@@ -78,6 +78,12 @@ pub enum FlintError {
 
     #[error("Fix cycle detected: {0}")]
     FixCycleDetected(String),
+
+    #[error("Physics error: {0}")]
+    PhysicsError(String),
+
+    #[error("Runtime error: {0}")]
+    RuntimeError(String),
 }
 
 /// Result type alias for Flint operations

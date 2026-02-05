@@ -3,6 +3,7 @@
 pub mod asset;
 pub mod entity;
 pub mod init;
+pub mod play;
 pub mod query;
 pub mod render;
 pub mod scene;

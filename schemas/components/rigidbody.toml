@@ -1,0 +1,6 @@
+[component.rigidbody]
+body_type = { type = "enum", values = ["static", "dynamic", "kinematic"], default = "static", description = "Physics body type" }
+mass = { type = "f32", default = 1.0, min = 0.0, description = "Mass in kilograms" }
+linear_damping = { type = "f32", default = 0.0, min = 0.0, description = "Linear velocity damping" }
+angular_damping = { type = "f32", default = 0.05, min = 0.0, description = "Angular velocity damping" }
+gravity_scale = { type = "f32", default = 1.0, description = "Gravity multiplier (0 = no gravity)" }

@@ -1,0 +1,481 @@
+# ================================================================
+#  PHASE 4 — Runtime & Physics Demo
+# ================================================================
+#
+#  A walkable tavern scene with first-person controls and physics.
+#  Demonstrates:
+#    * Game loop with fixed-timestep physics
+#    * Rapier 3D integration (rigid bodies, colliders)
+#    * Kinematic character controller (WASD + mouse look)
+#    * Collision detection (walls, floor, furniture)
+#    * First-person camera mode
+#
+#  Launch:  cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
+#     or:   cargo run --bin flint -- play demo/phase4_runtime.scene.toml
+# ================================================================
+
+[scene]
+name = "The Rusty Flint Tavern — Walkable"
+version = "4.0"
+description = "Phase 4 runtime demo: walk through the tavern in first-person with WASD+mouse, collide with walls and furniture"
+
+
+# ============================================================
+#  PLAYER — the entity you control
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 8]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+
+# ============================================================
+#  LIGHTING
+# ============================================================
+
+[entities.sun]
+archetype = "furniture"
+
+[entities.sun.transform]
+position = [0, 50, 0]
+
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 0.7, 0.4]
+color = [1.0, 0.9, 0.7]
+intensity = 2.5
+
+[entities.tavern_fire]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.tavern_fire.transform]
+position = [-5, 2, -3]
+
+[entities.tavern_fire.bounds]
+min = [-0.2, -0.2, -0.2]
+max = [0.2, 0.2, 0.2]
+
+[entities.tavern_fire.light]
+type = "point"
+color = [1.0, 0.6, 0.15]
+intensity = 20.0
+radius = 15.0
+
+[entities.bar_lamp]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bar_lamp.transform]
+position = [4, 3.5, -2]
+
+[entities.bar_lamp.bounds]
+min = [-0.1, -0.1, -0.1]
+max = [0.1, 0.1, 0.1]
+
+[entities.bar_lamp.light]
+type = "point"
+color = [0.9, 0.8, 0.5]
+intensity = 10.0
+radius = 8.0
+
+
+# ============================================================
+#  ROOMS (wireframe volumes)
+# ============================================================
+
+[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [0, 0, 0]
+
+[entities.main_hall.bounds]
+min = [-7, 0, -5]
+max = [7, 4, 10]
+
+[entities.kitchen]
+archetype = "room"
+parent = "main_hall"
+
+[entities.kitchen.transform]
+position = [0, 0, -8]
+
+[entities.kitchen.bounds]
+min = [-4, 0, -3]
+max = [4, 3.5, 3]
+
+[entities.storage]
+archetype = "room"
+parent = "main_hall"
+
+[entities.storage.transform]
+position = [8, 0, -2]
+
+[entities.storage.bounds]
+min = [-2, 0, -3]
+max = [2, 3, 3]
+
+
+# ============================================================
+#  FLOOR — large ground plane with physics collider
+# ============================================================
+
+[entities.ground]
+archetype = "floor"
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0.0, 20]
+
+[entities.ground.rigidbody]
+body_type = "static"
+
+[entities.ground.collider]
+shape = "box"
+size = [40, 0.2, 40]
+friction = 0.8
+
+[entities.ground.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.7
+
+
+# ============================================================
+#  WALLS — solid walls with colliders to prevent walking through
+# ============================================================
+
+# -- Main hall walls --
+[entities.wall_north]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_north.transform]
+position = [0, 2, -5]
+
+[entities.wall_north.bounds]
+min = [-7, -2, -0.15]
+max = [7, 2, 0.15]
+
+[entities.wall_north.rigidbody]
+body_type = "static"
+
+[entities.wall_north.collider]
+shape = "box"
+size = [14, 4, 0.3]
+
+[entities.wall_north.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+[entities.wall_south]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_south.transform]
+position = [0, 2, 10]
+
+[entities.wall_south.bounds]
+min = [-7, -2, -0.15]
+max = [7, 2, 0.15]
+
+[entities.wall_south.rigidbody]
+body_type = "static"
+
+[entities.wall_south.collider]
+shape = "box"
+size = [14, 4, 0.3]
+
+[entities.wall_south.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+[entities.wall_west]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_west.transform]
+position = [-7, 2, 2.5]
+
+[entities.wall_west.bounds]
+min = [-0.15, -2, -7.5]
+max = [0.15, 2, 7.5]
+
+[entities.wall_west.rigidbody]
+body_type = "static"
+
+[entities.wall_west.collider]
+shape = "box"
+size = [0.3, 4, 15]
+
+[entities.wall_west.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+[entities.wall_east]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_east.transform]
+position = [7, 2, 2.5]
+
+[entities.wall_east.bounds]
+min = [-0.15, -2, -7.5]
+max = [0.15, 2, 7.5]
+
+[entities.wall_east.rigidbody]
+body_type = "static"
+
+[entities.wall_east.collider]
+shape = "box"
+size = [0.3, 4, 15]
+
+[entities.wall_east.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+
+# ============================================================
+#  FURNITURE — with physics colliders
+# ============================================================
+
+# -- Bar counter: long wooden bar along the east wall --
+[entities.bar_counter]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bar_counter.transform]
+position = [5, 0, 0]
+
+[entities.bar_counter.bounds]
+min = [-0.5, 0, -3]
+max = [0.5, 1.1, 3]
+
+[entities.bar_counter.rigidbody]
+body_type = "static"
+
+[entities.bar_counter.collider]
+shape = "box"
+size = [1.0, 1.1, 6.0]
+
+[entities.bar_counter.material]
+texture = "textures/wood_planks.png"
+roughness = 0.6
+
+# -- Tables --
+[entities.table_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_1.transform]
+position = [-3, 0, 3]
+
+[entities.table_1.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.75, 0.6]
+
+[entities.table_1.rigidbody]
+body_type = "static"
+
+[entities.table_1.collider]
+shape = "box"
+size = [1.2, 0.75, 1.2]
+
+[entities.table_1.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.table_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_2.transform]
+position = [-3, 0, 6]
+
+[entities.table_2.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.75, 0.6]
+
+[entities.table_2.rigidbody]
+body_type = "static"
+
+[entities.table_2.collider]
+shape = "box"
+size = [1.2, 0.75, 1.2]
+
+[entities.table_2.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.table_3]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_3.transform]
+position = [0, 0, 5]
+
+[entities.table_3.bounds]
+min = [-0.8, 0, -0.4]
+max = [0.8, 0.75, 0.4]
+
+[entities.table_3.rigidbody]
+body_type = "static"
+
+[entities.table_3.collider]
+shape = "box"
+size = [1.6, 0.75, 0.8]
+
+[entities.table_3.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+# -- Fireplace: against the west wall --
+[entities.fireplace]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.fireplace.transform]
+position = [-6.5, 0, -3]
+
+[entities.fireplace.bounds]
+min = [-0.5, 0, -1]
+max = [0.5, 2.5, 1]
+
+[entities.fireplace.rigidbody]
+body_type = "static"
+
+[entities.fireplace.collider]
+shape = "box"
+size = [1.0, 2.5, 2.0]
+
+[entities.fireplace.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+# -- Barrels: near the storage area --
+[entities.barrel_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.barrel_1.transform]
+position = [5.5, 0, -3.5]
+
+[entities.barrel_1.bounds]
+min = [-0.3, 0, -0.3]
+max = [0.3, 0.9, 0.3]
+
+[entities.barrel_1.rigidbody]
+body_type = "static"
+
+[entities.barrel_1.collider]
+shape = "sphere"
+size = [0.6, 0.6, 0.6]
+
+[entities.barrel_1.material]
+texture = "textures/wood_planks.png"
+roughness = 0.7
+
+[entities.barrel_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.barrel_2.transform]
+position = [6.0, 0, -4.0]
+
+[entities.barrel_2.bounds]
+min = [-0.3, 0, -0.3]
+max = [0.3, 0.9, 0.3]
+
+[entities.barrel_2.rigidbody]
+body_type = "static"
+
+[entities.barrel_2.collider]
+shape = "sphere"
+size = [0.6, 0.6, 0.6]
+
+[entities.barrel_2.material]
+texture = "textures/wood_planks.png"
+roughness = 0.7
+
+
+# ============================================================
+#  DOORS
+# ============================================================
+
+[entities.front_entrance]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_entrance.transform]
+position = [0, 0, 10]
+
+[entities.front_entrance.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+
+[entities.kitchen_door]
+archetype = "door"
+parent = "main_hall"
+
+[entities.kitchen_door.transform]
+position = [0, 0, -5]
+
+[entities.kitchen_door.door]
+style = "hinged"
+locked = false
+open_angle = 75.0
+
+
+# ============================================================
+#  CHARACTERS — NPCs in the tavern
+# ============================================================
+
+[entities.bartender]
+archetype = "character"
+parent = "main_hall"
+
+[entities.bartender.transform]
+position = [5.5, 0, 1]
+
+[entities.patron_1]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_1.transform]
+position = [-3, 0, 3.5]
+
+[entities.patron_2]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_2.transform]
+position = [-2.5, 0, 6.5]
+
+[entities.mysterious_stranger]
+archetype = "character"
+parent = "main_hall"
+
+[entities.mysterious_stranger.transform]
+position = [-5, 0, 7]

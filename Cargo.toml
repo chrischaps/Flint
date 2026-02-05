@@ -11,6 +11,9 @@ members = [
     "crates/flint-asset",
     "crates/flint-import",
     "crates/flint-viewer",
+    "crates/flint-runtime",
+    "crates/flint-physics",
+    "crates/flint-player",
     "crates/flint-cli",
 ]
 
@@ -51,6 +54,12 @@ notify-debouncer-mini = "0.5"
 # Image encoding
 image = "0.25"
 
+# Physics
+rapier3d = { version = "0.22", features = ["default"] }
+
+# Game loop
+instant = "0.1"
+
 # Utilities
 bimap = "0.6"
 sha2 = "0.10"
@@ -75,3 +84,6 @@ flint-constraint = { path = "crates/flint-constraint" }
 flint-asset = { path = "crates/flint-asset" }
 flint-import = { path = "crates/flint-import" }
 flint-viewer = { path = "crates/flint-viewer" }
+flint-runtime = { path = "crates/flint-runtime" }
+flint-physics = { path = "crates/flint-physics" }
+flint-player = { path = "crates/flint-player" }

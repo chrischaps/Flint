@@ -4,7 +4,7 @@ mod commands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{asset, entity, init, query, render, scene, schema, serve, validate};
+use commands::{asset, entity, init, play, query, render, scene, schema, serve, validate};
 
 #[derive(Parser)]
 #[command(name = "flint")]
@@ -102,6 +102,20 @@ enum Commands {
     /// Asset management operations
     #[command(subcommand)]
     Asset(asset::AssetCommands),
+
+    /// Play a scene with first-person controls and physics
+    Play {
+        /// Path to scene file
+        scene: String,
+
+        /// Path to schemas directory
+        #[arg(long, default_value = "schemas")]
+        schemas: String,
+
+        /// Launch in fullscreen mode
+        #[arg(long)]
+        fullscreen: bool,
+    },
 
     /// Render a scene to a PNG image (headless)
     Render {
@@ -220,6 +234,15 @@ fn main() -> Result<()> {
             output_diff,
             schemas,
             format,
+        }),
+        Commands::Play {
+            scene,
+            schemas,
+            fullscreen,
+        } => play::run(play::PlayArgs {
+            scene,
+            schemas,
+            fullscreen,
         }),
         Commands::Asset(cmd) => asset::run(cmd),
         Commands::Serve { scene, watch, schemas, inspector } => {

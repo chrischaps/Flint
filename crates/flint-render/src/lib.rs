@@ -15,7 +15,7 @@ mod scene_renderer;
 pub mod shadow;
 mod texture_cache;
 
-pub use camera::Camera;
+pub use camera::{Camera, CameraMode};
 pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};
 pub use gpu_mesh::{GpuMesh, MeshCache};

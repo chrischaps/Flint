@@ -1,0 +1,6 @@
+[component.character_controller]
+move_speed = { type = "f32", default = 5.0, min = 0.0, description = "Movement speed in units per second" }
+jump_force = { type = "f32", default = 6.0, min = 0.0, description = "Vertical impulse applied on jump" }
+height = { type = "f32", default = 1.8, min = 0.1, description = "Character capsule height in units" }
+radius = { type = "f32", default = 0.3, min = 0.01, description = "Character capsule radius" }
+camera_mode = { type = "enum", values = ["first_person", "orbit"], default = "first_person", description = "Camera mode for this character" }

@@ -1,8 +1,18 @@
-//! 3D Camera with orbit controls
+//! 3D Camera with orbit and first-person controls
 
 use flint_core::Vec3;
 
-/// A simple 3D camera with orbit controls
+/// Camera operating mode
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum CameraMode {
+    /// Orbit around a target point (default for scene viewer)
+    #[default]
+    Orbit,
+    /// First-person view at a position looking in yaw/pitch direction
+    FirstPerson,
+}
+
+/// A 3D camera supporting orbit and first-person modes
 pub struct Camera {
     /// Camera position
     pub position: Vec3,
@@ -26,6 +36,9 @@ pub struct Camera {
     pub yaw: f32,
     /// Vertical angle in radians
     pub pitch: f32,
+
+    /// Camera operating mode
+    pub mode: CameraMode,
 }
 
 impl Default for Camera {
@@ -41,6 +54,7 @@ impl Default for Camera {
             distance: 15.0,
             yaw: std::f32::consts::FRAC_PI_4,
             pitch: std::f32::consts::FRAC_PI_6,
+            mode: CameraMode::Orbit,
         }
     }
 }
@@ -86,6 +100,25 @@ impl Camera {
     pub fn zoom(&mut self, delta: f32) {
         self.distance = (self.distance - delta).max(1.0).min(100.0);
         self.update_orbit();
+    }
+
+    /// Update for first-person mode: set position directly, compute target from yaw/pitch
+    pub fn update_first_person(&mut self, position: Vec3, yaw: f32, pitch: f32) {
+        self.mode = CameraMode::FirstPerson;
+        self.position = position;
+        self.yaw = yaw;
+        self.pitch = pitch;
+
+        // Compute forward direction from yaw/pitch
+        let forward_x = pitch.cos() * yaw.sin();
+        let forward_y = pitch.sin();
+        let forward_z = pitch.cos() * yaw.cos();
+
+        self.target = Vec3::new(
+            position.x + forward_x,
+            position.y + forward_y,
+            position.z + forward_z,
+        );
     }
 
     /// Pan the camera (move target)

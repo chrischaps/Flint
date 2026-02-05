@@ -1,0 +1,24 @@
+[archetype.player]
+description = "A player-controlled character with physics and first-person camera"
+components = ["transform", "collider", "rigidbody", "character_controller"]
+
+[archetype.player.defaults.transform]
+position = [0, 1, 0]
+
+[archetype.player.defaults.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+friction = 0.0
+restitution = 0.0
+
+[archetype.player.defaults.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[archetype.player.defaults.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
