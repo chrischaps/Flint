@@ -45,7 +45,7 @@ required_key = { type = "entity_ref", optional = true }
 
 ## Built-in Components
 
-Flint ships with three built-in component schemas:
+Flint ships with seven built-in component schemas:
 
 ### Transform
 
@@ -85,6 +85,62 @@ locked = { type = "bool", default = false }
 open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 ```
 
+### Material
+
+```toml
+# schemas/components/material.toml
+[component.material]
+description = "PBR material properties"
+
+[component.material.fields]
+texture = { type = "string", default = "", optional = true }
+roughness = { type = "f32", default = 0.5, min = 0.0, max = 1.0 }
+metallic = { type = "f32", default = 0.0, min = 0.0, max = 1.0 }
+color = { type = "vec3", default = [1.0, 1.0, 1.0] }
+emissive = { type = "vec3", default = [0.0, 0.0, 0.0] }
+```
+
+### Rigidbody
+
+```toml
+# schemas/components/rigidbody.toml
+[component.rigidbody]
+description = "Physics rigid body"
+
+[component.rigidbody.fields]
+body_type = { type = "enum", values = ["static", "dynamic", "kinematic"], default = "static" }
+mass = { type = "f32", default = 1.0, min = 0.0 }
+gravity_scale = { type = "f32", default = 1.0 }
+```
+
+### Collider
+
+```toml
+# schemas/components/collider.toml
+[component.collider]
+description = "Physics collision shape"
+
+[component.collider.fields]
+shape = { type = "enum", values = ["box", "sphere", "capsule"], default = "box" }
+size = { type = "vec3", default = [1.0, 1.0, 1.0] }
+friction = { type = "f32", default = 0.5, min = 0.0, max = 1.0 }
+```
+
+### Character Controller
+
+```toml
+# schemas/components/character_controller.toml
+[component.character_controller]
+description = "First-person character controller"
+
+[component.character_controller.fields]
+move_speed = { type = "f32", default = 5.0, min = 0.0 }
+jump_force = { type = "f32", default = 7.0, min = 0.0 }
+height = { type = "f32", default = 1.8, min = 0.1 }
+radius = { type = "f32", default = 0.4, min = 0.1 }
+camera_mode = { type = "enum", values = ["first_person", "orbit"], default = "first_person" }
+```
+
 ## Archetype Schemas
 
 Archetypes bundle components together with defaults. They live in `schemas/archetypes/`:
@@ -110,6 +166,11 @@ The `components` array lists which component schemas an entity of this archetype
 | `door` | transform, door | A door entity |
 | `furniture` | transform, bounds | A piece of furniture |
 | `character` | transform | A character or NPC |
+| `wall` | transform, bounds, material | A wall surface |
+| `floor` | transform, bounds, material | A floor surface |
+| `ceiling` | transform, bounds, material | A ceiling surface |
+| `pillar` | transform, bounds, material | A structural pillar |
+| `player` | transform, character_controller, rigidbody, collider | Player-controlled entity |
 
 ## Introspecting Schemas
 

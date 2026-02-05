@@ -42,6 +42,7 @@ flint/
 │   ├── flint-scene/          # Scene format, serialization (TOML/RON)
 │   ├── flint-constraint/     # Constraint definitions and solver
 │   ├── flint-render/         # wgpu-based renderer
+│   ├── flint-animation/      # Animation playback (property tweens + skeletal)
 │   ├── flint-physics/        # Rapier integration
 │   ├── flint-audio/          # Kira integration
 │   ├── flint-script/         # Rhai scripting integration
@@ -99,10 +100,10 @@ flint/
         ┌─────────────┬───────────────┼───────────────┬───────────────┐
         ▼             ▼               ▼               ▼               ▼
    ┌──────────┐ ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌────────────┐
-   │flint-    │ │flint-     │  │flint-     │  │flint-     │  │flint-      │
-   │render    │ │physics    │  │audio      │  │script     │  │viewer      │
-   │(wgpu)    │ │(rapier)   │  │(kira)     │  │(rhai)     │  │(validation)│
-   └──────────┘ └───────────┘  └───────────┘  └───────────┘  └────────────┘
+   │flint-    │ │flint-     │  │flint-     │  │flint-     │  │flint-      │  │flint-      │
+   │render    │ │physics    │  │animation  │  │audio      │  │script      │  │viewer      │
+   │(wgpu)    │ │(rapier)   │  │(keyframe) │  │(kira)     │  │(rhai)      │  │(validation)│
+   └──────────┘ └───────────┘  └───────────┘  └───────────┘  └────────────┘  └────────────┘
 ```
 
 ---
@@ -525,7 +526,135 @@ engine.register_fn("show_message", |msg: &str| { ... });
 
 ---
 
-### 8. Determinism
+### 8. Animation System (flint-animation)
+
+Two-tier animation supporting both code-defined property tweens and imported skeletal animation from glTF.
+
+#### Design Goals
+
+- **Data-driven** — Animations are assets, not code. Simple tweens definable in TOML, complex skeletal clips imported from glTF.
+- **Deterministic** — Same clip + time = same pose. Animation advances by GameClock delta, not wall time.
+- **GPU-accelerated** — Skeletal skinning runs in the vertex shader. CPU evaluates keyframes; GPU applies bone matrices.
+- **Composable** — Clips can be blended, layered, and sequenced. Scripts and events can trigger transitions.
+
+#### Tier 1: Property Animation
+
+Animate any transform property over time using keyframe tracks:
+
+```toml
+# Inline animation defined in a scene file
+[entities.front_door.animator]
+clip = "door_open"
+autoplay = false
+loop = false
+speed = 1.0
+
+# animations/door_open.anim.toml
+[animation]
+name = "door_open"
+duration = 0.8
+
+[[animation.tracks]]
+target = "rotation"
+interpolation = "cubic_spline"
+keyframes = [
+    { time = 0.0, value = [0, 0, 0] },
+    { time = 0.8, value = [0, 90, 0] },
+]
+
+[[animation.events]]
+time = 0.05
+event = "door_creak"
+```
+
+Property animations cover the majority of game animation needs: doors, platforms, elevators, UI elements, color shifts, light flicker. No glTF file required.
+
+#### Tier 2: Skeletal Animation
+
+Full bone-based animation for characters and complex meshes:
+
+```
+glTF file
+  ├── Skin (joint hierarchy, inverse bind matrices)
+  ├── Mesh (positions, normals, UVs, joint_indices, joint_weights)
+  └── Animations (per-joint translation/rotation/scale channels)
+         │
+         ▼
+  ┌──────────────────────┐
+  │   flint-import        │  Extract skeleton, clips, skinned vertices
+  └──────────┬───────────┘
+             │
+  ┌──────────▼───────────┐
+  │   flint-animation     │  Evaluate keyframes → bone matrices each frame
+  └──────────┬───────────┘
+             │
+  ┌──────────▼───────────┐
+  │   flint-render        │  Upload bone matrices → vertex shader skinning
+  └──────────────────────┘
+```
+
+Vertex shader skinning:
+
+```wgsl
+// Added to VertexInput
+@location(4) joint_indices: vec4<u32>,
+@location(5) joint_weights: vec4<f32>,
+
+// Bone matrix buffer
+@group(2) @binding(0)
+var<storage, read> bone_matrices: array<mat4x4<f32>>;
+
+// Skinning calculation
+fn skin_position(pos: vec3<f32>, joints: vec4<u32>, weights: vec4<f32>) -> vec3<f32> {
+    let m = bone_matrices[joints.x] * weights.x
+          + bone_matrices[joints.y] * weights.y
+          + bone_matrices[joints.z] * weights.z
+          + bone_matrices[joints.w] * weights.w;
+    return (m * vec4<f32>(pos, 1.0)).xyz;
+}
+```
+
+#### Animation Blending
+
+Smooth transitions between clips:
+
+- **Crossfade** — Linearly blend from clip A to clip B over a duration. Useful for walk → run, idle → attack.
+- **Additive** — Layer a partial clip on top of a base (wave hand while walking). The additive clip stores deltas from a reference pose.
+- **Blend tree** — (future) Parameterized blending based on movement speed, direction, etc.
+
+#### Component Schema
+
+```toml
+# schemas/components/animator.toml
+[component.animator]
+description = "Controls animation playback for an entity"
+
+[component.animator.fields]
+clip = { type = "string", description = "Current animation clip name", default = "" }
+playing = { type = "bool", default = false }
+loop = { type = "bool", default = true }
+speed = { type = "f32", default = 1.0, min = -10.0, max = 10.0 }
+time = { type = "f32", default = 0.0, min = 0.0, description = "Current playback position in seconds" }
+blend_target = { type = "string", optional = true, description = "Clip to crossfade into" }
+blend_duration = { type = "f32", default = 0.3, min = 0.0, description = "Crossfade duration in seconds" }
+```
+
+#### CLI Integration
+
+```bash
+# List animations available on an entity
+flint query "entities where animator.clip != ''"
+
+# Inspect animation state
+flint query "entities where animator.playing == true"
+
+# Preview an animation clip asset
+flint asset list --type animation
+```
+
+---
+
+### 10. Determinism
 
 Ensuring reproducible builds and testable results.
 
@@ -564,7 +693,7 @@ An agent can say "reproduce build X" and get bit-identical results.
 
 ---
 
-### 9. Rendering (flint-render)
+### 9. Rendering (flint-render) (Updated: now includes skinned mesh pipeline — see Animation System)
 
 wgpu-based renderer targeting indie-level fidelity.
 
@@ -578,6 +707,7 @@ wgpu-based renderer targeting indie-level fidelity.
 
 #### Future Considerations
 
+- Skinned mesh rendering pipeline (see Animation System, Stage 3)
 - Screen-space ambient occlusion
 - Bloom
 - Simple global illumination (light probes)
@@ -594,7 +724,7 @@ flint render --headless --output-diff baseline.png current.png
 
 ---
 
-### 10. Viewer (flint-viewer)
+### 11. Viewer (flint-viewer)
 
 Minimal GUI for human validation, not content creation.
 
@@ -656,15 +786,18 @@ The viewer answers: "Did the agent do what I asked?" not "Let me build this myse
 
 ### Phase 4: Runtime
 
-**Goal:** Playable game loop.
+**Goal:** Playable game loop with physics, animation, audio, and scripting.
 
 **Deliverables:**
-- flint-physics: Rapier integration
-- flint-audio: Kira integration
-- flint-script: Rhai scripting
-- flint-player: Standalone executable
+- flint-physics: Rapier integration (Stage 1 — complete)
+- flint-runtime: Game loop, input, event bus (Stage 1 — complete)
+- flint-player: Standalone executable (Stage 1 — complete)
+- flint-audio: Kira integration (Stage 2)
+- flint-animation: Property tweens + skeletal animation from glTF (Stage 3)
+- flint-script: Rhai scripting with animation/audio APIs (Stage 4)
+- Integration demo: Animated, interactive tavern scene (Stage 5)
 
-**Milestone:** A simple game (walk around, open doors, hear sounds) runs.
+**Milestone:** Walk around a tavern, open animated doors, see NPC idle animations, hear sounds.
 
 ### Phase 5: AI Asset Pipeline
 

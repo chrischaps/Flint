@@ -1,8 +1,6 @@
 # CLI Reference
 
-> This page is a stub. Full reference coming soon.
-
-Flint's CLI is the primary interface for all engine operations. Below is a summary of available commands.
+Flint's CLI is the primary interface for all engine operations. Below is a reference of available commands.
 
 ## Commands
 
@@ -21,8 +19,46 @@ Flint's CLI is the primary interface for all engine operations. Below is a summa
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
 | `flint asset resolve` | Check asset references in a scene |
-| `flint serve <scene>` | Launch the hot-reload viewer |
+| `flint serve <scene>` | Launch the hot-reload PBR viewer with egui inspector |
+| `flint play <scene>` | Play a scene with first-person controls and physics |
 | `flint render <scene>` | Render a scene to PNG (headless) |
+
+## The `play` Command
+
+Launch a scene as an interactive first-person experience with physics:
+
+```bash
+flint play demo/phase4_runtime.scene.toml
+flint play levels/tavern.scene.toml --schemas schemas --fullscreen
+```
+
+| Flag | Description |
+|------|-------------|
+| `--schemas <path>` | Path to schemas directory (default: `schemas`) |
+| `--fullscreen` | Launch in fullscreen mode |
+
+### Player Controls
+
+| Input | Action |
+|-------|--------|
+| WASD | Move |
+| Mouse | Look around |
+| Space | Jump |
+| Shift | Sprint |
+| Escape | Release cursor / Exit |
+| F1 | Cycle debug rendering mode |
+| F4 | Toggle shadows |
+| F11 | Toggle fullscreen |
+
+The `play` command requires the scene to have a `player` archetype entity with a `character_controller` component. Physics colliders on other entities define the walkable geometry.
+
+### Standalone Player Binary
+
+The player is also available as a standalone binary for distribution:
+
+```bash
+cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
+```
 
 ## Common Flags
 
@@ -45,5 +81,6 @@ flint <command> --help
 # Examples
 flint init my-game
 flint serve levels/tavern.scene.toml --watch --schemas schemas
+flint play levels/tavern.scene.toml
 flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml
 ```

@@ -30,6 +30,43 @@ impl Vertex {
     }
 }
 
+/// A vertex with position, normal, color, UV, and bone skinning data
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct SkinnedVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub color: [f32; 4],
+    pub uv: [f32; 2],
+    pub joint_indices: [u32; 4],
+    pub joint_weights: [f32; 4],
+}
+
+impl SkinnedVertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+        0 => Float32x3,   // position
+        1 => Float32x3,   // normal
+        2 => Float32x4,   // color
+        3 => Float32x2,   // uv
+        4 => Uint32x4,    // joint_indices
+        5 => Float32x4,   // joint_weights
+    ];
+
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<SkinnedVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
+/// A mesh with skinned vertices and indices
+pub struct SkinnedMesh {
+    pub vertices: Vec<SkinnedVertex>,
+    pub indices: Vec<u32>,
+}
+
 /// A mesh with vertices and indices
 pub struct Mesh {
     pub vertices: Vec<Vertex>,

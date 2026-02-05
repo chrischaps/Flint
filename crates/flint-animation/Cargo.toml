@@ -1,0 +1,14 @@
+[package]
+name = "flint-animation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Animation system for Flint engine — property tweens and skeletal animation"
+
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-import = { workspace = true }
+flint-runtime = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

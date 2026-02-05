@@ -22,6 +22,8 @@ flint-render = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-import = { workspace = true }
+flint-audio = { workspace = true }
+flint-animation = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }

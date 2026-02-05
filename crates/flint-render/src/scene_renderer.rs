@@ -9,6 +9,7 @@ use crate::pipeline::{
     TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
+use crate::skinned_pipeline::SkinnedPipeline;
 use crate::texture_cache::TextureCache;
 use crate::primitives::{
     create_box_mesh, create_grid_mesh, create_wireframe_box_mesh, generate_normal_arrows,
@@ -53,13 +54,30 @@ struct DrawCall {
     model_inv_transpose: [[f32; 4]; 4],
 }
 
+/// A draw call for a skinned mesh (has bone bind group)
+#[allow(dead_code)]
+struct SkinnedDrawCall {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    transform_buffer: wgpu::Buffer,
+    transform_bind_group: wgpu::BindGroup,
+    material_buffer: wgpu::Buffer,
+    material_bind_group: wgpu::BindGroup,
+    bone_bind_group: wgpu::BindGroup,
+    model: [[f32; 4]; 4],
+    model_inv_transpose: [[f32; 4]; 4],
+}
+
 /// Renders a FlintWorld to the screen
 pub struct SceneRenderer {
     pipeline: RenderPipeline,
+    skinned_pipeline: Option<SkinnedPipeline>,
     archetype_visuals: HashMap<String, ArchetypeVisual>,
     mesh_cache: MeshCache,
     grid_draw: Option<DrawCall>,
     entity_draws: Vec<DrawCall>,
+    skinned_entity_draws: Vec<SkinnedDrawCall>,
     debug_state: DebugState,
     wireframe_overlay_draws: Vec<DrawCall>,
     normal_arrow_draws: Vec<DrawCall>,
@@ -98,12 +116,22 @@ impl SceneRenderer {
         let (light_buffer, light_bind_group) =
             Self::create_light_bind(&context.device, &pipeline, &light_uniforms, &shadow_pass);
 
+        let skinned_pipeline = SkinnedPipeline::new(
+            &context.device,
+            context.config.format,
+            &pipeline.transform_bind_group_layout,
+            &pipeline.material_bind_group_layout,
+            &pipeline.light_bind_group_layout,
+        );
+
         Self {
             pipeline,
+            skinned_pipeline: Some(skinned_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
             grid_draw,
             entity_draws: Vec::new(),
+            skinned_entity_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
@@ -147,12 +175,22 @@ impl SceneRenderer {
         let (light_buffer, light_bind_group) =
             Self::create_light_bind(device, &pipeline, &light_uniforms, &shadow_pass);
 
+        let skinned_pipeline = SkinnedPipeline::new(
+            device,
+            format,
+            &pipeline.transform_bind_group_layout,
+            &pipeline.material_bind_group_layout,
+            &pipeline.light_bind_group_layout,
+        );
+
         Self {
             pipeline,
+            skinned_pipeline: Some(skinned_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
             grid_draw,
             entity_draws: Vec::new(),
+            skinned_entity_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
@@ -191,6 +229,56 @@ impl SceneRenderer {
         if let Some(cache) = &mut self.texture_cache {
             for texture in &import_result.textures {
                 cache.upload(device, queue, &texture.name, texture);
+            }
+        }
+    }
+
+    /// Load skinned meshes from an imported model into the GPU mesh cache
+    pub fn load_skinned_model(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        import_result: &ImportResult,
+    ) {
+        let default_color = self
+            .archetype_visuals
+            .get("character")
+            .map(|v| v.color)
+            .unwrap_or([0.5, 0.5, 0.5, 1.0]);
+
+        if let Some(sp) = &self.skinned_pipeline {
+            self.mesh_cache.upload_skinned(
+                device,
+                name,
+                import_result,
+                default_color,
+                &sp.bone_bind_group_layout,
+            );
+        }
+
+        // Also upload textures
+        if let Some(cache) = &mut self.texture_cache {
+            for texture in &import_result.textures {
+                cache.upload(device, queue, &texture.name, texture);
+            }
+        }
+    }
+
+    /// Update bone matrices for a skinned mesh asset on the GPU
+    pub fn update_bone_matrices(
+        &mut self,
+        queue: &wgpu::Queue,
+        asset_name: &str,
+        matrices: &[[[f32; 4]; 4]],
+    ) {
+        if let Some(skinned_meshes) = self.mesh_cache.get_skinned_mut(asset_name) {
+            for mesh in skinned_meshes.iter_mut() {
+                queue.write_buffer(
+                    &mesh.bone_buffer,
+                    0,
+                    bytemuck::cast_slice(matrices),
+                );
             }
         }
     }
@@ -367,6 +455,7 @@ impl SceneRenderer {
     /// Update meshes from the world state
     pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
         self.entity_draws.clear();
+        self.skinned_entity_draws.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
 
@@ -407,6 +496,73 @@ impl SceneRenderer {
                 });
 
             if let Some(asset_name) = &model_asset {
+                // Check for skinned meshes first
+                if let Some(skinned_meshes) = self.mesh_cache.get_skinned(asset_name) {
+                    let model_matrix = transform.to_matrix();
+                    let inv_transpose = mat4_inv_transpose(&model_matrix);
+
+                    for gpu_mesh in skinned_meshes {
+                        let transform_uniforms = TransformUniforms {
+                            view_proj: [[0.0; 4]; 4],
+                            model: model_matrix,
+                            model_inv_transpose: inv_transpose,
+                            camera_pos: [0.0; 3],
+                            _pad: 0.0,
+                        };
+
+                        let (bc_view, bc_sampler, has_bc) =
+                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.base_color_texture.as_deref(), &tex_cache_ref.default_white);
+                        let (nm_view, nm_sampler, has_nm) =
+                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.normal_texture.as_deref(), &tex_cache_ref.default_normal);
+                        let (mr_view, mr_sampler, has_mr) =
+                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.metallic_roughness_texture.as_deref(), &tex_cache_ref.default_metallic_roughness);
+
+                        let mut material_uniforms = MaterialUniforms::from_pbr(
+                            gpu_mesh.material.base_color,
+                            gpu_mesh.material.metallic,
+                            gpu_mesh.material.roughness,
+                        );
+                        material_uniforms.has_base_color_tex = if has_bc { 1 } else { 0 };
+                        material_uniforms.has_normal_map = if has_nm { 1 } else { 0 };
+                        material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
+
+                        let (transform_buffer, transform_bind_group) =
+                            Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
+                        let (material_buffer, material_bind_group) =
+                            Self::create_material_bind_with_textures(
+                                device,
+                                &self.pipeline,
+                                &material_uniforms,
+                                bc_view, bc_sampler,
+                                nm_view, nm_sampler,
+                                mr_view, mr_sampler,
+                            );
+
+                        let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &self.skinned_pipeline.as_ref().unwrap().bone_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: gpu_mesh.bone_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Skinned Draw Bone Bind Group"),
+                        });
+
+                        self.skinned_entity_draws.push(SkinnedDrawCall {
+                            vertex_buffer: gpu_mesh.create_vertex_buffer_copy(device),
+                            index_buffer: gpu_mesh.create_index_buffer_copy(device),
+                            index_count: gpu_mesh.index_count,
+                            transform_buffer,
+                            transform_bind_group,
+                            material_buffer,
+                            material_bind_group,
+                            bone_bind_group,
+                            model: model_matrix,
+                            model_inv_transpose: inv_transpose,
+                        });
+                    }
+                    continue;
+                }
+
                 if let Some(gpu_meshes) = self.mesh_cache.get(asset_name) {
                     let model_matrix = transform.to_matrix();
                     let inv_transpose = mat4_inv_transpose(&model_matrix);
@@ -1241,6 +1397,42 @@ impl SceneRenderer {
                             );
                             pass.draw_indexed(0..draw.index_count, 0, 0..1);
                         }
+
+                        // Render skinned entities into shadow map
+                        pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
+
+                        for draw in &self.skinned_entity_draws {
+                            let shadow_uniforms = ShadowDrawUniforms {
+                                light_view_proj: cascade_vp,
+                                model: draw.model,
+                            };
+
+                            let shadow_buffer = device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("Skinned Shadow Draw Uniform"),
+                                    contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                                    usage: wgpu::BufferUsages::UNIFORM,
+                                },
+                            );
+
+                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &shadow_pass.shadow_bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: shadow_buffer.as_entire_binding(),
+                                }],
+                                label: Some("Skinned Shadow Draw Bind Group"),
+                            });
+
+                            pass.set_bind_group(0, &shadow_bind, &[]);
+                            pass.set_bind_group(1, &draw.bone_bind_group, &[]);
+                            pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
                     }
 
                     queue.submit(std::iter::once(encoder.finish()));
@@ -1283,6 +1475,29 @@ impl SceneRenderer {
 
             // Write enable_tonemapping at byte offset 32
             // Layout: ... + debug_mode(4) = 32
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update skinned entity transforms
+        for draw in &self.skinned_entity_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
             queue.write_buffer(
                 &draw.material_buffer,
                 32,
@@ -1406,6 +1621,25 @@ impl SceneRenderer {
                         wgpu::IndexFormat::Uint32,
                     );
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Render skinned entities
+                if let Some(sp) = &self.skinned_pipeline {
+                    if !self.skinned_entity_draws.is_empty() {
+                        render_pass.set_pipeline(&sp.pipeline);
+                        for draw in &self.skinned_entity_draws {
+                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                            render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                            // Light bind group 2 is already set
+                            render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
                 }
 
                 // Wireframe overlay pass (on top of solid geometry)

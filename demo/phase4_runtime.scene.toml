@@ -46,6 +46,9 @@ height = 1.8
 radius = 0.3
 camera_mode = "first_person"
 
+[entities.player.audio_listener]
+active = true
+
 
 # ============================================================
 #  LIGHTING
@@ -435,6 +438,15 @@ style = "hinged"
 locked = false
 open_angle = 90.0
 
+[entities.front_entrance.audio_trigger]
+on_collision = "audio/door_open.ogg"
+
+[entities.front_entrance.animator]
+clip = "door_swing"
+autoplay = true
+loop = false
+speed = 1.0
+
 [entities.kitchen_door]
 archetype = "door"
 parent = "main_hall"
@@ -446,6 +458,36 @@ position = [0, 0, -5]
 style = "hinged"
 locked = false
 open_angle = 75.0
+
+[entities.kitchen_door.audio_trigger]
+on_collision = "audio/door_open.ogg"
+
+
+# ============================================================
+#  ANIMATED OBJECTS
+# ============================================================
+
+# Bobbing platform — rises and falls on a 4-second loop
+[entities.moving_platform]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.moving_platform.transform]
+position = [2, 0.5, 3]
+
+[entities.moving_platform.bounds]
+min = [-1.0, -0.15, -1.0]
+max = [1.0, 0.15, 1.0]
+
+[entities.moving_platform.material]
+texture = "textures/wood_planks.png"
+roughness = 0.5
+
+[entities.moving_platform.animator]
+clip = "platform_bob"
+autoplay = true
+loop = true
+speed = 1.0
 
 
 # ============================================================
@@ -479,3 +521,56 @@ parent = "main_hall"
 
 [entities.mysterious_stranger.transform]
 position = [-5, 0, 7]
+
+
+# ============================================================
+#  AUDIO — spatial and ambient sound sources
+# ============================================================
+
+# Ambient tavern atmosphere (non-spatial, heard everywhere)
+[entities.ambient_sound]
+archetype = "furniture"
+
+[entities.ambient_sound.transform]
+position = [0, 2, 2.5]
+
+[entities.ambient_sound.audio_source]
+file = "audio/ambient_tavern.ogg"
+volume = 0.3
+spatial = false
+loop = true
+autoplay = true
+
+# Fireplace crackle — spatial, louder as you approach
+[entities.fire_sound]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.fire_sound.transform]
+position = [-6.5, 1, -3]
+
+[entities.fire_sound.audio_source]
+file = "audio/fire_crackle.ogg"
+volume = 0.9
+spatial = true
+loop = true
+autoplay = true
+min_distance = 1.0
+max_distance = 12.0
+
+# Bar area — glass clinking behind the counter
+[entities.bar_sound]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bar_sound.transform]
+position = [5.5, 1, 0]
+
+[entities.bar_sound.audio_source]
+file = "audio/glasses_clink.ogg"
+volume = 0.5
+spatial = true
+loop = true
+autoplay = true
+min_distance = 1.0
+max_distance = 8.0

@@ -1,9 +1,0 @@
-(function() {
-    var implementors = Object.fromEntries([["flint",[["impl Parser for <a class=\"struct\" href=\"flint/struct.Cli.html\" title=\"struct flint::Cli\">Cli</a>"]]]]);
-    if (window.register_implementors) {
-        window.register_implementors(implementors);
-    } else {
-        window.pending_implementors = implementors;
-    }
-})()
-//{"start":57,"fragment_lengths":[118]}

@@ -1,0 +1,128 @@
+# ================================================================
+#  SKELETAL ANIMATION TEST
+# ================================================================
+#
+#  A minimal scene to test skeletal animation with YBot idle loop.
+#  Demonstrates:
+#    * glTF skeletal animation (Tier 2)
+#    * GPU vertex skinning with 65-joint skeleton
+#    * Looping animation playback via animator + skeleton components
+#
+#  Launch:  cargo run --bin flint-player -- demo/skeletal_test.scene.toml --schemas schemas
+#     or:   cargo run --bin flint -- play demo/skeletal_test.scene.toml
+# ================================================================
+
+[scene]
+name = "Skeletal Animation Test"
+version = "4.0"
+description = "Test scene: YBot with looping idle animation using skeletal animation system"
+
+
+# ============================================================
+#  PLAYER — first-person viewer
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 4]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+
+# ============================================================
+#  LIGHTING
+# ============================================================
+
+[entities.sun]
+archetype = "furniture"
+
+[entities.sun.transform]
+position = [0, 50, 0]
+
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 0.7, 0.4]
+color = [1.0, 0.95, 0.85]
+intensity = 2.5
+
+[entities.fill_light]
+archetype = "furniture"
+
+[entities.fill_light.transform]
+position = [-5, 3, 3]
+
+[entities.fill_light.light]
+type = "point"
+color = [0.6, 0.7, 1.0]
+intensity = 8.0
+radius = 15.0
+
+
+# ============================================================
+#  FLOOR
+# ============================================================
+
+[entities.ground]
+archetype = "floor"
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-10, -0.1, -10]
+max = [10, 0.0, 10]
+
+[entities.ground.rigidbody]
+body_type = "static"
+
+[entities.ground.collider]
+shape = "box"
+size = [20, 0.2, 20]
+friction = 0.8
+
+[entities.ground.material]
+color = [0.3, 0.3, 0.35, 1.0]
+roughness = 0.8
+
+
+# ============================================================
+#  YBOT — skinned character with idle animation
+# ============================================================
+
+[entities.ybot]
+archetype = "character"
+
+[entities.ybot.transform]
+position = [0, 0, 0]
+
+[entities.ybot.model]
+asset = "YBotWithIdle"
+
+[entities.ybot.skeleton]
+skin = "Armature"
+
+[entities.ybot.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.0
+playing = true

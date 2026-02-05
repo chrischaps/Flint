@@ -1,6 +1,6 @@
 [archetype.player]
 description = "A player-controlled character with physics and first-person camera"
-components = ["transform", "collider", "rigidbody", "character_controller"]
+components = ["transform", "collider", "rigidbody", "character_controller", "audio_listener"]
 
 [archetype.player.defaults.transform]
 position = [0, 1, 0]

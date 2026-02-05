@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["import_gltf"],"struct":["ImportResult","ImportedMaterial","ImportedMesh","ImportedTexture"]};

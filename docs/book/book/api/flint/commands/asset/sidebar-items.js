@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["AssetCommands"],"fn":["format_asset_toml","guess_asset_type","parse_asset_type","run","run_import","run_info","run_list","run_resolve"]};

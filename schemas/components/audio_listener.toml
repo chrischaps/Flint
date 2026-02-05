@@ -1,0 +1,2 @@
+[component.audio_listener]
+active = { type = "bool", default = true, description = "Whether this entity is the active listener" }

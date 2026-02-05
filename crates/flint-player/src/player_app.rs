@@ -2,11 +2,16 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
+use flint_animation::skeletal_clip::SkeletalClip;
+use flint_animation::skeleton::Skeleton;
+use flint_animation::AnimationSystem;
+use flint_audio::AudioSystem;
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::{GameClock, InputState, RuntimeSystem};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -25,12 +30,17 @@ pub struct PlayerApp {
     pub clock: GameClock,
     pub input: InputState,
     pub physics: PhysicsSystem,
+    pub audio: AudioSystem,
+    pub animation: AnimationSystem,
 
     // Rendering
     window: Option<Arc<Window>>,
     render_context: Option<RenderContext>,
     scene_renderer: Option<SceneRenderer>,
     camera: Camera,
+
+    // Skeletal animation: entity_id → asset name for bone matrix updates
+    skeletal_entity_assets: HashMap<flint_core::EntityId, String>,
 
     // Window options
     pub fullscreen: bool,
@@ -45,10 +55,13 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
+            audio: AudioSystem::new(),
+            animation: AnimationSystem::new(),
             window: None,
             render_context: None,
             scene_renderer: None,
             camera: Camera::new(),
+            skeletal_entity_assets: HashMap::new(),
             fullscreen,
             cursor_captured: false,
         }
@@ -75,10 +88,11 @@ impl PlayerApp {
 
         let mut scene_renderer = SceneRenderer::new(&render_context);
 
-        // Load models from world
-        load_models_from_world(
+        // Load models from world (including skeletal data)
+        self.skeletal_entity_assets = load_models_from_world(
             &self.world,
             &mut scene_renderer,
+            &mut self.animation,
             &render_context.device,
             &render_context.queue,
             &self.scene_path,
@@ -92,6 +106,18 @@ impl PlayerApp {
         self.physics
             .initialize(&mut self.world)
             .expect("Failed to initialize physics");
+
+        // Initialize audio
+        load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
+        self.audio
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Audio init: {:?}", e));
+
+        // Initialize animation
+        load_animations_from_world(&self.scene_path, &mut self.animation);
+        self.animation
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
 
         // Capture cursor for first-person look
         self.capture_cursor();
@@ -174,6 +200,43 @@ impl PlayerApp {
         );
         // Also set target explicitly for view matrix
         self.camera.target = cam_target;
+
+        // Update audio listener to match camera
+        self.audio.update_listener(
+            cam_pos,
+            self.physics.character.yaw,
+            self.physics.character.pitch,
+        );
+
+        // Process physics events for audio triggers
+        let physics_events = self.physics.event_bus.drain();
+        self.audio.process_events(&physics_events, &self.world);
+        self.audio
+            .update(&mut self.world, self.clock.delta_time)
+            .ok();
+
+        // Advance animations and write results to ECS transforms
+        self.animation
+            .update(&mut self.world, self.clock.delta_time)
+            .ok();
+
+        // Push skeletal bone matrices to GPU
+        if let (Some(renderer), Some(context)) =
+            (&mut self.scene_renderer, &self.render_context)
+        {
+            for (entity_id, asset_name) in &self.skeletal_entity_assets {
+                if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
+                    renderer.update_bone_matrices(&context.queue, asset_name, matrices);
+                }
+            }
+        }
+
+        // Refresh renderer with updated transforms (animation may have changed positions)
+        if let (Some(renderer), Some(context)) =
+            (&mut self.scene_renderer, &self.render_context)
+        {
+            renderer.update_from_world(&self.world, &context.device);
+        }
 
         // Clear per-frame input state
         self.input.end_frame();
@@ -313,17 +376,21 @@ impl ApplicationHandler for PlayerApp {
     }
 }
 
-/// Load glTF models referenced by entities in the world
+/// Load glTF models referenced by entities in the world.
+/// Returns a mapping of entity_id → asset_name for skinned entities.
 fn load_models_from_world(
     world: &FlintWorld,
     renderer: &mut SceneRenderer,
+    animation: &mut AnimationSystem,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene_path: &str,
-) {
+) -> HashMap<flint_core::EntityId, String> {
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
+
+    let mut skeletal_entity_assets = HashMap::new();
 
     for entity in world.all_entities() {
         let model_asset = world
@@ -333,6 +400,14 @@ fn load_models_from_world(
 
         if let Some(asset_name) = model_asset {
             if renderer.mesh_cache().contains(&asset_name) {
+                // Even if already loaded, check if this entity needs skeletal tracking
+                if renderer.mesh_cache().contains_skinned(&asset_name) {
+                    if !animation.skeletal_sync.has_skeleton(&entity.id) {
+                        // Re-import to get skeleton data (only on first encounter)
+                        // The mesh is already cached, but we need the skeleton
+                    }
+                    skeletal_entity_assets.insert(entity.id, asset_name.clone());
+                }
                 continue;
             }
 
@@ -341,13 +416,64 @@ fn load_models_from_world(
             if model_path.exists() {
                 match import_gltf(&model_path) {
                     Ok(import_result) => {
+                        let has_skins = !import_result.skeletons.is_empty();
+                        let has_skinned_meshes = import_result
+                            .meshes
+                            .iter()
+                            .any(|m| m.joint_indices.is_some());
+
                         println!(
-                            "Loaded model: {} ({} meshes, {} materials)",
+                            "Loaded model: {} ({} meshes, {} materials{})",
                             asset_name,
                             import_result.meshes.len(),
-                            import_result.materials.len()
+                            import_result.materials.len(),
+                            if has_skins {
+                                format!(
+                                    ", {} skins, {} skeletal clips",
+                                    import_result.skeletons.len(),
+                                    import_result.skeletal_clips.len()
+                                )
+                            } else {
+                                String::new()
+                            }
                         );
-                        renderer.load_model(device, queue, &asset_name, &import_result);
+
+                        if has_skinned_meshes && has_skins {
+                            // Upload as skinned mesh
+                            renderer.load_skinned_model(
+                                device,
+                                queue,
+                                &asset_name,
+                                &import_result,
+                            );
+                            // Also upload static meshes (unskinned parts of the model)
+                            renderer.load_model(device, queue, &asset_name, &import_result);
+
+                            // Register skeletons with the animation system
+                            for imported_skel in &import_result.skeletons {
+                                let skeleton = Skeleton::from_imported(imported_skel);
+                                animation
+                                    .skeletal_sync
+                                    .add_skeleton(entity.id, skeleton);
+                            }
+
+                            // Register skeletal clips
+                            for imported_clip in &import_result.skeletal_clips {
+                                let clip = SkeletalClip::from_imported(imported_clip);
+                                println!(
+                                    "  Skeletal clip: {} ({:.1}s, {} tracks)",
+                                    clip.name,
+                                    clip.duration,
+                                    clip.joint_tracks.len()
+                                );
+                                animation.skeletal_sync.add_clip(clip);
+                            }
+
+                            skeletal_entity_assets.insert(entity.id, asset_name.clone());
+                        } else {
+                            // Standard static mesh upload
+                            renderer.load_model(device, queue, &asset_name, &import_result);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Failed to load model '{}': {:?}", asset_name, e);
@@ -359,6 +485,46 @@ fn load_models_from_world(
 
     // Also load textures
     load_textures_from_world(world, renderer, device, queue, scene_path);
+
+    skeletal_entity_assets
+}
+
+/// Load audio files referenced by audio_source components
+fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path: &str) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    for entity in world.all_entities() {
+        let audio_file = world
+            .get_components(entity.id)
+            .and_then(|components| components.get("audio_source").cloned())
+            .and_then(|audio_src| {
+                audio_src
+                    .get("file")
+                    .and_then(|v| v.as_str().map(String::from))
+            });
+
+        if let Some(file_name) = audio_file {
+            if audio.engine.has_sound(&file_name) {
+                continue;
+            }
+
+            let audio_path = scene_dir.join(&file_name);
+            if audio_path.exists() {
+                match audio.engine.load_sound(&file_name, &audio_path) {
+                    Ok(_) => {
+                        println!("Loaded audio: {}", file_name);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load audio '{}': {:?}", file_name, e);
+                    }
+                }
+            } else {
+                eprintln!("Audio file not found: {}", audio_path.display());
+            }
+        }
+    }
 }
 
 /// Load texture files referenced by material components
@@ -398,6 +564,42 @@ fn load_textures_from_world(
                     Err(e) => {
                         eprintln!("Failed to load texture '{}': {}", tex_name, e);
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Load `.anim.toml` files from the `animations/` directory next to the scene
+fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    let anim_dir = scene_dir.join("animations");
+    if !anim_dir.is_dir() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(&anim_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map_or(false, |n| n.ends_with(".anim.toml"))
+        {
+            match flint_animation::loader::load_clip_from_file(&path) {
+                Ok(clip) => {
+                    println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
+                    animation.player.add_clip(clip);
+                }
+                Err(e) => {
+                    eprintln!("Failed to load animation '{}': {:?}", path.display(), e);
                 }
             }
         }

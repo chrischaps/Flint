@@ -31,13 +31,16 @@ flint query "entities where archetype == 'door'" --scene levels/tavern.scene.tom
 # Validate against constraints
 flint validate levels/tavern.scene.toml --fix --dry-run
 
-# See it in 3D
+# See it in 3D with PBR rendering
 flint serve levels/tavern.scene.toml --watch
+
+# Walk around in first person
+flint play levels/tavern.scene.toml
 ```
 
 ## Current Status
 
-Flint is in active development. Phase 1 (Foundation) and Phase 3 (Rendering) are implemented, with Phase 2 (Constraints and Assets) complete. The engine currently supports:
+Flint is in active development through Phase 4. Phases 1--3 are complete, and Phase 4 Stage 1 (Game Loop + Physics) is implemented. The engine currently supports:
 
 - **Entity CRUD** via CLI with archetype-based creation
 - **Scene serialization** in human-readable TOML
@@ -45,9 +48,13 @@ Flint is in active development. Phase 1 (Foundation) and Phase 3 (Rendering) are
 - **Schema system** for component and archetype definitions
 - **Constraint validation** with auto-fix capabilities
 - **Asset management** with content-addressed storage and glTF import
-- **wgpu renderer** with archetype-based coloring and orbit camera
+- **PBR renderer** with Cook-Torrance shading, cascaded shadow mapping, and glTF mesh rendering
+- **egui inspector** with entity tree, component editing, and constraint overlay
 - **Hot-reload viewer** that watches for file changes
 - **Headless rendering** for CI and automated screenshots
+- **Physics simulation** via Rapier 3D with kinematic character controller
+- **First-person gameplay** with WASD movement, mouse look, jumping, and sprinting
+- **Game loop** with fixed-timestep accumulator for deterministic physics
 
 See the [Roadmap](roadmap.md) for what's planned next.
 

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SceneCommands"],"fn":["create","info","list","run"]};

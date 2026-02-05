@@ -1,0 +1,5 @@
+[component.skeleton]
+description = "References a glTF skin for skeletal animation"
+
+[component.skeleton.fields]
+skin = { type = "string", default = "", description = "Name of the glTF skin to use" }

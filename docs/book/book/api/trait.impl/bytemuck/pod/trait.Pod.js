@@ -1,9 +1,0 @@
-(function() {
-    var implementors = Object.fromEntries([["flint_render",[["impl Pod for <a class=\"struct\" href=\"flint_render/shadow/struct.ShadowDrawUniforms.html\" title=\"struct flint_render::shadow::ShadowDrawUniforms\">ShadowDrawUniforms</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/shadow/struct.ShadowUniforms.html\" title=\"struct flint_render::shadow::ShadowUniforms\">ShadowUniforms</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.DirectionalLight.html\" title=\"struct flint_render::DirectionalLight\">DirectionalLight</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.LightUniforms.html\" title=\"struct flint_render::LightUniforms\">LightUniforms</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.MaterialUniforms.html\" title=\"struct flint_render::MaterialUniforms\">MaterialUniforms</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.PointLight.html\" title=\"struct flint_render::PointLight\">PointLight</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.SpotLight.html\" title=\"struct flint_render::SpotLight\">SpotLight</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.TransformUniforms.html\" title=\"struct flint_render::TransformUniforms\">TransformUniforms</a>"],["impl Pod for <a class=\"struct\" href=\"flint_render/struct.Vertex.html\" title=\"struct flint_render::Vertex\">Vertex</a>"]]],["flint_render",[["impl Pod for <a class=\"struct\" href=\"flint_render/struct.Vertex.html\" title=\"struct flint_render::Vertex\">Vertex</a>"]]]]);
-    if (window.register_implementors) {
-        window.register_implementors(implementors);
-    } else {
-        window.pending_implementors = implementors;
-    }
-})()
-//{"start":57,"fragment_lengths":[1386,146]}

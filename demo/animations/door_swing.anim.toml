@@ -1,0 +1,27 @@
+# Door swing — rotates 90 degrees on Y axis over 0.8 seconds
+# Attach to an entity with: [entities.X.animator] clip = "door_swing", autoplay = true
+
+name = "door_swing"
+duration = 0.8
+
+[[tracks]]
+interpolation = "Linear"
+
+[tracks.target]
+type = "Rotation"
+
+[[tracks.keyframes]]
+time = 0.0
+value = [0.0, 0.0, 0.0]
+
+[[tracks.keyframes]]
+time = 0.8
+value = [0.0, 90.0, 0.0]
+
+[[events]]
+time = 0.0
+event_name = "door_start"
+
+[[events]]
+time = 0.8
+event_name = "door_end"

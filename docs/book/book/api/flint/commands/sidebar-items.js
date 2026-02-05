@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["asset","entity","init","query","render","scene","schema","serve","validate"]};

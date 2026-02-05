@@ -82,8 +82,14 @@ pub enum FlintError {
     #[error("Physics error: {0}")]
     PhysicsError(String),
 
+    #[error("Audio error: {0}")]
+    AudioError(String),
+
     #[error("Runtime error: {0}")]
     RuntimeError(String),
+
+    #[error("Animation error: {0}")]
+    AnimationError(String),
 }
 
 /// Result type alias for Flint operations

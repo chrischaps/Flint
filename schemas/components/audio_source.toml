@@ -1,0 +1,9 @@
+[component.audio_source]
+file = { type = "string", description = "Path to audio file (relative to scene directory)" }
+volume = { type = "f32", default = 1.0, min = 0.0, max = 2.0, description = "Volume multiplier" }
+pitch = { type = "f32", default = 1.0, min = 0.1, max = 4.0, description = "Playback rate multiplier" }
+loop = { type = "bool", default = false, description = "Loop continuously" }
+spatial = { type = "bool", default = true, description = "3D positioned sound (uses entity transform)" }
+min_distance = { type = "f32", default = 1.0, min = 0.0, description = "Distance at full volume" }
+max_distance = { type = "f32", default = 25.0, min = 0.0, description = "Distance at silence" }
+autoplay = { type = "bool", default = true, description = "Start playing on load" }

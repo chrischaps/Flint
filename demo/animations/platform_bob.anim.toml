@@ -1,0 +1,31 @@
+# Looping platform bob — rises and falls over a 4-second cycle
+# Attach to an entity with: [entities.X.animator] clip = "platform_bob", autoplay = true
+
+name = "platform_bob"
+duration = 4.0
+
+[[tracks]]
+interpolation = "Linear"
+
+[tracks.target]
+type = "Position"
+
+[[tracks.keyframes]]
+time = 0.0
+value = [2.0, 0.5, 3.0]
+
+[[tracks.keyframes]]
+time = 1.0
+value = [2.0, 2.0, 3.0]
+
+[[tracks.keyframes]]
+time = 2.0
+value = [2.0, 2.5, 3.0]
+
+[[tracks.keyframes]]
+time = 3.0
+value = [2.0, 2.0, 3.0]
+
+[[tracks.keyframes]]
+time = 4.0
+value = [2.0, 0.5, 3.0]

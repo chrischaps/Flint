@@ -4,7 +4,7 @@
 //! a depth texture array (one layer per cascade). The main shader samples
 //! this texture to compute shadow factors.
 
-use crate::primitives::Vertex;
+use crate::primitives::{SkinnedVertex, Vertex};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -49,6 +49,8 @@ impl Default for ShadowUniforms {
 pub struct ShadowPass {
     pub shadow_pipeline: wgpu::RenderPipeline,
     pub shadow_bind_group_layout: wgpu::BindGroupLayout,
+    pub skinned_shadow_pipeline: wgpu::RenderPipeline,
+    pub skinned_shadow_bone_layout: wgpu::BindGroupLayout,
     pub shadow_texture: wgpu::Texture,
     pub shadow_view: wgpu::TextureView,
     pub cascade_views: Vec<wgpu::TextureView>,
@@ -103,6 +105,65 @@ impl ShadowPass {
                     compilation_options: Default::default(),
                 },
                 fragment: None, // Depth only, no fragment shader
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 2.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Skinned shadow pipeline: bind group 0 = shadow uniforms, bind group 1 = bone matrices
+        let skinned_shadow_bone_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("Skinned Shadow Bone Bind Group Layout"),
+            });
+
+        let skinned_shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Skinned Shadow Pipeline Layout"),
+                bind_group_layouts: &[&shadow_bind_group_layout, &skinned_shadow_bone_layout],
+                push_constant_ranges: &[],
+            });
+
+        let skinned_shadow_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Skinned Shadow Depth Pipeline"),
+                layout: Some(&skinned_shadow_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shadow_shader,
+                    entry_point: Some("vs_skinned_shadow"),
+                    buffers: &[SkinnedVertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: None,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
@@ -186,6 +247,8 @@ impl ShadowPass {
         Self {
             shadow_pipeline,
             shadow_bind_group_layout,
+            skinned_shadow_pipeline,
+            skinned_shadow_bone_layout,
             shadow_texture,
             shadow_view,
             cascade_views,
@@ -261,9 +324,14 @@ fn frustum_corners(
     cam_far: f32,
     inv_view_proj: &[[f32; 4]; 4],
 ) -> [[f32; 3]; 8] {
-    // NDC near/far mapped to the cascade range
-    let ndc_near = (cascade_near - cam_near) / (cam_far - cam_near) * 2.0 - 1.0;
-    let ndc_far = (cascade_far - cam_near) / (cam_far - cam_near) * 2.0 - 1.0;
+    // Perspective-correct NDC Z mapping (OpenGL convention: near → -1, far → +1)
+    // The relationship between view distance d and NDC Z is hyperbolic, not linear:
+    //   ndc_z = (F+N)/(F-N) - 2*F*N / ((F-N)*d)
+    let depth_range = cam_far - cam_near;
+    let sum_ratio = (cam_far + cam_near) / depth_range;
+    let prod_term = 2.0 * cam_far * cam_near / depth_range;
+    let ndc_near = sum_ratio - prod_term / cascade_near;
+    let ndc_far = sum_ratio - prod_term / cascade_far;
 
     let ndc_corners = [
         [-1.0, -1.0, ndc_near],
@@ -316,11 +384,11 @@ fn compute_light_matrix(
     // Snap radius to avoid shimmering
     radius = radius.ceil();
 
-    // Light view matrix (look_at from light direction)
+    // Light view matrix: position eye where the light source is (along light direction)
     let eye = [
-        center[0] - light_dir[0] * radius,
-        center[1] - light_dir[1] * radius,
-        center[2] - light_dir[2] * radius,
+        center[0] + light_dir[0] * radius,
+        center[1] + light_dir[1] * radius,
+        center[2] + light_dir[2] * radius,
     ];
 
     let view = look_at(&eye, &center);

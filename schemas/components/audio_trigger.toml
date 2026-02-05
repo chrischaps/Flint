@@ -1,0 +1,5 @@
+[component.audio_trigger]
+on_collision = { type = "string", description = "Sound on collision start" }
+on_interact = { type = "string", description = "Sound on player interact" }
+on_enter = { type = "string", description = "Sound when entering trigger" }
+on_exit = { type = "string", description = "Sound when exiting trigger" }

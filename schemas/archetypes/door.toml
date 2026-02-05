@@ -1,7 +1,10 @@
 [archetype.door]
 description = "A door entity"
-components = ["transform", "door"]
+components = ["transform", "door", "audio_trigger"]
 
 [archetype.door.defaults.door]
 style = "hinged"
 locked = false
+
+[archetype.door.defaults.audio_trigger]
+on_interact = "door_open.ogg"

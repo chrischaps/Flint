@@ -8,6 +8,9 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
+/// How long a jump press is remembered, in seconds
+const JUMP_BUFFER_WINDOW: f32 = 0.15;
+
 /// First-person character controller wrapping Rapier's KinematicCharacterController
 pub struct CharacterController {
     /// The Rapier character controller
@@ -18,6 +21,11 @@ pub struct CharacterController {
     vertical_velocity: f32,
     /// Whether the character is on the ground
     pub grounded: bool,
+    /// Remaining time in the jump input buffer (seconds). When the player
+    /// presses jump, this is set to `JUMP_BUFFER_WINDOW` and ticks down each
+    /// physics step. A jump executes whenever the character is grounded and
+    /// this timer is still positive.
+    jump_buffer: f32,
     /// Camera yaw (horizontal look angle in radians)
     pub yaw: f32,
     /// Camera pitch (vertical look angle in radians)
@@ -48,6 +56,7 @@ impl CharacterController {
             player_entity: None,
             vertical_velocity: 0.0,
             grounded: false,
+            jump_buffer: 0.0,
             yaw: 0.0,
             pitch: 0.0,
         }
@@ -159,11 +168,18 @@ impl CharacterController {
             Vec3::ZERO
         };
 
+        // Buffer jump input — a press is remembered for JUMP_BUFFER_WINDOW seconds
+        if input.is_action_just_pressed("jump") {
+            self.jump_buffer = JUMP_BUFFER_WINDOW;
+        }
+        self.jump_buffer = (self.jump_buffer - dt as f32).max(0.0);
+
         // Gravity and jumping
         if self.grounded {
             self.vertical_velocity = -0.1; // Small downward force to stay grounded
-            if input.is_action_just_pressed("jump") {
+            if self.jump_buffer > 0.0 {
                 self.vertical_velocity = jump_force;
+                self.jump_buffer = 0.0;
             }
         } else {
             self.vertical_velocity -= 9.81 * dt as f32;
@@ -197,6 +213,11 @@ impl CharacterController {
             |_| {},
         );
 
+        // If we just landed and have a buffered jump, apply it immediately
+        if corrected.grounded && !self.grounded && self.jump_buffer > 0.0 {
+            self.vertical_velocity = jump_force;
+            self.jump_buffer = 0.0;
+        }
         self.grounded = corrected.grounded;
 
         // Apply the corrected movement to the kinematic body

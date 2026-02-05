@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a seven-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the CLI down to core types.
+Flint is structured as a fourteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -8,18 +8,22 @@ Flint is structured as a seven-crate Cargo workspace with clear dependency layer
 flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
+│   ├── flint-player/       # Standalone player binary with game loop and physics
+│   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
+│   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus)
+│   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
+│   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading
+│   ├── flint-import/       # File importers (glTF/GLB)
+│   ├── flint-asset/        # Content-addressed asset storage and catalog
+│   ├── flint-constraint/   # Constraint definitions and validation engine
 │   ├── flint-query/        # PEG query language (pest parser)
 │   ├── flint-scene/        # TOML scene serialization/deserialization
-│   ├── flint-render/       # wgpu-based 3D renderer
-│   ├── flint-constraint/   # Constraint definitions and validation engine
-│   ├── flint-asset/        # Content-addressed asset storage and catalog
-│   ├── flint-import/       # File importers (glTF/GLB)
 │   ├── flint-ecs/          # hecs wrapper with stable IDs, names, hierarchy
 │   ├── flint-schema/       # Component/archetype schema loading and validation
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── schemas/                # Default component, archetype, and constraint definitions
-├── demo/                   # Showcase scene and build scripts
-└── docs/                   # This documentation
+├── demo/                   # Showcase scenes and build scripts
+└── docs/                   # This documentation (mdBook)
 ```
 
 ## Design Decisions
@@ -41,6 +45,10 @@ Entity IDs are monotonically increasing 64-bit integers that never recycle. A `B
 
 The TOML file on disk is canonical. In-memory state is derived from it. The `serve --watch` viewer re-parses the entire file on change rather than attempting incremental updates. This is simpler and avoids synchronization bugs.
 
+### Fixed-Timestep Physics
+
+The game loop uses a fixed-timestep accumulator pattern (1/60s default). Physics simulation steps at a constant rate regardless of frame rate, ensuring deterministic behavior. Rendering interpolates between physics states for smooth visuals.
+
 ### Error Handling
 
 All crates use `thiserror` for error types. Each crate defines its own error enum and a `Result<T>` type alias. Errors propagate upward through the crate hierarchy.
@@ -53,6 +61,8 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 | ECS | hecs | Lightweight, standalone, well-tested |
 | Rendering | wgpu 23 | Cross-platform, modern GPU API |
 | Windowing | winit 0.30 | `ApplicationHandler` trait pattern |
+| Physics | Rapier 3D 0.22 | Mature Rust physics, character controller |
+| GUI | egui 0.30 | Immediate-mode, easy integration with wgpu |
 | Scene format | TOML | Human-readable, diffable, good Rust support |
 | Query parser | pest | PEG grammar, good error messages |
 | CLI framework | clap (derive) | Ergonomic, well-documented |
@@ -60,36 +70,35 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 
 ## Data Flow
 
-Commands enter through the CLI and flow downward through the crate hierarchy:
+Flint has two entry points: the CLI for scene authoring and validation, and the player for interactive gameplay. Both flow through the same crate hierarchy:
 
 ```
 User / AI Agent
       │
-      ▼
-  flint-cli          Parse command, dispatch to subsystem
-      │
-      ├──► flint-query        Parse and execute queries
-      ├──► flint-scene        Load/save scene TOML
-      ├──► flint-render       Render scene (viewer or headless)
-      ├──► flint-constraint   Validate scene against rules
-      ├──► flint-asset        Manage content-addressed assets
-      └──► flint-import       Import external files (glTF)
-              │
-              ▼
-          flint-ecs           Entity storage, ID mapping, hierarchy
-              │
-              ▼
-          flint-schema        Component/archetype definitions
-              │
-              ▼
-          flint-core          EntityId, Transform, Vec3, Color, errors
+      ├──────────────────────────────────┐
+      ▼                                  ▼
+  flint-cli                        flint-player
+  (scene authoring)                (interactive gameplay)
+      │                                  │
+      ├──► flint-viewer (GUI)            ├──► flint-runtime  (game loop, input)
+      ├──► flint-query  (queries)        ├──► flint-physics  (Rapier 3D)
+      ├──► flint-scene  (load/save)      └──► flint-render   (PBR renderer)
+      ├──► flint-render (renderer)               │
+      ├──► flint-constraint (validation)         ▼
+      ├──► flint-asset  (asset catalog)      flint-import   (glTF meshes)
+      └──► flint-import (glTF import)            │
+              │                                  ▼
+              ▼                              flint-ecs
+          flint-ecs                          flint-schema
+          flint-schema                       flint-core
+          flint-core
 ```
 
 ## Crate Details
 
 ### flint-core
 
-Fundamental types shared by all crates. No external dependencies beyond `thiserror` and `serde`.
+Fundamental types shared by all crates. Minimal external dependencies (`thiserror`, `serde`, `sha2`).
 
 - `EntityId` --- stable 64-bit entity identifier
 - `ContentHash` --- SHA-256 based content addressing
@@ -98,7 +107,7 @@ Fundamental types shared by all crates. No external dependencies beyond `thiserr
 
 ### flint-schema
 
-Loads component and archetype definitions from TOML files. Provides a registry for introspection.
+Loads component and archetype definitions from TOML files. Provides a registry for introspection. Supports field types (`bool`, `i32`, `f32`, `string`, `vec3`, `enum`, `entity_ref`) with validation constraints.
 
 ### flint-ecs
 
@@ -128,19 +137,51 @@ Content-addressed asset storage with SHA-256 hashing. Manages an asset catalog w
 
 ### flint-import
 
-File importers for bringing external assets into the content-addressed store. Currently supports glTF/GLB with mesh, material, and texture extraction.
+File importers for bringing external assets into the content-addressed store. Supports glTF/GLB with mesh, material, and texture extraction.
 
 ### flint-render
 
-wgpu-based renderer. Two modes:
-- **Viewer mode** --- interactive window with orbit camera, hot-reload via `serve --watch`
+wgpu 23 PBR renderer with:
+- **Cook-Torrance shading** --- physically-based BRDF with roughness/metallic workflow
+- **Cascaded shadow mapping** --- directional light shadows across multiple distance ranges
+- **glTF mesh rendering** --- imported models rendered with full material support
+- **Camera modes** --- orbit (scene viewer) and first-person (player), sharing view/projection math
 - **Headless mode** --- render to PNG for CI and automated screenshots
 
-Currently renders entities as archetype-colored boxes (rooms as blue wireframes, doors as orange, furniture as green, characters as yellow).
+### flint-viewer
+
+egui-based GUI inspector built on top of `flint-render`:
+- Entity tree with selection
+- Component property editor
+- Constraint violation overlay
+- Hot-reload via file watching (`serve --watch`)
+
+### flint-runtime
+
+Game loop infrastructure for interactive scenes:
+- `GameClock` --- fixed-timestep accumulator (1/60s default)
+- `InputState` --- keyboard and mouse tracking with action bindings
+- `EventBus` --- decoupled event dispatch between systems
+- `RuntimeSystem` trait --- standard interface for update/render systems
+
+### flint-physics
+
+Rapier 3D integration:
+- `PhysicsWorld` --- manages Rapier rigid body and collider sets
+- `PhysicsSync` --- bridges TOML component data to Rapier bodies
+- `CharacterController` --- kinematic first-person movement with gravity, jumping, and ground detection
+- Uses kinematic bodies for player control, static bodies for world geometry
+
+### flint-player
+
+Standalone player binary that wires together runtime, physics, and rendering:
+- Full game loop: clock tick, fixed-step physics, character controller, first-person rendering
+- Scene loading with physics body creation from TOML collider/rigidbody components
+- First-person controls (WASD, mouse look, jump, sprint)
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `serve`, `validate`, `asset`, `render`.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `serve`, `play`, `validate`, `asset`, `render`.
 
 ## Further Reading
 

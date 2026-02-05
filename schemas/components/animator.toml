@@ -1,0 +1,11 @@
+[component.animator]
+description = "Controls animation playback for an entity"
+
+[component.animator.fields]
+clip = { type = "string", default = "" }
+playing = { type = "bool", default = false }
+autoplay = { type = "bool", default = false }
+loop = { type = "bool", default = true }
+speed = { type = "f32", default = 1.0, min = -10.0, max = 10.0 }
+blend_target = { type = "string", default = "", description = "Clip to crossfade into" }
+blend_duration = { type = "f32", default = 0.3, min = 0.0, max = 10.0, description = "Crossfade duration in seconds" }
