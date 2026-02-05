@@ -1,0 +1,14 @@
+[package]
+name = "flint-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Asset importers for Flint (glTF, etc.)"
+
+[dependencies]
+flint-core = { workspace = true }
+flint-asset = { workspace = true }
+gltf = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }

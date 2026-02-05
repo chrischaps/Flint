@@ -1,0 +1,57 @@
+[scene]
+name = "Demo Scene"
+version = "1.0"
+description = "A simple demo scene"
+
+[entities.front_door]
+archetype = "door"
+parent = "main_room"
+
+[entities.front_door.transform]
+position = [
+    5,
+    0,
+    0,
+]
+
+[entities.front_door.door]
+locked = false
+style = "hinged"
+
+[entities.table]
+archetype = "furniture"
+parent = "main_room"
+
+[entities.table.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.main_room]
+archetype = "room"
+
+[entities.main_room.transform]
+position = [
+    0,
+    0,
+    0,
+]
+
+[entities.main_room.bounds]
+max = [
+    10,
+    4,
+    8,
+]
+min = [
+    0,
+    0,
+    0,
+]

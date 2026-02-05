@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FieldType"],"fn":["validate_component_data"],"struct":["ArchetypeSchema","ComponentSchema","FieldSchema","SchemaRegistry"]};

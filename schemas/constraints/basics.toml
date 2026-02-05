@@ -1,0 +1,39 @@
+# Basic scene constraints for Flint demo scenes
+# These rules are checked by `flint validate`
+
+[[constraint]]
+name = "doors_have_transform"
+description = "Every door must have a transform component"
+query = "entities where archetype == 'door'"
+severity = "error"
+message = "Door '{name}' is missing a transform component"
+
+[constraint.kind]
+type = "required_component"
+archetype = "door"
+component = "transform"
+
+[[constraint]]
+name = "rooms_have_bounds"
+description = "Every room must have a bounds component"
+query = "entities where archetype == 'room'"
+severity = "error"
+message = "Room '{name}' is missing a bounds component"
+
+[constraint.kind]
+type = "required_component"
+archetype = "room"
+component = "bounds"
+
+[[constraint]]
+name = "door_angle_range"
+description = "Door open angle must be between 0 and 180 degrees"
+query = "entities where archetype == 'door'"
+severity = "warning"
+message = "Door '{name}' has an open_angle outside the valid range"
+
+[constraint.kind]
+type = "value_range"
+field = "door.open_angle"
+min = 0.0
+max = 180.0

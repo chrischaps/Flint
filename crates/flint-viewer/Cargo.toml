@@ -1,0 +1,25 @@
+[package]
+name = "flint-viewer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "egui-based validation viewer for Flint scenes"
+
+[dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-scene = { workspace = true }
+flint-schema = { workspace = true }
+flint-render = { workspace = true }
+flint-import = { workspace = true }
+flint-constraint = { workspace = true }
+toml = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
+anyhow = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "flint-constraint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Constraint validation and auto-fix system for Flint"
+
+[dependencies]
+flint-core = { workspace = true }
+flint-schema = { workspace = true }
+flint-ecs = { workspace = true }
+flint-query = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AutoFixStrategy","ConstraintKind","Severity"],"fn":["compute_scene_diff"],"struct":["AutoFix","ConstraintDef","ConstraintEvaluator","ConstraintFile","ConstraintFixer","ConstraintRegistry","FixAction","FixReport","ValidationReport","Violation"]};

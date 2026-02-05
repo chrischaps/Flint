@@ -1,0 +1,7 @@
+[archetype.pillar]
+description = "A structural pillar or column"
+components = ["transform", "bounds"]
+
+[archetype.pillar.defaults.bounds]
+min = [-0.25, 0, -0.25]
+max = [0.25, 4, 0.25]

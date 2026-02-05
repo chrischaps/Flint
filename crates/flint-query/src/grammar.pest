@@ -1,0 +1,30 @@
+// Flint Query Language Grammar
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+
+// Main query structure
+query = { resource ~ (where_clause)? }
+
+// Resources that can be queried
+resource = { "entities" | "components" }
+
+// WHERE clause
+where_clause = { ^"where" ~ condition }
+
+// Conditions
+condition = { field ~ operator ~ value }
+
+// Field path (e.g., "archetype" or "door.locked")
+field = @{ identifier ~ ("." ~ identifier)* }
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Operators
+operator = { "==" | "!=" | "contains" | ">=" | "<=" | ">" | "<" }
+
+// Values
+value = { string | number | boolean }
+string = { "'" ~ string_inner ~ "'" | "\"" ~ string_inner_dq ~ "\"" }
+string_inner = @{ (!"'" ~ ANY)* }
+string_inner_dq = @{ (!"\"" ~ ANY)* }
+number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+boolean = { "true" | "false" }

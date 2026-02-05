@@ -1,0 +1,33 @@
+[package]
+name = "flint-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI application for Flint engine"
+
+[[bin]]
+name = "flint"
+path = "src/main.rs"
+
+[dependencies]
+flint-core = { workspace = true }
+flint-schema = { workspace = true }
+flint-ecs = { workspace = true }
+flint-scene = { workspace = true }
+flint-query = { workspace = true }
+flint-render = { workspace = true }
+flint-constraint = { workspace = true }
+flint-asset = { workspace = true }
+flint-import = { workspace = true }
+flint-viewer = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
+image = { workspace = true }

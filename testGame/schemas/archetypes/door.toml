@@ -1,0 +1,7 @@
+[archetype.door]
+description = "A door entity"
+components = ["transform", "door"]
+
+[archetype.door.defaults.door]
+style = "hinged"
+locked = false

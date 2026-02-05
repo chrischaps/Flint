@@ -1,0 +1,279 @@
+[scene]
+name = "The Rusty Flint Tavern"
+version = "1.0"
+description = "A showcase scene demonstrating Flint engine capabilities"
+
+# ============================================================
+#  ROOMS - rendered as blue wireframe boxes
+# ============================================================
+
+[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [0, 0, 0]
+
+[entities.main_hall.bounds]
+min = [-7, 0, -5]
+max = [7, 4, 5]
+
+[entities.kitchen]
+archetype = "room"
+parent = "main_hall"
+
+[entities.kitchen.transform]
+position = [0, 0, -9]
+
+[entities.kitchen.bounds]
+min = [-4, 0, -3]
+max = [4, 3.5, 3]
+
+[entities.storage]
+archetype = "room"
+parent = "main_hall"
+
+[entities.storage.transform]
+position = [11, 0, 0]
+
+[entities.storage.bounds]
+min = [-3, 0, -3]
+max = [3, 3, 3]
+
+[entities.balcony]
+archetype = "room"
+parent = "main_hall"
+
+[entities.balcony.transform]
+position = [0, 4, 0]
+
+[entities.balcony.bounds]
+min = [-7, 0, -5]
+max = [7, 3, -2]
+
+# ============================================================
+#  DOORS - rendered as thin orange boxes
+# ============================================================
+
+[entities.front_entrance]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_entrance.transform]
+position = [0, 0, 5]
+
+[entities.front_entrance.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+
+[entities.kitchen_door]
+archetype = "door"
+parent = "main_hall"
+
+[entities.kitchen_door.transform]
+position = [0, 0, -5]
+
+[entities.kitchen_door.door]
+style = "sliding"
+locked = false
+open_angle = 90.0
+
+[entities.storage_door]
+archetype = "door"
+parent = "main_hall"
+
+[entities.storage_door.transform]
+position = [7, 0, 0]
+
+[entities.storage_door.door]
+style = "hinged"
+locked = true
+open_angle = 90.0
+
+[entities.back_exit]
+archetype = "door"
+parent = "kitchen"
+
+[entities.back_exit.transform]
+position = [0, 0, -12]
+
+[entities.back_exit.door]
+style = "hinged"
+locked = false
+open_angle = 120.0
+
+# ============================================================
+#  FURNITURE - rendered as green boxes
+# ============================================================
+
+# -- Bar counter --
+[entities.bar_counter]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bar_counter.transform]
+position = [-4, 0, 0]
+
+[entities.bar_counter.bounds]
+min = [-1.5, 0, -3]
+max = [0, 1.2, 3]
+
+# -- Tables --
+[entities.table_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_1.transform]
+position = [2, 0, 2]
+
+[entities.table_1.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.8, 0.6]
+
+[entities.table_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_2.transform]
+position = [2, 0, -2]
+
+[entities.table_2.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.8, 0.6]
+
+[entities.table_3]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_3.transform]
+position = [5, 0, 2]
+
+[entities.table_3.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.8, 0.6]
+
+[entities.table_4]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_4.transform]
+position = [5, 0, -2]
+
+[entities.table_4.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.8, 0.6]
+
+# -- Kitchen furniture --
+[entities.stove]
+archetype = "furniture"
+parent = "kitchen"
+
+[entities.stove.transform]
+position = [-2, 0, -9]
+
+[entities.stove.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.0, 0.5]
+
+[entities.prep_table]
+archetype = "furniture"
+parent = "kitchen"
+
+[entities.prep_table.transform]
+position = [2, 0, -9]
+
+[entities.prep_table.bounds]
+min = [-1.0, 0, -0.5]
+max = [1.0, 0.9, 0.5]
+
+# -- Storage crates --
+[entities.crate_stack_1]
+archetype = "furniture"
+parent = "storage"
+
+[entities.crate_stack_1.transform]
+position = [10, 0, -2]
+
+[entities.crate_stack_1.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.5, 0.5]
+
+[entities.crate_stack_2]
+archetype = "furniture"
+parent = "storage"
+
+[entities.crate_stack_2.transform]
+position = [12, 0, -2]
+
+[entities.crate_stack_2.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 2.0, 0.5]
+
+[entities.barrel]
+archetype = "furniture"
+parent = "storage"
+
+[entities.barrel.transform]
+position = [11, 0, 2]
+
+[entities.barrel.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 1.0, 0.4]
+
+# -- Balcony railing (long narrow box) --
+[entities.balcony_railing]
+archetype = "furniture"
+parent = "balcony"
+
+[entities.balcony_railing.transform]
+position = [0, 4, -2]
+
+[entities.balcony_railing.bounds]
+min = [-6.5, 0, -0.1]
+max = [6.5, 1.0, 0.1]
+
+# ============================================================
+#  CHARACTERS - rendered as yellow boxes
+# ============================================================
+
+[entities.bartender]
+archetype = "character"
+parent = "main_hall"
+
+[entities.bartender.transform]
+position = [-5, 0, 0]
+
+[entities.patron_1]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_1.transform]
+position = [2, 0, 2.8]
+
+[entities.patron_2]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_2.transform]
+position = [5, 0, 2.8]
+
+[entities.patron_3]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_3.transform]
+position = [5, 0, -2.8]
+
+[entities.cook]
+archetype = "character"
+parent = "kitchen"
+
+[entities.cook.transform]
+position = [-2, 0, -8]
+
+[entities.mysterious_stranger]
+archetype = "character"
+parent = "main_hall"
+
+[entities.mysterious_stranger.transform]
+position = [2, 0, -2.8]

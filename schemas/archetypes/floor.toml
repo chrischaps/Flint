@@ -1,0 +1,7 @@
+[archetype.floor]
+description = "A floor slab"
+components = ["transform", "bounds"]
+
+[archetype.floor.defaults.bounds]
+min = [-5, -0.1, -5]
+max = [5, 0.1, 5]

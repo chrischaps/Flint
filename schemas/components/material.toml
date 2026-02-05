@@ -1,0 +1,7 @@
+[component.material]
+description = "PBR material properties with optional texture reference"
+
+[component.material.fields]
+texture = { type = "string", description = "Path to base color texture (relative to scene file)" }
+metallic = { type = "float", description = "Metallic factor 0.0-1.0", default = 0.0 }
+roughness = { type = "float", description = "Roughness factor 0.0-1.0", default = 0.7 }

@@ -1,0 +1,7 @@
+[component.door]
+description = "A door that can connect spaces"
+
+[component.door.fields]
+style = { type = "enum", values = ["hinged", "sliding", "rotating"], default = "hinged" }
+locked = { type = "bool", default = false }
+open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }

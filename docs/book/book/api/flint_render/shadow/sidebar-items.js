@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CASCADE_COUNT","DEFAULT_SHADOW_RESOLUTION"],"struct":["ShadowDrawUniforms","ShadowPass","ShadowUniforms"]};

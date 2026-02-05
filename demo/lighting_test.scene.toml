@@ -1,0 +1,125 @@
+# Dynamic Lighting Test Scene - Verifies directional, point, and spot lights
+# Demonstrates the dynamic light system with various light types
+
+[scene]
+name = "Lighting Test Scene"
+version = "1.0"
+description = "Test scene for dynamic lighting with multiple light types"
+
+# --- Lights ---
+
+# Warm sun from upper-right
+[entities.sun]
+archetype = "furniture"
+
+[entities.sun.light]
+type = "directional"
+direction = [0.5, 1.0, 0.3]
+color = [1.0, 0.95, 0.85]
+intensity = 2.5
+
+# Cool fill light from the left
+[entities.fill]
+archetype = "furniture"
+
+[entities.fill.light]
+type = "directional"
+direction = [-0.6, 0.4, -0.2]
+color = [0.5, 0.6, 0.9]
+intensity = 0.6
+
+# Warm point light (torch-like) near the center
+[entities.torch]
+archetype = "furniture"
+
+[entities.torch.transform]
+position = [0, 3, 0]
+
+[entities.torch.light]
+type = "point"
+color = [1.0, 0.7, 0.3]
+intensity = 15.0
+radius = 12.0
+
+# Red point light on the left
+[entities.red_lamp]
+archetype = "furniture"
+
+[entities.red_lamp.transform]
+position = [-5, 2, 0]
+
+[entities.red_lamp.light]
+type = "point"
+color = [1.0, 0.15, 0.05]
+intensity = 12.0
+radius = 8.0
+
+# Blue spot light shining down from above
+[entities.spotlight]
+archetype = "furniture"
+
+[entities.spotlight.transform]
+position = [4, 5, -2]
+
+[entities.spotlight.light]
+type = "spot"
+direction = [0, -1, 0]
+color = [0.3, 0.5, 1.0]
+intensity = 20.0
+radius = 15.0
+inner_angle = 0.2
+outer_angle = 0.5
+
+# --- Geometry ---
+
+# Ground plane (large flat box)
+[entities.ground]
+archetype = "furniture"
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-10, 0, -10]
+max = [10, 0.2, 10]
+
+# Center sphere (imported model)
+[entities.center_sphere]
+archetype = "furniture"
+
+[entities.center_sphere.transform]
+position = [0, 0.5, 0]
+
+[entities.center_sphere.model]
+asset = "MetalRoughSpheres"
+
+# Some boxes to catch the colored lights
+[entities.box_left]
+archetype = "furniture"
+
+[entities.box_left.transform]
+position = [-4, 0, 0]
+
+[entities.box_left.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 2, 0.5]
+
+[entities.box_right]
+archetype = "furniture"
+
+[entities.box_right.transform]
+position = [4, 0, 0]
+
+[entities.box_right.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 2, 0.5]
+
+[entities.box_back]
+archetype = "furniture"
+
+[entities.box_back.transform]
+position = [0, 0, -4]
+
+[entities.box_back.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 2, 0.5]

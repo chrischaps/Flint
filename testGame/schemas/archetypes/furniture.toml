@@ -1,0 +1,7 @@
+[archetype.furniture]
+description = "A piece of furniture"
+components = ["transform", "bounds"]
+
+[archetype.furniture.defaults.bounds]
+min = [0, 0, 0]
+max = [1, 1, 1]

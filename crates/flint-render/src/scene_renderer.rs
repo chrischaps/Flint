@@ -1,0 +1,1536 @@
+//! Scene renderer - converts FlintWorld entities to GPU meshes
+
+use crate::camera::Camera;
+use crate::context::RenderContext;
+use crate::debug::{DebugMode, DebugState};
+use crate::gpu_mesh::MeshCache;
+use crate::pipeline::{
+    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
+    TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
+};
+use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
+use crate::texture_cache::TextureCache;
+use crate::primitives::{
+    create_box_mesh, create_grid_mesh, create_wireframe_box_mesh, generate_normal_arrows,
+    triangles_to_wireframe_indices, Mesh,
+};
+use flint_ecs::FlintWorld;
+use flint_import::ImportResult;
+use std::collections::HashMap;
+use std::path::Path;
+use wgpu::util::DeviceExt;
+
+/// Visual representation for an archetype
+#[derive(Clone)]
+pub struct ArchetypeVisual {
+    pub color: [f32; 4],
+    pub wireframe: bool,
+    pub default_size: [f32; 3],
+}
+
+impl Default for ArchetypeVisual {
+    fn default() -> Self {
+        Self {
+            color: [0.5, 0.5, 0.5, 1.0],
+            wireframe: false,
+            default_size: [1.0, 1.0, 1.0],
+        }
+    }
+}
+
+/// A single draw call with its own GPU resources
+#[allow(dead_code)]
+struct DrawCall {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    is_wireframe: bool,
+    transform_buffer: wgpu::Buffer,
+    transform_bind_group: wgpu::BindGroup,
+    material_buffer: wgpu::Buffer, // kept alive for bind group
+    material_bind_group: wgpu::BindGroup,
+    model: [[f32; 4]; 4],
+    model_inv_transpose: [[f32; 4]; 4],
+}
+
+/// Renders a FlintWorld to the screen
+pub struct SceneRenderer {
+    pipeline: RenderPipeline,
+    archetype_visuals: HashMap<String, ArchetypeVisual>,
+    mesh_cache: MeshCache,
+    grid_draw: Option<DrawCall>,
+    entity_draws: Vec<DrawCall>,
+    debug_state: DebugState,
+    wireframe_overlay_draws: Vec<DrawCall>,
+    normal_arrow_draws: Vec<DrawCall>,
+    tonemapping_enabled: bool,
+    light_buffer: wgpu::Buffer,
+    light_bind_group: wgpu::BindGroup,
+    light_uniforms: LightUniforms,
+    texture_cache: Option<TextureCache>,
+    shadow_pass: Option<ShadowPass>,
+}
+
+impl SceneRenderer {
+    pub fn new(context: &RenderContext) -> Self {
+        let pipeline = RenderPipeline::new(&context.device, context.config.format);
+        let archetype_visuals = Self::default_archetype_visuals();
+        let texture_cache = TextureCache::new(&context.device, &context.queue);
+
+        // Create grid draw call
+        let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
+        let grid_draw = Some(Self::create_draw_call(
+            &context.device,
+            &pipeline,
+            &grid,
+            true,
+            TransformUniforms::new(),
+            MaterialUniforms::procedural(),
+            &texture_cache,
+        ));
+
+        let shadow_pass = ShadowPass::new(
+            &context.device,
+            DEFAULT_SHADOW_RESOLUTION,
+        );
+
+        let light_uniforms = LightUniforms::default_scene_lights();
+        let (light_buffer, light_bind_group) =
+            Self::create_light_bind(&context.device, &pipeline, &light_uniforms, &shadow_pass);
+
+        Self {
+            pipeline,
+            archetype_visuals,
+            mesh_cache: MeshCache::new(),
+            grid_draw,
+            entity_draws: Vec::new(),
+            debug_state: DebugState::default(),
+            wireframe_overlay_draws: Vec::new(),
+            normal_arrow_draws: Vec::new(),
+            tonemapping_enabled: true,
+            light_buffer,
+            light_bind_group,
+            light_uniforms,
+            texture_cache: Some(texture_cache),
+            shadow_pass: Some(shadow_pass),
+        }
+    }
+
+    /// Create a renderer for headless (offscreen) use with explicit device and format
+    pub fn new_headless(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let pipeline = RenderPipeline::new(device, format);
+        let archetype_visuals = Self::default_archetype_visuals();
+        let texture_cache = TextureCache::new(device, queue);
+
+        // Create grid draw call
+        let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
+        let grid_draw = Some(Self::create_draw_call(
+            device,
+            &pipeline,
+            &grid,
+            true,
+            TransformUniforms::new(),
+            MaterialUniforms::procedural(),
+            &texture_cache,
+        ));
+
+        let shadow_pass = ShadowPass::new(
+            device,
+            DEFAULT_SHADOW_RESOLUTION,
+        );
+
+        let light_uniforms = LightUniforms::default_scene_lights();
+        let (light_buffer, light_bind_group) =
+            Self::create_light_bind(device, &pipeline, &light_uniforms, &shadow_pass);
+
+        Self {
+            pipeline,
+            archetype_visuals,
+            mesh_cache: MeshCache::new(),
+            grid_draw,
+            entity_draws: Vec::new(),
+            debug_state: DebugState::default(),
+            wireframe_overlay_draws: Vec::new(),
+            normal_arrow_draws: Vec::new(),
+            tonemapping_enabled: true,
+            light_buffer,
+            light_bind_group,
+            light_uniforms,
+            texture_cache: Some(texture_cache),
+            shadow_pass: Some(shadow_pass),
+        }
+    }
+
+    /// Disable the ground grid
+    pub fn disable_grid(&mut self) {
+        self.grid_draw = None;
+    }
+
+    /// Load an imported model into the GPU mesh cache
+    pub fn load_model(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        import_result: &ImportResult,
+    ) {
+        let default_color = self
+            .archetype_visuals
+            .get("furniture")
+            .map(|v| v.color)
+            .unwrap_or([0.5, 0.5, 0.5, 1.0]);
+
+        self.mesh_cache
+            .upload_imported(device, name, import_result, default_color);
+
+        // Upload textures referenced by materials
+        if let Some(cache) = &mut self.texture_cache {
+            for texture in &import_result.textures {
+                cache.upload(device, queue, &texture.name, texture);
+            }
+        }
+    }
+
+    /// Load a texture from an image file into the texture cache
+    pub fn load_texture_file(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        path: &Path,
+    ) -> Result<bool, String> {
+        if let Some(cache) = &mut self.texture_cache {
+            cache.load_file(device, queue, name, path)
+        } else {
+            Err("Texture cache not initialized".to_string())
+        }
+    }
+
+    /// Get a reference to the mesh cache
+    pub fn mesh_cache(&self) -> &MeshCache {
+        &self.mesh_cache
+    }
+
+    /// Read-only access to the current debug state
+    pub fn debug_state(&self) -> &DebugState {
+        &self.debug_state
+    }
+
+    /// Mutable access to the debug state
+    pub fn debug_state_mut(&mut self) -> &mut DebugState {
+        &mut self.debug_state
+    }
+
+    /// Set the shading debug mode
+    pub fn set_debug_mode(&mut self, mode: DebugMode) {
+        self.debug_state.mode = mode;
+    }
+
+    /// Toggle wireframe overlay on/off, returns the new state
+    pub fn toggle_wireframe_overlay(&mut self) -> bool {
+        self.debug_state.wireframe_overlay = !self.debug_state.wireframe_overlay;
+        self.debug_state.wireframe_overlay
+    }
+
+    /// Toggle normal direction arrows on/off, returns the new state
+    pub fn toggle_normal_arrows(&mut self) -> bool {
+        self.debug_state.show_normals = !self.debug_state.show_normals;
+        self.debug_state.show_normals
+    }
+
+    /// Enable or disable tone mapping
+    pub fn set_tonemapping(&mut self, enabled: bool) {
+        self.tonemapping_enabled = enabled;
+    }
+
+    /// Enable or disable shadow mapping
+    pub fn set_shadows(&mut self, enabled: bool) {
+        if let Some(sp) = &mut self.shadow_pass {
+            sp.enabled = enabled;
+        }
+    }
+
+    /// Recreate the shadow pass with a different resolution
+    pub fn set_shadow_resolution(&mut self, device: &wgpu::Device, resolution: u32) {
+        let was_enabled = self.shadow_pass.as_ref().map_or(false, |sp| sp.enabled);
+        let mut shadow_pass = ShadowPass::new(
+            device,
+            resolution,
+        );
+        shadow_pass.enabled = was_enabled;
+
+        // Recreate light bind group with new shadow pass resources
+        let (light_buffer, light_bind_group) =
+            Self::create_light_bind(device, &self.pipeline, &self.light_uniforms, &shadow_pass);
+        self.light_buffer = light_buffer;
+        self.light_bind_group = light_bind_group;
+        self.shadow_pass = Some(shadow_pass);
+    }
+
+    /// Toggle shadows on/off, returns the new state
+    pub fn toggle_shadows(&mut self) -> bool {
+        if let Some(sp) = &mut self.shadow_pass {
+            sp.enabled = !sp.enabled;
+            sp.enabled
+        } else {
+            false
+        }
+    }
+
+    fn default_archetype_visuals() -> HashMap<String, ArchetypeVisual> {
+        let mut archetype_visuals = HashMap::new();
+
+        archetype_visuals.insert(
+            "room".to_string(),
+            ArchetypeVisual {
+                color: [0.27, 0.53, 1.0, 0.5],
+                wireframe: true,
+                default_size: [10.0, 4.0, 10.0],
+            },
+        );
+
+        archetype_visuals.insert(
+            "door".to_string(),
+            ArchetypeVisual {
+                color: [1.0, 0.53, 0.27, 1.0],
+                wireframe: false,
+                default_size: [1.0, 2.0, 0.1],
+            },
+        );
+
+        archetype_visuals.insert(
+            "furniture".to_string(),
+            ArchetypeVisual {
+                color: [0.27, 1.0, 0.53, 1.0],
+                wireframe: false,
+                default_size: [1.0, 1.0, 1.0],
+            },
+        );
+
+        archetype_visuals.insert(
+            "character".to_string(),
+            ArchetypeVisual {
+                color: [1.0, 1.0, 0.27, 1.0],
+                wireframe: false,
+                default_size: [0.5, 1.8, 0.5],
+            },
+        );
+
+        archetype_visuals.insert(
+            "wall".to_string(),
+            ArchetypeVisual {
+                color: [0.76, 0.70, 0.60, 1.0],
+                wireframe: false,
+                default_size: [10.0, 4.0, 0.3],
+            },
+        );
+
+        archetype_visuals.insert(
+            "floor".to_string(),
+            ArchetypeVisual {
+                color: [0.55, 0.55, 0.52, 1.0],
+                wireframe: false,
+                default_size: [10.0, 0.2, 10.0],
+            },
+        );
+
+        archetype_visuals.insert(
+            "ceiling".to_string(),
+            ArchetypeVisual {
+                color: [0.65, 0.62, 0.58, 1.0],
+                wireframe: false,
+                default_size: [10.0, 0.2, 10.0],
+            },
+        );
+
+        archetype_visuals.insert(
+            "pillar".to_string(),
+            ArchetypeVisual {
+                color: [0.70, 0.65, 0.55, 1.0],
+                wireframe: false,
+                default_size: [0.5, 4.0, 0.5],
+            },
+        );
+
+        archetype_visuals
+    }
+
+    /// Set visual representation for an archetype
+    pub fn set_archetype_visual(&mut self, archetype: &str, visual: ArchetypeVisual) {
+        self.archetype_visuals.insert(archetype.to_string(), visual);
+    }
+
+    /// Update meshes from the world state
+    pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
+        self.entity_draws.clear();
+        self.wireframe_overlay_draws.clear();
+        self.normal_arrow_draws.clear();
+
+        // Extract lights from scene entities
+        self.extract_lights_from_world(world);
+
+        let need_overlay = self.debug_state.wireframe_overlay
+            || self.debug_state.mode == DebugMode::WireframeOnly;
+        let need_normals = self.debug_state.show_normals;
+        let arrow_length = self.debug_state.normal_arrow_length;
+
+        // Temporarily take texture_cache to avoid borrow conflicts
+        let tex_cache = self.texture_cache.take();
+        let tex_cache_ref = tex_cache.as_ref().unwrap();
+
+        for entity in world.all_entities() {
+            let archetype = entity.archetype.as_deref().unwrap_or("unknown");
+            let visual = self
+                .archetype_visuals
+                .get(archetype)
+                .cloned()
+                .unwrap_or(ArchetypeVisual {
+                    color: [0.5, 0.5, 0.5, 1.0],
+                    wireframe: false,
+                    default_size: [0.5, 0.5, 0.5],
+                });
+
+            let transform = world.get_transform(entity.id).unwrap_or_default();
+
+            // Check if entity has a model component
+            let model_asset = world
+                .get_components(entity.id)
+                .and_then(|components| components.get("model").cloned())
+                .and_then(|model| {
+                    model
+                        .get("asset")
+                        .and_then(|v| v.as_str().map(String::from))
+                });
+
+            if let Some(asset_name) = &model_asset {
+                if let Some(gpu_meshes) = self.mesh_cache.get(asset_name) {
+                    let model_matrix = transform.to_matrix();
+                    let inv_transpose = mat4_inv_transpose(&model_matrix);
+
+                    for gpu_mesh in gpu_meshes {
+                        let transform_uniforms = TransformUniforms {
+                            view_proj: [[0.0; 4]; 4],
+                            model: model_matrix,
+                            model_inv_transpose: inv_transpose,
+                            camera_pos: [0.0; 3],
+                            _pad: 0.0,
+                        };
+
+                        // Resolve textures for this material
+                        let (bc_view, bc_sampler, has_bc) =
+                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.base_color_texture.as_deref(), &tex_cache_ref.default_white);
+                        let (nm_view, nm_sampler, has_nm) =
+                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.normal_texture.as_deref(), &tex_cache_ref.default_normal);
+                        let (mr_view, mr_sampler, has_mr) =
+                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.metallic_roughness_texture.as_deref(), &tex_cache_ref.default_metallic_roughness);
+
+                        let mut material_uniforms = MaterialUniforms::from_pbr(
+                            gpu_mesh.material.base_color,
+                            gpu_mesh.material.metallic,
+                            gpu_mesh.material.roughness,
+                        );
+                        material_uniforms.has_base_color_tex = if has_bc { 1 } else { 0 };
+                        material_uniforms.has_normal_map = if has_nm { 1 } else { 0 };
+                        material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
+
+                        let draw = Self::create_imported_draw_call(
+                            device,
+                            &self.pipeline,
+                            gpu_mesh,
+                            transform_uniforms,
+                            material_uniforms,
+                            bc_view, bc_sampler,
+                            nm_view, nm_sampler,
+                            mr_view, mr_sampler,
+                        );
+                        self.entity_draws.push(draw);
+
+                        // Generate wireframe overlay for imported meshes
+                        if need_overlay {
+                            let tri_indices = gpu_mesh.triangle_indices();
+                            let wire_indices = triangles_to_wireframe_indices(&tri_indices);
+                            if !wire_indices.is_empty() {
+                                let vertices = gpu_mesh.vertices();
+                                let black_verts: Vec<_> = vertices
+                                    .iter()
+                                    .map(|v| crate::primitives::Vertex {
+                                        color: [0.0, 0.0, 0.0, 1.0],
+                                        ..*v
+                                    })
+                                    .collect();
+                                let wire_mesh = Mesh {
+                                    vertices: black_verts,
+                                    indices: wire_indices,
+                                };
+                                let wire_transform = TransformUniforms {
+                                    view_proj: [[0.0; 4]; 4],
+                                    model: model_matrix,
+                                    model_inv_transpose: inv_transpose,
+                                    camera_pos: [0.0; 3],
+                                    _pad: 0.0,
+                                };
+                                let overlay = Self::create_draw_call(
+                                    device,
+                                    &self.pipeline,
+                                    &wire_mesh,
+                                    true,
+                                    wire_transform,
+                                    MaterialUniforms::procedural(),
+                                    tex_cache_ref,
+                                );
+                                self.wireframe_overlay_draws.push(overlay);
+                            }
+                        }
+
+                        // Generate normal arrows for imported meshes
+                        if need_normals {
+                            let tri_indices = gpu_mesh.triangle_indices();
+                            let vertices = gpu_mesh.vertices();
+                            let arrows = generate_normal_arrows(&vertices, &tri_indices, arrow_length);
+                            if !arrows.indices.is_empty() {
+                                let arrow_transform = TransformUniforms {
+                                    view_proj: [[0.0; 4]; 4],
+                                    model: model_matrix,
+                                    model_inv_transpose: inv_transpose,
+                                    camera_pos: [0.0; 3],
+                                    _pad: 0.0,
+                                };
+                                let arrow_draw = Self::create_draw_call(
+                                    device,
+                                    &self.pipeline,
+                                    &arrows,
+                                    true,
+                                    arrow_transform,
+                                    MaterialUniforms::procedural(),
+                                    tex_cache_ref,
+                                );
+                                self.normal_arrow_draws.push(arrow_draw);
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            // Fall back to procedural shapes
+            let (size, bounds_center) = if let Some(components) = world.get_components(entity.id) {
+                if let Some(bounds) = components.get("bounds") {
+                    extract_bounds_info(bounds)
+                        .unwrap_or((visual.default_size, [0.0, 0.0, 0.0]))
+                } else {
+                    (visual.default_size, [0.0, 0.0, 0.0])
+                }
+            } else {
+                (visual.default_size, [0.0, 0.0, 0.0])
+            };
+
+            let mesh = if visual.wireframe {
+                create_wireframe_box_mesh(size[0], size[1], size[2], visual.color)
+            } else {
+                create_box_mesh(size[0], size[1], size[2], visual.color)
+            };
+
+            let mut model = transform.to_matrix();
+            model[3][0] += bounds_center[0];
+            model[3][1] += bounds_center[1];
+            model[3][2] += bounds_center[2];
+
+            let inv_transpose = mat4_inv_transpose(&model);
+
+            let transform_uniforms = TransformUniforms {
+                view_proj: [[0.0; 4]; 4],
+                model,
+                model_inv_transpose: inv_transpose,
+                camera_pos: [0.0; 3],
+                _pad: 0.0,
+            };
+
+            // Check for material.texture to use file-based textures on procedural geometry
+            let material_component = world
+                .get_components(entity.id)
+                .and_then(|components| components.get("material").cloned());
+
+            let material_texture = material_component
+                .as_ref()
+                .and_then(|m| m.get("texture").and_then(|v| v.as_str().map(String::from)));
+
+            if !visual.wireframe {
+                if let Some(tex_name) = &material_texture {
+                    let (bc_view, bc_sampler, has_bc) =
+                        Self::resolve_texture(tex_cache_ref, Some(tex_name.as_str()), &tex_cache_ref.default_white);
+
+                    if has_bc {
+                        let metallic = material_component
+                            .as_ref()
+                            .and_then(|m| m.get("metallic"))
+                            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            .unwrap_or(0.0) as f32;
+                        let roughness = material_component
+                            .as_ref()
+                            .and_then(|m| m.get("roughness"))
+                            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            .unwrap_or(0.7) as f32;
+
+                        let mut material_uniforms = MaterialUniforms::from_pbr(
+                            [1.0, 1.0, 1.0, 1.0],
+                            metallic,
+                            roughness,
+                        );
+                        material_uniforms.has_base_color_tex = 1;
+
+                        let draw = Self::create_textured_draw_call(
+                            device,
+                            &self.pipeline,
+                            &mesh,
+                            transform_uniforms,
+                            material_uniforms,
+                            bc_view, bc_sampler,
+                            &tex_cache_ref.default_normal.view, &tex_cache_ref.default_normal.sampler,
+                            &tex_cache_ref.default_metallic_roughness.view, &tex_cache_ref.default_metallic_roughness.sampler,
+                        );
+                        self.entity_draws.push(draw);
+                    } else {
+                        let draw = Self::create_draw_call(
+                            device,
+                            &self.pipeline,
+                            &mesh,
+                            false,
+                            transform_uniforms,
+                            MaterialUniforms::procedural(),
+                            tex_cache_ref,
+                        );
+                        self.entity_draws.push(draw);
+                    }
+                } else {
+                    let draw = Self::create_draw_call(
+                        device,
+                        &self.pipeline,
+                        &mesh,
+                        false,
+                        transform_uniforms,
+                        MaterialUniforms::procedural(),
+                        tex_cache_ref,
+                    );
+                    self.entity_draws.push(draw);
+                }
+            } else {
+                let draw = Self::create_draw_call(
+                    device,
+                    &self.pipeline,
+                    &mesh,
+                    true,
+                    transform_uniforms,
+                    MaterialUniforms::procedural(),
+                    tex_cache_ref,
+                );
+                self.entity_draws.push(draw);
+            }
+
+            // Generate wireframe overlay for procedural solid shapes
+            if need_overlay && !visual.wireframe {
+                let wire_indices = triangles_to_wireframe_indices(&mesh.indices);
+                if !wire_indices.is_empty() {
+                    let black_verts: Vec<_> = mesh
+                        .vertices
+                        .iter()
+                        .map(|v| crate::primitives::Vertex {
+                            color: [0.0, 0.0, 0.0, 1.0],
+                            ..*v
+                        })
+                        .collect();
+                    let wire_mesh = Mesh {
+                        vertices: black_verts,
+                        indices: wire_indices,
+                    };
+                    let wire_transform = TransformUniforms {
+                        view_proj: [[0.0; 4]; 4],
+                        model,
+                        model_inv_transpose: inv_transpose,
+                        camera_pos: [0.0; 3],
+                        _pad: 0.0,
+                    };
+                    let overlay = Self::create_draw_call(
+                        device,
+                        &self.pipeline,
+                        &wire_mesh,
+                        true,
+                        wire_transform,
+                        MaterialUniforms::procedural(),
+                        tex_cache_ref,
+                    );
+                    self.wireframe_overlay_draws.push(overlay);
+                }
+            }
+
+            // Generate normal arrows for procedural solid shapes
+            if need_normals && !visual.wireframe {
+                let arrows = generate_normal_arrows(&mesh.vertices, &mesh.indices, arrow_length);
+                if !arrows.indices.is_empty() {
+                    let arrow_transform = TransformUniforms {
+                        view_proj: [[0.0; 4]; 4],
+                        model,
+                        model_inv_transpose: inv_transpose,
+                        camera_pos: [0.0; 3],
+                        _pad: 0.0,
+                    };
+                    let arrow_draw = Self::create_draw_call(
+                        device,
+                        &self.pipeline,
+                        &arrows,
+                        true,
+                        arrow_transform,
+                        MaterialUniforms::procedural(),
+                        tex_cache_ref,
+                    );
+                    self.normal_arrow_draws.push(arrow_draw);
+                }
+            }
+        }
+
+        // Put texture cache back
+        self.texture_cache = tex_cache;
+    }
+
+    fn create_draw_call(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        mesh: &Mesh,
+        is_wireframe: bool,
+        transform_uniforms: TransformUniforms,
+        material_uniforms: MaterialUniforms,
+        texture_cache: &TextureCache,
+    ) -> DrawCall {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&mesh.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let (transform_buffer, transform_bind_group) =
+            Self::create_transform_bind(device, pipeline, &transform_uniforms);
+        let (material_buffer, material_bind_group) =
+            Self::create_material_bind(device, pipeline, &material_uniforms, texture_cache);
+
+        DrawCall {
+            vertex_buffer,
+            index_buffer,
+            index_count: mesh.indices.len() as u32,
+            is_wireframe,
+            transform_buffer,
+            transform_bind_group,
+            material_buffer,
+            material_bind_group,
+            model: transform_uniforms.model,
+            model_inv_transpose: transform_uniforms.model_inv_transpose,
+        }
+    }
+
+    /// Create a draw call for a procedural mesh with explicit texture bindings.
+    fn create_textured_draw_call(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        mesh: &Mesh,
+        transform_uniforms: TransformUniforms,
+        material_uniforms: MaterialUniforms,
+        base_color_view: &wgpu::TextureView,
+        base_color_sampler: &wgpu::Sampler,
+        normal_view: &wgpu::TextureView,
+        normal_sampler: &wgpu::Sampler,
+        mr_view: &wgpu::TextureView,
+        mr_sampler: &wgpu::Sampler,
+    ) -> DrawCall {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Textured Vertex Buffer"),
+            contents: bytemuck::cast_slice(&mesh.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Textured Index Buffer"),
+            contents: bytemuck::cast_slice(&mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let (transform_buffer, transform_bind_group) =
+            Self::create_transform_bind(device, pipeline, &transform_uniforms);
+        let (material_buffer, material_bind_group) =
+            Self::create_material_bind_with_textures(
+                device,
+                pipeline,
+                &material_uniforms,
+                base_color_view,
+                base_color_sampler,
+                normal_view,
+                normal_sampler,
+                mr_view,
+                mr_sampler,
+            );
+
+        DrawCall {
+            vertex_buffer,
+            index_buffer,
+            index_count: mesh.indices.len() as u32,
+            is_wireframe: false,
+            transform_buffer,
+            transform_bind_group,
+            material_buffer,
+            material_bind_group,
+            model: transform_uniforms.model,
+            model_inv_transpose: transform_uniforms.model_inv_transpose,
+        }
+    }
+
+    /// Create a draw call for an imported mesh that already has GPU buffers.
+    fn create_imported_draw_call(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        gpu_mesh: &crate::gpu_mesh::GpuMesh,
+        transform_uniforms: TransformUniforms,
+        material_uniforms: MaterialUniforms,
+        base_color_view: &wgpu::TextureView,
+        base_color_sampler: &wgpu::Sampler,
+        normal_view: &wgpu::TextureView,
+        normal_sampler: &wgpu::Sampler,
+        mr_view: &wgpu::TextureView,
+        mr_sampler: &wgpu::Sampler,
+    ) -> DrawCall {
+        let (transform_buffer, transform_bind_group) =
+            Self::create_transform_bind(device, pipeline, &transform_uniforms);
+        let (material_buffer, material_bind_group) =
+            Self::create_material_bind_with_textures(
+                device,
+                pipeline,
+                &material_uniforms,
+                base_color_view,
+                base_color_sampler,
+                normal_view,
+                normal_sampler,
+                mr_view,
+                mr_sampler,
+            );
+
+        DrawCall {
+            vertex_buffer: gpu_mesh.create_vertex_buffer_copy(device),
+            index_buffer: gpu_mesh.create_index_buffer_copy(device),
+            index_count: gpu_mesh.index_count,
+            is_wireframe: false,
+            transform_buffer,
+            transform_bind_group,
+            material_buffer,
+            material_bind_group,
+            model: transform_uniforms.model,
+            model_inv_transpose: transform_uniforms.model_inv_transpose,
+        }
+    }
+
+    fn create_transform_bind(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        uniforms: &TransformUniforms,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Transform Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[*uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.transform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+            label: Some("Transform Bind Group"),
+        });
+
+        (buffer, bind_group)
+    }
+
+    fn create_material_bind(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        uniforms: &MaterialUniforms,
+        texture_cache: &TextureCache,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        Self::create_material_bind_with_textures(
+            device,
+            pipeline,
+            uniforms,
+            &texture_cache.default_white.view,
+            &texture_cache.default_white.sampler,
+            &texture_cache.default_normal.view,
+            &texture_cache.default_normal.sampler,
+            &texture_cache.default_metallic_roughness.view,
+            &texture_cache.default_metallic_roughness.sampler,
+        )
+    }
+
+    fn create_material_bind_with_textures(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        uniforms: &MaterialUniforms,
+        base_color_view: &wgpu::TextureView,
+        base_color_sampler: &wgpu::Sampler,
+        normal_view: &wgpu::TextureView,
+        normal_sampler: &wgpu::Sampler,
+        mr_view: &wgpu::TextureView,
+        mr_sampler: &wgpu::Sampler,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Material Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[*uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.material_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(base_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(base_color_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(normal_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(mr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(mr_sampler),
+                },
+            ],
+            label: Some("Material Bind Group"),
+        });
+
+        (buffer, bind_group)
+    }
+
+    /// Resolve a texture reference, returning the view, sampler, and whether a real texture was found
+    fn resolve_texture<'a>(
+        cache: &'a TextureCache,
+        name: Option<&str>,
+        default: &'a crate::texture_cache::GpuTexture,
+    ) -> (&'a wgpu::TextureView, &'a wgpu::Sampler, bool) {
+        if let Some(name) = name {
+            if let Some(gpu_tex) = cache.get(name) {
+                return (&gpu_tex.view, &gpu_tex.sampler, true);
+            }
+        }
+        (&default.view, &default.sampler, false)
+    }
+
+    fn create_light_bind(
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        uniforms: &LightUniforms,
+        shadow_pass: &ShadowPass,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Light Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[*uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.light_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&shadow_pass.shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&shadow_pass.shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: shadow_pass.shadow_uniforms_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("Light Bind Group"),
+        });
+
+        (buffer, bind_group)
+    }
+
+    /// Extract light entities from the world and update the light uniform buffer
+    fn extract_lights_from_world(&mut self, world: &FlintWorld) {
+        let mut dir_count = 0u32;
+        let mut point_count = 0u32;
+        let mut spot_count = 0u32;
+        let mut directionals = [DirectionalLight::default(); MAX_DIRECTIONAL_LIGHTS];
+        let mut points = [PointLight::default(); MAX_POINT_LIGHTS];
+        let mut spots = [SpotLight::default(); MAX_SPOT_LIGHTS];
+
+        for entity in world.all_entities() {
+            let light_component = world
+                .get_components(entity.id)
+                .and_then(|components| components.get("light").cloned());
+
+            if let Some(light) = light_component {
+                let light_type = light
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("directional");
+
+                let color = Self::extract_light_vec3(&light, "color").unwrap_or([1.0, 1.0, 1.0]);
+                let intensity = light
+                    .get("intensity")
+                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                    .unwrap_or(1.0) as f32;
+
+                match light_type {
+                    "directional" => {
+                        if (dir_count as usize) < MAX_DIRECTIONAL_LIGHTS {
+                            let direction = Self::extract_light_vec3(&light, "direction")
+                                .unwrap_or([0.0, -1.0, 0.0]);
+                            directionals[dir_count as usize] = DirectionalLight {
+                                direction,
+                                _pad0: 0.0,
+                                color,
+                                intensity,
+                            };
+                            dir_count += 1;
+                        }
+                    }
+                    "point" => {
+                        if (point_count as usize) < MAX_POINT_LIGHTS {
+                            let transform =
+                                world.get_transform(entity.id).unwrap_or_default();
+                            let radius = light
+                                .get("radius")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
+                                .unwrap_or(10.0) as f32;
+                            points[point_count as usize] = PointLight {
+                                position: [
+                                    transform.position.x,
+                                    transform.position.y,
+                                    transform.position.z,
+                                ],
+                                radius,
+                                color,
+                                intensity,
+                            };
+                            point_count += 1;
+                        }
+                    }
+                    "spot" => {
+                        if (spot_count as usize) < MAX_SPOT_LIGHTS {
+                            let transform =
+                                world.get_transform(entity.id).unwrap_or_default();
+                            let direction = Self::extract_light_vec3(&light, "direction")
+                                .unwrap_or([0.0, -1.0, 0.0]);
+                            let radius = light
+                                .get("radius")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
+                                .unwrap_or(10.0) as f32;
+                            let inner_angle = light
+                                .get("inner_angle")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
+                                .unwrap_or(0.3) as f32;
+                            let outer_angle = light
+                                .get("outer_angle")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
+                                .unwrap_or(0.5) as f32;
+                            spots[spot_count as usize] = SpotLight {
+                                position: [
+                                    transform.position.x,
+                                    transform.position.y,
+                                    transform.position.z,
+                                ],
+                                radius,
+                                direction,
+                                inner_angle,
+                                color,
+                                outer_angle,
+                                intensity,
+                                _pad0: 0.0,
+                                _pad1: 0.0,
+                                _pad2: 0.0,
+                            };
+                            spot_count += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // If no lights found in scene, use defaults
+        if dir_count == 0 && point_count == 0 && spot_count == 0 {
+            self.light_uniforms = LightUniforms::default_scene_lights();
+        } else {
+            self.light_uniforms.directional_lights = directionals;
+            self.light_uniforms.point_lights = points;
+            self.light_uniforms.spot_lights = spots;
+            self.light_uniforms.directional_count = dir_count;
+            self.light_uniforms.point_count = point_count;
+            self.light_uniforms.spot_count = spot_count;
+        }
+    }
+
+    fn extract_light_vec3(table: &toml::Value, key: &str) -> Option<[f32; 3]> {
+        let arr = table.get(key)?.as_array()?;
+        if arr.len() >= 3 {
+            let x = arr[0]
+                .as_float()
+                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+            let y = arr[1]
+                .as_float()
+                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+            let z = arr[2]
+                .as_float()
+                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+            Some([x, y, z])
+        } else {
+            None
+        }
+    }
+
+    /// Render the scene using a RenderContext (windowed mode)
+    pub fn render(
+        &mut self,
+        context: &RenderContext,
+        camera: &Camera,
+        view: &wgpu::TextureView,
+    ) -> Result<(), wgpu::SurfaceError> {
+        self.render_to(&context.device, &context.queue, &context.depth_view, camera, view);
+        Ok(())
+    }
+
+    /// Render the scene to an arbitrary texture view with explicit device/queue/depth
+    pub fn render_to(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
+        target_view: &wgpu::TextureView,
+    ) {
+        let view_proj = camera.view_projection_matrix();
+        let camera_pos = camera.position_array();
+        let debug_mode_u32 = self.debug_state.mode.as_u32();
+        let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;
+
+        // Update light uniforms
+        queue.write_buffer(
+            &self.light_buffer,
+            0,
+            bytemuck::cast_slice(&[self.light_uniforms]),
+        );
+
+        // Shadow pass: render depth from light perspective
+        if let Some(shadow_pass) = &mut self.shadow_pass {
+            if shadow_pass.enabled && self.light_uniforms.directional_count > 0 {
+                // Use the first directional light for shadows
+                let light = &self.light_uniforms.directional_lights[0];
+
+                // Update cascade matrices
+                let camera_inv = camera.inverse_view_projection_matrix();
+                shadow_pass.update_cascades(
+                    light.direction,
+                    camera_pos,
+                    camera_inv,
+                    0.1,
+                    100.0,
+                );
+
+                // Write shadow uniforms
+                queue.write_buffer(
+                    &shadow_pass.shadow_uniforms_buffer,
+                    0,
+                    bytemuck::cast_slice(&[*shadow_pass.shadow_uniforms()]),
+                );
+
+                // Render each cascade
+                for cascade in 0..CASCADE_COUNT {
+                    let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+
+                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some(&format!("Shadow Cascade {} Encoder", cascade)),
+                    });
+
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some(&format!("Shadow Cascade {} Pass", cascade)),
+                            color_attachments: &[],
+                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                                view: &shadow_pass.cascade_views[cascade],
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0),
+                                    store: wgpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            }),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+
+                        pass.set_pipeline(&shadow_pass.shadow_pipeline);
+
+                        // Render each solid entity
+                        for draw in &self.entity_draws {
+                            if draw.is_wireframe {
+                                continue;
+                            }
+
+                            let shadow_uniforms = ShadowDrawUniforms {
+                                light_view_proj: cascade_vp,
+                                model: draw.model,
+                            };
+
+                            let shadow_buffer = device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("Shadow Draw Uniform"),
+                                    contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                                    usage: wgpu::BufferUsages::UNIFORM,
+                                },
+                            );
+
+                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &shadow_pass.shadow_bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: shadow_buffer.as_entire_binding(),
+                                }],
+                                label: Some("Shadow Draw Bind Group"),
+                            });
+
+                            pass.set_bind_group(0, &shadow_bind, &[]);
+                            pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+
+                    queue.submit(std::iter::once(encoder.finish()));
+                }
+            }
+        }
+
+        // Update grid transform
+        if let Some(grid) = &self.grid_draw {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: identity_matrix(),
+                model_inv_transpose: identity_matrix(),
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&grid.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        let tonemapping_u32: u32 = if self.tonemapping_enabled { 1 } else { 0 };
+
+        // Update entity transforms and write debug_mode + tonemapping into each material buffer
+        for draw in &self.entity_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            // Write debug_mode at byte offset 28 in the material buffer
+            // Layout: base_color(16) + metallic(4) + roughness(4) + use_vertex_color(4) = 28
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+
+            // Write enable_tonemapping at byte offset 32
+            // Layout: ... + debug_mode(4) = 32
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update wireframe overlay transforms
+        for draw in &self.wireframe_overlay_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update normal arrow transforms
+        for draw in &self.normal_arrow_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // Bind lights once for the entire pass (group 2 is shared)
+            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+            // Render grid
+            if let Some(grid) = &self.grid_draw {
+                render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                render_pass.set_bind_group(0, &grid.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &grid.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    grid.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
+            }
+
+            // In WireframeOnly mode: render overlay draws with line pipeline instead of entities
+            if wireframe_only {
+                render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                for draw in &self.wireframe_overlay_draws {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Also render entities that are already wireframe (rooms etc.)
+                for draw in &self.entity_draws {
+                    if draw.is_wireframe {
+                        render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            draw.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                }
+            } else {
+                // Normal entity rendering
+                for draw in &self.entity_draws {
+                    if draw.is_wireframe {
+                        render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                    } else {
+                        render_pass.set_pipeline(&self.pipeline.pipeline);
+                    }
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Wireframe overlay pass (on top of solid geometry)
+                if self.debug_state.wireframe_overlay {
+                    render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+                    for draw in &self.wireframe_overlay_draws {
+                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            draw.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                }
+            }
+
+            // Normal arrows pass (always uses line pipeline)
+            if self.debug_state.show_normals {
+                render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                for draw in &self.normal_arrow_draws {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+}
+
+fn identity_matrix() -> [[f32; 4]; 4] {
+    [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+}
+
+/// Compute the inverse-transpose of a 4x4 model matrix (for correct normal transformation).
+/// Only the upper 3x3 matters for normals; we embed it in a 4x4 for GPU upload.
+fn mat4_inv_transpose(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    // Extract upper-left 3x3
+    let a = m[0][0]; let b = m[1][0]; let c = m[2][0];
+    let d = m[0][1]; let e = m[1][1]; let f = m[2][1];
+    let g = m[0][2]; let h = m[1][2]; let i = m[2][2];
+
+    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+
+    if det.abs() < 1e-10 {
+        return identity_matrix();
+    }
+
+    let inv_det = 1.0 / det;
+
+    // Cofactor matrix: cof(i,j) / det gives the inverse-transpose entries.
+    // In column-major storage m[col][row], column c needs [cof(0,c), cof(1,c), cof(2,c)] / det.
+    //
+    // Row 0 cofactors:
+    let cof00 = (e * i - f * h) * inv_det;
+    let cof01 = (f * g - d * i) * inv_det;
+    let cof02 = (d * h - e * g) * inv_det;
+    // Row 1 cofactors:
+    let cof10 = (c * h - b * i) * inv_det;
+    let cof11 = (a * i - c * g) * inv_det;
+    let cof12 = (b * g - a * h) * inv_det;
+    // Row 2 cofactors:
+    let cof20 = (b * f - c * e) * inv_det;
+    let cof21 = (c * d - a * f) * inv_det;
+    let cof22 = (a * e - b * d) * inv_det;
+
+    // Column-major: column j = [cof(0,j), cof(1,j), cof(2,j)]
+    [
+        [cof00, cof10, cof20, 0.0],
+        [cof01, cof11, cof21, 0.0],
+        [cof02, cof12, cof22, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+}
+
+/// Extract both the size and center offset from bounds.
+fn extract_bounds_info(bounds: &toml::Value) -> Option<([f32; 3], [f32; 3])> {
+    let min = bounds.get("min")?;
+    let max = bounds.get("max")?;
+
+    let min_arr = extract_vec3(min)?;
+    let max_arr = extract_vec3(max)?;
+
+    let size = [
+        max_arr[0] - min_arr[0],
+        max_arr[1] - min_arr[1],
+        max_arr[2] - min_arr[2],
+    ];
+
+    let center = [
+        (min_arr[0] + max_arr[0]) / 2.0,
+        (min_arr[1] + max_arr[1]) / 2.0,
+        (min_arr[2] + max_arr[2]) / 2.0,
+    ];
+
+    Some((size, center))
+}
+
+fn extract_vec3(value: &toml::Value) -> Option<[f32; 3]> {
+    if let Some(arr) = value.as_array() {
+        if arr.len() >= 3 {
+            let x = arr[0]
+                .as_float()
+                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+            let y = arr[1]
+                .as_float()
+                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+            let z = arr[2]
+                .as_float()
+                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+            return Some([x, y, z]);
+        }
+    }
+    None
+}

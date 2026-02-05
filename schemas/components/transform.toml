@@ -1,0 +1,7 @@
+[component.transform]
+description = "Spatial transform for positioning entities"
+
+[component.transform.fields]
+position = { type = "vec3", default = [0, 0, 0] }
+rotation = { type = "vec3", default = [0, 0, 0], description = "Euler angles in degrees" }
+scale = { type = "vec3", default = [1, 1, 1] }

@@ -1,0 +1,7 @@
+[archetype.ceiling]
+description = "A ceiling panel"
+components = ["transform", "bounds"]
+
+[archetype.ceiling.defaults.bounds]
+min = [-5, -0.1, -5]
+max = [5, 0.1, 5]

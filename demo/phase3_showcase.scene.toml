@@ -1,0 +1,1056 @@
+# ================================================================
+#  THE LUMINARIUM — A Phase 3 Rendering Showcase
+# ================================================================
+#
+#  This scene demonstrates all rendering features added in Phase 3:
+#    * PBR Cook-Torrance shading with archetype-based materials
+#    * Procedural textures on architectural geometry (stone, wood, tile)
+#    * Imported glTF models with full PBR textures (Lantern)
+#    * Directional, point, and spot lights with varied colors
+#    * Cascaded shadow mapping (3 cascades, PCF filtering)
+#    * Tone mapping (toggle with runtime controls)
+#    * Debug visualization modes (F1 to cycle, F2 wireframe overlay, F3 normals)
+#    * World-space UV tiling on box meshes
+#
+#  Phase 2 features also present:
+#    * Constraint-valid entities (doors have transforms, rooms have bounds,
+#      door angles within 0-180 range)
+#    * Parent-child entity hierarchy
+#    * Schema-backed archetypes
+#
+#  Launch:  cargo run --bin flint -- serve demo/phase3_showcase.scene.toml --watch
+#  Render:  cargo run --bin flint -- render demo/phase3_showcase.scene.toml -o luminarium.png --distance 40 --yaw 25 --pitch 20 --shadows
+# ================================================================
+
+[scene]
+name = "The Luminarium"
+version = "2.0"
+description = "A cathedral of light — showcasing Flint Phase 3 rendering: PBR shading, procedural textures, imported models, dynamic multi-light, cascaded shadows, and tone mapping"
+
+
+# ============================================================
+#  LIGHTING — the heart of the Phase 3 showcase
+# ============================================================
+
+# -- Golden hour sun: warm directional key light casting long shadows --
+[entities.sun]
+archetype = "furniture"
+
+[entities.sun.transform]
+position = [0, 50, 0]
+
+[entities.sun.light]
+type = "directional"
+direction = [0.4, 0.8, 0.3]
+color = [1.0, 0.92, 0.75]
+intensity = 3.0
+
+# -- Cool sky fill: subtle opposing light to lift the shadows --
+[entities.sky_fill]
+archetype = "furniture"
+
+[entities.sky_fill.transform]
+position = [0, 50, 0]
+
+[entities.sky_fill.light]
+type = "directional"
+direction = [-0.3, -0.5, -0.8]
+color = [0.55, 0.65, 0.95]
+intensity = 0.6
+
+# -- Altar flame: warm point light at the heart of the nave --
+[entities.altar_flame]
+archetype = "furniture"
+parent = "nave"
+
+[entities.altar_flame.transform]
+position = [0, 3.5, -8]
+
+[entities.altar_flame.bounds]
+min = [-0.15, -0.15, -0.15]
+max = [0.15, 0.15, 0.15]
+
+[entities.altar_flame.light]
+type = "point"
+color = [1.0, 0.65, 0.2]
+intensity = 25.0
+radius = 18.0
+
+# -- Left cloister lantern: amber glow from imported model --
+[entities.lantern_left]
+archetype = "furniture"
+parent = "nave"
+
+[entities.lantern_left.transform]
+position = [-6, 2.8, 0]
+scale = [0.03, 0.03, 0.03]
+
+[entities.lantern_left.bounds]
+min = [-0.15, -0.4, -0.15]
+max = [0.15, 0.4, 0.15]
+
+[entities.lantern_left.model]
+asset = "Lantern"
+
+[entities.lantern_left.light]
+type = "point"
+color = [1.0, 0.55, 0.15]
+intensity = 12.0
+radius = 10.0
+
+# -- Right cloister lantern: amber glow from imported model --
+[entities.lantern_right]
+archetype = "furniture"
+parent = "nave"
+
+[entities.lantern_right.transform]
+position = [6, 2.8, 0]
+scale = [0.03, 0.03, 0.03]
+
+[entities.lantern_right.bounds]
+min = [-0.15, -0.4, -0.15]
+max = [0.15, 0.4, 0.15]
+
+[entities.lantern_right.model]
+asset = "Lantern"
+
+[entities.lantern_right.light]
+type = "point"
+color = [1.0, 0.55, 0.15]
+intensity = 12.0
+radius = 10.0
+
+# -- Rose window spotlight: colored beam falling from above --
+[entities.rose_window_light]
+archetype = "furniture"
+parent = "nave"
+
+[entities.rose_window_light.transform]
+position = [0, 9, 8]
+
+[entities.rose_window_light.bounds]
+min = [-0.1, -0.1, -0.1]
+max = [0.1, 0.1, 0.1]
+
+[entities.rose_window_light.light]
+type = "spot"
+direction = [0, -0.7, -0.7]
+color = [0.85, 0.3, 0.55]
+intensity = 30.0
+radius = 20.0
+inner_angle = 0.15
+outer_angle = 0.45
+
+# -- Apse spotlight: cool dramatic beam onto the altar area --
+[entities.apse_beam]
+archetype = "furniture"
+parent = "apse"
+
+[entities.apse_beam.transform]
+position = [0, 7, -12]
+
+[entities.apse_beam.bounds]
+min = [-0.1, -0.1, -0.1]
+max = [0.1, 0.1, 0.1]
+
+[entities.apse_beam.light]
+type = "spot"
+direction = [0, -0.85, 0.2]
+color = [0.4, 0.6, 1.0]
+intensity = 35.0
+radius = 14.0
+inner_angle = 0.1
+outer_angle = 0.35
+
+# -- Transept left spotlight: green-gold accent --
+[entities.transept_light_left]
+archetype = "furniture"
+parent = "transept_left"
+
+[entities.transept_light_left.transform]
+position = [-12, 6, -3]
+
+[entities.transept_light_left.bounds]
+min = [-0.1, -0.1, -0.1]
+max = [0.1, 0.1, 0.1]
+
+[entities.transept_light_left.light]
+type = "spot"
+direction = [0.5, -0.8, 0]
+color = [0.5, 0.9, 0.35]
+intensity = 18.0
+radius = 12.0
+inner_angle = 0.2
+outer_angle = 0.5
+
+# -- Transept right spotlight: violet accent --
+[entities.transept_light_right]
+archetype = "furniture"
+parent = "transept_right"
+
+[entities.transept_light_right.transform]
+position = [12, 6, -3]
+
+[entities.transept_light_right.bounds]
+min = [-0.1, -0.1, -0.1]
+max = [0.1, 0.1, 0.1]
+
+[entities.transept_light_right.light]
+type = "spot"
+direction = [-0.5, -0.8, 0]
+color = [0.7, 0.3, 0.95]
+intensity = 18.0
+radius = 12.0
+inner_angle = 0.2
+outer_angle = 0.5
+
+
+# ============================================================
+#  ROOMS — wireframe volumes defining the cathedral spaces
+# ============================================================
+
+# -- Nave: the central hall, tall and narrow --
+[entities.nave]
+archetype = "room"
+
+[entities.nave.transform]
+position = [0, 0, 0]
+
+[entities.nave.bounds]
+min = [-7, 0, -5]
+max = [7, 10, 10]
+
+# -- Apse: semicircular sanctuary behind the altar --
+[entities.apse]
+archetype = "room"
+parent = "nave"
+
+[entities.apse.transform]
+position = [0, 0, -9]
+
+[entities.apse.bounds]
+min = [-5, 0, -5]
+max = [5, 8, 5]
+
+# -- Left transept: cross arm --
+[entities.transept_left]
+archetype = "room"
+parent = "nave"
+
+[entities.transept_left.transform]
+position = [-10, 0, -3]
+
+[entities.transept_left.bounds]
+min = [-4, 0, -4]
+max = [4, 7, 4]
+
+# -- Right transept: cross arm --
+[entities.transept_right]
+archetype = "room"
+parent = "nave"
+
+[entities.transept_right.transform]
+position = [10, 0, -3]
+
+[entities.transept_right.bounds]
+min = [-4, 0, -4]
+max = [4, 7, 4]
+
+# -- Narthex: entrance vestibule --
+[entities.narthex]
+archetype = "room"
+parent = "nave"
+
+[entities.narthex.transform]
+position = [0, 0, 13]
+
+[entities.narthex.bounds]
+min = [-8, 0, -3]
+max = [8, 5, 3]
+
+# -- Bell tower: vertical space above the crossing --
+[entities.bell_tower]
+archetype = "room"
+parent = "nave"
+
+[entities.bell_tower.transform]
+position = [0, 10, -3]
+
+[entities.bell_tower.bounds]
+min = [-3, 0, -3]
+max = [3, 8, 3]
+
+
+# ============================================================
+#  ARCHITECTURE — solid textured geometry (floors, walls, ceilings)
+# ============================================================
+
+# -- Nave floor --
+[entities.nave_floor]
+archetype = "floor"
+parent = "nave"
+
+[entities.nave_floor.transform]
+position = [0, 0, 2.5]
+
+[entities.nave_floor.bounds]
+min = [-7, -0.1, -7.5]
+max = [7, 0.0, 7.5]
+
+[entities.nave_floor.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.65
+
+# -- Apse floor --
+[entities.apse_floor]
+archetype = "floor"
+parent = "apse"
+
+[entities.apse_floor.transform]
+position = [0, 0, -9]
+
+[entities.apse_floor.bounds]
+min = [-5, -0.1, -5]
+max = [5, 0.0, 5]
+
+[entities.apse_floor.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.6
+
+# -- Left transept floor --
+[entities.transept_left_floor]
+archetype = "floor"
+parent = "transept_left"
+
+[entities.transept_left_floor.transform]
+position = [-10, 0, -3]
+
+[entities.transept_left_floor.bounds]
+min = [-4, -0.1, -4]
+max = [4, 0.0, 4]
+
+[entities.transept_left_floor.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.65
+
+# -- Right transept floor --
+[entities.transept_right_floor]
+archetype = "floor"
+parent = "transept_right"
+
+[entities.transept_right_floor.transform]
+position = [10, 0, -3]
+
+[entities.transept_right_floor.bounds]
+min = [-4, -0.1, -4]
+max = [4, 0.0, 4]
+
+[entities.transept_right_floor.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.65
+
+# -- Narthex floor --
+[entities.narthex_floor]
+archetype = "floor"
+parent = "narthex"
+
+[entities.narthex_floor.transform]
+position = [0, 0, 13]
+
+[entities.narthex_floor.bounds]
+min = [-8, -0.1, -3]
+max = [8, 0.0, 3]
+
+[entities.narthex_floor.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.7
+
+# -- Nave walls (left and right) --
+[entities.nave_wall_left]
+archetype = "wall"
+parent = "nave"
+
+[entities.nave_wall_left.transform]
+position = [-7, 5, 2.5]
+
+[entities.nave_wall_left.bounds]
+min = [-0.15, -5, -7.5]
+max = [0.15, 5, 7.5]
+
+[entities.nave_wall_left.material]
+texture = "textures/stone_wall.png"
+roughness = 0.8
+
+[entities.nave_wall_right]
+archetype = "wall"
+parent = "nave"
+
+[entities.nave_wall_right.transform]
+position = [7, 5, 2.5]
+
+[entities.nave_wall_right.bounds]
+min = [-0.15, -5, -7.5]
+max = [0.15, 5, 7.5]
+
+[entities.nave_wall_right.material]
+texture = "textures/stone_wall.png"
+roughness = 0.8
+
+# -- Apse back wall --
+[entities.apse_wall_back]
+archetype = "wall"
+parent = "apse"
+
+[entities.apse_wall_back.transform]
+position = [0, 4, -14]
+
+[entities.apse_wall_back.bounds]
+min = [-5, -4, -0.15]
+max = [5, 4, 0.15]
+
+[entities.apse_wall_back.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+# -- Apse side walls --
+[entities.apse_wall_left]
+archetype = "wall"
+parent = "apse"
+
+[entities.apse_wall_left.transform]
+position = [-5, 4, -9]
+
+[entities.apse_wall_left.bounds]
+min = [-0.15, -4, -5]
+max = [0.15, 4, 5]
+
+[entities.apse_wall_left.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+[entities.apse_wall_right]
+archetype = "wall"
+parent = "apse"
+
+[entities.apse_wall_right.transform]
+position = [5, 4, -9]
+
+[entities.apse_wall_right.bounds]
+min = [-0.15, -4, -5]
+max = [0.15, 4, 5]
+
+[entities.apse_wall_right.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+# -- Apse ceiling --
+[entities.apse_ceiling]
+archetype = "ceiling"
+parent = "apse"
+
+[entities.apse_ceiling.transform]
+position = [0, 8, -9]
+
+[entities.apse_ceiling.bounds]
+min = [-5, -0.1, -5]
+max = [5, 0.0, 5]
+
+[entities.apse_ceiling.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+
+# ============================================================
+#  DOORS — demonstrating constraint system (Phase 2)
+# ============================================================
+
+# -- Great entrance: grand double door, wide open --
+[entities.great_entrance]
+archetype = "door"
+parent = "narthex"
+
+[entities.great_entrance.transform]
+position = [0, 0, 16]
+
+[entities.great_entrance.door]
+style = "hinged"
+locked = false
+open_angle = 120.0
+
+# -- Nave-apse threshold --
+[entities.apse_door]
+archetype = "door"
+parent = "nave"
+
+[entities.apse_door.transform]
+position = [0, 0, -5]
+
+[entities.apse_door.door]
+style = "sliding"
+locked = false
+open_angle = 90.0
+
+# -- Left transept door --
+[entities.transept_door_left]
+archetype = "door"
+parent = "nave"
+
+[entities.transept_door_left.transform]
+position = [-7, 0, -3]
+
+[entities.transept_door_left.door]
+style = "hinged"
+locked = false
+open_angle = 75.0
+
+# -- Right transept door --
+[entities.transept_door_right]
+archetype = "door"
+parent = "nave"
+
+[entities.transept_door_right.transform]
+position = [7, 0, -3]
+
+[entities.transept_door_right.door]
+style = "hinged"
+locked = false
+open_angle = 75.0
+
+# -- Sacristy door: locked, behind the apse --
+[entities.sacristy_door]
+archetype = "door"
+parent = "apse"
+
+[entities.sacristy_door.transform]
+position = [4, 0, -12]
+
+[entities.sacristy_door.door]
+style = "rotating"
+locked = true
+open_angle = 0.0
+
+# -- Bell tower stair door --
+[entities.tower_door]
+archetype = "door"
+parent = "nave"
+
+[entities.tower_door.transform]
+position = [3, 0, -3]
+rotation = [0, 90, 0]
+
+[entities.tower_door.door]
+style = "hinged"
+locked = true
+open_angle = 0.0
+
+
+# ============================================================
+#  PILLARS — stone colonnade along the nave
+# ============================================================
+
+[entities.pillar_L1]
+archetype = "pillar"
+parent = "nave"
+
+[entities.pillar_L1.transform]
+position = [-5, 0, 6]
+
+[entities.pillar_L1.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 9, 0.4]
+
+[entities.pillar_L1.material]
+texture = "textures/stone_wall.png"
+roughness = 0.75
+
+[entities.pillar_L2]
+archetype = "pillar"
+parent = "nave"
+
+[entities.pillar_L2.transform]
+position = [-5, 0, 2]
+
+[entities.pillar_L2.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 9, 0.4]
+
+[entities.pillar_L2.material]
+texture = "textures/stone_wall.png"
+roughness = 0.75
+
+[entities.pillar_L3]
+archetype = "pillar"
+parent = "nave"
+
+[entities.pillar_L3.transform]
+position = [-5, 0, -2]
+
+[entities.pillar_L3.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 9, 0.4]
+
+[entities.pillar_L3.material]
+texture = "textures/stone_wall.png"
+roughness = 0.75
+
+[entities.pillar_R1]
+archetype = "pillar"
+parent = "nave"
+
+[entities.pillar_R1.transform]
+position = [5, 0, 6]
+
+[entities.pillar_R1.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 9, 0.4]
+
+[entities.pillar_R1.material]
+texture = "textures/stone_wall.png"
+roughness = 0.75
+
+[entities.pillar_R2]
+archetype = "pillar"
+parent = "nave"
+
+[entities.pillar_R2.transform]
+position = [5, 0, 2]
+
+[entities.pillar_R2.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 9, 0.4]
+
+[entities.pillar_R2.material]
+texture = "textures/stone_wall.png"
+roughness = 0.75
+
+[entities.pillar_R3]
+archetype = "pillar"
+parent = "nave"
+
+[entities.pillar_R3.transform]
+position = [5, 0, -2]
+
+[entities.pillar_R3.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 9, 0.4]
+
+[entities.pillar_R3.material]
+texture = "textures/stone_wall.png"
+roughness = 0.75
+
+
+# ============================================================
+#  FURNITURE — furnishings and decorative objects
+# ============================================================
+
+# -- Altar: large central platform --
+[entities.altar]
+archetype = "furniture"
+parent = "nave"
+
+[entities.altar.transform]
+position = [0, 0, -7]
+
+[entities.altar.bounds]
+min = [-1.5, 0, -1.0]
+max = [1.5, 1.2, 1.0]
+
+[entities.altar.material]
+texture = "textures/stone_wall.png"
+roughness = 0.6
+
+# -- Altar candelabra left --
+[entities.candelabra_left]
+archetype = "furniture"
+parent = "nave"
+
+[entities.candelabra_left.transform]
+position = [-1.2, 1.2, -7]
+
+[entities.candelabra_left.bounds]
+min = [-0.1, 0, -0.1]
+max = [0.1, 1.0, 0.1]
+
+# -- Altar candelabra right --
+[entities.candelabra_right]
+archetype = "furniture"
+parent = "nave"
+
+[entities.candelabra_right.transform]
+position = [1.2, 1.2, -7]
+
+[entities.candelabra_right.bounds]
+min = [-0.1, 0, -0.1]
+max = [0.1, 1.0, 0.1]
+
+# -- Pews: rows of seating along the nave (wood texture) --
+[entities.pew_row_L1]
+archetype = "furniture"
+parent = "nave"
+
+[entities.pew_row_L1.transform]
+position = [-2.5, 0, 6]
+
+[entities.pew_row_L1.bounds]
+min = [-1.5, 0, -0.3]
+max = [1.5, 0.9, 0.3]
+
+[entities.pew_row_L1.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.pew_row_L2]
+archetype = "furniture"
+parent = "nave"
+
+[entities.pew_row_L2.transform]
+position = [-2.5, 0, 3.5]
+
+[entities.pew_row_L2.bounds]
+min = [-1.5, 0, -0.3]
+max = [1.5, 0.9, 0.3]
+
+[entities.pew_row_L2.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.pew_row_L3]
+archetype = "furniture"
+parent = "nave"
+
+[entities.pew_row_L3.transform]
+position = [-2.5, 0, 1]
+
+[entities.pew_row_L3.bounds]
+min = [-1.5, 0, -0.3]
+max = [1.5, 0.9, 0.3]
+
+[entities.pew_row_L3.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.pew_row_R1]
+archetype = "furniture"
+parent = "nave"
+
+[entities.pew_row_R1.transform]
+position = [2.5, 0, 6]
+
+[entities.pew_row_R1.bounds]
+min = [-1.5, 0, -0.3]
+max = [1.5, 0.9, 0.3]
+
+[entities.pew_row_R1.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.pew_row_R2]
+archetype = "furniture"
+parent = "nave"
+
+[entities.pew_row_R2.transform]
+position = [2.5, 0, 3.5]
+
+[entities.pew_row_R2.bounds]
+min = [-1.5, 0, -0.3]
+max = [1.5, 0.9, 0.3]
+
+[entities.pew_row_R2.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+[entities.pew_row_R3]
+archetype = "furniture"
+parent = "nave"
+
+[entities.pew_row_R3.transform]
+position = [2.5, 0, 1]
+
+[entities.pew_row_R3.bounds]
+min = [-1.5, 0, -0.3]
+max = [1.5, 0.9, 0.3]
+
+[entities.pew_row_R3.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+# -- Floor platform: raised dais beneath the altar --
+[entities.dais]
+archetype = "furniture"
+parent = "nave"
+
+[entities.dais.transform]
+position = [0, 0, -6]
+
+[entities.dais.bounds]
+min = [-3, 0, -3]
+max = [3, 0.25, 1]
+
+[entities.dais.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.55
+
+# -- Lectern: angled reading stand --
+[entities.lectern]
+archetype = "furniture"
+parent = "nave"
+
+[entities.lectern.transform]
+position = [-2, 0.25, -5.5]
+rotation = [0, 20, 0]
+
+[entities.lectern.bounds]
+min = [-0.25, 0, -0.2]
+max = [0.25, 1.3, 0.2]
+
+[entities.lectern.material]
+texture = "textures/wood_planks.png"
+roughness = 0.6
+
+# -- Transept left: prayer kneelers and reliquary --
+[entities.kneeler_left]
+archetype = "furniture"
+parent = "transept_left"
+
+[entities.kneeler_left.transform]
+position = [-10, 0, -3]
+
+[entities.kneeler_left.bounds]
+min = [-2, 0, -0.4]
+max = [2, 0.5, 0.4]
+
+[entities.kneeler_left.material]
+texture = "textures/wood_planks.png"
+roughness = 0.7
+
+[entities.reliquary]
+archetype = "furniture"
+parent = "transept_left"
+
+[entities.reliquary.transform]
+position = [-13, 0, -3]
+
+[entities.reliquary.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 2.0, 0.5]
+
+[entities.reliquary.material]
+texture = "textures/stone_wall.png"
+roughness = 0.5
+metallic = 0.2
+
+# -- Transept right: font and offering table --
+[entities.font]
+archetype = "furniture"
+parent = "transept_right"
+
+[entities.font.transform]
+position = [10, 0, -3]
+
+[entities.font.bounds]
+min = [-0.5, 0, -0.5]
+max = [0.5, 1.0, 0.5]
+
+[entities.font.material]
+texture = "textures/stone_wall.png"
+roughness = 0.55
+
+[entities.offering_table]
+archetype = "furniture"
+parent = "transept_right"
+
+[entities.offering_table.transform]
+position = [13, 0, -3]
+
+[entities.offering_table.bounds]
+min = [-1.0, 0, -0.5]
+max = [1.0, 0.8, 0.5]
+
+[entities.offering_table.material]
+texture = "textures/wood_planks.png"
+roughness = 0.65
+
+# -- Narthex: entry benches and notice board --
+[entities.entry_bench_left]
+archetype = "furniture"
+parent = "narthex"
+
+[entities.entry_bench_left.transform]
+position = [-4, 0, 14]
+
+[entities.entry_bench_left.bounds]
+min = [-2, 0, -0.3]
+max = [2, 0.5, 0.3]
+
+[entities.entry_bench_left.material]
+texture = "textures/wood_planks.png"
+roughness = 0.7
+
+[entities.entry_bench_right]
+archetype = "furniture"
+parent = "narthex"
+
+[entities.entry_bench_right.transform]
+position = [4, 0, 14]
+
+[entities.entry_bench_right.bounds]
+min = [-2, 0, -0.3]
+max = [2, 0.5, 0.3]
+
+[entities.entry_bench_right.material]
+texture = "textures/wood_planks.png"
+roughness = 0.7
+
+[entities.notice_board]
+archetype = "furniture"
+parent = "narthex"
+
+[entities.notice_board.transform]
+position = [7, 1.2, 14]
+
+[entities.notice_board.bounds]
+min = [-0.05, -0.6, -0.4]
+max = [0.05, 0.6, 0.4]
+
+[entities.notice_board.material]
+texture = "textures/wood_planks.png"
+roughness = 0.6
+
+# -- Apse: reredos screen behind the altar --
+[entities.reredos]
+archetype = "furniture"
+parent = "apse"
+
+[entities.reredos.transform]
+position = [0, 0, -12]
+
+[entities.reredos.bounds]
+min = [-3, 0, -0.2]
+max = [3, 5, 0.2]
+
+[entities.reredos.material]
+texture = "textures/stone_wall.png"
+roughness = 0.7
+metallic = 0.1
+
+
+# ============================================================
+#  CHARACTERS — YBot figures populating the scene
+# ============================================================
+
+# -- Priest: at the altar, lit by the altar flame and apse beam --
+[entities.priest]
+archetype = "character"
+parent = "nave"
+
+[entities.priest.transform]
+position = [0, 0.25, -6.5]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.priest.model]
+asset = "YBot"
+
+# -- Acolyte: beside the lectern --
+[entities.acolyte]
+archetype = "character"
+parent = "nave"
+
+[entities.acolyte.transform]
+position = [-1.5, 0.25, -5.5]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.acolyte.model]
+asset = "YBot"
+
+# -- Congregation: seated in pews, lit by the rose window spotlight --
+[entities.congregant_1]
+archetype = "character"
+parent = "nave"
+
+[entities.congregant_1.transform]
+position = [-2.5, 0, 6.3]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.congregant_1.model]
+asset = "YBot"
+
+[entities.congregant_2]
+archetype = "character"
+parent = "nave"
+
+[entities.congregant_2.transform]
+position = [2.5, 0, 6.3]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.congregant_2.model]
+asset = "YBot"
+
+[entities.congregant_3]
+archetype = "character"
+parent = "nave"
+
+[entities.congregant_3.transform]
+position = [-2.5, 0, 3.8]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.congregant_3.model]
+asset = "YBot"
+
+[entities.congregant_4]
+archetype = "character"
+parent = "nave"
+
+[entities.congregant_4.transform]
+position = [2.5, 0, 3.8]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.congregant_4.model]
+asset = "YBot"
+
+# -- Pilgrim: kneeling in the left transept, under green-gold spot --
+[entities.pilgrim]
+archetype = "character"
+parent = "transept_left"
+
+[entities.pilgrim.transform]
+position = [-10, 0, -2]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.pilgrim.model]
+asset = "YBot"
+
+# -- Visitor: at the font in the right transept, under violet spot --
+[entities.visitor]
+archetype = "character"
+parent = "transept_right"
+
+[entities.visitor.transform]
+position = [10, 0, -2]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.visitor.model]
+asset = "YBot"
+
+# -- Bell ringer: high up in the tower --
+[entities.bell_ringer]
+archetype = "character"
+parent = "bell_tower"
+
+[entities.bell_ringer.transform]
+position = [0, 12, -3]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.bell_ringer.model]
+asset = "YBot"
+
+# -- Stranger: lingering in the narthex shadows --
+[entities.stranger]
+archetype = "character"
+parent = "narthex"
+
+[entities.stranger.transform]
+position = [-6, 0, 14]
+#scale = [0.01, 0.01, 0.01]
+
+[entities.stranger.model]
+asset = "YBot"

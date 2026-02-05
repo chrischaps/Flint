@@ -1,0 +1,7 @@
+[archetype.wall]
+description = "A solid wall segment"
+components = ["transform", "bounds"]
+
+[archetype.wall.defaults.bounds]
+min = [-5, 0, -0.15]
+max = [5, 4, 0.15]

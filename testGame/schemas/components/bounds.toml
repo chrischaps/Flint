@@ -1,0 +1,6 @@
+[component.bounds]
+description = "Axis-aligned bounding box"
+
+[component.bounds.fields]
+min = { type = "vec3", default = [0, 0, 0] }
+max = { type = "vec3", default = [1, 1, 1] }

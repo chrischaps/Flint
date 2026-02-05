@@ -1,0 +1,12 @@
+[package]
+name = "flint-schema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Component and archetype schema system for Flint"
+
+[dependencies]
+flint-core = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }

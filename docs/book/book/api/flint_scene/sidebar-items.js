@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["load_scene","reload_scene","save_scene","save_scene_string"],"struct":["EntityDef","SceneFile","SceneMetadata"]};

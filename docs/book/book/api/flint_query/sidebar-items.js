@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Operator","QueryError","QueryResult"],"fn":["execute_query","format_json","format_toml","parse_query"],"struct":["Condition","Query"]};

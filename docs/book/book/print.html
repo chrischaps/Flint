@@ -1,0 +1,1784 @@
+<!DOCTYPE HTML>
+<html lang="en" class="coal sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Flint Engine</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Documentation for the Flint CLI-first, AI-agent-optimized 3D game engine">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/css/custom-ba9cc2aa.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "coal";
+            const default_dark_theme = "coal";
+            window.path_to_searchindex_js = "searchindex-7ea73f8d.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-a2d2185c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('coal')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Flint Engine</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/chaps/flint" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="flint-engine"><a class="header" href="#flint-engine">Flint Engine</a></h1>
+<p><strong>A CLI-first, AI-agent-optimized 3D game engine written in Rust.</strong></p>
+<p>Flint is a general-purpose 3D game engine designed from the ground up to provide an excellent interface for AI coding agents, while maintaining effective workflows for human developers. Unlike existing engines that optimize for GUI-driven workflows, Flint prioritizes programmatic interaction, introspection, and validation.</p>
+<h2 id="the-core-idea"><a class="header" href="#the-core-idea">The Core Idea</a></h2>
+<p>Current game engines are built around visual editors, drag-and-drop workflows, and GUI-heavy tooling. These become friction points when AI agents attempt to make changes programmatically — the agent ends up fighting against abstractions designed for human spatial reasoning and visual feedback loops.</p>
+<p>Flint inverts this: <strong>the primary interface is CLI and code</strong>, with visual tools focused on <em>validating</em> results rather than <em>creating</em> them.</p>
+<p>Every scene is a TOML file you can read, diff, and version. Every operation is a composable CLI command. Every piece of engine state is queryable as structured data. The viewer exists to answer one question: <em>“Did the agent do what I asked?”</em></p>
+<h2 id="what-it-looks-like"><a class="header" href="#what-it-looks-like">What It Looks Like</a></h2>
+<p>Create a scene, add entities, query them, and view the result — all from the command line:</p>
+<pre><code class="language-bash"># Initialize a project
+flint init my-game
+
+# Create a scene and populate it
+flint scene create levels/tavern.scene.toml --name "The Tavern"
+flint entity create --archetype room --name "main_hall" --scene levels/tavern.scene.toml
+flint entity create --archetype door --name "front_door" --parent "main_hall" --scene levels/tavern.scene.toml
+
+# Query what you've built
+flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml
+
+# Validate against constraints
+flint validate levels/tavern.scene.toml --fix --dry-run
+
+# See it in 3D
+flint serve levels/tavern.scene.toml --watch
+</code></pre>
+<h2 id="current-status"><a class="header" href="#current-status">Current Status</a></h2>
+<p>Flint is in active development. Phase 1 (Foundation) and Phase 3 (Rendering) are implemented, with Phase 2 (Constraints and Assets) complete. The engine currently supports:</p>
+<ul>
+<li><strong>Entity CRUD</strong> via CLI with archetype-based creation</li>
+<li><strong>Scene serialization</strong> in human-readable TOML</li>
+<li><strong>Query language</strong> for filtering and inspecting entities</li>
+<li><strong>Schema system</strong> for component and archetype definitions</li>
+<li><strong>Constraint validation</strong> with auto-fix capabilities</li>
+<li><strong>Asset management</strong> with content-addressed storage and glTF import</li>
+<li><strong>wgpu renderer</strong> with archetype-based coloring and orbit camera</li>
+<li><strong>Hot-reload viewer</strong> that watches for file changes</li>
+<li><strong>Headless rendering</strong> for CI and automated screenshots</li>
+</ul>
+<p>See the <a href="#roadmap">Roadmap</a> for what’s planned next.</p>
+<h2 id="who-is-this-for"><a class="header" href="#who-is-this-for">Who Is This For?</a></h2>
+<ul>
+<li><strong>AI agent developers</strong> building game content programmatically</li>
+<li><strong>Technical game developers</strong> who prefer code over visual editors</li>
+<li><strong>Tooling enthusiasts</strong> who want to compose game development operations</li>
+<li><strong>Rust game developers</strong> looking for a deterministic, introspectable engine</li>
+</ul>
+<h2 id="reading-this-guide"><a class="header" href="#reading-this-guide">Reading This Guide</a></h2>
+<ul>
+<li>Start with <a href="#why-flint">Why Flint?</a> to understand the motivation</li>
+<li>Follow the <a href="#installation">Getting Started</a> guide to build from source and create your first project</li>
+<li>Explore <a href="#entities-and-ecs">Core Concepts</a> to learn about the engine’s systems</li>
+<li>Check the <a href="#architecture-overview">Architecture</a> section if you want to understand the codebase</li>
+<li>Browse the <a href="/flint/api/flint_core">API Reference</a> for per-crate Rust documentation</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="why-flint"><a class="header" href="#why-flint">Why Flint?</a></h1>
+<h2 id="the-problem"><a class="header" href="#the-problem">The Problem</a></h2>
+<p>Game engines today — Unity, Unreal, Godot — are designed around visual editors. You drag objects into scenes, connect nodes in graphs, click through property inspectors. These workflows are excellent for humans using a mouse, but they create friction in two growing scenarios:</p>
+<ol>
+<li>
+<p><strong>AI agents building game content.</strong> When an AI coding agent needs to place a door in a scene, it shouldn’t need to simulate mouse clicks on a GUI. It should issue a command and get structured feedback.</p>
+</li>
+<li>
+<p><strong>Automation and CI pipelines.</strong> Validating a scene, running regression tests on visual output, or batch-processing hundreds of entities — these tasks fight against editor-centric architectures.</p>
+</li>
+</ol>
+<p>The core tension: existing engines treat programmatic access as a <em>secondary</em> concern. The API exists, but it’s bolted onto a system designed for spatial interaction. Scene formats are binary or semi-readable. Introspection is limited. Determinism is not guaranteed.</p>
+<h2 id="the-thesis"><a class="header" href="#the-thesis">The Thesis</a></h2>
+<p>Flint starts from the opposite assumption: <strong>the primary interface is CLI and code</strong>. Visual tools are for <em>validation</em>, not <em>creation</em>.</p>
+<p>This doesn’t mean Flint is hostile to humans. It means every operation flows through a composable, scriptable interface first. If you can do it in the CLI, you can automate it. If you can automate it, an AI agent can do it. The viewer is the place where a human confirms: “Yes, that’s what I wanted.”</p>
+<h2 id="what-this-enables"><a class="header" href="#what-this-enables">What This Enables</a></h2>
+<h3 id="for-ai-agents"><a class="header" href="#for-ai-agents">For AI agents</a></h3>
+<p>An agent working with Flint has a clean contract:</p>
+<ul>
+<li>Issue CLI commands, get structured JSON/TOML responses</li>
+<li>Query any aspect of engine state with a SQL-inspired language</li>
+<li>Validate work against declarative constraint rules</li>
+<li>Produce visual artifacts (headless renders) for verification</li>
+</ul>
+<p>No simulated GUI interaction. No screen scraping. No ambiguous visual state.</p>
+<h3 id="for-humans"><a class="header" href="#for-humans">For humans</a></h3>
+<p>A developer working with Flint gets:</p>
+<ul>
+<li>Scene files that are human-readable TOML, easily diffable in git</li>
+<li>A query language for exploring what’s in a scene without opening an editor</li>
+<li>Constraint rules that serve as living documentation of what a “correct” scene looks like</li>
+<li>A hot-reload viewer that updates in real-time as files change</li>
+</ul>
+<h3 id="for-teams"><a class="header" href="#for-teams">For teams</a></h3>
+<p>A team using Flint gets:</p>
+<ul>
+<li>Deterministic builds — same inputs always produce identical outputs</li>
+<li>Text-based formats that merge cleanly in version control</li>
+<li>Structured output for CI pipelines and automated testing</li>
+<li>A shared vocabulary between human developers and AI tools</li>
+</ul>
+<h2 id="comparison"><a class="header" href="#comparison">Comparison</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Aspect</th><th>Traditional Engines</th><th>Flint</th></tr>
+</thead>
+<tbody>
+<tr><td>Primary interface</td><td>GUI editor</td><td>CLI</td></tr>
+<tr><td>Scene format</td><td>Binary or semi-text</td><td>TOML (fully text)</td></tr>
+<tr><td>Programmatic API</td><td>Secondary</td><td>Primary</td></tr>
+<tr><td>Introspection</td><td>Limited</td><td>Full (query language)</td></tr>
+<tr><td>Deterministic builds</td><td>Generally no</td><td>Yes</td></tr>
+<tr><td>AI-agent optimized</td><td>No</td><td>Yes</td></tr>
+<tr><td>Validation</td><td>Runtime errors</td><td>Declarative constraints</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="the-name"><a class="header" href="#the-name">The Name</a></h2>
+<p>Flint is a tool for starting fires. Simple, reliable, fundamental. Strike it and something sparks into existence. That’s the idea: minimal friction between intent and result.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="design-principles"><a class="header" href="#design-principles">Design Principles</a></h1>
+<p>Flint’s architecture follows six principles that guide every design decision. They are listed in priority order — when principles conflict, higher-ranked ones win.</p>
+<h2 id="1-cli-first"><a class="header" href="#1-cli-first">1. CLI-First</a></h2>
+<p>Every operation is expressible as a composable command. There is no operation that <em>requires</em> a GUI. The CLI is the source of truth for what the engine can do.</p>
+<p>This means:</p>
+<ul>
+<li>All commands accept flags for output format (<code>--format json</code>, <code>--format toml</code>)</li>
+<li>Commands compose via pipes and standard shell tooling</li>
+<li>Batch operations are first-class, not afterthoughts</li>
+<li>The viewer is a <em>consumer</em> of state, not a <em>producer</em> of it</li>
+</ul>
+<h2 id="2-introspectable"><a class="header" href="#2-introspectable">2. Introspectable</a></h2>
+<p>You can query any aspect of engine state as structured data. Nothing is hidden behind opaque handles or binary blobs.</p>
+<pre><code class="language-bash"># What entities exist?
+flint query "entities where archetype == 'door'"
+
+# What does a door look like?
+flint schema door
+
+# What would this change break?
+flint validate levels/tavern.scene.toml --fix --dry-run
+</code></pre>
+<p>The query language is the same whether you’re exploring interactively or writing constraint rules. Learn it once, use it everywhere.</p>
+<h2 id="3-deterministic"><a class="header" href="#3-deterministic">3. Deterministic</a></h2>
+<p>Same inputs always produce identical outputs. No hidden state, no ambient randomness, no order-dependent behavior.</p>
+<ul>
+<li>Entity IDs are stable across save/load cycles</li>
+<li>Procedural generation uses explicit seeds</li>
+<li>Build manifests record exact asset hashes</li>
+<li>Headless renders are reproducible for regression testing</li>
+</ul>
+<h2 id="4-text-based"><a class="header" href="#4-text-based">4. Text-Based</a></h2>
+<p>Scene and asset formats are human-readable, machine-parseable, and diffable. TOML is the primary format throughout.</p>
+<pre><code class="language-toml">[entities.front_door]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_door.transform]
+position = [5, 0, 0]
+
+[entities.front_door.door]
+style = "hinged"
+locked = false
+</code></pre>
+<p>This isn’t just about readability — it’s about <em>collaboration</em>. Text files merge cleanly in version control. Diffs are meaningful. AI agents can read and write them directly.</p>
+<h2 id="5-constraint-driven"><a class="header" href="#5-constraint-driven">5. Constraint-Driven</a></h2>
+<p>Declarative rules define what a valid scene looks like. The engine validates against these rules and can optionally auto-fix violations.</p>
+<p>Constraints serve multiple roles:</p>
+<ul>
+<li><strong>Validation</strong> — catch errors before they become runtime bugs</li>
+<li><strong>Documentation</strong> — constraints describe what “correct” means</li>
+<li><strong>Automation</strong> — auto-fix rules handle routine corrections</li>
+<li><strong>Communication</strong> — constraints are a shared contract between human and AI</li>
+</ul>
+<h2 id="6-hybrid-workflows"><a class="header" href="#6-hybrid-workflows">6. Hybrid Workflows</a></h2>
+<p>Humans and AI agents collaborate effectively on the same project. Neither workflow is an afterthought.</p>
+<p>The typical loop:</p>
+<ol>
+<li>An AI agent creates or modifies scene content via CLI</li>
+<li>Constraints validate the changes automatically</li>
+<li>A human reviews the result in the viewer</li>
+<li>Feedback flows back to the agent as structured data</li>
+</ol>
+<p>This principle ensures Flint doesn’t optimize so hard for agents that humans can’t use it, or so hard for humans that agents can’t automate it.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-first-workflow"><a class="header" href="#cli-first-workflow">CLI-First Workflow</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>The CLI-first principle means every engine operation is available as a composable command. This page will cover:</p>
+<ul>
+<li>How CLI commands compose with pipes and shell tooling</li>
+<li>Structured output formats (JSON, TOML) for machine consumption</li>
+<li>Transaction mode for atomic multi-step operations</li>
+<li>Comparison with GUI-driven workflows in other engines</li>
+<li>Practical patterns for scripting scene construction</li>
+</ul>
+<p>See <a href="#design-principles">Design Principles</a> for an overview of this philosophy.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ai-agent-interface"><a class="header" href="#ai-agent-interface">AI Agent Interface</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>Flint is designed to be an excellent interface for AI coding agents. This page will cover:</p>
+<ul>
+<li>Why AI agents struggle with GUI-based game engines</li>
+<li>The structured input/output contract Flint provides</li>
+<li>How the query language enables agent introspection</li>
+<li>Constraint validation as an automated feedback loop</li>
+<li>Headless rendering for visual verification</li>
+<li>Example agent workflows for common tasks</li>
+</ul>
+<p>See the <a href="#ai-agent-workflow">AI Agent Workflow</a> guide for practical examples.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<p>Flint is built from source using the Rust toolchain. There are no pre-built binaries yet.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li><strong>Rust</strong> (stable, 1.75+) — install from <a href="https://rustup.rs/">rustup.rs</a></li>
+<li><strong>Git</strong> — for cloning the repository</li>
+<li>A GPU with <strong>Vulkan</strong>, <strong>Metal</strong>, or <strong>DX12</strong> support (for the renderer and viewer)</li>
+</ul>
+<h2 id="build-from-source"><a class="header" href="#build-from-source">Build from Source</a></h2>
+<p>Clone the repository and build in release mode:</p>
+<pre><code class="language-bash">git clone https://github.com/chaps/flint.git
+cd flint
+cargo build --release
+</code></pre>
+<p>The binary is at <code>target/release/flint</code> (or <code>target/release/flint.exe</code> on Windows).</p>
+<h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
+<pre><code class="language-bash">cargo run --bin flint -- --version
+</code></pre>
+<p>You should see the Flint version string.</p>
+<h2 id="running-without-installing"><a class="header" href="#running-without-installing">Running Without Installing</a></h2>
+<p>You can run Flint directly through Cargo without installing it system-wide:</p>
+<pre><code class="language-bash">cargo run --bin flint -- &lt;command&gt;
+</code></pre>
+<p>For example:</p>
+<pre><code class="language-bash">cargo run --bin flint -- init my-game
+cargo run --bin flint -- serve demo/showcase.scene.toml --watch
+</code></pre>
+<h2 id="running-tests"><a class="header" href="#running-tests">Running Tests</a></h2>
+<p>To verify everything is working:</p>
+<pre><code class="language-bash">cargo test
+</code></pre>
+<p>This runs the full test suite across all crates.</p>
+<h2 id="optional-add-to-path"><a class="header" href="#optional-add-to-path">Optional: Add to PATH</a></h2>
+<p>To use <code>flint</code> directly without <code>cargo run</code>:</p>
+<pre><code class="language-bash">cargo install --path crates/flint-cli
+</code></pre>
+<p>Or copy the release binary to a directory on your PATH.</p>
+<h2 id="whats-next"><a class="header" href="#whats-next">What’s Next</a></h2>
+<p>With Flint built, follow <a href="#your-first-project">Your First Project</a> to create a scene from scratch.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="your-first-project"><a class="header" href="#your-first-project">Your First Project</a></h1>
+<p>This guide walks through creating a Flint project and building a simple scene using only CLI commands.</p>
+<h2 id="initialize-a-project"><a class="header" href="#initialize-a-project">Initialize a Project</a></h2>
+<pre><code class="language-bash">flint init my-tavern
+</code></pre>
+<p>This creates a project directory with the standard structure:</p>
+<pre><code>my-tavern/
+├── schemas/
+│   ├── components/
+│   │   ├── transform.toml
+│   │   ├── bounds.toml
+│   │   └── door.toml
+│   ├── archetypes/
+│   │   ├── room.toml
+│   │   ├── door.toml
+│   │   ├── furniture.toml
+│   │   └── character.toml
+│   └── constraints/
+│       └── basics.toml
+├── levels/
+└── assets/
+</code></pre>
+<p>The <code>schemas/</code> directory contains default component definitions, archetype bundles, and constraint rules. You’ll modify and extend these as your project grows.</p>
+<h2 id="create-a-scene"><a class="header" href="#create-a-scene">Create a Scene</a></h2>
+<pre><code class="language-bash">flint scene create my-tavern/levels/tavern.scene.toml --name "The Rusty Flint Tavern"
+</code></pre>
+<p>This creates an empty scene file:</p>
+<pre><code class="language-toml">[scene]
+name = "The Rusty Flint Tavern"
+version = "1.0"
+</code></pre>
+<h2 id="add-rooms"><a class="header" href="#add-rooms">Add Rooms</a></h2>
+<p>Build out the space with room entities:</p>
+<pre><code class="language-bash">flint entity create --archetype room --name "main_hall" \
+    --scene my-tavern/levels/tavern.scene.toml \
+    --schemas my-tavern/schemas \
+    --props '{"transform":{"position":[0,0,0]},"bounds":{"min":[-7,0,-5],"max":[7,4,5]}}'
+</code></pre>
+<p>The <code>--archetype room</code> flag tells Flint to create an entity with the components defined in <code>schemas/archetypes/room.toml</code> (transform + bounds). The <code>--props</code> flag provides the specific values.</p>
+<p>Add a kitchen connected to the main hall:</p>
+<pre><code class="language-bash">flint entity create --archetype room --name "kitchen" \
+    --parent "main_hall" \
+    --scene my-tavern/levels/tavern.scene.toml \
+    --schemas my-tavern/schemas \
+    --props '{"transform":{"position":[0,0,-9]},"bounds":{"min":[-4,0,-3],"max":[4,3.5,3]}}'
+</code></pre>
+<p>The <code>--parent</code> flag establishes a hierarchy — the kitchen is a child of the main hall.</p>
+<h2 id="add-a-door"><a class="header" href="#add-a-door">Add a Door</a></h2>
+<pre><code class="language-bash">flint entity create --archetype door --name "front_entrance" \
+    --parent "main_hall" \
+    --scene my-tavern/levels/tavern.scene.toml \
+    --schemas my-tavern/schemas \
+    --props '{"transform":{"position":[0,0,5]},"door":{"style":"hinged","locked":false}}'
+</code></pre>
+<h2 id="query-your-scene"><a class="header" href="#query-your-scene">Query Your Scene</a></h2>
+<p>See what you’ve built:</p>
+<pre><code class="language-bash">flint query "entities" --scene my-tavern/levels/tavern.scene.toml
+</code></pre>
+<p>Filter for specific archetypes:</p>
+<pre><code class="language-bash">flint query "entities where archetype == 'door'" --scene my-tavern/levels/tavern.scene.toml
+</code></pre>
+<h2 id="inspect-the-scene-file"><a class="header" href="#inspect-the-scene-file">Inspect the Scene File</a></h2>
+<p>The scene is plain TOML. Open <code>my-tavern/levels/tavern.scene.toml</code> and you’ll see:</p>
+<pre><code class="language-toml">[scene]
+name = "The Rusty Flint Tavern"
+version = "1.0"
+
+[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [0, 0, 0]
+
+[entities.main_hall.bounds]
+min = [-7, 0, -5]
+max = [7, 4, 5]
+
+[entities.kitchen]
+archetype = "room"
+parent = "main_hall"
+
+[entities.kitchen.transform]
+position = [0, 0, -9]
+
+[entities.kitchen.bounds]
+min = [-4, 0, -3]
+max = [4, 3.5, 3]
+
+[entities.front_entrance]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_entrance.transform]
+position = [0, 0, 5]
+
+[entities.front_entrance.door]
+style = "hinged"
+locked = false
+</code></pre>
+<p>Everything is readable, editable, and diffable. You can modify this file directly — the CLI isn’t the only way to edit scenes.</p>
+<h2 id="view-it"><a class="header" href="#view-it">View It</a></h2>
+<p>Launch the hot-reload viewer:</p>
+<pre><code class="language-bash">flint serve my-tavern/levels/tavern.scene.toml --watch --schemas my-tavern/schemas
+</code></pre>
+<p>A window opens showing your scene as colored boxes:</p>
+<ul>
+<li><strong>Blue</strong> wireframes for rooms</li>
+<li><strong>Orange</strong> boxes for doors</li>
+<li><strong>Green</strong> boxes for furniture</li>
+<li><strong>Yellow</strong> boxes for characters</li>
+</ul>
+<p>The viewer hot-reloads — any change to the scene file (from the CLI, a text editor, or an AI agent) updates the view instantly.</p>
+<p><strong>Camera controls:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Input</th><th>Action</th></tr>
+</thead>
+<tbody>
+<tr><td>Left-drag</td><td>Orbit</td></tr>
+<tr><td>Right-drag</td><td>Pan</td></tr>
+<tr><td>Scroll</td><td>Zoom</td></tr>
+<tr><td>Space</td><td>Reset camera</td></tr>
+<tr><td>R</td><td>Force reload</td></tr>
+<tr><td>Escape</td><td>Quit</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="whats-next-1"><a class="header" href="#whats-next-1">What’s Next</a></h2>
+<ul>
+<li><a href="#your-first-scene">Your First Scene</a> dives deeper into scene file structure</li>
+<li><a href="#querying-entities">Querying Entities</a> covers the query language</li>
+<li><a href="#building-a-tavern">Building a Tavern</a> walks through a complete scene build</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="your-first-scene"><a class="header" href="#your-first-scene">Your First Scene</a></h1>
+<p>A Flint scene is a TOML file describing entities, their components, and their relationships. This page explains the scene format by building one from scratch.</p>
+<h2 id="scene-structure"><a class="header" href="#scene-structure">Scene Structure</a></h2>
+<p>Every scene file has two sections: metadata and entities.</p>
+<pre><code class="language-toml"># Metadata
+[scene]
+name = "My Scene"
+version = "1.0"
+description = "An optional description"
+
+# Entities
+[entities.my_entity]
+archetype = "room"
+
+[entities.my_entity.transform]
+position = [0, 0, 0]
+</code></pre>
+<p>The <code>[scene]</code> table holds metadata. Everything under <code>[entities.*]</code> defines the objects in your world.</p>
+<h2 id="entities"><a class="header" href="#entities">Entities</a></h2>
+<p>An entity is a named thing in the scene. Its name is the key under <code>[entities]</code>:</p>
+<pre><code class="language-toml">[entities.main_hall]
+archetype = "room"
+</code></pre>
+<p>Entities can optionally have:</p>
+<ul>
+<li>An <strong>archetype</strong> — a schema-defined bundle of components</li>
+<li>A <strong>parent</strong> — another entity this one is attached to</li>
+<li><strong>Components</strong> — data tables nested under the entity</li>
+</ul>
+<h2 id="components"><a class="header" href="#components">Components</a></h2>
+<p>Components are data attached to entities. They’re defined as nested TOML tables:</p>
+<pre><code class="language-toml">[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [0, 0, 0]
+
+[entities.main_hall.bounds]
+min = [-7, 0, -5]
+max = [7, 4, 5]
+</code></pre>
+<p>The <code>transform</code> and <code>bounds</code> components are defined by schema files in <code>schemas/components/</code>. The schema tells Flint what fields are valid and what types they are.</p>
+<h2 id="parent-child-relationships"><a class="header" href="#parent-child-relationships">Parent-Child Relationships</a></h2>
+<p>Entities form hierarchies through the <code>parent</code> field:</p>
+<pre><code class="language-toml">[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [0, 0, 0]
+
+[entities.kitchen]
+archetype = "room"
+parent = "main_hall"
+
+[entities.kitchen.transform]
+position = [0, 0, -9]
+</code></pre>
+<p>The kitchen is a child of the main hall. In the viewer, child transforms are relative to their parent.</p>
+<h2 id="a-complete-example"><a class="header" href="#a-complete-example">A Complete Example</a></h2>
+<p>Here’s a small but complete scene — a room with a door and a table:</p>
+<pre><code class="language-toml">[scene]
+name = "Simple Room"
+version = "1.0"
+
+[entities.room]
+archetype = "room"
+
+[entities.room.transform]
+position = [0, 0, 0]
+
+[entities.room.bounds]
+min = [-5, 0, -5]
+max = [5, 3, 5]
+
+[entities.door]
+archetype = "door"
+parent = "room"
+
+[entities.door.transform]
+position = [0, 0, 5]
+
+[entities.door.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+
+[entities.table]
+archetype = "furniture"
+parent = "room"
+
+[entities.table.transform]
+position = [0, 0, 0]
+
+[entities.table.bounds]
+min = [-0.6, 0, -0.6]
+max = [0.6, 0.8, 0.6]
+</code></pre>
+<h2 id="editing-scenes"><a class="header" href="#editing-scenes">Editing Scenes</a></h2>
+<p>You can edit scene files in three ways:</p>
+<ol>
+<li><strong>CLI commands</strong> — <code>flint entity create</code>, <code>flint entity delete</code>, etc.</li>
+<li><strong>Text editor</strong> — open the TOML file directly</li>
+<li><strong>Programmatically</strong> — any tool that can write TOML</li>
+</ol>
+<p>All three approaches produce the same result. The <code>flint serve --watch</code> viewer detects changes from any source and reloads automatically.</p>
+<h2 id="validating-scenes"><a class="header" href="#validating-scenes">Validating Scenes</a></h2>
+<p>Run the constraint checker to verify your scene is well-formed:</p>
+<pre><code class="language-bash">flint validate levels/my-scene.scene.toml --schemas schemas
+</code></pre>
+<p>This checks your scene against the rules defined in <code>schemas/constraints/</code>. See <a href="#constraints">Constraints</a> for details.</p>
+<h2 id="whats-next-2"><a class="header" href="#whats-next-2">What’s Next</a></h2>
+<ul>
+<li><a href="#entities-and-ecs">Entities and ECS</a> explains the entity-component system</li>
+<li><a href="#schemas">Schemas</a> covers how components and archetypes are defined</li>
+<li><a href="#scenes">Scenes</a> goes deeper into the scene system internals</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="querying-entities"><a class="header" href="#querying-entities">Querying Entities</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>Flint includes a SQL-inspired query language for filtering and inspecting entities. This page will cover:</p>
+<ul>
+<li>Basic query syntax: <code>entities where &lt;condition&gt;</code></li>
+<li>Comparison operators: <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>, <code>contains</code></li>
+<li>Querying by archetype, component values, and nested fields</li>
+<li>Output formats: JSON and TOML</li>
+<li>Combining queries with shell tools (<code>jq</code>, pipes)</li>
+</ul>
+<p>For a full reference, see <a href="#queries">Queries</a>.</p>
+<p>Quick example:</p>
+<pre><code class="language-bash">flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml
+flint query "entities where door.locked == true" --scene levels/tavern.scene.toml
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-scene-viewer"><a class="header" href="#the-scene-viewer">The Scene Viewer</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>The Flint viewer is a real-time 3D window for validating scenes. This page will cover:</p>
+<ul>
+<li>Launching the viewer with <code>flint serve --watch</code></li>
+<li>Camera controls (orbit, pan, zoom)</li>
+<li>How hot-reload works (file watching and re-parsing)</li>
+<li>Archetype-based coloring (rooms=blue, doors=orange, furniture=green, characters=yellow)</li>
+<li>Headless rendering with <code>flint render</code></li>
+</ul>
+<p>Quick start:</p>
+<pre><code class="language-bash">flint serve levels/tavern.scene.toml --watch --schemas schemas
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Input</th><th>Action</th></tr>
+</thead>
+<tbody>
+<tr><td>Left-drag</td><td>Orbit</td></tr>
+<tr><td>Right-drag</td><td>Pan</td></tr>
+<tr><td>Scroll</td><td>Zoom</td></tr>
+<tr><td>Space</td><td>Reset camera</td></tr>
+<tr><td>R</td><td>Force reload</td></tr>
+<tr><td>Escape</td><td>Quit</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="entities-and-ecs"><a class="header" href="#entities-and-ecs">Entities and ECS</a></h1>
+<p>Flint uses an Entity-Component-System (ECS) architecture, built on top of the <a href="https://crates.io/crates/hecs">hecs</a> crate. This page explains how entities, components, and IDs work in Flint.</p>
+<h2 id="what-is-ecs"><a class="header" href="#what-is-ecs">What Is ECS?</a></h2>
+<p>In an ECS architecture:</p>
+<ul>
+<li><strong>Entities</strong> are unique identifiers (not objects with methods)</li>
+<li><strong>Components</strong> are pure data attached to entities</li>
+<li><strong>Systems</strong> are logic that operates on entities with specific component combinations</li>
+</ul>
+<p>Flint’s twist: components are <strong>dynamic</strong>. Instead of being Rust structs compiled into the engine, they’re defined at runtime as TOML schema files and stored as <code>toml::Value</code>. This means you can define new component types without recompiling the engine.</p>
+<h2 id="entity-ids"><a class="header" href="#entity-ids">Entity IDs</a></h2>
+<p>Every entity gets a stable <code>EntityId</code> — a 64-bit integer that:</p>
+<ul>
+<li>Is unique within a scene</li>
+<li>Never gets recycled (monotonically increasing)</li>
+<li>Persists across save/load cycles</li>
+<li>Is deterministic (the same scene always produces the same IDs)</li>
+</ul>
+<p>Internally, Flint maintains a bidirectional map (<code>BiMap</code>) between <code>EntityId</code> values and hecs <code>Entity</code> handles. This allows efficient lookup in both directions.</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// From flint-core
+pub struct EntityId(pub u64);
+<span class="boring">}</span></code></pre>
+<p>When loading a saved scene, the ID counter is adjusted to be higher than any existing ID, preventing collisions when new entities are created.</p>
+<h2 id="named-entities"><a class="header" href="#named-entities">Named Entities</a></h2>
+<p>While entity IDs are the internal identifier, entities in Flint are also <strong>named</strong>. The name is the key in the scene file:</p>
+<pre><code class="language-toml">[entities.front_door]     # "front_door" is the name
+archetype = "door"
+</code></pre>
+<p>Names must be unique within a scene. They’re used in:</p>
+<ul>
+<li>CLI commands: <code>--name "front_door"</code></li>
+<li>Parent references: <code>parent = "main_hall"</code></li>
+<li>Query results</li>
+<li>Constraint violation messages</li>
+</ul>
+<h2 id="components-as-dynamic-data"><a class="header" href="#components-as-dynamic-data">Components as Dynamic Data</a></h2>
+<p>In most ECS implementations, components are Rust structs:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// NOT how Flint works
+struct Transform { position: Vec3, rotation: Vec3 }
+<span class="boring">}</span></code></pre>
+<p>In Flint, components are <code>toml::Value</code> maps, defined by schema files:</p>
+<pre><code class="language-toml"># schemas/components/transform.toml
+[component.transform]
+description = "Position and rotation in 3D space"
+
+[component.transform.fields]
+position = { type = "vec3", default = [0, 0, 0] }
+rotation = { type = "vec3", default = [0, 0, 0] }
+scale = { type = "vec3", default = [1, 1, 1] }
+</code></pre>
+<p>This design trades some type safety and performance for flexibility — archetypes and components can be defined, modified, and extended without touching Rust code.</p>
+<h2 id="parent-child-relationships-1"><a class="header" href="#parent-child-relationships-1">Parent-Child Relationships</a></h2>
+<p>Entities can form hierarchies. A child entity references its parent by name:</p>
+<pre><code class="language-toml">[entities.kitchen]
+archetype = "room"
+parent = "main_hall"
+</code></pre>
+<p>The ECS layer tracks these relationships, enabling:</p>
+<ul>
+<li>Hierarchical transforms (child positions are relative to parent)</li>
+<li>Tree queries (“find all children of main_hall”)</li>
+<li>Cascading operations (deleting a parent removes children)</li>
+</ul>
+<h2 id="archetypes"><a class="header" href="#archetypes">Archetypes</a></h2>
+<p>An archetype is a named bundle of components that defines an entity “type”:</p>
+<pre><code class="language-toml"># schemas/archetypes/door.toml
+[archetype.door]
+description = "A door entity"
+components = ["transform", "door"]
+
+[archetype.door.defaults.door]
+style = "hinged"
+locked = false
+</code></pre>
+<p>When you create an entity with <code>--archetype door</code>, Flint ensures it has the required components and fills in defaults for any missing values.</p>
+<p>Archetypes are not rigid types — an entity can have components beyond what its archetype specifies. The archetype defines the <em>minimum</em> set.</p>
+<h2 id="working-with-entities-via-cli"><a class="header" href="#working-with-entities-via-cli">Working with Entities via CLI</a></h2>
+<pre><code class="language-bash"># Create an entity
+flint entity create --archetype door --name "vault_door" \
+    --scene levels/dungeon.scene.toml \
+    --schemas schemas \
+    --props '{"transform":{"position":[0,0,0]},"door":{"locked":true}}'
+
+# Delete an entity
+flint entity delete --name "vault_door" --scene levels/dungeon.scene.toml
+
+# List entities in a scene
+flint query "entities" --scene levels/dungeon.scene.toml
+
+# Filter by archetype
+flint query "entities where archetype == 'door'" --scene levels/dungeon.scene.toml
+</code></pre>
+<h2 id="further-reading"><a class="header" href="#further-reading">Further Reading</a></h2>
+<ul>
+<li><a href="#schemas">Schemas</a> — how components and archetypes are defined</li>
+<li><a href="#scenes">Scenes</a> — how entities are serialized to TOML</li>
+<li><a href="#queries">Queries</a> — how to filter and inspect entities</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="schemas"><a class="header" href="#schemas">Schemas</a></h1>
+<p>Schemas define the structure of your game world. They specify what components exist, what fields they contain, and how they bundle together into archetypes. Schemas are TOML files stored in the <code>schemas/</code> directory of your project.</p>
+<h2 id="component-schemas"><a class="header" href="#component-schemas">Component Schemas</a></h2>
+<p>A component schema defines a reusable data type. Components live in <code>schemas/components/</code>:</p>
+<pre><code class="language-toml"># schemas/components/door.toml
+[component.door]
+description = "A door that can connect spaces"
+
+[component.door.fields]
+style = { type = "enum", values = ["hinged", "sliding", "rotating"], default = "hinged" }
+locked = { type = "bool", default = false }
+open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
+</code></pre>
+<h3 id="field-types"><a class="header" href="#field-types">Field Types</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Description</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bool</code></td><td>Boolean</td><td><code>true</code> / <code>false</code></td></tr>
+<tr><td><code>i32</code></td><td>32-bit integer</td><td><code>42</code></td></tr>
+<tr><td><code>f32</code></td><td>32-bit float</td><td><code>3.14</code></td></tr>
+<tr><td><code>string</code></td><td>Text string</td><td><code>"hello"</code></td></tr>
+<tr><td><code>vec3</code></td><td>3D vector (array of 3 floats)</td><td><code>[1.0, 2.0, 3.0]</code></td></tr>
+<tr><td><code>enum</code></td><td>One of a set of string values</td><td><code>"hinged"</code></td></tr>
+<tr><td><code>entity_ref</code></td><td>Reference to another entity by name</td><td><code>"main_hall"</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="field-constraints"><a class="header" href="#field-constraints">Field Constraints</a></h3>
+<p>Fields can include validation constraints:</p>
+<pre><code class="language-toml">open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
+required_key = { type = "entity_ref", optional = true }
+</code></pre>
+<ul>
+<li><code>default</code> — value used when not explicitly set</li>
+<li><code>min</code> / <code>max</code> — numeric range bounds</li>
+<li><code>optional</code> — whether the field can be omitted (defaults to false)</li>
+<li><code>values</code> — valid options for enum types</li>
+</ul>
+<h2 id="built-in-components"><a class="header" href="#built-in-components">Built-in Components</a></h2>
+<p>Flint ships with three built-in component schemas:</p>
+<h3 id="transform"><a class="header" href="#transform">Transform</a></h3>
+<pre><code class="language-toml"># schemas/components/transform.toml
+[component.transform]
+description = "Position and rotation in 3D space"
+
+[component.transform.fields]
+position = { type = "vec3", default = [0, 0, 0] }
+rotation = { type = "vec3", default = [0, 0, 0] }
+scale = { type = "vec3", default = [1, 1, 1] }
+</code></pre>
+<h3 id="bounds"><a class="header" href="#bounds">Bounds</a></h3>
+<pre><code class="language-toml"># schemas/components/bounds.toml
+[component.bounds]
+description = "Axis-aligned bounding box"
+
+[component.bounds.fields]
+min = { type = "vec3", default = [0, 0, 0] }
+max = { type = "vec3", default = [10, 4, 10] }
+</code></pre>
+<h3 id="door"><a class="header" href="#door">Door</a></h3>
+<pre><code class="language-toml"># schemas/components/door.toml
+[component.door]
+description = "A door that can connect spaces"
+
+[component.door.fields]
+style = { type = "enum", values = ["hinged", "sliding", "rotating"], default = "hinged" }
+locked = { type = "bool", default = false }
+open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
+</code></pre>
+<h2 id="archetype-schemas"><a class="header" href="#archetype-schemas">Archetype Schemas</a></h2>
+<p>Archetypes bundle components together with defaults. They live in <code>schemas/archetypes/</code>:</p>
+<pre><code class="language-toml"># schemas/archetypes/room.toml
+[archetype.room]
+description = "A room or enclosed space"
+components = ["transform", "bounds"]
+
+[archetype.room.defaults.bounds]
+min = [0, 0, 0]
+max = [10, 4, 10]
+</code></pre>
+<p>The <code>components</code> array lists which component schemas an entity of this archetype requires. The <code>defaults</code> section provides values used when a component field isn’t explicitly set.</p>
+<h3 id="built-in-archetypes"><a class="header" href="#built-in-archetypes">Built-in Archetypes</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Archetype</th><th>Components</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>room</code></td><td>transform, bounds</td><td>An enclosed space</td></tr>
+<tr><td><code>door</code></td><td>transform, door</td><td>A door entity</td></tr>
+<tr><td><code>furniture</code></td><td>transform, bounds</td><td>A piece of furniture</td></tr>
+<tr><td><code>character</code></td><td>transform</td><td>A character or NPC</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="introspecting-schemas"><a class="header" href="#introspecting-schemas">Introspecting Schemas</a></h2>
+<p>Use the CLI to inspect schema definitions:</p>
+<pre><code class="language-bash"># Show a component schema
+flint schema door --schemas schemas
+
+# Show an archetype schema
+flint schema room --schemas schemas
+</code></pre>
+<p>This outputs the component fields, types, defaults, and constraints — useful for both humans exploring the schema and AI agents discovering what fields are available.</p>
+<h2 id="creating-custom-schemas"><a class="header" href="#creating-custom-schemas">Creating Custom Schemas</a></h2>
+<p>To add a new component:</p>
+<ol>
+<li>Create a file in <code>schemas/components/</code>:</li>
+</ol>
+<pre><code class="language-toml"># schemas/components/health.toml
+[component.health]
+description = "Hit points and damage tracking"
+
+[component.health.fields]
+max_hp = { type = "i32", default = 100, min = 1 }
+current_hp = { type = "i32", default = 100, min = 0 }
+armor = { type = "f32", default = 0.0, min = 0.0, max = 1.0 }
+</code></pre>
+<ol start="2">
+<li>Reference it in an archetype:</li>
+</ol>
+<pre><code class="language-toml"># schemas/archetypes/enemy.toml
+[archetype.enemy]
+description = "A hostile NPC"
+components = ["transform", "health"]
+
+[archetype.enemy.defaults.health]
+max_hp = 50
+current_hp = 50
+</code></pre>
+<ol start="3">
+<li>Use it in a scene:</li>
+</ol>
+<pre><code class="language-toml">[entities.goblin]
+archetype = "enemy"
+
+[entities.goblin.transform]
+position = [10, 0, 5]
+
+[entities.goblin.health]
+max_hp = 30
+current_hp = 30
+armor = 0.1
+</code></pre>
+<p>No engine recompilation needed — schemas are loaded at runtime from the TOML files.</p>
+<h2 id="further-reading-1"><a class="header" href="#further-reading-1">Further Reading</a></h2>
+<ul>
+<li><a href="#entities-and-ecs">Entities and ECS</a> — how schemas connect to the entity system</li>
+<li><a href="#constraints">Constraints</a> — rules that validate entities against schemas</li>
+<li><a href="#scenes">Scenes</a> — how schema-defined entities are serialized</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="scenes"><a class="header" href="#scenes">Scenes</a></h1>
+<p>A scene in Flint is a TOML file that describes a collection of entities and their data. Scenes are the primary unit of content — they’re what you load, save, query, validate, and render.</p>
+<h2 id="file-format"><a class="header" href="#file-format">File Format</a></h2>
+<p>Scene files use the <code>.scene.toml</code> extension and have two sections:</p>
+<pre><code class="language-toml"># Metadata
+[scene]
+name = "The Rusty Flint Tavern"
+version = "1.0"
+description = "A showcase scene demonstrating Flint engine capabilities"
+
+# Entity definitions
+[entities.main_hall]
+archetype = "room"
+# ...
+</code></pre>
+<h3 id="the-scene-table"><a class="header" href="#the-scene-table">The <code>[scene]</code> Table</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>yes</td><td>Human-readable scene name</td></tr>
+<tr><td><code>version</code></td><td>yes</td><td>Format version (currently “1.0”)</td></tr>
+<tr><td><code>description</code></td><td>no</td><td>Optional description</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="the-entities-tables"><a class="header" href="#the-entities-tables">The <code>[entities.*]</code> Tables</a></h3>
+<p>Each entity is a table under <code>[entities]</code>, keyed by its unique name:</p>
+<pre><code class="language-toml">[entities.front_door]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_door.transform]
+position = [0, 0, 5]
+
+[entities.front_door.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+</code></pre>
+<p><strong>Top-level fields:</strong></p>
+<ul>
+<li><code>archetype</code> — the archetype schema name (optional but recommended)</li>
+<li><code>parent</code> — name of the parent entity (optional)</li>
+</ul>
+<p><strong>Component tables</strong> are nested under the entity. Each component name (e.g., <code>transform</code>, <code>door</code>, <code>bounds</code>) corresponds to a schema in <code>schemas/components/</code>.</p>
+<h2 id="scene-operations"><a class="header" href="#scene-operations">Scene Operations</a></h2>
+<h3 id="creating-a-scene"><a class="header" href="#creating-a-scene">Creating a Scene</a></h3>
+<pre><code class="language-bash">flint scene create levels/tavern.scene.toml --name "The Tavern"
+</code></pre>
+<h3 id="listing-scenes"><a class="header" href="#listing-scenes">Listing Scenes</a></h3>
+<pre><code class="language-bash">flint scene list
+</code></pre>
+<h3 id="getting-scene-info"><a class="header" href="#getting-scene-info">Getting Scene Info</a></h3>
+<pre><code class="language-bash">flint scene info levels/tavern.scene.toml
+</code></pre>
+<h3 id="loading-and-saving"><a class="header" href="#loading-and-saving">Loading and Saving</a></h3>
+<p>The <code>flint-scene</code> crate handles serialization. Scenes are loaded into the ECS world as entities with dynamic components, and saved back to TOML with stable ordering.</p>
+<p>When a scene is loaded:</p>
+<ol>
+<li>The TOML is parsed into a scene structure</li>
+<li>Each entity definition creates an ECS entity with a stable <code>EntityId</code></li>
+<li>Parent-child relationships are established</li>
+<li>The entity ID counter is adjusted to be above any existing ID (preventing collisions on subsequent creates)</li>
+</ol>
+<p>When a scene is saved:</p>
+<ol>
+<li>All entities are serialized to their TOML representation</li>
+<li>Component data is written as nested tables</li>
+<li>Parent references use entity names (not internal IDs)</li>
+</ol>
+<h2 id="reload-behavior"><a class="header" href="#reload-behavior">Reload Behavior</a></h2>
+<p>Scene reload is a full re-parse. When <code>flint serve --watch</code> detects a file change:</p>
+<ol>
+<li>The entire scene file is re-read and re-parsed</li>
+<li>The old world state is replaced with the new one</li>
+<li>The renderer picks up the new state on the next frame</li>
+</ol>
+<p>This approach is simple and correct — there’s no incremental diffing that could get out of sync. For the scene sizes Flint targets, re-parsing is fast enough.</p>
+<h2 id="scene-as-source-of-truth"><a class="header" href="#scene-as-source-of-truth">Scene as Source of Truth</a></h2>
+<p>A key design decision: <strong>the scene file is the source of truth</strong>, not the in-memory state. This means:</p>
+<ul>
+<li>You can edit the file with any text editor</li>
+<li>AI agents can write TOML directly</li>
+<li>Git diffs show exactly what changed</li>
+<li>No hidden state lives only in memory</li>
+</ul>
+<p>The CLI commands (<code>entity create</code>, <code>entity delete</code>) modify the scene file, and the in-memory world loads from that file. The viewer watches the file, not the internal state.</p>
+<h2 id="example-the-showcase-scene"><a class="header" href="#example-the-showcase-scene">Example: The Showcase Scene</a></h2>
+<p>The demo scene <code>demo/showcase.scene.toml</code> demonstrates the full format:</p>
+<pre><code class="language-toml">[scene]
+name = "The Rusty Flint Tavern"
+version = "1.0"
+description = "A showcase scene demonstrating Flint engine capabilities"
+
+# Rooms - rendered as blue wireframe boxes
+[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [0, 0, 0]
+
+[entities.main_hall.bounds]
+min = [-7, 0, -5]
+max = [7, 4, 5]
+
+# Doors - rendered as orange boxes
+[entities.front_entrance]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_entrance.transform]
+position = [0, 0, 5]
+
+[entities.front_entrance.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+
+# Furniture - rendered as green boxes
+[entities.bar_counter]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bar_counter.transform]
+position = [-4, 0, 0]
+
+[entities.bar_counter.bounds]
+min = [-1.5, 0, -3]
+max = [0, 1.2, 3]
+
+# Characters - rendered as yellow boxes
+[entities.bartender]
+archetype = "character"
+parent = "main_hall"
+
+[entities.bartender.transform]
+position = [-5, 0, 0]
+</code></pre>
+<p>This scene defines 4 rooms, 4 doors, 9 pieces of furniture, and 6 characters — all in readable, diffable TOML.</p>
+<h2 id="further-reading-2"><a class="header" href="#further-reading-2">Further Reading</a></h2>
+<ul>
+<li><a href="#your-first-scene">Your First Scene</a> — hands-on guide to building a scene</li>
+<li><a href="#entities-and-ecs">Entities and ECS</a> — how scene entities map to the ECS</li>
+<li><a href="#schemas">Schemas</a> — how component structure is defined</li>
+<li><a href="#constraints">Constraints</a> — how to validate scenes</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="queries"><a class="header" href="#queries">Queries</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>Flint’s query system provides a SQL-inspired language for filtering and inspecting entities. This page will cover:</p>
+<ul>
+<li>Query grammar (PEG, parsed by pest)</li>
+<li>Full operator reference: <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>, <code>contains</code></li>
+<li>Querying nested fields with dot notation (<code>door.locked</code>)</li>
+<li>Boolean logic: <code>and</code>, <code>or</code>, <code>not</code></li>
+<li>How queries are used in constraint definitions</li>
+<li>Performance characteristics and limitations</li>
+</ul>
+<p>Grammar overview:</p>
+<pre><code>entities where &lt;condition&gt;
+
+&lt;condition&gt; := &lt;field&gt; &lt;op&gt; &lt;value&gt;
+            | &lt;condition&gt; and &lt;condition&gt;
+            | &lt;condition&gt; or &lt;condition&gt;
+            | not &lt;condition&gt;
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="constraints"><a class="header" href="#constraints">Constraints</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>Constraints are declarative validation rules that define what a correct scene looks like. This page will cover:</p>
+<ul>
+<li>Constraint file format (TOML in <code>schemas/constraints/</code>)</li>
+<li>Constraint kinds: <code>required_component</code>, <code>required_child</code>, <code>value_range</code>, <code>reference_valid</code>, <code>query_rule</code></li>
+<li>Auto-fix strategies: <code>add_child</code>, <code>set_default</code>, <code>remove_invalid</code>, <code>assign_from_parent</code></li>
+<li>The validation loop: evaluate, fix, re-evaluate, detect cycles</li>
+<li>CLI usage: <code>flint validate</code>, <code>--fix</code>, <code>--dry-run</code>, <code>--output-diff</code></li>
+<li>JSON and text output formats</li>
+</ul>
+<p>See the <a href="#writing-constraints">Writing Constraints</a> guide for practical examples.</p>
+<p>Quick start:</p>
+<pre><code class="language-bash">flint validate levels/tavern.scene.toml --schemas schemas
+flint validate levels/tavern.scene.toml --fix --dry-run
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="assets"><a class="header" href="#assets">Assets</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>Flint uses a content-addressed asset system with SHA-256 hashing. This page will cover:</p>
+<ul>
+<li>Content addressing: how files are identified by hash</li>
+<li>Storage layout: <code>.flint/assets/&lt;prefix&gt;/&lt;hash&gt;.&lt;ext&gt;</code></li>
+<li>Asset sidecar files (<code>.asset.toml</code>) for metadata</li>
+<li>Importing assets: <code>flint asset import</code></li>
+<li>Browsing the catalog: <code>flint asset list</code>, <code>flint asset info</code></li>
+<li>Resolution strategies: <code>strict</code>, <code>placeholder</code></li>
+<li>glTF/GLB import with mesh, material, and texture extraction</li>
+<li>Deduplication and change detection</li>
+</ul>
+<p>See the <a href="#importing-assets">Importing Assets</a> guide for practical examples.</p>
+<p>Quick start:</p>
+<pre><code class="language-bash">flint asset import models/chair.glb --name tavern_chair --tags furniture,medieval
+flint asset list --type mesh
+flint asset resolve levels/tavern.scene.toml --strategy strict
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="rendering"><a class="header" href="#rendering">Rendering</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>Flint uses wgpu for cross-platform GPU rendering. This page will cover:</p>
+<ul>
+<li>wgpu backend selection (Vulkan, Metal, DX12)</li>
+<li>Current renderer: archetype-based colored boxes with wireframes</li>
+<li>Viewer mode vs headless mode</li>
+<li>The <code>ApplicationHandler</code> pattern (winit 0.30)</li>
+<li>Camera system: orbit, pan, zoom</li>
+<li>Ground grid rendering</li>
+<li>Planned: PBR materials, shadow mapping, post-processing, glTF mesh rendering</li>
+</ul>
+<p>Headless rendering for CI:</p>
+<pre><code class="language-bash">flint render levels/tavern.scene.toml --output preview.png --width 1920 --height 1080
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="building-a-tavern"><a class="header" href="#building-a-tavern">Building a Tavern</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>A step-by-step tutorial that builds a complete tavern scene from scratch using only CLI commands. This guide will cover:</p>
+<ul>
+<li>Project initialization with <code>flint init</code></li>
+<li>Building rooms with parent-child hierarchies</li>
+<li>Placing doors with component properties</li>
+<li>Furnishing spaces with tables, chairs, and decorations</li>
+<li>Adding characters (bartender, patrons, a mysterious stranger)</li>
+<li>Running queries to inspect the scene</li>
+<li>Validating against constraints</li>
+<li>Viewing the result with <code>flint serve --watch</code></li>
+</ul>
+<p>This tutorial follows the same steps as the <code>demo/build-tavern.ps1</code> showcase script, explained in detail.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="writing-constraints"><a class="header" href="#writing-constraints">Writing Constraints</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>A practical guide to authoring constraint rules for your project. This guide will cover:</p>
+<ul>
+<li>Anatomy of a constraint TOML file</li>
+<li>Choosing the right constraint kind for your rule</li>
+<li>Writing effective query selectors</li>
+<li>Adding auto-fix strategies</li>
+<li>Testing constraints with <code>--dry-run</code></li>
+<li>Debugging constraint evaluation order</li>
+<li>Cascade detection and cycle prevention</li>
+<li>Best practices for organizing constraint files</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="importing-assets"><a class="header" href="#importing-assets">Importing Assets</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>A practical guide to importing and managing assets in Flint. This guide will cover:</p>
+<ul>
+<li>Importing glTF/GLB files with <code>flint asset import</code></li>
+<li>Understanding the content-addressed storage layout</li>
+<li>Working with <code>.asset.toml</code> sidecar metadata</li>
+<li>Tagging and organizing assets</li>
+<li>Resolving asset references in scenes</li>
+<li>Deduplication: what happens when you import the same file twice</li>
+<li>Preparing assets for future rendering (mesh, material, texture extraction)</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="headless-rendering"><a class="header" href="#headless-rendering">Headless Rendering</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>A guide to rendering scenes without a window, for CI pipelines and automated screenshots. This guide will cover:</p>
+<ul>
+<li>The <code>flint render</code> command and its options</li>
+<li>Setting camera position, angle, and field of view</li>
+<li>Output resolution and format</li>
+<li>Using headless rendering in CI/CD pipelines</li>
+<li>Visual regression testing with baseline comparisons</li>
+<li>Disabling the ground grid for clean screenshots</li>
+</ul>
+<p>Quick example:</p>
+<pre><code class="language-bash">flint render levels/tavern.scene.toml \
+    --output preview.png \
+    --width 1920 --height 1080 \
+    --distance 30 --yaw 45 --pitch 30
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ai-agent-workflow"><a class="header" href="#ai-agent-workflow">AI Agent Workflow</a></h1>
+<blockquote>
+<p>This page is a stub. Content coming soon.</p>
+</blockquote>
+<p>A guide for AI agents (and their developers) working with Flint. This guide will cover:</p>
+<ul>
+<li>The agent interaction loop: create, validate, query, render</li>
+<li>Structured I/O: JSON output for machine parsing</li>
+<li>Using queries for state inspection</li>
+<li>Constraint validation as automated feedback</li>
+<li>Headless rendering for visual verification</li>
+<li>Example: an agent building a complete scene from a text description</li>
+<li>Error handling patterns for agent workflows</li>
+<li>Best practices for deterministic scene construction</li>
+</ul>
+<p>Example agent workflow:</p>
+<pre><code class="language-bash"># 1. Create scene and entities
+flint scene create levels/dungeon.scene.toml --name "Dungeon Level 1"
+flint entity create --archetype room --name "entrance" --scene levels/dungeon.scene.toml ...
+
+# 2. Validate
+flint validate levels/dungeon.scene.toml --format json
+
+# 3. Query to verify
+flint query "entities where archetype == 'door'" --scene levels/dungeon.scene.toml --format json
+
+# 4. Render a preview
+flint render levels/dungeon.scene.toml --output preview.png
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
+<blockquote>
+<p>This page is a stub. Full reference coming soon.</p>
+</blockquote>
+<p>Flint’s CLI is the primary interface for all engine operations. Below is a summary of available commands.</p>
+<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>flint init &lt;name&gt;</code></td><td>Initialize a new project</td></tr>
+<tr><td><code>flint entity create</code></td><td>Create an entity in a scene</td></tr>
+<tr><td><code>flint entity delete</code></td><td>Delete an entity from a scene</td></tr>
+<tr><td><code>flint scene create</code></td><td>Create a new scene file</td></tr>
+<tr><td><code>flint scene list</code></td><td>List scene files</td></tr>
+<tr><td><code>flint scene info</code></td><td>Show scene metadata and entity count</td></tr>
+<tr><td><code>flint query "&lt;query&gt;"</code></td><td>Query entities with the Flint query language</td></tr>
+<tr><td><code>flint schema &lt;name&gt;</code></td><td>Inspect a component or archetype schema</td></tr>
+<tr><td><code>flint validate &lt;scene&gt;</code></td><td>Validate a scene against constraints</td></tr>
+<tr><td><code>flint asset import</code></td><td>Import a file into the asset store</td></tr>
+<tr><td><code>flint asset list</code></td><td>List assets in the catalog</td></tr>
+<tr><td><code>flint asset info</code></td><td>Show details for a specific asset</td></tr>
+<tr><td><code>flint asset resolve</code></td><td>Check asset references in a scene</td></tr>
+<tr><td><code>flint serve &lt;scene&gt;</code></td><td>Launch the hot-reload viewer</td></tr>
+<tr><td><code>flint render &lt;scene&gt;</code></td><td>Render a scene to PNG (headless)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="common-flags"><a class="header" href="#common-flags">Common Flags</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--scene &lt;path&gt;</code></td><td>Path to scene file</td></tr>
+<tr><td><code>--schemas &lt;path&gt;</code></td><td>Path to schemas directory (default: <code>schemas</code>)</td></tr>
+<tr><td><code>--format &lt;fmt&gt;</code></td><td>Output format: <code>json</code>, <code>toml</code>, or <code>text</code></td></tr>
+<tr><td><code>--watch</code></td><td>Watch for file changes (with <code>serve</code>)</td></tr>
+<tr><td><code>--fix</code></td><td>Apply auto-fixes (with <code>validate</code>)</td></tr>
+<tr><td><code>--dry-run</code></td><td>Preview changes without applying</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<pre><code class="language-bash"># Get help
+flint --help
+flint &lt;command&gt; --help
+
+# Examples
+flint init my-game
+flint serve levels/tavern.scene.toml --watch --schemas schemas
+flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="file-formats"><a class="header" href="#file-formats">File Formats</a></h1>
+<blockquote>
+<p>This page is a stub. Full reference coming soon.</p>
+</blockquote>
+<p>All Flint data formats use TOML. This page will provide a complete reference for:</p>
+<h2 id="scene-files-scenetoml"><a class="header" href="#scene-files-scenetoml">Scene Files (<code>.scene.toml</code>)</a></h2>
+<pre><code class="language-toml">[scene]
+name = "Scene Name"
+version = "1.0"
+
+[entities.&lt;name&gt;]
+archetype = "&lt;archetype&gt;"
+parent = "&lt;parent_name&gt;"
+
+[entities.&lt;name&gt;.&lt;component&gt;]
+field = value
+</code></pre>
+<h2 id="component-schemas-schemascomponentstoml"><a class="header" href="#component-schemas-schemascomponentstoml">Component Schemas (<code>schemas/components/*.toml</code>)</a></h2>
+<pre><code class="language-toml">[component.&lt;name&gt;]
+description = "..."
+
+[component.&lt;name&gt;.fields]
+field_name = { type = "&lt;type&gt;", default = &lt;value&gt; }
+</code></pre>
+<h2 id="archetype-schemas-schemasarchetypestoml"><a class="header" href="#archetype-schemas-schemasarchetypestoml">Archetype Schemas (<code>schemas/archetypes/*.toml</code>)</a></h2>
+<pre><code class="language-toml">[archetype.&lt;name&gt;]
+description = "..."
+components = ["comp1", "comp2"]
+
+[archetype.&lt;name&gt;.defaults.&lt;component&gt;]
+field = value
+</code></pre>
+<h2 id="constraint-files-schemasconstraintstoml"><a class="header" href="#constraint-files-schemasconstraintstoml">Constraint Files (<code>schemas/constraints/*.toml</code>)</a></h2>
+<pre><code class="language-toml">[[constraint]]
+name = "rule_name"
+query = "entities where ..."
+severity = "error"
+message = "..."
+
+[constraint.kind]
+type = "&lt;kind&gt;"
+</code></pre>
+<h2 id="asset-sidecars-assetsassettoml"><a class="header" href="#asset-sidecars-assetsassettoml">Asset Sidecars (<code>assets/**/*.asset.toml</code>)</a></h2>
+<pre><code class="language-toml">[asset]
+name = "asset_name"
+type = "mesh"
+hash = "sha256:..."
+source_path = "..."
+tags = ["tag1", "tag2"]
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="architecture-overview"><a class="header" href="#architecture-overview">Architecture Overview</a></h1>
+<p>Flint is structured as a seven-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction — from the CLI down to core types.</p>
+<h2 id="workspace-structure"><a class="header" href="#workspace-structure">Workspace Structure</a></h2>
+<pre><code>flint/
+├── crates/
+│   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
+│   ├── flint-query/        # PEG query language (pest parser)
+│   ├── flint-scene/        # TOML scene serialization/deserialization
+│   ├── flint-render/       # wgpu-based 3D renderer
+│   ├── flint-constraint/   # Constraint definitions and validation engine
+│   ├── flint-asset/        # Content-addressed asset storage and catalog
+│   ├── flint-import/       # File importers (glTF/GLB)
+│   ├── flint-ecs/          # hecs wrapper with stable IDs, names, hierarchy
+│   ├── flint-schema/       # Component/archetype schema loading and validation
+│   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
+├── schemas/                # Default component, archetype, and constraint definitions
+├── demo/                   # Showcase scene and build scripts
+└── docs/                   # This documentation
+</code></pre>
+<h2 id="design-decisions"><a class="header" href="#design-decisions">Design Decisions</a></h2>
+<h3 id="dynamic-components"><a class="header" href="#dynamic-components">Dynamic Components</a></h3>
+<p>The most significant architectural choice: components are stored as <code>toml::Value</code> rather than Rust types. This means:</p>
+<ul>
+<li><strong>Archetypes are runtime data</strong>, not compiled types</li>
+<li>New components can be defined in TOML without recompiling</li>
+<li>The schema system validates component data against definitions</li>
+<li>Trade-off: less compile-time safety, more flexibility</li>
+</ul>
+<h3 id="stable-entity-ids"><a class="header" href="#stable-entity-ids">Stable Entity IDs</a></h3>
+<p>Entity IDs are monotonically increasing 64-bit integers that never recycle. A <code>BiMap</code> maintains the mapping between <code>EntityId</code> and hecs <code>Entity</code> handles. On scene load, the ID counter adjusts to be above the maximum existing ID.</p>
+<h3 id="scene-as-source-of-truth-1"><a class="header" href="#scene-as-source-of-truth-1">Scene as Source of Truth</a></h3>
+<p>The TOML file on disk is canonical. In-memory state is derived from it. The <code>serve --watch</code> viewer re-parses the entire file on change rather than attempting incremental updates. This is simpler and avoids synchronization bugs.</p>
+<h3 id="error-handling"><a class="header" href="#error-handling">Error Handling</a></h3>
+<p>All crates use <code>thiserror</code> for error types. Each crate defines its own error enum and a <code>Result&lt;T&gt;</code> type alias. Errors propagate upward through the crate hierarchy.</p>
+<h2 id="technology-choices"><a class="header" href="#technology-choices">Technology Choices</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Component</th><th>Technology</th><th>Rationale</th></tr>
+</thead>
+<tbody>
+<tr><td>Language</td><td>Rust</td><td>Performance, safety, game ecosystem</td></tr>
+<tr><td>ECS</td><td>hecs</td><td>Lightweight, standalone, well-tested</td></tr>
+<tr><td>Rendering</td><td>wgpu 23</td><td>Cross-platform, modern GPU API</td></tr>
+<tr><td>Windowing</td><td>winit 0.30</td><td><code>ApplicationHandler</code> trait pattern</td></tr>
+<tr><td>Scene format</td><td>TOML</td><td>Human-readable, diffable, good Rust support</td></tr>
+<tr><td>Query parser</td><td>pest</td><td>PEG grammar, good error messages</td></tr>
+<tr><td>CLI framework</td><td>clap (derive)</td><td>Ergonomic, well-documented</td></tr>
+<tr><td>Error handling</td><td>thiserror + anyhow</td><td>Typed errors in libraries, flexible in binary</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="data-flow"><a class="header" href="#data-flow">Data Flow</a></h2>
+<p>Commands enter through the CLI and flow downward through the crate hierarchy:</p>
+<pre><code>User / AI Agent
+      │
+      ▼
+  flint-cli          Parse command, dispatch to subsystem
+      │
+      ├──► flint-query        Parse and execute queries
+      ├──► flint-scene        Load/save scene TOML
+      ├──► flint-render       Render scene (viewer or headless)
+      ├──► flint-constraint   Validate scene against rules
+      ├──► flint-asset        Manage content-addressed assets
+      └──► flint-import       Import external files (glTF)
+              │
+              ▼
+          flint-ecs           Entity storage, ID mapping, hierarchy
+              │
+              ▼
+          flint-schema        Component/archetype definitions
+              │
+              ▼
+          flint-core          EntityId, Transform, Vec3, Color, errors
+</code></pre>
+<h2 id="crate-details"><a class="header" href="#crate-details">Crate Details</a></h2>
+<h3 id="flint-core"><a class="header" href="#flint-core">flint-core</a></h3>
+<p>Fundamental types shared by all crates. No external dependencies beyond <code>thiserror</code> and <code>serde</code>.</p>
+<ul>
+<li><code>EntityId</code> — stable 64-bit entity identifier</li>
+<li><code>ContentHash</code> — SHA-256 based content addressing</li>
+<li><code>Transform</code>, <code>Vec3</code>, <code>Color</code> — geometric primitives</li>
+<li><code>FlintError</code> — base error type</li>
+</ul>
+<h3 id="flint-schema"><a class="header" href="#flint-schema">flint-schema</a></h3>
+<p>Loads component and archetype definitions from TOML files. Provides a registry for introspection.</p>
+<h3 id="flint-ecs"><a class="header" href="#flint-ecs">flint-ecs</a></h3>
+<p>Wraps hecs with:</p>
+<ul>
+<li><code>BiMap&lt;EntityId, hecs::Entity&gt;</code> for stable ID mapping</li>
+<li>Named entity lookup</li>
+<li>Parent-child relationship tracking</li>
+<li>Atomic ID counter for deterministic allocation</li>
+</ul>
+<h3 id="flint-scene"><a class="header" href="#flint-scene">flint-scene</a></h3>
+<p>TOML serialization and deserialization for scenes. Handles the mapping between on-disk format and in-memory ECS world.</p>
+<h3 id="flint-query"><a class="header" href="#flint-query">flint-query</a></h3>
+<p>PEG parser (pest) for the query language. Parses queries like <code>entities where archetype == 'door'</code> and executes them against the ECS world.</p>
+<p>Supported operators: <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>, <code>contains</code></p>
+<h3 id="flint-constraint"><a class="header" href="#flint-constraint">flint-constraint</a></h3>
+<p>Constraint engine that validates scenes against declarative TOML rules. Supports required components, value ranges, reference validity, and custom query rules. Includes an auto-fix system with cascade detection.</p>
+<h3 id="flint-asset"><a class="header" href="#flint-asset">flint-asset</a></h3>
+<p>Content-addressed asset storage with SHA-256 hashing. Manages an asset catalog with name/hash/type/tag indexing. Supports resolution strategies (strict, placeholder).</p>
+<h3 id="flint-import"><a class="header" href="#flint-import">flint-import</a></h3>
+<p>File importers for bringing external assets into the content-addressed store. Currently supports glTF/GLB with mesh, material, and texture extraction.</p>
+<h3 id="flint-render"><a class="header" href="#flint-render">flint-render</a></h3>
+<p>wgpu-based renderer. Two modes:</p>
+<ul>
+<li><strong>Viewer mode</strong> — interactive window with orbit camera, hot-reload via <code>serve --watch</code></li>
+<li><strong>Headless mode</strong> — render to PNG for CI and automated screenshots</li>
+</ul>
+<p>Currently renders entities as archetype-colored boxes (rooms as blue wireframes, doors as orange, furniture as green, characters as yellow).</p>
+<h3 id="flint-cli"><a class="header" href="#flint-cli">flint-cli</a></h3>
+<p>Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: <code>init</code>, <code>entity</code>, <code>scene</code>, <code>query</code>, <code>schema</code>, <code>serve</code>, <code>validate</code>, <code>asset</code>, <code>render</code>.</p>
+<h2 id="further-reading-3"><a class="header" href="#further-reading-3">Further Reading</a></h2>
+<ul>
+<li><a href="#crate-dependency-graph">Crate Dependency Graph</a> — visual dependency diagram</li>
+<li><a href="#design-principles">Design Principles</a> — the principles behind these decisions</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="crate-dependency-graph"><a class="header" href="#crate-dependency-graph">Crate Dependency Graph</a></h1>
+<p>This page shows how Flint’s crates depend on each other. Dependencies flow downward — higher crates depend on lower ones, never the reverse.</p>
+<h2 id="dependency-diagram"><a class="header" href="#dependency-diagram">Dependency Diagram</a></h2>
+<pre><code>                        ┌─────────────┐
+                        │  flint-cli  │
+                        │  (binary)   │
+                        └──────┬──────┘
+                               │
+          ┌────────┬───────┬───┴───┬────────┬────────┬────────┐
+          │        │       │       │        │        │        │
+          ▼        ▼       ▼       ▼        ▼        ▼        ▼
+     ┌─────────┐ ┌─────┐ ┌─────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
+     │  query  │ │scene│ │serve│ │render│ │const-│ │asset │ │import│
+     │         │ │     │ │     │ │      │ │raint │ │      │ │      │
+     └────┬────┘ └──┬──┘ └──┬──┘ └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘
+          │         │       │       │        │        │        │
+          │         │       │       │     ┌──┘        │        │
+          │         │       │       │     │           │        │
+          ▼         ▼       ▼       ▼     ▼           ▼        ▼
+     ┌──────────────────────────────────────────┐  ┌──────────────┐
+     │               flint-ecs                  │  │              │
+     │  (hecs wrapper, stable IDs, hierarchy)   │  │  flint-asset │
+     └─────────────────┬────────────────────────┘  └──────┬───────┘
+                       │                                  │
+                       ▼                                  │
+               ┌──────────────┐                           │
+               │ flint-schema │                           │
+               │              │                           │
+               └──────┬───────┘                           │
+                      │                                   │
+                      ▼                                   ▼
+               ┌─────────────────────────────────────────────┐
+               │              flint-core                     │
+               │  (EntityId, Vec3, Transform, ContentHash)   │
+               └─────────────────────────────────────────────┘
+</code></pre>
+<h2 id="dependency-details"><a class="header" href="#dependency-details">Dependency Details</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Crate</th><th>Depends On</th><th>Depended On By</th></tr>
+</thead>
+<tbody>
+<tr><td><code>flint-core</code></td><td><em>(none)</em></td><td>all other crates</td></tr>
+<tr><td><code>flint-schema</code></td><td>core</td><td>ecs, constraint</td></tr>
+<tr><td><code>flint-ecs</code></td><td>core, schema</td><td>scene, query, render, constraint, cli</td></tr>
+<tr><td><code>flint-query</code></td><td>core, ecs</td><td>constraint, cli</td></tr>
+<tr><td><code>flint-scene</code></td><td>core, ecs, schema</td><td>cli</td></tr>
+<tr><td><code>flint-constraint</code></td><td>core, ecs, schema, query</td><td>cli</td></tr>
+<tr><td><code>flint-asset</code></td><td>core</td><td>import, cli</td></tr>
+<tr><td><code>flint-import</code></td><td>core, asset</td><td>cli</td></tr>
+<tr><td><code>flint-render</code></td><td>core, ecs, schema</td><td>cli</td></tr>
+<tr><td><code>flint-cli</code></td><td>all crates</td><td><em>(binary entry point)</em></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="key-properties"><a class="header" href="#key-properties">Key Properties</a></h2>
+<p><strong>Acyclic.</strong> The dependency graph has no cycles. This is enforced by Cargo and ensures clean compilation ordering.</p>
+<p><strong>Layered.</strong> Crates form clear layers:</p>
+<ol>
+<li><strong>Core</strong> — fundamental types (<code>flint-core</code>)</li>
+<li><strong>Schema</strong> — data definitions (<code>flint-schema</code>)</li>
+<li><strong>Storage</strong> — entity and asset management (<code>flint-ecs</code>, <code>flint-asset</code>)</li>
+<li><strong>Logic</strong> — query, scene, constraint, import, render</li>
+<li><strong>Interface</strong> — CLI binary (<code>flint-cli</code>)</li>
+</ol>
+<p><strong>Independent subsystems.</strong> The constraint system, asset system, and render system don’t depend on each other. They all flow through the CLI. This means you can build and test each subsystem in isolation.</p>
+<h2 id="external-dependencies"><a class="header" href="#external-dependencies">External Dependencies</a></h2>
+<p>Key third-party crates used across the workspace:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Crate</th><th>Used By</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>hecs</code></td><td>flint-ecs</td><td>Underlying ECS implementation</td></tr>
+<tr><td><code>toml</code></td><td>flint-schema, flint-scene, flint-constraint, flint-asset</td><td>TOML parsing and serialization</td></tr>
+<tr><td><code>serde</code></td><td>all crates</td><td>Serialization framework</td></tr>
+<tr><td><code>pest</code></td><td>flint-query</td><td>PEG parser generator</td></tr>
+<tr><td><code>wgpu</code></td><td>flint-render</td><td>GPU abstraction layer</td></tr>
+<tr><td><code>winit</code></td><td>flint-render</td><td>Window management</td></tr>
+<tr><td><code>clap</code></td><td>flint-cli</td><td>Command-line argument parsing</td></tr>
+<tr><td><code>thiserror</code></td><td>all crates</td><td>Error derive macros</td></tr>
+<tr><td><code>sha2</code></td><td>flint-core, flint-asset</td><td>SHA-256 hashing</td></tr>
+<tr><td><code>gltf</code></td><td>flint-import</td><td>glTF file parsing</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="roadmap"><a class="header" href="#roadmap">Roadmap</a></h1>
+<p>Flint’s development is organized into five phases. Each phase delivers a usable milestone that builds on the previous one.</p>
+<h2 id="phase-1-foundation--cli--query--schema"><a class="header" href="#phase-1-foundation--cli--query--schema">Phase 1: Foundation — CLI + Query + Schema</a></h2>
+<p><strong>Status: Complete</strong></p>
+<p>The foundation phase established the core data model and CLI interface. An agent (or human) can create, query, and modify scenes entirely through commands.</p>
+<p><strong>Delivered:</strong></p>
+<ul>
+<li><code>flint-core</code> — Entity IDs, content hashing, fundamental types</li>
+<li><code>flint-schema</code> — Component registry, archetype definitions, TOML-based introspection</li>
+<li><code>flint-ecs</code> — hecs integration with stable IDs, named entities, parent-child hierarchy</li>
+<li><code>flint-scene</code> — TOML scene serialization and deserialization</li>
+<li><code>flint-query</code> — PEG query language with pest parser</li>
+<li><code>flint-cli</code> — CRUD operations for entities and scenes</li>
+</ul>
+<p><strong>Milestone:</strong> <code>flint entity create --archetype door</code> works. <code>flint query "entities"</code> returns results.</p>
+<h2 id="phase-2-constraints--assets"><a class="header" href="#phase-2-constraints--assets">Phase 2: Constraints + Assets</a></h2>
+<p><strong>Status: Complete</strong></p>
+<p>The validation and asset management phase. Scenes can now be checked against declarative rules, and external files can be imported into a content-addressed store.</p>
+<p><strong>Delivered:</strong></p>
+<ul>
+<li><code>flint-constraint</code> — Constraint definitions, validation engine, auto-fix with cascade detection</li>
+<li><code>flint-asset</code> — Content-addressed storage (SHA-256), asset catalog with name/hash/type/tag indexing</li>
+<li><code>flint-import</code> — glTF/GLB importer with mesh, material, and texture extraction</li>
+</ul>
+<p><strong>Milestone:</strong> <code>flint validate --fix</code> automatically fixes constraint violations. <code>flint asset import model.glb</code> stores and catalogs assets.</p>
+<h2 id="phase-3-rendering--validation"><a class="header" href="#phase-3-rendering--validation">Phase 3: Rendering + Validation</a></h2>
+<p><strong>Status: Complete (basic)</strong></p>
+<p>The visual validation phase. Humans can now see what the agent built.</p>
+<p><strong>Delivered:</strong></p>
+<ul>
+<li><code>flint-render</code> — wgpu-based renderer with archetype-colored boxes</li>
+<li>Scene viewer with orbit camera, hot-reload via <code>serve --watch</code></li>
+<li>Headless rendering for CI (<code>flint render --headless</code>)</li>
+</ul>
+<p><strong>Milestone:</strong> <code>flint serve --watch</code> shows a live scene that updates when files change.</p>
+<h2 id="phase-4-runtime"><a class="header" href="#phase-4-runtime">Phase 4: Runtime</a></h2>
+<p><strong>Status: Planned</strong></p>
+<p>The game runtime phase. A playable game loop with physics, audio, and scripting.</p>
+<p><strong>Planned:</strong></p>
+<ul>
+<li><code>flint-physics</code> — Rapier integration for collision detection and rigid body simulation</li>
+<li><code>flint-audio</code> — Kira integration for spatial audio and sound effects</li>
+<li><code>flint-script</code> — Rhai scripting for game logic (sandboxed, statically typed)</li>
+<li><code>flint-player</code> — Standalone game executable</li>
+</ul>
+<p><strong>Milestone:</strong> A simple game runs — walk around, open doors, hear sounds.</p>
+<h2 id="phase-5-ai-asset-pipeline"><a class="header" href="#phase-5-ai-asset-pipeline">Phase 5: AI Asset Pipeline</a></h2>
+<p><strong>Status: Planned</strong></p>
+<p>Integrated AI generation workflows for textures, meshes, and audio.</p>
+<p><strong>Planned:</strong></p>
+<ul>
+<li><code>flint-asset-gen</code> — Provider integrations (texture generation, mesh generation, audio generation)</li>
+<li>Style consistency validation against style guide TOML files</li>
+<li>Human task generation for assets that need manual creation</li>
+<li>Resolution strategy: <code>ai_generate</code> alongside existing <code>strict</code> and <code>placeholder</code></li>
+</ul>
+<p><strong>Milestone:</strong> <code>flint asset generate model --provider meshy</code> produces usable game assets.</p>
+<h2 id="beyond-phase-5"><a class="header" href="#beyond-phase-5">Beyond Phase 5</a></h2>
+<p>These are ideas under consideration, not committed plans:</p>
+<ul>
+<li><strong>Networking</strong> — multiplayer support</li>
+<li><strong>Advanced rendering</strong> — PBR materials, shadow mapping, post-processing, LOD</li>
+<li><strong>Viewer GUI</strong> — entity inspector, constraint violation overlay, visual diff mode</li>
+<li><strong>Plugin system</strong> — third-party extensions</li>
+<li><strong>Package manager</strong> — share schemas, constraints, and assets between projects</li>
+<li><strong>WebAssembly</strong> — browser-based viewer and potentially runtime</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="contributing"><a class="header" href="#contributing">Contributing</a></h1>
+<blockquote>
+<p>This page is a stub. Contribution guidelines coming soon.</p>
+</blockquote>
+<p>Flint is in early development. Contributions are welcome in these areas:</p>
+<ul>
+<li><strong>Bug reports</strong> — file issues on GitHub</li>
+<li><strong>Schema definitions</strong> — new component and archetype schemas</li>
+<li><strong>Documentation</strong> — improvements to this guide</li>
+<li><strong>Test coverage</strong> — additional unit and integration tests</li>
+<li><strong>Constraint kinds</strong> — new validation rule types</li>
+</ul>
+<h2 id="development-setup"><a class="header" href="#development-setup">Development Setup</a></h2>
+<pre><code class="language-bash">git clone https://github.com/chaps/flint.git
+cd flint
+cargo build
+cargo test
+cargo clippy
+cargo fmt --check
+</code></pre>
+<h2 id="code-style"><a class="header" href="#code-style">Code Style</a></h2>
+<ul>
+<li>Run <code>cargo fmt</code> before committing</li>
+<li>Run <code>cargo clippy</code> and address warnings</li>
+<li>Each crate has its own error type using <code>thiserror</code></li>
+<li>Tests live alongside the code they test (<code>#[cfg(test)]</code> modules)</li>
+<li>Prefer explicit over clever; readability over brevity</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>
