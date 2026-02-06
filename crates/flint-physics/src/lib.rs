@@ -76,6 +76,9 @@ impl RuntimeSystem for PhysicsSystem {
         // Sync any new entities to Rapier
         self.sync.sync_to_rapier(world, &mut self.physics_world);
 
+        // Update kinematic bodies from ECS transforms (e.g., animated doors)
+        self.sync.update_kinematic_bodies(world, &mut self.physics_world);
+
         // Step physics
         self.physics_world.step(dt as f32);
 

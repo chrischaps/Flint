@@ -29,6 +29,36 @@ description = "A cathedral of light — showcasing Flint Phase 3 rendering: PBR 
 
 
 # ============================================================
+#  PLAYER — first-person walkthrough (play command)
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 12]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+
+# ============================================================
 #  LIGHTING — the heart of the Phase 3 showcase
 # ============================================================
 
@@ -282,6 +312,33 @@ max = [3, 8, 3]
 
 
 # ============================================================
+#  GROUND — physics-enabled ground plane for walkable scenes
+# ============================================================
+
+[entities.ground]
+archetype = "floor"
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-25, -0.1, -25]
+max = [25, 0.0, 25]
+
+[entities.ground.rigidbody]
+body_type = "static"
+
+[entities.ground.collider]
+shape = "box"
+size = [50, 0.2, 50]
+friction = 0.8
+
+[entities.ground.material]
+texture = "textures/floor_tiles.png"
+roughness = 0.7
+
+
+# ============================================================
 #  ARCHITECTURE — solid textured geometry (floors, walls, ceilings)
 # ============================================================
 
@@ -377,6 +434,13 @@ position = [-7, 5, 2.5]
 min = [-0.15, -5, -7.5]
 max = [0.15, 5, 7.5]
 
+[entities.nave_wall_left.rigidbody]
+body_type = "static"
+
+[entities.nave_wall_left.collider]
+shape = "box"
+size = [0.3, 10, 15]
+
 [entities.nave_wall_left.material]
 texture = "textures/stone_wall.png"
 roughness = 0.8
@@ -391,6 +455,13 @@ position = [7, 5, 2.5]
 [entities.nave_wall_right.bounds]
 min = [-0.15, -5, -7.5]
 max = [0.15, 5, 7.5]
+
+[entities.nave_wall_right.rigidbody]
+body_type = "static"
+
+[entities.nave_wall_right.collider]
+shape = "box"
+size = [0.3, 10, 15]
 
 [entities.nave_wall_right.material]
 texture = "textures/stone_wall.png"
@@ -408,6 +479,13 @@ position = [0, 4, -14]
 min = [-5, -4, -0.15]
 max = [5, 4, 0.15]
 
+[entities.apse_wall_back.rigidbody]
+body_type = "static"
+
+[entities.apse_wall_back.collider]
+shape = "box"
+size = [10, 8, 0.3]
+
 [entities.apse_wall_back.material]
 texture = "textures/stone_wall.png"
 roughness = 0.85
@@ -424,6 +502,13 @@ position = [-5, 4, -9]
 min = [-0.15, -4, -5]
 max = [0.15, 4, 5]
 
+[entities.apse_wall_left.rigidbody]
+body_type = "static"
+
+[entities.apse_wall_left.collider]
+shape = "box"
+size = [0.3, 8, 10]
+
 [entities.apse_wall_left.material]
 texture = "textures/stone_wall.png"
 roughness = 0.85
@@ -438,6 +523,13 @@ position = [5, 4, -9]
 [entities.apse_wall_right.bounds]
 min = [-0.15, -4, -5]
 max = [0.15, 4, 5]
+
+[entities.apse_wall_right.rigidbody]
+body_type = "static"
+
+[entities.apse_wall_right.collider]
+shape = "box"
+size = [0.3, 8, 10]
 
 [entities.apse_wall_right.material]
 texture = "textures/stone_wall.png"
@@ -458,6 +550,74 @@ max = [5, 0.0, 5]
 [entities.apse_ceiling.material]
 texture = "textures/stone_wall.png"
 roughness = 0.9
+
+# -- Narthex back wall (entrance facade) --
+[entities.narthex_wall_back]
+archetype = "wall"
+parent = "narthex"
+
+[entities.narthex_wall_back.transform]
+position = [0, 2.5, 16]
+
+[entities.narthex_wall_back.bounds]
+min = [-8, -2.5, -0.15]
+max = [8, 2.5, 0.15]
+
+[entities.narthex_wall_back.rigidbody]
+body_type = "static"
+
+[entities.narthex_wall_back.collider]
+shape = "box"
+size = [16, 5, 0.3]
+
+[entities.narthex_wall_back.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+# -- Narthex side walls --
+[entities.narthex_wall_left]
+archetype = "wall"
+parent = "narthex"
+
+[entities.narthex_wall_left.transform]
+position = [-8, 2.5, 13]
+
+[entities.narthex_wall_left.bounds]
+min = [-0.15, -2.5, -3]
+max = [0.15, 2.5, 3]
+
+[entities.narthex_wall_left.rigidbody]
+body_type = "static"
+
+[entities.narthex_wall_left.collider]
+shape = "box"
+size = [0.3, 5, 6]
+
+[entities.narthex_wall_left.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+
+[entities.narthex_wall_right]
+archetype = "wall"
+parent = "narthex"
+
+[entities.narthex_wall_right.transform]
+position = [8, 2.5, 13]
+
+[entities.narthex_wall_right.bounds]
+min = [-0.15, -2.5, -3]
+max = [0.15, 2.5, 3]
+
+[entities.narthex_wall_right.rigidbody]
+body_type = "static"
+
+[entities.narthex_wall_right.collider]
+shape = "box"
+size = [0.3, 5, 6]
+
+[entities.narthex_wall_right.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
 
 
 # ============================================================
@@ -559,6 +719,13 @@ position = [-5, 0, 6]
 min = [-0.4, 0, -0.4]
 max = [0.4, 9, 0.4]
 
+[entities.pillar_L1.rigidbody]
+body_type = "static"
+
+[entities.pillar_L1.collider]
+shape = "box"
+size = [0.8, 9, 0.8]
+
 [entities.pillar_L1.material]
 texture = "textures/stone_wall.png"
 roughness = 0.75
@@ -573,6 +740,13 @@ position = [-5, 0, 2]
 [entities.pillar_L2.bounds]
 min = [-0.4, 0, -0.4]
 max = [0.4, 9, 0.4]
+
+[entities.pillar_L2.rigidbody]
+body_type = "static"
+
+[entities.pillar_L2.collider]
+shape = "box"
+size = [0.8, 9, 0.8]
 
 [entities.pillar_L2.material]
 texture = "textures/stone_wall.png"
@@ -589,6 +763,13 @@ position = [-5, 0, -2]
 min = [-0.4, 0, -0.4]
 max = [0.4, 9, 0.4]
 
+[entities.pillar_L3.rigidbody]
+body_type = "static"
+
+[entities.pillar_L3.collider]
+shape = "box"
+size = [0.8, 9, 0.8]
+
 [entities.pillar_L3.material]
 texture = "textures/stone_wall.png"
 roughness = 0.75
@@ -603,6 +784,13 @@ position = [5, 0, 6]
 [entities.pillar_R1.bounds]
 min = [-0.4, 0, -0.4]
 max = [0.4, 9, 0.4]
+
+[entities.pillar_R1.rigidbody]
+body_type = "static"
+
+[entities.pillar_R1.collider]
+shape = "box"
+size = [0.8, 9, 0.8]
 
 [entities.pillar_R1.material]
 texture = "textures/stone_wall.png"
@@ -619,6 +807,13 @@ position = [5, 0, 2]
 min = [-0.4, 0, -0.4]
 max = [0.4, 9, 0.4]
 
+[entities.pillar_R2.rigidbody]
+body_type = "static"
+
+[entities.pillar_R2.collider]
+shape = "box"
+size = [0.8, 9, 0.8]
+
 [entities.pillar_R2.material]
 texture = "textures/stone_wall.png"
 roughness = 0.75
@@ -633,6 +828,13 @@ position = [5, 0, -2]
 [entities.pillar_R3.bounds]
 min = [-0.4, 0, -0.4]
 max = [0.4, 9, 0.4]
+
+[entities.pillar_R3.rigidbody]
+body_type = "static"
+
+[entities.pillar_R3.collider]
+shape = "box"
+size = [0.8, 9, 0.8]
 
 [entities.pillar_R3.material]
 texture = "textures/stone_wall.png"
@@ -654,6 +856,13 @@ position = [0, 0, -7]
 [entities.altar.bounds]
 min = [-1.5, 0, -1.0]
 max = [1.5, 1.2, 1.0]
+
+[entities.altar.rigidbody]
+body_type = "static"
+
+[entities.altar.collider]
+shape = "box"
+size = [3.0, 1.2, 2.0]
 
 [entities.altar.material]
 texture = "textures/stone_wall.png"
@@ -945,10 +1154,21 @@ parent = "nave"
 
 [entities.priest.transform]
 position = [0, 0.25, -6.5]
-#scale = [0.01, 0.01, 0.01]
+rotation = [90, 180, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.priest.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.priest.skeleton]
+skin = "Armature"
+
+[entities.priest.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.0
+playing = true
 
 # -- Acolyte: beside the lectern --
 [entities.acolyte]
@@ -957,10 +1177,21 @@ parent = "nave"
 
 [entities.acolyte.transform]
 position = [-1.5, 0.25, -5.5]
-#scale = [0.01, 0.01, 0.01]
+rotation = [90, 150, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.acolyte.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.acolyte.skeleton]
+skin = "Armature"
+
+[entities.acolyte.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 0.9
+playing = true
 
 # -- Congregation: seated in pews, lit by the rose window spotlight --
 [entities.congregant_1]
@@ -968,44 +1199,88 @@ archetype = "character"
 parent = "nave"
 
 [entities.congregant_1.transform]
-position = [-2.5, 0, 6.3]
-#scale = [0.01, 0.01, 0.01]
+position = [-0.5, 0, 6]
+rotation = [90, 0, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_1.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.congregant_1.skeleton]
+skin = "Armature"
+
+[entities.congregant_1.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.0
+playing = true
 
 [entities.congregant_2]
 archetype = "character"
 parent = "nave"
 
 [entities.congregant_2.transform]
-position = [2.5, 0, 6.3]
-#scale = [0.01, 0.01, 0.01]
+position = [0.5, 0, 6]
+rotation = [90, 0, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_2.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.congregant_2.skeleton]
+skin = "Armature"
+
+[entities.congregant_2.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.1
+playing = true
 
 [entities.congregant_3]
 archetype = "character"
 parent = "nave"
 
 [entities.congregant_3.transform]
-position = [-2.5, 0, 3.8]
-#scale = [0.01, 0.01, 0.01]
+position = [-0.3, 0, 3.5]
+rotation = [90, 0, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_3.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.congregant_3.skeleton]
+skin = "Armature"
+
+[entities.congregant_3.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 0.95
+playing = true
 
 [entities.congregant_4]
 archetype = "character"
 parent = "nave"
 
 [entities.congregant_4.transform]
-position = [2.5, 0, 3.8]
-#scale = [0.01, 0.01, 0.01]
+position = [0.3, 0, 3.5]
+rotation = [90, 0, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.congregant_4.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.congregant_4.skeleton]
+skin = "Armature"
+
+[entities.congregant_4.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.05
+playing = true
 
 # -- Pilgrim: kneeling in the left transept, under green-gold spot --
 [entities.pilgrim]
@@ -1013,11 +1288,22 @@ archetype = "character"
 parent = "transept_left"
 
 [entities.pilgrim.transform]
-position = [-10, 0, -2]
-#scale = [0.01, 0.01, 0.01]
+position = [-10, 0, -1.5]
+rotation = [90, -90, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.pilgrim.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.pilgrim.skeleton]
+skin = "Armature"
+
+[entities.pilgrim.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 0.85
+playing = true
 
 # -- Visitor: at the font in the right transept, under violet spot --
 [entities.visitor]
@@ -1025,11 +1311,22 @@ archetype = "character"
 parent = "transept_right"
 
 [entities.visitor.transform]
-position = [10, 0, -2]
-#scale = [0.01, 0.01, 0.01]
+position = [10, 0, -1.5]
+rotation = [90, 90, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.visitor.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.visitor.skeleton]
+skin = "Armature"
+
+[entities.visitor.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 0.9
+playing = true
 
 # -- Bell ringer: high up in the tower --
 [entities.bell_ringer]
@@ -1038,10 +1335,21 @@ parent = "bell_tower"
 
 [entities.bell_ringer.transform]
 position = [0, 12, -3]
-#scale = [0.01, 0.01, 0.01]
+rotation = [90, 0, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.bell_ringer.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.bell_ringer.skeleton]
+skin = "Armature"
+
+[entities.bell_ringer.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 1.0
+playing = true
 
 # -- Stranger: lingering in the narthex shadows --
 [entities.stranger]
@@ -1050,7 +1358,18 @@ parent = "narthex"
 
 [entities.stranger.transform]
 position = [-6, 0, 14]
-#scale = [0.01, 0.01, 0.01]
+rotation = [90, 45, 0]
+scale = [0.015, 0.015, 0.015]
 
 [entities.stranger.model]
-asset = "YBot"
+asset = "YBotWithIdle"
+
+[entities.stranger.skeleton]
+skin = "Armature"
+
+[entities.stranger.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 0.8
+playing = true

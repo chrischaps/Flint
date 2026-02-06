@@ -113,6 +113,8 @@ archetype = "character"
 
 [entities.ybot.transform]
 position = [0, 0, 0]
+rotation = [90, 0, 0]
+scale = [0.02, 0.02, 0.02]
 
 [entities.ybot.model]
 asset = "YBotWithIdle"

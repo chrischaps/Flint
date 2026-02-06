@@ -2,15 +2,19 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
+use crate::hud::HudState;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_audio::AudioSystem;
+use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
-use flint_runtime::{GameClock, InputState, RuntimeSystem};
+use flint_runtime::{GameClock, GameEvent, InputState, RuntimeSystem};
+use flint_script::context::{LogLevel, ScriptCommand};
+use flint_script::ScriptSystem;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -32,6 +36,7 @@ pub struct PlayerApp {
     pub physics: PhysicsSystem,
     pub audio: AudioSystem,
     pub animation: AnimationSystem,
+    pub script: ScriptSystem,
 
     // Rendering
     window: Option<Arc<Window>>,
@@ -41,6 +46,12 @@ pub struct PlayerApp {
 
     // Skeletal animation: entity_id → asset name for bone matrix updates
     skeletal_entity_assets: HashMap<flint_core::EntityId, String>,
+
+    // HUD + egui overlay
+    egui_ctx: egui::Context,
+    egui_winit: Option<egui_winit::State>,
+    egui_renderer: Option<egui_wgpu::Renderer>,
+    hud: HudState,
 
     // Window options
     pub fullscreen: bool,
@@ -57,11 +68,16 @@ impl PlayerApp {
             physics: PhysicsSystem::new(),
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
+            script: ScriptSystem::new(),
             window: None,
             render_context: None,
             scene_renderer: None,
             camera: Camera::new(),
             skeletal_entity_assets: HashMap::new(),
+            egui_ctx: egui::Context::default(),
+            egui_winit: None,
+            egui_renderer: None,
+            hud: HudState::new(),
             fullscreen,
             cursor_captured: false,
         }
@@ -99,6 +115,25 @@ impl PlayerApp {
         );
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
+        // Initialize egui for HUD overlay
+        let egui_winit = egui_winit::State::new(
+            self.egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            None,
+            None,
+        );
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &render_context.device,
+            render_context.config.format,
+            None,
+            1,
+            false,
+        );
+        self.egui_winit = Some(egui_winit);
+        self.egui_renderer = Some(egui_renderer);
+
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
 
@@ -118,6 +153,12 @@ impl PlayerApp {
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+
+        // Initialize scripting
+        load_scripts_from_world(&self.scene_path, &mut self.script);
+        self.script
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
 
         // Capture cursor for first-person look
         self.capture_cursor();
@@ -168,6 +209,9 @@ impl PlayerApp {
             eprintln!("Render error: {:?}", e);
         }
 
+        // Render egui HUD overlay on top of the 3D scene
+        self.render_hud(&view);
+
         output.present();
     }
 
@@ -201,6 +245,9 @@ impl PlayerApp {
         // Also set target explicitly for view matrix
         self.camera.target = cam_target;
 
+        // Update HUD (scan for interactables near player)
+        self.hud.update(&self.world, self.clock.delta_time);
+
         // Update audio listener to match camera
         self.audio.update_listener(
             cam_pos,
@@ -208,9 +255,29 @@ impl PlayerApp {
             self.physics.character.pitch,
         );
 
-        // Process physics events for audio triggers
-        let physics_events = self.physics.event_bus.drain();
-        self.audio.process_events(&physics_events, &self.world);
+        // Process physics events — scripts + audio both consume them
+        let mut game_events = self.physics.event_bus.drain();
+
+        // Generate ActionPressed events from input (drives on_action / on_interact callbacks)
+        for action in self.input.actions_just_pressed() {
+            game_events.push(flint_runtime::GameEvent::ActionPressed(action));
+        }
+
+        // Script system: provide context, run updates, drain commands
+        self.script.provide_context(
+            &self.input,
+            &game_events,
+            self.clock.total_time,
+            self.clock.delta_time,
+        );
+        self.script
+            .update(&mut self.world, self.clock.delta_time)
+            .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
+        let script_commands = self.script.drain_commands();
+        self.process_script_commands(script_commands);
+
+        // Audio triggers from game events
+        self.audio.process_events(&game_events, &self.world);
         self.audio
             .update(&mut self.world, self.clock.delta_time)
             .ok();
@@ -240,6 +307,109 @@ impl PlayerApp {
 
         // Clear per-frame input state
         self.input.end_frame();
+    }
+
+    fn render_hud(&mut self, target_view: &wgpu::TextureView) {
+        let Some(window) = &self.window else { return };
+        let Some(context) = &self.render_context else { return };
+        let Some(egui_winit) = &mut self.egui_winit else { return };
+
+        let raw_input = egui_winit.take_egui_input(window);
+
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            self.hud.render(ctx);
+        });
+
+        egui_winit.handle_platform_output(window, full_output.platform_output);
+
+        let paint_jobs = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [context.config.width, context.config.height],
+            pixels_per_point: full_output.pixels_per_point,
+        };
+
+        let mut egui_renderer = self.egui_renderer.take().unwrap();
+
+        let mut encoder =
+            context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("HUD Encoder"),
+                });
+
+        for (id, image_delta) in &full_output.textures_delta.set {
+            egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
+        }
+
+        egui_renderer.update_buffers(
+            &context.device,
+            &context.queue,
+            &mut encoder,
+            &paint_jobs,
+            &screen_descriptor,
+        );
+
+        {
+            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("HUD Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // overlay on top of 3D
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            let mut render_pass = render_pass.forget_lifetime();
+            egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
+        }
+
+        context.queue.submit(std::iter::once(encoder.finish()));
+
+        for id in &full_output.textures_delta.free {
+            egui_renderer.free_texture(id);
+        }
+
+        self.egui_renderer = Some(egui_renderer);
+    }
+
+    fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
+        for cmd in commands {
+            match cmd {
+                ScriptCommand::PlaySound { name, volume } => {
+                    if let Err(e) = self.audio.engine.play_non_spatial(&name, volume, 1.0, false) {
+                        eprintln!("[script] play_sound error: {:?}", e);
+                    }
+                }
+                ScriptCommand::PlaySoundAt { name, position, volume } => {
+                    let pos = FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
+                    if let Err(e) = self.audio.engine.play_at_position(&name, pos, volume) {
+                        eprintln!("[script] play_sound_at error: {:?}", e);
+                    }
+                }
+                ScriptCommand::StopSound { name: _ } => {
+                    // One-shot sounds play to completion (same as AudioCommand::Stop)
+                }
+                ScriptCommand::FireEvent { name, data } => {
+                    self.physics.event_bus.push(GameEvent::Custom { name, data });
+                }
+                ScriptCommand::Log { level, message } => {
+                    match level {
+                        LogLevel::Info => println!("[script] {}", message),
+                        LogLevel::Warn => eprintln!("[script warn] {}", message),
+                        LogLevel::Error => eprintln!("[script error] {}", message),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -422,8 +592,13 @@ fn load_models_from_world(
                             .iter()
                             .any(|m| m.joint_indices.is_some());
 
+                        let bounds_info = import_result
+                            .bounds()
+                            .map(|b| format!(", bounds: {}", b))
+                            .unwrap_or_default();
+
                         println!(
-                            "Loaded model: {} ({} meshes, {} materials{})",
+                            "Loaded model: {} ({} meshes, {} materials{}{})",
                             asset_name,
                             import_result.meshes.len(),
                             import_result.materials.len(),
@@ -435,7 +610,8 @@ fn load_models_from_world(
                                 )
                             } else {
                                 String::new()
-                            }
+                            },
+                            bounds_info,
                         );
 
                         if has_skinned_meshes && has_skins {
@@ -489,12 +665,13 @@ fn load_models_from_world(
     skeletal_entity_assets
 }
 
-/// Load audio files referenced by audio_source components
+/// Load audio files referenced by audio_source components and preload all .ogg files from audio/
 fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path: &str) {
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
 
+    // Load audio files referenced by audio_source components
     for entity in world.all_entities() {
         let audio_file = world
             .get_components(entity.id)
@@ -522,6 +699,31 @@ fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path
                 }
             } else {
                 eprintln!("Audio file not found: {}", audio_path.display());
+            }
+        }
+    }
+
+    // Preload all .ogg files from the audio/ directory (for script-triggered sounds)
+    let audio_dir = scene_dir.join("audio");
+    if audio_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&audio_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
+                    let rel_name = format!("audio/{}", path.file_name().unwrap().to_string_lossy());
+                    if audio.engine.has_sound(&rel_name) {
+                        continue;
+                    }
+                    match audio.engine.load_sound(&rel_name, &path) {
+                        Ok(_) => {
+                            println!("Preloaded audio: {}", rel_name);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to preload audio '{}': {:?}", rel_name, e);
+                        }
+                    }
+                }
             }
         }
     }
@@ -604,4 +806,9 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
             }
         }
     }
+}
+
+/// Set up the script system's scripts directory from the scene path
+fn load_scripts_from_world(scene_path: &str, script: &mut ScriptSystem) {
+    flint_script::sync::load_scripts_from_scene(scene_path, &mut script.sync);
 }

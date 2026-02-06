@@ -672,6 +672,20 @@ impl SceneRenderer {
                 }
             }
 
+            // Skip entities that are purely functional (no visible geometry needed)
+            if let Some(components) = world.get_components(entity.id) {
+                let has_material = components.get("material").is_some();
+                let is_light = components.get("light").is_some();
+                let is_audio = components.get("audio_source").is_some() || components.get("audio_listener").is_some();
+                let is_door = components.get("door").is_some();
+                let is_player = components.get("character_controller").is_some();
+
+                // If the entity is a non-visual type and has no explicit bounds+material, skip it
+                if (is_light || is_audio || is_door || is_player) && !has_material {
+                    continue;
+                }
+            }
+
             // Fall back to procedural shapes
             let (size, bounds_center) = if let Some(components) = world.get_components(entity.id) {
                 if let Some(bounds) = components.get("bounds") {
@@ -691,9 +705,13 @@ impl SceneRenderer {
             };
 
             let mut model = transform.to_matrix();
-            model[3][0] += bounds_center[0];
-            model[3][1] += bounds_center[1];
-            model[3][2] += bounds_center[2];
+            // Apply bounds_center in local space so rotation pivots around entity position
+            let rx = model[0][0] * bounds_center[0] + model[1][0] * bounds_center[1] + model[2][0] * bounds_center[2];
+            let ry = model[0][1] * bounds_center[0] + model[1][1] * bounds_center[1] + model[2][1] * bounds_center[2];
+            let rz = model[0][2] * bounds_center[0] + model[1][2] * bounds_center[1] + model[2][2] * bounds_center[2];
+            model[3][0] += rx;
+            model[3][1] += ry;
+            model[3][2] += rz;
 
             let inv_transpose = mat4_inv_transpose(&model);
 

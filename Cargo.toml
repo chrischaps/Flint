@@ -16,6 +16,7 @@ members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-animation",
+    "crates/flint-script",
     "crates/flint-cli",
 ]
 
@@ -63,6 +64,9 @@ rapier3d = { version = "0.22", features = ["default"] }
 kira = { version = "0.11", features = ["cpal", "ogg"] }
 glam = { version = "0.30", features = ["mint"] }
 
+# Scripting
+rhai = { version = "1", features = ["sync"] }
+
 # Game loop
 instant = "0.1"
 
@@ -94,4 +98,5 @@ flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
 flint-animation = { path = "crates/flint-animation" }
+flint-script = { path = "crates/flint-script" }
 flint-player = { path = "crates/flint-player" }

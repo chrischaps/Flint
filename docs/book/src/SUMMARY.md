@@ -28,6 +28,8 @@
 - [Constraints](concepts/constraints.md)
 - [Assets](concepts/assets.md)
 - [Rendering](concepts/rendering.md)
+- [Audio](concepts/audio.md)
+- [Animation](concepts/animation.md)
 - [Physics and Runtime](concepts/physics-and-runtime.md)
 
 # Guides

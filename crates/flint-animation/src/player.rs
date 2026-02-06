@@ -71,6 +71,11 @@ impl PlaybackState {
             fired_events: HashSet::new(),
         }
     }
+
+    /// Clear fired event tracking so events can fire again on replay.
+    pub fn clear_fired_events(&mut self) {
+        self.fired_events.clear();
+    }
 }
 
 /// Result of advancing a playback: sampled values per track + fired events.

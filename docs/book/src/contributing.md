@@ -5,10 +5,12 @@ Flint is in active development (Phase 4 of 5). Contributions are welcome in thes
 - **Bug reports** --- file issues on GitHub
 - **Schema definitions** --- new component and archetype schemas
 - **Documentation** --- improvements to this guide
-- **Test coverage** --- additional unit and integration tests (107 tests across 14 crates)
+- **Test coverage** --- additional unit and integration tests (146 tests across 16 crates)
 - **Constraint kinds** --- new validation rule types
 - **Physics** --- additional collider shapes, improved character controller behavior
 - **Rendering** --- post-processing effects, LOD, additional debug views
+- **Audio** --- additional audio formats, reverb zones, music system
+- **Animation** --- blend trees, additive blending, animation state machines
 
 ## Development Setup
 
@@ -41,7 +43,7 @@ cargo run --bin flint -- play demo/phase4_runtime.scene.toml
 
 ## Architecture
 
-The project is a 14-crate Cargo workspace. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
+The project is a 16-crate Cargo workspace. See the [Architecture Overview](architecture/overview.md) and [Crate Dependency Graph](architecture/crate-graph.md) for how the crates relate to each other. Key principles:
 
 - Dependencies flow in one direction (binary crates at the top, `flint-core` at the bottom)
 - Components are dynamic `toml::Value`, not Rust types --- schemas are runtime data

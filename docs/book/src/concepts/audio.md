@@ -1,0 +1,99 @@
+# Audio
+
+Flint's audio system provides spatial 3D sound via the `flint-audio` crate, built on [Kira](https://github.com/tesselode/kira) 0.11. Sounds can be positioned in 3D space with distance attenuation, played as ambient loops, or triggered by game events like collisions.
+
+## Spatial Audio
+
+Spatial sounds are attached to entities via the `audio_source` component. The sound's volume attenuates with distance from the listener (the player camera):
+
+- **min_distance** --- full volume within this radius
+- **max_distance** --- silence beyond this radius
+- Volume falls off smoothly between the two
+
+The listener position and orientation are updated each frame to match the first-person camera, so sounds pan and attenuate as you move through the scene.
+
+## Ambient Loops
+
+Non-spatial sounds play on the main audio track at constant volume regardless of listener position. Set `spatial = false` on an `audio_source` to use this mode --- useful for background music, ambient atmosphere, and UI sounds.
+
+## Audio Schemas
+
+Three component schemas define audio behavior:
+
+**audio_source** (`audio_source.toml`) --- a sound attached to an entity:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `file` | string | | Path to audio file (relative to scene directory) |
+| `volume` | f32 | 1.0 | Playback volume (0.0--2.0) |
+| `pitch` | f32 | 1.0 | Playback speed/pitch (0.1--4.0) |
+| `loop` | bool | false | Loop the sound continuously |
+| `spatial` | bool | true | 3D positioned (uses entity transform) |
+| `min_distance` | f32 | 1.0 | Distance at full volume |
+| `max_distance` | f32 | 25.0 | Distance at silence |
+| `autoplay` | bool | true | Start playing on scene load |
+
+**audio_listener** (`audio_listener.toml`) --- marks which entity receives audio:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `active` | bool | true | Whether this listener is active |
+
+**audio_trigger** (`audio_trigger.toml`) --- event-driven sounds:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `on_collision` | string | | Sound to play on collision start |
+| `on_interact` | string | | Sound to play on player interaction |
+| `on_enter` | string | | Sound when entering a trigger volume |
+| `on_exit` | string | | Sound when exiting a trigger volume |
+
+## Architecture
+
+The audio system has three main components:
+
+- **AudioEngine** --- wraps Kira's `AudioManager`, handles sound file loading, listener positioning, and spatial track creation. Sounds route through spatial tracks for 3D positioning or the main track for ambient playback.
+- **AudioSync** --- bridges TOML `audio_source` components to Kira spatial tracks. Discovers new audio entities each frame and updates spatial positions from entity transforms.
+- **AudioTrigger** --- maps game events (collisions, interactions) to `AudioCommand`s that play sounds at specific positions.
+
+The system implements the `RuntimeSystem` trait, ticking in the `update()` phase of the game loop (not `fixed_update()`, since audio doesn't need fixed-timestep processing).
+
+## Graceful Degradation
+
+`AudioManager::new()` can fail on headless machines or CI environments without an audio device. The engine wraps the manager in `Option` and silently skips audio operations when unavailable. This means scenes with audio components work correctly in all environments --- you just won't hear anything.
+
+## Adding Audio to a Scene
+
+```toml
+# A crackling fire with spatial falloff
+[entities.fireplace]
+archetype = "furniture"
+
+[entities.fireplace.transform]
+position = [5.0, 0.5, 3.0]
+
+[entities.fireplace.audio_source]
+file = "audio/fire_crackle.ogg"
+volume = 0.8
+loop = true
+spatial = true
+min_distance = 1.0
+max_distance = 15.0
+
+# Background tavern ambience (non-spatial)
+[entities.ambience]
+
+[entities.ambience.audio_source]
+file = "audio/tavern_ambient.ogg"
+volume = 0.3
+loop = true
+spatial = false
+```
+
+Supported audio formats: OGG, WAV, MP3, FLAC (via Kira's symphonia backend).
+
+## Further Reading
+
+- [Animation](animation.md) --- animation system that can trigger audio events
+- [Physics and Runtime](physics-and-runtime.md) --- the game loop and event bus that drives audio triggers
+- [Schemas](schemas.md) --- component and archetype definitions

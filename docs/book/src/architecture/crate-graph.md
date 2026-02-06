@@ -1,6 +1,6 @@
 # Crate Dependency Graph
 
-This page shows how Flint's fourteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
+This page shows how Flint's sixteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
 
 ## Dependency Diagram
 
@@ -10,27 +10,30 @@ This page shows how Flint's fourteen crates depend on each other. Dependencies f
           │  (binary)   │                │   (binary)   │
           └──────┬──────┘                └──────┬───────┘
                  │                              │
-    ┌────┬───┬──┴──┬────┬────┬────┐    ┌───┬───┴───┬───┐
-    │    │   │     │    │    │    │    │   │       │   │
-    ▼    │   ▼     ▼    ▼    ▼    ▼    ▼   ▼       ▼   │
- ┌──────┐│┌─────┐┌────┐│ ┌─────┐│ ┌────────┐┌────────┐│
- │viewer│││scene││qry ││ │const││ │runtime ││physics ││
- └──┬───┘│└──┬──┘└─┬──┘│ └──┬──┘│ └───┬────┘└───┬────┘│
-    │    │   │     │   │    │   │     │          │     │
-    │    ▼   │     │   │    │   │     │          │     │
-    │ ┌──────────┐ │   │    │   │     │          │     │
-    ├►│  render  │◄┘   │    │   │     │          │     │
-    │ └────┬─────┘     │    │   │     │          │     │
-    │      │           │    │   │     │          │     │
-    │      ▼           │    │   │     │          │     │
-    │ ┌──────────┐     │   ┌┘   │     │          │     │
-    │ │  import  │     │   │    │     │          │     │
-    │ └────┬─────┘     │   │    │     │          │     │
-    │      │           ▼   ▼    ▼     ▼          ▼     ▼
-    │      │    ┌──────────────────────────────────────────┐
-    │      │    │              flint-ecs                    │
-    │      │    │  (hecs wrapper, stable IDs, hierarchy)   │
-    │      │    └────────────────┬─────────────────────────┘
+    ┌────┬───┬──┴──┬────┬────┬────┐    ┌───┬───┴───┬───┬───┬───┐
+    │    │   │     │    │    │    │    │   │       │   │   │   │
+    ▼    │   ▼     ▼    ▼    ▼    ▼    ▼   ▼       ▼   │   │   │
+ ┌──────┐│┌─────┐┌────┐│ ┌─────┐│ ┌────────┐┌────────┐│   │   │
+ │viewer│││scene││qry ││ │const││ │runtime ││physics ││   │   │
+ └──┬───┘│└──┬──┘└─┬──┘│ └──┬──┘│ └───┬────┘└───┬────┘│   │   │
+    │    │   │     │   │    │   │     │          │     │   │   │
+    │    ▼   │     │   │    │   │     │          │     ▼   ▼   │
+    │ ┌──────────┐ │   │    │   │     │          │  ┌─────────┐│
+    ├►│  render  │◄┘   │    │   │     │          │  │  audio  ││
+    │ └────┬─────┘     │    │   │     │          │  └────┬────┘│
+    │      │           │    │   │     │          │       │     │
+    │      │           │    │   │     │          │       │     ▼
+    │      │           │    │   │     │          │       │  ┌──────────┐
+    │      │           │    │   │     │          │       │  │animation │
+    │      ▼           │    │   │     │          │       │  └────┬─────┘
+    │ ┌──────────┐     │   ┌┘   │     │          │       │       │
+    │ │  import  │     │   │    │     │          │       │       │
+    │ └────┬─────┘     │   │    │     │          │       │       │
+    │      │           ▼   ▼    ▼     ▼          ▼       ▼       ▼
+    │      │    ┌──────────────────────────────────────────────────┐
+    │      │    │              flint-ecs                            │
+    │      │    │  (hecs wrapper, stable IDs, hierarchy)           │
+    │      │    └────────────────┬─────────────────────────────────┘
     │      │                    │
     │      │                    ▼
     │      │             ┌──────────────┐
@@ -52,17 +55,19 @@ This page shows how Flint's fourteen crates depend on each other. Dependencies f
 |-------|-----------|----------------|
 | `flint-core` | *(none)* | all other crates |
 | `flint-schema` | core | ecs, constraint |
-| `flint-ecs` | core, schema | scene, query, render, constraint, runtime, physics, viewer, player, cli |
+| `flint-ecs` | core, schema | scene, query, render, constraint, runtime, physics, audio, animation, viewer, player, cli |
 | `flint-asset` | core | import, cli |
-| `flint-import` | core, asset | render, viewer, cli, player |
+| `flint-import` | core, asset | render, animation, viewer, cli, player |
 | `flint-query` | core, ecs | constraint, cli |
 | `flint-scene` | core, ecs, schema | viewer, player, cli |
 | `flint-constraint` | core, ecs, schema, query | viewer, cli |
 | `flint-render` | core, ecs, import | viewer, player, cli |
-| `flint-runtime` | core, ecs | physics, player |
+| `flint-runtime` | core, ecs | physics, audio, animation, player |
 | `flint-physics` | core, ecs, runtime | player |
+| `flint-audio` | core, ecs, runtime | player |
+| `flint-animation` | core, ecs, import, runtime | player |
 | `flint-viewer` | core, ecs, scene, schema, render, import, constraint | cli |
-| `flint-player` | core, schema, ecs, scene, render, runtime, physics, import | *(binary entry point)* |
+| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, import | *(binary entry point)* |
 | `flint-cli` | all crates | *(binary entry point)* |
 
 ## Key Properties
@@ -74,13 +79,13 @@ This page shows how Flint's fourteen crates depend on each other. Dependencies f
 2. **Schema** --- data definitions (`flint-schema`)
 3. **Storage** --- entity and asset management (`flint-ecs`, `flint-asset`)
 4. **Logic** --- query, scene, constraint, import
-5. **Systems** --- render, runtime, physics
+5. **Systems** --- render, runtime, physics, audio, animation
 6. **Applications** --- viewer, player
 7. **Interface** --- CLI binary (`flint-cli`), player binary (`flint-player`)
 
 **Two entry points.** The CLI binary (`flint-cli`) serves scene authoring and validation workflows. The player binary (`flint-player`) serves interactive gameplay. Both share the same underlying crate hierarchy.
 
-**Independent subsystems.** The constraint system, asset system, physics system, and render system don't depend on each other. This means you can build and test each subsystem in isolation.
+**Independent subsystems.** The constraint system, asset system, physics system, audio system, animation system, and render system don't depend on each other. This means you can build and test each subsystem in isolation.
 
 ## External Dependencies
 
@@ -95,9 +100,11 @@ Key third-party crates used across the workspace:
 | `wgpu` | flint-render, flint-viewer, flint-player | GPU abstraction layer |
 | `winit` | flint-render, flint-viewer, flint-runtime, flint-player | Window and input management |
 | `rapier3d` | flint-physics | 3D physics simulation |
+| `kira` | flint-audio | Spatial audio engine |
+| `glam` | flint-audio | Vec3/Quat types for Kira spatial positioning (via mint interop) |
 | `egui` | flint-viewer | Immediate-mode GUI framework |
 | `clap` | flint-cli, flint-player | Command-line argument parsing |
 | `thiserror` | all library crates | Error derive macros |
 | `sha2` | flint-core, flint-asset | SHA-256 hashing |
-| `gltf` | flint-import | glTF file parsing |
+| `gltf` | flint-import | glTF file parsing (meshes, materials, skins, animations) |
 | `crossbeam` | flint-physics | Channel-based event collection (Rapier) |

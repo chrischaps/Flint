@@ -23,14 +23,10 @@ impl AnimationSync {
     }
 
     /// Scan the world for entities with an `animator` component and create
-    /// `PlaybackState` entries for any new ones.
+    /// `PlaybackState` entries for any new ones. For already-tracked entities,
+    /// detect clip/playing/speed changes written by scripts.
     pub fn sync_from_world(&mut self, world: &FlintWorld, player: &AnimationPlayer) {
         for entity in world.all_entities() {
-            // Skip entities we're already tracking
-            if self.states.contains_key(&entity.id) {
-                continue;
-            }
-
             let Some(components) = world.get_components(entity.id) else {
                 continue;
             };
@@ -63,15 +59,42 @@ impl AnimationSync {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            let playing = animator
+            let ecs_playing = animator
                 .get("playing")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false)
                 || autoplay;
 
+            // For already-tracked entities, detect changes from scripts
+            if let Some(state) = self.states.get_mut(&entity.id) {
+                // Clip changed → switch clip, reset playback
+                if state.clip_name != clip_name {
+                    state.clip_name = clip_name;
+                    state.time = 0.0;
+                    state.playing = true;
+                    state.looping = looping;
+                    state.speed = speed;
+                    state.clear_fired_events();
+                } else {
+                    // ECS says play but we're stopped → restart
+                    if ecs_playing && !state.playing {
+                        state.playing = true;
+                        state.time = 0.0;
+                        state.clear_fired_events();
+                    }
+                    // Sync speed changes
+                    if (state.speed - speed).abs() > 1e-9 {
+                        state.speed = speed;
+                    }
+                    // Sync loop changes
+                    state.looping = looping;
+                }
+                continue;
+            }
+
             self.states.insert(
                 entity.id,
-                PlaybackState::new(clip_name, speed, looping, playing),
+                PlaybackState::new(clip_name, speed, looping, ecs_playing),
             );
         }
     }
@@ -88,6 +111,7 @@ impl AnimationSync {
                 continue;
             };
 
+            let was_playing = state.playing;
             let Some(result) = advance(state, clip, dt) else {
                 continue;
             };
@@ -96,6 +120,12 @@ impl AnimationSync {
             let Some(components) = world.get_components_mut(*entity_id) else {
                 continue;
             };
+
+            // If the clip just finished (non-looping), write playing=false back to ECS
+            // so sync_from_world won't see a stale playing=true and restart it
+            if was_playing && !state.playing {
+                components.set_field("animator", "playing", toml::Value::Boolean(false));
+            }
 
             for (i, track) in clip.tracks.iter().enumerate() {
                 if i >= result.samples.len() {

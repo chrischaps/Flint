@@ -1,0 +1,8 @@
+[component.interactable]
+description = "Marks an entity as interactable by the player"
+
+[component.interactable.fields]
+prompt_text = { type = "string", description = "Text shown on the HUD prompt", default = "Interact" }
+range = { type = "f32", description = "Maximum interaction distance from player", default = 3.0 }
+interaction_type = { type = "string", description = "Type of interaction: use, talk, examine", default = "use" }
+enabled = { type = "bool", description = "Whether this interactable is currently active", default = true }

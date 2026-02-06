@@ -1,11 +1,12 @@
 # Door swing — rotates 90 degrees on Y axis over 0.8 seconds
+# CubicSpline with ease-in-out tangents for natural deceleration
 # Attach to an entity with: [entities.X.animator] clip = "door_swing", autoplay = true
 
 name = "door_swing"
 duration = 0.8
 
 [[tracks]]
-interpolation = "Linear"
+interpolation = "CubicSpline"
 
 [tracks.target]
 type = "Rotation"
@@ -13,10 +14,14 @@ type = "Rotation"
 [[tracks.keyframes]]
 time = 0.0
 value = [0.0, 0.0, 0.0]
+in_tangent = [0.0, 0.0, 0.0]
+out_tangent = [0.0, 150.0, 0.0]
 
 [[tracks.keyframes]]
 time = 0.8
 value = [0.0, 90.0, 0.0]
+in_tangent = [0.0, 30.0, 0.0]
+out_tangent = [0.0, 0.0, 0.0]
 
 [[events]]
 time = 0.0

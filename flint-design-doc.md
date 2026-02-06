@@ -1,8 +1,8 @@
 # Flint Engine Design Document
 
-**Version:** 0.1 (Draft)  
-**Date:** February 2026  
-**Status:** Pre-development
+**Version:** 0.4 (Phase 4 Stage 3)
+**Date:** February 2026
+**Status:** Active development --- Phases 1--3 complete, Phase 4 Stages 1--3 complete
 
 ---
 
@@ -654,7 +654,7 @@ flint asset list --type animation
 
 ---
 
-### 10. Determinism
+### 9. Determinism
 
 Ensuring reproducible builds and testable results.
 
@@ -693,7 +693,7 @@ An agent can say "reproduce build X" and get bit-identical results.
 
 ---
 
-### 9. Rendering (flint-render) (Updated: now includes skinned mesh pipeline — see Animation System)
+### 10. Rendering (flint-render)
 
 wgpu-based renderer targeting indie-level fidelity.
 
@@ -705,9 +705,12 @@ wgpu-based renderer targeting indie-level fidelity.
 - Basic post-processing (tone mapping, gamma correction)
 - glTF import
 
+#### Implemented
+
+- Skinned mesh rendering pipeline with GPU vertex skinning (see Animation System)
+
 #### Future Considerations
 
-- Skinned mesh rendering pipeline (see Animation System, Stage 3)
 - Screen-space ambient occlusion
 - Bloom
 - Simple global illumination (light probes)
@@ -789,11 +792,11 @@ The viewer answers: "Did the agent do what I asked?" not "Let me build this myse
 **Goal:** Playable game loop with physics, animation, audio, and scripting.
 
 **Deliverables:**
-- flint-physics: Rapier integration (Stage 1 — complete)
-- flint-runtime: Game loop, input, event bus (Stage 1 — complete)
-- flint-player: Standalone executable (Stage 1 — complete)
-- flint-audio: Kira integration (Stage 2)
-- flint-animation: Property tweens + skeletal animation from glTF (Stage 3)
+- flint-physics: Rapier integration (Stage 1 --- complete)
+- flint-runtime: Game loop, input, event bus (Stage 1 --- complete)
+- flint-player: Standalone executable (Stage 1 --- complete)
+- flint-audio: Kira spatial audio integration (Stage 2 --- complete)
+- flint-animation: Property tweens + skeletal animation from glTF (Stage 3 --- complete)
 - flint-script: Rhai scripting with animation/audio APIs (Stage 4)
 - Integration demo: Animated, interactive tavern scene (Stage 5)
 

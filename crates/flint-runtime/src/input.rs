@@ -143,6 +143,15 @@ impl InputState {
             .unwrap_or(false)
     }
 
+    /// Get all actions that were just pressed this frame
+    pub fn actions_just_pressed(&self) -> Vec<String> {
+        self.action_map
+            .iter()
+            .filter(|(_, keys)| keys.iter().any(|k| self.keys_just_pressed.contains(k)))
+            .map(|(action, _)| action.clone())
+            .collect()
+    }
+
     /// Get the mouse movement delta this frame
     pub fn mouse_delta(&self) -> (f64, f64) {
         self.mouse_delta

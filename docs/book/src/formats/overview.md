@@ -53,6 +53,33 @@ message = "..."
 type = "<kind>"
 ```
 
+## Animation Clips (`demo/animations/*.anim.toml`)
+
+```toml
+name = "clip_name"
+duration = 0.8
+
+[[tracks]]
+interpolation = "Linear"       # "Step", "Linear", or "CubicSpline"
+
+[tracks.target]
+type = "Rotation"              # "Position", "Rotation", "Scale", or "CustomFloat"
+
+[[tracks.keyframes]]
+time = 0.0
+value = [0.0, 0.0, 0.0]       # [x, y, z] (euler degrees for rotation)
+
+[[tracks.keyframes]]
+time = 0.8
+value = [0.0, 90.0, 0.0]
+# in_tangent = [...]           # Optional, for CubicSpline
+# out_tangent = [...]
+
+[[events]]                     # Optional timed events
+time = 0.0
+event_name = "door_start"
+```
+
 ## Asset Sidecars (`assets/**/*.asset.toml`)
 
 ```toml

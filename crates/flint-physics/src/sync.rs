@@ -3,6 +3,7 @@
 use crate::world::PhysicsWorld;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
+use rapier3d::na;
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
@@ -141,11 +142,29 @@ impl PhysicsSync {
                     .and_then(|v| v.as_float())
                     .unwrap_or(0.0) as f32;
 
-                let collider = ColliderBuilder::new(collider_shape)
+                // Offset collider to match bounds center (for asymmetric bounds like doors)
+                let bounds_offset = components
+                    .get("bounds")
+                    .and_then(|b| compute_bounds_center(b))
+                    .unwrap_or([0.0, 0.0, 0.0]);
+
+                let mut builder = ColliderBuilder::new(collider_shape)
                     .sensor(is_sensor)
                     .friction(friction)
-                    .restitution(restitution)
-                    .build();
+                    .restitution(restitution);
+
+                if bounds_offset[0].abs() > f32::EPSILON
+                    || bounds_offset[1].abs() > f32::EPSILON
+                    || bounds_offset[2].abs() > f32::EPSILON
+                {
+                    builder = builder.position(Isometry::translation(
+                        bounds_offset[0],
+                        bounds_offset[1],
+                        bounds_offset[2],
+                    ));
+                }
+
+                let collider = builder.build();
 
                 let col_handle = physics.insert_collider_with_parent(collider, body_handle);
                 self.collider_map.insert(entity.id, col_handle);
@@ -185,6 +204,68 @@ impl PhysicsSync {
         }
     }
 
+    /// Update kinematic bodies from ECS transforms each frame.
+    /// This lets animated entities (like doors) move their physics colliders.
+    pub fn update_kinematic_bodies(&self, world: &FlintWorld, physics: &mut PhysicsWorld) {
+        for (entity_id, body_handle) in &self.body_map {
+            let body = match physics.get_rigid_body(*body_handle) {
+                Some(b) => b,
+                None => continue,
+            };
+
+            // Only update kinematic bodies (not static or dynamic)
+            if !body.is_kinematic() {
+                continue;
+            }
+
+            // Skip entities driven by the character controller (player)
+            if let Some(components) = world.get_components(*entity_id) {
+                if components.has("character_controller") {
+                    continue;
+                }
+            }
+
+            let transform = world.get_transform(*entity_id).unwrap_or_default();
+
+            // Convert Euler degrees to quaternion (ZYX order, matching renderer)
+            let rotation_f32 = euler_to_quat(
+                transform.rotation.x,
+                transform.rotation.y,
+                transform.rotation.z,
+            );
+
+            // Compute bounds center offset (for asymmetric bounds like doors)
+            let bounds_center = world
+                .get_components(*entity_id)
+                .and_then(|c| c.get("bounds"))
+                .and_then(|b| compute_bounds_center(b))
+                .unwrap_or([0.0, 0.0, 0.0]);
+
+            // Rotate the bounds center by the entity's rotation
+            let offset = rotation_f32 * na::Vector3::new(
+                bounds_center[0],
+                bounds_center[1],
+                bounds_center[2],
+            );
+
+            let translation = na::Vector3::new(
+                transform.position.x + offset.x,
+                transform.position.y + offset.y,
+                transform.position.z + offset.z,
+            );
+
+            let iso = Isometry::from_parts(
+                translation.into(),
+                rotation_f32,
+            );
+
+            // Get mutable body and set next kinematic position
+            if let Some(body_mut) = physics.get_rigid_body_mut(*body_handle) {
+                body_mut.set_next_kinematic_position(iso);
+            }
+        }
+    }
+
     /// Get the rigid body handle for an entity
     pub fn get_body_handle(&self, entity_id: EntityId) -> Option<RigidBodyHandle> {
         self.body_map.get(&entity_id).copied()
@@ -193,6 +274,34 @@ impl PhysicsSync {
     /// Check if an entity has been synced to physics
     pub fn is_synced(&self, entity_id: EntityId) -> bool {
         self.synced_entities.contains(&entity_id)
+    }
+}
+
+/// Compute the center offset of a bounds component
+fn compute_bounds_center(bounds: &toml::Value) -> Option<[f32; 3]> {
+    let min = bounds.get("min")?;
+    let max = bounds.get("max")?;
+
+    let min_arr = extract_toml_vec3(min)?;
+    let max_arr = extract_toml_vec3(max)?;
+
+    Some([
+        (min_arr[0] + max_arr[0]) / 2.0,
+        (min_arr[1] + max_arr[1]) / 2.0,
+        (min_arr[2] + max_arr[2]) / 2.0,
+    ])
+}
+
+/// Extract a [f32; 3] from a TOML array value
+fn extract_toml_vec3(value: &toml::Value) -> Option<[f32; 3]> {
+    let arr = value.as_array()?;
+    if arr.len() >= 3 {
+        let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+        let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+        let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+        Some([x, y, z])
+    } else {
+        None
     }
 }
 
@@ -238,6 +347,14 @@ fn read_vec3_from_value(value: Option<&toml::Value>, default: Vec3) -> Vec3 {
     }
 
     default
+}
+
+/// Convert Euler angles (degrees, ZYX order) to a unit quaternion matching the renderer convention
+fn euler_to_quat(rx_deg: f32, ry_deg: f32, rz_deg: f32) -> na::UnitQuaternion<f32> {
+    let qx = na::UnitQuaternion::from_axis_angle(&na::Vector3::x_axis(), rx_deg.to_radians());
+    let qy = na::UnitQuaternion::from_axis_angle(&na::Vector3::y_axis(), ry_deg.to_radians());
+    let qz = na::UnitQuaternion::from_axis_angle(&na::Vector3::z_axis(), rz_deg.to_radians());
+    qx * qy * qz
 }
 
 #[cfg(test)]

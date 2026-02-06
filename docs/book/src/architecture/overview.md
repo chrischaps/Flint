@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a fourteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a sixteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -8,12 +8,14 @@ Flint is structured as a fourteen-crate Cargo workspace with clear dependency la
 flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
-│   ├── flint-player/       # Standalone player binary with game loop and physics
+│   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
+│   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
+│   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus)
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
-│   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading
-│   ├── flint-import/       # File importers (glTF/GLB)
+│   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
+│   ├── flint-import/       # File importers (glTF/GLB with skeleton/skin extraction)
 │   ├── flint-asset/        # Content-addressed asset storage and catalog
 │   ├── flint-constraint/   # Constraint definitions and validation engine
 │   ├── flint-query/        # PEG query language (pest parser)
@@ -62,6 +64,7 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 | Rendering | wgpu 23 | Cross-platform, modern GPU API |
 | Windowing | winit 0.30 | `ApplicationHandler` trait pattern |
 | Physics | Rapier 3D 0.22 | Mature Rust physics, character controller |
+| Audio | Kira 0.11 | Rust-native, game-focused, spatial audio |
 | GUI | egui 0.30 | Immediate-mode, easy integration with wgpu |
 | Scene format | TOML | Human-readable, diffable, good Rust support |
 | Query parser | pest | PEG grammar, good error messages |
@@ -80,18 +83,19 @@ User / AI Agent
   flint-cli                        flint-player
   (scene authoring)                (interactive gameplay)
       │                                  │
-      ├──► flint-viewer (GUI)            ├──► flint-runtime  (game loop, input)
-      ├──► flint-query  (queries)        ├──► flint-physics  (Rapier 3D)
-      ├──► flint-scene  (load/save)      └──► flint-render   (PBR renderer)
-      ├──► flint-render (renderer)               │
-      ├──► flint-constraint (validation)         ▼
-      ├──► flint-asset  (asset catalog)      flint-import   (glTF meshes)
-      └──► flint-import (glTF import)            │
-              │                                  ▼
-              ▼                              flint-ecs
-          flint-ecs                          flint-schema
-          flint-schema                       flint-core
-          flint-core
+      ├──► flint-viewer (GUI)            ├──► flint-runtime   (game loop, input)
+      ├──► flint-query  (queries)        ├──► flint-physics   (Rapier 3D)
+      ├──► flint-scene  (load/save)      ├──► flint-audio     (Kira spatial audio)
+      ├──► flint-render (renderer)       ├──► flint-animation (tweens + skeletal)
+      ├──► flint-constraint (validation) └──► flint-render    (PBR + skinned mesh)
+      ├──► flint-asset  (asset catalog)          │
+      └──► flint-import (glTF import)            ▼
+              │                              flint-import  (glTF meshes + skins)
+              ▼                                  │
+          flint-ecs                              ▼
+          flint-schema                       flint-ecs
+          flint-core                         flint-schema
+                                             flint-core
 ```
 
 ## Crate Details
@@ -172,11 +176,30 @@ Rapier 3D integration:
 - `CharacterController` --- kinematic first-person movement with gravity, jumping, and ground detection
 - Uses kinematic bodies for player control, static bodies for world geometry
 
+### flint-audio
+
+Kira 0.11 integration for game audio:
+- `AudioEngine` --- wraps Kira AudioManager, handles sound loading and listener positioning
+- `AudioSync` --- bridges TOML `audio_source` components to Kira spatial tracks
+- `AudioTrigger` --- maps game events (collision, interaction) to sound playback
+- Spatial 3D audio with distance attenuation, non-spatial ambient loops
+- Graceful degradation when no audio device is available (headless/CI)
+
+### flint-animation
+
+Two-tier animation system:
+- **Tier 1: Property tweens** --- `AnimationClip` with keyframe tracks targeting transform properties (position, rotation, scale) or custom fields. Step, Linear, and CubicSpline interpolation. Clips defined in `.anim.toml` files.
+- **Tier 2: Skeletal animation** --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies. GPU vertex skinning via bone matrix storage buffer. Crossfade blending between clips.
+- `AnimationSync` bridges ECS `animator` components to property playback
+- `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
+
 ### flint-player
 
-Standalone player binary that wires together runtime, physics, and rendering:
-- Full game loop: clock tick, fixed-step physics, character controller, first-person rendering
+Standalone player binary that wires together runtime, physics, audio, animation, and rendering:
+- Full game loop: clock tick, fixed-step physics, audio sync, animation advance, first-person rendering
 - Scene loading with physics body creation from TOML collider/rigidbody components
+- Audio source loading and spatial listener tracking
+- Skeletal animation with bone matrix upload to GPU each frame
 - First-person controls (WASD, mouse look, jump, sprint)
 
 ### flint-cli

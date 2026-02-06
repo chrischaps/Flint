@@ -19,6 +19,79 @@ pub struct ImportResult {
     pub skeletal_clips: Vec<ImportedSkeletalClip>,
 }
 
+impl ImportResult {
+    /// Compute the combined bounding box across all meshes
+    pub fn bounds(&self) -> Option<MeshBounds> {
+        self.meshes
+            .iter()
+            .filter_map(|m| m.bounds())
+            .reduce(|a, b| a.union(&b))
+    }
+}
+
+/// Axis-aligned bounding box computed from vertex positions
+#[derive(Debug, Clone, Copy)]
+pub struct MeshBounds {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl MeshBounds {
+    /// Compute bounds from a set of vertex positions
+    pub fn from_positions(positions: &[[f32; 3]]) -> Option<Self> {
+        if positions.is_empty() {
+            return None;
+        }
+        let mut min = positions[0];
+        let mut max = positions[0];
+        for p in positions.iter().skip(1) {
+            for i in 0..3 {
+                if p[i] < min[i] { min[i] = p[i]; }
+                if p[i] > max[i] { max[i] = p[i]; }
+            }
+        }
+        Some(Self { min, max })
+    }
+
+    /// Size along each axis
+    pub fn size(&self) -> [f32; 3] {
+        [
+            self.max[0] - self.min[0],
+            self.max[1] - self.min[1],
+            self.max[2] - self.min[2],
+        ]
+    }
+
+    /// Merge with another bounds to get the union
+    pub fn union(&self, other: &MeshBounds) -> MeshBounds {
+        MeshBounds {
+            min: [
+                self.min[0].min(other.min[0]),
+                self.min[1].min(other.min[1]),
+                self.min[2].min(other.min[2]),
+            ],
+            max: [
+                self.max[0].max(other.max[0]),
+                self.max[1].max(other.max[1]),
+                self.max[2].max(other.max[2]),
+            ],
+        }
+    }
+}
+
+impl std::fmt::Display for MeshBounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.size();
+        write!(
+            f,
+            "{:.2} x {:.2} x {:.2} (min [{:.2}, {:.2}, {:.2}], max [{:.2}, {:.2}, {:.2}])",
+            s[0], s[1], s[2],
+            self.min[0], self.min[1], self.min[2],
+            self.max[0], self.max[1], self.max[2],
+        )
+    }
+}
+
 /// An imported mesh with vertex data
 #[derive(Debug, Clone)]
 pub struct ImportedMesh {
@@ -34,6 +107,13 @@ pub struct ImportedMesh {
     pub joint_weights: Option<Vec<[f32; 4]>>,
     /// Index into ImportResult.skeletons
     pub skin_index: Option<usize>,
+}
+
+impl ImportedMesh {
+    /// Compute the axis-aligned bounding box of this mesh's vertices
+    pub fn bounds(&self) -> Option<MeshBounds> {
+        MeshBounds::from_positions(&self.positions)
+    }
 }
 
 // --- Skeletal animation import types ---

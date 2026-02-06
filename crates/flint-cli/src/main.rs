@@ -4,7 +4,7 @@ mod commands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{asset, entity, init, play, query, render, scene, schema, serve, validate};
+use commands::{asset, entity, init, play, query, render, scene, schema, validate};
 
 #[derive(Parser)]
 #[command(name = "flint")]
@@ -68,9 +68,9 @@ enum Commands {
         #[arg(long, default_value = "schemas")]
         schemas: String,
 
-        /// Show egui inspector panels (entity tree, inspector, stats)
+        /// Hide the egui inspector panels (entity tree, inspector, stats)
         #[arg(long)]
-        inspector: bool,
+        no_inspector: bool,
     },
 
     /// Validate a scene against constraints
@@ -245,12 +245,8 @@ fn main() -> Result<()> {
             fullscreen,
         }),
         Commands::Asset(cmd) => asset::run(cmd),
-        Commands::Serve { scene, watch, schemas, inspector } => {
-            if inspector {
-                flint_viewer::app::run(&scene, watch, &schemas, true)
-            } else {
-                serve::run(&scene, watch, &schemas)
-            }
+        Commands::Serve { scene, watch, schemas, no_inspector } => {
+            flint_viewer::app::run(&scene, watch, &schemas, !no_inspector)
         }
         Commands::Render {
             scene,

@@ -1,0 +1,6 @@
+[component.script]
+description = "Attaches a Rhai script to an entity"
+
+[component.script.fields]
+source = { type = "string", description = "Path to .rhai file (relative to scripts/ dir)", default = "" }
+enabled = { type = "bool", description = "Whether the script is active", default = true }

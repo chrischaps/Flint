@@ -1,0 +1,32 @@
+# Door close — rotates from 90 to 0 degrees on Y axis over 0.8 seconds
+# CubicSpline with ease-in-out tangents for natural deceleration
+# Reverse of door_swing. Used by door_interact_v2.rhai for closing.
+
+name = "door_close"
+duration = 0.8
+
+[[tracks]]
+interpolation = "CubicSpline"
+
+[tracks.target]
+type = "Rotation"
+
+[[tracks.keyframes]]
+time = 0.0
+value = [0.0, 90.0, 0.0]
+in_tangent = [0.0, 0.0, 0.0]
+out_tangent = [0.0, -150.0, 0.0]
+
+[[tracks.keyframes]]
+time = 0.8
+value = [0.0, 0.0, 0.0]
+in_tangent = [0.0, -30.0, 0.0]
+out_tangent = [0.0, 0.0, 0.0]
+
+[[events]]
+time = 0.0
+event_name = "door_close_start"
+
+[[events]]
+time = 0.8
+event_name = "door_close_end"

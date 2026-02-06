@@ -12,9 +12,11 @@ The loop structure:
 2. **Process input** --- read keyboard and mouse state into `InputState`
 3. **Fixed-step physics** --- while enough time has accumulated, step the physics simulation
 4. **Character controller** --- apply player movement based on input and physics state
-5. **Render** --- draw the frame with the current entity positions
+5. **Update audio** --- sync listener position to camera, process trigger events, update spatial tracks
+6. **Advance animation** --- tick property tweens and skeletal playback, write updated transforms to ECS, upload bone matrices to GPU
+7. **Render** --- draw the frame with the current entity positions
 
-The `RuntimeSystem` trait provides a standard interface for systems that plug into this loop.
+The `RuntimeSystem` trait provides a standard interface for systems that plug into this loop. Physics, audio, and animation each implement `RuntimeSystem` with `initialize()`, `fixed_update()`, `update()`, and `shutdown()` methods.
 
 ## Physics with Rapier 3D
 
@@ -89,6 +91,8 @@ The `InputState` struct tracks keyboard and mouse state each frame:
 
 ## Further Reading
 
+- [Audio](audio.md) --- spatial audio with Kira
+- [Animation](animation.md) --- property tweens and skeletal animation
 - [Rendering](rendering.md) --- the PBR rendering pipeline
 - [Schemas](schemas.md) --- component and archetype definitions including physics schemas
 - [CLI Reference](../cli-reference/overview.md) --- the `play` command and player binary

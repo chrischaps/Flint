@@ -40,7 +40,7 @@ flint play levels/tavern.scene.toml
 
 ## Current Status
 
-Flint is in active development through Phase 4. Phases 1--3 are complete, and Phase 4 Stage 1 (Game Loop + Physics) is implemented. The engine currently supports:
+Flint is in active development through Phase 4. Phases 1--3 are complete, and Phase 4 Stages 1--3 (Game Loop, Audio, Animation) are implemented. The engine currently supports:
 
 - **Entity CRUD** via CLI with archetype-based creation
 - **Scene serialization** in human-readable TOML
@@ -49,12 +49,16 @@ Flint is in active development through Phase 4. Phases 1--3 are complete, and Ph
 - **Constraint validation** with auto-fix capabilities
 - **Asset management** with content-addressed storage and glTF import
 - **PBR renderer** with Cook-Torrance shading, cascaded shadow mapping, and glTF mesh rendering
+- **GPU skeletal animation** with glTF skin/joint import, vertex skinning, and crossfade blending
 - **egui inspector** with entity tree, component editing, and constraint overlay
 - **Hot-reload viewer** that watches for file changes
 - **Headless rendering** for CI and automated screenshots
 - **Physics simulation** via Rapier 3D with kinematic character controller
 - **First-person gameplay** with WASD movement, mouse look, jumping, and sprinting
 - **Game loop** with fixed-timestep accumulator for deterministic physics
+- **Spatial audio** via Kira with 3D positioned sounds, ambient loops, and event-driven triggers
+- **Property animation** with TOML-defined keyframe clips (Step, Linear, CubicSpline interpolation)
+- **Skeletal animation** with glTF skin import, GPU bone matrix skinning, and crossfade blending
 
 See the [Roadmap](roadmap.md) for what's planned next.
 

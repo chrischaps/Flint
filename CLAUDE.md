@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Currently through Phase 4 Stage 3 (Animation) with property tween animation, skeletal/glTF animation with GPU skinning, spatial audio, PBR rendering from Phase 3, constraints from Phase 2, and interactive first-person gameplay.
+Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase 4 complete (all 5 stages) with full integration: Rhai scripting, property tween animation, skeletal/glTF animation with GPU skinning, spatial audio, interactable entities with HUD prompts, NPC behaviors, footstep system, ambient events, and atmospheric tavern demo. PBR rendering from Phase 3, constraints from Phase 2.
 
 ## Build & Development Commands
 
@@ -14,7 +14,7 @@ cargo build --release          # Release build
 cargo run --bin flint -- <cmd> # Run CLI (e.g., cargo run --bin flint -- serve demo/showcase.scene.toml --watch)
 cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene with first-person controls
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas  # Standalone player
-cargo test                     # Run all tests (135 unit tests across crates)
+cargo test                     # Run all tests (172 unit tests across crates)
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --check              # Check formatting
@@ -22,11 +22,12 @@ cargo fmt --check              # Check formatting
 
 ## Architecture
 
-16-crate Cargo workspace with clear dependency layering:
+17-crate Cargo workspace with clear dependency layering:
 
 ```
 flint-cli           CLI binary (clap derive). Commands: init, entity, scene, query, schema, serve, play, validate, asset, render
-flint-player        Standalone player binary with game loop, physics, audio, animation, first-person controls
+flint-player        Standalone player binary with game loop, physics, audio, animation, scripting, egui HUD, first-person controls
+  ├── flint-script   Rhai scripting: ScriptEngine, ScriptSync, ScriptSystem (entity/input/audio/animation APIs, hot-reload)
   ├── flint-animation Property tween animation: AnimationClip, AnimationPlayer, AnimationSync, AnimationSystem
   ├── flint-audio    Kira spatial audio: AudioEngine, AudioSync, AudioTrigger, AudioSystem
   ├── flint-physics  Rapier 3D integration: PhysicsWorld, PhysicsSync, CharacterController
@@ -56,6 +57,9 @@ flint-player        Standalone player binary with game loop, physics, audio, ani
 - **Camera modes** — `CameraMode::Orbit` (scene viewer default) and `CameraMode::FirstPerson` (player) share the same view/projection math
 - **Audio uses Kira** via `flint-audio` crate — spatial 3D audio with distance attenuation, non-spatial ambient loops, event-driven triggers
 - **Animation system** via `flint-animation` crate — property tweens (Tier 1) with Step/Linear/CubicSpline interpolation, `.anim.toml` clip files; skeletal animation (Tier 2) with glTF skin/joint import, GPU vertex skinning, bone matrix computation, crossfade blending; `animator` + `skeleton` component schemas, plays in `update()` (variable-rate for smooth interpolation)
+- **Scripting** via `flint-script` crate — Rhai scripting engine with entity/input/audio/animation/math APIs; `script` component schema with `.rhai` files in `scripts/` directory; event callbacks (`on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`); hot-reload via file timestamp checking; ScriptCommand pattern for deferred audio/event effects
+- **Interactable system** — `interactable` component schema with prompt text, range, type, enabled flag; `find_nearest_interactable()` scans for closest in-range entity; HUD overlay shows interaction prompts via egui
+- **HUD overlay** — egui-based crosshair + interaction prompt in `flint-player`; fades in/out based on proximity; renders as overlay pass after 3D scene
 
 ## Technical Gotchas
 
@@ -75,18 +79,27 @@ flint-player        Standalone player binary with game loop, physics, audio, ani
 - Bone matrices stored in storage buffer (bind group 3) — uniform buffers have size limits; storage supports arbitrary bone counts
 - `SkeletalSync` bridges ECS to skeletal playback; `skeleton` component + `animator` component on same entity triggers skeletal path
 - Crossfade blending via `blend_target`/`blend_duration` fields on `animator` component — uses pose array slerp/lerp
+- Rhai v1.24 with `sync` feature — `Arc<Mutex<ScriptCallContext>>` pattern for closure-captured world access
+- ScriptCallContext uses raw `*mut FlintWorld` pointer — only valid during `call_update()`/`process_events()` scope
+- `rhai::Engine::call_fn()` requires `&mut Scope` — per-entity Scopes preserve persistent script variables
+- Callback detection via `ast.iter_functions()` checking function names — avoids calling non-existent functions
+- `.rhai` files live in `scripts/` directory next to the scene; discovered via `script` component's `source` field
+- Hot-reload checks file timestamps each frame; on recompile error, keeps old AST (never crashes)
+- `on_interact` is sugar: fires on ActionPressed("interact") + proximity check; reads `interactable.range` (default 3.0) and `interactable.enabled` (default true)
+- Entity IDs passed as `i64` in Rhai (native int type); cast to/from `EntityId` internally
+- Animation control from scripts writes directly to `animator` component — `AnimationSync` picks up changes next frame
 
 ## Implemented vs Planned
 
-**Working now:** Entity CRUD, scene load/save, query parsing/execution, schema introspection, PBR renderer with Cook-Torrance shading, glTF model import, cascaded shadow mapping, constraint validation + auto-fix, content-addressed asset catalog, egui GUI inspector, `serve --watch` hot-reload viewer, game loop with fixed-timestep physics, Rapier 3D character controller, first-person walkable scenes via `play` command, spatial audio with Kira (3D positioned sounds, ambient loops, event-driven triggers), property tween animation (Tier 1: keyframe clips with Step/Linear/CubicSpline, `.anim.toml` loading, `animator` component, event firing), skeletal animation (Tier 2: glTF skin/joint import, GPU vertex skinning via storage buffer, bone hierarchy computation, crossfade blending, skinned shadow mapping).
+**Working now:** Entity CRUD, scene load/save, query parsing/execution, schema introspection, PBR renderer with Cook-Torrance shading, glTF model import, cascaded shadow mapping, constraint validation + auto-fix, content-addressed asset catalog, egui GUI inspector, `serve --watch` hot-reload viewer, game loop with fixed-timestep physics, Rapier 3D character controller, first-person walkable scenes via `play` command, spatial audio with Kira (3D positioned sounds, ambient loops, event-driven triggers), property tween animation (Tier 1: keyframe clips with Step/Linear/CubicSpline, `.anim.toml` loading, `animator` component, event firing), skeletal animation (Tier 2: glTF skin/joint import, GPU vertex skinning via storage buffer, bone hierarchy computation, crossfade blending, skinned shadow mapping), Rhai scripting (entity/input/audio/animation/math APIs, event callbacks, hot-reload), interactable entities with HUD prompts (egui crosshair + interaction text overlay), NPC behavior scripts (bartender/patron/stranger), footstep sounds, ambient events, full atmospheric tavern integration demo.
 
-**Designed but not implemented:** Scripting (Rhai), AI asset generation pipeline. See `flint-design-doc.md` for full specification and `PHASE4_ROADMAP.md` for Phase 4 remaining stages (Stages 4-5).
+**Designed but not implemented:** AI asset generation pipeline. See `flint-design-doc.md` for full specification.
 
 ## Project Structure
 
-- `crates/` — All 16 workspace crates
-- `schemas/` — Component and archetype TOML definitions (transform, door, bounds, material, rigidbody, collider, character_controller, player, audio_source, audio_listener, audio_trigger, animator, skeleton, etc.)
-- `demo/` — Showcase scenes (showcase, phase3_showcase, phase4_runtime), demo scripts, `audio/` assets, and `animations/` clips
+- `crates/` — All 17 workspace crates
+- `schemas/` — Component and archetype TOML definitions (transform, door, bounds, material, rigidbody, collider, character_controller, player, audio_source, audio_listener, audio_trigger, animator, skeleton, script, interactable, etc.)
+- `demo/` — Showcase scenes (showcase, phase3_showcase, phase4_runtime), demo `scripts/` (.rhai), `audio/` assets, and `animations/` clips
 - `testGame/` — Test project directory (levels/, schemas/)
 - `flint-design-doc.md` — Comprehensive design document covering all planned phases
-- `PHASE4_ROADMAP.md` — Phase 4 status tracker (Stages 1-3 Tier 1 complete, Stages 3 Tier 2, 4-5 planned: Skeletal Animation, Scripting, Integration)
+- `PHASE4_ROADMAP.md` — Phase 4 status tracker (all 5 stages complete)
