@@ -90,6 +90,9 @@ pub enum FlintError {
 
     #[error("Animation error: {0}")]
     AnimationError(String),
+
+    #[error("Generation error: {0}")]
+    GenerationError(String),
 }
 
 /// Result type alias for Flint operations

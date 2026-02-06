@@ -3,6 +3,8 @@
 use anyhow::Result;
 use clap::Subcommand;
 use flint_asset::{AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, ResolutionStrategy};
+use flint_asset_gen::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
+use flint_asset_gen::{FlintConfig, JobStore, StyleGuide};
 use flint_import::import_gltf;
 use std::collections::HashMap;
 use std::fs;
@@ -50,10 +52,123 @@ pub enum AssetCommands {
         /// Path to scene file
         scene: String,
 
-        /// Resolution strategy (strict or placeholder)
+        /// Resolution strategy (strict, placeholder, ai_generate, human_task, ai_then_human)
         #[arg(long, default_value = "strict")]
         strategy: String,
+
+        /// Style guide name for AI generation
+        #[arg(long)]
+        style: Option<String>,
+
+        /// Output directory for generated assets or task files
+        #[arg(long)]
+        output_dir: Option<String>,
     },
+
+    /// Generate an asset using AI
+    Generate {
+        /// Asset type to generate: texture, model, audio
+        asset_type: String,
+
+        /// Description / prompt for generation
+        #[arg(long, short)]
+        description: String,
+
+        /// Asset name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Provider to use (flux, meshy, elevenlabs, mock)
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Style guide name
+        #[arg(long)]
+        style: Option<String>,
+
+        /// Image width (textures only)
+        #[arg(long, default_value = "1024")]
+        width: u32,
+
+        /// Image height (textures only)
+        #[arg(long, default_value = "1024")]
+        height: u32,
+
+        /// Random seed for reproducibility
+        #[arg(long)]
+        seed: Option<u64>,
+
+        /// Comma-separated tags
+        #[arg(long)]
+        tags: Option<String>,
+
+        /// Output directory (defaults to .flint/generated)
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Audio duration in seconds
+        #[arg(long)]
+        duration: Option<f64>,
+    },
+
+    /// Validate a generated asset against style constraints
+    Validate {
+        /// Path to the asset file (e.g., model.glb)
+        path: String,
+
+        /// Style guide name for constraint checking
+        #[arg(long)]
+        style: Option<String>,
+    },
+
+    /// Generate a build manifest of all generated assets
+    Manifest {
+        /// Output path for the manifest file
+        #[arg(long, default_value = "build/manifest.toml")]
+        output: String,
+
+        /// Assets directory to scan
+        #[arg(long, default_value = "assets")]
+        assets_dir: String,
+    },
+
+    /// Regenerate an existing asset with new parameters
+    Regenerate {
+        /// Asset name to regenerate
+        name: String,
+
+        /// Random seed for reproducibility
+        #[arg(long)]
+        seed: Option<u64>,
+
+        /// Provider override
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Style guide name
+        #[arg(long)]
+        style: Option<String>,
+
+        /// Output directory
+        #[arg(long)]
+        output: Option<String>,
+    },
+
+    /// Manage generation jobs
+    #[command(subcommand)]
+    Job(JobCommands),
+}
+
+#[derive(Subcommand)]
+pub enum JobCommands {
+    /// Show status of a generation job
+    Status {
+        /// Job ID
+        id: String,
+    },
+
+    /// List all generation jobs
+    List,
 }
 
 pub fn run(cmd: AssetCommands) -> Result<()> {
@@ -65,8 +180,411 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             format,
         } => run_list(r#type, tag, &format),
         AssetCommands::Info { name } => run_info(&name),
-        AssetCommands::Resolve { scene, strategy } => run_resolve(&scene, &strategy),
+        AssetCommands::Resolve {
+            scene,
+            strategy,
+            style,
+            output_dir,
+        } => run_resolve(&scene, &strategy, style.as_deref(), output_dir.as_deref()),
+        AssetCommands::Generate {
+            asset_type,
+            description,
+            name,
+            provider,
+            style,
+            width,
+            height,
+            seed,
+            tags,
+            output,
+            duration,
+        } => run_generate(
+            &asset_type,
+            &description,
+            name,
+            provider,
+            style,
+            width,
+            height,
+            seed,
+            tags,
+            output,
+            duration,
+        ),
+        AssetCommands::Validate { path, style } => run_validate(&path, style.as_deref()),
+        AssetCommands::Manifest { output, assets_dir } => run_manifest(&output, &assets_dir),
+        AssetCommands::Regenerate {
+            name,
+            seed,
+            provider,
+            style,
+            output,
+        } => run_regenerate(&name, seed, provider, style, output),
+        AssetCommands::Job(job_cmd) => run_job(job_cmd),
     }
+}
+
+fn run_generate(
+    asset_type: &str,
+    description: &str,
+    name: Option<String>,
+    provider: Option<String>,
+    style_name: Option<String>,
+    width: u32,
+    height: u32,
+    seed: Option<u64>,
+    tags: Option<String>,
+    output_dir: Option<String>,
+    duration: Option<f64>,
+) -> Result<()> {
+    let kind = match asset_type {
+        "texture" => AssetKind::Texture,
+        "model" => AssetKind::Model,
+        "audio" => AssetKind::Audio,
+        _ => anyhow::bail!(
+            "Unknown asset type '{}'. Use: texture, model, audio",
+            asset_type
+        ),
+    };
+
+    // Derive name from description if not provided
+    let asset_name = name.unwrap_or_else(|| {
+        description
+            .split_whitespace()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("_")
+            .to_lowercase()
+            .replace(|c: char| !c.is_alphanumeric() && c != '_', "")
+    });
+
+    // Load config
+    let config = FlintConfig::load().unwrap_or_else(|_| FlintConfig {
+        providers: HashMap::new(),
+        generation: Default::default(),
+    });
+
+    // Determine provider
+    let provider_name = provider
+        .as_deref()
+        .unwrap_or_else(|| config.default_provider(kind));
+
+    // Load style guide
+    let style = match style_name
+        .as_deref()
+        .or_else(|| config.default_style())
+    {
+        Some(s) => match StyleGuide::find(s) {
+            Ok(guide) => Some(guide),
+            Err(e) => {
+                eprintln!("Warning: Could not load style '{}': {}", s, e);
+                None
+            }
+        },
+        None => None,
+    };
+
+    // Build request
+    let tag_list: Vec<String> = tags
+        .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    let request = GenerateRequest {
+        name: asset_name.clone(),
+        description: description.to_string(),
+        kind,
+        texture_params: if kind == AssetKind::Texture {
+            Some(TextureParams {
+                width,
+                height,
+                seed,
+                seamless: false,
+            })
+        } else {
+            None
+        },
+        model_params: if kind == AssetKind::Model {
+            Some(ModelParams {
+                seed,
+                ..Default::default()
+            })
+        } else {
+            None
+        },
+        audio_params: if kind == AssetKind::Audio {
+            Some(AudioParams {
+                duration: duration.unwrap_or(3.0),
+                seed,
+            })
+        } else {
+            None
+        },
+        tags: tag_list,
+    };
+
+    // Create provider
+    let gen_provider = flint_asset_gen::providers::create_provider(provider_name, &config)?;
+
+    println!(
+        "Generating {} '{}' via {}...",
+        kind, asset_name, provider_name
+    );
+
+    if let Some(ref s) = style {
+        println!("  Style: {} (prompt enriched with palette + constraints)", s.name);
+    }
+
+    // Show the prompt that will be used
+    let prompt = gen_provider.build_prompt(&request, style.as_ref());
+    println!("  Prompt: {}", prompt);
+
+    // Generate
+    let out_dir = output_dir
+        .as_deref()
+        .unwrap_or(".flint/generated");
+
+    let result = gen_provider.generate(&request, style.as_ref(), Path::new(out_dir))?;
+
+    println!("  Downloaded: {}", result.output_path);
+
+    // Post-generation validation for models
+    if kind == AssetKind::Model {
+        println!("  Validating...");
+        match flint_asset_gen::validate::validate_model(
+            Path::new(&result.output_path),
+            style.as_ref(),
+        ) {
+            Ok(report) => {
+                for check in &report.checks {
+                    let icon = match check.status {
+                        flint_asset_gen::validate::CheckStatus::Pass => "OK",
+                        flint_asset_gen::validate::CheckStatus::Warn => "WARN",
+                        flint_asset_gen::validate::CheckStatus::Fail => "FAIL",
+                    };
+                    println!("    {}: {}  {}", check.name, check.detail, icon);
+                }
+            }
+            Err(e) => {
+                eprintln!("  Validation skipped: {}", e);
+            }
+        }
+    }
+
+    // Store in content-addressed storage
+    let store = ContentStore::new(".flint/assets");
+    let output_path = Path::new(&result.output_path);
+    if output_path.exists() {
+        let hash = store.store(output_path)?;
+        println!("  Stored: {}", hash.to_prefixed_hex());
+
+        // Write sidecar .asset.toml
+        let subdir = match kind {
+            AssetKind::Texture => "textures",
+            AssetKind::Model => "meshes",
+            AssetKind::Audio => "audio",
+        };
+        let assets_dir = Path::new("assets").join(subdir);
+        fs::create_dir_all(&assets_dir)?;
+
+        let meta = AssetMeta {
+            name: asset_name.clone(),
+            asset_type: match kind {
+                AssetKind::Texture => AssetType::Texture,
+                AssetKind::Model => AssetType::Mesh,
+                AssetKind::Audio => AssetType::Audio,
+            },
+            hash: hash.to_prefixed_hex(),
+            source_path: Some(result.output_path.clone()),
+            format: output_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_string()),
+            properties: {
+                let mut props = HashMap::new();
+                props.insert(
+                    "prompt".to_string(),
+                    toml::Value::String(result.prompt_used.clone()),
+                );
+                props.insert(
+                    "provider".to_string(),
+                    toml::Value::String(result.provider.clone()),
+                );
+                for (k, v) in &result.metadata {
+                    props.insert(k.clone(), toml::Value::String(v.clone()));
+                }
+                props
+            },
+            tags: request.tags.clone(),
+        };
+
+        let sidecar_path = assets_dir.join(format!("{}.asset.toml", asset_name));
+        let sidecar_content = format_asset_toml(&meta);
+        fs::write(&sidecar_path, sidecar_content)?;
+        println!("  Sidecar: {}", sidecar_path.display());
+    }
+
+    println!("  Done in {:.1}s", result.duration_secs);
+    Ok(())
+}
+
+fn run_manifest(output: &str, assets_dir: &str) -> Result<()> {
+    let manifest =
+        flint_asset_gen::manifest::BuildManifest::from_assets_directory(Path::new(assets_dir))
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let output_path = Path::new(output);
+    manifest
+        .save(output_path)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    println!(
+        "Build manifest: {} entries -> {}",
+        manifest.entries.len(),
+        output
+    );
+    for entry in &manifest.entries {
+        println!(
+            "  {} ({}) via {} [{}]",
+            entry.name, entry.asset_type, entry.provider, entry.content_hash
+        );
+    }
+    Ok(())
+}
+
+fn run_regenerate(
+    name: &str,
+    seed: Option<u64>,
+    provider_override: Option<String>,
+    style_name: Option<String>,
+    output_dir: Option<String>,
+) -> Result<()> {
+    // Look up the existing asset in catalog for its metadata
+    let catalog = AssetCatalog::load_from_directory("assets")?;
+    let meta = catalog
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("Asset '{}' not found in catalog", name))?;
+
+    // Extract original generation info from properties
+    let original_prompt = meta
+        .properties
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let original_provider = meta
+        .properties
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("mock")
+        .to_string();
+
+    // Determine asset kind from type
+    let kind = match meta.asset_type {
+        AssetType::Texture => AssetKind::Texture,
+        AssetType::Mesh => AssetKind::Model,
+        AssetType::Audio => AssetKind::Audio,
+        _ => anyhow::bail!("Cannot regenerate asset type: {:?}", meta.asset_type),
+    };
+
+    let provider_name = provider_override
+        .as_deref()
+        .unwrap_or(&original_provider);
+
+    println!(
+        "Regenerating '{}' ({}) via {}...",
+        name, kind, provider_name
+    );
+    if !original_prompt.is_empty() {
+        println!("  Original prompt: {}", original_prompt);
+    }
+
+    // Use the same description/prompt, with optional new seed
+    run_generate(
+        match kind {
+            AssetKind::Texture => "texture",
+            AssetKind::Model => "model",
+            AssetKind::Audio => "audio",
+        },
+        &original_prompt,
+        Some(name.to_string()),
+        Some(provider_name.to_string()),
+        style_name,
+        1024,
+        1024,
+        seed,
+        None,
+        output_dir,
+        None,
+    )
+}
+
+fn run_job(cmd: JobCommands) -> Result<()> {
+    let store = JobStore::default_store();
+
+    match cmd {
+        JobCommands::Status { id } => {
+            let job = store
+                .load(&id)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            println!("Job: {}", job.id);
+            println!("  Provider: {}", job.provider);
+            println!("  Asset: {}", job.asset_name);
+            println!("  Status: {:?}", job.status);
+            println!("  Progress: {}%", job.progress);
+            println!("  Submitted: {}", job.submitted_at);
+            if let Some(ref prompt) = job.prompt {
+                println!("  Prompt: {}", prompt);
+            }
+            if let Some(ref err) = job.error {
+                println!("  Error: {}", err);
+            }
+            if let Some(ref path) = job.output_path {
+                println!("  Output: {}", path);
+            }
+            Ok(())
+        }
+        JobCommands::List => {
+            let jobs = store.list().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            if jobs.is_empty() {
+                println!("No generation jobs found.");
+                return Ok(());
+            }
+
+            println!("{} job(s):\n", jobs.len());
+            for job in &jobs {
+                println!(
+                    "  {} ({}) {} {:?} {}%",
+                    job.id, job.provider, job.asset_name, job.status, job.progress
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+fn run_validate(path: &str, style_name: Option<&str>) -> Result<()> {
+    let asset_path = Path::new(path);
+    if !asset_path.exists() {
+        anyhow::bail!("File not found: {}", path);
+    }
+
+    let style = match style_name {
+        Some(s) => Some(StyleGuide::find(s).map_err(|e| anyhow::anyhow!("{}", e))?),
+        None => None,
+    };
+
+    let report = flint_asset_gen::validate::validate_model(asset_path, style.as_ref())
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    report.print_summary();
+
+    if !report.passed {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<()> {
@@ -229,11 +747,53 @@ fn run_info(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_resolve(scene_path: &str, strategy_str: &str) -> Result<()> {
+fn run_resolve(
+    scene_path: &str,
+    strategy_str: &str,
+    style_name: Option<&str>,
+    output_dir: Option<&str>,
+) -> Result<()> {
+    // Check for batch strategies (ai_generate, human_task, ai_then_human)
+    let batch_strategy = match strategy_str {
+        "ai_generate" => Some(flint_asset_gen::batch::BatchStrategy::AiGenerate),
+        "human_task" => Some(flint_asset_gen::batch::BatchStrategy::HumanTask),
+        "ai_then_human" => Some(flint_asset_gen::batch::BatchStrategy::AiThenHuman),
+        _ => None,
+    };
+
+    if let Some(batch_strat) = batch_strategy {
+        let config = FlintConfig::load().unwrap_or_else(|_| FlintConfig {
+            providers: HashMap::new(),
+            generation: Default::default(),
+        });
+
+        let style = match style_name.or_else(|| config.default_style()) {
+            Some(s) => StyleGuide::find(s).ok(),
+            None => None,
+        };
+
+        let out = output_dir.unwrap_or(".flint/generated");
+
+        flint_asset_gen::batch::resolve_scene(
+            scene_path,
+            batch_strat,
+            style.as_ref(),
+            &config,
+            out,
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        return Ok(());
+    }
+
+    // Existing catalog-based resolution
     let strategy = match strategy_str {
         "strict" => ResolutionStrategy::Strict,
         "placeholder" => ResolutionStrategy::Placeholder,
-        _ => anyhow::bail!("Unknown strategy: {} (use 'strict' or 'placeholder')", strategy_str),
+        _ => anyhow::bail!(
+            "Unknown strategy: {} (use 'strict', 'placeholder', 'ai_generate', 'human_task', 'ai_then_human')",
+            strategy_str
+        ),
     };
 
     let catalog = AssetCatalog::load_from_directory("assets")?;
@@ -249,7 +809,6 @@ fn run_resolve(scene_path: &str, strategy_str: &str) -> Result<()> {
     if let Some(entities) = scene.get("entities").and_then(|e| e.as_table()) {
         for (entity_name, entity_data) in entities {
             if let Some(table) = entity_data.as_table() {
-                // Check for common asset reference fields
                 for field in &["mesh", "texture", "material", "audio", "script"] {
                     if let Some(value) = table.get(*field) {
                         if let Some(name) = value.as_str() {

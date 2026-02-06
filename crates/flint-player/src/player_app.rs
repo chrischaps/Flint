@@ -6,6 +6,7 @@ use crate::hud::HudState;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
+use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
@@ -53,6 +54,10 @@ pub struct PlayerApp {
     egui_renderer: Option<egui_wgpu::Renderer>,
     hud: HudState,
 
+    // Asset catalog (optional, for content-addressed asset resolution)
+    catalog: Option<AssetCatalog>,
+    content_store: Option<ContentStore>,
+
     // Window options
     pub fullscreen: bool,
     cursor_captured: bool,
@@ -78,6 +83,8 @@ impl PlayerApp {
             egui_winit: None,
             egui_renderer: None,
             hud: HudState::new(),
+            catalog: AssetCatalog::load_from_directory("assets").ok(),
+            content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
             cursor_captured: false,
         }
@@ -112,6 +119,8 @@ impl PlayerApp {
             &render_context.device,
             &render_context.queue,
             &self.scene_path,
+            self.catalog.as_ref(),
+            self.content_store.as_ref(),
         );
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
@@ -555,6 +564,8 @@ fn load_models_from_world(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene_path: &str,
+    catalog: Option<&AssetCatalog>,
+    store: Option<&ContentStore>,
 ) -> HashMap<flint_core::EntityId, String> {
     let scene_dir = Path::new(scene_path)
         .parent()
@@ -581,7 +592,16 @@ fn load_models_from_world(
                 continue;
             }
 
-            let model_path = scene_dir.join("models").join(format!("{}.glb", asset_name));
+            // Try catalog lookup first (content-addressed storage)
+            let catalog_path = catalog
+                .and_then(|cat| cat.get(&asset_name))
+                .and_then(|meta| {
+                    let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
+                    store.and_then(|s| s.get(&hash))
+                });
+
+            let model_path = catalog_path
+                .unwrap_or_else(|| scene_dir.join("models").join(format!("{}.glb", asset_name)));
 
             if model_path.exists() {
                 match import_gltf(&model_path) {
@@ -660,7 +680,7 @@ fn load_models_from_world(
     }
 
     // Also load textures
-    load_textures_from_world(world, renderer, device, queue, scene_path);
+    load_textures_from_world(world, renderer, device, queue, scene_path, catalog, store);
 
     skeletal_entity_assets
 }
@@ -736,6 +756,8 @@ fn load_textures_from_world(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene_path: &str,
+    catalog: Option<&AssetCatalog>,
+    store: Option<&ContentStore>,
 ) {
     let scene_dir = Path::new(scene_path)
         .parent()
@@ -759,7 +781,15 @@ fn load_textures_from_world(
             }
             loaded.insert(tex_name.clone());
 
-            let tex_path = scene_dir.join(&tex_name);
+            // Try catalog lookup first
+            let catalog_path = catalog
+                .and_then(|cat| cat.get(&tex_name))
+                .and_then(|meta| {
+                    let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
+                    store.and_then(|s| s.get(&hash))
+                });
+
+            let tex_path = catalog_path.unwrap_or_else(|| scene_dir.join(&tex_name));
             if tex_path.exists() {
                 match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
                     Ok(_) => {}

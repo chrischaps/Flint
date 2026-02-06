@@ -171,8 +171,33 @@ The `animator` component controls playback for both tiers:
 
 Animation runs in `update()` (variable-rate), not `fixed_update()`, because smooth interpolation benefits from matching the rendering frame rate rather than the physics tick rate.
 
+## Scripting Integration
+
+Animations can be controlled from [Rhai scripts](scripting.md) by writing directly to the `animator` component. The `AnimationSync` system picks up changes on the next frame:
+
+| Function | Description |
+|----------|-------------|
+| `play_clip(entity_id, clip_name)` | Start playing a named animation clip |
+| `stop_clip(entity_id)` | Stop the current animation |
+| `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
+| `set_anim_speed(entity_id, speed)` | Set animation playback speed |
+
+```rust
+// In a Rhai script:
+fn on_interact() {
+    let me = self_entity();
+    play_clip(me, "door_swing");
+}
+
+fn on_init() {
+    let me = self_entity();
+    blend_to(me, "idle", 0.3);  // Smooth transition to idle
+}
+```
+
 ## Further Reading
 
+- [Scripting](scripting.md) --- full scripting API including animation functions
 - [Audio](audio.md) --- audio system that responds to animation events
 - [Rendering](rendering.md) --- the skinned mesh GPU pipeline
 - [Physics and Runtime](physics-and-runtime.md) --- the game loop that drives animation

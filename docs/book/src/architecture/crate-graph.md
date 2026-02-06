@@ -1,6 +1,6 @@
 # Crate Dependency Graph
 
-This page shows how Flint's sixteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
+This page shows how Flint's eighteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
 
 ## Dependency Diagram
 
@@ -10,26 +10,26 @@ This page shows how Flint's sixteen crates depend on each other. Dependencies fl
           │  (binary)   │                │   (binary)   │
           └──────┬──────┘                └──────┬───────┘
                  │                              │
-    ┌────┬───┬──┴──┬────┬────┬────┐    ┌───┬───┴───┬───┬───┬───┐
-    │    │   │     │    │    │    │    │   │       │   │   │   │
-    ▼    │   ▼     ▼    ▼    ▼    ▼    ▼   ▼       ▼   │   │   │
- ┌──────┐│┌─────┐┌────┐│ ┌─────┐│ ┌────────┐┌────────┐│   │   │
- │viewer│││scene││qry ││ │const││ │runtime ││physics ││   │   │
- └──┬───┘│└──┬──┘└─┬──┘│ └──┬──┘│ └───┬────┘└───┬────┘│   │   │
-    │    │   │     │   │    │   │     │          │     │   │   │
-    │    ▼   │     │   │    │   │     │          │     ▼   ▼   │
-    │ ┌──────────┐ │   │    │   │     │          │  ┌─────────┐│
-    ├►│  render  │◄┘   │    │   │     │          │  │  audio  ││
-    │ └────┬─────┘     │    │   │     │          │  └────┬────┘│
-    │      │           │    │   │     │          │       │     │
-    │      │           │    │   │     │          │       │     ▼
-    │      │           │    │   │     │          │       │  ┌──────────┐
-    │      │           │    │   │     │          │       │  │animation │
-    │      ▼           │    │   │     │          │       │  └────┬─────┘
-    │ ┌──────────┐     │   ┌┘   │     │          │       │       │
-    │ │  import  │     │   │    │     │          │       │       │
-    │ └────┬─────┘     │   │    │     │          │       │       │
-    │      │           ▼   ▼    ▼     ▼          ▼       ▼       ▼
+    ┌────┬───┬──┴──┬────┬────┬─────┐   ┌───┬───┴───┬───┬───┬───┬───┐
+    │    │   │     │    │    │     │   │   │       │   │   │   │   │
+    ▼    │   ▼     ▼    ▼    ▼     ▼   ▼   ▼       ▼   │   │   │   │
+ ┌──────┐│┌─────┐┌────┐│ ┌─────┐┌────────┐┌────────┐┌────────┐│   │
+ │viewer│││scene││qry ││ │const││asset-gen││runtime ││physics ││   │
+ └──┬───┘│└──┬──┘└─┬──┘│ └──┬──┘└───┬────┘└───┬────┘└───┬────┘│   │
+    │    │   │     │   │    │       │          │         │     │   │
+    │    ▼   │     │   │    │       │          │         │     ▼   │
+    │ ┌──────────┐ │   │    │       │          │         │  ┌─────────┐
+    ├►│  render  │◄┘   │    │       │          │         │  │ script  │
+    │ └────┬─────┘     │    │       │          │         │  └────┬────┘
+    │      │           │    │       │          │         │       │
+    │      │           │    │       │          │         ▼       ▼
+    │      │           │    │       │          │      ┌─────────────┐
+    │      │           │    │       │          │      │audio  anim  │
+    │      ▼           │    │       │          │      └──────┬──────┘
+    │ ┌──────────┐     │   ┌┘      │          │             │
+    │ │  import  │     │   │       │          │             │
+    │ └────┬─────┘     │   │       │          │             │
+    │      │           ▼   ▼       ▼          ▼             ▼
     │      │    ┌──────────────────────────────────────────────────┐
     │      │    │              flint-ecs                            │
     │      │    │  (hecs wrapper, stable IDs, hierarchy)           │
@@ -66,8 +66,10 @@ This page shows how Flint's sixteen crates depend on each other. Dependencies fl
 | `flint-physics` | core, ecs, runtime | player |
 | `flint-audio` | core, ecs, runtime | player |
 | `flint-animation` | core, ecs, import, runtime | player |
+| `flint-script` | core, ecs, runtime | player |
+| `flint-asset-gen` | core, asset, import | cli |
 | `flint-viewer` | core, ecs, scene, schema, render, import, constraint | cli |
-| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, import | *(binary entry point)* |
+| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, script, import, asset | *(binary entry point)* |
 | `flint-cli` | all crates | *(binary entry point)* |
 
 ## Key Properties
@@ -78,14 +80,14 @@ This page shows how Flint's sixteen crates depend on each other. Dependencies fl
 1. **Core** --- fundamental types (`flint-core`)
 2. **Schema** --- data definitions (`flint-schema`)
 3. **Storage** --- entity and asset management (`flint-ecs`, `flint-asset`)
-4. **Logic** --- query, scene, constraint, import
-5. **Systems** --- render, runtime, physics, audio, animation
+4. **Logic** --- query, scene, constraint, import, asset-gen
+5. **Systems** --- render, runtime, physics, audio, animation, script
 6. **Applications** --- viewer, player
 7. **Interface** --- CLI binary (`flint-cli`), player binary (`flint-player`)
 
 **Two entry points.** The CLI binary (`flint-cli`) serves scene authoring and validation workflows. The player binary (`flint-player`) serves interactive gameplay. Both share the same underlying crate hierarchy.
 
-**Independent subsystems.** The constraint system, asset system, physics system, audio system, animation system, and render system don't depend on each other. This means you can build and test each subsystem in isolation.
+**Independent subsystems.** The constraint system, asset system, physics system, audio system, animation system, script system, asset generation system, and render system don't depend on each other. This means you can build and test each subsystem in isolation.
 
 ## External Dependencies
 
@@ -108,3 +110,6 @@ Key third-party crates used across the workspace:
 | `sha2` | flint-core, flint-asset | SHA-256 hashing |
 | `gltf` | flint-import | glTF file parsing (meshes, materials, skins, animations) |
 | `crossbeam` | flint-physics | Channel-based event collection (Rapier) |
+| `rhai` | flint-script | Embedded scripting language |
+| `ureq` | flint-asset-gen | HTTP client for AI provider APIs |
+| `uuid` | flint-asset-gen | Unique job identifiers |

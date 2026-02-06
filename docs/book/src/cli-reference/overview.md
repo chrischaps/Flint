@@ -19,6 +19,12 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset list` | List assets in the catalog |
 | `flint asset info` | Show details for a specific asset |
 | `flint asset resolve` | Check asset references in a scene |
+| `flint asset generate` | Generate an asset using AI providers |
+| `flint asset validate` | Validate a generated model against style constraints |
+| `flint asset manifest` | Generate a build manifest of all generated assets |
+| `flint asset regenerate` | Regenerate an existing asset with new parameters |
+| `flint asset job status` | Check status of an async generation job |
+| `flint asset job list` | List all generation jobs |
 | `flint serve <scene>` | Launch the hot-reload PBR viewer with egui inspector |
 | `flint play <scene>` | Play a scene with first-person controls and physics |
 | `flint render <scene>` | Render a scene to PNG (headless) |
@@ -45,6 +51,7 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | Mouse | Look around |
 | Space | Jump |
 | Shift | Sprint |
+| E | Interact with nearby object |
 | Escape | Release cursor / Exit |
 | F1 | Cycle debug rendering mode |
 | F4 | Toggle shadows |
@@ -59,6 +66,30 @@ The player is also available as a standalone binary for distribution:
 ```bash
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
 ```
+
+## The `asset generate` Command
+
+Generate assets using AI providers:
+
+```bash
+flint asset generate texture -d "rough stone wall" --style medieval_tavern
+flint asset generate model -d "wooden chair" --provider meshy --seed 42
+flint asset generate audio -d "tavern ambient noise" --duration 10.0
+```
+
+| Flag | Description |
+|------|-------------|
+| `-d`, `--description` | Generation prompt (required) |
+| `--name` | Asset name (derived from description if omitted) |
+| `--provider` | Provider to use: `flux`, `meshy`, `elevenlabs`, `mock` |
+| `--style` | Style guide name (e.g., `medieval_tavern`) |
+| `--width`, `--height` | Image dimensions for textures (default: 1024x1024) |
+| `--seed` | Random seed for reproducibility |
+| `--tags` | Comma-separated tags |
+| `--output` | Output directory (default: `.flint/generated`) |
+| `--duration` | Audio duration in seconds (default: 3.0) |
+
+Generated assets are automatically stored in content-addressed storage and registered in the asset catalog with a `.asset.toml` sidecar. Models are validated against style constraints after generation.
 
 ## Common Flags
 

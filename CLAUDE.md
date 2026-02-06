@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase 4 complete (all 5 stages) with full integration: Rhai scripting, property tween animation, skeletal/glTF animation with GPU skinning, spatial audio, interactable entities with HUD prompts, NPC behaviors, footstep system, ambient events, and atmospheric tavern demo. PBR rendering from Phase 3, constraints from Phase 2.
+Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase 5 complete: AI asset generation pipeline with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, semantic asset definitions, batch scene resolution, build manifests, model validation, and runtime catalog integration. Phase 4 complete with Rhai scripting, property/skeletal animation, spatial audio, interactable entities. PBR rendering from Phase 3, constraints from Phase 2.
 
 ## Build & Development Commands
 
@@ -14,7 +14,7 @@ cargo build --release          # Release build
 cargo run --bin flint -- <cmd> # Run CLI (e.g., cargo run --bin flint -- serve demo/showcase.scene.toml --watch)
 cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene with first-person controls
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas  # Standalone player
-cargo test                     # Run all tests (172 unit tests across crates)
+cargo test                     # Run all tests (217 unit tests across crates)
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --check              # Check formatting
@@ -22,10 +22,11 @@ cargo fmt --check              # Check formatting
 
 ## Architecture
 
-17-crate Cargo workspace with clear dependency layering:
+18-crate Cargo workspace with clear dependency layering:
 
 ```
 flint-cli           CLI binary (clap derive). Commands: init, entity, scene, query, schema, serve, play, validate, asset, render
+  └── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock), style guides, batch resolution, validation, manifests
 flint-player        Standalone player binary with game loop, physics, audio, animation, scripting, egui HUD, first-person controls
   ├── flint-script   Rhai scripting: ScriptEngine, ScriptSync, ScriptSystem (entity/input/audio/animation APIs, hot-reload)
   ├── flint-animation Property tween animation: AnimationClip, AnimationPlayer, AnimationSync, AnimationSystem
@@ -60,6 +61,9 @@ flint-player        Standalone player binary with game loop, physics, audio, ani
 - **Scripting** via `flint-script` crate — Rhai scripting engine with entity/input/audio/animation/math APIs; `script` component schema with `.rhai` files in `scripts/` directory; event callbacks (`on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`); hot-reload via file timestamp checking; ScriptCommand pattern for deferred audio/event effects
 - **Interactable system** — `interactable` component schema with prompt text, range, type, enabled flag; `find_nearest_interactable()` scans for closest in-range entity; HUD overlay shows interaction prompts via egui
 - **HUD overlay** — egui-based crosshair + interaction prompt in `flint-player`; fades in/out based on proximity; renders as overlay pass after 3D scene
+- **AI asset generation** via `flint-asset-gen` crate — pluggable `GenerationProvider` trait with Flux (textures), Meshy (3D models), ElevenLabs (audio), and Mock implementations; `StyleGuide` enriches prompts with palette/material/geometry constraints; `BatchStrategy` resolves entire scenes (AiGenerate, HumanTask, AiThenHuman); `BuildManifest` tracks provenance; `SemanticAssetDef` maps intent to generation requests; `validate_model()` checks GLB against style constraints
+- **Asset config** — layered `FlintConfig`: `~/.flint/config.toml` < `.flint/config.toml` < env vars (`FLINT_{PROVIDER}_API_KEY`); per-provider API key/URL/enabled settings
+- **Runtime catalog resolution** — `PlayerApp` optionally loads `AssetCatalog` + `ContentStore`; tries catalog name → hash → content store path before file-based fallback (backwards-compatible)
 
 ## Technical Gotchas
 
@@ -88,18 +92,28 @@ flint-player        Standalone player binary with game loop, physics, audio, ani
 - `on_interact` is sugar: fires on ActionPressed("interact") + proximity check; reads `interactable.range` (default 3.0) and `interactable.enabled` (default true)
 - Entity IDs passed as `i64` in Rhai (native int type); cast to/from `EntityId` internally
 - Animation control from scripts writes directly to `animator` component — `AnimationSync` picks up changes next frame
+- ureq v3 requires `json` feature for `send_json()`; uses rustls by default (no `tls-native-certs` feature)
+- `GenerationProvider` trait's `generate()` takes `&Path` for output directory — providers write files directly
+- `FlintConfig::load()` is layered: global `~/.flint/config.toml` merged with local `.flint/config.toml`, then env var overrides
+- MockProvider generates minimal valid files (solid-color PNG, minimal GLB header, silence WAV) for testing without network
+- `StyleGuide::find()` searches `styles/` then `.flint/styles/` for `{name}.style.toml`
+- Model validation via `validate_model()` imports GLB through `import_gltf()` — reuses the same importer as the player
+- `BuildManifest::from_assets_directory()` scans `.asset.toml` sidecars for `provider` property to identify generated assets
+- `SemanticAssetDef` uses `#[serde(rename = "type")]` for `asset_type` field — TOML uses `type = "texture"` directly
 
 ## Implemented vs Planned
 
-**Working now:** Entity CRUD, scene load/save, query parsing/execution, schema introspection, PBR renderer with Cook-Torrance shading, glTF model import, cascaded shadow mapping, constraint validation + auto-fix, content-addressed asset catalog, egui GUI inspector, `serve --watch` hot-reload viewer, game loop with fixed-timestep physics, Rapier 3D character controller, first-person walkable scenes via `play` command, spatial audio with Kira (3D positioned sounds, ambient loops, event-driven triggers), property tween animation (Tier 1: keyframe clips with Step/Linear/CubicSpline, `.anim.toml` loading, `animator` component, event firing), skeletal animation (Tier 2: glTF skin/joint import, GPU vertex skinning via storage buffer, bone hierarchy computation, crossfade blending, skinned shadow mapping), Rhai scripting (entity/input/audio/animation/math APIs, event callbacks, hot-reload), interactable entities with HUD prompts (egui crosshair + interaction text overlay), NPC behavior scripts (bartender/patron/stranger), footstep sounds, ambient events, full atmospheric tavern integration demo.
+**Working now:** Entity CRUD, scene load/save, query parsing/execution, schema introspection, PBR renderer with Cook-Torrance shading, glTF model import, cascaded shadow mapping, constraint validation + auto-fix, content-addressed asset catalog, egui GUI inspector, `serve --watch` hot-reload viewer, game loop with fixed-timestep physics, Rapier 3D character controller, first-person walkable scenes via `play` command, spatial audio with Kira (3D positioned sounds, ambient loops, event-driven triggers), property tween animation (Tier 1: keyframe clips with Step/Linear/CubicSpline, `.anim.toml` loading, `animator` component, event firing), skeletal animation (Tier 2: glTF skin/joint import, GPU vertex skinning via storage buffer, bone hierarchy computation, crossfade blending, skinned shadow mapping), Rhai scripting (entity/input/audio/animation/math APIs, event callbacks, hot-reload), interactable entities with HUD prompts (egui crosshair + interaction text overlay), NPC behavior scripts (bartender/patron/stranger), footstep sounds, ambient events, full atmospheric tavern integration demo, AI asset generation pipeline (Flux textures, Meshy 3D models, ElevenLabs audio with mock provider for testing, style guides, batch scene resolution, model validation, build manifests, semantic asset definitions, runtime catalog integration).
 
-**Designed but not implemented:** AI asset generation pipeline. See `flint-design-doc.md` for full specification.
+**Designed but not implemented:** See `flint-design-doc.md` for full specification of remaining phases.
 
 ## Project Structure
 
-- `crates/` — All 17 workspace crates
-- `schemas/` — Component and archetype TOML definitions (transform, door, bounds, material, rigidbody, collider, character_controller, player, audio_source, audio_listener, audio_trigger, animator, skeleton, script, interactable, etc.)
-- `demo/` — Showcase scenes (showcase, phase3_showcase, phase4_runtime), demo `scripts/` (.rhai), `audio/` assets, and `animations/` clips
+- `crates/` — All 18 workspace crates
+- `schemas/` — Component and archetype TOML definitions (transform, door, bounds, material, rigidbody, collider, character_controller, player, audio_source, audio_listener, audio_trigger, animator, skeleton, script, interactable, asset_def, etc.)
+- `styles/` — Style guide TOML definitions (medieval_tavern) for AI generation
+- `demo/` — Showcase scenes (showcase, phase3_showcase, phase4_runtime, phase5_ai_demo), demo `scripts/` (.rhai), `audio/` assets, and `animations/` clips
 - `testGame/` — Test project directory (levels/, schemas/)
 - `flint-design-doc.md` — Comprehensive design document covering all planned phases
 - `PHASE4_ROADMAP.md` — Phase 4 status tracker (all 5 stages complete)
+- `PHASE5_ROADMAP.md` — Phase 5 status tracker (all 5 stages complete)

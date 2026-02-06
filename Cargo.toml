@@ -9,6 +9,7 @@ members = [
     "crates/flint-render",
     "crates/flint-constraint",
     "crates/flint-asset",
+    "crates/flint-asset-gen",
     "crates/flint-import",
     "crates/flint-viewer",
     "crates/flint-runtime",
@@ -70,10 +71,14 @@ rhai = { version = "1", features = ["sync"] }
 # Game loop
 instant = "0.1"
 
+# HTTP
+ureq = { version = "3", features = ["json"] }
+
 # Utilities
 bimap = "0.6"
 sha2 = "0.10"
 uuid = { version = "1.11", features = ["v4"] }
+dirs = "6"
 
 # glTF
 gltf = "1.4"
@@ -99,4 +104,5 @@ flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
+flint-asset-gen = { path = "crates/flint-asset-gen" }
 flint-player = { path = "crates/flint-player" }

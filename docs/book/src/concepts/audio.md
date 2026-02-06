@@ -92,8 +92,29 @@ spatial = false
 
 Supported audio formats: OGG, WAV, MP3, FLAC (via Kira's symphonia backend).
 
+## Scripting Integration
+
+Audio can be controlled from [Rhai scripts](scripting.md) using deferred commands. The script API produces `ScriptCommand` values that the player processes after the script update phase:
+
+| Function | Description |
+|----------|-------------|
+| `play_sound(name)` | Play a non-spatial sound by filename (without extension) |
+| `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
+| `stop_sound(name)` | Stop a playing sound |
+
+```rust
+// In a Rhai script:
+fn on_interact() {
+    play_sound("door_open");                          // Non-spatial
+    play_sound_at("glass_clink", 5.0, 1.0, 3.0, 0.8); // Spatial at position
+}
+```
+
+Sound names match files in the `audio/` directory. All `.ogg`, `.wav`, `.mp3`, and `.flac` files are automatically loaded at startup.
+
 ## Further Reading
 
+- [Scripting](scripting.md) --- full scripting API including audio functions
 - [Animation](animation.md) --- animation system that can trigger audio events
 - [Physics and Runtime](physics-and-runtime.md) --- the game loop and event bus that drives audio triggers
 - [Schemas](schemas.md) --- component and archetype definitions

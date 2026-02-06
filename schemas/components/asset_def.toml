@@ -1,0 +1,11 @@
+[component.asset_def]
+description = "Semantic asset definition — describes intent for AI generation"
+
+[component.asset_def.fields]
+name = { type = "string", description = "Asset name identifier" }
+description = { type = "string", description = "What this asset is for (e.g., 'tavern wall texture', 'wooden chair')" }
+type = { type = "string", description = "Asset type: texture, model, audio", default = "texture" }
+material_intent = { type = "string", description = "Material intent (e.g., 'aged wood', 'rough stone')", optional = true }
+wear_level = { type = "f32", description = "How worn/damaged (0.0 = pristine, 1.0 = heavily worn)", optional = true }
+size_class = { type = "string", description = "Size class: small, medium, large, huge", optional = true }
+tags = { type = "array", description = "Tags for categorization", default = [] }

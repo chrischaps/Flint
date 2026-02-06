@@ -1,0 +1,408 @@
+# ================================================================
+#  PHASE 5 — AI Asset Pipeline Demo
+# ================================================================
+#
+#  A scene showcasing the AI asset generation pipeline with
+#  semantic asset definitions. Each entity that needs AI-generated
+#  assets declares an [asset_def] component describing the intent.
+#
+#  Resolution:
+#    flint asset resolve demo/phase5_ai_demo.scene.toml --strategy ai_generate --style medieval_tavern
+#    flint asset resolve demo/phase5_ai_demo.scene.toml --strategy human_task --output-dir tasks/
+#    flint asset resolve demo/phase5_ai_demo.scene.toml --strategy ai_then_human --style medieval_tavern
+#
+#  After resolving, play the scene:
+#    cargo run --bin flint -- play demo/phase5_ai_demo.scene.toml
+#
+# ================================================================
+
+[scene]
+name = "Phase 5 — AI Asset Pipeline Demo"
+version = "5.0"
+description = "Demonstrates AI-generated textures, models, and audio via semantic asset definitions"
+
+
+# ============================================================
+#  PLAYER
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 8]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+
+[entities.player.audio_listener]
+enabled = true
+
+
+# ============================================================
+#  WORLD GEOMETRY — floor, walls, ceiling
+# ============================================================
+
+[entities.floor]
+archetype = "static_body"
+
+[entities.floor.transform]
+position = [0, -0.1, 0]
+scale = [20, 0.2, 20]
+
+[entities.floor.collider]
+shape = "box"
+size = [20, 0.2, 20]
+
+[entities.floor.rigidbody]
+body_type = "static"
+
+[entities.floor.material]
+texture = "stone_floor"
+roughness = 0.85
+metallic = 0.0
+
+[entities.floor.asset_def]
+name = "stone_floor"
+description = "Aged flagstone floor with scattered dust and dried ale stains"
+type = "texture"
+material_intent = "rough hewn stone"
+wear_level = 0.7
+size_class = "large"
+tags = ["floor", "stone", "interior"]
+
+
+# --- Walls ---
+
+[entities.wall_north]
+archetype = "static_body"
+
+[entities.wall_north.transform]
+position = [0, 2.5, -10]
+scale = [20, 5, 0.5]
+
+[entities.wall_north.collider]
+shape = "box"
+size = [20, 5, 0.5]
+
+[entities.wall_north.rigidbody]
+body_type = "static"
+
+[entities.wall_north.material]
+texture = "timber_wall"
+roughness = 0.75
+metallic = 0.0
+
+[entities.wall_south]
+archetype = "static_body"
+
+[entities.wall_south.transform]
+position = [0, 2.5, 10]
+scale = [20, 5, 0.5]
+
+[entities.wall_south.collider]
+shape = "box"
+size = [20, 5, 0.5]
+
+[entities.wall_south.rigidbody]
+body_type = "static"
+
+[entities.wall_south.material]
+texture = "timber_wall"
+roughness = 0.75
+metallic = 0.0
+
+[entities.wall_east]
+archetype = "static_body"
+
+[entities.wall_east.transform]
+position = [10, 2.5, 0]
+scale = [0.5, 5, 20]
+
+[entities.wall_east.collider]
+shape = "box"
+size = [0.5, 5, 20]
+
+[entities.wall_east.rigidbody]
+body_type = "static"
+
+[entities.wall_east.material]
+texture = "timber_wall"
+
+[entities.wall_west]
+archetype = "static_body"
+
+[entities.wall_west.transform]
+position = [-10, 2.5, 0]
+scale = [0.5, 5, 20]
+
+[entities.wall_west.collider]
+shape = "box"
+size = [0.5, 5, 20]
+
+[entities.wall_west.rigidbody]
+body_type = "static"
+
+[entities.wall_west.material]
+texture = "timber_wall"
+
+[entities.timber_wall_def]
+archetype = "prop"
+
+[entities.timber_wall_def.asset_def]
+name = "timber_wall"
+description = "Dark oak timber wall panels with iron nail heads and smoke staining"
+type = "texture"
+material_intent = "aged dark oak wood"
+wear_level = 0.6
+size_class = "large"
+tags = ["wall", "wood", "interior"]
+
+
+# ============================================================
+#  FURNITURE — AI-generated 3D models
+# ============================================================
+
+[entities.tavern_table]
+archetype = "static_body"
+
+[entities.tavern_table.transform]
+position = [-3, 0, -2]
+
+[entities.tavern_table.collider]
+shape = "box"
+size = [1.6, 0.8, 1.0]
+
+[entities.tavern_table.rigidbody]
+body_type = "static"
+
+[entities.tavern_table.model]
+asset = "oak_table"
+
+[entities.tavern_table.asset_def]
+name = "oak_table"
+description = "Heavy rectangular oak tavern table with thick legs and iron corner brackets"
+type = "model"
+material_intent = "aged dark oak"
+wear_level = 0.5
+size_class = "medium"
+tags = ["furniture", "table", "wood"]
+
+[entities.tavern_chair_1]
+archetype = "static_body"
+
+[entities.tavern_chair_1.transform]
+position = [-3, 0, -1]
+rotation = [0, 30, 0]
+
+[entities.tavern_chair_1.collider]
+shape = "box"
+size = [0.5, 0.9, 0.5]
+
+[entities.tavern_chair_1.rigidbody]
+body_type = "static"
+
+[entities.tavern_chair_1.model]
+asset = "tavern_chair"
+
+[entities.tavern_chair_1.asset_def]
+name = "tavern_chair"
+description = "Sturdy medieval tavern chair with a flat seat and simple back slats"
+type = "model"
+material_intent = "aged oak"
+wear_level = 0.4
+size_class = "small"
+tags = ["furniture", "chair", "wood"]
+
+[entities.tavern_chair_2]
+archetype = "static_body"
+
+[entities.tavern_chair_2.transform]
+position = [-3, 0, -3]
+rotation = [0, -15, 0]
+
+[entities.tavern_chair_2.collider]
+shape = "box"
+size = [0.5, 0.9, 0.5]
+
+[entities.tavern_chair_2.rigidbody]
+body_type = "static"
+
+[entities.tavern_chair_2.model]
+asset = "tavern_chair"
+
+[entities.bar_counter]
+archetype = "static_body"
+
+[entities.bar_counter.transform]
+position = [5, 0, -5]
+scale = [1, 1, 1]
+
+[entities.bar_counter.collider]
+shape = "box"
+size = [4.0, 1.1, 0.8]
+
+[entities.bar_counter.rigidbody]
+body_type = "static"
+
+[entities.bar_counter.model]
+asset = "bar_counter"
+
+[entities.bar_counter.asset_def]
+name = "bar_counter"
+description = "Long wooden bar counter with a polished top surface and storage shelves underneath"
+type = "model"
+material_intent = "polished dark wood"
+wear_level = 0.3
+size_class = "large"
+tags = ["furniture", "bar", "wood"]
+
+
+# ============================================================
+#  DECORATIVE PROPS
+# ============================================================
+
+[entities.barrel_1]
+archetype = "static_body"
+
+[entities.barrel_1.transform]
+position = [8, 0, -8]
+
+[entities.barrel_1.collider]
+shape = "cylinder"
+size = [0.5, 1.0, 0.5]
+
+[entities.barrel_1.rigidbody]
+body_type = "static"
+
+[entities.barrel_1.model]
+asset = "ale_barrel"
+
+[entities.barrel_1.asset_def]
+name = "ale_barrel"
+description = "Oak ale barrel with iron bands, slightly bulging with age"
+type = "model"
+material_intent = "aged oak with iron fittings"
+wear_level = 0.6
+size_class = "medium"
+tags = ["prop", "barrel", "wood"]
+
+[entities.barrel_2]
+archetype = "static_body"
+
+[entities.barrel_2.transform]
+position = [8, 0, -6.5]
+
+[entities.barrel_2.collider]
+shape = "cylinder"
+size = [0.5, 1.0, 0.5]
+
+[entities.barrel_2.rigidbody]
+body_type = "static"
+
+[entities.barrel_2.model]
+asset = "ale_barrel"
+
+
+# ============================================================
+#  LIGHTING
+# ============================================================
+
+[entities.sun]
+archetype = "light"
+
+[entities.sun.transform]
+position = [10, 15, 8]
+
+[entities.sun.light]
+type = "directional"
+color = [1.0, 0.92, 0.78]
+intensity = 0.3
+
+[entities.torch_1]
+archetype = "light"
+
+[entities.torch_1.transform]
+position = [-9, 3.5, 0]
+
+[entities.torch_1.light]
+type = "point"
+color = [1.0, 0.7, 0.3]
+intensity = 3.0
+
+[entities.torch_2]
+archetype = "light"
+
+[entities.torch_2.transform]
+position = [9, 3.5, 0]
+
+[entities.torch_2.light]
+type = "point"
+color = [1.0, 0.65, 0.25]
+intensity = 3.0
+
+[entities.fireplace_light]
+archetype = "light"
+
+[entities.fireplace_light.transform]
+position = [0, 1.5, -9]
+
+[entities.fireplace_light.light]
+type = "point"
+color = [1.0, 0.55, 0.15]
+intensity = 5.0
+
+
+# ============================================================
+#  AUDIO — AI-generated sound effects
+# ============================================================
+
+[entities.ambient_tavern]
+archetype = "audio"
+
+[entities.ambient_tavern.transform]
+position = [0, 2, 0]
+
+[entities.ambient_tavern.audio_source]
+file = "tavern_ambience"
+volume = 0.4
+loop = true
+spatial = false
+
+[entities.ambient_tavern.asset_def]
+name = "tavern_ambience"
+description = "Warm interior ambience with muffled crowd murmur and distant laughter"
+type = "audio"
+tags = ["ambient", "interior", "tavern"]
+
+[entities.fire_crackle]
+archetype = "audio"
+
+[entities.fire_crackle.transform]
+position = [0, 1, -9]
+
+[entities.fire_crackle.audio_source]
+file = "fire_crackle"
+volume = 0.6
+loop = true
+spatial = true
+min_distance = 1.0
+max_distance = 12.0
+
+[entities.fire_crackle.asset_def]
+name = "fire_crackle"
+description = "Cozy hearth fire with intermittent pops and crackles"
+type = "audio"
+tags = ["ambient", "fire", "loop"]

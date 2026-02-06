@@ -1,0 +1,33 @@
+[style]
+name = "medieval_tavern"
+description = "Weathered medieval fantasy tavern — warm wood, rough stone, flickering firelight"
+prompt_prefix = "Medieval fantasy tavern style, low-fantasy realism"
+prompt_suffix = "Photorealistic textures, warm candlelight tones, hand-crafted imperfections, aged and weathered"
+negative_prompt = "modern, sci-fi, neon, plastic, chrome, futuristic, clean, pristine, digital"
+palette = [
+    "#8B4513",  # saddle brown (dark wood)
+    "#A0522D",  # sienna (warm wood)
+    "#D4A574",  # light oak
+    "#4A4A4A",  # dark iron
+    "#2F1B0E",  # deep shadow
+    "#C4956A",  # sandy stone
+    "#6B4226",  # chestnut leather
+    "#3D2B1F",  # dark walnut
+]
+
+[style.materials]
+roughness_range = [0.6, 0.95]
+metallic_range = [0.0, 0.15]
+preferred_materials = [
+    "aged oak wood",
+    "rough-hewn stone",
+    "hammered wrought iron",
+    "worn leather",
+    "tallow-stained fabric",
+    "cracked clay",
+]
+
+[style.geometry]
+max_triangles = 5000
+require_uvs = true
+require_normals = true

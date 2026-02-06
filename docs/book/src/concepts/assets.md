@@ -58,6 +58,11 @@ When a scene references assets, Flint can resolve them using different strategie
 |----------|----------|
 | `strict` | All referenced assets must exist in the catalog. Missing assets are errors. |
 | `placeholder` | Missing assets are replaced with placeholder geometry. Useful during development. |
+| `ai_generate` | Missing assets are generated via AI providers (Flux, Meshy, ElevenLabs) and stored. |
+| `human_task` | Missing assets produce task files for manual creation by an artist. |
+| `ai_then_human` | Generate with AI first, then produce review tasks for human approval. |
+
+The `ai_generate`, `human_task`, and `ai_then_human` strategies are part of the [AI Asset Generation](ai-generation.md) pipeline.
 
 ## Asset Sidecar Files
 
@@ -72,8 +77,20 @@ source_path = "models/chair.glb"
 tags = ["furniture", "medieval"]
 ```
 
+## Runtime Catalog Resolution
+
+The player can load the asset catalog at startup for name-based asset resolution. When an entity references an asset by name, the resolution chain is:
+
+1. Look up the name in the `AssetCatalog`
+2. If found, resolve the content hash
+3. Load from the `ContentStore` path (`.flint/assets/<hash>`)
+4. Fall back to file-based loading if not in the catalog
+
+This allows scenes to reference both pre-imported and AI-generated assets by name without hardcoding file paths.
+
 ## Further Reading
 
 - [Importing Assets](../guides/importing-assets.md) --- step-by-step import guide
+- [AI Asset Generation](ai-generation.md) --- AI-powered asset creation pipeline
 - [Schemas](schemas.md) --- the `material` component schema for PBR properties
 - [File Formats](../formats/overview.md) --- asset sidecar TOML format reference

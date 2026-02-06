@@ -14,9 +14,10 @@ The loop structure:
 4. **Character controller** --- apply player movement based on input and physics state
 5. **Update audio** --- sync listener position to camera, process trigger events, update spatial tracks
 6. **Advance animation** --- tick property tweens and skeletal playback, write updated transforms to ECS, upload bone matrices to GPU
-7. **Render** --- draw the frame with the current entity positions
+7. **Run scripts** --- execute Rhai scripts (`on_update`, event callbacks), process deferred commands (audio, events)
+8. **Render** --- draw the frame with the current entity positions, HUD overlay (crosshair, interaction prompts)
 
-The `RuntimeSystem` trait provides a standard interface for systems that plug into this loop. Physics, audio, and animation each implement `RuntimeSystem` with `initialize()`, `fixed_update()`, `update()`, and `shutdown()` methods.
+The `RuntimeSystem` trait provides a standard interface for systems that plug into this loop. Physics, audio, animation, and scripting each implement `RuntimeSystem` with `initialize()`, `fixed_update()`, `update()`, and `shutdown()` methods.
 
 ## Physics with Rapier 3D
 
@@ -91,6 +92,7 @@ The `InputState` struct tracks keyboard and mouse state each frame:
 
 ## Further Reading
 
+- [Scripting](scripting.md) --- Rhai scripting system for game logic
 - [Audio](audio.md) --- spatial audio with Kira
 - [Animation](animation.md) --- property tweens and skeletal animation
 - [Rendering](rendering.md) --- the PBR rendering pipeline

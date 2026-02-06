@@ -18,6 +18,7 @@ flint-query = { workspace = true }
 flint-render = { workspace = true }
 flint-constraint = { workspace = true }
 flint-asset = { workspace = true }
+flint-asset-gen = { workspace = true }
 flint-import = { workspace = true }
 flint-animation = { workspace = true }
 flint-runtime = { workspace = true }

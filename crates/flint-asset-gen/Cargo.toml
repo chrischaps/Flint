@@ -1,0 +1,23 @@
+[package]
+name = "flint-asset-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AI-powered asset generation pipeline for Flint engine"
+
+[dependencies]
+flint-core = { workspace = true }
+flint-asset = { workspace = true }
+flint-import = { workspace = true }
+ureq = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+dirs = { workspace = true }
+image = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }

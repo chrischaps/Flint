@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a sixteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as an eighteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -8,7 +8,9 @@ Flint is structured as a sixteen-crate Cargo workspace with clear dependency lay
 flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
-│   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation
+│   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
+│   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
+│   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
@@ -68,6 +70,8 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 | GUI | egui 0.30 | Immediate-mode, easy integration with wgpu |
 | Scene format | TOML | Human-readable, diffable, good Rust support |
 | Query parser | pest | PEG grammar, good error messages |
+| Scripting | Rhai 1.24 | Sandboxed, embeddable, Rust-native |
+| AI generation | ureq | Lightweight HTTP client for provider APIs |
 | CLI framework | clap (derive) | Ergonomic, well-documented |
 | Error handling | thiserror + anyhow | Typed errors in libraries, flexible in binary |
 
@@ -83,13 +87,14 @@ User / AI Agent
   flint-cli                        flint-player
   (scene authoring)                (interactive gameplay)
       │                                  │
-      ├──► flint-viewer (GUI)            ├──► flint-runtime   (game loop, input)
-      ├──► flint-query  (queries)        ├──► flint-physics   (Rapier 3D)
-      ├──► flint-scene  (load/save)      ├──► flint-audio     (Kira spatial audio)
-      ├──► flint-render (renderer)       ├──► flint-animation (tweens + skeletal)
-      ├──► flint-constraint (validation) └──► flint-render    (PBR + skinned mesh)
-      ├──► flint-asset  (asset catalog)          │
-      └──► flint-import (glTF import)            ▼
+      ├──► flint-viewer    (GUI)         ├──► flint-runtime   (game loop, input)
+      ├──► flint-query     (queries)     ├──► flint-physics   (Rapier 3D)
+      ├──► flint-scene     (load/save)   ├──► flint-audio     (Kira spatial audio)
+      ├──► flint-render    (renderer)    ├──► flint-animation (tweens + skeletal)
+      ├──► flint-constraint(validation)  ├──► flint-script    (Rhai scripting)
+      ├──► flint-asset     (catalog)     └──► flint-render    (PBR + skinned mesh)
+      ├──► flint-asset-gen (AI gen)              │
+      └──► flint-import    (glTF import)         ▼
               │                              flint-import  (glTF meshes + skins)
               ▼                                  │
           flint-ecs                              ▼
@@ -193,14 +198,39 @@ Two-tier animation system:
 - `AnimationSync` bridges ECS `animator` components to property playback
 - `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
 
+### flint-script
+
+Rhai scripting engine for runtime game logic:
+- `ScriptEngine` --- compiles `.rhai` files, manages per-entity `Scope` and `AST`, dispatches callbacks
+- `ScriptSync` --- discovers entities with `script` components, monitors file timestamps for hot-reload
+- `ScriptSystem` --- `RuntimeSystem` implementation running in `update()` (variable-rate)
+- Full API: entity CRUD, input, time, audio, animation, math, events, logging
+- `ScriptCommand` pattern --- deferred audio/event effects processed by PlayerApp after script batch
+- `ScriptCallContext` with raw `*mut FlintWorld` pointer for world access during call batches
+
+### flint-asset-gen
+
+AI asset generation pipeline:
+- `GenerationProvider` trait with pluggable implementations (Flux, Meshy, ElevenLabs, Mock)
+- `StyleGuide` --- TOML-defined visual vocabulary (palette, materials, geometry constraints) for prompt enrichment
+- `SemanticAssetDef` --- maps intent (description, material, wear level) to generation requests
+- Batch scene resolution with strategies: `AiGenerate`, `HumanTask`, `AiThenHuman`
+- `validate_model()` --- checks GLB geometry and materials against style constraints
+- `BuildManifest` --- provenance tracking (provider, prompt, content hash) for all generated assets
+- `FlintConfig` --- layered configuration for API keys and provider settings
+- `JobStore` --- persistent tracking of async generation jobs (for long-running 3D model generation)
+
 ### flint-player
 
-Standalone player binary that wires together runtime, physics, audio, animation, and rendering:
-- Full game loop: clock tick, fixed-step physics, audio sync, animation advance, first-person rendering
+Standalone player binary that wires together runtime, physics, audio, animation, scripting, and rendering:
+- Full game loop: clock tick, fixed-step physics, audio sync, animation advance, script update, first-person rendering
 - Scene loading with physics body creation from TOML collider/rigidbody components
 - Audio source loading and spatial listener tracking
 - Skeletal animation with bone matrix upload to GPU each frame
-- First-person controls (WASD, mouse look, jump, sprint)
+- Rhai script system with event dispatch (collisions, triggers, actions, interactions)
+- Interactable entity system with HUD prompt overlay (egui crosshair + proximity text)
+- First-person controls (WASD, mouse look, jump, sprint, interact)
+- Optional asset catalog integration for runtime name-based asset resolution
 
 ### flint-cli
 

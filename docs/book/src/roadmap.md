@@ -48,9 +48,9 @@ The visual validation phase. Physically-based rendering with a full-featured sce
 
 ## Phase 4: Interactive Runtime
 
-**Status: In Progress (Stages 1--3 of 5 complete)**
+**Status: Complete**
 
-The game runtime phase. A playable game loop with physics, audio, animation, and eventually scripting.
+The game runtime phase. A playable game loop with physics, audio, animation, scripting, and interactive entities.
 
 **Stage 1 --- Game Loop + Physics: Complete**
 - `flint-runtime` --- GameClock (fixed-timestep accumulator), InputState (keyboard/mouse with action bindings), EventBus, RuntimeSystem trait
@@ -78,31 +78,50 @@ The game runtime phase. A playable game loop with physics, audio, animation, and
 - Skinned shadow mapping with dedicated shader entry point
 - Demo animations --- bobbing platform (4s loop), door swing (0.8s), skeletal test scene
 
-**Stage 4 --- Scripting: Planned**
-- `flint-script` --- Rhai scripting for game logic (sandboxed)
-- Entity API, event callbacks (`on_collision`, `on_trigger`, `on_action`)
-- Animation and audio APIs for scripts
-- Hot-reload for script files
+**Stage 4 --- Scripting: Complete**
+- `flint-script` --- Rhai scripting engine with per-entity scopes and AST management
+- Entity API (read/write components, spawn/despawn, position/rotation, distance)
+- Input API (action pressed/just-pressed, mouse delta)
+- Audio API (play_sound, play_sound_at, stop_sound) via deferred ScriptCommand pattern
+- Animation API (play_clip, stop_clip, blend_to, set_anim_speed) via direct ECS writes
+- Math API (clamp, lerp, random, trig, atan2)
+- Event callbacks: `on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`
+- Hot-reload via file timestamp checking (keeps old AST on compile error)
+- `script` component schema with `source` and `enabled` fields
 
-**Stage 5 --- Integration: Planned**
-- Interactable component with scripted behaviors
-- Full demo: walk around, open animated doors, see NPC idle animations, hear sounds
+**Stage 5 --- Integration: Complete**
+- `interactable` component schema (prompt_text, range, interaction_type, enabled)
+- Proximity-based interaction with `find_nearest_interactable()` scanning
+- egui HUD overlay: crosshair + interaction prompt text with fade in/out
+- NPC behavior scripts: bartender (wave + glass clink), patron (random fidget), mysterious stranger (ominous reactions)
+- Footstep sounds synced to player movement
+- Ambient event system (random sounds: glass clinks, chair creaks)
+- Full atmospheric tavern integration demo with scripts, audio, animation, and interactables
 
-**Milestone:** `flint play tavern.scene.toml` launches a first-person walkable scene with physics, spatial audio, and animation.
+**Milestone:** `flint play tavern.scene.toml` launches a first-person walkable scene with physics, spatial audio, animation, scripted NPCs, and interactive objects.
 
 ## Phase 5: AI Asset Pipeline
 
-**Status: Planned**
+**Status: Complete**
 
-Integrated AI generation workflows for textures, meshes, and audio.
+Integrated AI generation workflows for textures, meshes, and audio with style consistency and provenance tracking.
 
-**Planned:**
-- `flint-asset-gen` --- Provider integrations (texture generation, mesh generation, audio generation)
-- Style consistency validation against style guide TOML files
-- Human task generation for assets that need manual creation
-- Resolution strategy: `ai_generate` alongside existing `strict` and `placeholder`
+**Delivered:**
+- `flint-asset-gen` --- pluggable `GenerationProvider` trait with four implementations:
+  - **Flux** --- AI texture generation (PNG output)
+  - **Meshy** --- text-to-3D model generation (GLB output, async job polling)
+  - **ElevenLabs** --- AI sound effect and voice generation
+  - **Mock** --- generates minimal valid files for testing without network access
+- **Style guides** --- TOML-defined visual vocabulary (palette, materials, geometry constraints) that enriches generation prompts for consistent asset aesthetics
+- **Semantic asset definitions** --- `asset_def` component schema mapping intent to generation requests (description, material intent, wear level, size class)
+- **Batch scene resolution** --- `flint asset resolve` with strategies: `ai_generate`, `human_task`, `ai_then_human`
+- **Model validation** --- `validate_model()` checks GLB geometry and materials against style constraints (triangle count, UVs, normals, roughness/metallic ranges)
+- **Build manifests** --- provenance tracking for all generated assets (provider, prompt, content hash)
+- **Layered configuration** --- `~/.flint/config.toml` < `.flint/config.toml` < environment variables for API keys and provider settings
+- **Runtime catalog integration** --- `PlayerApp` resolves assets by name through catalog → hash → content store → file fallback chain
+- **CLI commands** --- `flint asset generate`, `flint asset validate`, `flint asset manifest`, `flint asset regenerate`, `flint asset job status/list`
 
-**Milestone:** `flint asset generate model --provider meshy` produces usable game assets.
+**Milestone:** `flint asset generate texture -d "stone wall" --style medieval_tavern` produces a style-consistent texture, validates it, and stores it in the content-addressed catalog.
 
 ## Beyond Phase 5
 
