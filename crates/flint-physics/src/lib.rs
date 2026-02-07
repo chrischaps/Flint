@@ -11,11 +11,20 @@ pub mod sync;
 pub mod world;
 
 use character::CharacterController;
-use flint_core::Result;
+use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, GameEvent, InputState, RuntimeSystem};
 use sync::PhysicsSync;
 use world::PhysicsWorld;
+
+/// Entity-level raycast result
+#[derive(Debug, Clone)]
+pub struct EntityRaycastHit {
+    pub entity_id: EntityId,
+    pub distance: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
 
 /// Physics system implementing RuntimeSystem for the game loop
 pub struct PhysicsSystem {
@@ -39,6 +48,33 @@ impl PhysicsSystem {
             character: CharacterController::new(),
             event_bus: EventBus::new(),
         }
+    }
+
+    /// Cast a ray and resolve the hit collider to an EntityId
+    pub fn raycast(
+        &self,
+        origin: [f32; 3],
+        direction: [f32; 3],
+        max_distance: f32,
+        exclude_entity: Option<EntityId>,
+    ) -> Option<EntityRaycastHit> {
+        let exclude_collider = exclude_entity
+            .and_then(|eid| self.sync.collider_map.get(&eid).copied());
+
+        let hit = self.physics_world.cast_ray(origin, direction, max_distance, exclude_collider)?;
+
+        // Resolve collider handle → EntityId
+        let entity_id = self.sync.collider_map
+            .iter()
+            .find(|(_, ch)| **ch == hit.collider_handle)
+            .map(|(eid, _)| *eid)?;
+
+        Some(EntityRaycastHit {
+            entity_id,
+            distance: hit.distance,
+            point: hit.point,
+            normal: hit.normal,
+        })
     }
 
     /// Run the character controller update (called from player app with input access)
@@ -78,6 +114,9 @@ impl RuntimeSystem for PhysicsSystem {
 
         // Update kinematic bodies from ECS transforms (e.g., animated doors)
         self.sync.update_kinematic_bodies(world, &mut self.physics_world);
+
+        // Update sensor flags (e.g., dead enemies become non-solid)
+        self.sync.update_sensor_flags(world, &mut self.physics_world);
 
         // Step physics
         self.physics_world.step(dt as f32);

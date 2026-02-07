@@ -1,0 +1,14 @@
+[component.weapon]
+description = "Weapon properties for hitscan combat"
+
+[component.weapon.fields]
+name = { type = "string", default = "Pistol", description = "Display name" }
+damage = { type = "f32", default = 15.0, min = 0.0, description = "Damage per hit" }
+fire_rate = { type = "f32", default = 0.4, min = 0.01, description = "Seconds between shots" }
+ammo = { type = "i32", default = 50, min = 0, description = "Current ammo count" }
+max_ammo = { type = "i32", default = 50, min = 1, description = "Maximum ammo capacity" }
+range = { type = "f32", default = 100.0, min = 0.0, description = "Maximum effective range" }
+spread = { type = "f32", default = 0.0, min = 0.0, description = "Random spread angle (radians)" }
+cooldown_remaining = { type = "f32", default = 0.0, min = 0.0, description = "Time until next shot allowed" }
+fire_sound = { type = "string", default = "audio/gunshot.ogg", description = "Sound effect on fire" }
+pellet_count = { type = "i32", default = 1, min = 1, description = "Number of pellets per shot (1=single, 7=shotgun)" }

@@ -11,6 +11,7 @@ pub mod job;
 pub mod manifest;
 pub mod provider;
 pub mod providers;
+pub mod registration;
 pub mod semantic;
 pub mod style;
 pub mod validate;
@@ -24,3 +25,10 @@ pub use provider::{
 };
 pub use semantic::SemanticAssetDef;
 pub use style::StyleGuide;
+pub use registration::{
+    register_generated_asset,
+    register_generated_asset_with_roots,
+    write_asset_sidecar,
+    write_asset_sidecar_with_root,
+    RegisteredAsset,
+};

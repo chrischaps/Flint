@@ -1,0 +1,11 @@
+[component.weapon_inventory]
+description = "Tracks owned weapons and per-weapon ammo (shared bus between scripts)"
+
+[component.weapon_inventory.fields]
+current_weapon = { type = "i32", default = 1, min = 1, max = 2, description = "Active weapon slot: 1=pistol, 2=shotgun" }
+has_shotgun = { type = "bool", default = false, description = "Whether shotgun has been picked up" }
+pistol_ammo = { type = "i32", default = 50, min = 0, description = "Current pistol ammo" }
+pistol_max_ammo = { type = "i32", default = 200, min = 1, description = "Maximum pistol ammo" }
+shotgun_ammo = { type = "i32", default = 0, min = 0, description = "Current shotgun ammo" }
+shotgun_max_ammo = { type = "i32", default = 50, min = 1, description = "Maximum shotgun ammo" }
+switch_pending = { type = "bool", default = false, description = "Dirty flag: set by pickup.rhai when inventory changes externally" }

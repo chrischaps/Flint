@@ -52,6 +52,56 @@ For skeletal animation, the renderer provides a separate GPU pipeline that appli
 
 Skinned meshes also cast shadows through a dedicated `vs_skinned_shadow` shader entry point that applies bone transforms before depth rendering.
 
+## Billboard Sprites
+
+Billboard sprites are camera-facing quads used for 2D elements in 3D space --- enemies, pickups, particle effects, and environmental details. They always face the camera, like classic Doom-style sprites.
+
+The `BillboardPipeline` is a separate rendering pipeline from PBR, optimized for flat textured quads:
+
+- **No vertex buffer** --- quad positions are generated procedurally from `vertex_index` (4 vertices per sprite)
+- **Per-sprite uniform buffer** --- each sprite gets its own instance data (position, size, frame, anchor)
+- **Binary alpha** --- the fragment shader uses `discard` for transparent pixels (avoids order-independent transparency complexity)
+- **Sprite sheet animation** --- supports multi-frame sprite sheets via `frame`, `frames_x`, and `frames_y` fields
+- **Render order** --- billboard sprites render after skinned meshes in the pipeline
+
+### Sprite Component
+
+Attach a sprite to any entity with the `sprite` component:
+
+```toml
+[entities.imp]
+archetype = "enemy"
+
+[entities.imp.transform]
+position = [10, 0, 5]
+
+[entities.imp.sprite]
+texture = "imp_spritesheet"
+width = 1.5
+height = 2.0
+frames_x = 4
+frames_y = 1
+frame = 0
+anchor_y = 0.0
+fullbright = true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `texture` | string | `""` | Sprite sheet texture name (from `sprites/` directory) |
+| `width` | f32 | `1.0` | World-space width of the quad |
+| `height` | f32 | `1.0` | World-space height of the quad |
+| `frame` | i32 | `0` | Current frame index in the sprite sheet |
+| `frames_x` | i32 | `1` | Number of columns in the sprite sheet |
+| `frames_y` | i32 | `1` | Number of rows in the sprite sheet |
+| `anchor_y` | f32 | `0.0` | Vertical anchor point (0.0 = bottom, 0.5 = center) |
+| `fullbright` | bool | `true` | If true, bypasses PBR lighting (always fully lit) |
+| `visible` | bool | `true` | Whether the sprite is rendered |
+
+### Design Decisions
+
+Billboard sprites use a **separate pipeline** rather than extending the PBR pipeline. This keeps the PBR shaders clean and allows sprites to opt out of lighting entirely (`fullbright = true`). The `discard`-based alpha approach is simple and avoids the significant complexity of order-independent transparency, at the cost of no partial transparency (pixels are either fully opaque or fully transparent).
+
 ## Viewer vs Headless
 
 The renderer operates in two modes:
@@ -75,6 +125,8 @@ The rendering stack uses winit 0.30's `ApplicationHandler` trait pattern (not th
 ## Further Reading
 
 - [The Scene Viewer](../getting-started/viewing.md) --- getting started with the viewer
+- [Scripting](scripting.md) --- UI draw API for script-driven HUD overlays
+- [Schemas](schemas.md) --- sprite component schema definition
 - [Animation](animation.md) --- the animation system that drives skinned meshes
 - [Physics and Runtime](physics-and-runtime.md) --- the game loop and first-person gameplay
 - [Headless Rendering](../guides/headless-rendering.md) --- CI integration guide

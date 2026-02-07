@@ -1390,6 +1390,7 @@ dependencies = [
  "flint-scene",
  "flint-schema",
  "flint-script",
+ "image",
  "pollster",
  "toml",
  "wgpu",
@@ -1465,6 +1466,7 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "flint-ecs",
+ "flint-physics",
  "flint-runtime",
  "rhai",
  "toml",

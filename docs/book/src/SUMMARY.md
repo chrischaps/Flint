@@ -41,6 +41,7 @@
 - [Importing Assets](guides/importing-assets.md)
 - [Headless Rendering](guides/headless-rendering.md)
 - [AI Agent Workflow](guides/ai-agent-workflow.md)
+- [Building a Game Project](guides/building-a-game-project.md)
 
 # Reference
 

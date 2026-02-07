@@ -4,13 +4,14 @@ use anyhow::{Context, Result};
 use flint_schema::{FieldType, SchemaRegistry};
 use std::path::Path;
 
-pub fn run(name: &str, schemas_path: &str) -> Result<()> {
-    if !Path::new(schemas_path).exists() {
-        anyhow::bail!("Schemas directory not found: {}", schemas_path);
+pub fn run(name: &str, schemas_paths: &[&str]) -> Result<()> {
+    let existing: Vec<&str> = schemas_paths.iter().copied().filter(|p| Path::new(p).exists()).collect();
+    if existing.is_empty() {
+        anyhow::bail!("No schemas directories found: {:?}", schemas_paths);
     }
 
     let registry =
-        SchemaRegistry::load_from_directory(schemas_path).context("Failed to load schemas")?;
+        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?;
 
     // Try component first, then archetype
     if let Some(component) = registry.get_component(name) {

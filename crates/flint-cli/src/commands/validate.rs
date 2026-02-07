@@ -12,16 +12,37 @@ pub struct ValidateArgs {
     pub fix: bool,
     pub dry_run: bool,
     pub output_diff: bool,
-    pub schemas: String,
+    pub schemas: Vec<String>,
     pub format: String,
 }
 
 pub fn run(args: ValidateArgs) -> Result<()> {
-    let schema_registry = SchemaRegistry::load_from_directory(&args.schemas)?;
-    let constraint_registry = ConstraintRegistry::load_from_directory(&args.schemas)?;
+    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| std::path::Path::new(p).exists()).collect();
+    let schema_registry = SchemaRegistry::load_from_directories(&existing)?;
+    let mut constraint_registry = ConstraintRegistry::new();
+
+    if existing.is_empty() {
+        // Preserve existing single-directory fallback behavior
+        let loaded = ConstraintRegistry::load_from_directory("schemas")?;
+        for constraint in loaded.all() {
+            constraint_registry.register(constraint.clone());
+        }
+    } else {
+        // Merge constraints from all schema directories (later directories are additive)
+        for path in &existing {
+            let loaded = ConstraintRegistry::load_from_directory(path)?;
+            for constraint in loaded.all() {
+                constraint_registry.register(constraint.clone());
+            }
+        }
+    }
 
     if constraint_registry.is_empty() {
-        println!("No constraints found in {}/constraints/", args.schemas);
+        if existing.is_empty() {
+            println!("No constraints found in schemas/constraints/");
+        } else {
+            println!("No constraints found in provided schema directories.");
+        }
         println!("Create constraint files to enable validation.");
         return Ok(());
     }

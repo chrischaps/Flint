@@ -1,5 +1,6 @@
 //! Main viewer application — combines wgpu scene rendering with egui panels
 
+use anyhow::{Context, Result};
 use crate::panels::{EntityInspector, RenderStats, SceneTree};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
@@ -33,7 +34,7 @@ pub fn run(
     watch: bool,
     schemas_path: &str,
     inspector: bool,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let registry = if Path::new(schemas_path).exists() {
         SchemaRegistry::load_from_directory(schemas_path)?
     } else {
@@ -62,9 +63,22 @@ pub fn run(
         let (tx, rx) = mpsc::channel();
 
         let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
+        let scene_file = Path::new(scene_path);
+        let scene_dir = scene_file.parent().unwrap_or_else(|| Path::new("."));
+
         debouncer
             .watcher()
-            .watch(Path::new(scene_path), RecursiveMode::NonRecursive)?;
+            .watch(scene_file, RecursiveMode::NonRecursive)?;
+        debouncer
+            .watcher()
+            .watch(scene_dir, RecursiveMode::Recursive)?;
+
+        let schemas_dir = Path::new(schemas_path);
+        if schemas_dir.exists() {
+            debouncer
+                .watcher()
+                .watch(schemas_dir, RecursiveMode::Recursive)?;
+        }
 
         std::thread::spawn(move || {
             for result in rx {
@@ -81,7 +95,7 @@ pub fn run(
             }
         });
 
-        println!("Watching for changes...");
+        println!("Watching for changes in scene and related assets...");
         Some(debouncer)
     } else {
         None
@@ -148,15 +162,20 @@ impl ViewerApp {
         }
     }
 
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
+    fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let window_attrs = Window::default_attributes()
             .with_title("Flint Viewer")
             .with_inner_size(PhysicalSize::new(1600, 900));
 
-        let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .context("Failed to create viewer window")?,
+        );
         self.window = Some(window.clone());
 
-        let render_context = pollster::block_on(RenderContext::new(window.clone())).unwrap();
+        let render_context = pollster::block_on(RenderContext::new(window.clone()))
+            .context("Failed to initialize viewer render context")?;
 
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.update_orbit();
@@ -207,6 +226,8 @@ impl ViewerApp {
         self.scene_renderer = Some(scene_renderer);
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
+
+        Ok(())
     }
 
     fn update_constraints(&mut self) {
@@ -258,6 +279,7 @@ impl ViewerApp {
         {
             let context = self.render_context.as_ref().unwrap();
             let renderer = self.scene_renderer.as_mut().unwrap();
+            renderer.set_selected_entity(self.scene_tree.selected_entity());
             renderer.render(context, &self.camera, &view).ok();
         }
 
@@ -581,7 +603,10 @@ fn load_textures_from_world(
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            self.initialize(event_loop);
+            if let Err(e) = self.initialize(event_loop) {
+                eprintln!("Failed to initialize viewer: {e:#}");
+                event_loop.exit();
+            }
         }
     }
 

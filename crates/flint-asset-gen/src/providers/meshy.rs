@@ -11,9 +11,14 @@ use crate::style::StyleGuide;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 const DEFAULT_MESHY_URL: &str = "https://api.meshy.ai/openapi/v2/text-to-3d";
 const POLL_INTERVAL_SECS: u64 = 10;
+const REQUEST_TIMEOUT_SECS: u64 = 60;
+const MAX_RETRIES: usize = 3;
+const RETRY_BASE_DELAY_MS: u64 = 500;
+const MAX_POLL_ATTEMPTS: u32 = 180;
 
 /// Meshy provider for AI 3D model generation
 pub struct MeshyProvider {
@@ -53,14 +58,7 @@ impl MeshyProvider {
             payload["negative_prompt"] = serde_json::json!(neg);
         }
 
-        let response: serde_json::Value = ureq::post(&self.api_url)
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .send_json(&payload)
-            .map_err(|e| FlintError::GenerationError(format!("Meshy API request failed: {}", e)))?
-            .body_mut()
-            .read_json()
-            .map_err(|e| FlintError::GenerationError(format!("Failed to parse Meshy response: {}", e)))?;
+        let response = self.post_json_with_retry(&self.api_url, &payload)?;
 
         response
             .get("result")
@@ -78,13 +76,7 @@ impl MeshyProvider {
     fn poll_task(&self, task_id: &str) -> Result<MeshyTaskStatus> {
         let url = format!("{}/{}", self.api_url, task_id);
 
-        let response: serde_json::Value = ureq::get(&url)
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .call()
-            .map_err(|e| FlintError::GenerationError(format!("Meshy poll failed: {}", e)))?
-            .body_mut()
-            .read_json()
-            .map_err(|e| FlintError::GenerationError(format!("Failed to parse poll response: {}", e)))?;
+        let response = self.get_json_with_retry(&url)?;
 
         let status = response
             .get("status")
@@ -121,18 +113,113 @@ impl MeshyProvider {
 
     /// Download a GLB file from URL
     fn download_glb(&self, url: &str, output_path: &Path) -> Result<()> {
-        let mut reader = ureq::get(url)
-            .call()
-            .map_err(|e| FlintError::GenerationError(format!("Failed to download model: {}", e)))?
-            .into_body()
-            .into_reader();
-
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut reader, &mut bytes)
-            .map_err(|e| FlintError::GenerationError(format!("Failed to read model data: {}", e)))?;
-
+        let bytes = self.download_bytes_with_retry(url)?;
         std::fs::write(output_path, &bytes)?;
         Ok(())
+    }
+
+    fn post_json_with_retry(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        for attempt in 0..MAX_RETRIES {
+            let agent = build_agent();
+            let response = agent
+                .post(url)
+                .header("Authorization", &format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .send_json(payload);
+
+            match response {
+                Ok(mut ok) => {
+                    return ok.body_mut().read_json().map_err(|e| {
+                        FlintError::GenerationError(format!(
+                            "Failed to parse Meshy response: {}",
+                            e
+                        ))
+                    });
+                }
+                Err(e) => {
+                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
+                        sleep_backoff(attempt);
+                        continue;
+                    }
+                    return Err(FlintError::GenerationError(format!(
+                        "Meshy API request failed: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        Err(FlintError::GenerationError(
+            "Meshy API request failed after retries".to_string(),
+        ))
+    }
+
+    fn get_json_with_retry(&self, url: &str) -> Result<serde_json::Value> {
+        for attempt in 0..MAX_RETRIES {
+            let agent = build_agent();
+            let response = agent
+                .get(url)
+                .header("Authorization", &format!("Bearer {}", self.api_key))
+                .call();
+
+            match response {
+                Ok(mut ok) => {
+                    return ok.body_mut().read_json().map_err(|e| {
+                        FlintError::GenerationError(format!(
+                            "Failed to parse poll response: {}",
+                            e
+                        ))
+                    });
+                }
+                Err(e) => {
+                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
+                        sleep_backoff(attempt);
+                        continue;
+                    }
+                    return Err(FlintError::GenerationError(format!("Meshy poll failed: {}", e)));
+                }
+            }
+        }
+
+        Err(FlintError::GenerationError(
+            "Meshy poll failed after retries".to_string(),
+        ))
+    }
+
+    fn download_bytes_with_retry(&self, url: &str) -> Result<Vec<u8>> {
+        for attempt in 0..MAX_RETRIES {
+            let agent = build_agent();
+            let response = agent.get(url).call();
+
+            match response {
+                Ok(ok) => {
+                    let mut reader = ok.into_body().into_reader();
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| {
+                        FlintError::GenerationError(format!("Failed to read model data: {}", e))
+                    })?;
+                    return Ok(bytes);
+                }
+                Err(e) => {
+                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
+                        sleep_backoff(attempt);
+                        continue;
+                    }
+                    return Err(FlintError::GenerationError(format!(
+                        "Failed to download model: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        Err(FlintError::GenerationError(
+            "Model download failed after retries".to_string(),
+        ))
     }
 }
 
@@ -175,7 +262,16 @@ impl GenerationProvider for MeshyProvider {
         eprintln!("  Submitted job: {}", task_id);
 
         // Poll until complete
+        let mut poll_attempts = 0u32;
         loop {
+            poll_attempts += 1;
+            if poll_attempts > MAX_POLL_ATTEMPTS {
+                return Err(FlintError::GenerationError(format!(
+                    "Meshy generation timed out after {} poll attempts",
+                    MAX_POLL_ATTEMPTS
+                )));
+            }
+
             std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS));
 
             match self.poll_task(&task_id)? {
@@ -289,6 +385,29 @@ impl GenerationProvider for MeshyProvider {
             None => request.description.clone(),
         }
     }
+}
+
+fn build_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
+        .build();
+    config.into()
+}
+
+fn is_retryable_error(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::Timeout(_)
+        | ureq::Error::Io(_)
+        | ureq::Error::ConnectionFailed
+        | ureq::Error::HostNotFound => true,
+        ureq::Error::StatusCode(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
+        _ => false,
+    }
+}
+
+fn sleep_backoff(attempt: usize) {
+    let delay_ms = RETRY_BASE_DELAY_MS.saturating_mul(1u64 << attempt);
+    std::thread::sleep(Duration::from_millis(delay_ms));
 }
 
 /// Parse a Meshy submit response for testing

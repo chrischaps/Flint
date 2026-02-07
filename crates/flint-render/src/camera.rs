@@ -173,6 +173,27 @@ impl Camera {
         mat4_mul(&proj, &view)
     }
 
+    /// Get camera right vector (world space)
+    pub fn right_vector(&self) -> [f32; 3] {
+        let f = (self.target - self.position).normalized();
+        let s = f.cross(&self.up).normalized();
+        [s.x, s.y, s.z]
+    }
+
+    /// Get camera up vector (world space, perpendicular to both forward and right)
+    pub fn up_vector(&self) -> [f32; 3] {
+        let f = (self.target - self.position).normalized();
+        let s = f.cross(&self.up).normalized();
+        let u = s.cross(&f);
+        [u.x, u.y, u.z]
+    }
+
+    /// Get camera forward direction (world space)
+    pub fn forward_vector(&self) -> [f32; 3] {
+        let f = (self.target - self.position).normalized();
+        [f.x, f.y, f.z]
+    }
+
     /// Get inverse of the combined view-projection matrix (for unprojecting)
     pub fn inverse_view_projection_matrix(&self) -> [[f32; 4]; 4] {
         let vp = self.view_projection_matrix();

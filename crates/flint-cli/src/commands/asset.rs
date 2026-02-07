@@ -4,10 +4,9 @@ use anyhow::Result;
 use clap::Subcommand;
 use flint_asset::{AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, ResolutionStrategy};
 use flint_asset_gen::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
-use flint_asset_gen::{FlintConfig, JobStore, StyleGuide};
+use flint_asset_gen::{register_generated_asset, write_asset_sidecar, FlintConfig, JobStore, StyleGuide};
 use flint_import::import_gltf;
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 #[derive(Subcommand)]
@@ -370,58 +369,10 @@ fn run_generate(
         }
     }
 
-    // Store in content-addressed storage
-    let store = ContentStore::new(".flint/assets");
-    let output_path = Path::new(&result.output_path);
-    if output_path.exists() {
-        let hash = store.store(output_path)?;
-        println!("  Stored: {}", hash.to_prefixed_hex());
-
-        // Write sidecar .asset.toml
-        let subdir = match kind {
-            AssetKind::Texture => "textures",
-            AssetKind::Model => "meshes",
-            AssetKind::Audio => "audio",
-        };
-        let assets_dir = Path::new("assets").join(subdir);
-        fs::create_dir_all(&assets_dir)?;
-
-        let meta = AssetMeta {
-            name: asset_name.clone(),
-            asset_type: match kind {
-                AssetKind::Texture => AssetType::Texture,
-                AssetKind::Model => AssetType::Mesh,
-                AssetKind::Audio => AssetType::Audio,
-            },
-            hash: hash.to_prefixed_hex(),
-            source_path: Some(result.output_path.clone()),
-            format: output_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|s| s.to_string()),
-            properties: {
-                let mut props = HashMap::new();
-                props.insert(
-                    "prompt".to_string(),
-                    toml::Value::String(result.prompt_used.clone()),
-                );
-                props.insert(
-                    "provider".to_string(),
-                    toml::Value::String(result.provider.clone()),
-                );
-                for (k, v) in &result.metadata {
-                    props.insert(k.clone(), toml::Value::String(v.clone()));
-                }
-                props
-            },
-            tags: request.tags.clone(),
-        };
-
-        let sidecar_path = assets_dir.join(format!("{}.asset.toml", asset_name));
-        let sidecar_content = format_asset_toml(&meta);
-        fs::write(&sidecar_path, sidecar_content)?;
-        println!("  Sidecar: {}", sidecar_path.display());
-    }
+    // Store in content-addressed storage and register sidecar metadata
+    let registered = register_generated_asset(&request, &result)?;
+    println!("  Stored: {}", registered.hash);
+    println!("  Sidecar: {}", registered.sidecar_path.display());
 
     println!("  Done in {:.1}s", result.duration_secs);
     Ok(())
@@ -644,22 +595,8 @@ fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<
     let store = ContentStore::new(".flint/assets");
     store.store(source_path)?;
 
-    // Determine asset subdirectory
-    let subdir = match meta.asset_type {
-        AssetType::Mesh => "meshes",
-        AssetType::Texture => "textures",
-        AssetType::Material => "materials",
-        AssetType::Audio => "audio",
-        AssetType::Script => "scripts",
-    };
-
     // Write sidecar .asset.toml
-    let assets_dir = Path::new("assets").join(subdir);
-    fs::create_dir_all(&assets_dir)?;
-
-    let sidecar_path = assets_dir.join(format!("{}.asset.toml", meta.name));
-    let sidecar_content = format_asset_toml(&meta);
-    fs::write(&sidecar_path, sidecar_content)?;
+    let sidecar_path = write_asset_sidecar(&meta)?;
 
     println!("Asset '{}' registered.", meta.name);
     println!("  Hash: {}", meta.hash);
@@ -803,30 +740,22 @@ fn run_resolve(
     let content = std::fs::read_to_string(scene_path)?;
     let scene: toml::Value = toml::from_str(&content)?;
 
-    let mut found = 0;
-    let mut missing = 0;
+    let mut found = 0usize;
+    let mut missing = 0usize;
 
-    if let Some(entities) = scene.get("entities").and_then(|e| e.as_table()) {
-        for (entity_name, entity_data) in entities {
-            if let Some(table) = entity_data.as_table() {
-                for field in &["mesh", "texture", "material", "audio", "script"] {
-                    if let Some(value) = table.get(*field) {
-                        if let Some(name) = value.as_str() {
-                            let asset_ref = flint_asset::AssetRef::ByName(name.to_string());
-                            let result = resolver.resolve(&asset_ref, &catalog);
-                            if result.is_found() {
-                                found += 1;
-                            } else {
-                                missing += 1;
-                                println!(
-                                    "  Missing: {}.{} -> \"{}\"",
-                                    entity_name, field, name
-                                );
-                            }
-                        }
-                    }
-                }
-            }
+    for reference in collect_scene_asset_references(&scene) {
+        let asset_ref = flint_asset::AssetRef::ByName(reference.name.clone());
+        let result = resolver.resolve(&asset_ref, &catalog);
+        if result.is_found() {
+            found += 1;
+        } else {
+            missing += 1;
+            println!(
+                "  Missing: {}.{} -> \"{}\"",
+                reference.entity,
+                reference.field,
+                reference.name
+            );
         }
     }
 
@@ -837,6 +766,75 @@ fn run_resolve(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct SceneAssetReference {
+    entity: String,
+    field: String,
+    name: String,
+}
+
+fn collect_scene_asset_references(scene: &toml::Value) -> Vec<SceneAssetReference> {
+    let mut refs = Vec::new();
+
+    let Some(entities) = scene.get("entities").and_then(|e| e.as_table()) else {
+        return refs;
+    };
+
+    for (entity_name, entity_data) in entities {
+        let Some(table) = entity_data.as_table() else {
+            continue;
+        };
+
+        // Legacy top-level references
+        for field in ["mesh", "texture", "material", "audio", "script"] {
+            push_ref_if_string(table, entity_name, field, field, &mut refs);
+        }
+
+        // Current component references
+        if let Some(model) = table.get("model").and_then(|v| v.as_table()) {
+            push_ref_if_string(model, entity_name, "asset", "model.asset", &mut refs);
+        }
+
+        if let Some(material) = table.get("material").and_then(|v| v.as_table()) {
+            push_ref_if_string(
+                material,
+                entity_name,
+                "texture",
+                "material.texture",
+                &mut refs,
+            );
+        }
+
+        if let Some(sprite) = table.get("sprite").and_then(|v| v.as_table()) {
+            push_ref_if_string(sprite, entity_name, "texture", "sprite.texture", &mut refs);
+        }
+
+        if let Some(audio) = table.get("audio_source").and_then(|v| v.as_table()) {
+            push_ref_if_string(audio, entity_name, "file", "audio_source.file", &mut refs);
+        }
+    }
+
+    refs
+}
+
+fn push_ref_if_string(
+    table: &toml::map::Map<String, toml::Value>,
+    entity_name: &str,
+    key: &str,
+    field_name: &str,
+    refs: &mut Vec<SceneAssetReference>,
+) {
+    if let Some(name) = table.get(key).and_then(|v| v.as_str()) {
+        if !name.is_empty() {
+            refs.push(SceneAssetReference {
+                entity: entity_name.to_string(),
+                field: field_name.to_string(),
+                name: name.to_string(),
+            });
+        }
+    }
 }
 
 fn guess_asset_type(ext: &str) -> AssetType {
@@ -858,36 +856,4 @@ fn parse_asset_type(s: &str) -> Option<AssetType> {
         "script" => Some(AssetType::Script),
         _ => None,
     }
-}
-
-fn format_asset_toml(meta: &AssetMeta) -> String {
-    let mut out = String::new();
-    out.push_str("[asset]\n");
-    out.push_str(&format!("name = \"{}\"\n", meta.name));
-    out.push_str(&format!(
-        "type = \"{}\"\n",
-        format!("{:?}", meta.asset_type).to_lowercase()
-    ));
-    out.push_str(&format!("hash = \"{}\"\n", meta.hash));
-
-    if let Some(ref source) = meta.source_path {
-        out.push_str(&format!("source_path = \"{}\"\n", source));
-    }
-    if let Some(ref fmt) = meta.format {
-        out.push_str(&format!("format = \"{}\"\n", fmt));
-    }
-
-    if !meta.tags.is_empty() {
-        let tags: Vec<String> = meta.tags.iter().map(|t| format!("\"{}\"", t)).collect();
-        out.push_str(&format!("tags = [{}]\n", tags.join(", ")));
-    }
-
-    if !meta.properties.is_empty() {
-        out.push_str("\n[asset.properties]\n");
-        for (key, value) in &meta.properties {
-            out.push_str(&format!("{} = {}\n", key, value));
-        }
-    }
-
-    out
 }

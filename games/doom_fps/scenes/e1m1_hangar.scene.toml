@@ -1,0 +1,1430 @@
+# ================================================================
+#  E1M1: HANGAR — Multi-Room Doom-Inspired Level
+# ================================================================
+#
+#  A recreation of Doom's iconic opening level. Five distinct rooms
+#  connected by three doors, with a secret area and a nukage-filled
+#  zigzag chamber. Progression flows south to north (positive Z to
+#  negative Z).
+#
+#  Layout (top-down):
+#    Z=-25  Computer Room  (blue-gray tech, exit switch)
+#    Z=-10  ──── Door 3 ────
+#           Zigzag Room    (nukage pit, raised walkways)
+#    Z=+5   ──── Door 2 ────
+#           Hallway        (narrow gray corridor)
+#    Z=+15  ──── Door 1 ────
+#           Start Room     (warm brown, player spawn)
+#    Z=+25
+#
+#  Launch:
+#    cargo run --bin flint-player -- games/doom_fps/scenes/e1m1_hangar.scene.toml \
+#        --schemas schemas --schemas games/doom_fps/schemas
+#
+#  Controls:
+#    WASD       - Move             Space     - Jump
+#    Mouse      - Look around      Shift     - Sprint
+#    Left Click - Fire weapon      E         - Interact
+#    1 / 2      - Switch weapon    Escape    - Release cursor / Exit
+#    F1         - Debug modes      F4        - Toggle shadows
+#    F11        - Fullscreen
+# ================================================================
+
+[scene]
+name = "E1M1: Hangar"
+version = "1.0"
+description = "Doom E1M1-inspired multi-room level with nukage zigzag, secret area, and computer room exit"
+
+
+# ============================================================
+#  PLAYER — first-person shooter protagonist
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 22]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 6.0
+jump_force = 7.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.health]
+current = 100.0
+max = 100.0
+
+[entities.player.armor]
+current = 0.0
+max = 100.0
+absorption = 0.33
+
+[entities.player.weapon]
+name = "Pistol"
+damage = 15.0
+fire_rate = 0.4
+ammo = 50
+max_ammo = 200
+range = 100.0
+spread = 0.0
+pellet_count = 1
+fire_sound = "audio/gunshot.ogg"
+
+[entities.player.weapon_inventory]
+current_weapon = 1
+has_shotgun = false
+pistol_ammo = 50
+pistol_max_ammo = 200
+shotgun_ammo = 0
+shotgun_max_ammo = 50
+switch_pending = false
+
+[entities.player.script]
+source = "player_weapon.rhai"
+
+
+# ============================================================
+#  HUD — script-driven UI overlay
+# ============================================================
+
+[entities.hud_controller]
+
+[entities.hud_controller.script]
+source = "hud.rhai"
+
+
+# ============================================================
+#  START ROOM — warm brown, player spawn area
+#  X: -12..+12, Z: +15..+25
+# ============================================================
+
+# --- Floor ---
+[entities.sr_floor]
+
+[entities.sr_floor.transform]
+position = [0, -0.1, 20]
+scale = [24, 0.2, 10]
+
+[entities.sr_floor.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_floor.collider]
+shape = "box"
+size = [24, 0.2, 10]
+
+[entities.sr_floor.rigidbody]
+body_type = "static"
+
+# --- Ceiling ---
+[entities.sr_ceiling]
+
+[entities.sr_ceiling.transform]
+position = [0, 4.1, 20]
+scale = [24, 0.2, 10]
+
+[entities.sr_ceiling.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_ceiling.collider]
+shape = "box"
+size = [24, 0.2, 10]
+
+[entities.sr_ceiling.rigidbody]
+body_type = "static"
+
+# --- South wall (back wall) ---
+[entities.sr_wall_south]
+
+[entities.sr_wall_south.transform]
+position = [0, 2.0, 25.15]
+scale = [24, 4.0, 0.3]
+
+[entities.sr_wall_south.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_wall_south.collider]
+shape = "box"
+size = [24, 4.0, 0.3]
+
+[entities.sr_wall_south.rigidbody]
+body_type = "static"
+
+# --- East wall ---
+[entities.sr_wall_east]
+
+[entities.sr_wall_east.transform]
+position = [12.15, 2.0, 20]
+scale = [0.3, 4.0, 10]
+
+[entities.sr_wall_east.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_wall_east.collider]
+shape = "box"
+size = [0.3, 4.0, 10]
+
+[entities.sr_wall_east.rigidbody]
+body_type = "static"
+
+# --- West wall, south segment (Z: 22..25) ---
+[entities.sr_wall_west_s]
+
+[entities.sr_wall_west_s.transform]
+position = [-12.15, 2.0, 23.5]
+scale = [0.3, 4.0, 3]
+
+[entities.sr_wall_west_s.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_wall_west_s.collider]
+shape = "box"
+size = [0.3, 4.0, 3]
+
+[entities.sr_wall_west_s.rigidbody]
+body_type = "static"
+
+# --- West wall, north segment (Z: 15..18) ---
+[entities.sr_wall_west_n]
+
+[entities.sr_wall_west_n.transform]
+position = [-12.15, 2.0, 16.5]
+scale = [0.3, 4.0, 3]
+
+[entities.sr_wall_west_n.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_wall_west_n.collider]
+shape = "box"
+size = [0.3, 4.0, 3]
+
+[entities.sr_wall_west_n.rigidbody]
+body_type = "static"
+
+# --- Secret wall (pushable, Z: 18..22) — slightly different shade as hint ---
+[entities.sr_secret_wall]
+
+[entities.sr_secret_wall.transform]
+position = [-12.15, 2.0, 20]
+scale = [0.3, 4.0, 4]
+
+[entities.sr_secret_wall.material]
+color = [0.38, 0.28, 0.19, 1.0]
+roughness = 0.85
+
+[entities.sr_secret_wall.collider]
+shape = "box"
+size = [0.3, 4.0, 4]
+
+[entities.sr_secret_wall.rigidbody]
+body_type = "static"
+
+# --- North wall, left of door 1 (X: -12..-1.5) ---
+[entities.sr_wall_north_l]
+
+[entities.sr_wall_north_l.transform]
+position = [-6.75, 2.0, 14.85]
+scale = [10.5, 4.0, 0.3]
+
+[entities.sr_wall_north_l.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_wall_north_l.collider]
+shape = "box"
+size = [10.5, 4.0, 0.3]
+
+[entities.sr_wall_north_l.rigidbody]
+body_type = "static"
+
+# --- North wall, right of door 1 (X: +1.5..+12) ---
+[entities.sr_wall_north_r]
+
+[entities.sr_wall_north_r.transform]
+position = [6.75, 2.0, 14.85]
+scale = [10.5, 4.0, 0.3]
+
+[entities.sr_wall_north_r.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_wall_north_r.collider]
+shape = "box"
+size = [10.5, 4.0, 0.3]
+
+[entities.sr_wall_north_r.rigidbody]
+body_type = "static"
+
+# --- North lintel above door 1 ---
+[entities.sr_north_lintel]
+
+[entities.sr_north_lintel.transform]
+position = [0, 3.75, 14.85]
+scale = [3.0, 0.5, 0.3]
+
+[entities.sr_north_lintel.material]
+color = [0.4, 0.3, 0.2, 1.0]
+roughness = 0.85
+
+[entities.sr_north_lintel.collider]
+shape = "box"
+size = [3.0, 0.5, 0.3]
+
+[entities.sr_north_lintel.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  SECRET AREA — dark alcove behind pushable wall
+#  X: -16..-12, Z: +18..+22
+# ============================================================
+
+[entities.secret_floor]
+
+[entities.secret_floor.transform]
+position = [-14, -0.1, 20]
+scale = [4, 0.2, 4]
+
+[entities.secret_floor.material]
+color = [0.3, 0.22, 0.15, 1.0]
+roughness = 0.9
+
+[entities.secret_floor.collider]
+shape = "box"
+size = [4, 0.2, 4]
+
+[entities.secret_floor.rigidbody]
+body_type = "static"
+
+[entities.secret_ceiling]
+
+[entities.secret_ceiling.transform]
+position = [-14, 4.1, 20]
+scale = [4, 0.2, 4]
+
+[entities.secret_ceiling.material]
+color = [0.3, 0.22, 0.15, 1.0]
+roughness = 0.9
+
+[entities.secret_ceiling.collider]
+shape = "box"
+size = [4, 0.2, 4]
+
+[entities.secret_ceiling.rigidbody]
+body_type = "static"
+
+# --- West wall ---
+[entities.secret_wall_w]
+
+[entities.secret_wall_w.transform]
+position = [-16.15, 2.0, 20]
+scale = [0.3, 4.0, 4]
+
+[entities.secret_wall_w.material]
+color = [0.3, 0.22, 0.15, 1.0]
+roughness = 0.9
+
+[entities.secret_wall_w.collider]
+shape = "box"
+size = [0.3, 4.0, 4]
+
+[entities.secret_wall_w.rigidbody]
+body_type = "static"
+
+# --- North wall ---
+[entities.secret_wall_n]
+
+[entities.secret_wall_n.transform]
+position = [-14, 2.0, 17.85]
+scale = [4, 4.0, 0.3]
+
+[entities.secret_wall_n.material]
+color = [0.3, 0.22, 0.15, 1.0]
+roughness = 0.9
+
+[entities.secret_wall_n.collider]
+shape = "box"
+size = [4, 4.0, 0.3]
+
+[entities.secret_wall_n.rigidbody]
+body_type = "static"
+
+# --- South wall ---
+[entities.secret_wall_s]
+
+[entities.secret_wall_s.transform]
+position = [-14, 2.0, 22.15]
+scale = [4, 4.0, 0.3]
+
+[entities.secret_wall_s.material]
+color = [0.3, 0.22, 0.15, 1.0]
+roughness = 0.9
+
+[entities.secret_wall_s.collider]
+shape = "box"
+size = [4, 4.0, 0.3]
+
+[entities.secret_wall_s.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  HALLWAY — narrow gray corridor
+#  X: -8..+8, Z: +5..+15
+# ============================================================
+
+[entities.hw_floor]
+
+[entities.hw_floor.transform]
+position = [0, -0.1, 10]
+scale = [16, 0.2, 10]
+
+[entities.hw_floor.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_floor.collider]
+shape = "box"
+size = [16, 0.2, 10]
+
+[entities.hw_floor.rigidbody]
+body_type = "static"
+
+[entities.hw_ceiling]
+
+[entities.hw_ceiling.transform]
+position = [0, 4.1, 10]
+scale = [16, 0.2, 10]
+
+[entities.hw_ceiling.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_ceiling.collider]
+shape = "box"
+size = [16, 0.2, 10]
+
+[entities.hw_ceiling.rigidbody]
+body_type = "static"
+
+# --- East wall ---
+[entities.hw_wall_east]
+
+[entities.hw_wall_east.transform]
+position = [8.15, 2.0, 10]
+scale = [0.3, 4.0, 10]
+
+[entities.hw_wall_east.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_wall_east.collider]
+shape = "box"
+size = [0.3, 4.0, 10]
+
+[entities.hw_wall_east.rigidbody]
+body_type = "static"
+
+# --- West wall ---
+[entities.hw_wall_west]
+
+[entities.hw_wall_west.transform]
+position = [-8.15, 2.0, 10]
+scale = [0.3, 4.0, 10]
+
+[entities.hw_wall_west.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_wall_west.collider]
+shape = "box"
+size = [0.3, 4.0, 10]
+
+[entities.hw_wall_west.rigidbody]
+body_type = "static"
+
+# --- North wall, left of door 2 (X: -8..-1.5) ---
+[entities.hw_wall_north_l]
+
+[entities.hw_wall_north_l.transform]
+position = [-4.75, 2.0, 4.85]
+scale = [6.5, 4.0, 0.3]
+
+[entities.hw_wall_north_l.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_wall_north_l.collider]
+shape = "box"
+size = [6.5, 4.0, 0.3]
+
+[entities.hw_wall_north_l.rigidbody]
+body_type = "static"
+
+# --- North wall, right of door 2 (X: +1.5..+8) ---
+[entities.hw_wall_north_r]
+
+[entities.hw_wall_north_r.transform]
+position = [4.75, 2.0, 4.85]
+scale = [6.5, 4.0, 0.3]
+
+[entities.hw_wall_north_r.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_wall_north_r.collider]
+shape = "box"
+size = [6.5, 4.0, 0.3]
+
+[entities.hw_wall_north_r.rigidbody]
+body_type = "static"
+
+# --- North lintel above door 2 ---
+[entities.hw_north_lintel]
+
+[entities.hw_north_lintel.transform]
+position = [0, 3.75, 4.85]
+scale = [3.0, 0.5, 0.3]
+
+[entities.hw_north_lintel.material]
+color = [0.5, 0.5, 0.5, 1.0]
+roughness = 0.8
+
+[entities.hw_north_lintel.collider]
+shape = "box"
+size = [3.0, 0.5, 0.3]
+
+[entities.hw_north_lintel.rigidbody]
+body_type = "static"
+
+# --- Wing walls at Z=+5 boundary (fill gap between hallway 8-wide and zigzag 15-wide) ---
+
+# Southwest wing wall (X: -15..-8)
+[entities.zz_wing_sw]
+
+[entities.zz_wing_sw.transform]
+position = [-11.5, 2.0, 4.85]
+scale = [7.0, 4.0, 0.3]
+
+[entities.zz_wing_sw.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wing_sw.collider]
+shape = "box"
+size = [7.0, 4.0, 0.3]
+
+[entities.zz_wing_sw.rigidbody]
+body_type = "static"
+
+# Southeast wing wall (X: +8..+15)
+[entities.zz_wing_se]
+
+[entities.zz_wing_se.transform]
+position = [11.5, 2.0, 4.85]
+scale = [7.0, 4.0, 0.3]
+
+[entities.zz_wing_se.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wing_se.collider]
+shape = "box"
+size = [7.0, 4.0, 0.3]
+
+[entities.zz_wing_se.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  ZIGZAG ROOM — nukage pit with raised walkway platforms
+#  X: -15..+15, Z: -10..+5
+#  Nukage floor at Y=-1.5, walkways at Y=0 (top surface)
+# ============================================================
+
+# --- Nukage floor (toxic green, below walkways) ---
+[entities.zz_nukage_floor]
+
+[entities.zz_nukage_floor.transform]
+position = [0, -1.5, -2.5]
+scale = [30, 0.2, 15]
+
+[entities.zz_nukage_floor.material]
+color = [0.1, 0.8, 0.1, 1.0]
+roughness = 0.3
+
+[entities.zz_nukage_floor.collider]
+shape = "box"
+size = [30, 0.2, 15]
+
+[entities.zz_nukage_floor.rigidbody]
+body_type = "static"
+
+# --- Ceiling ---
+[entities.zz_ceiling]
+
+[entities.zz_ceiling.transform]
+position = [0, 4.1, -2.5]
+scale = [30, 0.2, 15]
+
+[entities.zz_ceiling.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_ceiling.collider]
+shape = "box"
+size = [30, 0.2, 15]
+
+[entities.zz_ceiling.rigidbody]
+body_type = "static"
+
+# --- South walkway platform (left side, connects from door 2) ---
+[entities.zz_walkway_s]
+
+[entities.zz_walkway_s.transform]
+position = [-4, -0.6, 2.5]
+scale = [8, 1.2, 5]
+
+[entities.zz_walkway_s.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.8
+
+[entities.zz_walkway_s.collider]
+shape = "box"
+size = [8, 1.2, 5]
+
+[entities.zz_walkway_s.rigidbody]
+body_type = "static"
+
+# --- Middle walkway platform (right side) ---
+[entities.zz_walkway_m]
+
+[entities.zz_walkway_m.transform]
+position = [4, -0.6, -2.5]
+scale = [8, 1.2, 5]
+
+[entities.zz_walkway_m.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.8
+
+[entities.zz_walkway_m.collider]
+shape = "box"
+size = [8, 1.2, 5]
+
+[entities.zz_walkway_m.rigidbody]
+body_type = "static"
+
+# --- North walkway platform (left side, leads to door 3) ---
+[entities.zz_walkway_n]
+
+[entities.zz_walkway_n.transform]
+position = [-4, -0.6, -7.5]
+scale = [8, 1.2, 5]
+
+[entities.zz_walkway_n.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.8
+
+[entities.zz_walkway_n.collider]
+shape = "box"
+size = [8, 1.2, 5]
+
+[entities.zz_walkway_n.rigidbody]
+body_type = "static"
+
+# --- Bridge connecting south-to-middle walkways ---
+[entities.zz_bridge_1]
+
+[entities.zz_bridge_1.transform]
+position = [0, -0.6, 0]
+scale = [3, 1.2, 3]
+
+[entities.zz_bridge_1.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.8
+
+[entities.zz_bridge_1.collider]
+shape = "box"
+size = [3, 1.2, 3]
+
+[entities.zz_bridge_1.rigidbody]
+body_type = "static"
+
+# --- Bridge connecting middle-to-north walkways ---
+[entities.zz_bridge_2]
+
+[entities.zz_bridge_2.transform]
+position = [0, -0.6, -5]
+scale = [3, 1.2, 3]
+
+[entities.zz_bridge_2.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.8
+
+[entities.zz_bridge_2.collider]
+shape = "box"
+size = [3, 1.2, 3]
+
+[entities.zz_bridge_2.rigidbody]
+body_type = "static"
+
+# --- East wall ---
+[entities.zz_wall_east]
+
+[entities.zz_wall_east.transform]
+position = [15.15, 2.0, -2.5]
+scale = [0.3, 4.0, 15]
+
+[entities.zz_wall_east.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wall_east.collider]
+shape = "box"
+size = [0.3, 4.0, 15]
+
+[entities.zz_wall_east.rigidbody]
+body_type = "static"
+
+# --- West wall, south of alcove (Z: 0..+5) ---
+[entities.zz_wall_west_s]
+
+[entities.zz_wall_west_s.transform]
+position = [-15.15, 2.0, 2.5]
+scale = [0.3, 4.0, 5]
+
+[entities.zz_wall_west_s.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wall_west_s.collider]
+shape = "box"
+size = [0.3, 4.0, 5]
+
+[entities.zz_wall_west_s.rigidbody]
+body_type = "static"
+
+# --- West wall, north of alcove (Z: -10..-5) ---
+[entities.zz_wall_west_n]
+
+[entities.zz_wall_west_n.transform]
+position = [-15.15, 2.0, -7.5]
+scale = [0.3, 4.0, 5]
+
+[entities.zz_wall_west_n.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wall_west_n.collider]
+shape = "box"
+size = [0.3, 4.0, 5]
+
+[entities.zz_wall_west_n.rigidbody]
+body_type = "static"
+
+# --- North wall, left of door 3 (X: -15..-1.5) ---
+[entities.zz_wall_north_l]
+
+[entities.zz_wall_north_l.transform]
+position = [-8.25, 2.0, -10.15]
+scale = [13.5, 4.0, 0.3]
+
+[entities.zz_wall_north_l.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wall_north_l.collider]
+shape = "box"
+size = [13.5, 4.0, 0.3]
+
+[entities.zz_wall_north_l.rigidbody]
+body_type = "static"
+
+# --- North wall, right of door 3 (X: +1.5..+15) ---
+[entities.zz_wall_north_r]
+
+[entities.zz_wall_north_r.transform]
+position = [8.25, 2.0, -10.15]
+scale = [13.5, 4.0, 0.3]
+
+[entities.zz_wall_north_r.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_wall_north_r.collider]
+shape = "box"
+size = [13.5, 4.0, 0.3]
+
+[entities.zz_wall_north_r.rigidbody]
+body_type = "static"
+
+# --- North lintel above door 3 ---
+[entities.zz_north_lintel]
+
+[entities.zz_north_lintel.transform]
+position = [0, 3.75, -10.15]
+scale = [3.0, 0.5, 0.3]
+
+[entities.zz_north_lintel.material]
+color = [0.3, 0.3, 0.3, 1.0]
+roughness = 0.85
+
+[entities.zz_north_lintel.collider]
+shape = "box"
+size = [3.0, 0.5, 0.3]
+
+[entities.zz_north_lintel.rigidbody]
+body_type = "static"
+
+# --- Railings (prevent falling off walkways into nukage) ---
+
+# South walkway, east edge railing
+[entities.zz_rail_s_e]
+
+[entities.zz_rail_s_e.transform]
+position = [0.15, 0.35, 2.5]
+scale = [0.2, 0.7, 5]
+
+[entities.zz_rail_s_e.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.7
+
+[entities.zz_rail_s_e.collider]
+shape = "box"
+size = [0.2, 0.7, 5]
+
+[entities.zz_rail_s_e.rigidbody]
+body_type = "static"
+
+# South walkway, south edge railing
+[entities.zz_rail_s_s]
+
+[entities.zz_rail_s_s.transform]
+position = [-4, 0.35, 5.0]
+scale = [8, 0.7, 0.2]
+
+[entities.zz_rail_s_s.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.7
+
+[entities.zz_rail_s_s.collider]
+shape = "box"
+size = [8, 0.7, 0.2]
+
+[entities.zz_rail_s_s.rigidbody]
+body_type = "static"
+
+# Middle walkway, west edge railing
+[entities.zz_rail_m_w]
+
+[entities.zz_rail_m_w.transform]
+position = [-0.15, 0.35, -2.5]
+scale = [0.2, 0.7, 5]
+
+[entities.zz_rail_m_w.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.7
+
+[entities.zz_rail_m_w.collider]
+shape = "box"
+size = [0.2, 0.7, 5]
+
+[entities.zz_rail_m_w.rigidbody]
+body_type = "static"
+
+# Middle walkway, east edge railing
+[entities.zz_rail_m_e]
+
+[entities.zz_rail_m_e.transform]
+position = [8.15, 0.35, -2.5]
+scale = [0.2, 0.7, 5]
+
+[entities.zz_rail_m_e.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.7
+
+[entities.zz_rail_m_e.collider]
+shape = "box"
+size = [0.2, 0.7, 5]
+
+[entities.zz_rail_m_e.rigidbody]
+body_type = "static"
+
+# North walkway, east edge railing
+[entities.zz_rail_n_e]
+
+[entities.zz_rail_n_e.transform]
+position = [0.15, 0.35, -7.5]
+scale = [0.2, 0.7, 5]
+
+[entities.zz_rail_n_e.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.7
+
+[entities.zz_rail_n_e.collider]
+shape = "box"
+size = [0.2, 0.7, 5]
+
+[entities.zz_rail_n_e.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  ARMOR ALCOVE — side chamber off zigzag room west wall
+#  X: -20..-15, Z: -5..0
+# ============================================================
+
+[entities.alcove_floor]
+
+[entities.alcove_floor.transform]
+position = [-17.5, -0.1, -2.5]
+scale = [5, 0.2, 5]
+
+[entities.alcove_floor.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.85
+
+[entities.alcove_floor.collider]
+shape = "box"
+size = [5, 0.2, 5]
+
+[entities.alcove_floor.rigidbody]
+body_type = "static"
+
+[entities.alcove_ceiling]
+
+[entities.alcove_ceiling.transform]
+position = [-17.5, 4.1, -2.5]
+scale = [5, 0.2, 5]
+
+[entities.alcove_ceiling.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.85
+
+[entities.alcove_ceiling.collider]
+shape = "box"
+size = [5, 0.2, 5]
+
+[entities.alcove_ceiling.rigidbody]
+body_type = "static"
+
+# --- West wall ---
+[entities.alcove_wall_w]
+
+[entities.alcove_wall_w.transform]
+position = [-20.15, 2.0, -2.5]
+scale = [0.3, 4.0, 5]
+
+[entities.alcove_wall_w.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.85
+
+[entities.alcove_wall_w.collider]
+shape = "box"
+size = [0.3, 4.0, 5]
+
+[entities.alcove_wall_w.rigidbody]
+body_type = "static"
+
+# --- North wall ---
+[entities.alcove_wall_n]
+
+[entities.alcove_wall_n.transform]
+position = [-17.5, 2.0, -5.15]
+scale = [5, 4.0, 0.3]
+
+[entities.alcove_wall_n.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.85
+
+[entities.alcove_wall_n.collider]
+shape = "box"
+size = [5, 4.0, 0.3]
+
+[entities.alcove_wall_n.rigidbody]
+body_type = "static"
+
+# --- South wall ---
+[entities.alcove_wall_s]
+
+[entities.alcove_wall_s.transform]
+position = [-17.5, 2.0, 0.15]
+scale = [5, 4.0, 0.3]
+
+[entities.alcove_wall_s.material]
+color = [0.35, 0.35, 0.3, 1.0]
+roughness = 0.85
+
+[entities.alcove_wall_s.collider]
+shape = "box"
+size = [5, 4.0, 0.3]
+
+[entities.alcove_wall_s.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  COMPUTER ROOM — blue-gray tech aesthetic, exit area
+#  X: -12..+12, Z: -25..-10
+#  South boundary handled by zigzag room's north wall segments
+# ============================================================
+
+[entities.cr_floor]
+
+[entities.cr_floor.transform]
+position = [0, -0.1, -17.5]
+scale = [24, 0.2, 15]
+
+[entities.cr_floor.material]
+color = [0.3, 0.4, 0.5, 1.0]
+roughness = 0.75
+
+[entities.cr_floor.collider]
+shape = "box"
+size = [24, 0.2, 15]
+
+[entities.cr_floor.rigidbody]
+body_type = "static"
+
+[entities.cr_ceiling]
+
+[entities.cr_ceiling.transform]
+position = [0, 4.1, -17.5]
+scale = [24, 0.2, 15]
+
+[entities.cr_ceiling.material]
+color = [0.3, 0.4, 0.5, 1.0]
+roughness = 0.75
+
+[entities.cr_ceiling.collider]
+shape = "box"
+size = [24, 0.2, 15]
+
+[entities.cr_ceiling.rigidbody]
+body_type = "static"
+
+# --- North wall (far wall, exit switch location) ---
+[entities.cr_wall_north]
+
+[entities.cr_wall_north.transform]
+position = [0, 2.0, -25.15]
+scale = [24, 4.0, 0.3]
+
+[entities.cr_wall_north.material]
+color = [0.3, 0.4, 0.5, 1.0]
+roughness = 0.75
+
+[entities.cr_wall_north.collider]
+shape = "box"
+size = [24, 4.0, 0.3]
+
+[entities.cr_wall_north.rigidbody]
+body_type = "static"
+
+# --- East wall ---
+[entities.cr_wall_east]
+
+[entities.cr_wall_east.transform]
+position = [12.15, 2.0, -17.5]
+scale = [0.3, 4.0, 15]
+
+[entities.cr_wall_east.material]
+color = [0.3, 0.4, 0.5, 1.0]
+roughness = 0.75
+
+[entities.cr_wall_east.collider]
+shape = "box"
+size = [0.3, 4.0, 15]
+
+[entities.cr_wall_east.rigidbody]
+body_type = "static"
+
+# --- West wall ---
+[entities.cr_wall_west]
+
+[entities.cr_wall_west.transform]
+position = [-12.15, 2.0, -17.5]
+scale = [0.3, 4.0, 15]
+
+[entities.cr_wall_west.material]
+color = [0.3, 0.4, 0.5, 1.0]
+roughness = 0.75
+
+[entities.cr_wall_west.collider]
+shape = "box"
+size = [0.3, 4.0, 15]
+
+[entities.cr_wall_west.rigidbody]
+body_type = "static"
+
+# --- Console cluster NW (against north wall, left) ---
+[entities.cr_console_nw]
+
+[entities.cr_console_nw.transform]
+position = [-10, 0.75, -23.5]
+scale = [3, 1.5, 2.5]
+
+[entities.cr_console_nw.material]
+color = [0.25, 0.3, 0.4, 1.0]
+roughness = 0.6
+
+[entities.cr_console_nw.collider]
+shape = "box"
+size = [3, 1.5, 2.5]
+
+[entities.cr_console_nw.rigidbody]
+body_type = "static"
+
+# --- Console cluster NE (against north wall, right) ---
+[entities.cr_console_ne]
+
+[entities.cr_console_ne.transform]
+position = [10, 0.75, -23.5]
+scale = [3, 1.5, 2.5]
+
+[entities.cr_console_ne.material]
+color = [0.25, 0.3, 0.4, 1.0]
+roughness = 0.6
+
+[entities.cr_console_ne.collider]
+shape = "box"
+size = [3, 1.5, 2.5]
+
+[entities.cr_console_ne.rigidbody]
+body_type = "static"
+
+# --- Console W (along west wall, center) ---
+[entities.cr_console_w]
+
+[entities.cr_console_w.transform]
+position = [-10.5, 0.75, -17.5]
+scale = [2.5, 1.5, 3]
+
+[entities.cr_console_w.material]
+color = [0.25, 0.3, 0.4, 1.0]
+roughness = 0.6
+
+[entities.cr_console_w.collider]
+shape = "box"
+size = [2.5, 1.5, 3]
+
+[entities.cr_console_w.rigidbody]
+body_type = "static"
+
+# --- Console E (along east wall, center) ---
+[entities.cr_console_e]
+
+[entities.cr_console_e.transform]
+position = [10.5, 0.75, -17.5]
+scale = [2.5, 1.5, 3]
+
+[entities.cr_console_e.material]
+color = [0.25, 0.3, 0.4, 1.0]
+roughness = 0.6
+
+[entities.cr_console_e.collider]
+shape = "box"
+size = [2.5, 1.5, 3]
+
+[entities.cr_console_e.rigidbody]
+body_type = "static"
+
+# --- Exit platform (raised step in front of north wall) ---
+[entities.cr_exit_platform]
+
+[entities.cr_exit_platform.transform]
+position = [0, 0.25, -24]
+scale = [4, 0.5, 2]
+
+[entities.cr_exit_platform.material]
+color = [0.35, 0.45, 0.55, 1.0]
+roughness = 0.7
+
+[entities.cr_exit_platform.collider]
+shape = "box"
+size = [4, 0.5, 2]
+
+[entities.cr_exit_platform.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  DOORS — metallic sliding doors between rooms
+# ============================================================
+
+# --- Door 1: Start Room → Hallway ---
+[entities.door_1]
+
+[entities.door_1.transform]
+position = [0, 1.75, 15]
+scale = [3, 3.5, 0.3]
+
+[entities.door_1.material]
+color = [0.55, 0.55, 0.55, 1.0]
+roughness = 0.5
+metallic = 0.3
+
+[entities.door_1.collider]
+shape = "box"
+size = [3, 3.5, 0.3]
+
+[entities.door_1.rigidbody]
+body_type = "kinematic"
+
+[entities.door_1.interactable]
+prompt = "Open Door"
+range = 3.0
+type = "door"
+enabled = true
+
+# --- Door 2: Hallway → Zigzag Room ---
+[entities.door_2]
+
+[entities.door_2.transform]
+position = [0, 1.75, 5]
+scale = [3, 3.5, 0.3]
+
+[entities.door_2.material]
+color = [0.55, 0.55, 0.55, 1.0]
+roughness = 0.5
+metallic = 0.3
+
+[entities.door_2.collider]
+shape = "box"
+size = [3, 3.5, 0.3]
+
+[entities.door_2.rigidbody]
+body_type = "kinematic"
+
+[entities.door_2.interactable]
+prompt = "Open Door"
+range = 3.0
+type = "door"
+enabled = true
+
+# --- Door 3: Zigzag Room → Computer Room ---
+[entities.door_3]
+
+[entities.door_3.transform]
+position = [0, 1.75, -10]
+scale = [3, 3.5, 0.3]
+
+[entities.door_3.material]
+color = [0.55, 0.55, 0.55, 1.0]
+roughness = 0.5
+metallic = 0.3
+
+[entities.door_3.collider]
+shape = "box"
+size = [3, 3.5, 0.3]
+
+[entities.door_3.rigidbody]
+body_type = "kinematic"
+
+[entities.door_3.interactable]
+prompt = "Open Door"
+range = 3.0
+type = "door"
+enabled = true
+
+
+# ============================================================
+#  LIGHTING — atmospheric per-room illumination
+#  1 directional (sun) + 14 point lights = 15 total
+#  (leaves 2 slots under 16-light limit for future additions)
+# ============================================================
+
+# --- Dim directional fill light (indoor level, very low) ---
+[entities.sun]
+
+[entities.sun.transform]
+position = [10, 30, 10]
+rotation = [-45, 30, 0]
+
+[entities.sun.light]
+type = "directional"
+color = [0.6, 0.55, 0.5]
+intensity = 0.4
+cast_shadows = true
+
+# --- Start Room: warm torchlight ---
+[entities.light_sr_1]
+
+[entities.light_sr_1.transform]
+position = [0, 3.5, 20]
+
+[entities.light_sr_1.light]
+type = "point"
+color = [1.0, 0.85, 0.6]
+intensity = 12.0
+range = 14.0
+
+[entities.light_sr_2]
+
+[entities.light_sr_2.transform]
+position = [0, 3.5, 23]
+
+[entities.light_sr_2.light]
+type = "point"
+color = [0.9, 0.7, 0.4]
+intensity = 8.0
+range = 10.0
+
+# --- Hallway: neutral white ---
+[entities.light_hw_1]
+
+[entities.light_hw_1.transform]
+position = [0, 3.5, 12]
+
+[entities.light_hw_1.light]
+type = "point"
+color = [0.8, 0.8, 0.8]
+intensity = 10.0
+range = 10.0
+
+[entities.light_hw_2]
+
+[entities.light_hw_2.transform]
+position = [0, 3.5, 7]
+
+[entities.light_hw_2.light]
+type = "point"
+color = [0.8, 0.8, 0.8]
+intensity = 10.0
+range = 10.0
+
+# --- Zigzag Room: green nukage glow from below ---
+[entities.light_zz_g1]
+
+[entities.light_zz_g1.transform]
+position = [-5, 0.5, 2]
+
+[entities.light_zz_g1.light]
+type = "point"
+color = [0.2, 0.9, 0.2]
+intensity = 8.0
+range = 10.0
+
+[entities.light_zz_g2]
+
+[entities.light_zz_g2.transform]
+position = [5, 0.5, -5]
+
+[entities.light_zz_g2.light]
+type = "point"
+color = [0.2, 0.9, 0.2]
+intensity = 8.0
+range = 10.0
+
+# --- Zigzag Room: dim ceiling lights ---
+[entities.light_zz_c1]
+
+[entities.light_zz_c1.transform]
+position = [-5, 3.5, 0]
+
+[entities.light_zz_c1.light]
+type = "point"
+color = [0.7, 0.7, 0.6]
+intensity = 6.0
+range = 10.0
+
+[entities.light_zz_c2]
+
+[entities.light_zz_c2.transform]
+position = [4, 3.5, -7]
+
+[entities.light_zz_c2.light]
+type = "point"
+color = [0.7, 0.7, 0.6]
+intensity = 6.0
+range = 10.0
+
+# --- Armor Alcove: green-tinted ---
+[entities.light_alcove]
+
+[entities.light_alcove.transform]
+position = [-17.5, 3.5, -2.5]
+
+[entities.light_alcove.light]
+type = "point"
+color = [0.5, 0.9, 0.5]
+intensity = 8.0
+range = 8.0
+
+# --- Computer Room: blue tech glow ---
+[entities.light_cr_1]
+
+[entities.light_cr_1.transform]
+position = [0, 3.5, -17.5]
+
+[entities.light_cr_1.light]
+type = "point"
+color = [0.5, 0.6, 1.0]
+intensity = 12.0
+range = 15.0
+
+[entities.light_cr_2]
+
+[entities.light_cr_2.transform]
+position = [0, 3.5, -23]
+
+[entities.light_cr_2.light]
+type = "point"
+color = [0.6, 0.7, 1.0]
+intensity = 10.0
+range = 12.0
+
+# --- Computer Room: console screen glow ---
+[entities.light_cr_cw]
+
+[entities.light_cr_cw.transform]
+position = [-10, 2.0, -17.5]
+
+[entities.light_cr_cw.light]
+type = "point"
+color = [0.3, 0.8, 0.3]
+intensity = 5.0
+range = 6.0
+
+[entities.light_cr_ce]
+
+[entities.light_cr_ce.transform]
+position = [10, 2.0, -17.5]
+
+[entities.light_cr_ce.light]
+type = "point"
+color = [0.3, 0.8, 0.3]
+intensity = 5.0
+range = 6.0
+
+# --- Secret Area: warm amber glow (reward lighting) ---
+[entities.light_secret]
+
+[entities.light_secret.transform]
+position = [-14, 3.5, 20]
+
+[entities.light_secret.light]
+type = "point"
+color = [1.0, 0.5, 0.2]
+intensity = 6.0
+range = 6.0

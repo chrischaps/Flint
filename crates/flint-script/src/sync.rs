@@ -152,7 +152,8 @@ impl Default for ScriptSync {
     }
 }
 
-/// Load scripts from the `scripts/` directory next to the scene file
+/// Load scripts from the `scripts/` directory next to the scene file.
+/// Also checks one level up (e.g. game root) for projects that use a `scenes/` subdirectory.
 pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
     let scene_dir = Path::new(scene_path)
         .parent()
@@ -161,7 +162,14 @@ pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
     let scripts_dir = scene_dir.join("scripts");
     if scripts_dir.is_dir() {
         sync.set_scripts_dir(scripts_dir);
-    } else {
-        // Scripts dir doesn't exist — no scripts to load, but that's fine
+        return;
+    }
+
+    // Check parent directory (game project structure: scenes/ and scripts/ are siblings)
+    if let Some(parent) = scene_dir.parent() {
+        let scripts_dir = parent.join("scripts");
+        if scripts_dir.is_dir() {
+            sync.set_scripts_dir(scripts_dir);
+        }
     }
 }

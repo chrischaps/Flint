@@ -20,9 +20,9 @@ struct Args {
     /// Path to scene file
     scene: String,
 
-    /// Path to schemas directory
-    #[arg(long, default_value = "schemas")]
-    schemas: String,
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+    schemas: Vec<String>,
 
     /// Launch in fullscreen mode
     #[arg(long)]
@@ -32,11 +32,12 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Load schemas
-    let registry = if Path::new(&args.schemas).exists() {
-        SchemaRegistry::load_from_directory(&args.schemas).context("Failed to load schemas")?
+    // Load schemas from all directories
+    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| Path::new(p).exists()).collect();
+    let registry = if !existing.is_empty() {
+        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
     } else {
-        println!("Warning: Schemas directory not found: {}", args.schemas);
+        println!("Warning: No schemas directories found");
         SchemaRegistry::new()
     };
 

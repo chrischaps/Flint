@@ -40,7 +40,7 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 
 | Flag | Description |
 |------|-------------|
-| `--schemas <path>` | Path to schemas directory (default: `schemas`) |
+| `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
 | `--fullscreen` | Launch in fullscreen mode |
 
 ### Player Controls
@@ -49,9 +49,12 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 |-------|--------|
 | WASD | Move |
 | Mouse | Look around |
+| Left Click | Fire (weapon) |
 | Space | Jump |
 | Shift | Sprint |
 | E | Interact with nearby object |
+| R | Reload |
+| 1 / 2 | Select weapon slot |
 | Escape | Release cursor / Exit |
 | F1 | Cycle debug rendering mode |
 | F4 | Toggle shadows |
@@ -59,12 +62,28 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 
 The `play` command requires the scene to have a `player` archetype entity with a `character_controller` component. Physics colliders on other entities define the walkable geometry.
 
+### Game Project Pattern
+
+Games that define their own schemas, scripts, and assets use multiple `--schemas` paths. The engine schemas come first, then the game-specific schemas overlay on top:
+
+```bash
+flint play games/doom_fps/scenes/fps_arena.scene.toml \
+  --schemas schemas \
+  --schemas games/doom_fps/schemas
+```
+
+This loads the engine's built-in components (transform, material, rigidbody, etc.) from `schemas/`, then adds game-specific components (health, weapon, enemy AI) from `games/doom_fps/schemas/`. See [Schemas: Game Project Schemas](../concepts/schemas.md#game-project-schemas) for directory structure details.
+
 ### Standalone Player Binary
 
 The player is also available as a standalone binary for distribution:
 
 ```bash
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
+
+# With game project schemas
+cargo run --bin flint-player -- games/doom_fps/scenes/fps_arena.scene.toml \
+  --schemas schemas --schemas games/doom_fps/schemas
 ```
 
 ## The `asset generate` Command
@@ -96,7 +115,7 @@ Generated assets are automatically stored in content-addressed storage and regis
 | Flag | Description |
 |------|-------------|
 | `--scene <path>` | Path to scene file |
-| `--schemas <path>` | Path to schemas directory (default: `schemas`) |
+| `--schemas <path>` | Path to schemas directory (repeatable for multi-schema layering; default: `schemas`) |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
 | `--watch` | Watch for file changes (with `serve`) |
 | `--fix` | Apply auto-fixes (with `validate`) |

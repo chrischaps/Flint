@@ -26,6 +26,7 @@ flint/
 │   ├── flint-schema/       # Component/archetype schema loading and validation
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── schemas/                # Default component, archetype, and constraint definitions
+├── games/                  # Game projects with their own schemas/scripts/scenes/assets
 ├── demo/                   # Showcase scenes and build scripts
 └── docs/                   # This documentation (mdBook)
 ```
@@ -154,6 +155,7 @@ wgpu 23 PBR renderer with:
 - **Cook-Torrance shading** --- physically-based BRDF with roughness/metallic workflow
 - **Cascaded shadow mapping** --- directional light shadows across multiple distance ranges
 - **glTF mesh rendering** --- imported models rendered with full material support
+- **Billboard sprite pipeline** --- camera-facing quads with sprite sheet animation and binary alpha
 - **Camera modes** --- orbit (scene viewer) and first-person (player), sharing view/projection math
 - **Headless mode** --- render to PNG for CI and automated screenshots
 
@@ -176,8 +178,8 @@ Game loop infrastructure for interactive scenes:
 ### flint-physics
 
 Rapier 3D integration:
-- `PhysicsWorld` --- manages Rapier rigid body and collider sets
-- `PhysicsSync` --- bridges TOML component data to Rapier bodies
+- `PhysicsWorld` --- manages Rapier rigid body and collider sets, raycasting via `EntityRaycastHit`
+- `PhysicsSync` --- bridges TOML component data to Rapier bodies, maintains collider-to-entity mapping
 - `CharacterController` --- kinematic first-person movement with gravity, jumping, and ground detection
 - Uses kinematic bodies for player control, static bodies for world geometry
 
@@ -204,9 +206,11 @@ Rhai scripting engine for runtime game logic:
 - `ScriptEngine` --- compiles `.rhai` files, manages per-entity `Scope` and `AST`, dispatches callbacks
 - `ScriptSync` --- discovers entities with `script` components, monitors file timestamps for hot-reload
 - `ScriptSystem` --- `RuntimeSystem` implementation running in `update()` (variable-rate)
-- Full API: entity CRUD, input, time, audio, animation, math, events, logging
+- Full API: entity CRUD, input, time, audio, animation, physics (raycast, camera), math, events, logging, UI draw
 - `ScriptCommand` pattern --- deferred audio/event effects processed by PlayerApp after script batch
+- `DrawCommand` pattern --- immediate-mode 2D draw primitives (text, rect, circle, line, sprite) rendered via egui
 - `ScriptCallContext` with raw `*mut FlintWorld` pointer for world access during call batches
+- Depends on `flint-physics` for raycast and camera direction access
 
 ### flint-asset-gen
 
@@ -228,8 +232,9 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 - Audio source loading and spatial listener tracking
 - Skeletal animation with bone matrix upload to GPU each frame
 - Rhai script system with event dispatch (collisions, triggers, actions, interactions)
-- Interactable entity system with HUD prompt overlay (egui crosshair + proximity text)
-- First-person controls (WASD, mouse look, jump, sprint, interact)
+- Script-driven 2D HUD overlay via `DrawCommand` pipeline (replaces hardcoded HUD)
+- Billboard sprite rendering for Doom-style entities
+- First-person controls (WASD, mouse look, jump, sprint, interact, fire)
 - Optional asset catalog integration for runtime name-based asset resolution
 
 ### flint-cli

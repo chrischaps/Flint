@@ -1,5 +1,6 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
+use crate::billboard_pipeline::{BillboardDrawCall, BillboardPipeline, BillboardUniforms, SpriteInstance};
 use crate::camera::Camera;
 use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
@@ -52,6 +53,7 @@ struct DrawCall {
     material_bind_group: wgpu::BindGroup,
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
+    entity_id: Option<flint_core::EntityId>,
 }
 
 /// A draw call for a skinned mesh (has bone bind group)
@@ -67,17 +69,20 @@ struct SkinnedDrawCall {
     bone_bind_group: wgpu::BindGroup,
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
+    entity_id: Option<flint_core::EntityId>,
 }
 
 /// Renders a FlintWorld to the screen
 pub struct SceneRenderer {
     pipeline: RenderPipeline,
     skinned_pipeline: Option<SkinnedPipeline>,
+    billboard_pipeline: Option<BillboardPipeline>,
     archetype_visuals: HashMap<String, ArchetypeVisual>,
     mesh_cache: MeshCache,
     grid_draw: Option<DrawCall>,
     entity_draws: Vec<DrawCall>,
     skinned_entity_draws: Vec<SkinnedDrawCall>,
+    billboard_draws: Vec<BillboardDrawCall>,
     debug_state: DebugState,
     wireframe_overlay_draws: Vec<DrawCall>,
     normal_arrow_draws: Vec<DrawCall>,
@@ -87,6 +92,7 @@ pub struct SceneRenderer {
     light_uniforms: LightUniforms,
     texture_cache: Option<TextureCache>,
     shadow_pass: Option<ShadowPass>,
+    selected_entity: Option<flint_core::EntityId>,
 }
 
 impl SceneRenderer {
@@ -124,14 +130,18 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
 
+        let billboard_pipeline = BillboardPipeline::new(&context.device, context.config.format);
+
         Self {
             pipeline,
             skinned_pipeline: Some(skinned_pipeline),
+            billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
+            billboard_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
@@ -141,6 +151,7 @@ impl SceneRenderer {
             light_uniforms,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
+            selected_entity: None,
         }
     }
 
@@ -183,14 +194,18 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
 
+        let billboard_pipeline = BillboardPipeline::new(device, format);
+
         Self {
             pipeline,
             skinned_pipeline: Some(skinned_pipeline),
+            billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
+            billboard_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
@@ -200,6 +215,7 @@ impl SceneRenderer {
             light_uniforms,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
+            selected_entity: None,
         }
     }
 
@@ -359,6 +375,11 @@ impl SceneRenderer {
         self.shadow_pass = Some(shadow_pass);
     }
 
+    /// Set the entity to highlight with a selection glow, or None to clear
+    pub fn set_selected_entity(&mut self, id: Option<flint_core::EntityId>) {
+        self.selected_entity = id;
+    }
+
     /// Toggle shadows on/off, returns the new state
     pub fn toggle_shadows(&mut self) -> bool {
         if let Some(sp) = &mut self.shadow_pass {
@@ -456,6 +477,7 @@ impl SceneRenderer {
     pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
         self.entity_draws.clear();
         self.skinned_entity_draws.clear();
+        self.billboard_draws.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
 
@@ -558,6 +580,7 @@ impl SceneRenderer {
                             bone_bind_group,
                             model: model_matrix,
                             model_inv_transpose: inv_transpose,
+                            entity_id: Some(entity.id),
                         });
                     }
                     continue;
@@ -593,7 +616,7 @@ impl SceneRenderer {
                         material_uniforms.has_normal_map = if has_nm { 1 } else { 0 };
                         material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
 
-                        let draw = Self::create_imported_draw_call(
+                        let mut draw = Self::create_imported_draw_call(
                             device,
                             &self.pipeline,
                             gpu_mesh,
@@ -603,6 +626,7 @@ impl SceneRenderer {
                             nm_view, nm_sampler,
                             mr_view, mr_sampler,
                         );
+                        draw.entity_id = Some(entity.id);
                         self.entity_draws.push(draw);
 
                         // Generate wireframe overlay for imported meshes
@@ -669,6 +693,123 @@ impl SceneRenderer {
                         }
                     }
                     continue;
+                }
+            }
+
+            // Check for sprite component — render as billboard instead of geometry
+            if let Some(components) = world.get_components(entity.id) {
+                if let Some(sprite) = components.get("sprite") {
+                    let visible = sprite.get("visible")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    if visible {
+                        if let Some(bp) = &self.billboard_pipeline {
+                            let tex_name = sprite.get("texture")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let width = sprite.get("width")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(1.0) as f32;
+                            let height = sprite.get("height")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(1.0) as f32;
+                            let frame = sprite.get("frame")
+                                .and_then(|v| v.as_integer())
+                                .unwrap_or(0) as u32;
+                            let frames_x = sprite.get("frames_x")
+                                .and_then(|v| v.as_integer())
+                                .unwrap_or(1) as u32;
+                            let frames_y = sprite.get("frames_y")
+                                .and_then(|v| v.as_integer())
+                                .unwrap_or(1) as u32;
+                            let anchor_y = sprite.get("anchor_y")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(0.0) as f32;
+                            let fullbright = sprite.get("fullbright")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+
+                            let sprite_instance = SpriteInstance {
+                                world_pos: [transform.position.x, transform.position.y, transform.position.z],
+                                width,
+                                height,
+                                frame,
+                                frames_x,
+                                frames_y,
+                                anchor_y,
+                                fullbright: if fullbright { 1 } else { 0 },
+                                selection_highlight: 0,
+                                _pad1: 0.0,
+                            };
+
+                            // Billboard uniforms will be filled during render (need camera)
+                            let billboard_uniforms = BillboardUniforms {
+                                view_proj: [[0.0; 4]; 4],
+                                camera_right: [1.0, 0.0, 0.0],
+                                _pad0: 0.0,
+                                camera_up: [0.0, 1.0, 0.0],
+                                _pad1: 0.0,
+                            };
+
+                            let billboard_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Billboard Uniform Buffer"),
+                                contents: bytemuck::cast_slice(&[billboard_uniforms]),
+                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            });
+
+                            let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Sprite Instance Buffer"),
+                                contents: bytemuck::cast_slice(&[sprite_instance]),
+                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            });
+
+                            let billboard_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &bp.billboard_bind_group_layout,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: billboard_buffer.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: sprite_buffer.as_entire_binding(),
+                                    },
+                                ],
+                                label: Some("Billboard Bind Group"),
+                            });
+
+                            // Resolve sprite texture
+                            let (tex_view, tex_sampler, _has_tex) = Self::resolve_texture(
+                                tex_cache_ref,
+                                if tex_name.is_empty() { None } else { Some(tex_name) },
+                                &tex_cache_ref.default_white,
+                            );
+
+                            let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &bp.texture_bind_group_layout,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: wgpu::BindingResource::TextureView(tex_view),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::Sampler(tex_sampler),
+                                    },
+                                ],
+                                label: Some("Billboard Texture Bind Group"),
+                            });
+
+                            self.billboard_draws.push(BillboardDrawCall {
+                                billboard_buffer,
+                                sprite_buffer,
+                                billboard_bind_group,
+                                texture_bind_group,
+                                entity_id: Some(entity.id),
+                            });
+                        }
+                    }
+                    continue; // Don't render sprites as geometry
                 }
             }
 
@@ -756,7 +897,7 @@ impl SceneRenderer {
                         );
                         material_uniforms.has_base_color_tex = 1;
 
-                        let draw = Self::create_textured_draw_call(
+                        let mut draw = Self::create_textured_draw_call(
                             device,
                             &self.pipeline,
                             &mesh,
@@ -766,9 +907,10 @@ impl SceneRenderer {
                             &tex_cache_ref.default_normal.view, &tex_cache_ref.default_normal.sampler,
                             &tex_cache_ref.default_metallic_roughness.view, &tex_cache_ref.default_metallic_roughness.sampler,
                         );
+                        draw.entity_id = Some(entity.id);
                         self.entity_draws.push(draw);
                     } else {
-                        let draw = Self::create_draw_call(
+                        let mut draw = Self::create_draw_call(
                             device,
                             &self.pipeline,
                             &mesh,
@@ -777,10 +919,11 @@ impl SceneRenderer {
                             MaterialUniforms::procedural(),
                             tex_cache_ref,
                         );
+                        draw.entity_id = Some(entity.id);
                         self.entity_draws.push(draw);
                     }
                 } else {
-                    let draw = Self::create_draw_call(
+                    let mut draw = Self::create_draw_call(
                         device,
                         &self.pipeline,
                         &mesh,
@@ -789,10 +932,11 @@ impl SceneRenderer {
                         MaterialUniforms::procedural(),
                         tex_cache_ref,
                     );
+                    draw.entity_id = Some(entity.id);
                     self.entity_draws.push(draw);
                 }
             } else {
-                let draw = Self::create_draw_call(
+                let mut draw = Self::create_draw_call(
                     device,
                     &self.pipeline,
                     &mesh,
@@ -801,6 +945,7 @@ impl SceneRenderer {
                     MaterialUniforms::procedural(),
                     tex_cache_ref,
                 );
+                draw.entity_id = Some(entity.id);
                 self.entity_draws.push(draw);
             }
 
@@ -906,6 +1051,7 @@ impl SceneRenderer {
             material_bind_group,
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
+            entity_id: None,
         }
     }
 
@@ -961,6 +1107,7 @@ impl SceneRenderer {
             material_bind_group,
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
+            entity_id: None,
         }
     }
 
@@ -1004,6 +1151,7 @@ impl SceneRenderer {
             material_bind_group,
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
+            entity_id: None,
         }
     }
 
@@ -1498,6 +1646,14 @@ impl SceneRenderer {
                 32,
                 bytemuck::cast_slice(&[tonemapping_u32]),
             );
+
+            // Write selection_highlight at byte offset 48
+            let highlight: u32 = if self.selected_entity == draw.entity_id && draw.entity_id.is_some() { 1 } else { 0 };
+            queue.write_buffer(
+                &draw.material_buffer,
+                48,
+                bytemuck::cast_slice(&[highlight]),
+            );
         }
 
         // Update skinned entity transforms
@@ -1521,6 +1677,14 @@ impl SceneRenderer {
                 32,
                 bytemuck::cast_slice(&[tonemapping_u32]),
             );
+
+            // Write selection_highlight at byte offset 48
+            let highlight: u32 = if self.selected_entity == draw.entity_id && draw.entity_id.is_some() { 1 } else { 0 };
+            queue.write_buffer(
+                &draw.material_buffer,
+                48,
+                bytemuck::cast_slice(&[highlight]),
+            );
         }
 
         // Update wireframe overlay transforms
@@ -1533,6 +1697,35 @@ impl SceneRenderer {
                 _pad: 0.0,
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update billboard uniforms with camera vectors
+        {
+            // Extract camera right and up from the view matrix
+            let cam_right = camera.right_vector();
+            let cam_up = camera.up_vector();
+            let billboard_uniforms = BillboardUniforms {
+                view_proj,
+                camera_right: cam_right,
+                _pad0: 0.0,
+                camera_up: cam_up,
+                _pad1: 0.0,
+            };
+            for draw in &self.billboard_draws {
+                queue.write_buffer(
+                    &draw.billboard_buffer,
+                    0,
+                    bytemuck::cast_slice(&[billboard_uniforms]),
+                );
+
+                // Write selection_highlight at byte offset 40 in sprite buffer
+                let highlight: u32 = if self.selected_entity == draw.entity_id && draw.entity_id.is_some() { 1 } else { 0 };
+                queue.write_buffer(
+                    &draw.sprite_buffer,
+                    40,
+                    bytemuck::cast_slice(&[highlight]),
+                );
+            }
         }
 
         // Update normal arrow transforms
@@ -1656,6 +1849,22 @@ impl SceneRenderer {
                                 wgpu::IndexFormat::Uint32,
                             );
                             render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
+                // Billboard sprites (after geometry, uses depth test)
+                if let Some(bp) = &self.billboard_pipeline {
+                    if !self.billboard_draws.is_empty() {
+                        render_pass.set_pipeline(&bp.pipeline);
+                        for draw in &self.billboard_draws {
+                            render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
+                            render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
+                            render_pass.set_index_buffer(
+                                bp.quad_index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..6, 0, 0..1);
                         }
                     }
                 }

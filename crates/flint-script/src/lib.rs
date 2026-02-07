@@ -14,6 +14,7 @@ pub mod engine;
 pub mod sync;
 
 use context::{InputSnapshot, ScriptCommand};
+pub use context::DrawCommand;
 use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
@@ -56,9 +57,39 @@ impl ScriptSystem {
         self.pending_events = events.to_vec();
     }
 
+    /// Set the physics system pointer for raycast access from scripts
+    pub fn set_physics(&mut self, physics: &flint_physics::PhysicsSystem) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.physics = physics as *const flint_physics::PhysicsSystem;
+    }
+
+    /// Set camera position and direction for weapon aiming
+    pub fn set_camera(&mut self, position: [f32; 3], direction: [f32; 3]) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.camera_position = position;
+        c.camera_direction = direction;
+    }
+
     /// Drain commands produced by scripts this frame
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()
+    }
+
+    /// Set screen dimensions for UI draw functions
+    pub fn set_screen_size(&mut self, w: f32, h: f32) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.screen_width = w;
+        c.screen_height = h;
+    }
+
+    /// Call on_draw_ui() for all scripts
+    pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
+        self.engine.call_draw_uis(world);
+    }
+
+    /// Drain draw commands produced by scripts this frame
+    pub fn drain_draw_commands(&mut self) -> Vec<DrawCommand> {
+        self.engine.drain_draw_commands()
     }
 }
 
@@ -128,6 +159,7 @@ fn snapshot_actions(input: &InputState, pressed: bool) -> std::collections::Hash
     let action_names = [
         "move_forward", "move_backward", "move_left", "move_right",
         "jump", "interact", "sprint",
+        "fire", "weapon_1", "weapon_2", "reload",
     ];
 
     let mut set = std::collections::HashSet::new();

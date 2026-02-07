@@ -45,7 +45,7 @@ required_key = { type = "entity_ref", optional = true }
 
 ## Built-in Components
 
-Flint ships with seven built-in component schemas:
+Flint ships with several built-in component schemas:
 
 ### Transform
 
@@ -141,6 +141,27 @@ radius = { type = "f32", default = 0.4, min = 0.1 }
 camera_mode = { type = "enum", values = ["first_person", "orbit"], default = "first_person" }
 ```
 
+### Sprite
+
+```toml
+# schemas/components/sprite.toml
+[component.sprite]
+description = "Billboard sprite rendered as a camera-facing quad"
+
+[component.sprite.fields]
+texture = { type = "string", default = "", description = "Sprite sheet texture name" }
+width = { type = "f32", default = 1.0, min = 0.01, description = "World-space width" }
+height = { type = "f32", default = 1.0, min = 0.01, description = "World-space height" }
+frame = { type = "i32", default = 0, min = 0, description = "Current frame index" }
+frames_x = { type = "i32", default = 1, min = 1, description = "Columns in sprite sheet" }
+frames_y = { type = "i32", default = 1, min = 1, description = "Rows in sprite sheet" }
+anchor_y = { type = "f32", default = 0.0, description = "Vertical anchor (0=bottom, 0.5=center)" }
+fullbright = { type = "bool", default = true, description = "Bypass PBR lighting" }
+visible = { type = "bool", default = true }
+```
+
+The sprite component is used for billboard sprites that always face the camera. See [Rendering: Billboard Sprites](rendering.md#billboard-sprites) for details on the rendering pipeline.
+
 ## Archetype Schemas
 
 Archetypes bundle components together with defaults. They live in `schemas/archetypes/`:
@@ -233,8 +254,50 @@ armor = 0.1
 
 No engine recompilation needed --- schemas are loaded at runtime from the TOML files.
 
+## Game Project Schemas
+
+Games can define their own schemas that extend or override the engine's built-in schemas. The `--schemas` flag accepts multiple paths, with later paths taking priority:
+
+```bash
+flint play games/doom_fps/scenes/arena.scene.toml \
+  --schemas schemas \
+  --schemas games/doom_fps/schemas
+```
+
+In this example, `schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and `games/doom_fps/schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
+
+### Game Project Directory Structure
+
+```
+games/
+└── doom_fps/
+    ├── schemas/
+    │   ├── components/
+    │   │   ├── health.toml
+    │   │   ├── weapon.toml
+    │   │   └── enemy_ai.toml
+    │   └── archetypes/
+    │       ├── enemy.toml
+    │       └── pickup.toml
+    ├── scripts/
+    │   ├── enemy_ai.rhai
+    │   ├── weapon.rhai
+    │   └── hud.rhai
+    ├── scenes/
+    │   └── fps_arena.scene.toml
+    ├── sprites/
+    │   └── imp.png
+    └── audio/
+        ├── shotgun.ogg
+        └── imp_death.ogg
+```
+
+This separation keeps game-specific data out of the engine directory, allowing multiple games to share the same engine schemas while defining their own components and archetypes.
+
 ## Further Reading
 
 - [Entities and ECS](entities-and-ecs.md) --- how schemas connect to the entity system
 - [Constraints](constraints.md) --- rules that validate entities against schemas
 - [Scenes](scenes.md) --- how schema-defined entities are serialized
+- [Rendering](rendering.md) --- billboard sprite rendering pipeline
+- [CLI Reference](../cli-reference/overview.md) --- multi-schema CLI usage

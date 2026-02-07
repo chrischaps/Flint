@@ -1,6 +1,6 @@
 # Roadmap
 
-Flint's development is organized into five phases. Each phase delivers a usable milestone that builds on the previous one.
+Flint's development is organized into phases. Each phase delivers a usable milestone that builds on the previous one.
 
 ## Phase 1: Foundation --- CLI + Query + Schema
 
@@ -123,9 +123,29 @@ Integrated AI generation workflows for textures, meshes, and audio with style co
 
 **Milestone:** `flint asset generate texture -d "stone wall" --style medieval_tavern` produces a style-consistent texture, validates it, and stores it in the content-addressed catalog.
 
-## Beyond Phase 5
+## Phase A: Doom-Style FPS
 
-These are ideas under consideration, not committed plans:
+**Status: Complete**
+
+A minimum playable Doom-style first-person shooter, demonstrating the engine's capability for real-time action gameplay with billboard sprites, raycasting combat, and game-level logic entirely in scripts.
+
+**Delivered:**
+- **Billboard sprite rendering** --- `BillboardPipeline` with camera-facing quads, sprite sheet animation, binary alpha via `discard`, per-sprite uniform buffers. `sprite` component schema (texture, width, height, frame, frames_x/y, anchor_y, fullbright, visible)
+- **Raycasting** --- `PhysicsWorld::raycast()` with `EntityRaycastHit` struct, collider-to-entity resolution, self-exclusion. Exposed to Rhai scripts as `raycast()`, `get_camera_direction()`, `get_camera_position()`
+- **Script-driven HUD** --- `DrawCommand` pipeline with text, rect, circle, line, and sprite primitives. `on_draw_ui()` callback, `screen_width()`/`screen_height()`, `measure_text()`, `find_nearest_interactable()`. All game UI lives in `.rhai` scripts, not engine code
+- **Mouse button action bindings** --- `mouse_button_map` alongside keyboard `action_map`; `fire` bound to left mouse button by default. `weapon_1`/`weapon_2`/`reload` actions added
+- **Game project pattern** --- `games/<name>/` directory structure with own schemas/scripts/scenes/assets. `--schemas` flag accepts multiple paths with later-path-wins priority
+- **Multi-directory schema loading** --- `SchemaRegistry::load_from_multiple_dirs()` merges engine and game schemas
+- **Enemy AI state machine** --- idle/chase/attack/dead states with line-of-sight checks, patrol patterns, and damage response (all in Rhai scripts)
+- **Health/ammo pickups** --- pickup component with collect-on-proximity logic in scripts
+- **Combat HUD** --- crosshair, health bar, ammo counter, damage flash overlay, weapon name display, interaction prompts (all script-driven via `hud.rhai`)
+- **Additional script APIs** --- `this_entity()` alias, `get_component()`, `play_sound(name, volume)` overload, `log_info()` alias
+
+**Milestone:** `flint play games/doom_fps/scenes/fps_arena.scene.toml --schemas schemas --schemas games/doom_fps/schemas` launches a playable FPS with enemies, weapons, pickups, and a full combat HUD.
+
+## Beyond Phase A
+
+These are ideas under consideration, not committed plans. See `DOOM_FPS_GAPS.md` for 55 remaining gaps toward a feature-complete Doom clone.
 
 - **Networking** --- multiplayer support
 - **Post-processing** --- bloom, ambient occlusion, tone mapping, LOD

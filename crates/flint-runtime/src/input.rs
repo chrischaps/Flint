@@ -26,6 +26,9 @@ pub struct InputState {
 
     /// Action map: action name -> list of key bindings
     action_map: HashMap<String, Vec<KeyCode>>,
+
+    /// Mouse button action map: action name -> list of mouse button indices
+    mouse_button_map: HashMap<String, Vec<u32>>,
 }
 
 impl Default for InputState {
@@ -46,6 +49,7 @@ impl InputState {
             mouse_delta: (0.0, 0.0),
             raw_mouse_delta: (0.0, 0.0),
             action_map: Self::default_action_map(),
+            mouse_button_map: Self::default_mouse_button_map(),
         }
     }
 
@@ -58,6 +62,15 @@ impl InputState {
         map.insert("jump".into(), vec![KeyCode::Space]);
         map.insert("interact".into(), vec![KeyCode::KeyE]);
         map.insert("sprint".into(), vec![KeyCode::ShiftLeft]);
+        map.insert("weapon_1".into(), vec![KeyCode::Digit1]);
+        map.insert("weapon_2".into(), vec![KeyCode::Digit2]);
+        map.insert("reload".into(), vec![KeyCode::KeyR]);
+        map
+    }
+
+    fn default_mouse_button_map() -> HashMap<String, Vec<u32>> {
+        let mut map = HashMap::new();
+        map.insert("fire".into(), vec![0]); // Left mouse button
         map
     }
 
@@ -127,29 +140,48 @@ impl InputState {
         self.keys_just_pressed.contains(&key)
     }
 
-    /// Is an action currently held? (any bound key is down)
+    /// Is an action currently held? (any bound key or mouse button is down)
     pub fn is_action_pressed(&self, action: &str) -> bool {
-        self.action_map
+        let key_match = self.action_map
             .get(action)
             .map(|keys| keys.iter().any(|k| self.keys_down.contains(k)))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        let mouse_match = self.mouse_button_map
+            .get(action)
+            .map(|btns| btns.iter().any(|b| self.mouse_buttons_down.contains(b)))
+            .unwrap_or(false);
+        key_match || mouse_match
     }
 
     /// Was an action just pressed this frame?
     pub fn is_action_just_pressed(&self, action: &str) -> bool {
-        self.action_map
+        let key_match = self.action_map
             .get(action)
             .map(|keys| keys.iter().any(|k| self.keys_just_pressed.contains(k)))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        let mouse_match = self.mouse_button_map
+            .get(action)
+            .map(|btns| btns.iter().any(|b| self.mouse_buttons_just_pressed.contains(b)))
+            .unwrap_or(false);
+        key_match || mouse_match
     }
 
     /// Get all actions that were just pressed this frame
     pub fn actions_just_pressed(&self) -> Vec<String> {
-        self.action_map
+        let mut result: Vec<String> = self.action_map
             .iter()
             .filter(|(_, keys)| keys.iter().any(|k| self.keys_just_pressed.contains(k)))
             .map(|(action, _)| action.clone())
-            .collect()
+            .collect();
+        // Also check mouse button actions
+        for (action, btns) in &self.mouse_button_map {
+            if btns.iter().any(|b| self.mouse_buttons_just_pressed.contains(b)) {
+                if !result.contains(action) {
+                    result.push(action.clone());
+                }
+            }
+        }
+        result
     }
 
     /// Get the mouse movement delta this frame

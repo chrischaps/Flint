@@ -68,6 +68,16 @@ source = "footsteps.rhai"
 
 
 # ============================================================
+#  HUD — script-driven crosshair + interaction prompt
+# ============================================================
+
+[entities.hud_controller]
+
+[entities.hud_controller.script]
+source = "hud_interact.rhai"
+
+
+# ============================================================
 #  AMBIENT CONTROLLER — hidden entity for background events
 # ============================================================
 

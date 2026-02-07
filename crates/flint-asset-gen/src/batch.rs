@@ -6,6 +6,7 @@
 use crate::config::FlintConfig;
 use crate::human_task::generate_task_file;
 use crate::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
+use crate::registration::register_generated_asset;
 use crate::style::StyleGuide;
 use flint_core::{FlintError, Result};
 use std::path::Path;
@@ -269,6 +270,7 @@ fn generate_asset(
     };
 
     let result = provider.generate(&request, style, Path::new(output_dir))?;
+    register_generated_asset(&request, &result)?;
     Ok(result.duration_secs)
 }
 

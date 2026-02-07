@@ -98,7 +98,8 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 
 | Function | Description |
 |----------|-------------|
-| `play_sound(name)` | Play a non-spatial sound by filename (without extension) |
+| `play_sound(name)` | Play a non-spatial sound at default volume |
+| `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
 | `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
 | `stop_sound(name)` | Stop a playing sound |
 

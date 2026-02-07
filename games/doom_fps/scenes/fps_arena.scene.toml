@@ -1,0 +1,438 @@
+# ================================================================
+#  DOOM-STYLE FPS ARENA — Phase A Minimum Playable Shooter
+# ================================================================
+#
+#  A small combat arena with hitscan weapons, billboard sprite
+#  enemies, health/ammo pickups, and a full combat HUD.
+#
+#  Launch:
+#    cargo run --bin flint-player -- games/doom_fps/scenes/fps_arena.scene.toml \
+#        --schemas schemas --schemas games/doom_fps/schemas
+#
+#  Controls:
+#    WASD       - Move             Space     - Jump
+#    Mouse      - Look around      Shift     - Sprint
+#    Left Click - Fire weapon      R         - Reload (future)
+#    1 / 2      - Switch weapon    E         - Interact
+#    Escape     - Release cursor / Exit
+#    F1         - Debug modes      F4        - Toggle shadows
+#    F11        - Fullscreen
+# ================================================================
+
+[scene]
+name = "FPS Arena — Doom-Style Combat"
+version = "1.0"
+description = "Phase A: Minimum playable Doom-style shooter with hitscan combat, billboard sprites, and enemy AI"
+
+
+# ============================================================
+#  PLAYER — first-person shooter protagonist
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 0]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 6.0
+jump_force = 7.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.health]
+current = 100.0
+max = 100.0
+
+[entities.player.armor]
+current = 0.0
+max = 100.0
+absorption = 0.33
+
+[entities.player.weapon]
+name = "Pistol"
+damage = 15.0
+fire_rate = 0.4
+ammo = 50
+max_ammo = 200
+range = 100.0
+spread = 0.0
+pellet_count = 1
+fire_sound = "audio/gunshot.ogg"
+
+[entities.player.weapon_inventory]
+current_weapon = 1
+has_shotgun = false
+pistol_ammo = 50
+pistol_max_ammo = 200
+shotgun_ammo = 0
+shotgun_max_ammo = 50
+switch_pending = false
+
+[entities.player.script]
+source = "player_weapon.rhai"
+
+
+# ============================================================
+#  HUD — script-driven UI overlay
+# ============================================================
+
+[entities.hud_controller]
+
+[entities.hud_controller.script]
+source = "hud.rhai"
+
+
+# ============================================================
+#  ARENA GEOMETRY — floor, walls, pillars
+# ============================================================
+
+# --- Floor ---
+[entities.floor]
+
+[entities.floor.transform]
+position = [0, -0.1, 0]
+scale = [30, 0.2, 30]
+
+[entities.floor.material]
+color = [0.3, 0.25, 0.2, 1.0]
+roughness = 0.9
+metallic = 0.0
+
+[entities.floor.collider]
+shape = "box"
+size = [30, 0.2, 30]
+
+[entities.floor.rigidbody]
+body_type = "static"
+
+# --- North wall ---
+[entities.wall_north]
+
+[entities.wall_north.transform]
+position = [0, 2.5, -15]
+scale = [30, 5, 0.5]
+
+[entities.wall_north.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.85
+
+[entities.wall_north.collider]
+shape = "box"
+size = [30, 5, 0.5]
+
+[entities.wall_north.rigidbody]
+body_type = "static"
+
+# --- South wall ---
+[entities.wall_south]
+
+[entities.wall_south.transform]
+position = [0, 2.5, 15]
+scale = [30, 5, 0.5]
+
+[entities.wall_south.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.85
+
+[entities.wall_south.collider]
+shape = "box"
+size = [30, 5, 0.5]
+
+[entities.wall_south.rigidbody]
+body_type = "static"
+
+# --- East wall ---
+[entities.wall_east]
+
+[entities.wall_east.transform]
+position = [15, 2.5, 0]
+scale = [0.5, 5, 30]
+
+[entities.wall_east.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.85
+
+[entities.wall_east.collider]
+shape = "box"
+size = [0.5, 5, 30]
+
+[entities.wall_east.rigidbody]
+body_type = "static"
+
+# --- West wall ---
+[entities.wall_west]
+
+[entities.wall_west.transform]
+position = [-15, 2.5, 0]
+scale = [0.5, 5, 30]
+
+[entities.wall_west.material]
+color = [0.45, 0.4, 0.35, 1.0]
+roughness = 0.85
+
+[entities.wall_west.collider]
+shape = "box"
+size = [0.5, 5, 30]
+
+[entities.wall_west.rigidbody]
+body_type = "static"
+
+# --- Pillar 1 (center-left) ---
+[entities.pillar_1]
+
+[entities.pillar_1.transform]
+position = [-5, 2.5, -3]
+scale = [1.5, 5, 1.5]
+
+[entities.pillar_1.material]
+color = [0.5, 0.45, 0.4, 1.0]
+roughness = 0.7
+
+[entities.pillar_1.collider]
+shape = "box"
+size = [1.5, 5, 1.5]
+
+[entities.pillar_1.rigidbody]
+body_type = "static"
+
+# --- Pillar 2 (center-right) ---
+[entities.pillar_2]
+
+[entities.pillar_2.transform]
+position = [5, 2.5, 3]
+scale = [1.5, 5, 1.5]
+
+[entities.pillar_2.material]
+color = [0.5, 0.45, 0.4, 1.0]
+roughness = 0.7
+
+[entities.pillar_2.collider]
+shape = "box"
+size = [1.5, 5, 1.5]
+
+[entities.pillar_2.rigidbody]
+body_type = "static"
+
+# --- Pillar 3 (near spawn) ---
+[entities.pillar_3]
+
+[entities.pillar_3.transform]
+position = [3, 2.5, -8]
+scale = [1.2, 5, 1.2]
+
+[entities.pillar_3.material]
+color = [0.5, 0.45, 0.4, 1.0]
+roughness = 0.7
+
+[entities.pillar_3.collider]
+shape = "box"
+size = [1.2, 5, 1.2]
+
+[entities.pillar_3.rigidbody]
+body_type = "static"
+
+
+# ============================================================
+#  ENEMIES — 5 imp demons around the arena
+# ============================================================
+
+[entities.imp_north]
+archetype = "enemy_imp"
+
+[entities.imp_north.transform]
+position = [-4, 0.7, -10]
+
+[entities.imp_south]
+archetype = "enemy_imp"
+
+[entities.imp_south.transform]
+position = [6, 0.7, 10]
+
+[entities.imp_east]
+archetype = "enemy_imp"
+
+[entities.imp_east.transform]
+position = [11, 0.7, -5]
+
+[entities.imp_west]
+archetype = "enemy_imp"
+
+[entities.imp_west.transform]
+position = [-10, 0.7, 4]
+
+[entities.imp_center]
+archetype = "enemy_imp"
+
+[entities.imp_center.transform]
+position = [0, 0.7, -6]
+
+
+# ============================================================
+#  HITSCAN ENEMIES — zombiemen and shotgun guys
+# ============================================================
+
+[entities.zombieman_1]
+archetype = "enemy_zombieman"
+
+[entities.zombieman_1.transform]
+position = [8, 0.7, -8]
+
+[entities.zombieman_2]
+archetype = "enemy_zombieman"
+
+[entities.zombieman_2.transform]
+position = [-12, 0.7, -6]
+
+[entities.shotgunguy_1]
+archetype = "enemy_shotgunguy"
+
+[entities.shotgunguy_1.transform]
+position = [-10, 0.7, -9]
+
+[entities.shotgunguy_2]
+archetype = "enemy_shotgunguy"
+
+[entities.shotgunguy_2.transform]
+position = [10, 0.7, 8]
+
+
+# ============================================================
+#  PICKUPS — health and ammo scattered around
+# ============================================================
+
+[entities.health_pickup_1]
+archetype = "pickup_health"
+
+[entities.health_pickup_1.transform]
+position = [7, 0.5, -8]
+
+[entities.health_pickup_2]
+archetype = "pickup_health"
+
+[entities.health_pickup_2.transform]
+position = [-8, 0.5, 8]
+
+[entities.health_pickup_3]
+archetype = "pickup_health"
+
+[entities.health_pickup_3.transform]
+position = [0, 0.5, 12]
+
+[entities.health_pickup_3.pickup]
+amount = 50.0
+
+[entities.ammo_pickup_1]
+archetype = "pickup_ammo"
+
+[entities.ammo_pickup_1.transform]
+position = [-6, 0.5, -6]
+
+[entities.ammo_pickup_2]
+archetype = "pickup_ammo"
+
+[entities.ammo_pickup_2.transform]
+position = [10, 0.5, 6]
+
+[entities.ammo_pickup_3]
+archetype = "pickup_ammo"
+
+[entities.ammo_pickup_3.transform]
+position = [-12, 0.5, -10]
+
+# --- Shotgun weapon pickup ---
+[entities.shotgun_pickup]
+archetype = "pickup_weapon_shotgun"
+
+[entities.shotgun_pickup.transform]
+position = [-3, 0.5, -12]
+
+# --- Shell ammo pickups ---
+[entities.shells_pickup_1]
+archetype = "pickup_shells"
+
+[entities.shells_pickup_1.transform]
+position = [12, 0.5, -3]
+
+[entities.shells_pickup_2]
+archetype = "pickup_shells"
+
+[entities.shells_pickup_2.transform]
+position = [-9, 0.5, 11]
+
+# --- Armor pickups ---
+[entities.armor_pickup_1]
+archetype = "pickup_armor"
+
+[entities.armor_pickup_1.transform]
+position = [8, 0.5, -3]
+
+[entities.armor_pickup_2]
+archetype = "pickup_armor"
+
+[entities.armor_pickup_2.transform]
+position = [-10, 0.5, -8]
+
+
+# ============================================================
+#  LIGHTING
+# ============================================================
+
+[entities.sun]
+
+[entities.sun.transform]
+position = [10, 20, 10]
+rotation = [-45, 30, 0]
+
+[entities.sun.light]
+type = "directional"
+color = [1.0, 0.95, 0.85]
+intensity = 1.2
+cast_shadows = true
+
+[entities.light_red]
+
+[entities.light_red.transform]
+position = [-8, 4, -8]
+
+[entities.light_red.light]
+type = "point"
+color = [1.0, 0.3, 0.2]
+intensity = 15.0
+range = 12.0
+
+[entities.light_blue]
+
+[entities.light_blue.transform]
+position = [8, 4, 8]
+
+[entities.light_blue.light]
+type = "point"
+color = [0.3, 0.4, 1.0]
+intensity = 15.0
+range = 12.0
+
+[entities.light_center]
+
+[entities.light_center.transform]
+position = [0, 6, 0]
+
+[entities.light_center.light]
+type = "point"
+color = [1.0, 0.9, 0.7]
+intensity = 25.0
+range = 20.0

@@ -51,6 +51,10 @@ pub struct MaterialUniforms {
     pub has_base_color_tex: u32,
     pub has_normal_map: u32,
     pub has_metallic_roughness_tex: u32,
+    pub selection_highlight: u32,
+    pub _pad_sel0: u32,
+    pub _pad_sel1: u32,
+    pub _pad_sel2: u32,
 }
 
 impl MaterialUniforms {
@@ -66,6 +70,10 @@ impl MaterialUniforms {
             has_base_color_tex: 0,
             has_normal_map: 0,
             has_metallic_roughness_tex: 0,
+            selection_highlight: 0,
+            _pad_sel0: 0,
+            _pad_sel1: 0,
+            _pad_sel2: 0,
         }
     }
 
@@ -81,6 +89,10 @@ impl MaterialUniforms {
             has_base_color_tex: 0,
             has_normal_map: 0,
             has_metallic_roughness_tex: 0,
+            selection_highlight: 0,
+            _pad_sel0: 0,
+            _pad_sel1: 0,
+            _pad_sel2: 0,
         }
     }
 }

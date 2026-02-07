@@ -82,13 +82,57 @@ Then play the scene:
 flint play my_scene.scene.toml
 ```
 
+## Raycasting
+
+The physics system provides raycasting for line-of-sight checks, hitscan weapons, and interaction targeting. `PhysicsWorld::raycast()` casts a ray through the Rapier collision world and returns the first hit:
+
+```rust
+pub struct EntityRaycastHit {
+    pub entity_id: EntityId,
+    pub distance: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+```
+
+The function resolves Rapier collider handles back to Flint `EntityId`s through the collider-to-entity map maintained by `PhysicsSync`. An optional `exclude_entity` parameter lets callers exclude a specific entity (typically the shooter) from the results.
+
+Raycasting is exposed to scripts via the `raycast()` function --- see [Scripting: Physics API](scripting.md#physics-api) for the script-level interface and examples.
+
 ## Input System
 
 The `InputState` struct tracks keyboard and mouse state each frame:
 
 - Keyboard keys are tracked as pressed/released
+- **Mouse buttons** are tracked alongside keyboard keys, with their own action binding map
 - Mouse provides raw delta movement (via `DeviceEvent::MouseMotion`) for smooth camera look
-- Action bindings map keys to game actions (move forward, jump, sprint, etc.)
+- Action bindings map keys and mouse buttons to game actions
+
+### Default Action Bindings
+
+| Action | Key / Button | Description |
+|--------|-------------|-------------|
+| `move_forward` | W | Move forward |
+| `move_backward` | S | Move backward |
+| `move_left` | A | Strafe left |
+| `move_right` | D | Strafe right |
+| `jump` | Space | Jump |
+| `interact` | E | Interact with nearby object |
+| `sprint` | Left Shift | Sprint (hold) |
+| `weapon_1` | 1 | Select weapon slot 1 |
+| `weapon_2` | 2 | Select weapon slot 2 |
+| `reload` | R | Reload weapon |
+| `fire` | Left Mouse Button | Fire weapon |
+
+Mouse button bindings are stored in a separate `mouse_button_map` alongside the keyboard `action_map`. Both maps feed into the same `is_action_pressed()` / `is_action_just_pressed()` interface, so scripts don't need to distinguish between key-triggered and mouse-triggered actions.
+
+## Runtime Physics Updates
+
+The physics system handles several runtime updates beyond the core simulation:
+
+- **Sensor flag updates** --- when game logic marks an entity as dead, its collider can be set to a sensor (non-solid) so other entities pass through it
+- **Kinematic body sync** --- script-controlled position changes are written back to Rapier kinematic bodies each frame
+- **Collision event drain** --- the `ChannelEventCollector` collects collision and contact events each physics step; these are drained and dispatched as script callbacks (`on_collision`, `on_trigger_enter`, `on_trigger_exit`)
 
 ## Further Reading
 

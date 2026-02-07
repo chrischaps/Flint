@@ -2,7 +2,7 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
-use crate::hud::HudState;
+use anyhow::{Context, Result};
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
@@ -14,7 +14,7 @@ use flint_import::import_gltf;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::{GameClock, GameEvent, InputState, RuntimeSystem};
-use flint_script::context::{LogLevel, ScriptCommand};
+use flint_script::context::{DrawCommand, LogLevel, ScriptCommand};
 use flint_script::ScriptSystem;
 use std::collections::HashMap;
 use std::path::Path;
@@ -52,7 +52,10 @@ pub struct PlayerApp {
     egui_ctx: egui::Context,
     egui_winit: Option<egui_winit::State>,
     egui_renderer: Option<egui_wgpu::Renderer>,
-    hud: HudState,
+
+    // Script-driven 2D draw commands
+    draw_commands: Vec<DrawCommand>,
+    ui_textures: HashMap<String, egui::TextureHandle>,
 
     // Asset catalog (optional, for content-addressed asset resolution)
     catalog: Option<AssetCatalog>,
@@ -82,7 +85,8 @@ impl PlayerApp {
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
-            hud: HudState::new(),
+            draw_commands: Vec::new(),
+            ui_textures: HashMap::new(),
             catalog: AssetCatalog::load_from_directory("assets").ok(),
             content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
@@ -90,12 +94,16 @@ impl PlayerApp {
         }
     }
 
-    fn initialize(&mut self, event_loop: &ActiveEventLoop) {
+    fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let window_attrs = Window::default_attributes()
             .with_title("Flint Player")
             .with_inner_size(PhysicalSize::new(1280, 720));
 
-        let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
+        let window = Arc::new(
+            event_loop
+                .create_window(window_attrs)
+                .context("Failed to create player window")?,
+        );
 
         if self.fullscreen {
             window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
@@ -104,7 +112,8 @@ impl PlayerApp {
         self.window = Some(window.clone());
 
         // Initialize rendering
-        let render_context = pollster::block_on(RenderContext::new(window.clone())).unwrap();
+        let render_context = pollster::block_on(RenderContext::new(window.clone()))
+            .context("Failed to initialize render context")?;
 
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.fov = 70.0; // Slightly wider FOV for first-person
@@ -149,7 +158,7 @@ impl PlayerApp {
         // Initialize physics
         self.physics
             .initialize(&mut self.world)
-            .expect("Failed to initialize physics");
+            .context("Failed to initialize physics")?;
 
         // Initialize audio
         load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
@@ -171,6 +180,8 @@ impl PlayerApp {
 
         // Capture cursor for first-person look
         self.capture_cursor();
+
+        Ok(())
     }
 
     fn capture_cursor(&mut self) {
@@ -254,9 +265,6 @@ impl PlayerApp {
         // Also set target explicitly for view matrix
         self.camera.target = cam_target;
 
-        // Update HUD (scan for interactables near player)
-        self.hud.update(&self.world, self.clock.delta_time);
-
         // Update audio listener to match camera
         self.audio.update_listener(
             cam_pos,
@@ -272,18 +280,33 @@ impl PlayerApp {
             game_events.push(flint_runtime::GameEvent::ActionPressed(action));
         }
 
-        // Script system: provide context, run updates, drain commands
+        // Script system: provide physics + camera context, then run updates
+        self.script.set_physics(&self.physics);
+        self.script.set_camera(
+            self.camera.position_array(),
+            self.camera.forward_vector(),
+        );
         self.script.provide_context(
             &self.input,
             &game_events,
             self.clock.total_time,
             self.clock.delta_time,
         );
+        // Set screen size for UI draw functions (logical points, not physical pixels)
+        let screen_rect = self.egui_ctx.screen_rect();
+        self.script.set_screen_size(screen_rect.width(), screen_rect.height());
         self.script
             .update(&mut self.world, self.clock.delta_time)
             .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
+
+        // Call on_draw_ui() for all scripts (generates draw commands)
+        self.script.call_draw_uis(&mut self.world);
+
         let script_commands = self.script.drain_commands();
         self.process_script_commands(script_commands);
+
+        // Collect draw commands for this frame
+        self.draw_commands = self.script.drain_draw_commands();
 
         // Audio triggers from game events
         self.audio.process_events(&game_events, &self.world);
@@ -319,15 +342,24 @@ impl PlayerApp {
     }
 
     fn render_hud(&mut self, target_view: &wgpu::TextureView) {
+        // Lazy-load any sprite textures referenced by draw commands
+        // (must happen before egui_winit borrow)
+        self.load_pending_sprites();
+
         let Some(window) = &self.window else { return };
         let Some(context) = &self.render_context else { return };
         let Some(egui_winit) = &mut self.egui_winit else { return };
 
         let raw_input = egui_winit.take_egui_input(window);
 
+        let draw_commands = std::mem::take(&mut self.draw_commands);
+        let ui_textures = &self.ui_textures;
+
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            self.hud.render(ctx);
+            render_draw_commands(ctx, &draw_commands, ui_textures);
         });
+
+        self.draw_commands = draw_commands;
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
@@ -425,7 +457,10 @@ impl PlayerApp {
 impl ApplicationHandler for PlayerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            self.initialize(event_loop);
+            if let Err(e) = self.initialize(event_loop) {
+                eprintln!("Failed to initialize player: {e:#}");
+                event_loop.exit();
+            }
         }
     }
 
@@ -600,8 +635,19 @@ fn load_models_from_world(
                     store.and_then(|s| s.get(&hash))
                 });
 
-            let model_path = catalog_path
-                .unwrap_or_else(|| scene_dir.join("models").join(format!("{}.glb", asset_name)));
+            let model_path = if let Some(cp) = catalog_path {
+                cp
+            } else {
+                // Search scene dir first, then parent (game root)
+                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
+                if p.exists() {
+                    p
+                } else if let Some(parent) = scene_dir.parent() {
+                    parent.join("models").join(format!("{}.glb", asset_name))
+                } else {
+                    p
+                }
+            };
 
             if model_path.exists() {
                 match import_gltf(&model_path) {
@@ -691,6 +737,12 @@ fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path
         .parent()
         .unwrap_or_else(|| Path::new("."));
 
+    // Build list of directories to search: scene dir first, then parent (game root)
+    let mut search_dirs = vec![scene_dir.to_path_buf()];
+    if let Some(parent) = scene_dir.parent() {
+        search_dirs.push(parent.to_path_buf());
+    }
+
     // Load audio files referenced by audio_source components
     for entity in world.all_entities() {
         let audio_file = world
@@ -707,40 +759,48 @@ fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path
                 continue;
             }
 
-            let audio_path = scene_dir.join(&file_name);
-            if audio_path.exists() {
-                match audio.engine.load_sound(&file_name, &audio_path) {
-                    Ok(_) => {
-                        println!("Loaded audio: {}", file_name);
+            let mut loaded = false;
+            for dir in &search_dirs {
+                let audio_path = dir.join(&file_name);
+                if audio_path.exists() {
+                    match audio.engine.load_sound(&file_name, &audio_path) {
+                        Ok(_) => {
+                            println!("Loaded audio: {}", file_name);
+                            loaded = true;
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to load audio '{}': {:?}", file_name, e);
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("Failed to load audio '{}': {:?}", file_name, e);
-                    }
+                    break;
                 }
-            } else {
-                eprintln!("Audio file not found: {}", audio_path.display());
+            }
+            if !loaded {
+                eprintln!("Audio file not found: {}", file_name);
             }
         }
     }
 
-    // Preload all .ogg files from the audio/ directory (for script-triggered sounds)
-    let audio_dir = scene_dir.join("audio");
-    if audio_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&audio_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
-                    let rel_name = format!("audio/{}", path.file_name().unwrap().to_string_lossy());
-                    if audio.engine.has_sound(&rel_name) {
-                        continue;
-                    }
-                    match audio.engine.load_sound(&rel_name, &path) {
-                        Ok(_) => {
-                            println!("Preloaded audio: {}", rel_name);
+    // Preload all audio files from the audio/ directory (for script-triggered sounds)
+    for dir in &search_dirs {
+        let audio_dir = dir.join("audio");
+        if audio_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&audio_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
+                        let rel_name = format!("audio/{}", path.file_name().unwrap().to_string_lossy());
+                        if audio.engine.has_sound(&rel_name) {
+                            continue;
                         }
-                        Err(e) => {
-                            eprintln!("Failed to preload audio '{}': {:?}", rel_name, e);
+                        match audio.engine.load_sound(&rel_name, &path) {
+                            Ok(_) => {
+                                println!("Preloaded audio: {}", rel_name);
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to preload audio '{}': {:?}", rel_name, e);
+                            }
                         }
                     }
                 }
@@ -749,7 +809,7 @@ fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path
     }
 }
 
-/// Load texture files referenced by material components
+/// Load texture files referenced by material and sprite components
 fn load_textures_from_world(
     world: &FlintWorld,
     renderer: &mut SceneRenderer,
@@ -766,16 +826,27 @@ fn load_textures_from_world(
     let mut loaded = std::collections::HashSet::new();
 
     for entity in world.all_entities() {
-        let texture_name = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("material").cloned())
-            .and_then(|material| {
-                material
-                    .get("texture")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
+        let components = world.get_components(entity.id);
 
-        if let Some(tex_name) = texture_name {
+        // Collect texture names from material and sprite components
+        let mut tex_names = Vec::new();
+
+        if let Some(comps) = &components {
+            if let Some(material) = comps.get("material") {
+                if let Some(tex) = material.get("texture").and_then(|v| v.as_str()) {
+                    tex_names.push(tex.to_string());
+                }
+            }
+            if let Some(sprite) = comps.get("sprite") {
+                if let Some(tex) = sprite.get("texture").and_then(|v| v.as_str()) {
+                    if !tex.is_empty() {
+                        tex_names.push(tex.to_string());
+                    }
+                }
+            }
+        }
+
+        for tex_name in tex_names {
             if loaded.contains(&tex_name) {
                 continue;
             }
@@ -789,7 +860,19 @@ fn load_textures_from_world(
                     store.and_then(|s| s.get(&hash))
                 });
 
-            let tex_path = catalog_path.unwrap_or_else(|| scene_dir.join(&tex_name));
+            let tex_path = if let Some(cp) = catalog_path {
+                cp
+            } else {
+                // Search scene dir first, then parent (game root)
+                let p = scene_dir.join(&tex_name);
+                if p.exists() {
+                    p
+                } else if let Some(parent) = scene_dir.parent() {
+                    parent.join(&tex_name)
+                } else {
+                    p
+                }
+            };
             if tex_path.exists() {
                 match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
                     Ok(_) => {}
@@ -802,15 +885,26 @@ fn load_textures_from_world(
     }
 }
 
-/// Load `.anim.toml` files from the `animations/` directory next to the scene
+/// Load `.anim.toml` files from the `animations/` directory next to the scene.
+/// Also checks one level up (game root) for projects that use a `scenes/` subdirectory.
 fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
 
-    let anim_dir = scene_dir.join("animations");
+    let mut anim_dir = scene_dir.join("animations");
     if !anim_dir.is_dir() {
-        return;
+        // Check parent directory (game project structure)
+        if let Some(parent) = scene_dir.parent() {
+            let parent_anim = parent.join("animations");
+            if parent_anim.is_dir() {
+                anim_dir = parent_anim;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
     }
 
     let entries = match std::fs::read_dir(&anim_dir) {
@@ -841,4 +935,173 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
 /// Set up the script system's scripts directory from the scene path
 fn load_scripts_from_world(scene_path: &str, script: &mut ScriptSystem) {
     flint_script::sync::load_scripts_from_scene(scene_path, &mut script.sync);
+}
+
+// ─── Script-driven UI rendering ──────────────────────────
+
+fn to_color32(c: &[f32; 4]) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(
+        (c[0] * 255.0) as u8,
+        (c[1] * 255.0) as u8,
+        (c[2] * 255.0) as u8,
+        (c[3] * 255.0) as u8,
+    )
+}
+
+/// Render script-issued 2D draw commands via egui layer painter.
+/// Uses `ctx.layer_painter()` directly instead of `egui::Area` to avoid
+/// zero-size clipping when only painter calls are used (no widgets).
+fn render_draw_commands(
+    ctx: &egui::Context,
+    commands: &[DrawCommand],
+    ui_textures: &HashMap<String, egui::TextureHandle>,
+) {
+    if commands.is_empty() {
+        return;
+    }
+
+    // Sort by layer (stable sort preserves insertion order within same layer)
+    let mut sorted: Vec<&DrawCommand> = commands.iter().collect();
+    sorted.sort_by_key(|cmd| cmd.layer());
+
+    let layer_id = egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("script_ui_overlay"),
+    );
+    let painter = ctx.layer_painter(layer_id);
+
+    for cmd in &sorted {
+        match cmd {
+            DrawCommand::Text { x, y, text, size, color, .. } => {
+                painter.text(
+                    egui::Pos2::new(*x, *y),
+                    egui::Align2::LEFT_TOP,
+                    text,
+                    egui::FontId::proportional(*size),
+                    to_color32(color),
+                );
+            }
+
+            DrawCommand::RectFilled { x, y, w, h, color, rounding, .. } => {
+                let rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(*x, *y),
+                    egui::Vec2::new(*w, *h),
+                );
+                painter.rect_filled(rect, *rounding, to_color32(color));
+            }
+
+            DrawCommand::RectOutline { x, y, w, h, color, thickness, .. } => {
+                let rect = egui::Rect::from_min_size(
+                    egui::Pos2::new(*x, *y),
+                    egui::Vec2::new(*w, *h),
+                );
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(*thickness, to_color32(color)),
+                );
+            }
+
+            DrawCommand::CircleFilled { x, y, radius, color, .. } => {
+                painter.circle_filled(
+                    egui::Pos2::new(*x, *y),
+                    *radius,
+                    to_color32(color),
+                );
+            }
+
+            DrawCommand::CircleOutline { x, y, radius, color, thickness, .. } => {
+                painter.circle_stroke(
+                    egui::Pos2::new(*x, *y),
+                    *radius,
+                    egui::Stroke::new(*thickness, to_color32(color)),
+                );
+            }
+
+            DrawCommand::Line { x1, y1, x2, y2, color, thickness, .. } => {
+                painter.line_segment(
+                    [egui::Pos2::new(*x1, *y1), egui::Pos2::new(*x2, *y2)],
+                    egui::Stroke::new(*thickness, to_color32(color)),
+                );
+            }
+
+            DrawCommand::Sprite { x, y, w, h, name, uv, tint, .. } => {
+                if let Some(tex_handle) = ui_textures.get(name.as_str()) {
+                    let rect = egui::Rect::from_min_size(
+                        egui::Pos2::new(*x, *y),
+                        egui::Vec2::new(*w, *h),
+                    );
+                    let uv_rect = egui::Rect::from_min_max(
+                        egui::Pos2::new(uv[0], uv[1]),
+                        egui::Pos2::new(uv[2], uv[3]),
+                    );
+                    painter.image(tex_handle.id(), rect, uv_rect, to_color32(tint));
+                }
+            }
+        }
+    }
+}
+
+impl PlayerApp {
+    /// Load a sprite texture for UI rendering. Called lazily when a draw_sprite
+    /// command references a name not yet in ui_textures.
+    pub fn load_ui_texture(&mut self, name: &str) -> bool {
+        if self.ui_textures.contains_key(name) {
+            return true;
+        }
+
+        let scene_dir = Path::new(&self.scene_path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+
+        // Search: scene_dir/sprites/{name} → game_root/sprites/{name} → scene_dir/{name}
+        let candidates = [
+            scene_dir.join("sprites").join(name),
+            scene_dir.parent().map(|p| p.join("sprites").join(name)).unwrap_or_default(),
+            scene_dir.join(name),
+        ];
+
+        for path in &candidates {
+            if path.exists() {
+                if let Ok(img) = image::open(path) {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        [w as usize, h as usize],
+                        &rgba,
+                    );
+                    let tex_handle = self.egui_ctx.load_texture(
+                        name,
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.ui_textures.insert(name.to_string(), tex_handle);
+                    println!("Loaded UI sprite: {}", name);
+                    return true;
+                }
+            }
+        }
+
+        eprintln!("UI sprite not found: {}", name);
+        false
+    }
+
+    /// Pre-scan draw commands and load any sprite textures that haven't been loaded yet
+    fn load_pending_sprites(&mut self) {
+        let sprite_names: Vec<String> = self.draw_commands.iter().filter_map(|cmd| {
+            if let DrawCommand::Sprite { name, .. } = cmd {
+                if !self.ui_textures.contains_key(name.as_str()) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }).collect();
+
+        for name in sprite_names {
+            self.load_ui_texture(&name);
+        }
+    }
 }

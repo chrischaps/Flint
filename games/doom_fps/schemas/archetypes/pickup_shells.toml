@@ -1,0 +1,18 @@
+[archetype.pickup_shells]
+description = "Shotgun shell ammo pickup"
+components = ["transform", "sprite", "pickup", "script"]
+
+[archetype.pickup_shells.defaults.sprite]
+texture = "sprites/pickup_shells.png"
+width = 0.5
+height = 0.5
+fullbright = true
+
+[archetype.pickup_shells.defaults.pickup]
+pickup_type = "shells"
+amount = 4.0
+range = 1.5
+respawn_time = 30.0
+
+[archetype.pickup_shells.defaults.script]
+source = "pickup.rhai"

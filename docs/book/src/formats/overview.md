@@ -35,7 +35,7 @@ field_name = { type = "<type>", default = <value>, description = "..." }
 
 Supported field types: `bool`, `i32`, `f32`, `string`, `vec3`, `enum`, `entity_ref`, `array`.
 
-Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_listener`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `asset_def`.
+Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_listener`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `sprite`, `asset_def`.
 
 ## Archetype Schemas (`schemas/archetypes/*.toml`)
 

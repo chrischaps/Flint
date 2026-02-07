@@ -1,0 +1,13 @@
+[component.sprite]
+description = "Billboard sprite rendered as a camera-facing quad"
+
+[component.sprite.fields]
+texture = { type = "string", default = "", description = "Sprite sheet texture name" }
+width = { type = "f32", default = 1.0, min = 0.01, description = "World-space width" }
+height = { type = "f32", default = 1.0, min = 0.01, description = "World-space height" }
+frame = { type = "i32", default = 0, min = 0, description = "Current frame index" }
+frames_x = { type = "i32", default = 1, min = 1, description = "Columns in sprite sheet" }
+frames_y = { type = "i32", default = 1, min = 1, description = "Rows in sprite sheet" }
+anchor_y = { type = "f32", default = 0.0, description = "Vertical anchor (0=bottom, 0.5=center)" }
+fullbright = { type = "bool", default = true, description = "Bypass PBR lighting" }
+visible = { type = "bool", default = true }

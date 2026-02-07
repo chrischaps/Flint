@@ -1,0 +1,39 @@
+[archetype.enemy_zombieman]
+description = "Hitscan trooper — slow, single-shot, low HP"
+components = ["transform", "sprite", "health", "enemy", "collider", "rigidbody", "script"]
+
+[archetype.enemy_zombieman.defaults.sprite]
+texture = "sprites/zombieman.png"
+width = 1.0
+height = 1.4
+frames_x = 4
+frames_y = 2
+fullbright = true
+
+[archetype.enemy_zombieman.defaults.health]
+current = 20.0
+max = 20.0
+
+[archetype.enemy_zombieman.defaults.enemy]
+state = "idle"
+move_speed = 2.5
+attack_damage = 8.0
+attack_rate = 1.0
+attack_range = 18.0
+sight_range = 22.0
+attack_spread = 0.15
+pellet_count = 1
+attack_sound = "audio/zombieman_fire.ogg"
+alert_sound = "audio/zombieman_alert.ogg"
+death_sound = "audio/zombieman_death.ogg"
+
+[archetype.enemy_zombieman.defaults.collider]
+shape = "capsule"
+radius = 0.35
+height = 1.4
+
+[archetype.enemy_zombieman.defaults.rigidbody]
+body_type = "kinematic"
+
+[archetype.enemy_zombieman.defaults.script]
+source = "enemy_ai_hitscan.rhai"

@@ -266,6 +266,33 @@ impl PhysicsSync {
         }
     }
 
+    /// Update sensor flags on already-synced colliders to match ECS state.
+    /// This allows scripts to make colliders non-solid at runtime (e.g., dead enemies).
+    pub fn update_sensor_flags(&self, world: &FlintWorld, physics: &mut PhysicsWorld) {
+        for (entity_id, col_handle) in &self.collider_map {
+            let components = match world.get_components(*entity_id) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let col_data = match components.get("collider") {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let wants_sensor = col_data
+                .get("is_sensor")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if let Some(collider) = physics.collider_set.get_mut(*col_handle) {
+                if collider.is_sensor() != wants_sensor {
+                    collider.set_sensor(wants_sensor);
+                }
+            }
+        }
+    }
+
     /// Get the rigid body handle for an entity
     pub fn get_body_handle(&self, entity_id: EntityId) -> Option<RigidBodyHandle> {
         self.body_map.get(&entity_id).copied()

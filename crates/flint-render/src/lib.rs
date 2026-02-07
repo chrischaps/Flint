@@ -5,6 +5,7 @@
 //! physically-based Cook-Torrance shading. Supports GPU vertex skinning
 //! for skeletal animation.
 
+pub mod billboard_pipeline;
 mod camera;
 mod context;
 mod debug;
@@ -31,6 +32,7 @@ pub use primitives::{
     SkinnedVertex, Vertex,
 };
 pub use scene_renderer::{ArchetypeVisual, SceneRenderer};
+pub use billboard_pipeline::BillboardPipeline;
 pub use skinned_pipeline::SkinnedPipeline;
 pub use texture_cache::TextureCache;
 
@@ -52,5 +54,11 @@ mod tests {
     fn skinned_shader_wgsl_parses() {
         let source = include_str!("skinned_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("skinned_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn billboard_shader_wgsl_parses() {
+        let source = include_str!("billboard_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("billboard_shader.wgsl failed to parse");
     }
 }

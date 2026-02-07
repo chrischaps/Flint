@@ -10,8 +10,12 @@ use crate::style::StyleGuide;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 const DEFAULT_ELEVENLABS_URL: &str = "https://api.elevenlabs.io/v1/sound-generation";
+const REQUEST_TIMEOUT_SECS: u64 = 60;
+const MAX_RETRIES: usize = 3;
+const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// ElevenLabs provider for AI audio/sound effect generation
 pub struct ElevenLabsProvider {
@@ -46,22 +50,67 @@ impl ElevenLabsProvider {
             "duration_seconds": duration
         });
 
-        let mut reader = ureq::post(&self.api_url)
-            .header("xi-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&payload)
-            .map_err(|e| {
-                FlintError::GenerationError(format!("ElevenLabs API request failed: {}", e))
-            })?
-            .into_body()
-            .into_reader();
-
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut reader, &mut bytes)
-            .map_err(|e| FlintError::GenerationError(format!("Failed to read audio data: {}", e)))?;
-
-        Ok(bytes)
+        self.post_audio_with_retry(&payload)
     }
+
+    fn post_audio_with_retry(&self, payload: &serde_json::Value) -> Result<Vec<u8>> {
+        for attempt in 0..MAX_RETRIES {
+            let agent = build_agent();
+            let response = agent
+                .post(&self.api_url)
+                .header("xi-api-key", &self.api_key)
+                .header("Content-Type", "application/json")
+                .send_json(payload);
+
+            match response {
+                Ok(ok) => {
+                    let mut reader = ok.into_body().into_reader();
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| {
+                        FlintError::GenerationError(format!("Failed to read audio data: {}", e))
+                    })?;
+                    return Ok(bytes);
+                }
+                Err(e) => {
+                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
+                        sleep_backoff(attempt);
+                        continue;
+                    }
+                    return Err(FlintError::GenerationError(format!(
+                        "ElevenLabs API request failed: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        Err(FlintError::GenerationError(
+            "ElevenLabs API request failed after retries".to_string(),
+        ))
+    }
+}
+
+fn build_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
+        .build();
+    config.into()
+}
+
+fn is_retryable_error(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::Timeout(_)
+        | ureq::Error::Io(_)
+        | ureq::Error::ConnectionFailed
+        | ureq::Error::HostNotFound => true,
+        ureq::Error::StatusCode(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
+        _ => false,
+    }
+}
+
+fn sleep_backoff(attempt: usize) {
+    let delay_ms = RETRY_BASE_DELAY_MS.saturating_mul(1u64 << attempt);
+    std::thread::sleep(Duration::from_millis(delay_ms));
 }
 
 impl GenerationProvider for ElevenLabsProvider {

@@ -19,7 +19,7 @@ This page shows how Flint's eighteen crates depend on each other. Dependencies f
     │    │   │     │   │    │       │          │         │     │   │
     │    ▼   │     │   │    │       │          │         │     ▼   │
     │ ┌──────────┐ │   │    │       │          │         │  ┌─────────┐
-    ├►│  render  │◄┘   │    │       │          │         │  │ script  │
+    ├►│  render  │◄┘   │    │       │          │         ├─►│ script  │
     │ └────┬─────┘     │    │       │          │         │  └────┬────┘
     │      │           │    │       │          │         │       │
     │      │           │    │       │          │         ▼       ▼
@@ -63,10 +63,10 @@ This page shows how Flint's eighteen crates depend on each other. Dependencies f
 | `flint-constraint` | core, ecs, schema, query | viewer, cli |
 | `flint-render` | core, ecs, import | viewer, player, cli |
 | `flint-runtime` | core, ecs | physics, audio, animation, player |
-| `flint-physics` | core, ecs, runtime | player |
+| `flint-physics` | core, ecs, runtime | script, player |
 | `flint-audio` | core, ecs, runtime | player |
 | `flint-animation` | core, ecs, import, runtime | player |
-| `flint-script` | core, ecs, runtime | player |
+| `flint-script` | core, ecs, runtime, physics | player |
 | `flint-asset-gen` | core, asset, import | cli |
 | `flint-viewer` | core, ecs, scene, schema, render, import, constraint | cli |
 | `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, script, import, asset | *(binary entry point)* |
@@ -87,7 +87,7 @@ This page shows how Flint's eighteen crates depend on each other. Dependencies f
 
 **Two entry points.** The CLI binary (`flint-cli`) serves scene authoring and validation workflows. The player binary (`flint-player`) serves interactive gameplay. Both share the same underlying crate hierarchy.
 
-**Independent subsystems.** The constraint system, asset system, physics system, audio system, animation system, script system, asset generation system, and render system don't depend on each other. This means you can build and test each subsystem in isolation.
+**Mostly independent subsystems.** The constraint, asset, physics, audio, animation, asset generation, and render systems don't depend on each other. The one exception is `flint-script`, which depends on `flint-physics` for raycasting and camera direction access. This means most subsystems can be built and tested in isolation.
 
 ## External Dependencies
 

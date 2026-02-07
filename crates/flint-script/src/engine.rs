@@ -5,7 +5,7 @@
 //! that temporarily lends the FlintWorld to scripts.
 
 use crate::api;
-use crate::context::{InputSnapshot, ScriptCallContext, ScriptCommand};
+use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -25,6 +25,7 @@ pub struct ScriptInstance {
     pub has_on_trigger_exit: bool,
     pub has_on_action: bool,
     pub has_on_interact: bool,
+    pub has_on_draw_ui: bool,
     pub init_called: bool,
 }
 
@@ -37,6 +38,7 @@ impl ScriptInstance {
         let has_on_trigger_exit = has_function(&ast, "on_trigger_exit");
         let has_on_action = has_function(&ast, "on_action");
         let has_on_interact = has_function(&ast, "on_interact");
+        let has_on_draw_ui = has_function(&ast, "on_draw_ui");
 
         Self {
             ast,
@@ -49,6 +51,7 @@ impl ScriptInstance {
             has_on_trigger_exit,
             has_on_action,
             has_on_interact,
+            has_on_draw_ui,
             init_called: false,
         }
     }
@@ -62,6 +65,7 @@ impl ScriptInstance {
         self.has_on_trigger_exit = has_function(&ast, "on_trigger_exit");
         self.has_on_action = has_function(&ast, "on_action");
         self.has_on_interact = has_function(&ast, "on_interact");
+        self.has_on_draw_ui = has_function(&ast, "on_draw_ui");
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -83,6 +87,9 @@ impl ScriptEngine {
     pub fn new() -> Self {
         let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
         let mut engine = Engine::new();
+
+        // Game scripts can have deep nesting (state machines, type checks, etc.)
+        engine.set_max_expr_depths(128, 128);
 
         // Register all API functions
         api::register_all(&mut engine, ctx.clone());
@@ -181,6 +188,39 @@ impl ScriptEngine {
             let mut c = self.ctx.lock().unwrap();
             c.world = std::ptr::null_mut();
         }
+    }
+
+    /// Call on_draw_ui() for all scripts that define it
+    pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = world as *mut FlintWorld;
+        }
+
+        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        for entity_id in entity_ids {
+            let script = self.scripts.get_mut(&entity_id).unwrap();
+            if script.has_on_draw_ui {
+                {
+                    let mut c = self.ctx.lock().unwrap();
+                    c.current_entity = entity_id;
+                }
+                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_draw_ui", ()) {
+                    eprintln!("[script] on_draw_ui error ({}): {}", script.source_path, e);
+                }
+            }
+        }
+
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = std::ptr::null_mut();
+        }
+    }
+
+    /// Drain all accumulated draw commands
+    pub fn drain_draw_commands(&self) -> Vec<DrawCommand> {
+        let mut c = self.ctx.lock().unwrap();
+        std::mem::take(&mut c.draw_commands)
     }
 
     /// Route game events to appropriate script callbacks

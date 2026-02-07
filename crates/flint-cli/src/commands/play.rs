@@ -8,16 +8,17 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 pub struct PlayArgs {
     pub scene: String,
-    pub schemas: String,
+    pub schemas: Vec<String>,
     pub fullscreen: bool,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
-    // Load schemas
-    let registry = if Path::new(&args.schemas).exists() {
-        SchemaRegistry::load_from_directory(&args.schemas).context("Failed to load schemas")?
+    // Load schemas from all directories
+    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| Path::new(p).exists()).collect();
+    let registry = if !existing.is_empty() {
+        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
     } else {
-        println!("Warning: Schemas directory not found: {}", args.schemas);
+        println!("Warning: No schemas directories found");
         SchemaRegistry::new()
     };
 

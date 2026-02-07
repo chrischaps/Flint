@@ -50,9 +50,9 @@ enum Commands {
         /// Component or archetype name
         name: String,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 
     /// Start the scene viewer with hot-reload
@@ -64,9 +64,9 @@ enum Commands {
         #[arg(long)]
         watch: bool,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
 
         /// Hide the egui inspector panels (entity tree, inspector, stats)
         #[arg(long)]
@@ -90,9 +90,9 @@ enum Commands {
         #[arg(long)]
         output_diff: bool,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
 
         /// Output format (json or toml)
         #[arg(long, default_value = "text")]
@@ -108,9 +108,9 @@ enum Commands {
         /// Path to scene file
         scene: String,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
 
         /// Launch in fullscreen mode
         #[arg(long)]
@@ -134,9 +134,9 @@ enum Commands {
         #[arg(long, default_value = "1080")]
         height: u32,
 
-        /// Path to schemas directory
-        #[arg(long, default_value = "schemas")]
-        schemas: String,
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
 
         /// Camera orbit distance
         #[arg(long)]
@@ -219,7 +219,7 @@ fn main() -> Result<()> {
         Commands::Query { query, scene, format } => {
             query::run(&query, scene.as_deref(), &format)
         }
-        Commands::Schema { name, schemas } => schema::run(&name, &schemas),
+        Commands::Schema { name, schemas } => schema::run(&name, &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
         Commands::Validate {
             scene,
             fix,
@@ -246,7 +246,9 @@ fn main() -> Result<()> {
         }),
         Commands::Asset(cmd) => asset::run(cmd),
         Commands::Serve { scene, watch, schemas, no_inspector } => {
-            flint_viewer::app::run(&scene, watch, &schemas, !no_inspector)
+            // Serve uses first schemas path (viewer doesn't need multi-dir yet)
+            let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");
+            flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector)
         }
         Commands::Render {
             scene,

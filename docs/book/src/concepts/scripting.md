@@ -45,6 +45,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `on_trigger_exit` | `fn on_trigger_exit(other_id)` | When another entity exits a trigger volume |
 | `on_action` | `fn on_action(action_name)` | When an input action fires (e.g., `"jump"`, `"interact"`) |
 | `on_interact` | `fn on_interact()` | When the player presses Interact near this entity |
+| `on_draw_ui` | `fn on_draw_ui()` | Every frame after `on_update`, for 2D HUD draw commands |
 
 The `on_interact` callback is sugar for the common pattern of proximity-based interaction. It automatically checks the entity's `interactable` component for `range` (default 3.0) and `enabled` (default true) before firing.
 
@@ -57,10 +58,12 @@ All functions are available globally in every script. Entity IDs are passed as `
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `self_entity()` | `i64` | The entity ID of the entity this script is attached to |
+| `this_entity()` | `i64` | Alias for `self_entity()` |
 | `get_entity(name)` | `i64` | Look up an entity by name. Returns `-1` if not found |
 | `entity_exists(id)` | `bool` | Check whether an entity ID is valid |
 | `entity_name(id)` | `String` | Get the name of an entity |
 | `has_component(id, component)` | `bool` | Check if an entity has a specific component |
+| `get_component(id, component)` | `Map` | Get an entire component as a map (or `()` if missing) |
 | `get_field(id, component, field)` | `Dynamic` | Read a component field value |
 | `set_field(id, component, field, value)` | --- | Write a component field value |
 | `get_position(id)` | `Map` | Get entity position as `#{x, y, z}` |
@@ -80,7 +83,9 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `mouse_delta_x()` | `f64` | Horizontal mouse movement this frame |
 | `mouse_delta_y()` | `f64` | Vertical mouse movement this frame |
 
-Available action names: `move_forward`, `move_backward`, `move_left`, `move_right`, `jump`, `interact`, `sprint`.
+Available action names: `move_forward`, `move_backward`, `move_left`, `move_right`, `jump`, `interact`, `sprint`, `weapon_1`, `weapon_2`, `reload`, `fire`.
+
+The `fire` action is bound to the left mouse button by default. `weapon_1` and `weapon_2` are bound to the `1` and `2` keys, and `reload` to `R`. See [Physics and Runtime](physics-and-runtime.md) for the full action binding table.
 
 ### Time API
 
@@ -95,7 +100,8 @@ Audio functions produce deferred commands that the player processes after the sc
 
 | Function | Description |
 |----------|-------------|
-| `play_sound(name)` | Play a non-spatial sound by filename |
+| `play_sound(name)` | Play a non-spatial sound at default volume |
+| `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
 | `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
 | `stop_sound(name)` | Stop a playing sound |
 
@@ -142,8 +148,92 @@ Animation functions write directly to the `animator` component on the target ent
 | Function | Description |
 |----------|-------------|
 | `log(msg)` | Log an info-level message |
+| `log_info(msg)` | Alias for `log()` |
 | `log_warn(msg)` | Log a warning |
 | `log_error(msg)` | Log an error |
+
+### Physics API
+
+Physics functions provide raycasting and camera access for combat, line-of-sight checks, and interaction targeting:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `raycast(ox, oy, oz, dx, dy, dz, max_dist)` | `Map` or `()` | Cast a ray from origin in direction. Returns hit info or `()` if nothing hit |
+| `get_camera_direction()` | `Map` | Camera forward vector as `#{x, y, z}` |
+| `get_camera_position()` | `Map` | Camera world position as `#{x, y, z}` |
+
+The `raycast()` function automatically excludes the calling entity's collider from results. On a hit, it returns a map with these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entity` | `i64` | Entity ID of the hit object |
+| `distance` | `f64` | Distance from origin to hit point |
+| `point_x`, `point_y`, `point_z` | `f64` | World-space hit position |
+| `normal_x`, `normal_y`, `normal_z` | `f64` | Surface normal at hit point |
+
+**Example: Hitscan weapon**
+
+```rust
+fn fire_weapon() {
+    let cam_pos = get_camera_position();
+    let cam_dir = get_camera_direction();
+    let hit = raycast(cam_pos.x, cam_pos.y, cam_pos.z,
+                      cam_dir.x, cam_dir.y, cam_dir.z, 100.0);
+    if hit != () {
+        let target = hit.entity;
+        if has_component(target, "health") {
+            let hp = get_field(target, "health", "current_hp");
+            set_field(target, "health", "current_hp", hp - 25);
+        }
+    }
+}
+```
+
+### UI Draw API
+
+The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` callback. Draw commands are issued in screen-space coordinates (logical points, not physical pixels) and rendered by the engine through egui.
+
+#### Draw Primitives
+
+| Function | Description |
+|----------|-------------|
+| `draw_text(x, y, text, size, r, g, b, a)` | Draw text at position |
+| `draw_text_ex(x, y, text, size, r, g, b, a, layer)` | Draw text with explicit layer |
+| `draw_rect(x, y, w, h, r, g, b, a)` | Draw filled rectangle |
+| `draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)` | Filled rectangle with corner rounding and layer |
+| `draw_rect_outline(x, y, w, h, r, g, b, a, thickness)` | Rectangle outline |
+| `draw_circle(x, y, radius, r, g, b, a)` | Draw filled circle |
+| `draw_circle_outline(x, y, radius, r, g, b, a, thickness)` | Circle outline |
+| `draw_line(x1, y1, x2, y2, r, g, b, a, thickness)` | Draw a line segment |
+| `draw_sprite(x, y, w, h, name)` | Draw a sprite image |
+| `draw_sprite_ex(x, y, w, h, name, u0, v0, u1, v1, r, g, b, a, layer)` | Sprite with custom UV coordinates, tint, and layer |
+
+#### Query Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `screen_width()` | `f64` | Logical screen width in points |
+| `screen_height()` | `f64` | Logical screen height in points |
+| `measure_text(text, size)` | `Map` | Approximate text size as `#{width, height}` |
+| `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
+
+`find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
+
+#### Layer Ordering
+
+All draw commands accept a `layer` parameter (or default to 0). Commands are sorted by layer before rendering:
+
+- **Negative layers** render behind (background elements)
+- **Layer 0** is the default
+- **Positive layers** render in front (foreground elements)
+
+#### Coordinate System
+
+Coordinates are in **egui logical points**, not physical pixels. On high-DPI displays, logical points differ from pixels by the scale factor. Use `screen_width()` and `screen_height()` for layout calculations --- they return the correct logical dimensions.
+
+#### Sprite Loading
+
+Sprite names map to image files in the `sprites/` directory (without extension). Supported formats: PNG, JPG, BMP, TGA. Textures are lazy-loaded on first use and cached for subsequent frames.
 
 ## Hot-Reload
 
@@ -269,16 +359,72 @@ events ────► ScriptEngine.process_events()
         ECS reads/writes      ScriptCommands
         (via ScriptCallContext)  (PlaySound, FireEvent, Log)
                                      │
-                                     ▼
-                              PlayerApp processes
-                              deferred commands
+on_draw_ui ► ScriptEngine            ▼
+                │              PlayerApp processes
+                ▼              deferred commands
+          DrawCommands
+          (Text, Rect, Circle,
+           Line, Sprite)
+                │
+                ▼
+          egui layer_painter()
+          renders 2D overlay
 ```
 
 Each entity gets its own Rhai `Scope`, preserving persistent variables between frames. The `Engine` is shared across all entities. World access happens through a `ScriptCallContext` that holds a raw pointer to the `FlintWorld` --- valid only during the call batch, cleared immediately after.
+
+## Example: Combat HUD
+
+For game-specific UI, use a dedicated `hud_controller` entity with a `script` component. The entity has no physical presence in the world --- it exists only to run the HUD script:
+
+```toml
+[entities.hud_controller]
+
+[entities.hud_controller.script]
+source = "hud.rhai"
+```
+
+```rust
+// scripts/hud.rhai
+
+fn on_draw_ui() {
+    let sw = screen_width();
+    let sh = screen_height();
+
+    // Crosshair
+    let cx = sw / 2.0;
+    let cy = sh / 2.0;
+    draw_line(cx - 10.0, cy, cx + 10.0, cy, 0.0, 1.0, 0.0, 0.8, 2.0);
+    draw_line(cx, cy - 10.0, cx, cy + 10.0, 0.0, 1.0, 0.0, 0.8, 2.0);
+
+    // Health bar
+    let player = get_entity("player");
+    if player != -1 && has_component(player, "health") {
+        let hp = get_field(player, "health", "current_hp");
+        let max_hp = get_field(player, "health", "max_hp");
+        let pct = hp / max_hp;
+
+        draw_rect(20.0, sh - 40.0, 200.0, 20.0, 0.2, 0.2, 0.2, 0.8);
+        draw_rect(20.0, sh - 40.0, 200.0 * pct, 20.0, 0.8, 0.1, 0.1, 0.9);
+        draw_text(25.0, sh - 38.0, `HP: ${hp}/${max_hp}`, 14.0, 1.0, 1.0, 1.0, 1.0);
+    }
+
+    // Interaction prompt
+    let interact = find_nearest_interactable();
+    if interact != () {
+        let prompt = interact.prompt_text;
+        let tw = measure_text(prompt, 18.0);
+        draw_text(cx - tw.width / 2.0, cy + 40.0, `[E] ${prompt}`, 18.0, 1.0, 1.0, 1.0, 0.9);
+    }
+}
+```
+
+This pattern keeps all game-specific HUD logic in scripts rather than engine code. The engine provides only the generic draw primitives.
 
 ## Further Reading
 
 - [Audio](audio.md) --- sound system that scripts can control
 - [Animation](animation.md) --- animation system driven by script commands
 - [Physics and Runtime](physics-and-runtime.md) --- the game loop that calls scripts
+- [Rendering](rendering.md) --- billboard sprites and the PBR pipeline
 - [Building a Tavern](../guides/building-a-tavern.md) --- tutorial using scripts for interactive entities

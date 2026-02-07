@@ -124,6 +124,57 @@ impl PhysicsWorld {
     pub fn get_rigid_body_mut(&mut self, handle: RigidBodyHandle) -> Option<&mut RigidBody> {
         self.rigid_body_set.get_mut(handle)
     }
+
+    /// Cast a ray and return the first hit
+    pub fn cast_ray(
+        &self,
+        origin: [f32; 3],
+        direction: [f32; 3],
+        max_distance: f32,
+        exclude_collider: Option<ColliderHandle>,
+    ) -> Option<RaycastHit> {
+        let ray = Ray::new(
+            point![origin[0], origin[1], origin[2]],
+            vector![direction[0], direction[1], direction[2]],
+        );
+
+        let predicate = |handle: ColliderHandle, _collider: &rapier3d::prelude::Collider| -> bool {
+            if let Some(exclude) = exclude_collider {
+                handle != exclude
+            } else {
+                true
+            }
+        };
+        let filter = QueryFilter::default().predicate(&predicate);
+
+        self.query_pipeline
+            .cast_ray_and_get_normal(
+                &self.rigid_body_set,
+                &self.collider_set,
+                &ray,
+                max_distance,
+                true,
+                filter,
+            )
+            .map(|(collider_handle, intersection)| {
+                let point = ray.point_at(intersection.time_of_impact);
+                RaycastHit {
+                    collider_handle,
+                    distance: intersection.time_of_impact,
+                    point: [point.x, point.y, point.z],
+                    normal: [intersection.normal.x, intersection.normal.y, intersection.normal.z],
+                }
+            })
+    }
+}
+
+/// Result of a raycast query
+#[derive(Debug, Clone)]
+pub struct RaycastHit {
+    pub collider_handle: ColliderHandle,
+    pub distance: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
 }
 
 impl Default for PhysicsWorld {

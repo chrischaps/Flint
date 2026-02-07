@@ -10,8 +10,12 @@ use crate::style::StyleGuide;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 const DEFAULT_FLUX_URL: &str = "https://queue.fal.run/fal-ai/flux/dev";
+const REQUEST_TIMEOUT_SECS: u64 = 60;
+const MAX_RETRIES: usize = 3;
+const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// Flux provider for AI texture generation via fal.ai
 pub struct FluxProvider {
@@ -61,33 +65,106 @@ impl FluxProvider {
             payload["seed"] = serde_json::json!(s);
         }
 
-        let response: serde_json::Value = ureq::post(&self.api_url)
-            .header("Authorization", &format!("Key {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .send_json(&payload)
-            .map_err(|e| FlintError::GenerationError(format!("Flux API request failed: {}", e)))?
-            .body_mut()
-            .read_json()
-            .map_err(|e| FlintError::GenerationError(format!("Failed to parse Flux response: {}", e)))?;
-
-        Ok(response)
+        self.post_json_with_retry(&payload)
     }
 
     /// Download an image from a URL to a local file
     fn download_image(&self, url: &str, output_path: &Path) -> Result<()> {
-        let mut reader = ureq::get(url)
-            .call()
-            .map_err(|e| FlintError::GenerationError(format!("Failed to download image: {}", e)))?
-            .into_body()
-            .into_reader();
-
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut reader, &mut bytes)
-            .map_err(|e| FlintError::GenerationError(format!("Failed to read image data: {}", e)))?;
-
+        let bytes = self.download_bytes_with_retry(url)?;
         std::fs::write(output_path, &bytes)?;
         Ok(())
     }
+
+    fn post_json_with_retry(&self, payload: &serde_json::Value) -> Result<serde_json::Value> {
+        for attempt in 0..MAX_RETRIES {
+            let agent = build_agent();
+            let response = agent
+                .post(&self.api_url)
+                .header("Authorization", &format!("Key {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .send_json(payload);
+
+            match response {
+                Ok(mut ok) => {
+                    return ok.body_mut().read_json().map_err(|e| {
+                        FlintError::GenerationError(format!(
+                            "Failed to parse Flux response: {}",
+                            e
+                        ))
+                    });
+                }
+                Err(e) => {
+                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
+                        sleep_backoff(attempt);
+                        continue;
+                    }
+                    return Err(FlintError::GenerationError(format!(
+                        "Flux API request failed: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        Err(FlintError::GenerationError(
+            "Flux API request failed after retries".to_string(),
+        ))
+    }
+
+    fn download_bytes_with_retry(&self, url: &str) -> Result<Vec<u8>> {
+        for attempt in 0..MAX_RETRIES {
+            let agent = build_agent();
+            let response = agent.get(url).call();
+
+            match response {
+                Ok(ok) => {
+                    let mut reader = ok.into_body().into_reader();
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| {
+                        FlintError::GenerationError(format!("Failed to read image data: {}", e))
+                    })?;
+                    return Ok(bytes);
+                }
+                Err(e) => {
+                    if attempt + 1 < MAX_RETRIES && is_retryable_error(&e) {
+                        sleep_backoff(attempt);
+                        continue;
+                    }
+                    return Err(FlintError::GenerationError(format!(
+                        "Failed to download image: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        Err(FlintError::GenerationError(
+            "Image download failed after retries".to_string(),
+        ))
+    }
+}
+
+fn build_agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
+        .build();
+    config.into()
+}
+
+fn is_retryable_error(e: &ureq::Error) -> bool {
+    match e {
+        ureq::Error::Timeout(_)
+        | ureq::Error::Io(_)
+        | ureq::Error::ConnectionFailed
+        | ureq::Error::HostNotFound => true,
+        ureq::Error::StatusCode(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
+        _ => false,
+    }
+}
+
+fn sleep_backoff(attempt: usize) {
+    let delay_ms = RETRY_BASE_DELAY_MS.saturating_mul(1u64 << attempt);
+    std::thread::sleep(Duration::from_millis(delay_ms));
 }
 
 impl GenerationProvider for FluxProvider {

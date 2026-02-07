@@ -20,6 +20,16 @@ impl SchemaRegistry {
         Self::default()
     }
 
+    /// Load schemas from multiple directories, merging them in order.
+    /// Later directories override earlier ones (game overrides engine).
+    pub fn load_from_directories(paths: &[impl AsRef<Path>]) -> Result<Self> {
+        let mut registry = Self::new();
+        for path in paths {
+            registry.load_directory(path)?;
+        }
+        Ok(registry)
+    }
+
     /// Load schemas from a directory structure
     ///
     /// Expects:
@@ -54,6 +64,37 @@ impl SchemaRegistry {
         }
 
         Ok(registry)
+    }
+
+    /// Load schemas from a single directory into this registry (additive/override)
+    pub fn load_directory<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let path = path.as_ref();
+
+        // Load components
+        let components_path = path.join("components");
+        if components_path.exists() {
+            for entry in fs::read_dir(&components_path)? {
+                let entry = entry?;
+                let file_path = entry.path();
+                if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
+                    self.load_component_file(&file_path)?;
+                }
+            }
+        }
+
+        // Load archetypes
+        let archetypes_path = path.join("archetypes");
+        if archetypes_path.exists() {
+            for entry in fs::read_dir(&archetypes_path)? {
+                let entry = entry?;
+                let file_path = entry.path();
+                if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
+                    self.load_archetype_file(&file_path)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Load a component schema from a TOML file

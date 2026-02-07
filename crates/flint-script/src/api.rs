@@ -3,7 +3,7 @@
 //! All functions accessible from Rhai scripts are registered here.
 //! They access the world through the shared ScriptCallContext.
 
-use crate::context::{LogLevel, ScriptCallContext, ScriptCommand};
+use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
 use flint_core::EntityId;
 use rhai::{Dynamic, Engine, Map};
 use std::sync::{Arc, Mutex};
@@ -15,8 +15,10 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_time_api(engine, ctx.clone());
     register_audio_api(engine, ctx.clone());
     register_animation_api(engine, ctx.clone());
+    register_physics_api(engine, ctx.clone());
     register_math_api(engine);
     register_event_api(engine, ctx.clone());
+    register_ui_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -27,6 +29,15 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("self_entity", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.current_entity.raw() as i64
+        });
+    }
+
+    // this_entity() -> i64 (alias for self_entity)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("this_entity", move || -> i64 {
             let c = ctx.lock().unwrap();
             c.current_entity.raw() as i64
         });
@@ -76,6 +87,25 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             world.get_components(EntityId::from_raw(id as u64))
                 .map(|comps| comps.has(comp))
                 .unwrap_or(false)
+        });
+    }
+
+    // get_component(id: i64, comp: &str) -> Dynamic (returns full component as Map, or () if missing)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_component", move |id: i64, comp: &str| -> Dynamic {
+            if id < 0 { return Dynamic::UNIT; }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            match world.get_components(EntityId::from_raw(id as u64)) {
+                Some(comps) => {
+                    match comps.get(comp) {
+                        Some(val) => toml_to_dynamic(val.clone()),
+                        None => Dynamic::UNIT,
+                    }
+                }
+                None => Dynamic::UNIT,
+            }
         });
     }
 
@@ -295,6 +325,18 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // play_sound(name: &str, volume: f64) — 2-arg overload with volume
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("play_sound", move |name: &str, volume: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.commands.push(ScriptCommand::PlaySound {
+                name: name.to_string(),
+                volume,
+            });
+        });
+    }
+
     // play_sound_at(name: &str, x: f64, y: f64, z: f64, vol: f64)
     {
         let ctx = ctx.clone();
@@ -378,6 +420,73 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field("animator", "speed", toml::Value::Float(speed));
             }
+        });
+    }
+}
+
+// ─── Physics / Raycast API ───────────────────────────────
+
+fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // raycast(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("raycast", move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
+            let c = ctx.lock().unwrap();
+            let physics = unsafe { c.physics_ref() };
+            let physics = match physics {
+                Some(p) => p,
+                None => return Dynamic::UNIT,
+            };
+
+            // Exclude the current entity from the raycast
+            let exclude = Some(c.current_entity);
+
+            match physics.raycast(
+                [ox as f32, oy as f32, oz as f32],
+                [dx as f32, dy as f32, dz as f32],
+                max_dist as f32,
+                exclude,
+            ) {
+                Some(hit) => {
+                    let mut map = Map::new();
+                    map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
+                    map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+                    map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
+                    map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
+                    map.insert("point_z".into(), Dynamic::from(hit.point[2] as f64));
+                    map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
+                    map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
+                    map.insert("normal_z".into(), Dynamic::from(hit.normal[2] as f64));
+                    Dynamic::from(map)
+                }
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
+    // get_camera_direction() -> Map #{x, y, z}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_camera_direction", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.camera_direction[0] as f64));
+            map.insert("y".into(), Dynamic::from(c.camera_direction[1] as f64));
+            map.insert("z".into(), Dynamic::from(c.camera_direction[2] as f64));
+            map
+        });
+    }
+
+    // get_camera_position() -> Map #{x, y, z}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_camera_position", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.camera_position[0] as f64));
+            map.insert("y".into(), Dynamic::from(c.camera_position[1] as f64));
+            map.insert("z".into(), Dynamic::from(c.camera_position[2] as f64));
+            map
         });
     }
 }
@@ -467,6 +576,18 @@ fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // log_info(msg: &str) — alias for log()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("log_info", move |msg: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.commands.push(ScriptCommand::Log {
+                level: LogLevel::Info,
+                message: msg.to_string(),
+            });
+        });
+    }
+
     // log_warn(msg: &str)
     {
         let ctx = ctx.clone();
@@ -488,6 +609,208 @@ fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 level: LogLevel::Error,
                 message: msg.to_string(),
             });
+        });
+    }
+}
+
+// ─── UI Draw API ─────────────────────────────────────────
+
+fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // draw_text(x, y, text, size, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_text", move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Text {
+                x: x as f32, y: y as f32,
+                text: text.to_string(),
+                size: size as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_text_ex(x, y, text, size, r, g, b, a, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_text_ex", move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Text {
+                x: x as f32, y: y as f32,
+                text: text.to_string(),
+                size: size as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                layer: layer as i32,
+            });
+        });
+    }
+
+    // draw_rect(x, y, w, h, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_rect", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::RectFilled {
+                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                rounding: 0.0,
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_rect_ex", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64, rounding: f64, layer: i64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::RectFilled {
+                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                rounding: rounding as f32,
+                layer: layer as i32,
+            });
+        });
+    }
+
+    // draw_rect_outline(x, y, w, h, r, g, b, a, thickness)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_rect_outline", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::RectOutline {
+                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                thickness: thickness as f32,
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_circle(x, y, radius, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_circle", move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::CircleFilled {
+                x: x as f32, y: y as f32,
+                radius: radius as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_circle_outline(x, y, radius, r, g, b, a, thickness)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_circle_outline", move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::CircleOutline {
+                x: x as f32, y: y as f32,
+                radius: radius as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                thickness: thickness as f32,
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_line(x1, y1, x2, y2, r, g, b, a, thickness)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_line", move |x1: f64, y1: f64, x2: f64, y2: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Line {
+                x1: x1 as f32, y1: y1 as f32, x2: x2 as f32, y2: y2 as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                thickness: thickness as f32,
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_sprite(x, y, w, h, name)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_sprite", move |x: f64, y: f64, w: f64, h: f64, name: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Sprite {
+                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
+                name: name.to_string(),
+                uv: [0.0, 0.0, 1.0, 1.0],
+                tint: [1.0, 1.0, 1.0, 1.0],
+                layer: 0,
+            });
+        });
+    }
+
+    // draw_sprite_ex(x, y, w, h, name, u0, v0, u1, v1, r, g, b, a, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_sprite_ex", move |x: f64, y: f64, w: f64, h: f64, name: &str, u0: f64, v0: f64, u1: f64, v1: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Sprite {
+                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
+                name: name.to_string(),
+                uv: [u0 as f32, v0 as f32, u1 as f32, v1 as f32],
+                tint: [r as f32, g as f32, b as f32, a as f32],
+                layer: layer as i32,
+            });
+        });
+    }
+
+    // screen_width() -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("screen_width", move || -> f64 {
+            let c = ctx.lock().unwrap();
+            c.screen_width as f64
+        });
+    }
+
+    // screen_height() -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("screen_height", move || -> f64 {
+            let c = ctx.lock().unwrap();
+            c.screen_height as f64
+        });
+    }
+
+    // find_nearest_interactable() -> Map or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("find_nearest_interactable", move || -> Dynamic {
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            match crate::engine::find_nearest_interactable(world) {
+                Some(nearest) => {
+                    let mut map = Map::new();
+                    map.insert("entity".into(), Dynamic::from(nearest.entity_id.raw() as i64));
+                    map.insert("prompt_text".into(), Dynamic::from(nearest.prompt_text));
+                    map.insert("interaction_type".into(), Dynamic::from(nearest.interaction_type));
+                    map.insert("distance".into(), Dynamic::from(nearest.distance));
+                    Dynamic::from(map)
+                }
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
+    // measure_text(text, size) -> Map #{width, height}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("measure_text", move |text: &str, size: f64| -> Map {
+            drop(ctx.lock().unwrap());
+            // Approximate text width: average character width ~0.6 * font_size
+            let char_width = size * 0.6;
+            let width = text.len() as f64 * char_width;
+            let mut map = Map::new();
+            map.insert("width".into(), Dynamic::from(width));
+            map.insert("height".into(), Dynamic::from(size));
+            map
         });
     }
 }

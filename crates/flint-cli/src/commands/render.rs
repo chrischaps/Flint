@@ -13,7 +13,7 @@ pub struct RenderArgs {
     pub output: String,
     pub width: u32,
     pub height: u32,
-    pub schemas: String,
+    pub schemas: Vec<String>,
     pub distance: Option<f32>,
     pub yaw: Option<f32>,
     pub pitch: Option<f32>,
@@ -29,11 +29,12 @@ pub struct RenderArgs {
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
-    // Load schemas
-    let registry = if Path::new(&args.schemas).exists() {
-        SchemaRegistry::load_from_directory(&args.schemas).context("Failed to load schemas")?
+    // Load schemas from all directories
+    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| Path::new(p).exists()).collect();
+    let registry = if !existing.is_empty() {
+        SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
     } else {
-        println!("Warning: Schemas directory not found: {}", args.schemas);
+        println!("Warning: No schemas directories found");
         SchemaRegistry::new()
     };
 
