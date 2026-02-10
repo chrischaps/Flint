@@ -179,6 +179,21 @@ impl FlintWorld {
         Ok(())
     }
 
+    /// Merge fields into an existing component on an entity
+    ///
+    /// If the component already exists (e.g. from archetype defaults),
+    /// individual fields from `data` are merged in rather than replacing
+    /// the entire component. Entity-level fields win over defaults.
+    pub fn merge_component(&mut self, id: EntityId, component: &str, data: toml::Value) -> Result<()> {
+        let components = self
+            .components
+            .get_mut(&id)
+            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
+
+        components.merge_component(component, data);
+        Ok(())
+    }
+
     /// Get a component from an entity
     pub fn get_component(&self, id: EntityId, component: &str) -> Option<&toml::Value> {
         self.components.get(&id).and_then(|c| c.get(component))

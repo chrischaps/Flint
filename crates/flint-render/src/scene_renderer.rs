@@ -923,13 +923,35 @@ impl SceneRenderer {
                         self.entity_draws.push(draw);
                     }
                 } else {
+                    // Use material.color for PBR base color if present
+                    let mat_color = material_component
+                        .as_ref()
+                        .and_then(|m| m.get("color"))
+                        .and_then(|v| extract_color(v));
+
+                    let mat_uniforms = if let Some(color) = mat_color {
+                        let metallic = material_component
+                            .as_ref()
+                            .and_then(|m| m.get("metallic"))
+                            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            .unwrap_or(0.0) as f32;
+                        let roughness = material_component
+                            .as_ref()
+                            .and_then(|m| m.get("roughness"))
+                            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            .unwrap_or(0.7) as f32;
+                        MaterialUniforms::from_pbr(color, metallic, roughness)
+                    } else {
+                        MaterialUniforms::procedural()
+                    };
+
                     let mut draw = Self::create_draw_call(
                         device,
                         &self.pipeline,
                         &mesh,
                         false,
                         transform_uniforms,
-                        MaterialUniforms::procedural(),
+                        mat_uniforms,
                         tex_cache_ref,
                     );
                     draw.entity_id = Some(entity.id);
@@ -1349,7 +1371,8 @@ impl SceneRenderer {
                             let transform =
                                 world.get_transform(entity.id).unwrap_or_default();
                             let radius = light
-                                .get("radius")
+                                .get("range")
+                                .or_else(|| light.get("radius"))
                                 .and_then(|v| {
                                     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                 })
@@ -1374,7 +1397,8 @@ impl SceneRenderer {
                             let direction = Self::extract_light_vec3(&light, "direction")
                                 .unwrap_or([0.0, -1.0, 0.0]);
                             let radius = light
-                                .get("radius")
+                                .get("range")
+                                .or_else(|| light.get("radius"))
                                 .and_then(|v| {
                                     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                 })
@@ -1994,4 +2018,30 @@ fn extract_vec3(value: &toml::Value) -> Option<[f32; 3]> {
         }
     }
     None
+}
+
+/// Extract an RGBA color array from a TOML value like `[0.7, 0.35, 0.2, 1.0]`
+fn extract_color(value: &toml::Value) -> Option<[f32; 4]> {
+    let arr = value.as_array()?;
+    if arr.len() < 3 {
+        return None;
+    }
+    let r = arr[0]
+        .as_float()
+        .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+    let g = arr[1]
+        .as_float()
+        .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+    let b = arr[2]
+        .as_float()
+        .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+    let a = if arr.len() >= 4 {
+        arr[3]
+            .as_float()
+            .or_else(|| arr[3].as_integer().map(|i| i as f64))
+            .unwrap_or(1.0) as f32
+    } else {
+        1.0
+    };
+    Some([r, g, b, a])
 }

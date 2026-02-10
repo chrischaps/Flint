@@ -121,7 +121,7 @@ position = [0, -0.1, 20]
 scale = [24, 0.2, 10]
 
 [entities.sr_floor.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_floor.collider]
@@ -139,7 +139,7 @@ position = [0, 4.1, 20]
 scale = [24, 0.2, 10]
 
 [entities.sr_ceiling.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_ceiling.collider]
@@ -157,7 +157,7 @@ position = [0, 2.0, 25.15]
 scale = [24, 4.0, 0.3]
 
 [entities.sr_wall_south.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_wall_south.collider]
@@ -175,7 +175,7 @@ position = [12.15, 2.0, 20]
 scale = [0.3, 4.0, 10]
 
 [entities.sr_wall_east.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_wall_east.collider]
@@ -193,7 +193,7 @@ position = [-12.15, 2.0, 23.5]
 scale = [0.3, 4.0, 3]
 
 [entities.sr_wall_west_s.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_wall_west_s.collider]
@@ -211,7 +211,7 @@ position = [-12.15, 2.0, 16.5]
 scale = [0.3, 4.0, 3]
 
 [entities.sr_wall_west_n.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_wall_west_n.collider]
@@ -223,13 +223,14 @@ body_type = "static"
 
 # --- Secret wall (pushable, Z: 18..22) — slightly different shade as hint ---
 [entities.sr_secret_wall]
+archetype = "fps_secret_wall"
 
 [entities.sr_secret_wall.transform]
 position = [-12.15, 2.0, 20]
 scale = [0.3, 4.0, 4]
 
 [entities.sr_secret_wall.material]
-color = [0.38, 0.28, 0.19, 1.0]
+color = [0.67, 0.33, 0.18, 1.0]
 roughness = 0.85
 
 [entities.sr_secret_wall.collider]
@@ -237,7 +238,19 @@ shape = "box"
 size = [0.3, 4.0, 4]
 
 [entities.sr_secret_wall.rigidbody]
-body_type = "static"
+body_type = "kinematic"
+
+[entities.sr_secret_wall.secret]
+slide_dx = -4.0
+speed = 1.5
+
+[entities.sr_secret_wall.interactable]
+interaction_type = "secret"
+prompt_text = "Wall"
+range = 2.5
+
+[entities.sr_secret_wall.script]
+source = "secret_wall.rhai"
 
 # --- North wall, left of door 1 (X: -12..-1.5) ---
 [entities.sr_wall_north_l]
@@ -247,7 +260,7 @@ position = [-6.75, 2.0, 14.85]
 scale = [10.5, 4.0, 0.3]
 
 [entities.sr_wall_north_l.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_wall_north_l.collider]
@@ -265,7 +278,7 @@ position = [6.75, 2.0, 14.85]
 scale = [10.5, 4.0, 0.3]
 
 [entities.sr_wall_north_r.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_wall_north_r.collider]
@@ -283,7 +296,7 @@ position = [0, 3.75, 14.85]
 scale = [3.0, 0.5, 0.3]
 
 [entities.sr_north_lintel.material]
-color = [0.4, 0.3, 0.2, 1.0]
+color = [0.7, 0.35, 0.2, 1.0]
 roughness = 0.85
 
 [entities.sr_north_lintel.collider]
@@ -306,7 +319,7 @@ position = [-14, -0.1, 20]
 scale = [4, 0.2, 4]
 
 [entities.secret_floor.material]
-color = [0.3, 0.22, 0.15, 1.0]
+color = [0.65, 0.5, 0.15, 1.0]
 roughness = 0.9
 
 [entities.secret_floor.collider]
@@ -323,7 +336,7 @@ position = [-14, 4.1, 20]
 scale = [4, 0.2, 4]
 
 [entities.secret_ceiling.material]
-color = [0.3, 0.22, 0.15, 1.0]
+color = [0.65, 0.5, 0.15, 1.0]
 roughness = 0.9
 
 [entities.secret_ceiling.collider]
@@ -341,7 +354,7 @@ position = [-16.15, 2.0, 20]
 scale = [0.3, 4.0, 4]
 
 [entities.secret_wall_w.material]
-color = [0.3, 0.22, 0.15, 1.0]
+color = [0.65, 0.5, 0.15, 1.0]
 roughness = 0.9
 
 [entities.secret_wall_w.collider]
@@ -359,7 +372,7 @@ position = [-14, 2.0, 17.85]
 scale = [4, 4.0, 0.3]
 
 [entities.secret_wall_n.material]
-color = [0.3, 0.22, 0.15, 1.0]
+color = [0.65, 0.5, 0.15, 1.0]
 roughness = 0.9
 
 [entities.secret_wall_n.collider]
@@ -377,7 +390,7 @@ position = [-14, 2.0, 22.15]
 scale = [4, 4.0, 0.3]
 
 [entities.secret_wall_s.material]
-color = [0.3, 0.22, 0.15, 1.0]
+color = [0.65, 0.5, 0.15, 1.0]
 roughness = 0.9
 
 [entities.secret_wall_s.collider]
@@ -400,7 +413,7 @@ position = [0, -0.1, 10]
 scale = [16, 0.2, 10]
 
 [entities.hw_floor.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_floor.collider]
@@ -417,7 +430,7 @@ position = [0, 4.1, 10]
 scale = [16, 0.2, 10]
 
 [entities.hw_ceiling.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_ceiling.collider]
@@ -435,7 +448,7 @@ position = [8.15, 2.0, 10]
 scale = [0.3, 4.0, 10]
 
 [entities.hw_wall_east.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_wall_east.collider]
@@ -453,7 +466,7 @@ position = [-8.15, 2.0, 10]
 scale = [0.3, 4.0, 10]
 
 [entities.hw_wall_west.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_wall_west.collider]
@@ -471,7 +484,7 @@ position = [-4.75, 2.0, 4.85]
 scale = [6.5, 4.0, 0.3]
 
 [entities.hw_wall_north_l.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_wall_north_l.collider]
@@ -489,7 +502,7 @@ position = [4.75, 2.0, 4.85]
 scale = [6.5, 4.0, 0.3]
 
 [entities.hw_wall_north_r.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_wall_north_r.collider]
@@ -507,7 +520,7 @@ position = [0, 3.75, 4.85]
 scale = [3.0, 0.5, 0.3]
 
 [entities.hw_north_lintel.material]
-color = [0.5, 0.5, 0.5, 1.0]
+color = [0.4, 0.45, 0.65, 1.0]
 roughness = 0.8
 
 [entities.hw_north_lintel.collider]
@@ -527,7 +540,7 @@ position = [-11.5, 2.0, 4.85]
 scale = [7.0, 4.0, 0.3]
 
 [entities.zz_wing_sw.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wing_sw.collider]
@@ -545,7 +558,7 @@ position = [11.5, 2.0, 4.85]
 scale = [7.0, 4.0, 0.3]
 
 [entities.zz_wing_se.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wing_se.collider]
@@ -580,6 +593,21 @@ size = [30, 0.2, 15]
 [entities.zz_nukage_floor.rigidbody]
 body_type = "static"
 
+# --- Nukage hazard controller (periodic damage when player falls in) ---
+[entities.nukage_hazard]
+
+[entities.nukage_hazard.hazard]
+min_x = -15.0
+max_x = 15.0
+min_z = -10.0
+max_z = 5.0
+surface_y = 0.0
+dps = 5.0
+tick_interval = 0.5
+
+[entities.nukage_hazard.script]
+source = "hazard_zone.rhai"
+
 # --- Ceiling ---
 [entities.zz_ceiling]
 
@@ -588,7 +616,7 @@ position = [0, 4.1, -2.5]
 scale = [30, 0.2, 15]
 
 [entities.zz_ceiling.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_ceiling.collider]
@@ -606,7 +634,7 @@ position = [-4, -0.6, 2.5]
 scale = [8, 1.2, 5]
 
 [entities.zz_walkway_s.material]
-color = [0.45, 0.4, 0.35, 1.0]
+color = [0.65, 0.5, 0.3, 1.0]
 roughness = 0.8
 
 [entities.zz_walkway_s.collider]
@@ -624,7 +652,7 @@ position = [4, -0.6, -2.5]
 scale = [8, 1.2, 5]
 
 [entities.zz_walkway_m.material]
-color = [0.45, 0.4, 0.35, 1.0]
+color = [0.65, 0.5, 0.3, 1.0]
 roughness = 0.8
 
 [entities.zz_walkway_m.collider]
@@ -642,7 +670,7 @@ position = [-4, -0.6, -7.5]
 scale = [8, 1.2, 5]
 
 [entities.zz_walkway_n.material]
-color = [0.45, 0.4, 0.35, 1.0]
+color = [0.65, 0.5, 0.3, 1.0]
 roughness = 0.8
 
 [entities.zz_walkway_n.collider]
@@ -660,7 +688,7 @@ position = [0, -0.6, 0]
 scale = [3, 1.2, 3]
 
 [entities.zz_bridge_1.material]
-color = [0.45, 0.4, 0.35, 1.0]
+color = [0.65, 0.5, 0.3, 1.0]
 roughness = 0.8
 
 [entities.zz_bridge_1.collider]
@@ -678,7 +706,7 @@ position = [0, -0.6, -5]
 scale = [3, 1.2, 3]
 
 [entities.zz_bridge_2.material]
-color = [0.45, 0.4, 0.35, 1.0]
+color = [0.65, 0.5, 0.3, 1.0]
 roughness = 0.8
 
 [entities.zz_bridge_2.collider]
@@ -696,7 +724,7 @@ position = [15.15, 2.0, -2.5]
 scale = [0.3, 4.0, 15]
 
 [entities.zz_wall_east.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wall_east.collider]
@@ -714,7 +742,7 @@ position = [-15.15, 2.0, 2.5]
 scale = [0.3, 4.0, 5]
 
 [entities.zz_wall_west_s.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wall_west_s.collider]
@@ -732,7 +760,7 @@ position = [-15.15, 2.0, -7.5]
 scale = [0.3, 4.0, 5]
 
 [entities.zz_wall_west_n.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wall_west_n.collider]
@@ -750,7 +778,7 @@ position = [-8.25, 2.0, -10.15]
 scale = [13.5, 4.0, 0.3]
 
 [entities.zz_wall_north_l.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wall_north_l.collider]
@@ -768,7 +796,7 @@ position = [8.25, 2.0, -10.15]
 scale = [13.5, 4.0, 0.3]
 
 [entities.zz_wall_north_r.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_wall_north_r.collider]
@@ -786,7 +814,7 @@ position = [0, 3.75, -10.15]
 scale = [3.0, 0.5, 0.3]
 
 [entities.zz_north_lintel.material]
-color = [0.3, 0.3, 0.3, 1.0]
+color = [0.2, 0.4, 0.35, 1.0]
 roughness = 0.85
 
 [entities.zz_north_lintel.collider]
@@ -802,16 +830,16 @@ body_type = "static"
 [entities.zz_rail_s_e]
 
 [entities.zz_rail_s_e.transform]
-position = [0.15, 0.35, 2.5]
-scale = [0.2, 0.7, 5]
+position = [0.15, 0.35, 2.0]
+scale = [0.2, 0.7, 4]
 
 [entities.zz_rail_s_e.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.45, 0.42, 0.32, 1.0]
 roughness = 0.7
 
 [entities.zz_rail_s_e.collider]
 shape = "box"
-size = [0.2, 0.7, 5]
+size = [0.2, 0.7, 4]
 
 [entities.zz_rail_s_e.rigidbody]
 body_type = "static"
@@ -820,16 +848,16 @@ body_type = "static"
 [entities.zz_rail_s_s]
 
 [entities.zz_rail_s_s.transform]
-position = [-4, 0.35, 5.0]
-scale = [8, 0.7, 0.2]
+position = [-5.5, 0.35, 5.0]
+scale = [5, 0.7, 0.2]
 
 [entities.zz_rail_s_s.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.45, 0.42, 0.32, 1.0]
 roughness = 0.7
 
 [entities.zz_rail_s_s.collider]
 shape = "box"
-size = [8, 0.7, 0.2]
+size = [5, 0.7, 0.2]
 
 [entities.zz_rail_s_s.rigidbody]
 body_type = "static"
@@ -842,7 +870,7 @@ position = [-0.15, 0.35, -2.5]
 scale = [0.2, 0.7, 5]
 
 [entities.zz_rail_m_w.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.45, 0.42, 0.32, 1.0]
 roughness = 0.7
 
 [entities.zz_rail_m_w.collider]
@@ -860,7 +888,7 @@ position = [8.15, 0.35, -2.5]
 scale = [0.2, 0.7, 5]
 
 [entities.zz_rail_m_e.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.45, 0.42, 0.32, 1.0]
 roughness = 0.7
 
 [entities.zz_rail_m_e.collider]
@@ -878,7 +906,7 @@ position = [0.15, 0.35, -7.5]
 scale = [0.2, 0.7, 5]
 
 [entities.zz_rail_n_e.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.45, 0.42, 0.32, 1.0]
 roughness = 0.7
 
 [entities.zz_rail_n_e.collider]
@@ -901,7 +929,7 @@ position = [-17.5, -0.1, -2.5]
 scale = [5, 0.2, 5]
 
 [entities.alcove_floor.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.35, 0.5, 0.25, 1.0]
 roughness = 0.85
 
 [entities.alcove_floor.collider]
@@ -918,7 +946,7 @@ position = [-17.5, 4.1, -2.5]
 scale = [5, 0.2, 5]
 
 [entities.alcove_ceiling.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.35, 0.5, 0.25, 1.0]
 roughness = 0.85
 
 [entities.alcove_ceiling.collider]
@@ -936,7 +964,7 @@ position = [-20.15, 2.0, -2.5]
 scale = [0.3, 4.0, 5]
 
 [entities.alcove_wall_w.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.35, 0.5, 0.25, 1.0]
 roughness = 0.85
 
 [entities.alcove_wall_w.collider]
@@ -954,7 +982,7 @@ position = [-17.5, 2.0, -5.15]
 scale = [5, 4.0, 0.3]
 
 [entities.alcove_wall_n.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.35, 0.5, 0.25, 1.0]
 roughness = 0.85
 
 [entities.alcove_wall_n.collider]
@@ -972,7 +1000,7 @@ position = [-17.5, 2.0, 0.15]
 scale = [5, 4.0, 0.3]
 
 [entities.alcove_wall_s.material]
-color = [0.35, 0.35, 0.3, 1.0]
+color = [0.35, 0.5, 0.25, 1.0]
 roughness = 0.85
 
 [entities.alcove_wall_s.collider]
@@ -996,7 +1024,7 @@ position = [0, -0.1, -17.5]
 scale = [24, 0.2, 15]
 
 [entities.cr_floor.material]
-color = [0.3, 0.4, 0.5, 1.0]
+color = [0.3, 0.28, 0.6, 1.0]
 roughness = 0.75
 
 [entities.cr_floor.collider]
@@ -1013,7 +1041,7 @@ position = [0, 4.1, -17.5]
 scale = [24, 0.2, 15]
 
 [entities.cr_ceiling.material]
-color = [0.3, 0.4, 0.5, 1.0]
+color = [0.3, 0.28, 0.6, 1.0]
 roughness = 0.75
 
 [entities.cr_ceiling.collider]
@@ -1031,7 +1059,7 @@ position = [0, 2.0, -25.15]
 scale = [24, 4.0, 0.3]
 
 [entities.cr_wall_north.material]
-color = [0.3, 0.4, 0.5, 1.0]
+color = [0.3, 0.28, 0.6, 1.0]
 roughness = 0.75
 
 [entities.cr_wall_north.collider]
@@ -1049,7 +1077,7 @@ position = [12.15, 2.0, -17.5]
 scale = [0.3, 4.0, 15]
 
 [entities.cr_wall_east.material]
-color = [0.3, 0.4, 0.5, 1.0]
+color = [0.3, 0.28, 0.6, 1.0]
 roughness = 0.75
 
 [entities.cr_wall_east.collider]
@@ -1067,7 +1095,7 @@ position = [-12.15, 2.0, -17.5]
 scale = [0.3, 4.0, 15]
 
 [entities.cr_wall_west.material]
-color = [0.3, 0.4, 0.5, 1.0]
+color = [0.3, 0.28, 0.6, 1.0]
 roughness = 0.75
 
 [entities.cr_wall_west.collider]
@@ -1085,7 +1113,7 @@ position = [-10, 0.75, -23.5]
 scale = [3, 1.5, 2.5]
 
 [entities.cr_console_nw.material]
-color = [0.25, 0.3, 0.4, 1.0]
+color = [0.2, 0.22, 0.5, 1.0]
 roughness = 0.6
 
 [entities.cr_console_nw.collider]
@@ -1103,7 +1131,7 @@ position = [10, 0.75, -23.5]
 scale = [3, 1.5, 2.5]
 
 [entities.cr_console_ne.material]
-color = [0.25, 0.3, 0.4, 1.0]
+color = [0.2, 0.22, 0.5, 1.0]
 roughness = 0.6
 
 [entities.cr_console_ne.collider]
@@ -1121,7 +1149,7 @@ position = [-10.5, 0.75, -17.5]
 scale = [2.5, 1.5, 3]
 
 [entities.cr_console_w.material]
-color = [0.25, 0.3, 0.4, 1.0]
+color = [0.2, 0.22, 0.5, 1.0]
 roughness = 0.6
 
 [entities.cr_console_w.collider]
@@ -1139,7 +1167,7 @@ position = [10.5, 0.75, -17.5]
 scale = [2.5, 1.5, 3]
 
 [entities.cr_console_e.material]
-color = [0.25, 0.3, 0.4, 1.0]
+color = [0.2, 0.22, 0.5, 1.0]
 roughness = 0.6
 
 [entities.cr_console_e.collider]
@@ -1157,7 +1185,7 @@ position = [0, 0.25, -24]
 scale = [4, 0.5, 2]
 
 [entities.cr_exit_platform.material]
-color = [0.35, 0.45, 0.55, 1.0]
+color = [0.45, 0.32, 0.6, 1.0]
 roughness = 0.7
 
 [entities.cr_exit_platform.collider]
@@ -1180,7 +1208,7 @@ position = [0, 1.75, 15]
 scale = [3, 3.5, 0.3]
 
 [entities.door_1.material]
-color = [0.55, 0.55, 0.55, 1.0]
+color = [0.75, 0.72, 0.68, 1.0]
 roughness = 0.5
 metallic = 0.3
 
@@ -1213,7 +1241,7 @@ position = [0, 1.75, 5]
 scale = [3, 3.5, 0.3]
 
 [entities.door_2.material]
-color = [0.55, 0.55, 0.55, 1.0]
+color = [0.75, 0.72, 0.68, 1.0]
 roughness = 0.5
 metallic = 0.3
 
@@ -1246,7 +1274,7 @@ position = [0, 1.75, -10]
 scale = [3, 3.5, 0.3]
 
 [entities.door_3.material]
-color = [0.55, 0.55, 0.55, 1.0]
+color = [0.75, 0.72, 0.68, 1.0]
 roughness = 0.5
 metallic = 0.3
 

@@ -66,6 +66,26 @@ impl DynamicComponents {
         self.data.get(component).and_then(|v| v.get(field))
     }
 
+    /// Merge fields into an existing component (archetype defaults + entity overrides)
+    ///
+    /// If the component already exists as a table, merges individual fields
+    /// from `data` into it (entity-level fields win). If it doesn't exist
+    /// or isn't a table, sets the component outright.
+    pub fn merge_component(&mut self, component: impl Into<String>, data: toml::Value) {
+        let key = component.into();
+        if let Some(existing) = self.data.get_mut(&key) {
+            if let (Some(existing_table), Some(override_table)) =
+                (existing.as_table_mut(), data.as_table())
+            {
+                for (k, v) in override_table {
+                    existing_table.insert(k.clone(), v.clone());
+                }
+                return;
+            }
+        }
+        self.data.insert(key, data);
+    }
+
     /// Set a field value in a component
     pub fn set_field(&mut self, component: &str, field: &str, value: toml::Value) {
         let comp = self

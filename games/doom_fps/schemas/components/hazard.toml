@@ -1,0 +1,12 @@
+[component.hazard]
+description = "Environmental hazard zone that damages entities within its bounds"
+
+[component.hazard.fields]
+min_x = { type = "f32", default = 0.0, description = "Western boundary" }
+max_x = { type = "f32", default = 0.0, description = "Eastern boundary" }
+min_z = { type = "f32", default = 0.0, description = "Southern boundary" }
+max_z = { type = "f32", default = 0.0, description = "Northern boundary" }
+surface_y = { type = "f32", default = 0.0, description = "Y threshold — damage applies below this height" }
+dps = { type = "f32", default = 5.0, min = 0.0, description = "Damage per second" }
+tick_interval = { type = "f32", default = 0.5, min = 0.1, description = "Seconds between damage ticks" }
+tick_timer = { type = "f32", default = 0.0, description = "Runtime countdown to next damage tick" }

@@ -14,6 +14,8 @@
 let prompt_alpha = 0.0;
 let prev_health = 100.0;
 let damage_flash = 0.0;
+let secret_flash = 0.0;
+let secret_was_found = false;
 
 // ─── Pure helpers (no scope vars needed) ─────────────
 
@@ -56,9 +58,31 @@ fn on_update(dt) {
         damage_flash = max(damage_flash - dt * 3.0, 0.0);
     }
 
+    // Poll secret wall discovery state
+    let secret_id = get_entity("sr_secret_wall");
+    if secret_id >= 0 && has_component(secret_id, "secret") {
+        let secret_comp = get_component(secret_id, "secret");
+        if type_of(secret_comp) != "()" {
+            let disc = secret_comp.discovered;
+            if type_of(disc) == "bool" && disc && !secret_was_found {
+                secret_flash = 3.0;
+                secret_was_found = true;
+            }
+        }
+    }
+    if secret_flash > 0.0 {
+        secret_flash = max(secret_flash - dt, 0.0);
+    }
+
     let nearest = find_nearest_interactable();
     if type_of(nearest) != "()" {
-        prompt_alpha = min(prompt_alpha + 5.0 * dt, 1.0);
+        // Suppress interaction prompt for secret walls — don't give away the secret
+        let itype = nearest.interaction_type;
+        if itype == "secret" {
+            prompt_alpha = max(prompt_alpha - 5.0 * dt, 0.0);
+        } else {
+            prompt_alpha = min(prompt_alpha + 5.0 * dt, 1.0);
+        }
     } else {
         prompt_alpha = max(prompt_alpha - 5.0 * dt, 0.0);
     }
@@ -80,6 +104,21 @@ fn on_draw_ui() {
     if damage_flash > 0.01 {
         let flash_a = damage_flash * 0.31;
         draw_rect_ex(0.0, 0.0, sw, sh, 0.78, 0.08, 0.04, flash_a, 0.0, -1);
+    }
+
+    // ── Secret discovered notification (top-center, golden fade-out) ──
+    if secret_flash > 0.01 {
+        let sa = min(secret_flash, 1.0);
+        let msg = "A secret is revealed!";
+        let msg_size = 22.0;
+        let msg_m = measure_text(msg, msg_size);
+        let msg_w = msg_m.width;
+        let pill_w = msg_w + 40.0;
+        let pill_h = msg_size + 20.0;
+        let pill_x = (sw - pill_w) / 2.0;
+        let pill_y = 40.0;
+        draw_rect_ex(pill_x, pill_y, pill_w, pill_h, 0.04, 0.04, 0.04, 0.71 * sa, 12.0, 2);
+        draw_text_ex(pill_x + 20.0, pill_y + 10.0, msg, msg_size, 0.94, 0.86, 0.31, sa, 2);
     }
 
     // ── Health panel (bottom-left) ──

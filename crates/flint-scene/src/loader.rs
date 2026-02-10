@@ -50,7 +50,7 @@ pub fn load_scene_string(
 
         // Set component data
         for (comp_name, comp_data) in &entity_def.components {
-            world.set_component(id, comp_name, comp_data.clone())?;
+            world.merge_component(id, comp_name, comp_data.clone())?;
         }
 
         // Set parent relationship
@@ -109,7 +109,7 @@ pub fn reload_scene_string(
 
         // Set component data
         for (comp_name, comp_data) in &entity_def.components {
-            world.set_component(id, comp_name, comp_data.clone())?;
+            world.merge_component(id, comp_name, comp_data.clone())?;
         }
 
         // Set parent relationship
