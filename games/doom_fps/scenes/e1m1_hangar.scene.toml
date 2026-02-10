@@ -1192,10 +1192,18 @@ size = [3, 3.5, 0.3]
 body_type = "kinematic"
 
 [entities.door_1.interactable]
-prompt = "Open Door"
+prompt_text = "Open Door"
 range = 3.0
-type = "door"
+interaction_type = "door"
 enabled = true
+
+[entities.door_1.door_state]
+open_height = 3.5
+speed = 3.0
+stay_open_time = 4.0
+
+[entities.door_1.script]
+source = "door.rhai"
 
 # --- Door 2: Hallway → Zigzag Room ---
 [entities.door_2]
@@ -1217,10 +1225,18 @@ size = [3, 3.5, 0.3]
 body_type = "kinematic"
 
 [entities.door_2.interactable]
-prompt = "Open Door"
+prompt_text = "Open Door"
 range = 3.0
-type = "door"
+interaction_type = "door"
 enabled = true
+
+[entities.door_2.door_state]
+open_height = 3.5
+speed = 3.0
+stay_open_time = 4.0
+
+[entities.door_2.script]
+source = "door.rhai"
 
 # --- Door 3: Zigzag Room → Computer Room ---
 [entities.door_3]
@@ -1242,10 +1258,18 @@ size = [3, 3.5, 0.3]
 body_type = "kinematic"
 
 [entities.door_3.interactable]
-prompt = "Open Door"
+prompt_text = "Open Door"
 range = 3.0
-type = "door"
+interaction_type = "door"
 enabled = true
+
+[entities.door_3.door_state]
+open_height = 3.5
+speed = 3.0
+stay_open_time = 4.0
+
+[entities.door_3.script]
+source = "door.rhai"
 
 
 # ============================================================

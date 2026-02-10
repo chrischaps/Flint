@@ -502,7 +502,7 @@ impl SceneRenderer {
                 .unwrap_or(ArchetypeVisual {
                     color: [0.5, 0.5, 0.5, 1.0],
                     wireframe: false,
-                    default_size: [0.5, 0.5, 0.5],
+                    default_size: [1.0, 1.0, 1.0],
                 });
 
             let transform = world.get_transform(entity.id).unwrap_or_default();

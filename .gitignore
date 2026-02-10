@@ -20,3 +20,4 @@ Thumbs.db
 
 # Generated docs (rebuild with mdbook build / cargo doc)
 docs/book/book/
+nul

@@ -72,7 +72,7 @@ This document catalogs every missing piece between the Flint engine's current ca
 
 | # | Gap | Needed For | Approach |
 |---|-----|-----------|----------|
-| F.1 | No key/lock system | Colored keycards gating progression | `key` component + inventory check in door script |
+| F.1 | ~~No key/lock system~~ | ~~Colored keycards gating progression~~ | **Partial — E1M1 Task 5**: door system in place with `locked` + `key_required` fields; key inventory + pickup not yet implemented |
 | F.2 | No switches/buttons | Remote door/elevator activation | `switch` component with target_entity + action |
 | F.3 | No elevators/lifts | Gameplay-driven vertical transport | `elevator` component, script-driven movement |
 | F.4 | No secret areas | Classic Doom secret counting | `secret` component on trigger volumes |
@@ -124,8 +124,8 @@ This document catalogs every missing piece between the Flint engine's current ca
 | C. Scripting | 8 | 3 (raycast, combat, camera) | 5 |
 | D. Audio | 5 | 0 | 5 |
 | E. Game State | 5 | 0 | 5 |
-| F. Level Design | 6 | 0 | 6 |
+| F. Level Design | 6 | 0.5 (doors partial) | 5.5 |
 | G. Enemy & Combat | 8 | 1 (basic AI) | 7 |
 | H. HUD & UI | 6 | 1 (combat HUD) | 5 |
 | I. Infrastructure | 5 | 0 | 5 |
-| **Total** | **62** | **7** | **55** |
+| **Total** | **62** | **7.5** | **54.5** |

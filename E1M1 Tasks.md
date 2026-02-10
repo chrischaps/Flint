@@ -4,7 +4,7 @@
 
 ---
 
-## Task 1: Make Combat Game-Specific
+## Task 1: Make Combat Game-Specific ✅ DONE
 **Why**: `deal_damage`/`get_health`/`heal`/`is_dead` are hardcoded in the engine. They should be game-layer functions so the doom_fps game can build armor-aware damage.
 
 **Work**:
@@ -17,7 +17,7 @@
 
 ---
 
-## Task 2: Armor System
+## Task 2: Armor System ✅ DONE
 **Why**: E1M1 has green armor. Need an armor component and damage absorption logic.
 
 **Work**:
@@ -31,7 +31,7 @@
 
 ---
 
-## Task 3: Weapon Switching (Pistol + Shotgun)
+## Task 3: Weapon Switching (Pistol + Shotgun) ✅ DONE
 **Why**: E1M1's core loop involves finding the shotgun. Player needs 2 weapons.
 
 **Work**:
@@ -48,7 +48,7 @@
 
 ---
 
-## Task 4: Hitscan Enemy AI
+## Task 4: Hitscan Enemy AI ✅ DONE
 **Why**: E1M1 has Zombiemen and Shotgun Guys — ranged hitscan enemies unlike the melee Imp.
 
 **Work**:
@@ -66,21 +66,22 @@
 
 ---
 
-## Task 5: Door System
+## Task 5: Door System ✅ DONE
 **Why**: E1M1 has doors between rooms — vertical sliding doors that open on interact.
 
 **Work**:
-- Create `schemas/components/door_state.toml`: state, open_height, speed, stay_open_time, timer, closed_y, auto_open, trigger_range
+- Create `schemas/components/door_state.toml`: state, open_height, speed, stay_open_time, timer, closed_y, auto_open, trigger_range, locked, key_required, move_progress
 - Create `scripts/door.rhai` with state machine:
-  - `closed` → interact or proximity → `opening`
-  - `opening` → lerp Y upward → `open` (play sound)
+  - `closed` → interact or proximity → `opening` (play sound)
+  - `opening` → lerp Y upward → `open`
   - `open` → timer countdown → `closing`
-  - `closing` → lerp Y down → `closed` (re-open if player blocking)
+  - `closing` → lerp Y down → `closed` (re-open if interact during close)
 - Create `archetypes/fps_door.toml` (kinematic rigidbody, box collider, door_state, interactable, script)
 - Door uses `set_position()` — `PhysicsSync::update_kinematic_bodies()` moves collider automatically
-- Generate/source `door_open.ogg` and `door_close.ogg`
+- Locked door support stubbed (plays locked sound, key_required field for future key system)
+- Audio: `door_open.ogg`, `door_locked.wav`
 
-**Files**: `door_state.toml`, `fps_door.toml`, `door.rhai`, 2 audio files
+**Files**: `door_state.toml`, `fps_door.toml`, `door.rhai`, 2 audio files, modified `hud.rhai` (door verb), modified `e1m1_hangar.scene.toml` (3 door entities)
 
 ---
 
@@ -124,7 +125,7 @@
 
 ---
 
-## Task 9: Build Level Geometry
+## Task 9: Build Level Geometry ✅ DONE
 **Why**: The actual E1M1-inspired room layout.
 
 **Work**: Create `games/doom_fps/scenes/e1m1_hangar.scene.toml` with all geometry entities.
@@ -207,20 +208,20 @@
 ## Dependency Graph
 
 ```
-Task 1 (combat to game layer)
-  └─→ Task 2 (armor)
-  └─→ Task 3 (weapon switching)
-  └─→ Task 4 (hitscan enemies)
+Task 1 (combat to game layer) ✅
+  └─→ Task 2 (armor) ✅
+  └─→ Task 3 (weapon switching) ✅
+  └─→ Task 4 (hitscan enemies) ✅
 
-Task 5 (doors)         ─── independent
+Task 5 (doors) ✅
 Task 6 (nukage)        ─── independent (needs Task 1 for deal_damage)
 Task 7 (secrets)       ─── independent
 Task 8 (exit + completion) ─── independent
 
-Task 9 (level geometry) ─── independent (can start anytime)
+Task 9 (level geometry) ✅
 
 Task 10 (populate) ─── needs Tasks 2-9 all done
 Task 11 (polish)   ─── needs Task 10
 ```
 
-**Suggested order**: 1 → 2+3+4 (parallel) → 5+6+7+8 (parallel) → 9 → 10 → 11
+**Progress**: 6/11 tasks complete. Next candidates: Tasks 6, 7, 8 (all independent, can be done in parallel).

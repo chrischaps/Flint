@@ -1,0 +1,29 @@
+[archetype.fps_door]
+description = "Doom-style vertical sliding door — opens on interact, auto-closes after delay"
+components = ["transform", "material", "door_state", "interactable", "collider", "rigidbody", "script"]
+
+[archetype.fps_door.defaults.material]
+color = [0.55, 0.55, 0.55, 1.0]
+roughness = 0.5
+metallic = 0.3
+
+[archetype.fps_door.defaults.door_state]
+state = "closed"
+open_height = 3.5
+speed = 3.0
+stay_open_time = 4.0
+
+[archetype.fps_door.defaults.interactable]
+prompt_text = "Open Door"
+range = 3.0
+interaction_type = "door"
+enabled = true
+
+[archetype.fps_door.defaults.collider]
+shape = "box"
+
+[archetype.fps_door.defaults.rigidbody]
+body_type = "kinematic"
+
+[archetype.fps_door.defaults.script]
+source = "door.rhai"

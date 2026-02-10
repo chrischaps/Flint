@@ -192,7 +192,12 @@ fn on_draw_ui() {
             let itype = nearest.interaction_type;
             if itype == "talk" { verb = "Talk to"; }
             else if itype == "examine" { verb = "Examine"; }
-            prompt = "[E] " + verb + " " + nearest.prompt_text;
+            else if itype == "door" {
+                prompt = "[E] Open";
+            }
+            if itype != "door" {
+                prompt = "[E] " + verb + " " + nearest.prompt_text;
+            }
         }
 
         let text_size = 16.0;
