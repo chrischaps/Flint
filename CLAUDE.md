@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase A complete: minimum playable Doom-style FPS with billboard sprites, hitscan combat, enemy AI, health/ammo pickups, combat HUD, and game/engine schema separation. Phase 5 complete: AI asset generation pipeline with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, semantic asset definitions, batch scene resolution, build manifests, model validation, and runtime catalog integration. Phase 4 complete with Rhai scripting, property/skeletal animation, spatial audio, interactable entities. PBR rendering from Phase 3, constraints from Phase 2.
+Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase 5 complete: AI asset generation pipeline with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, semantic asset definitions, batch scene resolution, build manifests, model validation, and runtime catalog integration. Phase 4 complete with Rhai scripting, property/skeletal animation, spatial audio, interactable entities. PBR rendering from Phase 3, constraints from Phase 2. Game projects (e.g., the Doom-style FPS) live in their own repositories and include the engine as a git subtree.
 
 ## Build & Development Commands
 
@@ -14,7 +14,6 @@ cargo build --release          # Release build
 cargo run --bin flint -- <cmd> # Run CLI (e.g., cargo run --bin flint -- serve demo/showcase.scene.toml --watch)
 cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene with first-person controls
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas  # Standalone player
-cargo run --bin flint-player -- games/doom_fps/scenes/fps_arena.scene.toml --schemas schemas --schemas games/doom_fps/schemas  # Doom FPS demo
 cargo test                     # Run all tests (218 unit tests across crates)
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
@@ -66,7 +65,7 @@ flint-player        Standalone player binary with game loop, physics, audio, ani
 - **Raycasting** — Rapier `query_pipeline.cast_ray_and_get_normal()` exposed as `raycast()` in Rhai scripts; collider handle → EntityId resolution; exclude_collider for self-exclusion
 - **Combat system** — game-level Rhai helper functions (`deal_damage()`, `get_health()`, `heal()`, `is_dead()`) defined in each game script that needs them, using generic `get_field`/`set_field` ECS access; engine has zero concept of "combat"; mouse button → action bindings for weapon firing
 - **HUD overlay** — script-driven via `on_draw_ui()` callback + `DrawCommand` pipeline; engine renders 2D primitives (text, rect, circle, line, sprite) via egui painter; all game-specific UI (crosshair, health, ammo, damage flash, interaction prompts) lives in `.rhai` scripts, not engine code; `hud_controller` entity with `script.source = "hud.rhai"` pattern; supports layered rendering (negative layers = background, 0 = default, positive = foreground)
-- **Game project pattern** — games live in `games/<name>/` with their own schemas/scripts/scenes/assets; `--schemas` flag accepts multiple paths that merge with later-path-wins priority
+- **Game project pattern** — games live in their own repositories and include the engine as a git subtree at `engine/`; `--schemas` flag accepts multiple paths that merge with later-path-wins priority (e.g., `--schemas engine/schemas --schemas schemas`)
 - **AI asset generation** via `flint-asset-gen` crate — pluggable `GenerationProvider` trait with Flux (textures), Meshy (3D models), ElevenLabs (audio), and Mock implementations; `StyleGuide` enriches prompts with palette/material/geometry constraints; `BatchStrategy` resolves entire scenes (AiGenerate, HumanTask, AiThenHuman); `BuildManifest` tracks provenance; `SemanticAssetDef` maps intent to generation requests; `validate_model()` checks GLB against style constraints
 - **Asset config** — layered `FlintConfig`: `~/.flint/config.toml` < `.flint/config.toml` < env vars (`FLINT_{PROVIDER}_API_KEY`); per-provider API key/URL/enabled settings
 - **Runtime catalog resolution** — `PlayerApp` optionally loads `AssetCatalog` + `ContentStore`; tries catalog name → hash → content store path before file-based fallback (backwards-compatible)
@@ -117,17 +116,17 @@ flint-player        Standalone player binary with game loop, physics, audio, ani
 
 **Working now:** Entity CRUD, scene load/save, query parsing/execution, schema introspection, PBR renderer with Cook-Torrance shading, glTF model import, cascaded shadow mapping, constraint validation + auto-fix, content-addressed asset catalog, egui GUI inspector, `serve --watch` hot-reload viewer, game loop with fixed-timestep physics, Rapier 3D character controller, first-person walkable scenes via `play` command, spatial audio with Kira (3D positioned sounds, ambient loops, event-driven triggers), property tween animation (Tier 1: keyframe clips with Step/Linear/CubicSpline, `.anim.toml` loading, `animator` component, event firing), skeletal animation (Tier 2: glTF skin/joint import, GPU vertex skinning via storage buffer, bone hierarchy computation, crossfade blending, skinned shadow mapping), Rhai scripting (entity/input/audio/animation/math/physics/combat/UI draw APIs, event callbacks incl. `on_draw_ui`, hot-reload), **scriptable 2D UI overlay** (DrawCommand pipeline with text/rect/circle/line/sprite primitives, layer sorting, lazy sprite loading, `hud.rhai` for game-specific HUD), interactable entities with script-driven prompts, NPC behavior scripts (bartender/patron/stranger), footstep sounds, ambient events, full atmospheric tavern integration demo, AI asset generation pipeline (Flux textures, Meshy 3D models, ElevenLabs audio with mock provider for testing, style guides, batch scene resolution, model validation, build manifests, semantic asset definitions, runtime catalog integration), **Doom-style FPS** (Phase A: billboard sprite rendering, hitscan raycast weapons, health/damage system, enemy AI state machine, health/ammo pickups, combat HUD with damage flash, mouse button action bindings, multi-directory schema loading for game/engine separation).
 
-**Designed but not implemented:** See `flint-design-doc.md` for full specification of remaining phases. See `DOOM_FPS_GAPS.md` for 55 remaining gaps toward a feature-complete Doom clone.
+**Designed but not implemented:** See `flint-design-doc.md` for full specification of remaining phases.
 
 ## Project Structure
 
 - `crates/` — All 18 workspace crates
 - `schemas/` — Engine component and archetype TOML definitions (transform, door, bounds, material, rigidbody, collider, character_controller, player, audio_source, audio_listener, audio_trigger, animator, skeleton, script, interactable, sprite, asset_def, etc.)
-- `games/` — Game projects with their own schemas/scripts/scenes/assets (e.g., `games/doom_fps/`)
+- Game projects live in separate repositories with the engine as a git subtree (e.g., the Doom FPS)
 - `styles/` — Style guide TOML definitions (medieval_tavern) for AI generation
 - `demo/` — Showcase scenes (showcase, phase3_showcase, phase4_runtime, phase5_ai_demo), demo `scripts/` (.rhai), `audio/` assets, and `animations/` clips
 - `testGame/` — Test project directory (levels/, schemas/)
 - `flint-design-doc.md` — Comprehensive design document covering all planned phases
-- `DOOM_FPS_GAPS.md` — 62 gaps identified for Doom-style FPS (7 fixed in Phase A, 55 remaining)
+- `DOOM_FPS_GAPS.md` — moved to the Doom FPS game repository
 - `PHASE4_ROADMAP.md` — Phase 4 status tracker (all 5 stages complete)
 - `PHASE5_ROADMAP.md` — Phase 5 status tracker (all 5 stages complete)

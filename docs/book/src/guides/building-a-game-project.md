@@ -2,33 +2,71 @@
 
 This guide walks through setting up a standalone game project that uses Flint's engine schemas while defining its own game-specific components, scripts, and assets.
 
+## Setting Up a Game Repository
+
+Game projects live in their own git repositories with the Flint engine included as a git subtree. This gives you a single clone with everything needed to build and play, while keeping game and engine commits separate.
+
+### 1. Create the repository
+
+```bash
+mkdir my_game && cd my_game
+git init
+mkdir schemas schemas/components schemas/archetypes scripts scenes sprites audio
+```
+
+### 2. Add the engine as a subtree
+
+```bash
+git remote add flint-engine https://github.com/chrischaps/Flint.git
+git subtree add --prefix=engine flint-engine main --squash
+```
+
+The `--squash` flag collapses engine history into one commit, keeping your game history clean. Full engine history stays in the Flint repo.
+
+### 3. Create convenience scripts
+
+**`play.bat`** --- launch any scene by name:
+
+```batch
+@echo off
+set SCENE=%~1
+if "%SCENE%"=="" set SCENE=level_1
+cargo run --manifest-path engine\Cargo.toml --bin flint-player -- scenes\%SCENE%.scene.toml --schemas engine\schemas --schemas schemas %2 %3 %4
+```
+
+**`build.bat`** --- build the engine in release mode:
+
+```batch
+@echo off
+cargo build --manifest-path engine\Cargo.toml --release
+```
+
 ## Directory Structure
 
-Game projects live in `games/<name>/` with their own schemas, scripts, scenes, and asset directories:
-
 ```
-games/
-└── my_game/
-    ├── schemas/
-    │   ├── components/       # Game-specific component definitions
-    │   │   ├── health.toml
-    │   │   ├── weapon.toml
-    │   │   └── enemy_ai.toml
-    │   └── archetypes/       # Game-specific archetype bundles
-    │       ├── enemy.toml
-    │       └── pickup.toml
-    ├── scripts/              # Rhai game logic scripts
-    │   ├── player_weapon.rhai
-    │   ├── enemy_ai.rhai
-    │   └── hud.rhai
-    ├── scenes/               # Scene files
-    │   └── level_1.scene.toml
-    ├── sprites/              # Billboard sprite textures
-    │   ├── enemy.png
-    │   └── pickup_health.png
-    └── audio/                # Sound effects and music
-        ├── weapon_fire.ogg
-        └── enemy_death.ogg
+my_game/                         (your git repo)
+├── engine/                      (git subtree ← Flint repo)
+│   ├── crates/
+│   ├── schemas/                 (engine schemas: transform, material, etc.)
+│   └── Cargo.toml
+├── schemas/
+│   ├── components/              # Game-specific component definitions
+│   │   ├── health.toml
+│   │   ├── weapon.toml
+│   │   └── enemy_ai.toml
+│   └── archetypes/              # Game-specific archetype bundles
+│       ├── enemy.toml
+│       └── pickup.toml
+├── scripts/                     # Rhai game logic scripts
+│   ├── player_weapon.rhai
+│   ├── enemy_ai.rhai
+│   └── hud.rhai
+├── scenes/                      # Scene files
+│   └── level_1.scene.toml
+├── sprites/                     # Billboard sprite textures
+├── audio/                       # Sound effects and music
+├── play.bat                     # Convenience launcher
+└── build.bat                    # Engine build script
 ```
 
 ## Multi-Schema Layering
@@ -36,23 +74,24 @@ games/
 The key to the game project pattern is the `--schemas` flag, which accepts multiple paths. Schemas load in order, with later paths overriding earlier ones:
 
 ```bash
-flint play games/my_game/scenes/level_1.scene.toml \
-  --schemas schemas \
-  --schemas games/my_game/schemas
+cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
+  scenes\level_1.scene.toml ^
+  --schemas engine\schemas ^
+  --schemas schemas
 ```
 
 This loads:
-1. **Engine schemas** from `schemas/` --- built-in components like `transform`, `material`, `rigidbody`, `collider`, `character_controller`, `sprite`, etc.
-2. **Game schemas** from `games/my_game/schemas/` --- game-specific components like `health`, `weapon`, `enemy_ai`
+1. **Engine schemas** from `engine/schemas/` --- built-in components like `transform`, `material`, `rigidbody`, `collider`, `character_controller`, `sprite`, etc.
+2. **Game schemas** from `schemas/` --- game-specific components like `health`, `weapon`, `enemy_ai`
 
 If both directories define a component with the same name, the game's version takes priority.
 
 ## Defining Game Components
 
-Create component schemas in `games/my_game/schemas/components/`:
+Create component schemas in `schemas/components/`:
 
 ```toml
-# games/my_game/schemas/components/health.toml
+# schemas/components/health.toml
 [component.health]
 description = "Hit points for damageable entities"
 
@@ -62,7 +101,7 @@ current_hp = { type = "i32", default = 100, min = 0 }
 ```
 
 ```toml
-# games/my_game/schemas/components/weapon.toml
+# schemas/components/weapon.toml
 [component.weapon]
 description = "Weapon carried by the player"
 
@@ -79,7 +118,7 @@ max_ammo = { type = "i32", default = 100 }
 Bundle game components with engine components:
 
 ```toml
-# games/my_game/schemas/archetypes/enemy.toml
+# schemas/archetypes/enemy.toml
 [archetype.enemy]
 description = "A hostile NPC with health and a sprite"
 components = ["transform", "health", "sprite", "collider", "rigidbody", "script"]
@@ -145,7 +184,7 @@ source = "hud.rhai"
 All game-specific behavior lives in Rhai scripts. The engine provides generic APIs (entity, input, audio, physics, draw) and your scripts implement game rules:
 
 ```rust
-// games/my_game/scripts/hud.rhai
+// scripts/hud.rhai
 
 fn on_draw_ui() {
     let sw = screen_width();
@@ -170,23 +209,34 @@ fn on_draw_ui() {
 ## Running the Game
 
 ```bash
-# Via the CLI
-flint play games/my_game/scenes/level_1.scene.toml \
-  --schemas schemas \
-  --schemas games/my_game/schemas
+# Via convenience script
+.\play.bat level_1
 
-# Via the standalone player
-cargo run --bin flint-player -- games/my_game/scenes/level_1.scene.toml \
-  --schemas schemas \
-  --schemas games/my_game/schemas
+# Via the standalone player directly
+cargo run --manifest-path engine\Cargo.toml --bin flint-player -- ^
+  scenes\level_1.scene.toml --schemas engine\schemas --schemas schemas
 ```
 
 ## Asset Resolution
 
-Scripts, audio, and sprite paths are resolved relative to the game project root. When a scene lives in `games/my_game/scenes/`, the engine looks for:
-- Scripts in `games/my_game/scripts/`
-- Audio in `games/my_game/audio/`
-- Sprites in `games/my_game/sprites/`
+Scripts, audio, and sprite paths are resolved relative to the game project root. When a scene lives in `scenes/`, the engine looks for:
+- Scripts in `scripts/`
+- Audio in `audio/`
+- Sprites in `sprites/`
+
+## Engine Subtree Workflow
+
+The engine at `engine/` is a full copy of the Flint repo. You can edit engine code directly, and manage updates with standard git subtree commands:
+
+```bash
+# Pull latest engine changes
+git subtree pull --prefix=engine flint-engine main --squash
+
+# Push engine edits back to the Flint repo
+git subtree push --prefix=engine flint-engine main
+```
+
+Engine edits are normal commits in your game repo. The subtree commands handle splitting and merging the `engine/` prefix.
 
 ## Further Reading
 

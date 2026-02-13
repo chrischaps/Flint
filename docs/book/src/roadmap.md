@@ -141,11 +141,11 @@ A minimum playable Doom-style first-person shooter, demonstrating the engine's c
 - **Combat HUD** --- crosshair, health bar, ammo counter, damage flash overlay, weapon name display, interaction prompts (all script-driven via `hud.rhai`)
 - **Additional script APIs** --- `this_entity()` alias, `get_component()`, `play_sound(name, volume)` overload, `log_info()` alias
 
-**Milestone:** `flint play games/doom_fps/scenes/fps_arena.scene.toml --schemas schemas --schemas games/doom_fps/schemas` launches a playable FPS with enemies, weapons, pickups, and a full combat HUD.
+**Milestone:** From the Doom FPS game repo: `.\play.bat fps_arena` launches a playable FPS with enemies, weapons, pickups, and a full combat HUD. The game repo includes the engine as a git subtree.
 
 ## Beyond Phase A
 
-These are ideas under consideration, not committed plans. See `DOOM_FPS_GAPS.md` for 55 remaining gaps toward a feature-complete Doom clone.
+These are ideas under consideration, not committed plans. See the Doom FPS game repository's `DOOM_FPS_GAPS.md` for remaining gaps toward a feature-complete Doom clone.
 
 - **Networking** --- multiplayer support
 - **Post-processing** --- bloom, ambient occlusion, tone mapping, LOD

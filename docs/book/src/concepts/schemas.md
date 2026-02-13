@@ -259,40 +259,47 @@ No engine recompilation needed --- schemas are loaded at runtime from the TOML f
 Games can define their own schemas that extend or override the engine's built-in schemas. The `--schemas` flag accepts multiple paths, with later paths taking priority:
 
 ```bash
-flint play games/doom_fps/scenes/arena.scene.toml \
-  --schemas schemas \
-  --schemas games/doom_fps/schemas
+# From a game project root (engine at engine/)
+cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
+  scenes/arena.scene.toml \
+  --schemas engine/schemas \
+  --schemas schemas
 ```
 
-In this example, `schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and `games/doom_fps/schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
+In this example, `engine/schemas/` provides the engine's built-in components (transform, material, rigidbody, etc.) and the game's own `schemas/` adds game-specific components (health, weapon, enemy AI). If both directories define a component with the same name, the game's definition wins.
 
 ### Game Project Directory Structure
 
+Game projects live in their own repositories with the engine included as a git subtree:
+
 ```
-games/
-└── doom_fps/
-    ├── schemas/
-    │   ├── components/
-    │   │   ├── health.toml
-    │   │   ├── weapon.toml
-    │   │   └── enemy_ai.toml
-    │   └── archetypes/
-    │       ├── enemy.toml
-    │       └── pickup.toml
-    ├── scripts/
-    │   ├── enemy_ai.rhai
-    │   ├── weapon.rhai
-    │   └── hud.rhai
-    ├── scenes/
-    │   └── fps_arena.scene.toml
-    ├── sprites/
-    │   └── imp.png
-    └── audio/
-        ├── shotgun.ogg
-        └── imp_death.ogg
+my_game/                    (standalone git repo)
+├── engine/                 (git subtree ← Flint repo)
+│   ├── crates/
+│   ├── schemas/            (engine schemas)
+│   └── Cargo.toml
+├── schemas/
+│   ├── components/
+│   │   ├── health.toml
+│   │   ├── weapon.toml
+│   │   └── enemy_ai.toml
+│   └── archetypes/
+│       ├── enemy.toml
+│       └── pickup.toml
+├── scripts/
+│   ├── enemy_ai.rhai
+│   ├── weapon.rhai
+│   └── hud.rhai
+├── scenes/
+│   └── level_1.scene.toml
+├── sprites/
+│   └── imp.png
+└── audio/
+    ├── shotgun.ogg
+    └── imp_death.ogg
 ```
 
-This separation keeps game-specific data out of the engine directory, allowing multiple games to share the same engine schemas while defining their own components and archetypes.
+This separation keeps game-specific data out of the engine directory, allowing multiple games to share the same engine schemas while defining their own components and archetypes. See [Building a Game Project](../guides/building-a-game-project.md) for the full setup guide.
 
 ## Further Reading
 

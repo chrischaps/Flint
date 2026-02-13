@@ -1,9 +1,0 @@
-[component.health]
-description = "Health and damage state for combat entities"
-
-[component.health.fields]
-current = { type = "f32", default = 100.0, min = 0.0, description = "Current health points" }
-max = { type = "f32", default = 100.0, min = 1.0, description = "Maximum health points" }
-dead = { type = "bool", default = false, description = "Whether entity is dead" }
-invulnerable = { type = "bool", default = false, description = "Whether entity ignores damage" }
-damage_flash_timer = { type = "f32", default = 0.0, min = 0.0, description = "Countdown for damage visual flash" }

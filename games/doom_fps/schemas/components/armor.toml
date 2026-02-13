@@ -1,7 +1,0 @@
-[component.armor]
-description = "Damage absorption armor for combat entities"
-
-[component.armor.fields]
-current = { type = "f32", default = 0.0, min = 0.0, description = "Current armor points" }
-max = { type = "f32", default = 100.0, min = 0.0, description = "Maximum armor points" }
-absorption = { type = "f32", default = 0.33, min = 0.0, max = 1.0, description = "Fraction of damage absorbed by armor (0.33 = green, 0.5 = blue)" }

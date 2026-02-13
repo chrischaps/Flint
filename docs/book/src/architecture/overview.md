@@ -26,7 +26,6 @@ flint/
 │   ├── flint-schema/       # Component/archetype schema loading and validation
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
 ├── schemas/                # Default component, archetype, and constraint definitions
-├── games/                  # Game projects with their own schemas/scripts/scenes/assets
 ├── demo/                   # Showcase scenes and build scripts
 └── docs/                   # This documentation (mdBook)
 ```
