@@ -85,7 +85,7 @@
 
 ---
 
-## Task 6: Nukage Damage Floors
+## Task 6: Nukage Damage Floors ✅ DONE
 **Why**: E1M1's zigzag room has toxic green nukage that damages the player.
 
 **Work**:
@@ -93,8 +93,9 @@
 - Create `scripts/hazard_zone.rhai`: find player each frame, check if within bounds and below surface_y, apply periodic damage via `deal_damage`
 - Nukage floor entities use bright green material (color ~[0.1, 0.8, 0.1], low roughness for slight glow)
 - Controller entity is invisible (no geometry, just the script)
+- Note: `surface_y` must account for character controller height (~0.9 units above floor)
 
-**Files**: `hazard.toml`, `hazard_zone.rhai`
+**Files**: `hazard.toml`, `hazard_zone.rhai`, modified `e1m1_hangar.scene.toml` (nukage_hazard entity)
 
 ---
 
@@ -214,7 +215,7 @@ Task 1 (combat to game layer) ✅
   └─→ Task 4 (hitscan enemies) ✅
 
 Task 5 (doors) ✅
-Task 6 (nukage)        ─── independent (needs Task 1 for deal_damage)
+Task 6 (nukage) ✅
 Task 7 (secrets)       ─── independent
 Task 8 (exit + completion) ─── independent
 
@@ -224,4 +225,4 @@ Task 10 (populate) ─── needs Tasks 2-9 all done
 Task 11 (polish)   ─── needs Task 10
 ```
 
-**Progress**: 6/11 tasks complete. Next candidates: Tasks 6, 7, 8 (all independent, can be done in parallel).
+**Progress**: 7/11 tasks complete. Next candidates: Tasks 7, 8 (both independent, can be done in parallel).

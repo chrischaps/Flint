@@ -43,6 +43,15 @@ fn on_interact() {
         set_field(me, "secret", "state", "opening");
         set_field(me, "secret", "discovered", true);
         play_sound("audio/secret_found.ogg", 0.8);
+
+        // Report secret to level controller
+        let lc = get_entity("level_controller");
+        if lc >= 0 {
+            let secrets = get_field(lc, "level_state", "secret_count");
+            if secrets == () { secrets = 0; }
+            if type_of(secrets) == "f64" { secrets = secrets.to_int(); }
+            set_field(lc, "level_state", "secret_count", secrets + 1);
+        }
     }
 }
 

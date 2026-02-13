@@ -16,6 +16,9 @@ let prev_health = 100.0;
 let damage_flash = 0.0;
 let secret_flash = 0.0;
 let secret_was_found = false;
+let level_completed = false;
+let completion_fade = 0.0;
+let completion_show_time = 0.0;
 
 // ─── Pure helpers (no scope vars needed) ─────────────
 
@@ -86,6 +89,21 @@ fn on_update(dt) {
     } else {
         prompt_alpha = max(prompt_alpha - 5.0 * dt, 0.0);
     }
+
+    // ── Level completion detection ──
+    let lc = get_entity("level_controller");
+    if lc >= 0 {
+        let done = get_field(lc, "level_state", "completed");
+        if type_of(done) == "bool" && done && !level_completed {
+            level_completed = true;
+            completion_fade = 0.0;
+            completion_show_time = 0.0;
+        }
+        if level_completed {
+            completion_fade = min(completion_fade + dt * 2.0, 1.0);
+            completion_show_time += dt;
+        }
+    }
 }
 
 // ─── on_draw_ui: all drawing inline ────────────────────
@@ -93,6 +111,135 @@ fn on_update(dt) {
 fn on_draw_ui() {
     let sw = screen_width();
     let sh = screen_height();
+
+    // ── Level completion overlay ──
+    if level_completed && completion_fade > 0.01 {
+        let fade = completion_fade;
+
+        // Full-screen dark overlay (layer 10)
+        draw_rect_ex(0.0, 0.0, sw, sh, 0.0, 0.0, 0.0, 0.85 * fade, 0.0, 10);
+
+        // Read stats from level controller
+        let lc = get_entity("level_controller");
+        let kills = 0;
+        let total_enemies = 0;
+        let secrets = 0;
+        let total_secrets = 0;
+        let elapsed = 0.0;
+        let par = 0.0;
+        if lc >= 0 {
+            let k = get_field(lc, "level_state", "kill_count");
+            if k != () { kills = to_int_val(k); }
+            let te = get_field(lc, "level_state", "total_enemies");
+            if te != () { total_enemies = to_int_val(te); }
+            let s = get_field(lc, "level_state", "secret_count");
+            if s != () { secrets = to_int_val(s); }
+            let ts = get_field(lc, "level_state", "total_secrets");
+            if ts != () { total_secrets = to_int_val(ts); }
+            let e = get_field(lc, "level_state", "elapsed_time");
+            if e != () { elapsed = to_float(e); }
+            let p = get_field(lc, "level_state", "par_time");
+            if p != () { par = to_float(p); }
+        }
+
+        // Center column
+        let col_x = sw / 2.0;
+        let base_y = sh * 0.18;
+
+        // Title: level name
+        let title = "HANGAR";
+        let title_size = 42.0;
+        let title_m = measure_text(title, title_size);
+        draw_text_ex(col_x - title_m.width / 2.0, base_y, title, title_size,
+            1.0, 1.0, 1.0, fade, 11);
+
+        // Subtitle
+        let sub = "COMPLETE";
+        let sub_size = 22.0;
+        let sub_m = measure_text(sub, sub_size);
+        draw_text_ex(col_x - sub_m.width / 2.0, base_y + 50.0, sub, sub_size,
+            0.31, 0.86, 0.31, fade, 11);
+
+        // Decorative line
+        let line_w = 240.0;
+        draw_rect_ex(col_x - line_w / 2.0, base_y + 82.0, line_w, 2.0,
+            0.31, 0.86, 0.31, 0.5 * fade, 0.0, 11);
+
+        // ── Stat rows (staggered reveal) ──
+        let row_x_label = col_x - 120.0;
+        let row_x_val = col_x + 60.0;
+        let row_size = 20.0;
+        let row_y = base_y + 110.0;
+        let row_gap = 36.0;
+
+        // Kills row (appears at 0.3s)
+        if completion_show_time > 0.3 {
+            let kill_a = min((completion_show_time - 0.3) * 4.0, 1.0) * fade;
+            let kill_pct = if total_enemies > 0 { (kills * 100) / total_enemies } else { 0 };
+
+            // Color: green = 100%, yellow > 50%, gray otherwise
+            let kr = 0.6; let kg = 0.6; let kb = 0.6;
+            if total_enemies > 0 {
+                if kill_pct >= 100 { kr = 0.31; kg = 0.86; kb = 0.31; }
+                else if kill_pct > 50 { kr = 0.94; kg = 0.78; kb = 0.16; }
+            }
+
+            draw_text_ex(row_x_label, row_y, "KILLS", row_size, 0.7, 0.7, 0.7, kill_a, 11);
+            let kill_text = "" + kills + " / " + total_enemies + "  (" + kill_pct + "%)";
+            draw_text_ex(row_x_val, row_y, kill_text, row_size, kr, kg, kb, kill_a, 11);
+        }
+
+        // Secrets row (appears at 0.7s)
+        if completion_show_time > 0.7 {
+            let sec_a = min((completion_show_time - 0.7) * 4.0, 1.0) * fade;
+            let sec_pct = if total_secrets > 0 { (secrets * 100) / total_secrets } else { 0 };
+
+            let sr = 0.6; let sg = 0.6; let sb = 0.6;
+            if total_secrets > 0 {
+                if sec_pct >= 100 { sr = 0.31; sg = 0.86; sb = 0.31; }
+                else if sec_pct > 50 { sr = 0.94; sg = 0.78; sb = 0.16; }
+            }
+
+            draw_text_ex(row_x_label, row_y + row_gap, "SECRETS", row_size, 0.7, 0.7, 0.7, sec_a, 11);
+            let sec_text = "" + secrets + " / " + total_secrets + "  (" + sec_pct + "%)";
+            draw_text_ex(row_x_val, row_y + row_gap, sec_text, row_size, sr, sg, sb, sec_a, 11);
+        }
+
+        // Time row (appears at 1.1s)
+        if completion_show_time > 1.1 {
+            let time_a = min((completion_show_time - 1.1) * 4.0, 1.0) * fade;
+
+            let total_secs = elapsed.floor();
+            let mins = (total_secs / 60.0).floor();
+            let secs = total_secs - mins * 60.0;
+            let secs_i = secs.floor();
+            let time_str = "" + to_int_val(mins) + ":";
+            if secs_i < 10.0 { time_str += "0"; }
+            time_str += "" + to_int_val(secs_i);
+
+            draw_text_ex(row_x_label, row_y + row_gap * 2.0, "TIME", row_size, 0.7, 0.7, 0.7, time_a, 11);
+            draw_text_ex(row_x_val, row_y + row_gap * 2.0, time_str, row_size, 0.78, 0.78, 0.86, time_a, 11);
+
+            // Par time comparison
+            if par > 0.0 {
+                let par_secs = par.floor();
+                let par_mins = (par_secs / 60.0).floor();
+                let par_s = par_secs - par_mins * 60.0;
+                let par_s_i = par_s.floor();
+                let par_str = "PAR  " + to_int_val(par_mins) + ":";
+                if par_s_i < 10.0 { par_str += "0"; }
+                par_str += "" + to_int_val(par_s_i);
+
+                let pr = 0.94; let pg = 0.55; let pb = 0.16; // orange = over par
+                if elapsed <= par { pr = 0.31; pg = 0.86; pb = 0.31; } // green = under par
+
+                draw_text_ex(row_x_val, row_y + row_gap * 2.0 + 22.0, par_str, 14.0, pr, pg, pb, time_a * 0.8, 11);
+            }
+        }
+
+        // Suppress normal HUD once overlay is mostly opaque
+        if fade > 0.9 { return; }
+    }
 
     // ── Crosshair ──
     let cx = sw / 2.0;

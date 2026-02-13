@@ -53,6 +53,13 @@ fn on_init() {
 }
 
 fn on_update(dt) {
+    // Freeze when level is completed
+    let lc = get_entity("level_controller");
+    if lc >= 0 {
+        let done = get_field(lc, "level_state", "completed");
+        if type_of(done) == "bool" && done { return; }
+    }
+
     let enemy = get_component(this_entity(), "enemy");
     if enemy == () { return; }
 
@@ -410,6 +417,15 @@ fn enter_dead() {
             let pos = get_position(this_entity());
             play_sound_at(snd, pos.x, pos.y, pos.z, 0.7);
         }
+    }
+
+    // Report kill to level controller
+    let lc = get_entity("level_controller");
+    if lc >= 0 {
+        let kills = get_field(lc, "level_state", "kill_count");
+        if kills == () { kills = 0; }
+        if type_of(kills) == "f64" { kills = kills.to_int(); }
+        set_field(lc, "level_state", "kill_count", kills + 1);
     }
 }
 

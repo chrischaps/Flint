@@ -210,6 +210,13 @@ fn on_action(action) {
 // ─── Firing logic (supports multi-pellet spread) ──
 
 fn try_fire() {
+    // Block firing when level is completed
+    let lc = get_entity("level_controller");
+    if lc >= 0 {
+        let done = get_field(lc, "level_state", "completed");
+        if type_of(done) == "bool" && done { return; }
+    }
+
     let weapon = get_component(this_entity(), "weapon");
     if weapon == () { return; }
 
