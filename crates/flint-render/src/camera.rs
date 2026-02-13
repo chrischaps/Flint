@@ -39,6 +39,9 @@ pub struct Camera {
 
     /// Camera operating mode
     pub mode: CameraMode,
+
+    /// Use orthographic projection (true) or perspective (false)
+    pub orthographic: bool,
 }
 
 impl Default for Camera {
@@ -55,6 +58,7 @@ impl Default for Camera {
             yaw: std::f32::consts::FRAC_PI_4,
             pitch: std::f32::consts::FRAC_PI_6,
             mode: CameraMode::Orbit,
+            orthographic: false,
         }
     }
 }
@@ -91,8 +95,8 @@ impl Camera {
     /// Orbit vertically (tilt up/down)
     pub fn orbit_vertical(&mut self, delta: f32) {
         self.pitch += delta;
-        // Clamp pitch to avoid gimbal lock
-        self.pitch = self.pitch.clamp(-1.4, 1.4);
+        // Clamp pitch to avoid gimbal lock (1.56 ≈ 89.4° allows near-orthographic top/bottom views)
+        self.pitch = self.pitch.clamp(-1.56, 1.56);
         self.update_orbit();
     }
 
@@ -153,6 +157,14 @@ impl Camera {
 
     /// Get the projection matrix (4x4, column-major)
     pub fn projection_matrix(&self) -> [[f32; 4]; 4] {
+        if self.orthographic {
+            self.orthographic_matrix()
+        } else {
+            self.perspective_matrix()
+        }
+    }
+
+    fn perspective_matrix(&self) -> [[f32; 4]; 4] {
         let fov_rad = self.fov.to_radians();
         let f = 1.0 / (fov_rad / 2.0).tan();
 
@@ -163,6 +175,24 @@ impl Camera {
             [0.0, f, 0.0, 0.0],
             [0.0, 0.0, -(self.far + self.near) / depth, -1.0],
             [0.0, 0.0, -(2.0 * self.far * self.near) / depth, 0.0],
+        ]
+    }
+
+    fn orthographic_matrix(&self) -> [[f32; 4]; 4] {
+        // Size the ortho volume so objects at `distance` appear the same size as in perspective
+        let half_h = self.distance * (self.fov.to_radians() / 2.0).tan();
+        let half_w = half_h * self.aspect;
+        let depth = self.far - self.near;
+
+        // Column-major: m[col][row]
+        // Maps depth to [0, 1] (wgpu convention): z_view=-near → 0, z_view=-far → 1
+        // (The perspective matrix uses [-1,1] OpenGL convention which works due to
+        // hyperbolic 1/z mapping, but orthographic has w=1 so we need [0,1] directly)
+        [
+            [1.0 / half_w, 0.0, 0.0, 0.0],
+            [0.0, 1.0 / half_h, 0.0, 0.0],
+            [0.0, 0.0, -1.0 / depth, 0.0],
+            [0.0, 0.0, -self.near / depth, 1.0],
         ]
     }
 

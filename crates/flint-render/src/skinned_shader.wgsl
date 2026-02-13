@@ -408,13 +408,6 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var color = ambient + Lo;
 
-    // Selection highlight — Fresnel rim glow
-    if (material.selection_highlight == 1u) {
-        let rim = pow(1.0 - n_dot_v, 2.5);
-        let rim_color = vec3<f32>(0.35, 0.65, 1.0);
-        color = color + rim_color * rim * 0.7;
-    }
-
     if (material.enable_tonemapping == 1u) {
         let mapped = aces_filmic(color);
         let corrected = linear_to_srgb(mapped);

@@ -35,7 +35,7 @@ impl EntityInspector {
         // Transform
         let transform = world.get_transform(entity_id).unwrap_or_default();
         ui.separator();
-        ui.collapsing("Transform", |ui| {
+        egui::CollapsingHeader::new("Transform").default_open(true).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Position:");
                 ui.monospace(format!(
@@ -63,7 +63,7 @@ impl EntityInspector {
         if let Some(components) = world.get_components(entity_id) {
             for (comp_name, comp_value) in components.data.iter() {
                 ui.separator();
-                ui.collapsing(comp_name, |ui| {
+                egui::CollapsingHeader::new(comp_name).default_open(true).show(ui, |ui| {
                     display_toml_value(ui, comp_value);
                 });
             }

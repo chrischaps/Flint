@@ -114,17 +114,89 @@ fn fs_billboard(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    var out_color = color.rgb;
+    return vec4<f32>(color.rgb, 1.0);
+}
 
-    // Selection highlight — UV-edge rim glow
-    if (sprite.selection_highlight == 1u) {
-        // Use distance from UV center as rim proxy for flat billboards
-        let uv_centered = in.uv * 2.0 - 1.0;
-        let edge_dist = max(abs(uv_centered.x), abs(uv_centered.y));
-        let rim = smoothstep(0.5, 1.0, edge_dist);
-        let rim_color = vec3<f32>(0.35, 0.65, 1.0);
-        out_color = out_color + rim_color * rim * 0.7;
+// ===== Outline entry points for billboard sprites =====
+// Renders a slightly larger quad with solid orange, alpha-tested.
+// The normal-size sprite covers the interior, leaving only the outline visible.
+
+const OUTLINE_MARGIN: f32 = 0.08; // extra fraction of width/height for outline
+const OUTLINE_COLOR: vec4<f32> = vec4<f32>(1.0, 0.55, 0.0, 1.0);
+
+@vertex
+fn vs_billboard_outline(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
+    var local_x: f32;
+    var local_y: f32;
+    var u: f32;
+    var v: f32;
+
+    switch vertex_index {
+        case 0u: {
+            local_x = -0.5;
+            local_y = 0.0;
+            u = 0.0;
+            v = 1.0;
+        }
+        case 1u: {
+            local_x = 0.5;
+            local_y = 0.0;
+            u = 1.0;
+            v = 1.0;
+        }
+        case 2u: {
+            local_x = -0.5;
+            local_y = 1.0;
+            u = 0.0;
+            v = 0.0;
+        }
+        case 3u: {
+            local_x = 0.5;
+            local_y = 1.0;
+            u = 1.0;
+            v = 0.0;
+        }
+        default: {
+            local_x = 0.0;
+            local_y = 0.0;
+            u = 0.0;
+            v = 0.0;
+        }
     }
 
-    return vec4<f32>(out_color, 1.0);
+    let fx = f32(sprite.frames_x);
+    let fy = f32(sprite.frames_y);
+    let frame_col = f32(sprite.frame % sprite.frames_x);
+    let frame_row = f32(sprite.frame / sprite.frames_x);
+    let cell_w = 1.0 / fx;
+    let cell_h = 1.0 / fy;
+    let final_u = (frame_col + u) * cell_w;
+    let final_v = (frame_row + v) * cell_h;
+
+    let adjusted_y = local_y - sprite.anchor_y;
+
+    // Scale up the quad by the outline margin
+    let outline_w = sprite.width * (1.0 + OUTLINE_MARGIN);
+    let outline_h = sprite.height * (1.0 + OUTLINE_MARGIN);
+
+    let world = sprite.world_pos
+        + billboard.camera_right * local_x * outline_w
+        + billboard.camera_up * adjusted_y * outline_h;
+
+    var out: VertexOutput;
+    out.clip_position = billboard.view_proj * vec4<f32>(world, 1.0);
+    out.uv = vec2<f32>(final_u, final_v);
+    return out;
+}
+
+@fragment
+fn fs_billboard_outline(in: VertexOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(sprite_texture, sprite_sampler, in.uv);
+
+    // Only draw outline where the sprite has alpha (avoid orange rectangle)
+    if color.a < 0.5 {
+        discard;
+    }
+
+    return OUTLINE_COLOR;
 }

@@ -1,7 +1,7 @@
 //! Main viewer application — combines wgpu scene rendering with egui panels
 
 use anyhow::{Context, Result};
-use crate::panels::{EntityInspector, RenderStats, SceneTree};
+use crate::panels::{CameraView, EntityInspector, GizmoAction, RenderStats, SceneTree, ViewGizmo};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
@@ -12,12 +12,12 @@ use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 struct ViewerState {
@@ -122,6 +122,7 @@ pub struct ViewerApp {
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     right_mouse_pressed: bool,
+    modifiers: ModifiersState,
 
     // egui state
     egui_ctx: egui::Context,
@@ -133,6 +134,11 @@ pub struct ViewerApp {
     scene_tree: SceneTree,
     entity_inspector: EntityInspector,
     render_stats: RenderStats,
+    view_gizmo: ViewGizmo,
+
+    // Camera snap animation
+    camera_snap_target: Option<(f32, f32)>,
+    last_frame_time: Instant,
 
     // Constraint violations cache
     violation_count: usize,
@@ -150,6 +156,7 @@ impl ViewerApp {
             mouse_pressed: false,
             last_mouse_pos: None,
             right_mouse_pressed: false,
+            modifiers: ModifiersState::empty(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -157,6 +164,9 @@ impl ViewerApp {
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
+            view_gizmo: ViewGizmo::new(),
+            camera_snap_target: None,
+            last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
         }
@@ -254,6 +264,9 @@ impl ViewerApp {
             return;
         }
 
+        // Animate camera snap transitions
+        self.animate_camera();
+
         let output = match self
             .render_context
             .as_ref()
@@ -283,30 +296,72 @@ impl ViewerApp {
             renderer.render(context, &self.camera, &view).ok();
         }
 
-        // Render egui overlay if inspector is enabled
-        if self.show_inspector {
-            self.render_egui(&view);
+        // Always render egui overlay (gizmo is always visible, panels are conditional)
+        let gizmo_action = self.render_egui(&view);
+
+        // Process gizmo interaction
+        if let Some(action) = gizmo_action {
+            match action {
+                GizmoAction::SnapToView { yaw, pitch } => {
+                    self.camera_snap_target = Some((yaw, pitch));
+                    self.camera.orthographic = true;
+                }
+                GizmoAction::OrbitDelta { dyaw, dpitch } => {
+                    self.camera.orbit_horizontal(dyaw);
+                    self.camera.orbit_vertical(dpitch);
+                    self.camera_snap_target = None;
+                    self.camera.orthographic = false;
+                }
+                GizmoAction::SwitchToPerspective => {
+                    self.camera.orthographic = false;
+                }
+            }
         }
 
         output.present();
     }
 
-    fn render_egui(&mut self, target_view: &wgpu::TextureView) {
+    fn animate_camera(&mut self) {
+        let now = Instant::now();
+        let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
+        self.last_frame_time = now;
+
+        if let Some((target_yaw, target_pitch)) = self.camera_snap_target {
+            let t = 1.0 - (-12.0 * dt).exp();
+            self.camera.yaw = lerp_angle(self.camera.yaw, target_yaw, t);
+            self.camera.pitch = lerp(self.camera.pitch, target_pitch, t);
+            self.camera.update_orbit();
+
+            let remaining = shortest_angle_diff(self.camera.yaw, target_yaw).abs()
+                + (self.camera.pitch - target_pitch).abs();
+            if remaining < 0.002 {
+                self.camera.yaw = target_yaw;
+                self.camera.pitch = target_pitch;
+                self.camera.update_orbit();
+                self.camera_snap_target = None;
+            }
+        }
+    }
+
+    fn render_egui(&mut self, target_view: &wgpu::TextureView) -> Option<GizmoAction> {
         // Extract references to disjoint fields to satisfy the borrow checker
         let window = match &self.window {
             Some(w) => w.clone(),
-            None => return,
+            None => return None,
         };
         let context = match &self.render_context {
             Some(c) => c,
-            None => return,
+            None => return None,
         };
         let egui_winit = match &mut self.egui_winit {
             Some(e) => e,
-            None => return,
+            None => return None,
         };
 
         let raw_input = egui_winit.take_egui_input(&window);
+
+        // Snapshot camera state for gizmo (avoids holding &self.camera across the closure)
+        let cam_view = CameraView::from_camera(&self.camera);
 
         // Build the UI — we need to collect data for the closure without borrowing self
         let scene_tree = &mut self.scene_tree;
@@ -315,62 +370,71 @@ impl ViewerApp {
         let violation_count = self.violation_count;
         let violation_messages = &self.violation_messages;
         let state = &self.state;
+        let view_gizmo = &mut self.view_gizmo;
+        let show_panels = self.show_inspector;
+
+        let mut gizmo_action = None;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            // Left side panel: scene tree
-            egui::SidePanel::left("scene_tree_panel")
-                .default_width(220.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    scene_tree.ui(ui);
-                });
+            if show_panels {
+                // Left side panel: scene tree
+                egui::SidePanel::left("scene_tree_panel")
+                    .default_width(220.0)
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        scene_tree.ui(ui);
+                    });
 
-            // Right side panel: entity inspector
-            egui::SidePanel::right("inspector_panel")
-                .default_width(300.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    let selected = scene_tree.selected_entity();
-                    if let Some(entity_id) = selected {
-                        let st = state.lock().unwrap();
-                        entity_inspector.ui(ui, &st.world, entity_id);
-                    } else {
-                        ui.heading("Entity Inspector");
-                        ui.label("Select an entity in the scene tree.");
-                    }
-                });
-
-            // Bottom panel: stats + constraint violations
-            egui::TopBottomPanel::bottom("status_panel")
-                .default_height(100.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        render_stats.ui(ui);
-                        ui.separator();
-
-                        if violation_count == 0 {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(100, 200, 100),
-                                "No violations",
-                            );
+                // Right side panel: entity inspector
+                egui::SidePanel::right("inspector_panel")
+                    .default_width(300.0)
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        let selected = scene_tree.selected_entity();
+                        if let Some(entity_id) = selected {
+                            let st = state.lock().unwrap();
+                            entity_inspector.ui(ui, &st.world, entity_id);
                         } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(255, 100, 100),
-                                format!("{} violation(s)", violation_count),
-                            );
+                            ui.heading("Entity Inspector");
+                            ui.label("Select an entity in the scene tree.");
                         }
                     });
 
-                    if !violation_messages.is_empty() {
-                        ui.separator();
-                        egui::ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
-                            for msg in violation_messages {
-                                ui.label(msg);
+                // Bottom panel: stats + constraint violations
+                egui::TopBottomPanel::bottom("status_panel")
+                    .default_height(100.0)
+                    .resizable(true)
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            render_stats.ui(ui);
+                            ui.separator();
+
+                            if violation_count == 0 {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(100, 200, 100),
+                                    "No violations",
+                                );
+                            } else {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 100, 100),
+                                    format!("{} violation(s)", violation_count),
+                                );
                             }
                         });
-                    }
-                });
+
+                        if !violation_messages.is_empty() {
+                            ui.separator();
+                            egui::ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
+                                for msg in violation_messages {
+                                    ui.label(msg);
+                                }
+                            });
+                        }
+                    });
+            }
+
+            // View orientation gizmo (always visible)
+            gizmo_action = view_gizmo.draw(ctx, &cam_view);
         });
 
         egui_winit.handle_platform_output(&window, full_output.platform_output);
@@ -434,6 +498,8 @@ impl ViewerApp {
         }
 
         self.egui_renderer = Some(egui_renderer);
+
+        gizmo_action
     }
 
     fn check_reload(&mut self) {
@@ -616,6 +682,28 @@ impl ApplicationHandler for ViewerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Track modifier keys
+        if let WindowEvent::ModifiersChanged(mods) = &event {
+            self.modifiers = mods.state();
+        }
+
+        // Handle Tab as a global shortcut before egui can consume it.
+        // Only toggle when no modifiers are held — prevents Alt+Tab from triggering.
+        if let WindowEvent::KeyboardInput { event: ref key_event, .. } = event {
+            if key_event.state == ElementState::Pressed
+                && !key_event.repeat
+                && key_event.physical_key == PhysicalKey::Code(KeyCode::Tab)
+                && self.modifiers.is_empty()
+            {
+                self.show_inspector = !self.show_inspector;
+                println!(
+                    "Inspector: {}",
+                    if self.show_inspector { "ON" } else { "OFF" }
+                );
+                return;
+            }
+        }
+
         // Let egui handle the event first
         if let Some(egui_winit) = &mut self.egui_winit {
             if let Some(window) = &self.window {
@@ -702,13 +790,6 @@ impl ApplicationHandler for ViewerApp {
                                 println!("Shadows: {}", if on { "ON" } else { "OFF" });
                             }
                         }
-                        PhysicalKey::Code(KeyCode::Tab) => {
-                            self.show_inspector = !self.show_inspector;
-                            println!(
-                                "Inspector: {}",
-                                if self.show_inspector { "ON" } else { "OFF" }
-                            );
-                        }
                         _ => {}
                     }
                 }
@@ -732,10 +813,13 @@ impl ApplicationHandler for ViewerApp {
                     if self.mouse_pressed {
                         self.camera.orbit_horizontal(-dx * 0.01);
                         self.camera.orbit_vertical(-dy * 0.01);
+                        self.camera_snap_target = None;
+                        self.camera.orthographic = false;
                     }
 
                     if self.right_mouse_pressed {
                         self.camera.pan(-dx * 0.02, dy * 0.02);
+                        self.camera_snap_target = None;
                     }
                 }
 
@@ -764,4 +848,26 @@ impl ApplicationHandler for ViewerApp {
             window.request_redraw();
         }
     }
+}
+
+// --- Angle interpolation helpers ---
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn shortest_angle_diff(from: f32, to: f32) -> f32 {
+    use std::f32::consts::PI;
+    let mut diff = to - from;
+    while diff > PI {
+        diff -= 2.0 * PI;
+    }
+    while diff < -PI {
+        diff += 2.0 * PI;
+    }
+    diff
+}
+
+fn lerp_angle(from: f32, to: f32, t: f32) -> f32 {
+    from + shortest_angle_diff(from, to) * t
 }

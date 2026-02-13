@@ -1670,14 +1670,6 @@ impl SceneRenderer {
                 32,
                 bytemuck::cast_slice(&[tonemapping_u32]),
             );
-
-            // Write selection_highlight at byte offset 48
-            let highlight: u32 = if self.selected_entity == draw.entity_id && draw.entity_id.is_some() { 1 } else { 0 };
-            queue.write_buffer(
-                &draw.material_buffer,
-                48,
-                bytemuck::cast_slice(&[highlight]),
-            );
         }
 
         // Update skinned entity transforms
@@ -1700,14 +1692,6 @@ impl SceneRenderer {
                 &draw.material_buffer,
                 32,
                 bytemuck::cast_slice(&[tonemapping_u32]),
-            );
-
-            // Write selection_highlight at byte offset 48
-            let highlight: u32 = if self.selected_entity == draw.entity_id && draw.entity_id.is_some() { 1 } else { 0 };
-            queue.write_buffer(
-                &draw.material_buffer,
-                48,
-                bytemuck::cast_slice(&[highlight]),
             );
         }
 
@@ -1740,14 +1724,6 @@ impl SceneRenderer {
                     &draw.billboard_buffer,
                     0,
                     bytemuck::cast_slice(&[billboard_uniforms]),
-                );
-
-                // Write selection_highlight at byte offset 40 in sprite buffer
-                let highlight: u32 = if self.selected_entity == draw.entity_id && draw.entity_id.is_some() { 1 } else { 0 };
-                queue.write_buffer(
-                    &draw.sprite_buffer,
-                    40,
-                    bytemuck::cast_slice(&[highlight]),
                 );
             }
         }
@@ -1812,9 +1788,75 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
             }
 
-            // In WireframeOnly mode: render overlay draws with line pipeline instead of entities
+            // In WireframeOnly mode: depth prepass masks outline interior,
+            // then outline, then wireframe lines on top.
             if wireframe_only {
-                render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                if let Some(sel_id) = self.selected_entity {
+                    // Step 1: Depth prepass — write front-face depth (no color)
+                    // so the outline interior is blocked by the depth buffer.
+                    render_pass.set_pipeline(&self.pipeline.depth_prepass_pipeline);
+                    for draw in &self.entity_draws {
+                        if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
+                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+
+                    if let Some(sp) = &self.skinned_pipeline {
+                        render_pass.set_pipeline(&sp.depth_prepass_pipeline);
+                        for draw in &self.skinned_entity_draws {
+                            if draw.entity_id == Some(sel_id) {
+                                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                                render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(
+                                    draw.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                            }
+                        }
+                    }
+
+                    // Step 2: Outline — back faces pushed out, only visible at silhouette
+                    render_pass.set_pipeline(&self.pipeline.outline_pipeline);
+                    for draw in &self.entity_draws {
+                        if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
+                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+
+                    if let Some(sp) = &self.skinned_pipeline {
+                        render_pass.set_pipeline(&sp.outline_pipeline);
+                        for draw in &self.skinned_entity_draws {
+                            if draw.entity_id == Some(sel_id) {
+                                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                                render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(
+                                    draw.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                            }
+                        }
+                    }
+                }
+
+                // Step 3: Wireframe lines — use overlay pipeline (LessEqual + bias)
+                // so lines draw on top of the depth prepass.
+                render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
                 for draw in &self.wireframe_overlay_draws {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
@@ -1829,7 +1871,7 @@ impl SceneRenderer {
                 // Also render entities that are already wireframe (rooms etc.)
                 for draw in &self.entity_draws {
                     if draw.is_wireframe {
-                        render_pass.set_pipeline(&self.pipeline.line_pipeline);
+                        render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
                         render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                         render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                         render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -1841,6 +1883,22 @@ impl SceneRenderer {
                     }
                 }
             } else {
+                // Outline pass for selected standard entities (before normal rendering)
+                if let Some(sel_id) = self.selected_entity {
+                    render_pass.set_pipeline(&self.pipeline.outline_pipeline);
+                    for draw in &self.entity_draws {
+                        if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
+                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
                 // Normal entity rendering
                 for draw in &self.entity_draws {
                     if draw.is_wireframe {
@@ -1858,6 +1916,25 @@ impl SceneRenderer {
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
+                // Outline pass for selected skinned entities
+                if let Some(sel_id) = self.selected_entity {
+                    if let Some(sp) = &self.skinned_pipeline {
+                        render_pass.set_pipeline(&sp.outline_pipeline);
+                        for draw in &self.skinned_entity_draws {
+                            if draw.entity_id == Some(sel_id) {
+                                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                                render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                                render_pass.set_index_buffer(
+                                    draw.index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                            }
+                        }
+                    }
+                }
+
                 // Render skinned entities
                 if let Some(sp) = &self.skinned_pipeline {
                     if !self.skinned_entity_draws.is_empty() {
@@ -1873,6 +1950,24 @@ impl SceneRenderer {
                                 wgpu::IndexFormat::Uint32,
                             );
                             render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
+                // Outline pass for selected billboards
+                if let Some(sel_id) = self.selected_entity {
+                    if let Some(bp) = &self.billboard_pipeline {
+                        render_pass.set_pipeline(&bp.outline_pipeline);
+                        for draw in &self.billboard_draws {
+                            if draw.entity_id == Some(sel_id) {
+                                render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
+                                render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
+                                render_pass.set_index_buffer(
+                                    bp.quad_index_buffer.slice(..),
+                                    wgpu::IndexFormat::Uint32,
+                                );
+                                render_pass.draw_indexed(0..6, 0, 0..1);
+                            }
                         }
                     }
                 }

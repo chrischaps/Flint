@@ -45,6 +45,7 @@ pub struct BillboardDrawCall {
 /// The billboard rendering pipeline
 pub struct BillboardPipeline {
     pub pipeline: wgpu::RenderPipeline,
+    pub outline_pipeline: wgpu::RenderPipeline,
     pub billboard_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     /// Shared index buffer for unit quad (6 indices: 2 triangles)
@@ -166,8 +167,50 @@ impl BillboardPipeline {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        // Billboard outline pipeline (scaled-up quad, solid orange, alpha-tested)
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Billboard Outline Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_billboard_outline"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_billboard_outline"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // Billboards are double-sided
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             pipeline,
+            outline_pipeline,
             billboard_bind_group_layout,
             texture_bind_group_layout,
             quad_index_buffer,
