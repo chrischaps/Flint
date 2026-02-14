@@ -79,7 +79,8 @@ fn on_init() {
 
 // ─── Per-frame update ──
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let weapon = get_component(this_entity(), "weapon");
     if weapon == () { return; }
 

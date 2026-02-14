@@ -8,7 +8,17 @@ use std::collections::HashMap;
 pub struct SceneFile {
     pub scene: SceneMetadata,
     #[serde(default)]
+    pub environment: Option<EnvironmentDef>,
+    #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
+}
+
+/// Environment settings for the scene (skybox, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentDef {
+    /// Path to equirectangular panorama image for the skybox
+    #[serde(default)]
+    pub skybox: Option<String>,
 }
 
 /// Scene metadata
@@ -79,6 +89,7 @@ impl SceneFile {
                 version: default_version(),
                 description: None,
             },
+            environment: None,
             entities: HashMap::new(),
         }
     }

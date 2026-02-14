@@ -12,7 +12,8 @@ fn on_init() {
     log("The stranger watches from the shadows...");
 }
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let me = self_entity();
     let player = get_entity("player");
     if player < 0 { return; }

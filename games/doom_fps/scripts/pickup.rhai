@@ -36,7 +36,8 @@ fn on_init() {
     initial_y = pos.y;
 }
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let pickup = get_component(this_entity(), "pickup");
     if pickup == () { return; }
 

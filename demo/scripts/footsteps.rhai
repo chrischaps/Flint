@@ -6,7 +6,8 @@ let step_timer = 0.0;
 let step_interval = 0.4;
 let sprint_interval = 0.25;
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let me = self_entity();
 
     // Check if any movement key is pressed

@@ -50,7 +50,8 @@ fn find_player() {
 
 // ─── Per-frame update ──
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let me = this_entity();
     let hz = get_component(me, "hazard");
     if hz == () { return; }

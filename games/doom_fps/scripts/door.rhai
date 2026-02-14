@@ -74,7 +74,8 @@ fn on_interact() {
 
 // ─── Frame update — drive the state machine ─────────
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let me = this_entity();
     let door = get_component(me, "door_state");
     if door == () { return; }

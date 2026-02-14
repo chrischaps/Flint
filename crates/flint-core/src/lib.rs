@@ -9,6 +9,7 @@
 mod error;
 mod hash;
 mod id;
+pub mod spline;
 mod types;
 
 pub use error::{FlintError, Result};

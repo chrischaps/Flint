@@ -63,6 +63,12 @@ fn main() -> Result<()> {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = PlayerApp::new(world, args.scene, args.fullscreen);
+
+    // Pass skybox path from scene environment settings
+    if let Some(env) = &scene_file.environment {
+        app.skybox_path = env.skybox.clone();
+    }
+
     event_loop.run_app(&mut app)?;
 
     Ok(())

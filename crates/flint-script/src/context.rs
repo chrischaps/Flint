@@ -125,6 +125,9 @@ pub struct ScriptCallContext {
     /// Screen dimensions in pixels (set before scripts run)
     pub screen_width: f32,
     pub screen_height: f32,
+    /// Script-driven camera overrides (set by set_camera_position/set_camera_target)
+    pub camera_position_override: Option<[f32; 3]>,
+    pub camera_target_override: Option<[f32; 3]>,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -153,6 +156,8 @@ impl ScriptCallContext {
             total_time: 0.0,
             screen_width: 1280.0,
             screen_height: 720.0,
+            camera_position_override: None,
+            camera_target_override: None,
         }
     }
 

@@ -302,6 +302,52 @@ impl PhysicsSync {
     pub fn is_synced(&self, entity_id: EntityId) -> bool {
         self.synced_entities.contains(&entity_id)
     }
+
+    /// Register a trimesh collider from raw geometry and attach it to an existing rigid body.
+    /// Used for procedural geometry like track surfaces that can't be approximated by primitives.
+    pub fn register_trimesh(
+        &mut self,
+        entity_id: EntityId,
+        physics: &mut PhysicsWorld,
+        vertices: Vec<[f32; 3]>,
+        indices: Vec<[u32; 3]>,
+        body_handle: RigidBodyHandle,
+        friction: f32,
+        restitution: f32,
+    ) {
+        let rapier_vertices: Vec<rapier3d::na::Point3<f32>> = vertices
+            .into_iter()
+            .map(|v| rapier3d::na::Point3::new(v[0], v[1], v[2]))
+            .collect();
+
+        let shape = SharedShape::trimesh(rapier_vertices, indices);
+        let collider = ColliderBuilder::new(shape)
+            .friction(friction)
+            .restitution(restitution)
+            .build();
+
+        let col_handle = physics.insert_collider_with_parent(collider, body_handle);
+        self.collider_map.insert(entity_id, col_handle);
+        self.synced_entities.insert(entity_id);
+    }
+
+    /// Create a static rigid body for a trimesh entity and return its handle.
+    /// Convenience method for registering static track geometry.
+    pub fn register_static_trimesh(
+        &mut self,
+        entity_id: EntityId,
+        physics: &mut PhysicsWorld,
+        vertices: Vec<[f32; 3]>,
+        indices: Vec<[u32; 3]>,
+        friction: f32,
+        restitution: f32,
+    ) {
+        let body = RigidBodyBuilder::fixed().build();
+        let body_handle = physics.insert_rigid_body(body);
+        self.body_map.insert(entity_id, body_handle);
+
+        self.register_trimesh(entity_id, physics, vertices, indices, body_handle, friction, restitution);
+    }
 }
 
 /// Compute the center offset of a bounds component

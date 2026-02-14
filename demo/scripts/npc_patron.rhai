@@ -13,7 +13,7 @@ fn on_init() {
     }
 }
 
-fn on_update(dt) {
+fn on_update() {
 
     let me = self_entity();
     let t = total_time();

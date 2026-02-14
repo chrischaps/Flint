@@ -50,7 +50,8 @@ fn on_init() {
     set_field(this_entity(), "enemy", "state", "idle");
 }
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let enemy = get_component(this_entity(), "enemy");
     if enemy == () { return; }
 

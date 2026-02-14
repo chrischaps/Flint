@@ -167,8 +167,9 @@ fn on_init() {
     log("Entity initialized");
 }
 
-fn on_update(dt) {
-    // Called every frame with delta time
+fn on_update() {
+    let dt = delta_time();
+    // Called every frame — use delta_time() for frame delta
 }
 
 fn on_interact() {

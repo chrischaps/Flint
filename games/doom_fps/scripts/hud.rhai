@@ -40,7 +40,8 @@ fn to_int_val(v) {
 
 // ─── on_update: track health changes for damage flash ──
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let player = find_player();
     if player < 0 { return; }
 

@@ -55,6 +55,7 @@ impl InputState {
 
     fn default_action_map() -> HashMap<String, Vec<KeyCode>> {
         let mut map = HashMap::new();
+        // FPS defaults
         map.insert("move_forward".into(), vec![KeyCode::KeyW]);
         map.insert("move_backward".into(), vec![KeyCode::KeyS]);
         map.insert("move_left".into(), vec![KeyCode::KeyA]);
@@ -65,6 +66,12 @@ impl InputState {
         map.insert("weapon_1".into(), vec![KeyCode::Digit1]);
         map.insert("weapon_2".into(), vec![KeyCode::Digit2]);
         map.insert("reload".into(), vec![KeyCode::KeyR]);
+        // Kart defaults (overlap with FPS keys is intentional — game scripts use whichever they need)
+        map.insert("accelerate".into(), vec![KeyCode::KeyW, KeyCode::ArrowUp]);
+        map.insert("brake".into(), vec![KeyCode::KeyS, KeyCode::ArrowDown]);
+        map.insert("steer_left".into(), vec![KeyCode::KeyA, KeyCode::ArrowLeft]);
+        map.insert("steer_right".into(), vec![KeyCode::KeyD, KeyCode::ArrowRight]);
+        map.insert("restart".into(), vec![KeyCode::KeyR]);
         map
     }
 
@@ -182,6 +189,17 @@ impl InputState {
             }
         }
         result
+    }
+
+    /// Get all registered action names (keyboard + mouse button maps)
+    pub fn action_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.action_map.keys().cloned().collect();
+        for name in self.mouse_button_map.keys() {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        names
     }
 
     /// Get the mouse movement delta this frame
