@@ -91,6 +91,14 @@ impl ScriptSystem {
     pub fn drain_draw_commands(&mut self) -> Vec<DrawCommand> {
         self.engine.drain_draw_commands()
     }
+
+    /// Take camera overrides set by scripts this frame (clears them)
+    pub fn take_camera_overrides(&mut self) -> (Option<[f32; 3]>, Option<[f32; 3]>) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        let pos = c.camera_position_override.take();
+        let target = c.camera_target_override.take();
+        (pos, target)
+    }
 }
 
 impl Default for ScriptSystem {
@@ -120,7 +128,7 @@ impl RuntimeSystem for ScriptSystem {
         Ok(())
     }
 
-    fn update(&mut self, world: &mut FlintWorld, dt: f64) -> Result<()> {
+    fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
         // Check for hot-reloaded scripts
         self.sync.check_hot_reload(&mut self.engine);
 
@@ -134,8 +142,8 @@ impl RuntimeSystem for ScriptSystem {
         let events = std::mem::take(&mut self.pending_events);
         self.engine.process_events(&events, world);
 
-        // Call on_update(dt) for all scripts
-        self.engine.call_updates(world, dt);
+        // Call on_update() for all scripts
+        self.engine.call_updates(world);
 
         Ok(())
     }
@@ -153,24 +161,18 @@ impl RuntimeSystem for ScriptSystem {
     }
 }
 
-/// Snapshot which actions are pressed/just-pressed from InputState
+/// Snapshot which actions are pressed/just-pressed from InputState.
+/// Dynamically iterates all registered action names instead of a hard-coded list.
 fn snapshot_actions(input: &InputState, pressed: bool) -> std::collections::HashSet<String> {
-    // Check known action names
-    let action_names = [
-        "move_forward", "move_backward", "move_left", "move_right",
-        "jump", "interact", "sprint",
-        "fire", "weapon_1", "weapon_2", "reload",
-    ];
-
     let mut set = std::collections::HashSet::new();
-    for action in &action_names {
+    for action in input.action_names() {
         let active = if pressed {
-            input.is_action_pressed(action)
+            input.is_action_pressed(&action)
         } else {
-            input.is_action_just_pressed(action)
+            input.is_action_just_pressed(&action)
         };
         if active {
-            set.insert(action.to_string());
+            set.insert(action);
         }
     }
     set

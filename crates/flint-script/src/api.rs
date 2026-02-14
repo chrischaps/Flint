@@ -489,6 +489,24 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             map
         });
     }
+
+    // set_camera_position(x, y, z) — override camera position from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_position", move |x: f64, y: f64, z: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_position_override = Some([x as f32, y as f32, z as f32]);
+        });
+    }
+
+    // set_camera_target(x, y, z) — override camera look-at target from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_target", move |x: f64, y: f64, z: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_target_override = Some([x as f32, y as f32, z as f32]);
+        });
+    }
 }
 
 // ─── Math API ────────────────────────────────────────────
@@ -532,6 +550,42 @@ fn register_math_api(engine: &mut Engine) {
     engine.register_fn("min", |a: f64, b: f64| -> f64 { a.min(b) });
     engine.register_fn("max", |a: f64, b: f64| -> f64 { a.max(b) });
     engine.register_fn("atan2", |y: f64, x: f64| -> f64 { y.atan2(x) });
+
+    // Constants
+    engine.register_fn("PI", || -> f64 { std::f64::consts::PI });
+    engine.register_fn("TAU", || -> f64 { std::f64::consts::TAU });
+
+    // Angle conversion
+    engine.register_fn("deg_to_rad", |degrees: f64| -> f64 {
+        degrees * std::f64::consts::PI / 180.0
+    });
+    engine.register_fn("rad_to_deg", |radians: f64| -> f64 {
+        radians * 180.0 / std::f64::consts::PI
+    });
+
+    // Direction helpers — encode the Y-up, right-handed coordinate system
+    // FORWARD = (0, 0, -1), RIGHT = (1, 0, 0), rotated by yaw around Y
+    engine.register_fn("forward_from_yaw", |yaw_degrees: f64| -> Map {
+        let yaw_rad = yaw_degrees * std::f64::consts::PI / 180.0;
+        let mut map = Map::new();
+        map.insert("x".into(), Dynamic::from(-yaw_rad.sin()));
+        map.insert("y".into(), Dynamic::from(0.0_f64));
+        map.insert("z".into(), Dynamic::from(-yaw_rad.cos()));
+        map
+    });
+    engine.register_fn("right_from_yaw", |yaw_degrees: f64| -> Map {
+        let yaw_rad = yaw_degrees * std::f64::consts::PI / 180.0;
+        let mut map = Map::new();
+        map.insert("x".into(), Dynamic::from(yaw_rad.cos()));
+        map.insert("y".into(), Dynamic::from(0.0_f64));
+        map.insert("z".into(), Dynamic::from(-yaw_rad.sin()));
+        map
+    });
+
+    // Angle wrapping — normalizes degrees to [0, 360)
+    engine.register_fn("wrap_angle", |degrees: f64| -> f64 {
+        ((degrees % 360.0) + 360.0) % 360.0
+    });
 }
 
 // ─── Event + Log API ─────────────────────────────────────

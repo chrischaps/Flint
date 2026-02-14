@@ -15,6 +15,7 @@ mod pipeline;
 mod primitives;
 mod scene_renderer;
 pub mod shadow;
+pub mod skybox_pipeline;
 pub mod skinned_pipeline;
 mod texture_cache;
 
@@ -33,6 +34,7 @@ pub use primitives::{
 };
 pub use scene_renderer::{ArchetypeVisual, SceneRenderer};
 pub use billboard_pipeline::BillboardPipeline;
+pub use skybox_pipeline::SkyboxPipeline;
 pub use skinned_pipeline::SkinnedPipeline;
 pub use texture_cache::TextureCache;
 
@@ -66,5 +68,11 @@ mod tests {
     fn outline_shader_wgsl_parses() {
         let source = include_str!("outline_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("outline_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn skybox_shader_wgsl_parses() {
+        let source = include_str!("skybox_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("skybox_shader.wgsl failed to parse");
     }
 }

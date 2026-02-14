@@ -39,7 +39,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | Callback | Signature | When It Fires |
 |----------|-----------|---------------|
 | `on_init` | `fn on_init()` | Once when the script is first loaded |
-| `on_update` | `fn on_update(dt)` | Every frame, with delta time in seconds |
+| `on_update` | `fn on_update()` | Every frame. Use `delta_time()` for frame delta |
 | `on_collision` | `fn on_collision(other_id)` | When this entity collides with another |
 | `on_trigger_enter` | `fn on_trigger_enter(other_id)` | When another entity enters a trigger volume |
 | `on_trigger_exit` | `fn on_trigger_exit(other_id)` | When another entity exits a trigger volume |
@@ -118,23 +118,42 @@ Animation functions write directly to the `animator` component on the target ent
 | `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
 | `set_anim_speed(entity_id, speed)` | Set animation playback speed |
 
+### Coordinate System
+
+Flint uses a **Y-up, right-handed** coordinate system:
+
+- **Forward** = `-Z` (into the screen)
+- **Right** = `+X`
+- **Up** = `+Y`
+
+Euler angles are stored as `(pitch, yaw, roll)` in **degrees**, applied in ZYX order. Positive yaw rotates counter-clockwise when viewed from above (i.e., turns left).
+
+Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a yaw angle into a world-space direction vector. These encode the coordinate convention so scripts don't need to compute the trig manually.
+
 ### Math API
 
 | Function | Returns | Description |
 |----------|---------|-------------|
+| `PI()` | `f64` | The constant π (3.14159...) |
+| `TAU()` | `f64` | The constant τ = 2π (6.28318...) |
+| `deg_to_rad(degrees)` | `f64` | Convert degrees to radians |
+| `rad_to_deg(radians)` | `f64` | Convert radians to degrees |
+| `forward_from_yaw(yaw_deg)` | `Map` | Forward direction vector `#{x, y, z}` for a given yaw in degrees |
+| `right_from_yaw(yaw_deg)` | `Map` | Right direction vector `#{x, y, z}` for a given yaw in degrees |
+| `wrap_angle(degrees)` | `f64` | Normalize an angle to `[0, 360)` |
 | `clamp(val, min, max)` | `f64` | Clamp a value to a range |
 | `lerp(a, b, t)` | `f64` | Linear interpolation between `a` and `b` |
 | `random()` | `f64` | Random value in `[0, 1)` |
 | `random_range(min, max)` | `f64` | Random value in `[min, max)` |
-| `sin(x)` | `f64` | Sine |
-| `cos(x)` | `f64` | Cosine |
+| `sin(x)` | `f64` | Sine (radians) |
+| `cos(x)` | `f64` | Cosine (radians) |
 | `abs(x)` | `f64` | Absolute value |
 | `sqrt(x)` | `f64` | Square root |
 | `floor(x)` | `f64` | Floor |
 | `ceil(x)` | `f64` | Ceiling |
 | `min(a, b)` | `f64` | Minimum of two values |
 | `max(a, b)` | `f64` | Maximum of two values |
-| `atan2(y, x)` | `f64` | Two-argument arctangent |
+| `atan2(y, x)` | `f64` | Two-argument arctangent (radians) |
 
 ### Event API
 
@@ -302,7 +321,7 @@ fn on_interact() {
 ```rust
 // scripts/torch_flicker.rhai
 
-fn on_update(dt) {
+fn on_update() {
     let me = self_entity();
     let t = total_time();
 
@@ -350,7 +369,7 @@ on_init ──► ScriptEngine.call_inits()
             per-entity Scope + AST
                 │
                 ▼
-on_update ──► ScriptEngine.call_updates(dt)
+on_update ──► ScriptEngine.call_updates()
                 │
                 ▼
 events ────► ScriptEngine.process_events()

@@ -231,7 +231,7 @@ impl Camera {
     }
 }
 
-fn mat4_mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+pub(crate) fn mat4_mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     let mut result = [[0.0; 4]; 4];
     for i in 0..4 {
         for j in 0..4 {
@@ -244,7 +244,7 @@ fn mat4_mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
 }
 
 /// Compute the inverse of a 4x4 column-major matrix using cofactor expansion
-fn mat4_inverse(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+pub(crate) fn mat4_inverse(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     // Flatten column-major to indexable
     let s = |col: usize, row: usize| -> f32 { m[col][row] };
 

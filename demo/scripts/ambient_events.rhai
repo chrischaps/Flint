@@ -15,7 +15,8 @@ fn on_init() {
     log("Ambient event controller active");
 }
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     clink_timer -= dt;
     crackle_timer -= dt;
 

@@ -64,6 +64,9 @@ pub struct PlayerApp {
     // Window options
     pub fullscreen: bool,
     cursor_captured: bool,
+
+    // Environment
+    pub skybox_path: Option<String>,
 }
 
 impl PlayerApp {
@@ -91,6 +94,7 @@ impl PlayerApp {
             content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
             cursor_captured: false,
+            skybox_path: None,
         }
     }
 
@@ -152,6 +156,47 @@ impl PlayerApp {
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
+        // Generate procedural geometry from spline + spline_mesh entities
+        crate::spline_gen::load_splines(
+            &self.scene_path,
+            &mut self.world,
+            &mut scene_renderer,
+            &mut self.physics,
+            &render_context.device,
+        );
+
+        // Refresh renderer with any new procedural meshes
+        scene_renderer.update_from_world(&self.world, &render_context.device);
+
+        // Load skybox if configured
+        if let Some(skybox_rel) = &self.skybox_path {
+            let scene_dir = Path::new(&self.scene_path)
+                .parent()
+                .unwrap_or_else(|| Path::new("."));
+
+            // Search scene dir first, then parent (game root)
+            let skybox_path = {
+                let p = scene_dir.join(skybox_rel);
+                if p.exists() {
+                    p
+                } else if let Some(parent) = scene_dir.parent() {
+                    parent.join(skybox_rel)
+                } else {
+                    p
+                }
+            };
+
+            if skybox_path.exists() {
+                scene_renderer.load_skybox(
+                    &render_context.device,
+                    &render_context.queue,
+                    &skybox_path,
+                );
+            } else {
+                eprintln!("Skybox file not found: {}", skybox_path.display());
+            }
+        }
+
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
 
@@ -178,8 +223,10 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
 
-        // Capture cursor for first-person look
-        self.capture_cursor();
+        // Capture cursor for first-person look (only if FPS player exists)
+        if self.physics.character.player_entity().is_some() {
+            self.capture_cursor();
+        }
 
         Ok(())
     }
@@ -239,12 +286,16 @@ impl PlayerApp {
         // Advance game clock
         self.clock.tick();
 
+        let has_fps_player = self.physics.character.player_entity().is_some();
+
         // Fixed-timestep physics loop
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
-            // Update character controller with current input
-            self.physics.update_character(&self.input, &mut self.world, dt);
+            // Only update FPS character controller if a player entity exists
+            if has_fps_player {
+                self.physics.update_character(&self.input, &mut self.world, dt);
+            }
 
             // Step physics simulation
             self.physics
@@ -254,23 +305,23 @@ impl PlayerApp {
             self.clock.consume_fixed_step();
         }
 
-        // Update camera from player character position
-        let cam_pos = self.physics.character.camera_position(&self.world);
-        let cam_target = self.physics.character.camera_target(cam_pos);
-        self.camera.update_first_person(
-            cam_pos,
-            self.physics.character.yaw,
-            self.physics.character.pitch,
-        );
-        // Also set target explicitly for view matrix
-        self.camera.target = cam_target;
+        // Update camera from player character position (FPS mode)
+        if has_fps_player {
+            let cam_pos = self.physics.character.camera_position(&self.world);
+            let cam_target = self.physics.character.camera_target(cam_pos);
+            self.camera.update_first_person(
+                cam_pos,
+                self.physics.character.yaw,
+                self.physics.character.pitch,
+            );
+            self.camera.target = cam_target;
 
-        // Update audio listener to match camera
-        self.audio.update_listener(
-            cam_pos,
-            self.physics.character.yaw,
-            self.physics.character.pitch,
-        );
+            self.audio.update_listener(
+                cam_pos,
+                self.physics.character.yaw,
+                self.physics.character.pitch,
+            );
+        }
 
         // Process physics events — scripts + audio both consume them
         let mut game_events = self.physics.event_bus.drain();
@@ -298,6 +349,15 @@ impl PlayerApp {
         self.script
             .update(&mut self.world, self.clock.delta_time)
             .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
+
+        // Apply script camera overrides (for non-FPS camera modes like chase camera)
+        let (cam_pos_override, cam_target_override) = self.script.take_camera_overrides();
+        if let Some(pos) = cam_pos_override {
+            self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
+        }
+        if let Some(target) = cam_target_override {
+            self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
+        }
 
         // Call on_draw_ui() for all scripts (generates draw commands)
         self.script.call_draw_uis(&mut self.world);

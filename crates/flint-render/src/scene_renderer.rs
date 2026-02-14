@@ -1,7 +1,7 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardPipeline, BillboardUniforms, SpriteInstance};
-use crate::camera::Camera;
+use crate::camera::{Camera, mat4_inverse, mat4_mul};
 use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
@@ -10,6 +10,7 @@ use crate::pipeline::{
     TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
+use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::skinned_pipeline::SkinnedPipeline;
 use crate::texture_cache::TextureCache;
 use crate::primitives::{
@@ -93,6 +94,11 @@ pub struct SceneRenderer {
     texture_cache: Option<TextureCache>,
     shadow_pass: Option<ShadowPass>,
     selected_entity: Option<flint_core::EntityId>,
+    // Skybox
+    skybox_pipeline: Option<SkyboxPipeline>,
+    skybox_uniform_buffer: Option<wgpu::Buffer>,
+    skybox_uniform_bind_group: Option<wgpu::BindGroup>,
+    skybox_texture_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl SceneRenderer {
@@ -131,6 +137,7 @@ impl SceneRenderer {
         );
 
         let billboard_pipeline = BillboardPipeline::new(&context.device, context.config.format);
+        let skybox_pipeline = SkyboxPipeline::new(&context.device, context.config.format);
 
         Self {
             pipeline,
@@ -152,6 +159,10 @@ impl SceneRenderer {
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
+            skybox_pipeline: Some(skybox_pipeline),
+            skybox_uniform_buffer: None,
+            skybox_uniform_bind_group: None,
+            skybox_texture_bind_group: None,
         }
     }
 
@@ -195,6 +206,7 @@ impl SceneRenderer {
         );
 
         let billboard_pipeline = BillboardPipeline::new(device, format);
+        let skybox_pipeline = SkyboxPipeline::new(device, format);
 
         Self {
             pipeline,
@@ -216,6 +228,10 @@ impl SceneRenderer {
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
+            skybox_pipeline: Some(skybox_pipeline),
+            skybox_uniform_buffer: None,
+            skybox_uniform_bind_group: None,
+            skybox_texture_bind_group: None,
         }
     }
 
@@ -314,6 +330,24 @@ impl SceneRenderer {
         }
     }
 
+    /// Load a procedural mesh from raw vertex/index data into the GPU mesh cache
+    pub fn load_procedural_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        name: &str,
+        vertices: &[crate::primitives::Vertex],
+        indices: &[u32],
+        material: flint_import::ImportedMaterial,
+    ) {
+        self.mesh_cache
+            .upload_procedural(device, name, vertices, indices, material);
+    }
+
+    /// Get a mutable reference to the mesh cache
+    pub fn mesh_cache_mut(&mut self) -> &mut MeshCache {
+        &mut self.mesh_cache
+    }
+
     /// Get a reference to the mesh cache
     pub fn mesh_cache(&self) -> &MeshCache {
         &self.mesh_cache
@@ -381,6 +415,112 @@ impl SceneRenderer {
     }
 
     /// Toggle shadows on/off, returns the new state
+    /// Load an equirectangular panorama image as a skybox
+    pub fn load_skybox(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) {
+        let skybox_pipeline = match &self.skybox_pipeline {
+            Some(p) => p,
+            None => {
+                eprintln!("Skybox pipeline not available");
+                return;
+            }
+        };
+
+        // Load panorama image
+        let img = match image::open(path) {
+            Ok(img) => img.to_rgba8(),
+            Err(e) => {
+                eprintln!("Failed to load skybox '{}': {:?}", path.display(), e);
+                return;
+            }
+        };
+        let (width, height) = img.dimensions();
+
+        // Create GPU texture
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Skybox Panorama Texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &img,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            texture_size,
+        );
+
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Skybox Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        // Create uniform buffer
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Skybox Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[SkyboxUniforms {
+                inv_view_proj: identity_matrix(),
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create bind groups
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &skybox_pipeline.uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("Skybox Uniform Bind Group"),
+        });
+
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &skybox_pipeline.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: Some("Skybox Texture Bind Group"),
+        });
+
+        self.skybox_uniform_buffer = Some(uniform_buffer);
+        self.skybox_uniform_bind_group = Some(uniform_bind_group);
+        self.skybox_texture_bind_group = Some(texture_bind_group);
+
+        println!("Loaded skybox: {} ({}x{})", path.display(), width, height);
+    }
+
     pub fn toggle_shadows(&mut self) -> bool {
         if let Some(sp) = &mut self.shadow_pass {
             sp.enabled = !sp.enabled;
@@ -1774,6 +1914,37 @@ impl SceneRenderer {
 
             // Bind lights once for the entire pass (group 2 is shared)
             render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+            // Render skybox (before everything else, at the far plane)
+            if let (Some(sp), Some(ub), Some(ubg), Some(tbg)) = (
+                &self.skybox_pipeline,
+                &self.skybox_uniform_buffer,
+                &self.skybox_uniform_bind_group,
+                &self.skybox_texture_bind_group,
+            ) {
+                // Build view matrix with translation stripped (rotation only)
+                let view = camera.view_matrix();
+                let view_rot_only = [
+                    view[0],
+                    view[1],
+                    view[2],
+                    [0.0, 0.0, 0.0, 1.0], // zero out translation column
+                ];
+                let proj = camera.projection_matrix();
+                let vp = mat4_mul(&proj, &view_rot_only);
+                let inv_vp = mat4_inverse(&vp);
+
+                queue.write_buffer(
+                    ub,
+                    0,
+                    bytemuck::cast_slice(&[SkyboxUniforms { inv_view_proj: inv_vp }]),
+                );
+
+                render_pass.set_pipeline(&sp.pipeline);
+                render_pass.set_bind_group(0, ubg, &[]);
+                render_pass.set_bind_group(1, tbg, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
 
             // Render grid
             if let Some(grid) = &self.grid_draw {

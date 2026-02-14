@@ -10,7 +10,8 @@
 
 let prompt_alpha = 0.0;
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     let nearest = find_nearest_interactable();
     if type_of(nearest) != "()" {
         prompt_alpha = min(prompt_alpha + 5.0 * dt, 1.0);

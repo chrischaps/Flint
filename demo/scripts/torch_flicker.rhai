@@ -17,7 +17,7 @@ fn on_init() {
     log("Torch flicker active: " + entity_name(me));
 }
 
-fn on_update(dt) {
+fn on_update() {
     let t = total_time();
     let me = self_entity();
 

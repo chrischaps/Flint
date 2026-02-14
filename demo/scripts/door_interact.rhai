@@ -44,7 +44,8 @@ fn on_interact() {
     play_sound("audio/door_open.ogg");
 }
 
-fn on_update(dt) {
+fn on_update() {
+    let dt = delta_time();
     // Animate the door swing
     if swing_time < swing_duration {
         swing_time += dt;

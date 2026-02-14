@@ -31,6 +31,7 @@ pub struct ScriptInstance {
 
 impl ScriptInstance {
     pub fn new(ast: AST, source_path: String) -> Self {
+        validate_callbacks(&ast, &source_path);
         let has_on_init = has_function(&ast, "on_init");
         let has_on_update = has_function(&ast, "on_update");
         let has_on_collision = has_function(&ast, "on_collision");
@@ -58,6 +59,7 @@ impl ScriptInstance {
 
     /// Recompile with a new AST but preserve the scope (persistent state)
     pub fn hot_reload(&mut self, ast: AST) {
+        validate_callbacks(&ast, &self.source_path);
         self.has_on_init = has_function(&ast, "on_init");
         self.has_on_update = has_function(&ast, "on_update");
         self.has_on_collision = has_function(&ast, "on_collision");
@@ -74,6 +76,37 @@ impl ScriptInstance {
 /// Check if an AST contains a function definition with the given name
 fn has_function(ast: &AST, name: &str) -> bool {
     ast.iter_functions().any(|f| f.name == name)
+}
+
+/// Expected parameter counts for engine callbacks.
+const CALLBACK_ARITIES: &[(&str, usize)] = &[
+    ("on_init", 0),
+    ("on_update", 0),
+    ("on_collision", 1),
+    ("on_trigger_enter", 1),
+    ("on_trigger_exit", 1),
+    ("on_action", 1),
+    ("on_interact", 0),
+    ("on_draw_ui", 0),
+];
+
+/// Warn at load time if a script defines a callback with the wrong number of parameters.
+fn validate_callbacks(ast: &AST, source_path: &str) {
+    for func in ast.iter_functions() {
+        for &(name, expected) in CALLBACK_ARITIES {
+            if func.name == name && func.params.len() != expected {
+                let hint = if name == "on_update" && func.params.len() == 1 {
+                    " Did you mean `fn on_update()`? Use `delta_time()` to access frame delta."
+                } else {
+                    ""
+                };
+                eprintln!(
+                    "[script] warning ({}): `fn {}` expects {} parameter(s) but has {}.{}",
+                    source_path, name, expected, func.params.len(), hint
+                );
+            }
+        }
+    }
 }
 
 /// The scripting engine — owns the Rhai Engine and per-entity script instances
@@ -163,8 +196,8 @@ impl ScriptEngine {
         }
     }
 
-    /// Call on_update(dt) for all scripts
-    pub fn call_updates(&mut self, world: &mut FlintWorld, dt: f64) {
+    /// Call on_update() for all scripts
+    pub fn call_updates(&mut self, world: &mut FlintWorld) {
         {
             let mut c = self.ctx.lock().unwrap();
             c.world = world as *mut FlintWorld;
@@ -178,7 +211,7 @@ impl ScriptEngine {
                     let mut c = self.ctx.lock().unwrap();
                     c.current_entity = entity_id;
                 }
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_update", (dt,)) {
+                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_update", ()) {
                     eprintln!("[script] on_update error ({}): {}", script.source_path, e);
                 }
             }
@@ -478,7 +511,7 @@ mod tests {
     #[test]
     fn test_compile_valid_script() {
         let engine = ScriptEngine::new();
-        let result = engine.compile("fn on_update(dt) { let x = 1 + 2; }");
+        let result = engine.compile("fn on_update() { let x = 1 + 2; }");
         assert!(result.is_ok());
     }
 
@@ -494,7 +527,7 @@ mod tests {
         let engine = ScriptEngine::new();
         let ast = engine.compile(r#"
             fn on_init() {}
-            fn on_update(dt) {}
+            fn on_update() {}
             fn on_collision(other) {}
         "#).unwrap();
 
@@ -540,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn test_on_update_receives_dt() {
+    fn test_on_update_uses_delta_time() {
         let mut engine = ScriptEngine::new();
         let mut world = FlintWorld::new();
         let id = world.spawn("mover").unwrap();
@@ -552,7 +585,8 @@ mod tests {
         })).unwrap();
 
         let ast = engine.compile(r#"
-            fn on_update(dt) {
+            fn on_update() {
+                let dt = delta_time();
                 let me = self_entity();
                 let acc = get_field(me, "state", "accumulated");
                 set_field(me, "state", "accumulated", acc + dt);
@@ -563,9 +597,9 @@ mod tests {
 
         // Simulate 3 frames
         engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
-        engine.call_updates(&mut world, 0.016);
-        engine.call_updates(&mut world, 0.016);
-        engine.call_updates(&mut world, 0.016);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
 
         let acc = world.get_components(id).unwrap()
             .get_field("state", "accumulated").unwrap()
@@ -586,7 +620,7 @@ mod tests {
         })).unwrap();
 
         let ast = engine.compile(r#"
-            fn on_update(dt) {
+            fn on_update() {
                 let me = self_entity();
                 if is_action_just_pressed("jump") {
                     set_field(me, "result", "jumped", true);
@@ -599,7 +633,7 @@ mod tests {
         let mut input = InputSnapshot::default();
         input.actions_just_pressed.insert("jump".into());
         engine.provide_context(input, 0.016, 0.0);
-        engine.call_updates(&mut world, 0.016);
+        engine.call_updates(&mut world);
 
         let jumped = world.get_components(id).unwrap()
             .get_field("result", "jumped").unwrap()
@@ -772,7 +806,7 @@ mod tests {
             fn on_init() {
                 // No persistent state in this version
             }
-            fn on_update(dt) {
+            fn on_update() {
                 let me = self_entity();
                 log("v1 running");
             }
@@ -783,7 +817,7 @@ mod tests {
 
         // Hot-reload with new version
         let ast2 = engine.compile(r#"
-            fn on_update(dt) {
+            fn on_update() {
                 let me = self_entity();
                 log("v2 running");
             }
@@ -820,7 +854,7 @@ mod tests {
                 counter = 42.0;
             }
 
-            fn on_update(dt) {
+            fn on_update() {
                 // Read the value set in on_init
                 let me = self_entity();
                 set_field(me, "state", "value", counter);
@@ -829,11 +863,25 @@ mod tests {
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
-        engine.call_updates(&mut world, 0.016);
+        engine.call_updates(&mut world);
 
         let value = world.get_components(id).unwrap()
             .get_field("state", "value").unwrap()
             .as_float().unwrap();
         assert!((value - 42.0).abs() < 1e-10, "Module-level var should persist: got {}", value);
+    }
+
+    #[test]
+    fn test_arity_mismatch_still_detects_function() {
+        // A script with the wrong arity should still be detected (warning, not error)
+        let engine = ScriptEngine::new();
+        let ast = engine.compile(r#"
+            fn on_update(dt) {
+                // Wrong arity — should warn but still detect
+            }
+        "#).unwrap();
+
+        let instance = ScriptInstance::new(ast, "test_mismatch.rhai".into());
+        assert!(instance.has_on_update, "has_on_update should be true even with wrong arity");
     }
 }

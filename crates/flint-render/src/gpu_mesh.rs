@@ -329,6 +329,42 @@ impl MeshCache {
         self.skinned_meshes.get_mut(name)
     }
 
+    /// Upload a procedural mesh from raw vertex/index data to the GPU
+    pub fn upload_procedural(
+        &mut self,
+        device: &wgpu::Device,
+        name: &str,
+        vertices: &[Vertex],
+        indices: &[u32],
+        material: ImportedMaterial,
+    ) {
+        let vertex_data = bytemuck::cast_slice(vertices).to_vec();
+        let index_data = bytemuck::cast_slice(indices).to_vec();
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{} Procedural Vertex Buffer", name)),
+            contents: &vertex_data,
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{} Procedural Index Buffer", name)),
+            contents: &index_data,
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let gpu_mesh = GpuMesh {
+            vertex_buffer,
+            index_buffer,
+            index_count: indices.len() as u32,
+            material,
+            vertex_data,
+            index_data,
+        };
+
+        self.meshes.insert(name.to_string(), vec![gpu_mesh]);
+    }
+
     /// Check if a model has skinned meshes cached
     pub fn contains_skinned(&self, name: &str) -> bool {
         self.skinned_meshes.contains_key(name)
