@@ -42,8 +42,11 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 |------|-------------|
 | `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
 | `--fullscreen` | Launch in fullscreen mode |
+| `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
 
-### Player Controls
+### Player Controls (Defaults)
+
+These are the built-in defaults. Games can override any binding via input config files (see [Physics and Runtime: Input System](../concepts/physics-and-runtime.md#input-system)).
 
 | Input | Action |
 |-------|--------|
@@ -59,6 +62,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | F1 | Cycle debug rendering mode |
 | F4 | Toggle shadows |
 | F11 | Toggle fullscreen |
+
+Gamepad controllers are also supported when connected. Bindings for gamepad buttons and axes can be configured in input config TOML files.
 
 The `play` command requires the scene to have a `player` archetype entity with a `character_controller` component. Physics colliders on other entities define the walkable geometry.
 

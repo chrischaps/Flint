@@ -111,5 +111,6 @@ Key third-party crates used across the workspace:
 | `gltf` | flint-import | glTF file parsing (meshes, materials, skins, animations) |
 | `crossbeam` | flint-physics | Channel-based event collection (Rapier) |
 | `rhai` | flint-script | Embedded scripting language |
+| `gilrs` | flint-player | Gamepad input (buttons, axes, multi-controller) |
 | `ureq` | flint-asset-gen | HTTP client for AI provider APIs |
 | `uuid` | flint-asset-gen | Unique job identifiers |

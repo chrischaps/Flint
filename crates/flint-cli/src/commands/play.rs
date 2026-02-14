@@ -10,6 +10,7 @@ pub struct PlayArgs {
     pub scene: String,
     pub schemas: Vec<String>,
     pub fullscreen: bool,
+    pub input_config: Option<String>,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -43,7 +44,13 @@ pub fn run(args: PlayArgs) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = flint_player::PlayerApp::new(world, args.scene, args.fullscreen);
+    let mut app = flint_player::PlayerApp::new(
+        world,
+        args.scene,
+        args.fullscreen,
+        args.input_config,
+        scene_file.scene.input_config.clone(),
+    );
     event_loop.run_app(&mut app)?;
 
     Ok(())

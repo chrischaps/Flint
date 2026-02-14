@@ -115,6 +115,10 @@ enum Commands {
         /// Launch in fullscreen mode
         #[arg(long)]
         fullscreen: bool,
+
+        /// Optional input config overlay path
+        #[arg(long)]
+        input_config: Option<String>,
     },
 
     /// Render a scene to a PNG image (headless)
@@ -239,10 +243,12 @@ fn main() -> Result<()> {
             scene,
             schemas,
             fullscreen,
+            input_config,
         } => play::run(play::PlayArgs {
             scene,
             schemas,
             fullscreen,
+            input_config,
         }),
         Commands::Asset(cmd) => asset::run(cmd),
         Commands::Serve { scene, watch, schemas, no_inspector } => {

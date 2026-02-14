@@ -27,6 +27,10 @@ struct Args {
     /// Launch in fullscreen mode
     #[arg(long)]
     fullscreen: bool,
+
+    /// Optional input config overlay path
+    #[arg(long)]
+    input_config: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -62,7 +66,13 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = PlayerApp::new(world, args.scene, args.fullscreen);
+    let mut app = PlayerApp::new(
+        world,
+        args.scene,
+        args.fullscreen,
+        args.input_config,
+        scene_file.scene.input_config.clone(),
+    );
 
     // Pass skybox path from scene environment settings
     if let Some(env) = &scene_file.environment {
