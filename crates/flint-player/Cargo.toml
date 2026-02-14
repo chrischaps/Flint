@@ -36,3 +36,5 @@ egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 image = { workspace = true }
+dirs = { workspace = true }
+gilrs = { workspace = true }

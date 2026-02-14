@@ -19,6 +19,8 @@ pub struct SceneMetadata {
     pub version: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub input_config: Option<String>,
 }
 
 fn default_version() -> String {
@@ -78,6 +80,7 @@ impl SceneFile {
                 name: name.into(),
                 version: default_version(),
                 description: None,
+                input_config: None,
             },
             entities: HashMap::new(),
         }

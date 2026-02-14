@@ -15,5 +15,8 @@ mod system;
 pub use clock::GameClock;
 pub use event::GameEvent;
 pub use event_bus::EventBus;
-pub use input::InputState;
+pub use input::{
+    ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputState,
+    RebindMode,
+};
 pub use system::RuntimeSystem;

@@ -13,18 +13,34 @@ use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
-use flint_runtime::{GameClock, GameEvent, InputState, RuntimeSystem};
+use flint_runtime::{
+    Binding, GameClock, GameEvent, InputConfig, InputState, RebindMode, RuntimeSystem,
+};
 use flint_script::context::{DrawCommand, LogLevel, ScriptCommand};
 use flint_script::ScriptSystem;
+use gilrs::{Axis, Button, EventType, Gilrs};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
+
+#[derive(Debug, Clone)]
+struct PendingRebind {
+    action: String,
+    mode: RebindMode,
+}
+
+#[derive(Debug, Clone)]
+struct InputConfigPaths {
+    game_default: Option<PathBuf>,
+    user_override: Option<PathBuf>,
+    cli_override: Option<PathBuf>,
+}
 
 pub struct PlayerApp {
     // Core state
@@ -64,10 +80,26 @@ pub struct PlayerApp {
     // Window options
     pub fullscreen: bool,
     cursor_captured: bool,
+
+    // Input config layering + remap persistence
+    input_config_override: Option<String>,
+    scene_input_config: Option<String>,
+    input_config_paths: Option<InputConfigPaths>,
+    user_override_config: InputConfig,
+    pending_rebind: Option<PendingRebind>,
+
+    // Optional gamepad backend
+    gilrs: Option<Gilrs>,
 }
 
 impl PlayerApp {
-    pub fn new(world: FlintWorld, scene_path: String, fullscreen: bool) -> Self {
+    pub fn new(
+        world: FlintWorld,
+        scene_path: String,
+        fullscreen: bool,
+        input_config_override: Option<String>,
+        scene_input_config: Option<String>,
+    ) -> Self {
         Self {
             world,
             scene_path,
@@ -91,6 +123,16 @@ impl PlayerApp {
             content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
             cursor_captured: false,
+            input_config_override,
+            scene_input_config,
+            input_config_paths: None,
+            user_override_config: InputConfig {
+                version: 1,
+                game_id: String::new(),
+                actions: Default::default(),
+            },
+            pending_rebind: None,
+            gilrs: None,
         }
     }
 
@@ -132,6 +174,13 @@ impl PlayerApp {
             self.content_store.as_ref(),
         );
         scene_renderer.update_from_world(&self.world, &render_context.device);
+
+        // Load input configs with deterministic layering.
+        self.configure_input_bindings()
+            .unwrap_or_else(|e| eprintln!("Input config load error: {e:#}"));
+
+        // Initialize gamepad backend (best-effort).
+        self.gilrs = Gilrs::new().ok();
 
         // Initialize egui for HUD overlay
         let egui_winit = egui_winit::State::new(
@@ -181,6 +230,185 @@ impl PlayerApp {
         // Capture cursor for first-person look
         self.capture_cursor();
 
+        Ok(())
+    }
+
+    /// Start capture mode for "press next control to bind" remapping.
+    pub fn begin_rebind_capture(&mut self, action: impl Into<String>, mode: RebindMode) {
+        self.pending_rebind = Some(PendingRebind {
+            action: action.into(),
+            mode,
+        });
+    }
+
+    fn configure_input_bindings(&mut self) -> Result<()> {
+        self.input
+            .load_bindings(InputConfig::built_in_defaults())
+            .context("failed to load built-in input defaults")?;
+
+        let paths = resolve_input_paths(
+            Path::new(&self.scene_path),
+            self.scene_input_config.as_deref(),
+            self.input_config_override.as_deref(),
+        );
+
+        if let Some(path) = &paths.game_default {
+            if path.exists() {
+                let cfg = InputConfig::load_from_file(path).with_context(|| {
+                    format!("failed to load game input config '{}'", path.display())
+                })?;
+                self.input
+                    .merge_bindings(cfg)
+                    .context("failed to merge game input config")?;
+            }
+        }
+
+        if let Some(path) = &paths.user_override {
+            if path.exists() {
+                let cfg = InputConfig::load_from_file(path).with_context(|| {
+                    format!("failed to load user input config '{}'", path.display())
+                })?;
+                self.user_override_config = cfg.clone();
+                self.input
+                    .merge_bindings(cfg)
+                    .context("failed to merge user input config")?;
+            }
+        }
+
+        if let Some(path) = &paths.cli_override {
+            if path.exists() {
+                let cfg = InputConfig::load_from_file(path).with_context(|| {
+                    format!("failed to load CLI input config '{}'", path.display())
+                })?;
+                self.input
+                    .merge_bindings(cfg)
+                    .context("failed to merge CLI input config")?;
+            }
+        }
+
+        if self.user_override_config.version == 0 {
+            self.user_override_config.version = 1;
+        }
+        if self.user_override_config.game_id.trim().is_empty() {
+            self.user_override_config.game_id = self.input.config().game_id.clone();
+        }
+
+        self.input_config_paths = Some(paths);
+        Ok(())
+    }
+
+    fn poll_gamepad_events(&mut self) {
+        let mut events = Vec::new();
+        if let Some(gilrs) = &mut self.gilrs {
+            while let Some(event) = gilrs.next_event() {
+                events.push(event);
+            }
+        }
+
+        for event in events {
+            let gamepad = gamepad_id_to_u32(event.id);
+            match event.event {
+                EventType::ButtonPressed(button, _) => {
+                    let name = format!("{button:?}");
+                    if self.try_capture_rebind(Binding::GamepadButton {
+                        button: name.clone(),
+                        gamepad: flint_runtime::GamepadSelector::Any,
+                    }) {
+                        continue;
+                    }
+                    self.input.process_gamepad_button_down(gamepad, name);
+                }
+                EventType::ButtonReleased(button, _) => {
+                    let name = format!("{button:?}");
+                    self.input.process_gamepad_button_up(gamepad, name);
+                }
+                EventType::AxisChanged(axis, value, _) => {
+                    let name = format!("{axis:?}");
+                    if self.pending_rebind.is_some() && value.abs() >= 0.45 {
+                        let direction = if value < 0.0 {
+                            Some(flint_runtime::AxisDirection::Negative)
+                        } else {
+                            Some(flint_runtime::AxisDirection::Positive)
+                        };
+                        if self.try_capture_rebind(Binding::GamepadAxis {
+                            axis: name.clone(),
+                            gamepad: flint_runtime::GamepadSelector::Any,
+                            deadzone: 0.15,
+                            scale: 1.0,
+                            invert: false,
+                            threshold: Some(0.35),
+                            direction,
+                        }) {
+                            continue;
+                        }
+                    }
+                    self.input.process_gamepad_axis(gamepad, name, value);
+                }
+                EventType::Disconnected => {
+                    self.input.clear_gamepad(gamepad);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn try_capture_rebind(&mut self, binding: Binding) -> bool {
+        let Some(pending) = self.pending_rebind.take() else {
+            return false;
+        };
+
+        if let Err(e) = self
+            .input
+            .rebind_action(&pending.action, binding, pending.mode)
+        {
+            eprintln!("Failed to rebind action '{}': {:?}", pending.action, e);
+            return true;
+        }
+
+        if let Some(action_cfg) = self.input.action_config(&pending.action) {
+            self.user_override_config
+                .actions
+                .insert(pending.action.clone(), action_cfg);
+        }
+        if self.user_override_config.game_id.trim().is_empty() {
+            self.user_override_config.game_id = self.input.config().game_id.clone();
+        }
+
+        if let Err(e) = self.persist_user_overrides() {
+            eprintln!("Failed to save input overrides: {e:#}");
+        }
+
+        true
+    }
+
+    fn persist_user_overrides(&mut self) -> Result<()> {
+        let Some(paths) = &mut self.input_config_paths else {
+            return Ok(());
+        };
+
+        let mut target = paths.user_override.clone().unwrap_or_else(|| {
+            fallback_user_override_path(
+                Path::new(&self.scene_path),
+                &self.input.config().game_id,
+            )
+            .unwrap_or_else(|| PathBuf::from(".flint/input.user.toml"))
+        });
+
+        if let Err(err) = write_user_override_file(&target, &self.user_override_config) {
+            let Some(fallback) =
+                fallback_user_override_path(Path::new(&self.scene_path), &self.input.config().game_id)
+            else {
+                return Err(err);
+            };
+            if fallback != target {
+                write_user_override_file(&fallback, &self.user_override_config)?;
+                target = fallback;
+            } else {
+                return Err(err);
+            }
+        }
+
+        paths.user_override = Some(target);
         Ok(())
     }
 
@@ -236,6 +464,8 @@ impl PlayerApp {
     }
 
     fn tick(&mut self) {
+        self.poll_gamepad_events();
+
         // Advance game clock
         self.clock.tick();
 
@@ -278,6 +508,9 @@ impl PlayerApp {
         // Generate ActionPressed events from input (drives on_action / on_interact callbacks)
         for action in self.input.actions_just_pressed() {
             game_events.push(flint_runtime::GameEvent::ActionPressed(action));
+        }
+        for action in self.input.actions_just_released() {
+            game_events.push(flint_runtime::GameEvent::ActionReleased(action));
         }
 
         // Script system: provide physics + camera context, then run updates
