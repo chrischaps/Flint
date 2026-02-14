@@ -101,30 +101,118 @@ Raycasting is exposed to scripts via the `raycast()` function --- see [Scripting
 
 ## Input System
 
-The `InputState` struct tracks keyboard and mouse state each frame:
+The `InputState` struct provides a config-driven, device-agnostic input layer. It tracks keyboard, mouse, and gamepad state each frame and evaluates logical **actions** from physical bindings.
 
-- Keyboard keys are tracked as pressed/released
-- **Mouse buttons** are tracked alongside keyboard keys, with their own action binding map
-- Mouse provides raw delta movement (via `DeviceEvent::MouseMotion`) for smooth camera look
-- Action bindings map keys and mouse buttons to game actions
+### How It Works
+
+All input flows through a unified `Binding` model:
+
+- **Keyboard keys** (`Key { code }`) --- any winit `KeyCode` name (e.g., `"KeyW"`, `"Space"`, `"ShiftLeft"`)
+- **Mouse buttons** (`MouseButton { button }`) --- `"Left"`, `"Right"`, `"Middle"`, `"Back"`, `"Forward"`
+- **Mouse delta** (`MouseDelta { axis, scale }`) --- raw mouse movement for camera look
+- **Mouse wheel** (`MouseWheel { axis, scale }`) --- scroll wheel input
+- **Gamepad buttons** (`GamepadButton { button, gamepad }`) --- any gilrs button name (e.g., `"South"`, `"RightTrigger"`)
+- **Gamepad axes** (`GamepadAxis { axis, gamepad, deadzone, scale, invert, threshold, direction }`) --- analog sticks and triggers with full processing pipeline
+
+Actions have two kinds:
+- **Button** --- discrete on/off (pressed/released). Any binding value >= 0.5 counts as pressed.
+- **Axis1d** --- continuous analog value. All binding values are summed.
+
+### Input Configuration Files
+
+Bindings are defined in TOML files with a layered loading model:
+
+```toml
+version = 1
+game_id = "doom_fps"
+
+[actions.move_forward]
+kind = "button"
+[[actions.move_forward.bindings]]
+type = "key"
+code = "KeyW"
+[[actions.move_forward.bindings]]
+type = "gamepad_axis"
+axis = "LeftStickY"
+direction = "negative"
+threshold = 0.35
+gamepad = "any"
+
+[actions.fire]
+kind = "button"
+[[actions.fire.bindings]]
+type = "mouse_button"
+button = "Left"
+[[actions.fire.bindings]]
+type = "gamepad_button"
+button = "RightTrigger"
+gamepad = "any"
+
+[actions.look_x]
+kind = "axis1d"
+[[actions.look_x.bindings]]
+type = "mouse_delta"
+axis = "x"
+scale = 2.0
+[[actions.look_x.bindings]]
+type = "gamepad_axis"
+axis = "RightStickX"
+deadzone = 0.15
+scale = 1.0
+gamepad = "any"
+```
+
+### Config Layering
+
+Configs are loaded with deterministic precedence (later layers override earlier):
+
+1. **Engine built-in defaults** --- hardcoded WASD + mouse baseline (always present)
+2. **Game default config** --- `<game_root>/config/input.toml` (checked into the repo)
+3. **User overrides** --- `~/.flint/input_{game_id}.toml` (per-player remapping, written at runtime)
+4. **CLI override** --- `--input-config <path>` flag (one-off testing/debugging)
+
+Scenes can also reference an input config via the `input_config` field in the `[scene]` table.
 
 ### Default Action Bindings
 
-| Action | Key / Button | Description |
-|--------|-------------|-------------|
-| `move_forward` | W | Move forward |
-| `move_backward` | S | Move backward |
-| `move_left` | A | Strafe left |
-| `move_right` | D | Strafe right |
-| `jump` | Space | Jump |
-| `interact` | E | Interact with nearby object |
-| `sprint` | Left Shift | Sprint (hold) |
-| `weapon_1` | 1 | Select weapon slot 1 |
-| `weapon_2` | 2 | Select weapon slot 2 |
-| `reload` | R | Reload weapon |
-| `fire` | Left Mouse Button | Fire weapon |
+When no config files are present, the built-in defaults provide:
 
-Mouse button bindings are stored in a separate `mouse_button_map` alongside the keyboard `action_map`. Both maps feed into the same `is_action_pressed()` / `is_action_just_pressed()` interface, so scripts don't need to distinguish between key-triggered and mouse-triggered actions.
+| Action | Default Binding | Kind |
+|--------|----------------|------|
+| `move_forward` | W | Button |
+| `move_backward` | S | Button |
+| `move_left` | A | Button |
+| `move_right` | D | Button |
+| `jump` | Space | Button |
+| `interact` | E | Button |
+| `sprint` | Left Shift | Button |
+| `weapon_1` | 1 | Button |
+| `weapon_2` | 2 | Button |
+| `reload` | R | Button |
+| `fire` | Left Mouse Button | Button |
+
+Games can define any number of custom actions in their config files. Scripts access them with `is_action_pressed("custom_action")`.
+
+### Gamepad Support
+
+Gamepad input is handled via the [gilrs](https://gitlab.com/gilrs-project/gilrs) crate. The player polls gamepad events each frame and routes them through the same binding system as keyboard/mouse:
+
+- **Buttons** are matched by gilrs `Debug` names: `South`, `East`, `North`, `West`, `LeftTrigger`, `RightTrigger`, `DPadUp`, etc.
+- **Axes** support deadzone filtering, scale, invert, and optional threshold for button-like behavior
+- **Multi-gamepad** is supported via `GamepadSelector::Any` (first match) or `GamepadSelector::Index(n)` (specific controller)
+- Disconnected gamepads are automatically cleaned up
+
+### Runtime Rebinding
+
+Bindings can be remapped at runtime through the `rebind_action()` API:
+
+1. Call `begin_rebind_capture(action, mode)` to enter capture mode
+2. The next physical input (key press, mouse click, or gamepad button/axis) becomes the new binding
+3. The mode determines conflict resolution:
+   - **Replace** --- clear all existing bindings, set the new one
+   - **Add** --- append to the binding list (allows multiple inputs for one action)
+   - **Swap** --- remove this binding from any other action, assign to target
+4. User overrides are automatically saved to `~/.flint/input_{game_id}.toml`
 
 ## Runtime Physics Updates
 

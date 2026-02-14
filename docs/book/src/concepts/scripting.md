@@ -80,12 +80,14 @@ All functions are available globally in every script. Entity IDs are passed as `
 |----------|---------|-------------|
 | `is_action_pressed(action)` | `bool` | Whether an action is currently held |
 | `is_action_just_pressed(action)` | `bool` | Whether an action was pressed this frame |
+| `is_action_just_released(action)` | `bool` | Whether an action was released this frame |
+| `get_action_value(action)` | `f64` | Analog value for Axis1d actions (0.0 if not bound) |
 | `mouse_delta_x()` | `f64` | Horizontal mouse movement this frame |
 | `mouse_delta_y()` | `f64` | Vertical mouse movement this frame |
 
-Available action names: `move_forward`, `move_backward`, `move_left`, `move_right`, `jump`, `interact`, `sprint`, `weapon_1`, `weapon_2`, `reload`, `fire`.
+Action names are defined by input configuration files and are fully customizable per game. The built-in defaults include: `move_forward`, `move_backward`, `move_left`, `move_right`, `jump`, `interact`, `sprint`, `weapon_1`, `weapon_2`, `reload`, `fire`. Games can define arbitrary custom actions in their input config TOML files and query them from scripts with `is_action_pressed("custom_action")`.
 
-The `fire` action is bound to the left mouse button by default. `weapon_1` and `weapon_2` are bound to the `1` and `2` keys, and `reload` to `R`. See [Physics and Runtime](physics-and-runtime.md) for the full action binding table.
+Input bindings support keyboard, mouse, and gamepad devices. See [Physics and Runtime: Input System](physics-and-runtime.md#input-system) for the config file format and layered loading model.
 
 ### Time API
 

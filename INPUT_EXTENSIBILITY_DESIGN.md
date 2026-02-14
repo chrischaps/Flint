@@ -1,5 +1,7 @@
 # Input Extensibility Design (Flint)
 
+> **Status: IMPLEMENTED** on branch `feature/input-extensibility` (commit `79c5a8a`). All phases described below are complete: config-backed bindings, runtime rebinding with persistence, gamepad support via gilrs, and ActionReleased event flow.
+
 ## 1. Current Input Handling (Exploration Summary)
 
 Input is currently centralized and functional, but mostly hardcoded:

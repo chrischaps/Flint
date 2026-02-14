@@ -108,7 +108,7 @@ This document catalogs every missing piece between the Flint engine's current ca
 | # | Gap | Needed For | Approach |
 |---|-----|-----------|----------|
 | I.1 | No build/package system | Distributing standalone game | Asset bundling, release builds |
-| I.2 | No settings persistence | Mouse sensitivity, volume, keybinds | `settings.toml` loaded on startup |
+| I.2 | ~~No settings persistence~~ | ~~Mouse sensitivity, volume, keybinds~~ | **Partial — Input Extensibility**: keybind persistence via layered InputConfig TOML + user override files; mouse sensitivity and volume settings not yet implemented |
 | I.3 | No demo recording/playback | Replays, testing | Serialize InputState per tick |
 | I.4 | No multiplayer/networking | Deathmatch, co-op | Major architecture change (deferred) |
 | I.5 | No mod support | Community content | Load additional schema/script/asset dirs |
@@ -127,5 +127,5 @@ This document catalogs every missing piece between the Flint engine's current ca
 | F. Level Design | 6 | 0.5 (doors partial) | 5.5 |
 | G. Enemy & Combat | 8 | 1 (basic AI) | 7 |
 | H. HUD & UI | 6 | 1 (combat HUD) | 5 |
-| I. Infrastructure | 5 | 0 | 5 |
-| **Total** | **62** | **7.5** | **54.5** |
+| I. Infrastructure | 5 | 0.5 (keybinds partial) | 4.5 |
+| **Total** | **62** | **8** | **54** |

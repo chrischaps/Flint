@@ -26,6 +26,7 @@ archetype = "room"
 | `name` | yes | Human-readable scene name |
 | `version` | yes | Format version (currently "1.0") |
 | `description` | no | Optional description |
+| `input_config` | no | Path or name of an input config file for this scene (see [Input System](physics-and-runtime.md#input-system)) |
 
 ### The `[entities.*]` Tables
 

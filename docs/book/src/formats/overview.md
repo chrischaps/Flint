@@ -10,6 +10,7 @@ The primary data format. Each scene file contains metadata and a collection of n
 [scene]
 name = "Scene Name"
 version = "1.0"
+input_config = "custom_input.toml"  # Optional input binding config
 
 [entities.<name>]
 archetype = "<archetype>"
@@ -176,6 +177,53 @@ fn on_interact() {
     play_sound("door_open");
 }
 ```
+
+## Input Configuration (`config/input.toml`, `~/.flint/input_{game_id}.toml`)
+
+Define action-to-binding mappings for keyboard, mouse, and gamepad input. Loaded with layered precedence: engine defaults → game config → user overrides → CLI override.
+
+```toml
+version = 1
+game_id = "doom_fps"
+
+[actions.move_forward]
+kind = "button"
+[[actions.move_forward.bindings]]
+type = "key"
+code = "KeyW"
+[[actions.move_forward.bindings]]
+type = "gamepad_axis"
+axis = "LeftStickY"
+direction = "negative"
+threshold = 0.35
+gamepad = "any"
+
+[actions.fire]
+kind = "button"
+[[actions.fire.bindings]]
+type = "mouse_button"
+button = "Left"
+[[actions.fire.bindings]]
+type = "gamepad_button"
+button = "RightTrigger"
+gamepad = "any"
+
+[actions.look_x]
+kind = "axis1d"
+[[actions.look_x.bindings]]
+type = "mouse_delta"
+axis = "x"
+scale = 2.0
+[[actions.look_x.bindings]]
+type = "gamepad_axis"
+axis = "RightStickX"
+deadzone = 0.15
+scale = 1.0
+invert = false
+gamepad = "any"
+```
+
+Binding types: `key`, `mouse_button`, `mouse_delta`, `mouse_wheel`, `gamepad_button`, `gamepad_axis`. Action kinds: `button` (discrete), `axis1d` (analog). Gamepad selector: `"any"` or a numeric index. User overrides are written automatically when bindings are remapped at runtime.
 
 ## Configuration (`~/.flint/config.toml`, `.flint/config.toml`)
 
