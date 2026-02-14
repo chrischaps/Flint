@@ -188,26 +188,6 @@ impl InputConfig {
                 }],
             },
         );
-        // Kart defaults (overlap with FPS keys is intentional — game scripts use whichever they need)
-        for (action, keys) in [
-            ("accelerate", vec!["KeyW", "ArrowUp"]),
-            ("brake", vec!["KeyS", "ArrowDown"]),
-            ("steer_left", vec!["KeyA", "ArrowLeft"]),
-            ("steer_right", vec!["KeyD", "ArrowRight"]),
-            ("restart", vec!["KeyR"]),
-        ] {
-            actions.insert(
-                action.into(),
-                ActionConfig {
-                    kind: ActionKind::Button,
-                    bindings: keys
-                        .into_iter()
-                        .map(|k| Binding::Key { code: k.into() })
-                        .collect(),
-                },
-            );
-        }
-
         Self {
             version: default_config_version(),
             game_id: "flint".into(),
