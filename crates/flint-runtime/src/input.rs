@@ -86,6 +86,8 @@ pub enum AxisDirection {
 pub enum Binding {
     Key {
         code: String,
+        #[serde(default = "default_scale")]
+        scale: f32,
     },
     MouseButton {
         button: String,
@@ -175,7 +177,7 @@ impl InputConfig {
                 action.into(),
                 ActionConfig {
                     kind: ActionKind::Button,
-                    bindings: vec![Binding::Key { code: key.into() }],
+                    bindings: vec![Binding::Key { code: key.into(), scale: 1.0 }],
                 },
             );
         }
@@ -247,6 +249,7 @@ pub struct InputState {
     gamepad_buttons_down: HashSet<(u32, String)>,
     gamepad_buttons_just_pressed: HashSet<(u32, String)>,
     gamepad_buttons_just_released: HashSet<(u32, String)>,
+    gamepad_button_values: HashMap<(u32, String), f32>,
     gamepad_axes: HashMap<(u32, String), f32>,
     last_frame_gamepad_axes: HashMap<(u32, String), f32>,
 
@@ -277,6 +280,7 @@ impl InputState {
             gamepad_buttons_down: HashSet::new(),
             gamepad_buttons_just_pressed: HashSet::new(),
             gamepad_buttons_just_released: HashSet::new(),
+            gamepad_button_values: HashMap::new(),
             gamepad_axes: HashMap::new(),
             last_frame_gamepad_axes: HashMap::new(),
             mouse_position: (0.0, 0.0),
@@ -375,6 +379,7 @@ impl InputState {
                     .into_iter()
                     .map(|key| Binding::Key {
                         code: format!("{key:?}"),
+                        scale: 1.0,
                     })
                     .collect(),
             },
@@ -441,7 +446,15 @@ impl InputState {
     pub fn process_gamepad_button_up(&mut self, gamepad: u32, button: impl Into<String>) {
         let key = (gamepad, button.into());
         self.gamepad_buttons_down.remove(&key);
+        self.gamepad_button_values.remove(&key);
         self.gamepad_buttons_just_released.insert(key);
+    }
+
+    /// Store the analog value for a gamepad button (e.g. trigger pressure).
+    /// gilrs fires ButtonChanged events with a 0.0–1.0 value for analog buttons.
+    pub fn process_gamepad_button_changed(&mut self, gamepad: u32, button: impl Into<String>, value: f32) {
+        self.gamepad_button_values
+            .insert((gamepad, button.into()), value.clamp(0.0, 1.0));
     }
 
     pub fn process_gamepad_axis(&mut self, gamepad: u32, axis: impl Into<String>, value: f32) {
@@ -455,6 +468,8 @@ impl InputState {
             .retain(|(id, _)| *id != gamepad);
         self.gamepad_buttons_just_released
             .retain(|(id, _)| *id != gamepad);
+        self.gamepad_button_values
+            .retain(|(id, _), _| *id != gamepad);
         self.gamepad_axes.retain(|(id, _), _| *id != gamepad);
         self.last_frame_gamepad_axes
             .retain(|(id, _), _| *id != gamepad);
@@ -600,9 +615,9 @@ impl InputState {
 
     fn binding_value(&self, binding: &Binding) -> f32 {
         match binding {
-            Binding::Key { code } => parse_key_code(code)
+            Binding::Key { code, scale } => parse_key_code(code)
                 .map(|key| self.keys_down.contains(&key))
-                .unwrap_or(false) as i32 as f32,
+                .unwrap_or(false) as i32 as f32 * *scale,
             Binding::MouseButton { button } => parse_mouse_button(button)
                 .map(|btn| self.mouse_buttons_down.contains(&btn))
                 .unwrap_or(false) as i32 as f32,
@@ -616,12 +631,25 @@ impl InputState {
                 Some("y") => self.mouse_wheel_delta.1 * *scale,
                 _ => 0.0,
             },
-            Binding::GamepadButton { button, gamepad } => self
-                .gamepad_buttons_down
-                .iter()
-                .any(|(id, pressed_button)| {
-                    selector_matches(*gamepad, *id) && pressed_button == button
-                }) as i32 as f32,
+            Binding::GamepadButton { button, gamepad } => {
+                // Return analog value if available (e.g. trigger pressure),
+                // otherwise fall back to digital 0/1 from button_down state.
+                let analog = self
+                    .gamepad_button_values
+                    .iter()
+                    .filter(|((id, name), _)| selector_matches(*gamepad, *id) && name == button)
+                    .map(|(_, v)| *v)
+                    .reduce(f32::max);
+                if let Some(val) = analog {
+                    val
+                } else {
+                    self.gamepad_buttons_down
+                        .iter()
+                        .any(|(id, pressed_button)| {
+                            selector_matches(*gamepad, *id) && pressed_button == button
+                        }) as i32 as f32
+                }
+            }
             Binding::GamepadAxis {
                 axis,
                 gamepad,
@@ -650,7 +678,7 @@ impl InputState {
 
     fn binding_just_pressed(&self, binding: &Binding) -> bool {
         match binding {
-            Binding::Key { code } => parse_key_code(code)
+            Binding::Key { code, .. } => parse_key_code(code)
                 .map(|key| self.keys_just_pressed.contains(&key))
                 .unwrap_or(false),
             Binding::MouseButton { button } => parse_mouse_button(button)
@@ -698,7 +726,7 @@ impl InputState {
 
     fn binding_just_released(&self, binding: &Binding) -> bool {
         match binding {
-            Binding::Key { code } => parse_key_code(code)
+            Binding::Key { code, .. } => parse_key_code(code)
                 .map(|key| self.keys_just_released.contains(&key))
                 .unwrap_or(false),
             Binding::MouseButton { button } => parse_mouse_button(button)
@@ -814,7 +842,7 @@ fn selector_matches(selector: GamepadSelector, gamepad_id: u32) -> bool {
 
 fn validate_binding(binding: &Binding, action_name: &str) -> Result<()> {
     match binding {
-        Binding::Key { code } => {
+        Binding::Key { code, .. } => {
             if parse_key_code(code).is_none() {
                 return Err(FlintError::RuntimeError(format!(
                     "action '{action_name}' has invalid key code '{code}'"
@@ -878,7 +906,7 @@ fn validate_binding(binding: &Binding, action_name: &str) -> Result<()> {
 
 fn binding_label(binding: &Binding) -> String {
     match binding {
-        Binding::Key { code } => key_code_label(code),
+        Binding::Key { code, .. } => key_code_label(code),
         Binding::MouseButton { button } => match button.as_str() {
             "Left" => "Mouse1".into(),
             "Right" => "Mouse2".into(),

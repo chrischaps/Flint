@@ -50,6 +50,7 @@ impl ScriptSystem {
         let snapshot = InputSnapshot {
             actions_pressed: snapshot_actions(input, true),
             actions_just_pressed: snapshot_actions(input, false),
+            action_values: snapshot_action_values(input),
             mouse_delta: input.raw_mouse_delta(),
         };
 
@@ -176,6 +177,17 @@ fn snapshot_actions(input: &InputState, pressed: bool) -> std::collections::Hash
         }
     }
     set
+}
+
+fn snapshot_action_values(input: &InputState) -> std::collections::HashMap<String, f64> {
+    let mut map = std::collections::HashMap::new();
+    for action in input.action_names() {
+        let val = input.action_value(&action);
+        if val.abs() > 0.001 {
+            map.insert(action, val as f64);
+        }
+    }
+    map
 }
 
 #[cfg(test)]

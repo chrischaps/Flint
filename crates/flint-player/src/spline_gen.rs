@@ -377,7 +377,7 @@ pub fn load_splines(
     scene_path: &str,
     world: &mut FlintWorld,
     renderer: &mut SceneRenderer,
-    physics: &mut PhysicsSystem,
+    mut physics: Option<&mut PhysicsSystem>,
     device: &wgpu::Device,
 ) {
     let scene_dir = Path::new(scene_path)
@@ -540,15 +540,17 @@ pub fn load_splines(
         };
         renderer.load_procedural_mesh(device, &job.entity_name, &verts, &indices, material);
 
-        // Register trimesh collider
-        physics.sync.register_static_trimesh(
-            job.entity_id,
-            &mut physics.physics_world,
-            phys_verts,
-            phys_tris,
-            job.def.friction,
-            job.def.restitution,
-        );
+        // Register trimesh collider (when physics is available)
+        if let Some(ref mut phys) = physics {
+            phys.sync.register_static_trimesh(
+                job.entity_id,
+                &mut phys.physics_world,
+                phys_verts,
+                phys_tris,
+                job.def.friction,
+                job.def.restitution,
+            );
+        }
 
         // Set model.asset so renderer draws it
         set_model_asset(world, job.entity_id, &job.entity_name);

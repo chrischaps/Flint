@@ -164,10 +164,54 @@ locked = false
 "#,
     )?;
 
+    // Create CLAUDE.md for AI agent discoverability
+    fs::write(
+        project_dir.join("CLAUDE.md"),
+        format!(
+            r#"# {name}
+
+A game built with the [Flint engine](https://github.com/chrischaps/Flint).
+
+## Build & Run
+
+```bash
+# Build the engine (from engine/ subtree)
+cd engine && cargo build --release && cd ..
+
+# Play the game
+engine/target/release/flint play levels/demo.scene.toml --schemas engine/schemas --schemas schemas
+
+# Validate visual changes by rendering to a PNG (no window required)
+engine/target/release/flint render levels/demo.scene.toml --output render_test.png \
+  --schemas engine/schemas --schemas schemas --width 1280 --height 720 --no-grid --shadows
+```
+
+## Development Workflow
+
+Use the **edit → render → play** loop:
+
+1. Edit scene files (`levels/*.scene.toml`), scripts (`scripts/*.rhai`), or models (`models/*.glb`)
+2. **Render a snapshot** with `flint render` to validate visual changes — fast, headless, no window needed
+3. **Play** with `flint play` to test interactively with physics, scripting, and input
+
+## Project Structure
+
+- `levels/` — Scene files (TOML)
+- `schemas/` — Game-specific component and archetype schemas
+- `scripts/` — Rhai game scripts
+- `models/` — 3D models (GLB format)
+- `assets/` — Textures, materials, audio
+- `engine/` — Flint engine (git subtree)
+"#,
+            name = name
+        ),
+    )?;
+
     println!("Created Flint project: {}", name);
-    println!("");
+    println!();
     println!("Project structure:");
     println!("  {}/", name);
+    println!("  ├── CLAUDE.md");
     println!("  ├── schemas/");
     println!("  │   ├── components/");
     println!("  │   │   ├── transform.toml");
@@ -186,10 +230,11 @@ locked = false
     println!("  │   └── materials/");
     println!("  └── levels/");
     println!("      └── demo.scene.toml");
-    println!("");
+    println!();
     println!("Next steps:");
     println!("  cd {}", name);
-    println!("  flint serve --watch levels/demo.scene.toml");
+    println!("  flint render levels/demo.scene.toml --output test.png --schemas schemas");
+    println!("  flint serve --watch levels/demo.scene.toml --schemas schemas");
 
     Ok(())
 }

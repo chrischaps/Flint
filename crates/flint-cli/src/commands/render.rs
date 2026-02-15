@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use flint_core::Vec3;
 use flint_import::import_gltf;
+use flint_player::spline_gen;
 use flint_render::{Camera, DebugMode, HeadlessContext, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
@@ -39,7 +40,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
     };
 
     // Load scene
-    let (world, scene_file) =
+    let (mut world, scene_file) =
         load_scene(&args.scene, &registry).context("Failed to load scene")?;
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -95,7 +96,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
                 continue;
             }
 
-            let model_path = scene_dir.join("models").join(format!("{}.glb", asset_name));
+            // Search scene dir first, then parent (game root)
+            let model_path = {
+                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
+                if p.exists() {
+                    p
+                } else if let Some(parent) = scene_dir.parent() {
+                    parent.join("models").join(format!("{}.glb", asset_name))
+                } else {
+                    p
+                }
+            };
 
             if model_path.exists() {
                 match import_gltf(&model_path) {
@@ -163,6 +174,15 @@ pub fn run(args: RenderArgs) -> Result<()> {
             }
         }
     }
+
+    // Generate procedural geometry from spline + spline_mesh entities
+    spline_gen::load_splines(
+        &args.scene,
+        &mut world,
+        &mut renderer,
+        None,
+        &ctx.device,
+    );
 
     // Apply debug state
     if let Some(mode_str) = &args.debug_mode {

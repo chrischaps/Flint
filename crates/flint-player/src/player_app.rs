@@ -210,7 +210,7 @@ impl PlayerApp {
             &self.scene_path,
             &mut self.world,
             &mut scene_renderer,
-            &mut self.physics,
+            Some(&mut self.physics),
             &render_context.device,
         );
 
@@ -368,6 +368,10 @@ impl PlayerApp {
                 EventType::ButtonReleased(button, _) => {
                     let name = format!("{button:?}");
                     self.input.process_gamepad_button_up(gamepad, name);
+                }
+                EventType::ButtonChanged(button, value, _) => {
+                    let name = format!("{button:?}");
+                    self.input.process_gamepad_button_changed(gamepad, name, value);
                 }
                 EventType::AxisChanged(axis, value, _) => {
                     let name = format!("{axis:?}");
@@ -1408,15 +1412,24 @@ fn resolve_input_paths(
 ) -> InputConfigPaths {
     let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
 
-    // Game default: look next to the scene or in a config/ sibling
+    // Game default: look next to the scene, then parent (game root)
     let game_default = scene_input_config
-        .map(|name| scene_dir.join(name))
+        .map(|name| {
+            let p = scene_dir.join(name);
+            if p.exists() {
+                p
+            } else if let Some(parent) = scene_dir.parent() {
+                parent.join(name)
+            } else {
+                p
+            }
+        })
         .or_else(|| {
             let candidate = scene_dir.join("config").join("input.toml");
             if candidate.exists() {
                 Some(candidate)
             } else {
-                None
+                scene_dir.parent().map(|p| p.join("config").join("input.toml")).filter(|p| p.exists())
             }
         });
 

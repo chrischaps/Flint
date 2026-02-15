@@ -3,7 +3,7 @@
 use crate::component::DynamicComponents;
 use crate::entity::EntityInfo;
 use bimap::BiMap;
-use flint_core::{EntityId, FlintError, Result, Transform, Vec3};
+use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
 use flint_schema::SchemaRegistry;
 use std::collections::HashMap;
 
@@ -301,6 +301,24 @@ impl FlintWorld {
             rotation: rot,
             scale: scale,
         })
+    }
+
+    /// Get the world-space transform matrix for an entity, walking the parent chain
+    pub fn get_world_matrix(&self, id: EntityId) -> Option<[[f32; 4]; 4]> {
+        let local = self.get_transform(id)?;
+        match self.parents.get(&id) {
+            Some(parent_id) => {
+                let parent_mat = self.get_world_matrix(*parent_id)?;
+                Some(mat4_mul(&parent_mat, &local.to_matrix()))
+            }
+            None => Some(local.to_matrix()),
+        }
+    }
+
+    /// Get the world-space position for an entity (extracts translation from world matrix)
+    pub fn get_world_position(&self, id: EntityId) -> Option<Vec3> {
+        let mat = self.get_world_matrix(id)?;
+        Some(Vec3::new(mat[3][0], mat[3][1], mat[3][2]))
     }
 
     /// Iterate over entity names

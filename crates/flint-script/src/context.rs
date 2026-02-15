@@ -13,6 +13,7 @@ use std::collections::HashSet;
 pub struct InputSnapshot {
     pub actions_pressed: HashSet<String>,
     pub actions_just_pressed: HashSet<String>,
+    pub action_values: std::collections::HashMap<String, f64>,
     pub mouse_delta: (f64, f64),
 }
 

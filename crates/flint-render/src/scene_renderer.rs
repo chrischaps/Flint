@@ -17,6 +17,7 @@ use crate::primitives::{
     create_box_mesh, create_grid_mesh, create_wireframe_box_mesh, generate_normal_arrows,
     triangles_to_wireframe_indices, Mesh,
 };
+use flint_core::{Transform, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportResult;
 use std::collections::HashMap;
@@ -645,7 +646,9 @@ impl SceneRenderer {
                     default_size: [1.0, 1.0, 1.0],
                 });
 
-            let transform = world.get_transform(entity.id).unwrap_or_default();
+            let model_matrix = world.get_world_matrix(entity.id)
+                .unwrap_or_else(|| Transform::default().to_matrix());
+            let world_pos = [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]];
 
             // Check if entity has a model component
             let model_asset = world
@@ -660,7 +663,6 @@ impl SceneRenderer {
             if let Some(asset_name) = &model_asset {
                 // Check for skinned meshes first
                 if let Some(skinned_meshes) = self.mesh_cache.get_skinned(asset_name) {
-                    let model_matrix = transform.to_matrix();
                     let inv_transpose = mat4_inv_transpose(&model_matrix);
 
                     for gpu_mesh in skinned_meshes {
@@ -727,7 +729,6 @@ impl SceneRenderer {
                 }
 
                 if let Some(gpu_meshes) = self.mesh_cache.get(asset_name) {
-                    let model_matrix = transform.to_matrix();
                     let inv_transpose = mat4_inv_transpose(&model_matrix);
 
                     for gpu_mesh in gpu_meshes {
@@ -747,8 +748,23 @@ impl SceneRenderer {
                         let (mr_view, mr_sampler, has_mr) =
                             Self::resolve_texture(tex_cache_ref, gpu_mesh.material.metallic_roughness_texture.as_deref(), &tex_cache_ref.default_metallic_roughness);
 
+                        let base_color = if let Some(override_color) = world
+                            .get_components(entity.id)
+                            .and_then(|c| c.get("material"))
+                            .and_then(|m| {
+                                let r = m.get("base_color_r")?.as_float()? as f32;
+                                let g = m.get("base_color_g")?.as_float()? as f32;
+                                let b = m.get("base_color_b")?.as_float()? as f32;
+                                let a = m.get("base_color_a").and_then(|v| v.as_float()).unwrap_or(1.0) as f32;
+                                Some([r, g, b, a])
+                            }) {
+                            override_color
+                        } else {
+                            gpu_mesh.material.base_color
+                        };
+
                         let mut material_uniforms = MaterialUniforms::from_pbr(
-                            gpu_mesh.material.base_color,
+                            base_color,
                             gpu_mesh.material.metallic,
                             gpu_mesh.material.roughness,
                         );
@@ -870,7 +886,7 @@ impl SceneRenderer {
                                 .unwrap_or(true);
 
                             let sprite_instance = SpriteInstance {
-                                world_pos: [transform.position.x, transform.position.y, transform.position.z],
+                                world_pos,
                                 width,
                                 height,
                                 frame,
@@ -985,7 +1001,7 @@ impl SceneRenderer {
                 create_box_mesh(size[0], size[1], size[2], visual.color)
             };
 
-            let mut model = transform.to_matrix();
+            let mut model = model_matrix;
             // Apply bounds_center in local space so rotation pivots around entity position
             let rx = model[0][0] * bounds_center[0] + model[1][0] * bounds_center[1] + model[2][0] * bounds_center[2];
             let ry = model[0][1] * bounds_center[0] + model[1][1] * bounds_center[1] + model[2][1] * bounds_center[2];
@@ -1508,8 +1524,8 @@ impl SceneRenderer {
                     }
                     "point" => {
                         if (point_count as usize) < MAX_POINT_LIGHTS {
-                            let transform =
-                                world.get_transform(entity.id).unwrap_or_default();
+                            let light_pos = world.get_world_position(entity.id)
+                                .unwrap_or(Vec3::ZERO);
                             let radius = light
                                 .get("range")
                                 .or_else(|| light.get("radius"))
@@ -1519,9 +1535,9 @@ impl SceneRenderer {
                                 .unwrap_or(10.0) as f32;
                             points[point_count as usize] = PointLight {
                                 position: [
-                                    transform.position.x,
-                                    transform.position.y,
-                                    transform.position.z,
+                                    light_pos.x,
+                                    light_pos.y,
+                                    light_pos.z,
                                 ],
                                 radius,
                                 color,
@@ -1532,8 +1548,8 @@ impl SceneRenderer {
                     }
                     "spot" => {
                         if (spot_count as usize) < MAX_SPOT_LIGHTS {
-                            let transform =
-                                world.get_transform(entity.id).unwrap_or_default();
+                            let light_pos = world.get_world_position(entity.id)
+                                .unwrap_or(Vec3::ZERO);
                             let direction = Self::extract_light_vec3(&light, "direction")
                                 .unwrap_or([0.0, -1.0, 0.0]);
                             let radius = light
@@ -1557,9 +1573,9 @@ impl SceneRenderer {
                                 .unwrap_or(0.5) as f32;
                             spots[spot_count as usize] = SpotLight {
                                 position: [
-                                    transform.position.x,
-                                    transform.position.y,
-                                    transform.position.z,
+                                    light_pos.x,
+                                    light_pos.y,
+                                    light_pos.z,
                                 ],
                                 radius,
                                 direction,

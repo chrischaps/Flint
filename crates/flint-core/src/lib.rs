@@ -15,4 +15,4 @@ mod types;
 pub use error::{FlintError, Result};
 pub use hash::ContentHash;
 pub use id::EntityId;
-pub use types::{Color, Transform, Vec3};
+pub use types::{mat4_mul, Color, Transform, Vec3};

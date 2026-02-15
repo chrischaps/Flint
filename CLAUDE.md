@@ -20,6 +20,32 @@ cargo clippy                   # Lint
 cargo fmt --check              # Check formatting
 ```
 
+## Development Workflow
+
+Flint is designed for a **edit → validate → play** iteration loop. When making visual changes to scenes, models, or scripts, use these tools in order:
+
+1. **`flint render`** — Headless scene-to-PNG snapshot. Use this to validate visual changes without launching a window. Fast, scriptable, and works in CI. This is the primary validation tool for AI agents.
+   ```bash
+   # Render a scene to a PNG file
+   flint render levels/demo.scene.toml --output test.png --schemas schemas --width 1280 --height 720
+
+   # Useful flags for framing the shot
+   flint render levels/demo.scene.toml --output test.png --schemas schemas \
+     --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid --shadows
+   ```
+
+2. **`flint serve --watch`** — Interactive 3D viewer with hot-reload. Use for orbit-camera inspection and live scene editing.
+   ```bash
+   flint serve --watch levels/demo.scene.toml --schemas schemas
+   ```
+
+3. **`flint play`** — Full game runtime with physics, scripting, audio, and input. Use to test gameplay.
+   ```bash
+   flint play levels/demo.scene.toml --schemas schemas
+   ```
+
+**For AI agents:** After making changes to a scene file, model, or visual configuration, always render a snapshot with `flint render` to verify the result before moving on. The render command loads models (searches `scene_dir/models/` then parent `../models/`), generates spline geometry, and computes the full transform hierarchy — it produces output representative of what `flint play` will display.
+
 ## Architecture
 
 18-crate Cargo workspace with clear dependency layering:

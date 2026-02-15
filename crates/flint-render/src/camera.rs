@@ -1,6 +1,7 @@
 //! 3D Camera with orbit and first-person controls
 
 use flint_core::Vec3;
+pub use flint_core::mat4_mul;
 
 /// Camera operating mode
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -229,18 +230,6 @@ impl Camera {
         let vp = self.view_projection_matrix();
         mat4_inverse(&vp)
     }
-}
-
-pub(crate) fn mat4_mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
-    let mut result = [[0.0; 4]; 4];
-    for i in 0..4 {
-        for j in 0..4 {
-            for k in 0..4 {
-                result[i][j] += a[k][j] * b[i][k];
-            }
-        }
-    }
-    result
 }
 
 /// Compute the inverse of a 4x4 column-major matrix using cofactor expansion
