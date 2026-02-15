@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 /// Register all API functions on the Rhai engine
 pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_entity_api(engine, ctx.clone());
+    register_spline_api(engine, ctx.clone());
     register_input_api(engine, ctx.clone());
     register_time_api(engine, ctx.clone());
     register_audio_api(engine, ctx.clone());
@@ -323,6 +324,217 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 comps.set_field("material", "base_color_b", toml::Value::Float(b));
                 comps.set_field("material", "base_color_a", toml::Value::Float(a));
             }
+        });
+    }
+
+    // find_entities_with(component: &str) -> Array of entity IDs
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("find_entities_with", move |comp: &str| -> rhai::Array {
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            world.all_entities()
+                .into_iter()
+                .filter(|info| info.components.iter().any(|c| c == comp))
+                .map(|info| Dynamic::from(info.id.raw() as i64))
+                .collect()
+        });
+    }
+
+    // entity_count_with(component: &str) -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("entity_count_with", move |comp: &str| -> i64 {
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            world.all_entities()
+                .into_iter()
+                .filter(|info| info.components.iter().any(|c| c == comp))
+                .count() as i64
+        });
+    }
+}
+
+// ─── Spline API ──────────────────────────────────────────
+
+fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // spline_closest_point(spline_entity, x, z) -> Map #{t, x, y, z, dist_sq}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("spline_closest_point", move |spline_id: i64, qx: f64, qz: f64| -> Dynamic {
+            if spline_id < 0 { return Dynamic::UNIT; }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(spline_id as u64);
+            let comps = match world.get_components(eid) {
+                Some(c) => c,
+                None => return Dynamic::UNIT,
+            };
+            let sd = match comps.get("spline_data") {
+                Some(v) => v,
+                None => return Dynamic::UNIT,
+            };
+            let table = match sd.as_table() {
+                Some(t) => t,
+                None => return Dynamic::UNIT,
+            };
+
+            let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
+                Some(n) if n > 0 => n as usize,
+                _ => return Dynamic::UNIT,
+            };
+
+            let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+
+            let mut best_dist_sq = f64::MAX;
+            let mut best_idx = 0usize;
+
+            for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
+                let sx = px_arr[i].as_float().unwrap_or(0.0);
+                let sz = pz_arr[i].as_float().unwrap_or(0.0);
+                let dx = qx - sx;
+                let dz = qz - sz;
+                let dist_sq = dx * dx + dz * dz;
+                if dist_sq < best_dist_sq {
+                    best_dist_sq = dist_sq;
+                    best_idx = i;
+                }
+            }
+
+            let mut map = Map::new();
+            map.insert("t".into(), Dynamic::from(t_arr[best_idx].as_float().unwrap_or(0.0)));
+            map.insert("x".into(), Dynamic::from(px_arr[best_idx].as_float().unwrap_or(0.0)));
+            map.insert("y".into(), Dynamic::from(py_arr[best_idx].as_float().unwrap_or(0.0)));
+            map.insert("z".into(), Dynamic::from(pz_arr[best_idx].as_float().unwrap_or(0.0)));
+            map.insert("dist_sq".into(), Dynamic::from(best_dist_sq));
+            Dynamic::from(map)
+        });
+    }
+
+    // spline_sample_at(spline_entity, t) -> Map #{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("spline_sample_at", move |spline_id: i64, t: f64| -> Dynamic {
+            if spline_id < 0 { return Dynamic::UNIT; }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(spline_id as u64);
+            let comps = match world.get_components(eid) {
+                Some(c) => c,
+                None => return Dynamic::UNIT,
+            };
+            let sd = match comps.get("spline_data") {
+                Some(v) => v,
+                None => return Dynamic::UNIT,
+            };
+            let table = match sd.as_table() {
+                Some(t) => t,
+                None => return Dynamic::UNIT,
+            };
+
+            let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
+                Some(n) if n > 1 => n as usize,
+                _ => return Dynamic::UNIT,
+            };
+
+            let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+
+            let len = count.min(px_arr.len()).min(py_arr.len()).min(pz_arr.len()).min(t_arr.len());
+            if len < 2 { return Dynamic::UNIT; }
+
+            // Wrap t into [0, 1) for closed splines
+            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
+
+            // Binary search for the bracketing segment
+            let mut lo = 0usize;
+            let mut hi = len - 1;
+            while lo + 1 < hi {
+                let mid = (lo + hi) / 2;
+                if t_arr[mid].as_float().unwrap_or(0.0) <= t_wrapped {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            let t0 = t_arr[lo].as_float().unwrap_or(0.0);
+            let t1 = t_arr[hi].as_float().unwrap_or(0.0);
+            let seg_len = t1 - t0;
+            let frac = if seg_len.abs() > 1e-9 { (t_wrapped - t0) / seg_len } else { 0.0 };
+
+            let x0 = px_arr[lo].as_float().unwrap_or(0.0);
+            let y0 = py_arr[lo].as_float().unwrap_or(0.0);
+            let z0 = pz_arr[lo].as_float().unwrap_or(0.0);
+            let x1 = px_arr[hi].as_float().unwrap_or(0.0);
+            let y1 = py_arr[hi].as_float().unwrap_or(0.0);
+            let z1 = pz_arr[hi].as_float().unwrap_or(0.0);
+
+            let px = x0 + (x1 - x0) * frac;
+            let py = y0 + (y1 - y0) * frac;
+            let pz = z0 + (z1 - z0) * frac;
+
+            // Forward direction: tangent along the spline
+            let mut fx = x1 - x0;
+            let mut fy = y1 - y0;
+            let mut fz = z1 - z0;
+            let flen = (fx * fx + fy * fy + fz * fz).sqrt();
+            if flen > 1e-9 {
+                fx /= flen;
+                fy /= flen;
+                fz /= flen;
+            }
+
+            // Right vector: cross(forward, up) where up = (0,1,0)
+            let mut rx = fz;
+            let ry = 0.0_f64;
+            let mut rz = -fx;
+            let rlen = (rx * rx + rz * rz).sqrt();
+            if rlen > 1e-9 {
+                rx /= rlen;
+                rz /= rlen;
+            }
+
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(px));
+            map.insert("y".into(), Dynamic::from(py));
+            map.insert("z".into(), Dynamic::from(pz));
+            map.insert("fwd_x".into(), Dynamic::from(fx));
+            map.insert("fwd_y".into(), Dynamic::from(fy));
+            map.insert("fwd_z".into(), Dynamic::from(fz));
+            map.insert("right_x".into(), Dynamic::from(rx));
+            map.insert("right_y".into(), Dynamic::from(ry));
+            map.insert("right_z".into(), Dynamic::from(rz));
+            Dynamic::from(map)
         });
     }
 }
