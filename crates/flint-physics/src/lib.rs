@@ -14,6 +14,8 @@ use character::CharacterController;
 use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, GameEvent, InputState, RuntimeSystem};
+use rapier3d::control::{CharacterLength, KinematicCharacterController};
+use rapier3d::prelude::*;
 use sync::PhysicsSync;
 use world::PhysicsWorld;
 
@@ -24,6 +26,23 @@ pub struct EntityRaycastHit {
     pub distance: f32,
     pub point: [f32; 3],
     pub normal: [f32; 3],
+}
+
+/// Result of a collision-corrected character movement
+#[derive(Debug, Clone)]
+pub struct MoveCharacterResult {
+    /// Corrected absolute position after collision resolution
+    pub position: [f32; 3],
+    /// Whether the character is touching ground after movement
+    pub grounded: bool,
+}
+
+/// Collider shape dimensions for an entity
+#[derive(Debug, Clone)]
+pub enum ColliderExtents {
+    Box { half_extents: [f32; 3] },
+    Sphere { radius: f32 },
+    Capsule { radius: f32, half_height: f32 },
 }
 
 /// Physics system implementing RuntimeSystem for the game loop
@@ -75,6 +94,84 @@ impl PhysicsSystem {
             point: hit.point,
             normal: hit.normal,
         })
+    }
+
+    /// Collision-corrected kinematic character movement using Rapier's shape-sweep.
+    /// Scripts pass the desired movement delta; the engine resolves collisions and
+    /// returns the corrected absolute position plus grounded status.
+    pub fn move_character_shape(
+        &self,
+        entity_id: EntityId,
+        current_pos: [f32; 3],
+        desired_delta: [f32; 3],
+        dt: f32,
+    ) -> Option<MoveCharacterResult> {
+        let collider_handle = *self.sync.collider_map.get(&entity_id)?;
+        let body_handle = *self.sync.body_map.get(&entity_id)?;
+
+        let collider = self.physics_world.collider_set.get(collider_handle)?;
+        let shape = collider.shape();
+
+        // Build isometry from the ECS position (freshest data from scripts)
+        let position = Isometry::translation(current_pos[0], current_pos[1], current_pos[2]);
+
+        // Lightweight config struct — no snap/autostep so scripts own their physics feel
+        let controller = KinematicCharacterController {
+            offset: CharacterLength::Absolute(0.01),
+            snap_to_ground: None,
+            autostep: None,
+            ..KinematicCharacterController::default()
+        };
+
+        let desired = vector![desired_delta[0], desired_delta[1], desired_delta[2]];
+
+        let corrected = controller.move_shape(
+            dt,
+            &self.physics_world.rigid_body_set,
+            &self.physics_world.collider_set,
+            &self.physics_world.query_pipeline,
+            shape,
+            &position,
+            desired,
+            QueryFilter::default().exclude_rigid_body(body_handle),
+            |_| {},
+        );
+
+        let resolved = [
+            current_pos[0] + corrected.translation.x,
+            current_pos[1] + corrected.translation.y,
+            current_pos[2] + corrected.translation.z,
+        ];
+
+        Some(MoveCharacterResult {
+            position: resolved,
+            grounded: corrected.grounded,
+        })
+    }
+
+    /// Query an entity's collider shape dimensions.
+    pub fn get_entity_collider_extents(&self, entity_id: EntityId) -> Option<ColliderExtents> {
+        let collider_handle = *self.sync.collider_map.get(&entity_id)?;
+        let collider = self.physics_world.collider_set.get(collider_handle)?;
+        let shape = collider.shape();
+
+        if let Some(cuboid) = shape.as_cuboid() {
+            let he = cuboid.half_extents;
+            Some(ColliderExtents::Box {
+                half_extents: [he.x, he.y, he.z],
+            })
+        } else if let Some(ball) = shape.as_ball() {
+            Some(ColliderExtents::Sphere {
+                radius: ball.radius,
+            })
+        } else if let Some(capsule) = shape.as_capsule() {
+            Some(ColliderExtents::Capsule {
+                radius: capsule.radius,
+                half_height: capsule.half_height(),
+            })
+        } else {
+            None
+        }
     }
 
     /// Run the character controller update (called from player app with input access)
