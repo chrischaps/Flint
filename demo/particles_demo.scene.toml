@@ -1,0 +1,143 @@
+[scene]
+name = "Particle System Demo"
+version = "1.0"
+description = "Demonstrates the particle system with fire, smoke, sparks, and dust motes"
+
+# ============================================================
+#  FIRE — warm additive glow rising upward
+# ============================================================
+
+[entities.fire]
+[entities.fire.transform]
+position = [0, 0.2, 0]
+
+[entities.fire.particle_emitter]
+emission_rate = 40.0
+max_particles = 200
+lifetime_min = 0.3
+lifetime_max = 0.8
+speed_min = 1.5
+speed_max = 3.0
+direction = [0, 1, 0]
+spread = 20.0
+gravity = [0, 2.0, 0]
+size_start = 0.15
+size_end = 0.02
+color_start = [1.0, 0.7, 0.1, 0.9]
+color_end = [1.0, 0.1, 0.0, 0.0]
+blend_mode = "additive"
+shape = "sphere"
+shape_radius = 0.15
+autoplay = true
+
+# ============================================================
+#  SMOKE — slow alpha-blended wisps drifting up from the fire
+# ============================================================
+
+[entities.smoke]
+[entities.smoke.transform]
+position = [0, 1.0, 0]
+
+[entities.smoke.particle_emitter]
+emission_rate = 8.0
+max_particles = 100
+lifetime_min = 2.0
+lifetime_max = 4.0
+speed_min = 0.3
+speed_max = 0.8
+direction = [0, 1, 0]
+spread = 25.0
+gravity = [0, 0.5, 0]
+damping = 0.3
+size_start = 0.1
+size_end = 0.6
+color_start = [0.4, 0.4, 0.4, 0.3]
+color_end = [0.6, 0.6, 0.6, 0.0]
+blend_mode = "alpha"
+shape = "point"
+autoplay = true
+
+# ============================================================
+#  SPARKS — fast particles arcing under gravity
+# ============================================================
+
+[entities.sparks]
+[entities.sparks.transform]
+position = [3, 0.5, 0]
+
+[entities.sparks.particle_emitter]
+emission_rate = 15.0
+max_particles = 150
+lifetime_min = 0.5
+lifetime_max = 1.5
+speed_min = 3.0
+speed_max = 6.0
+direction = [0, 1, 0]
+spread = 45.0
+gravity = [0, -9.81, 0]
+size_start = 0.03
+size_end = 0.01
+color_start = [1.0, 0.9, 0.3, 1.0]
+color_end = [1.0, 0.3, 0.0, 0.0]
+blend_mode = "additive"
+shape = "point"
+autoplay = true
+
+# ============================================================
+#  DUST MOTES — gentle ambient particles floating lazily
+# ============================================================
+
+[entities.dust_motes]
+[entities.dust_motes.transform]
+position = [-3, 1.5, 0]
+
+[entities.dust_motes.particle_emitter]
+emission_rate = 5.0
+max_particles = 80
+lifetime_min = 3.0
+lifetime_max = 6.0
+speed_min = 0.05
+speed_max = 0.2
+direction = [0, 1, 0]
+spread = 180.0
+gravity = [0, 0.02, 0]
+damping = 0.5
+size_start = 0.02
+size_end = 0.02
+color_start = [1.0, 1.0, 0.9, 0.5]
+color_end = [1.0, 1.0, 0.9, 0.0]
+blend_mode = "alpha"
+shape = "box"
+shape_extents = [2.0, 1.0, 2.0]
+autoplay = true
+
+# ============================================================
+#  BURST FOUNTAIN — cone emitter with periodic bursts
+# ============================================================
+
+[entities.fountain]
+[entities.fountain.transform]
+position = [0, 0, -4]
+
+[entities.fountain.particle_emitter]
+emission_rate = 0.0
+burst_count = 30
+max_particles = 500
+lifetime_min = 1.0
+lifetime_max = 2.5
+speed_min = 4.0
+speed_max = 7.0
+direction = [0, 1, 0]
+spread = 0.0
+gravity = [0, -9.81, 0]
+size_start = 0.05
+size_end = 0.03
+color_start = [0.3, 0.7, 1.0, 0.8]
+color_end = [0.1, 0.3, 1.0, 0.0]
+blend_mode = "alpha"
+shape = "cone"
+shape_angle = 25.0
+shape_radius = 0.1
+duration = 2.0
+looping = true
+autoplay = true

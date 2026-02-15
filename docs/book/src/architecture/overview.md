@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as an eighteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a nineteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -12,6 +12,7 @@ flint/
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
+│   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
 │   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus)
@@ -91,15 +92,16 @@ User / AI Agent
       ├──► flint-query     (queries)     ├──► flint-physics   (Rapier 3D)
       ├──► flint-scene     (load/save)   ├──► flint-audio     (Kira spatial audio)
       ├──► flint-render    (renderer)    ├──► flint-animation (tweens + skeletal)
-      ├──► flint-constraint(validation)  ├──► flint-script    (Rhai scripting)
-      ├──► flint-asset     (catalog)     └──► flint-render    (PBR + skinned mesh)
-      ├──► flint-asset-gen (AI gen)              │
-      └──► flint-import    (glTF import)         ▼
-              │                              flint-import  (glTF meshes + skins)
-              ▼                                  │
-          flint-ecs                              ▼
-          flint-schema                       flint-ecs
-          flint-core                         flint-schema
+      ├──► flint-constraint(validation)  ├──► flint-particles (GPU particles)
+      ├──► flint-asset     (catalog)     ├──► flint-script    (Rhai scripting)
+      ├──► flint-asset-gen (AI gen)      └──► flint-render    (PBR + skinned mesh)
+      └──► flint-import    (glTF import)         │
+              │                                  ▼
+              ▼                              flint-import  (glTF meshes + skins)
+          flint-ecs                              │
+          flint-schema                           ▼
+          flint-core                         flint-ecs
+                                             flint-schema
                                              flint-core
 ```
 
@@ -199,6 +201,15 @@ Two-tier animation system:
 - `AnimationSync` bridges ECS `animator` components to property playback
 - `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
 
+### flint-particles
+
+GPU-instanced particle system for visual effects:
+- **ParticlePool** --- swap-remove array for O(1) particle death, contiguous alive iteration
+- **ParticleSync** --- bridges ECS `particle_emitter` components to the simulation, auto-discovers new emitters each frame
+- **ParticleSystem** --- top-level `RuntimeSystem` that ticks simulation in `update()` (variable-rate, not fixed-step)
+- **ParticlePipeline** --- wgpu render pipeline with alpha and additive variants, storage buffer for instances
+- Emission shapes: point, sphere, cone, box. Value-over-lifetime interpolation for size and color.
+
 ### flint-script
 
 Rhai scripting engine for runtime game logic:
@@ -225,7 +236,7 @@ AI asset generation pipeline:
 
 ### flint-player
 
-Standalone player binary that wires together runtime, physics, audio, animation, scripting, and rendering:
+Standalone player binary that wires together runtime, physics, audio, animation, particles, scripting, and rendering:
 - Full game loop: clock tick, fixed-step physics, audio sync, animation advance, script update, first-person rendering
 - Scene loading with physics body creation from TOML collider/rigidbody components
 - Audio source loading and spatial listener tracking

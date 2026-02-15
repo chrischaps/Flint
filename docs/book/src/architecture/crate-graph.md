@@ -1,6 +1,6 @@
 # Crate Dependency Graph
 
-This page shows how Flint's eighteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
+This page shows how Flint's nineteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
 
 ## Dependency Diagram
 
@@ -66,10 +66,11 @@ This page shows how Flint's eighteen crates depend on each other. Dependencies f
 | `flint-physics` | core, ecs, runtime | script, player |
 | `flint-audio` | core, ecs, runtime | player |
 | `flint-animation` | core, ecs, import, runtime | player |
+| `flint-particles` | core, ecs, runtime | player |
 | `flint-script` | core, ecs, runtime, physics | player |
 | `flint-asset-gen` | core, asset, import | cli |
 | `flint-viewer` | core, ecs, scene, schema, render, import, constraint | cli |
-| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, script, import, asset | *(binary entry point)* |
+| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, particles, script, import, asset | *(binary entry point)* |
 | `flint-cli` | all crates | *(binary entry point)* |
 
 ## Key Properties
@@ -81,13 +82,13 @@ This page shows how Flint's eighteen crates depend on each other. Dependencies f
 2. **Schema** --- data definitions (`flint-schema`)
 3. **Storage** --- entity and asset management (`flint-ecs`, `flint-asset`)
 4. **Logic** --- query, scene, constraint, import, asset-gen
-5. **Systems** --- render, runtime, physics, audio, animation, script
+5. **Systems** --- render, runtime, physics, audio, animation, particles, script
 6. **Applications** --- viewer, player
 7. **Interface** --- CLI binary (`flint-cli`), player binary (`flint-player`)
 
 **Two entry points.** The CLI binary (`flint-cli`) serves scene authoring and validation workflows. The player binary (`flint-player`) serves interactive gameplay. Both share the same underlying crate hierarchy.
 
-**Mostly independent subsystems.** The constraint, asset, physics, audio, animation, asset generation, and render systems don't depend on each other. The one exception is `flint-script`, which depends on `flint-physics` for raycasting and camera direction access. This means most subsystems can be built and tested in isolation.
+**Mostly independent subsystems.** The constraint, asset, physics, audio, animation, particles, asset generation, and render systems don't depend on each other. The one exception is `flint-script`, which depends on `flint-physics` for raycasting and camera direction access. This means most subsystems can be built and tested in isolation.
 
 ## External Dependencies
 

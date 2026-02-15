@@ -18,6 +18,7 @@ members = [
     "crates/flint-audio",
     "crates/flint-animation",
     "crates/flint-script",
+    "crates/flint-particles",
     "crates/flint-cli",
 ]
 
@@ -106,4 +107,5 @@ flint-audio = { path = "crates/flint-audio" }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }
+flint-particles = { path = "crates/flint-particles" }
 flint-player = { path = "crates/flint-player" }

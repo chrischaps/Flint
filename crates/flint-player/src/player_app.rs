@@ -11,8 +11,9 @@ use flint_audio::AudioSystem;
 use flint_core::{FlintError, Vec3 as FlintVec3};
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
+use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
-use flint_render::{Camera, RenderContext, SceneRenderer};
+use flint_render::{Camera, ParticleDrawData, ParticleInstanceGpu, RenderContext, SceneRenderer};
 use flint_runtime::{
     Binding, GameClock, GameEvent, InputConfig, InputState, RebindMode, RuntimeSystem,
 };
@@ -53,6 +54,7 @@ pub struct PlayerApp {
     pub physics: PhysicsSystem,
     pub audio: AudioSystem,
     pub animation: AnimationSystem,
+    pub particles: ParticleSystem,
     pub script: ScriptSystem,
 
     // Rendering
@@ -111,6 +113,7 @@ impl PlayerApp {
             physics: PhysicsSystem::new(),
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
+            particles: ParticleSystem::new(),
             script: ScriptSystem::new(),
             window: None,
             render_context: None,
@@ -265,6 +268,11 @@ impl PlayerApp {
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+
+        // Initialize particles
+        self.particles
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Particles init: {:?}", e));
 
         // Initialize scripting
         load_scripts_from_world(&self.scene_path, &mut self.script);
@@ -627,11 +635,37 @@ impl PlayerApp {
             }
         }
 
+        // Advance particle simulation (after animation — emitter transforms may be animated)
+        self.particles
+            .update(&mut self.world, self.clock.delta_time)
+            .ok();
+
         // Refresh renderer with updated transforms (animation may have changed positions)
         if let (Some(renderer), Some(context)) =
             (&mut self.scene_renderer, &self.render_context)
         {
             renderer.update_from_world(&self.world, &context.device);
+        }
+
+        // Upload particle instance data to GPU
+        if let (Some(renderer), Some(context)) =
+            (&mut self.scene_renderer, &self.render_context)
+        {
+            let sync_draw_data = self.particles.sync.draw_data();
+            let render_draw_data: Vec<ParticleDrawData<'_>> = sync_draw_data
+                .iter()
+                .map(|d| {
+                    // ParticleInstance and ParticleInstanceGpu have identical repr(C) layouts
+                    let gpu_instances: &[ParticleInstanceGpu] =
+                        bytemuck::cast_slice(bytemuck::cast_slice::<_, u8>(d.instances));
+                    ParticleDrawData {
+                        instances: gpu_instances,
+                        texture: d.texture,
+                        additive: d.blend_mode == flint_particles::ParticleBlendMode::Additive,
+                    }
+                })
+                .collect();
+            renderer.update_particles(&context.device, render_draw_data);
         }
 
         // Clear per-frame input state
@@ -745,6 +779,10 @@ impl PlayerApp {
                         LogLevel::Warn => eprintln!("[script warn] {}", message),
                         LogLevel::Error => eprintln!("[script error] {}", message),
                     }
+                }
+                ScriptCommand::EmitBurst { entity_id, count } => {
+                    let eid = flint_core::EntityId(entity_id as u64);
+                    self.particles.sync.queue_burst(eid, count as u32);
                 }
             }
         }

@@ -11,6 +11,7 @@ mod context;
 mod debug;
 mod gpu_mesh;
 mod headless;
+pub mod particle_pipeline;
 mod pipeline;
 mod primitives;
 mod scene_renderer;
@@ -34,6 +35,9 @@ pub use primitives::{
 };
 pub use scene_renderer::{ArchetypeVisual, SceneRenderer};
 pub use billboard_pipeline::BillboardPipeline;
+pub use particle_pipeline::{
+    ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
+};
 pub use skybox_pipeline::SkyboxPipeline;
 pub use skinned_pipeline::SkinnedPipeline;
 pub use texture_cache::TextureCache;
@@ -62,6 +66,12 @@ mod tests {
     fn billboard_shader_wgsl_parses() {
         let source = include_str!("billboard_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("billboard_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn particle_shader_wgsl_parses() {
+        let source = include_str!("particle_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("particle_shader.wgsl failed to parse");
     }
 
     #[test]

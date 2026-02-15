@@ -1,0 +1,33 @@
+[component.particle_emitter]
+description = "GPU-instanced particle emitter with configurable shape, lifetime, and visual properties"
+
+[component.particle_emitter.fields]
+emission_rate = { type = "f32", default = 10.0, min = 0.0, max = 10000.0, description = "Particles emitted per second (0 = burst-only)" }
+burst_count = { type = "i32", default = 0, min = 0, max = 10000, description = "Particles per burst" }
+max_particles = { type = "i32", default = 256, min = 1, max = 10000, description = "Maximum pool capacity" }
+lifetime_min = { type = "f32", default = 1.0, min = 0.01, max = 60.0, description = "Minimum particle lifetime in seconds" }
+lifetime_max = { type = "f32", default = 2.0, min = 0.01, max = 60.0, description = "Maximum particle lifetime in seconds" }
+speed_min = { type = "f32", default = 1.0, min = 0.0, max = 100.0, description = "Minimum initial speed" }
+speed_max = { type = "f32", default = 3.0, min = 0.0, max = 100.0, description = "Maximum initial speed" }
+direction = { type = "vec3", default = [0, 1, 0], description = "Base emission direction (local space)" }
+spread = { type = "f32", default = 15.0, min = 0.0, max = 180.0, description = "Random deviation angle in degrees" }
+gravity = { type = "vec3", default = [0, -9.81, 0], description = "Acceleration applied each frame (world space)" }
+damping = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Velocity decay per second" }
+size_start = { type = "f32", default = 0.1, min = 0.0, max = 10.0, description = "Particle size at birth" }
+size_end = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Particle size at death" }
+color_start = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "RGBA color at birth" }
+color_end = { type = "vec4", default = [1.0, 1.0, 1.0, 0.0], description = "RGBA color at death" }
+texture = { type = "string", default = "", description = "Sprite texture path (empty = white dot)" }
+frames_x = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet columns" }
+frames_y = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet rows" }
+animate_frames = { type = "bool", default = false, description = "Auto-advance frames over lifetime" }
+blend_mode = { type = "string", default = "alpha", description = "Blend mode: alpha or additive" }
+shape = { type = "string", default = "point", description = "Emission shape: point, sphere, cone, box" }
+shape_radius = { type = "f32", default = 0.5, min = 0.0, max = 100.0, description = "Radius for sphere/cone shapes" }
+shape_angle = { type = "f32", default = 30.0, min = 0.0, max = 180.0, description = "Half-angle for cone shape in degrees" }
+shape_extents = { type = "vec3", default = [0.5, 0.5, 0.5], description = "Half-extents for box shape" }
+world_space = { type = "bool", default = true, description = "Particles detach from emitter transform" }
+duration = { type = "f32", default = 0.0, min = 0.0, max = 3600.0, description = "Emitter duration (0 = infinite)" }
+looping = { type = "bool", default = true, description = "Loop emitter when duration expires" }
+playing = { type = "bool", default = false, description = "Current playback state" }
+autoplay = { type = "bool", default = true, description = "Start emitting on scene load" }

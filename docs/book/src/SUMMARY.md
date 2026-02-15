@@ -30,6 +30,7 @@
 - [Rendering](concepts/rendering.md)
 - [Audio](concepts/audio.md)
 - [Animation](concepts/animation.md)
+- [Particles](concepts/particles.md)
 - [Physics and Runtime](concepts/physics-and-runtime.md)
 - [Scripting](concepts/scripting.md)
 - [AI Asset Generation](concepts/ai-generation.md)

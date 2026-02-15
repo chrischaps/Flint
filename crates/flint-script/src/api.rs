@@ -19,6 +19,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_math_api(engine);
     register_event_api(engine, ctx.clone());
     register_ui_api(engine, ctx.clone());
+    register_particle_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -697,6 +698,65 @@ fn register_event_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 name: name.to_string(),
                 data: toml_data,
             });
+        });
+    }
+}
+
+// ─── Particle API ─────────────────────────────────────────
+
+fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // emit_burst(entity_id, count) — fire N particles immediately
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("emit_burst", move |entity_id: i64, count: i64| {
+            let mut c = ctx.lock().unwrap();
+            c.commands.push(ScriptCommand::EmitBurst {
+                entity_id,
+                count,
+            });
+        });
+    }
+
+    // start_emitter(entity_id) — set playing = true in ECS
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("start_emitter", move |entity_id: i64| {
+            let mut c = ctx.lock().unwrap();
+            let world = unsafe { &mut *c.world };
+            let eid = EntityId(entity_id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                comps.set_field("particle_emitter", "playing", toml::Value::Boolean(true));
+            }
+        });
+    }
+
+    // stop_emitter(entity_id) — set playing = false in ECS
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("stop_emitter", move |entity_id: i64| {
+            let mut c = ctx.lock().unwrap();
+            let world = unsafe { &mut *c.world };
+            let eid = EntityId(entity_id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                comps.set_field("particle_emitter", "playing", toml::Value::Boolean(false));
+            }
+        });
+    }
+
+    // set_emission_rate(entity_id, rate) — update emission rate in ECS
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_emission_rate", move |entity_id: i64, rate: f64| {
+            let mut c = ctx.lock().unwrap();
+            let world = unsafe { &mut *c.world };
+            let eid = EntityId(entity_id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                comps.set_field(
+                    "particle_emitter",
+                    "emission_rate",
+                    toml::Value::Float(rate),
+                );
+            }
         });
     }
 }

@@ -33,6 +33,7 @@ pub enum ScriptCommand {
     StopSound { name: String },
     FireEvent { name: String, data: toml::Value },
     Log { level: LogLevel, message: String },
+    EmitBurst { entity_id: i64, count: i64 },
 }
 
 /// 2D draw command issued by scripts each frame (immediate mode)
