@@ -1093,16 +1093,13 @@ impl SceneRenderer {
                 }
             }
 
-            // Skip entities that are purely functional (no visible geometry needed)
+            // Only draw fallback geometry for entities that explicitly have bounds or material.
+            // Entities without a model, bounds, or material are non-visual (lights, scripts,
+            // particle emitters, splines, etc.) and should not get a default cube.
             if let Some(components) = world.get_components(entity.id) {
+                let has_bounds = components.get("bounds").is_some();
                 let has_material = components.get("material").is_some();
-                let is_light = components.get("light").is_some();
-                let is_audio = components.get("audio_source").is_some() || components.get("audio_listener").is_some();
-                let is_door = components.get("door").is_some();
-                let is_player = components.get("character_controller").is_some();
-
-                // If the entity is a non-visual type and has no explicit bounds+material, skip it
-                if (is_light || is_audio || is_door || is_player) && !has_material {
+                if !has_bounds && !has_material {
                     continue;
                 }
             }
