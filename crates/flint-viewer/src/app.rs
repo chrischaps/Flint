@@ -5,7 +5,7 @@ use crate::panels::{CameraView, EntityInspector, GizmoAction, RenderStats, Scene
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
-use flint_render::{Camera, RenderContext, SceneRenderer};
+use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
@@ -208,7 +208,7 @@ impl ViewerApp {
             false,
         );
 
-        let mut scene_renderer = SceneRenderer::new(&render_context);
+        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
 
         // Load models and update meshes from world
         {

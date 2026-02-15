@@ -6,7 +6,7 @@ use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
-use flint_render::{Camera, RenderContext, SceneRenderer};
+use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
 use flint_runtime::RuntimeSystem;
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
@@ -147,7 +147,7 @@ impl ViewerApp {
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.update_orbit();
 
-        let mut scene_renderer = SceneRenderer::new(&render_context);
+        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
 
         // Load models (including skeletal data) and update meshes from world
         {

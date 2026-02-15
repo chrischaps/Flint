@@ -255,7 +255,7 @@ impl ShadowPass {
             shadow_sampler,
             shadow_uniforms_buffer,
             resolution,
-            enabled: false,
+            enabled: true,
             shadow_uniforms,
         }
     }

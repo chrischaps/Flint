@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use flint_core::Vec3;
 use flint_import::import_gltf;
 use flint_player::spline_gen;
-use flint_render::{Camera, DebugMode, HeadlessContext, SceneRenderer};
+use flint_render::{Camera, DebugMode, HeadlessContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
 use std::path::Path;
@@ -25,7 +25,7 @@ pub struct RenderArgs {
     pub wireframe_overlay: bool,
     pub show_normals: bool,
     pub no_tonemapping: bool,
-    pub shadows: bool,
+    pub no_shadows: bool,
     pub shadow_resolution: u32,
 }
 
@@ -71,10 +71,12 @@ pub fn run(args: RenderArgs) -> Result<()> {
     camera.update_orbit();
 
     // Create scene renderer
-    let mut renderer = SceneRenderer::new_headless(&ctx.device, &ctx.queue, ctx.format);
-    if args.no_grid {
-        renderer.disable_grid();
-    }
+    let mut renderer = SceneRenderer::new_headless(
+        &ctx.device,
+        &ctx.queue,
+        ctx.format,
+        RendererConfig { show_grid: !args.no_grid },
+    );
 
     // Load models from the scene
     let scene_dir = Path::new(&args.scene)
@@ -206,8 +208,8 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if args.no_tonemapping {
         renderer.set_tonemapping(false);
     }
-    if args.shadows {
-        renderer.set_shadows(true);
+    if args.no_shadows {
+        renderer.set_shadows(false);
     }
     if args.shadow_resolution != 1024 {
         renderer.set_shadow_resolution(&ctx.device, args.shadow_resolution);

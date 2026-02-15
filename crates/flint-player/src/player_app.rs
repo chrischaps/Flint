@@ -167,7 +167,7 @@ impl PlayerApp {
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.fov = 70.0; // Slightly wider FOV for first-person
 
-        let mut scene_renderer = SceneRenderer::new(&render_context);
+        let mut scene_renderer = SceneRenderer::new(&render_context, Default::default());
 
         // Load models from world (including skeletal data)
         self.skeletal_entity_assets = load_models_from_world(

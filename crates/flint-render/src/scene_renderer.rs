@@ -75,6 +75,18 @@ struct SkinnedDrawCall {
     entity_id: Option<flint_core::EntityId>,
 }
 
+/// Configuration for creating a SceneRenderer
+pub struct RendererConfig {
+    /// Show the ground-plane grid (useful for debug/inspection modes)
+    pub show_grid: bool,
+}
+
+impl Default for RendererConfig {
+    fn default() -> Self {
+        Self { show_grid: false }
+    }
+}
+
 /// Renders a FlintWorld to the screen
 pub struct SceneRenderer {
     pipeline: RenderPipeline,
@@ -107,22 +119,26 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(context: &RenderContext) -> Self {
+    pub fn new(context: &RenderContext, config: RendererConfig) -> Self {
         let pipeline = RenderPipeline::new(&context.device, context.config.format);
         let archetype_visuals = Self::default_archetype_visuals();
         let texture_cache = TextureCache::new(&context.device, &context.queue);
 
-        // Create grid draw call
-        let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
-        let grid_draw = Some(Self::create_draw_call(
-            &context.device,
-            &pipeline,
-            &grid,
-            true,
-            TransformUniforms::new(),
-            MaterialUniforms::procedural(),
-            &texture_cache,
-        ));
+        // Create grid draw call (only for debug/inspection modes)
+        let grid_draw = if config.show_grid {
+            let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
+            Some(Self::create_draw_call(
+                &context.device,
+                &pipeline,
+                &grid,
+                true,
+                TransformUniforms::new(),
+                MaterialUniforms::procedural(),
+                &texture_cache,
+            ))
+        } else {
+            None
+        };
 
         let shadow_pass = ShadowPass::new(
             &context.device,
@@ -278,22 +294,27 @@ impl SceneRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
+        config: RendererConfig,
     ) -> Self {
         let pipeline = RenderPipeline::new(device, format);
         let archetype_visuals = Self::default_archetype_visuals();
         let texture_cache = TextureCache::new(device, queue);
 
-        // Create grid draw call
-        let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
-        let grid_draw = Some(Self::create_draw_call(
-            device,
-            &pipeline,
-            &grid,
-            true,
-            TransformUniforms::new(),
-            MaterialUniforms::procedural(),
-            &texture_cache,
-        ));
+        // Create grid draw call (only for debug/inspection modes)
+        let grid_draw = if config.show_grid {
+            let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
+            Some(Self::create_draw_call(
+                device,
+                &pipeline,
+                &grid,
+                true,
+                TransformUniforms::new(),
+                MaterialUniforms::procedural(),
+                &texture_cache,
+            ))
+        } else {
+            None
+        };
 
         let shadow_pass = ShadowPass::new(
             device,
@@ -342,11 +363,6 @@ impl SceneRenderer {
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
         }
-    }
-
-    /// Disable the ground grid
-    pub fn disable_grid(&mut self) {
-        self.grid_draw = None;
     }
 
     /// Load an imported model into the GPU mesh cache

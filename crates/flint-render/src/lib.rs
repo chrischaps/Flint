@@ -33,7 +33,7 @@ pub use primitives::{
     create_box_mesh, generate_normal_arrows, triangles_to_wireframe_indices, Mesh, SkinnedMesh,
     SkinnedVertex, Vertex,
 };
-pub use scene_renderer::{ArchetypeVisual, SceneRenderer};
+pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use billboard_pipeline::BillboardPipeline;
 pub use particle_pipeline::{
     ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,

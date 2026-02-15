@@ -183,7 +183,7 @@ engine/target/release/flint play levels/demo.scene.toml --schemas engine/schemas
 
 # Validate visual changes by rendering to a PNG (no window required)
 engine/target/release/flint render levels/demo.scene.toml --output render_test.png \
-  --schemas engine/schemas --schemas schemas --width 1280 --height 720 --no-grid --shadows
+  --schemas engine/schemas --schemas schemas --width 1280 --height 720 --no-grid
 ```
 
 ## Development Workflow

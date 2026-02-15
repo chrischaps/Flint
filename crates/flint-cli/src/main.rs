@@ -182,9 +182,9 @@ enum Commands {
         #[arg(long)]
         no_tonemapping: bool,
 
-        /// Enable shadow mapping
+        /// Disable shadow mapping
         #[arg(long)]
-        shadows: bool,
+        no_shadows: bool,
 
         /// Shadow map resolution per cascade (default: 1024)
         #[arg(long, default_value = "1024")]
@@ -272,7 +272,7 @@ fn main() -> Result<()> {
             wireframe_overlay,
             show_normals,
             no_tonemapping,
-            shadows,
+            no_shadows,
             shadow_resolution,
         } => render::run(render::RenderArgs {
             scene,
@@ -290,7 +290,7 @@ fn main() -> Result<()> {
             wireframe_overlay,
             show_normals,
             no_tonemapping,
-            shadows,
+            no_shadows,
             shadow_resolution,
         }),
     }
