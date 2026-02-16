@@ -6,6 +6,6 @@ mod format;
 mod loader;
 mod saver;
 
-pub use format::{EntityDef, SceneFile, SceneMetadata};
+pub use format::{EntityDef, PostProcessDef, SceneFile, SceneMetadata};
 pub use loader::{load_scene, reload_scene};
 pub use saver::{save_scene, save_scene_string};

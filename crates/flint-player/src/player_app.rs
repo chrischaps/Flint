@@ -86,6 +86,9 @@ pub struct PlayerApp {
     // Environment
     pub skybox_path: Option<String>,
 
+    // Scene-level post-processing overrides
+    pub scene_post_process: Option<flint_scene::PostProcessDef>,
+
     // Input config layering + remap persistence
     input_config_override: Option<String>,
     scene_input_config: Option<String>,
@@ -130,6 +133,7 @@ impl PlayerApp {
             fullscreen,
             cursor_captured: false,
             skybox_path: None,
+            scene_post_process: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -247,6 +251,19 @@ impl PlayerApp {
             } else {
                 eprintln!("Skybox file not found: {}", skybox_path.display());
             }
+        }
+
+        // Apply scene-level post-processing config
+        if let Some(pp_def) = &self.scene_post_process {
+            use flint_render::PostProcessConfig;
+            let mut config = PostProcessConfig::default();
+            config.bloom_enabled = pp_def.bloom_enabled;
+            config.bloom_intensity = pp_def.bloom_intensity;
+            config.bloom_threshold = pp_def.bloom_threshold;
+            config.vignette_enabled = pp_def.vignette_enabled;
+            config.vignette_intensity = pp_def.vignette_intensity;
+            config.exposure = pp_def.exposure;
+            scene_renderer.set_post_process_config(config);
         }
 
         self.render_context = Some(render_context);
@@ -830,6 +847,14 @@ impl ApplicationHandler for PlayerApp {
                 if let Some(context) = &mut self.render_context {
                     context.resize(new_size);
                     self.camera.aspect = context.aspect_ratio();
+                    // Resize post-processing HDR buffer and bloom chain
+                    if let Some(renderer) = &mut self.scene_renderer {
+                        renderer.resize_postprocess(
+                            &context.device,
+                            new_size.width,
+                            new_size.height,
+                        );
+                    }
                 }
             }
 
@@ -864,6 +889,22 @@ impl ApplicationHandler for PlayerApp {
                                 KeyCode::F4 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
                                         renderer.toggle_shadows();
+                                    }
+                                }
+                                KeyCode::F5 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config =
+                                            renderer.post_process_config().clone();
+                                        config.bloom_enabled = !config.bloom_enabled;
+                                        renderer.set_post_process_config(config);
+                                    }
+                                }
+                                KeyCode::F6 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config =
+                                            renderer.post_process_config().clone();
+                                        config.enabled = !config.enabled;
+                                        renderer.set_post_process_config(config);
                                     }
                                 }
                                 KeyCode::F11 => {

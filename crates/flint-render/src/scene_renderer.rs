@@ -10,6 +10,7 @@ use crate::pipeline::{
     DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
     TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
+use crate::postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::skinned_pipeline::SkinnedPipeline;
@@ -116,11 +117,21 @@ pub struct SceneRenderer {
     // Particles
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
+    // Post-processing
+    postprocess_pipeline: Option<PostProcessPipeline>,
+    postprocess_resources: Option<PostProcessResources>,
+    postprocess_config: PostProcessConfig,
+    #[allow(dead_code)]
+    surface_format: wgpu::TextureFormat,
 }
 
 impl SceneRenderer {
     pub fn new(context: &RenderContext, config: RendererConfig) -> Self {
-        let pipeline = RenderPipeline::new(&context.device, context.config.format);
+        let surface_format = context.config.format;
+        // Scene geometry renders to HDR; the composite pass tonemaps to the surface.
+        let scene_format = HDR_FORMAT;
+
+        let pipeline = RenderPipeline::new(&context.device, scene_format);
         let archetype_visuals = Self::default_archetype_visuals();
         let texture_cache = TextureCache::new(&context.device, &context.queue);
 
@@ -151,15 +162,24 @@ impl SceneRenderer {
 
         let skinned_pipeline = SkinnedPipeline::new(
             &context.device,
-            context.config.format,
+            scene_format,
             &pipeline.transform_bind_group_layout,
             &pipeline.material_bind_group_layout,
             &pipeline.light_bind_group_layout,
         );
 
-        let billboard_pipeline = BillboardPipeline::new(&context.device, context.config.format);
-        let particle_pipeline = ParticlePipeline::new(&context.device, context.config.format);
-        let skybox_pipeline = SkyboxPipeline::new(&context.device, context.config.format);
+        let billboard_pipeline = BillboardPipeline::new(&context.device, scene_format);
+        let particle_pipeline = ParticlePipeline::new(&context.device, scene_format);
+        let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
+
+        // Create post-processing pipeline and resources
+        let postprocess_pipeline = PostProcessPipeline::new(&context.device, surface_format);
+        let postprocess_resources = PostProcessResources::new(
+            &context.device,
+            context.config.width,
+            context.config.height,
+        );
+        let postprocess_config = PostProcessConfig::default();
 
         Self {
             pipeline,
@@ -187,6 +207,10 @@ impl SceneRenderer {
             skybox_texture_bind_group: None,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
+            postprocess_pipeline: Some(postprocess_pipeline),
+            postprocess_resources: Some(postprocess_resources),
+            postprocess_config,
+            surface_format,
         }
     }
 
@@ -294,9 +318,15 @@ impl SceneRenderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
         config: RendererConfig,
     ) -> Self {
-        let pipeline = RenderPipeline::new(device, format);
+        let surface_format = format;
+        // Scene geometry renders to HDR; composite tonemaps to the readback surface.
+        let scene_format = HDR_FORMAT;
+
+        let pipeline = RenderPipeline::new(device, scene_format);
         let archetype_visuals = Self::default_archetype_visuals();
         let texture_cache = TextureCache::new(device, queue);
 
@@ -327,14 +357,19 @@ impl SceneRenderer {
 
         let skinned_pipeline = SkinnedPipeline::new(
             device,
-            format,
+            scene_format,
             &pipeline.transform_bind_group_layout,
             &pipeline.material_bind_group_layout,
             &pipeline.light_bind_group_layout,
         );
 
-        let billboard_pipeline = BillboardPipeline::new(device, format);
-        let skybox_pipeline = SkyboxPipeline::new(device, format);
+        let billboard_pipeline = BillboardPipeline::new(device, scene_format);
+        let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
+
+        // Create post-processing pipeline and resources for headless
+        let postprocess_pipeline = PostProcessPipeline::new(device, surface_format);
+        let postprocess_resources = PostProcessResources::new(device, width, height);
+        let postprocess_config = PostProcessConfig::default();
 
         Self {
             pipeline,
@@ -362,6 +397,10 @@ impl SceneRenderer {
             skybox_texture_bind_group: None,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
+            postprocess_pipeline: Some(postprocess_pipeline),
+            postprocess_resources: Some(postprocess_resources),
+            postprocess_config,
+            surface_format,
         }
     }
 
@@ -1758,6 +1797,24 @@ impl SceneRenderer {
         Ok(())
     }
 
+    /// Resize post-processing resources (call on window resize).
+    pub fn resize_postprocess(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.postprocess_resources = Some(PostProcessResources::new(device, width, height));
+    }
+
+    /// Get the current post-processing configuration.
+    pub fn post_process_config(&self) -> &PostProcessConfig {
+        &self.postprocess_config
+    }
+
+    /// Set the post-processing configuration.
+    pub fn set_post_process_config(&mut self, config: PostProcessConfig) {
+        self.postprocess_config = config;
+    }
+
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
     pub fn render_to(
         &mut self,
@@ -1919,7 +1976,20 @@ impl SceneRenderer {
             queue.write_buffer(&grid.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
-        let tonemapping_u32: u32 = if self.tonemapping_enabled { 1 } else { 0 };
+        // All scene pipelines target Rgba16Float, so we always render to the HDR
+        // buffer and composite to sRGB.  The `enabled` flag only controls whether
+        // bloom / vignette are applied during the composite pass.
+        let has_postprocess = self.postprocess_pipeline.is_some()
+            && self.postprocess_resources.is_some();
+
+        // Shader-side tonemapping is always OFF when compositing through the HDR
+        // buffer (the composite pass handles ACES + gamma).  Only fall back to
+        // shader tonemapping when there is no post-process pipeline at all.
+        let tonemapping_u32: u32 = if !has_postprocess && self.tonemapping_enabled {
+            1
+        } else {
+            0
+        };
 
         // Update entity transforms and write debug_mode + tonemapping into each material buffer
         for draw in &self.entity_draws {
@@ -2037,6 +2107,14 @@ impl SceneRenderer {
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
+        // All scene pipelines target Rgba16Float, so always render to HDR buffer
+        // when the post-process resources exist.
+        let scene_target_view = if has_postprocess {
+            &self.postprocess_resources.as_ref().unwrap().hdr_view
+        } else {
+            target_view
+        };
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
@@ -2045,7 +2123,7 @@ impl SceneRenderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
+                    view: scene_target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -2383,6 +2461,24 @@ impl SceneRenderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Composite: always needed to convert HDR → sRGB surface
+        if has_postprocess {
+            let pp = self.postprocess_pipeline.as_ref().unwrap();
+            let resources = self.postprocess_resources.as_ref().unwrap();
+
+            // Run bloom if post-processing effects are enabled
+            if self.postprocess_config.enabled
+                && self.postprocess_config.bloom_enabled
+                && resources.bloom_mip_count > 0
+            {
+                pp.run_bloom(device, queue, resources, &self.postprocess_config);
+            }
+
+            // Composite: HDR + bloom → tonemapped sRGB surface
+            // (always runs — this is what converts Rgba16Float → surface format)
+            pp.composite(device, queue, resources, &self.postprocess_config, target_view);
+        }
     }
 }
 

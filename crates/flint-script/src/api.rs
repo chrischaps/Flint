@@ -1223,6 +1223,81 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             map
         });
     }
+
+    // move_character(entity_id, dx, dy, dz) -> Map #{x, y, z, grounded} or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("move_character", move |entity_id: i64, dx: f64, dy: f64, dz: f64| -> Dynamic {
+            if entity_id < 0 { return Dynamic::UNIT; }
+            let c = ctx.lock().unwrap();
+            let physics = unsafe { c.physics_ref() };
+            let physics = match physics {
+                Some(p) => p,
+                None => return Dynamic::UNIT,
+            };
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(entity_id as u64);
+
+            // Read entity's current ECS position (freshest data, sees set_position from same frame)
+            let current_pos = match world.get_transform(eid) {
+                Some(t) => [t.position.x, t.position.y, t.position.z],
+                None => return Dynamic::UNIT,
+            };
+
+            let dt = c.delta_time as f32;
+            match physics.move_character_shape(eid, current_pos, [dx as f32, dy as f32, dz as f32], dt) {
+                Some(result) => {
+                    let mut map = Map::new();
+                    map.insert("x".into(), Dynamic::from(result.position[0] as f64));
+                    map.insert("y".into(), Dynamic::from(result.position[1] as f64));
+                    map.insert("z".into(), Dynamic::from(result.position[2] as f64));
+                    map.insert("grounded".into(), Dynamic::from(result.grounded));
+                    Dynamic::from(map)
+                }
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
+    // get_collider_extents(entity_id) -> Map or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_collider_extents", move |entity_id: i64| -> Dynamic {
+            if entity_id < 0 { return Dynamic::UNIT; }
+            let c = ctx.lock().unwrap();
+            let physics = unsafe { c.physics_ref() };
+            let physics = match physics {
+                Some(p) => p,
+                None => return Dynamic::UNIT,
+            };
+            let eid = EntityId::from_raw(entity_id as u64);
+
+            match physics.get_entity_collider_extents(eid) {
+                Some(flint_physics::ColliderExtents::Box { half_extents }) => {
+                    let mut map = Map::new();
+                    map.insert("shape".into(), Dynamic::from("box".to_string()));
+                    map.insert("half_x".into(), Dynamic::from(half_extents[0] as f64));
+                    map.insert("half_y".into(), Dynamic::from(half_extents[1] as f64));
+                    map.insert("half_z".into(), Dynamic::from(half_extents[2] as f64));
+                    Dynamic::from(map)
+                }
+                Some(flint_physics::ColliderExtents::Sphere { radius }) => {
+                    let mut map = Map::new();
+                    map.insert("shape".into(), Dynamic::from("sphere".to_string()));
+                    map.insert("radius".into(), Dynamic::from(radius as f64));
+                    Dynamic::from(map)
+                }
+                Some(flint_physics::ColliderExtents::Capsule { radius, half_height }) => {
+                    let mut map = Map::new();
+                    map.insert("shape".into(), Dynamic::from("capsule".to_string()));
+                    map.insert("radius".into(), Dynamic::from(radius as f64));
+                    map.insert("half_height".into(), Dynamic::from(half_height as f64));
+                    Dynamic::from(map)
+                }
+                None => Dynamic::UNIT,
+            }
+        });
+    }
 }
 
 // ─── Conversion helpers ──────────────────────────────────

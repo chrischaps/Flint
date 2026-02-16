@@ -13,6 +13,7 @@ mod gpu_mesh;
 mod headless;
 pub mod particle_pipeline;
 mod pipeline;
+pub mod postprocess;
 mod primitives;
 mod scene_renderer;
 pub mod shadow;
@@ -33,6 +34,7 @@ pub use primitives::{
     create_box_mesh, generate_normal_arrows, triangles_to_wireframe_indices, Mesh, SkinnedMesh,
     SkinnedVertex, Vertex,
 };
+pub use postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use billboard_pipeline::BillboardPipeline;
 pub use particle_pipeline::{
@@ -84,5 +86,17 @@ mod tests {
     fn skybox_shader_wgsl_parses() {
         let source = include_str!("skybox_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("skybox_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn composite_shader_wgsl_parses() {
+        let source = include_str!("composite_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("composite_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn bloom_shader_wgsl_parses() {
+        let source = include_str!("bloom_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("bloom_shader.wgsl failed to parse");
     }
 }

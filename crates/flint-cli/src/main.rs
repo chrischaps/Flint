@@ -189,6 +189,22 @@ enum Commands {
         /// Shadow map resolution per cascade (default: 1024)
         #[arg(long, default_value = "1024")]
         shadow_resolution: u32,
+
+        /// Disable post-processing (bloom, vignette, tonemapping in composite pass)
+        #[arg(long)]
+        no_postprocess: bool,
+
+        /// Bloom intensity (enables bloom; default: 0.04)
+        #[arg(long)]
+        bloom_intensity: Option<f32>,
+
+        /// Bloom brightness threshold (default: 1.0)
+        #[arg(long)]
+        bloom_threshold: Option<f32>,
+
+        /// Exposure multiplier (default: 1.0)
+        #[arg(long)]
+        exposure: Option<f32>,
     },
 }
 
@@ -274,6 +290,10 @@ fn main() -> Result<()> {
             no_tonemapping,
             no_shadows,
             shadow_resolution,
+            no_postprocess,
+            bloom_intensity,
+            bloom_threshold,
+            exposure,
         } => render::run(render::RenderArgs {
             scene,
             output,
@@ -292,6 +312,10 @@ fn main() -> Result<()> {
             no_tonemapping,
             no_shadows,
             shadow_resolution,
+            no_postprocess,
+            bloom_intensity,
+            bloom_threshold,
+            exposure,
         }),
     }
 }
