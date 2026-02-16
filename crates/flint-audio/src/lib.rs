@@ -46,6 +46,9 @@ impl AudioSystem {
 
     /// Process game events and execute resulting audio commands
     pub fn process_events(&mut self, events: &[GameEvent], world: &FlintWorld) {
+        if !self.engine.is_available() {
+            return;
+        }
         let commands = self.triggers.process_events(events, world);
 
         for cmd in commands {
@@ -62,6 +65,7 @@ impl AudioSystem {
                     } else if let Err(e) =
                         self.engine.play_non_spatial(&sound, volume, 1.0, false)
                     {
+                        // One-shot non-spatial: handle not needed
                         eprintln!("Audio: {:?}", e);
                     }
                 }
@@ -108,6 +112,9 @@ impl RuntimeSystem for AudioSystem {
 
         // Update spatial positions for moving sources
         self.sync.update_positions(world);
+
+        // Propagate per-frame pitch/volume changes from ECS to Kira handles
+        self.sync.update_parameters(world);
 
         // Reload trigger rules for any new entities
         self.triggers.load_rules(world);

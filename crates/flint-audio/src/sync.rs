@@ -2,19 +2,38 @@
 //!
 //! Follows the same pattern as PhysicsSync: discovers entities with audio components,
 //! creates Kira tracks, and updates positions each frame.
+//! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
-use crate::engine::AudioEngine;
+use crate::engine::{amplitude_to_db, AudioEngine};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
+use kira::sound::static_sound::StaticSoundHandle;
 use kira::track::SpatialTrackHandle;
 use kira::Tween;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+/// Per-entity audio state: spatial track handle + active sound handles + cached parameters
+struct SpatialEntry {
+    track: SpatialTrackHandle,
+    handles: Vec<StaticSoundHandle>,
+    last_volume: f64,
+    last_pitch: f64,
+}
+
+/// Non-spatial entry: sound handles + cached parameters
+struct NonSpatialEntry {
+    handles: Vec<StaticSoundHandle>,
+    last_volume: f64,
+    last_pitch: f64,
+}
+
 /// Tracks which entities have been synced to Kira and holds their spatial track handles
 pub struct AudioSync {
-    /// EntityId → spatial track handle for 3D-positioned sounds
-    track_map: HashMap<EntityId, SpatialTrackHandle>,
+    /// EntityId → spatial audio entry for 3D-positioned sounds
+    spatial_map: HashMap<EntityId, SpatialEntry>,
+    /// EntityId → non-spatial audio entry (ambient/UI sounds)
+    non_spatial_map: HashMap<EntityId, NonSpatialEntry>,
     /// Entities that have already been discovered and synced
     synced_entities: HashSet<EntityId>,
 }
@@ -25,10 +44,18 @@ impl Default for AudioSync {
     }
 }
 
+/// Smooth tween duration for parameter changes (avoids clicks)
+const PARAM_TWEEN: Tween = Tween {
+    duration: Duration::from_millis(16),
+    easing: kira::Easing::Linear,
+    start_time: kira::StartTime::Immediate,
+};
+
 impl AudioSync {
     pub fn new() -> Self {
         Self {
-            track_map: HashMap::new(),
+            spatial_map: HashMap::new(),
+            non_spatial_map: HashMap::new(),
             synced_entities: HashSet::new(),
         }
     }
@@ -105,14 +132,19 @@ impl AudioSync {
 
                 match engine.create_spatial_track(transform.position, min_distance, max_distance) {
                     Ok(mut track) => {
+                        let mut handles = Vec::new();
                         if autoplay && engine.has_sound(file) {
-                            if let Err(e) =
-                                engine.play_on_spatial_track(file, &mut track, volume, pitch, looping)
-                            {
-                                eprintln!("Audio: failed to play '{}': {:?}", file, e);
+                            match engine.play_on_spatial_track(file, &mut track, volume, pitch, looping) {
+                                Ok(handle) => handles.push(handle),
+                                Err(e) => eprintln!("Audio: failed to play '{}': {:?}", file, e),
                             }
                         }
-                        self.track_map.insert(entity.id, track);
+                        self.spatial_map.insert(entity.id, SpatialEntry {
+                            track,
+                            handles,
+                            last_volume: volume,
+                            last_pitch: pitch,
+                        });
                     }
                     Err(e) => {
                         eprintln!("Audio: failed to create spatial track: {:?}", e);
@@ -120,11 +152,18 @@ impl AudioSync {
                 }
             } else {
                 // Non-spatial: play directly on the main track
+                let mut handles = Vec::new();
                 if autoplay && engine.has_sound(file) {
-                    if let Err(e) = engine.play_non_spatial(file, volume, pitch, looping) {
-                        eprintln!("Audio: failed to play non-spatial '{}': {:?}", file, e);
+                    match engine.play_non_spatial(file, volume, pitch, looping) {
+                        Ok(handle) => handles.push(handle),
+                        Err(e) => eprintln!("Audio: failed to play non-spatial '{}': {:?}", file, e),
                     }
                 }
+                self.non_spatial_map.insert(entity.id, NonSpatialEntry {
+                    handles,
+                    last_volume: volume,
+                    last_pitch: pitch,
+                });
             }
 
             self.synced_entities.insert(entity.id);
@@ -138,14 +177,60 @@ impl AudioSync {
             ..Default::default()
         };
 
-        for (entity_id, track) in &mut self.track_map {
-            let transform = match world.get_transform(*entity_id) {
-                Some(t) => t,
+        for (entity_id, entry) in &mut self.spatial_map {
+            // Use world position to account for transform hierarchy (e.g. sounds parented to kart)
+            let position = match world.get_world_position(*entity_id) {
+                Some(p) => p,
                 None => continue,
             };
 
-            let pos = to_glam_vec3(transform.position);
-            track.set_position(pos, tween);
+            let pos = to_glam_vec3(position);
+            entry.track.set_position(pos, tween);
+        }
+    }
+
+    /// Read audio_source pitch/volume from ECS and push changes to Kira sound handles
+    pub fn update_parameters(&mut self, world: &FlintWorld) {
+        // Update spatial entries
+        for (entity_id, entry) in &mut self.spatial_map {
+            let (volume, pitch) = read_audio_params(world, *entity_id);
+
+            let vol_changed = (volume - entry.last_volume).abs() > 0.001;
+            let pitch_changed = (pitch - entry.last_pitch).abs() > 0.001;
+
+            if vol_changed || pitch_changed {
+                for handle in &mut entry.handles {
+                    if vol_changed {
+                        handle.set_volume(amplitude_to_db(volume), PARAM_TWEEN);
+                    }
+                    if pitch_changed {
+                        handle.set_playback_rate(kira::PlaybackRate(pitch), PARAM_TWEEN);
+                    }
+                }
+                entry.last_volume = volume;
+                entry.last_pitch = pitch;
+            }
+        }
+
+        // Update non-spatial entries
+        for (entity_id, entry) in &mut self.non_spatial_map {
+            let (volume, pitch) = read_audio_params(world, *entity_id);
+
+            let vol_changed = (volume - entry.last_volume).abs() > 0.001;
+            let pitch_changed = (pitch - entry.last_pitch).abs() > 0.001;
+
+            if vol_changed || pitch_changed {
+                for handle in &mut entry.handles {
+                    if vol_changed {
+                        handle.set_volume(amplitude_to_db(volume), PARAM_TWEEN);
+                    }
+                    if pitch_changed {
+                        handle.set_playback_rate(kira::PlaybackRate(pitch), PARAM_TWEEN);
+                    }
+                }
+                entry.last_volume = volume;
+                entry.last_pitch = pitch;
+            }
         }
     }
 
@@ -156,8 +241,33 @@ impl AudioSync {
 
     /// Number of spatial tracks currently active
     pub fn spatial_track_count(&self) -> usize {
-        self.track_map.len()
+        self.spatial_map.len()
     }
+}
+
+/// Read volume and pitch from an entity's audio_source component
+fn read_audio_params(world: &FlintWorld, entity_id: EntityId) -> (f64, f64) {
+    let components = match world.get_components(entity_id) {
+        Some(c) => c,
+        None => return (1.0, 1.0),
+    };
+
+    let audio_data = match components.get("audio_source") {
+        Some(v) => v,
+        None => return (1.0, 1.0),
+    };
+
+    let volume = audio_data
+        .get("volume")
+        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+        .unwrap_or(1.0);
+
+    let pitch = audio_data
+        .get("pitch")
+        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+        .unwrap_or(1.0);
+
+    (volume, pitch)
 }
 
 /// Convert Flint Vec3 to glam Vec3
@@ -231,5 +341,13 @@ mod tests {
 
         // Entity without audio_source should not be synced
         assert!(!sync.is_synced(id));
+    }
+
+    #[test]
+    fn test_read_audio_params_defaults() {
+        let world = FlintWorld::new();
+        let (vol, pitch) = read_audio_params(&world, EntityId::new());
+        assert_eq!(vol, 1.0);
+        assert_eq!(pitch, 1.0);
     }
 }

@@ -604,6 +604,20 @@ impl PlayerApp {
             self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
         }
 
+        // Update audio listener for script-driven cameras (chase cam, etc.)
+        if !has_fps_player && cam_pos_override.is_some() {
+            let cam_pos = self.camera.position;
+            let dir = flint_core::Vec3::new(
+                self.camera.target.x - cam_pos.x,
+                self.camera.target.y - cam_pos.y,
+                self.camera.target.z - cam_pos.z,
+            );
+            let yaw = dir.x.atan2(dir.z);
+            let horiz = (dir.x * dir.x + dir.z * dir.z).sqrt();
+            let pitch = (-dir.y).atan2(horiz);
+            self.audio.update_listener(cam_pos, yaw, pitch);
+        }
+
         // Call on_draw_ui() for all scripts (generates draw commands)
         self.script.call_draw_uis(&mut self.world);
 
@@ -757,8 +771,10 @@ impl PlayerApp {
         for cmd in commands {
             match cmd {
                 ScriptCommand::PlaySound { name, volume } => {
-                    if let Err(e) = self.audio.engine.play_non_spatial(&name, volume, 1.0, false) {
-                        eprintln!("[script] play_sound error: {:?}", e);
+                    if self.audio.engine.is_available() {
+                        if let Err(e) = self.audio.engine.play_non_spatial(&name, volume, 1.0, false) {
+                            eprintln!("[script] play_sound error: {:?}", e);
+                        }
                     }
                 }
                 ScriptCommand::PlaySoundAt { name, position, volume } => {
