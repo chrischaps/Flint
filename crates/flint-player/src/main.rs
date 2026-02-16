@@ -60,6 +60,8 @@ fn main() -> Result<()> {
     println!("  Escape   - Release cursor / Exit");
     println!("  F1       - Cycle debug mode");
     println!("  F4       - Toggle shadows");
+    println!("  F5       - Toggle bloom");
+    println!("  F6       - Toggle post-processing");
     println!("  F11      - Toggle fullscreen");
 
     // Create and run the event loop
@@ -78,6 +80,9 @@ fn main() -> Result<()> {
     if let Some(env) = &scene_file.environment {
         app.skybox_path = env.skybox.clone();
     }
+
+    // Pass post-processing settings from scene
+    app.scene_post_process = scene_file.post_process.clone();
 
     event_loop.run_app(&mut app)?;
 

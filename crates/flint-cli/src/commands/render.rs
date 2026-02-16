@@ -27,6 +27,10 @@ pub struct RenderArgs {
     pub no_tonemapping: bool,
     pub no_shadows: bool,
     pub shadow_resolution: u32,
+    pub no_postprocess: bool,
+    pub bloom_intensity: Option<f32>,
+    pub bloom_threshold: Option<f32>,
+    pub exposure: Option<f32>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -75,6 +79,8 @@ pub fn run(args: RenderArgs) -> Result<()> {
         &ctx.device,
         &ctx.queue,
         ctx.format,
+        ctx.width,
+        ctx.height,
         RendererConfig { show_grid: !args.no_grid },
     );
 
@@ -213,6 +219,39 @@ pub fn run(args: RenderArgs) -> Result<()> {
     }
     if args.shadow_resolution != 1024 {
         renderer.set_shadow_resolution(&ctx.device, args.shadow_resolution);
+    }
+
+    // Post-processing configuration
+    {
+        use flint_render::PostProcessConfig;
+        let mut pp_config = PostProcessConfig::default();
+
+        // Apply scene-level settings first
+        if let Some(pp_def) = &scene_file.post_process {
+            pp_config.bloom_enabled = pp_def.bloom_enabled;
+            pp_config.bloom_intensity = pp_def.bloom_intensity;
+            pp_config.bloom_threshold = pp_def.bloom_threshold;
+            pp_config.vignette_enabled = pp_def.vignette_enabled;
+            pp_config.vignette_intensity = pp_def.vignette_intensity;
+            pp_config.exposure = pp_def.exposure;
+        }
+
+        // CLI overrides
+        if args.no_postprocess {
+            pp_config.enabled = false;
+        }
+        if let Some(intensity) = args.bloom_intensity {
+            pp_config.bloom_intensity = intensity;
+            pp_config.bloom_enabled = true;
+        }
+        if let Some(threshold) = args.bloom_threshold {
+            pp_config.bloom_threshold = threshold;
+        }
+        if let Some(exposure) = args.exposure {
+            pp_config.exposure = exposure;
+        }
+
+        renderer.set_post_process_config(pp_config);
     }
 
     renderer.update_from_world(&world, &ctx.device);

@@ -430,7 +430,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var color = ambient + Lo;
 
-    // Tone mapping + gamma correction (skip when disabled for raw linear output)
+    // Output linear HDR — tonemapping and gamma are applied in the composite pass.
+    // When post-processing is disabled, the legacy tonemapping path is used.
     if (material.enable_tonemapping == 1u) {
         let mapped = aces_filmic(color);
         let corrected = linear_to_srgb(mapped);

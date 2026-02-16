@@ -34,6 +34,7 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
             input_config: None,
         },
         environment: None,
+        post_process: None,
         entities: std::collections::HashMap::new(),
     };
 

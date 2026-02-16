@@ -529,6 +529,13 @@ impl ApplicationHandler for ViewerApp {
                 if let Some(context) = &mut self.render_context {
                     context.resize(new_size);
                     self.camera.aspect = context.aspect_ratio();
+                    if let Some(renderer) = &mut self.scene_renderer {
+                        renderer.resize_postprocess(
+                            &context.device,
+                            new_size.width,
+                            new_size.height,
+                        );
+                    }
                 }
             }
 

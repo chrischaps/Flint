@@ -10,7 +10,46 @@ pub struct SceneFile {
     #[serde(default)]
     pub environment: Option<EnvironmentDef>,
     #[serde(default)]
+    pub post_process: Option<PostProcessDef>,
+    #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
+}
+
+/// Post-processing settings for the scene
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostProcessDef {
+    #[serde(default = "default_true")]
+    pub bloom_enabled: bool,
+    #[serde(default = "default_bloom_intensity")]
+    pub bloom_intensity: f32,
+    #[serde(default = "default_bloom_threshold")]
+    pub bloom_threshold: f32,
+    #[serde(default)]
+    pub vignette_enabled: bool,
+    #[serde(default = "default_vignette_intensity")]
+    pub vignette_intensity: f32,
+    #[serde(default = "default_exposure")]
+    pub exposure: f32,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_bloom_intensity() -> f32 {
+    0.04
+}
+
+fn default_bloom_threshold() -> f32 {
+    1.0
+}
+
+fn default_vignette_intensity() -> f32 {
+    0.3
+}
+
+fn default_exposure() -> f32 {
+    1.0
 }
 
 /// Environment settings for the scene (skybox, etc.)
@@ -93,6 +132,7 @@ impl SceneFile {
                 input_config: None,
             },
             environment: None,
+            post_process: None,
             entities: HashMap::new(),
         }
     }
