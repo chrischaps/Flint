@@ -230,6 +230,12 @@ impl Camera {
         let vp = self.view_projection_matrix();
         mat4_inverse(&vp)
     }
+
+    /// Get inverse of the projection matrix (for reconstructing view-space positions from depth)
+    pub fn inverse_projection_matrix(&self) -> [[f32; 4]; 4] {
+        let proj = self.projection_matrix();
+        mat4_inverse(&proj)
+    }
 }
 
 /// Compute the inverse of a 4x4 column-major matrix using cofactor expansion

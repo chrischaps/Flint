@@ -144,6 +144,7 @@ pub struct ScriptCallContext {
     pub postprocess_exposure_override: Option<f32>,
     pub postprocess_chromatic_aberration_override: Option<f32>,
     pub postprocess_radial_blur_override: Option<f32>,
+    pub postprocess_ssao_intensity_override: Option<f32>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
     /// Raw pointer to the GameStateMachine — valid only during call scope
@@ -192,6 +193,7 @@ impl ScriptCallContext {
             postprocess_exposure_override: None,
             postprocess_chromatic_aberration_override: None,
             postprocess_radial_blur_override: None,
+            postprocess_ssao_intensity_override: None,
             audio_lowpass_cutoff_override: None,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),

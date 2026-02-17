@@ -173,7 +173,7 @@ impl SceneRenderer {
         let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
 
         // Create post-processing pipeline and resources
-        let postprocess_pipeline = PostProcessPipeline::new(&context.device, surface_format);
+        let postprocess_pipeline = PostProcessPipeline::new(&context.device, &context.queue, surface_format);
         let postprocess_resources = PostProcessResources::new(
             &context.device,
             context.config.width,
@@ -367,7 +367,7 @@ impl SceneRenderer {
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
 
         // Create post-processing pipeline and resources for headless
-        let postprocess_pipeline = PostProcessPipeline::new(device, surface_format);
+        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format);
         let postprocess_resources = PostProcessResources::new(device, width, height);
         let postprocess_config = PostProcessConfig::default();
 
@@ -2473,6 +2473,11 @@ impl SceneRenderer {
             let pp = self.postprocess_pipeline.as_ref().unwrap();
             let resources = self.postprocess_resources.as_ref().unwrap();
 
+            // Run SSAO if enabled
+            if self.postprocess_config.enabled && self.postprocess_config.ssao_enabled {
+                pp.run_ssao(device, queue, resources, &self.postprocess_config, depth_view, camera);
+            }
+
             // Run bloom if post-processing effects are enabled
             if self.postprocess_config.enabled
                 && self.postprocess_config.bloom_enabled
@@ -2481,7 +2486,7 @@ impl SceneRenderer {
                 pp.run_bloom(device, queue, resources, &self.postprocess_config);
             }
 
-            // Composite: HDR + bloom → tonemapped sRGB surface
+            // Composite: HDR + bloom + SSAO → tonemapped sRGB surface
             // (always runs — this is what converts Rgba16Float → surface format)
             pp.composite(device, queue, resources, &self.postprocess_config, target_view);
         }

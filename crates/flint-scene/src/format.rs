@@ -32,6 +32,12 @@ pub struct PostProcessDef {
     pub vignette_smoothness: f32,
     #[serde(default = "default_exposure")]
     pub exposure: f32,
+    #[serde(default = "default_true")]
+    pub ssao_enabled: bool,
+    #[serde(default = "default_ssao_radius")]
+    pub ssao_radius: f32,
+    #[serde(default = "default_ssao_intensity")]
+    pub ssao_intensity: f32,
 }
 
 fn default_true() -> bool {
@@ -55,6 +61,14 @@ fn default_vignette_smoothness() -> f32 {
 }
 
 fn default_exposure() -> f32 {
+    1.0
+}
+
+fn default_ssao_radius() -> f32 {
+    0.5
+}
+
+fn default_ssao_intensity() -> f32 {
     1.0
 }
 

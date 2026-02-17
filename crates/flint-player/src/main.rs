@@ -62,6 +62,7 @@ fn main() -> Result<()> {
     println!("  F4       - Toggle shadows");
     println!("  F5       - Toggle bloom");
     println!("  F6       - Toggle post-processing");
+    println!("  F7       - Toggle SSAO");
     println!("  F11      - Toggle fullscreen");
 
     // Create and run the event loop

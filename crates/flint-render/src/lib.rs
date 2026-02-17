@@ -99,4 +99,16 @@ mod tests {
         let source = include_str!("bloom_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("bloom_shader.wgsl failed to parse");
     }
+
+    #[test]
+    fn ssao_shader_wgsl_parses() {
+        let source = include_str!("ssao_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("ssao_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn ssao_blur_shader_wgsl_parses() {
+        let source = include_str!("ssao_blur_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("ssao_blur_shader.wgsl failed to parse");
+    }
 }

@@ -30,6 +30,11 @@ var bloom_texture: texture_2d<f32>;
 @group(2) @binding(1)
 var bloom_sampler: sampler;
 
+@group(3) @binding(0)
+var ssao_texture: texture_2d<f32>;
+@group(3) @binding(1)
+var ssao_sampler: sampler;
+
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -98,6 +103,10 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         let b = textureSample(hdr_texture, hdr_sampler, uv - offset).b;
         color = vec3<f32>(r, color.g, b);
     }
+
+    // ── SSAO ──
+    let ao = textureSample(ssao_texture, ssao_sampler, uv).r;
+    color = color * ao;
 
     // ── Bloom ──
     let bloom = textureSample(bloom_texture, bloom_sampler, uv).rgb;

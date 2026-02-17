@@ -31,6 +31,8 @@ pub struct RenderArgs {
     pub bloom_intensity: Option<f32>,
     pub bloom_threshold: Option<f32>,
     pub exposure: Option<f32>,
+    pub ssao_radius: Option<f32>,
+    pub ssao_intensity: Option<f32>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -234,6 +236,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.vignette_enabled = pp_def.vignette_enabled;
             pp_config.vignette_intensity = pp_def.vignette_intensity;
             pp_config.exposure = pp_def.exposure;
+            pp_config.ssao_enabled = pp_def.ssao_enabled;
+            pp_config.ssao_radius = pp_def.ssao_radius;
+            pp_config.ssao_intensity = pp_def.ssao_intensity;
         }
 
         // CLI overrides
@@ -249,6 +254,15 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
         if let Some(exposure) = args.exposure {
             pp_config.exposure = exposure;
+        }
+        if let Some(radius) = args.ssao_radius {
+            pp_config.ssao_radius = radius;
+        }
+        if let Some(intensity) = args.ssao_intensity {
+            pp_config.ssao_intensity = intensity;
+            if intensity <= 0.0 {
+                pp_config.ssao_enabled = false;
+            }
         }
 
         renderer.set_post_process_config(pp_config);
