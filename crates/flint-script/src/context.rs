@@ -127,9 +127,18 @@ pub struct ScriptCallContext {
     /// Screen dimensions in pixels (set before scripts run)
     pub screen_width: f32,
     pub screen_height: f32,
-    /// Script-driven camera overrides (set by set_camera_position/set_camera_target)
+    /// Script-driven camera overrides (set by set_camera_position/set_camera_target/set_camera_fov)
     pub camera_position_override: Option<[f32; 3]>,
     pub camera_target_override: Option<[f32; 3]>,
+    pub camera_fov_override: Option<f32>,
+    /// Script-driven post-processing overrides
+    pub postprocess_vignette_override: Option<f32>,
+    pub postprocess_bloom_override: Option<f32>,
+    pub postprocess_exposure_override: Option<f32>,
+    pub postprocess_chromatic_aberration_override: Option<f32>,
+    pub postprocess_radial_blur_override: Option<f32>,
+    /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
+    pub audio_lowpass_cutoff_override: Option<f32>,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -160,6 +169,13 @@ impl ScriptCallContext {
             screen_height: 720.0,
             camera_position_override: None,
             camera_target_override: None,
+            camera_fov_override: None,
+            postprocess_vignette_override: None,
+            postprocess_bloom_override: None,
+            postprocess_exposure_override: None,
+            postprocess_chromatic_aberration_override: None,
+            postprocess_radial_blur_override: None,
+            audio_lowpass_cutoff_override: None,
         }
     }
 

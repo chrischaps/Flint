@@ -24,6 +24,8 @@ pub struct PostProcessConfig {
     pub vignette_enabled: bool,
     pub vignette_intensity: f32,
     pub vignette_smoothness: f32,
+    pub chromatic_aberration: f32,
+    pub radial_blur: f32,
 }
 
 impl Default for PostProcessConfig {
@@ -38,6 +40,8 @@ impl Default for PostProcessConfig {
             vignette_enabled: false,
             vignette_intensity: 0.3,
             vignette_smoothness: 2.0,
+            chromatic_aberration: 0.0,
+            radial_blur: 0.0,
         }
     }
 }
@@ -53,6 +57,9 @@ pub struct PostProcessUniforms {
     pub vignette_intensity: f32,
     pub vignette_smoothness: f32,
     pub texel_size: [f32; 2],
+    pub chromatic_aberration: f32,
+    pub radial_blur: f32,
+    pub _pad: [f32; 2],
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -689,6 +696,9 @@ impl PostProcessPipeline {
                 1.0 / resources.width as f32,
                 1.0 / resources.height as f32,
             ],
+            chromatic_aberration: config.chromatic_aberration,
+            radial_blur: config.radial_blur,
+            _pad: [0.0; 2],
         };
 
         queue.write_buffer(

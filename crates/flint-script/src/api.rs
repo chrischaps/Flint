@@ -358,10 +358,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
 // ─── Spline API ──────────────────────────────────────────
 
 fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
-    // spline_closest_point(spline_entity, x, z) -> Map #{t, x, y, z, dist_sq}
+    // spline_closest_point(spline_entity, x, y, z) -> Map #{t, x, y, z, dist_sq}
     {
         let ctx = ctx.clone();
-        engine.register_fn("spline_closest_point", move |spline_id: i64, qx: f64, qz: f64| -> Dynamic {
+        engine.register_fn("spline_closest_point", move |spline_id: i64, qx: f64, qy: f64, qz: f64| -> Dynamic {
             if spline_id < 0 { return Dynamic::UNIT; }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
@@ -406,10 +406,12 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
 
             for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
                 let sx = px_arr[i].as_float().unwrap_or(0.0);
+                let sy = py_arr[i].as_float().unwrap_or(0.0);
                 let sz = pz_arr[i].as_float().unwrap_or(0.0);
                 let dx = qx - sx;
+                let dy = qy - sy;
                 let dz = qz - sz;
-                let dist_sq = dx * dx + dz * dz;
+                let dist_sq = dx * dx + dy * dy + dz * dz;
                 if dist_sq < best_dist_sq {
                     best_dist_sq = dist_sq;
                     best_idx = i;
@@ -802,6 +804,69 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("set_camera_target", move |x: f64, y: f64, z: f64| {
             let mut c = ctx.lock().unwrap();
             c.camera_target_override = Some([x as f32, y as f32, z as f32]);
+        });
+    }
+
+    // set_camera_fov(fov) — override camera field of view from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_fov", move |fov: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_fov_override = Some(fov as f32);
+        });
+    }
+
+    // set_vignette(intensity) — override vignette intensity from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_vignette", move |intensity: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_vignette_override = Some(intensity as f32);
+        });
+    }
+
+    // set_bloom_intensity(intensity) — override bloom intensity from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_bloom_intensity", move |intensity: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_bloom_override = Some(intensity as f32);
+        });
+    }
+
+    // set_exposure(value) — override exposure from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_exposure", move |value: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_exposure_override = Some(value as f32);
+        });
+    }
+
+    // set_chromatic_aberration(intensity) — override chromatic aberration from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_chromatic_aberration", move |intensity: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_chromatic_aberration_override = Some(intensity as f32);
+        });
+    }
+
+    // set_radial_blur(intensity) — override radial blur from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_radial_blur", move |intensity: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_radial_blur_override = Some(intensity as f32);
+        });
+    }
+
+    // set_audio_lowpass(cutoff_hz) — override audio low-pass filter cutoff from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_audio_lowpass", move |cutoff_hz: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.audio_lowpass_cutoff_override = Some(cutoff_hz as f32);
         });
     }
 }

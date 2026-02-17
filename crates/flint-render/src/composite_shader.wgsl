@@ -1,8 +1,8 @@
 // Composite post-processing shader
 //
 // Fullscreen triangle that reads from the HDR scene buffer, applies
-// exposure, ACES tonemapping, gamma correction, and vignette, then
-// writes to the sRGB surface.
+// radial blur, chromatic aberration, bloom, exposure, ACES tonemapping,
+// gamma correction, and vignette, then writes to the sRGB surface.
 
 struct PostProcessUniforms {
     exposure: f32,
@@ -12,6 +12,9 @@ struct PostProcessUniforms {
     vignette_intensity: f32,
     vignette_smoothness: f32,
     texel_size: vec2<f32>,
+    chromatic_aberration: f32,
+    radial_blur: f32,
+    _pad: vec2<f32>,
 };
 
 @group(0) @binding(0)
@@ -62,25 +65,53 @@ fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
-    var color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
+    let uv = in.uv;
+    let center = vec2<f32>(0.5, 0.5);
+    let dir_from_center = uv - center;
+    let dist = length(dir_from_center);
 
-    // Add bloom contribution
-    let bloom = textureSample(bloom_texture, bloom_sampler, in.uv).rgb;
+    // ── Radial Blur (8-tap, center stays sharp, edges blur) ──
+    var color: vec3<f32>;
+    if (params.radial_blur > 0.001) {
+        let blur_str = params.radial_blur * dist * 0.04;
+        let blur_dir = normalize(dir_from_center + vec2<f32>(0.0001, 0.0001)) * blur_str;
+        var acc = vec3<f32>(0.0);
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -3.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -2.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -1.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir * -0.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  0.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  1.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  2.5).rgb;
+        acc += textureSample(hdr_texture, hdr_sampler, uv + blur_dir *  3.5).rgb;
+        let blurred = acc / 8.0;
+        let blur_mix = smoothstep(0.1, 0.7, dist) * params.radial_blur;
+        color = mix(textureSample(hdr_texture, hdr_sampler, uv).rgb, blurred, clamp(blur_mix, 0.0, 1.0));
+    } else {
+        color = textureSample(hdr_texture, hdr_sampler, uv).rgb;
+    }
+
+    // ── Chromatic Aberration (R/B offset radially, G stays) ──
+    if (params.chromatic_aberration > 0.001) {
+        let offset = dir_from_center * params.chromatic_aberration * 0.012;
+        let r = textureSample(hdr_texture, hdr_sampler, uv + offset).r;
+        let b = textureSample(hdr_texture, hdr_sampler, uv - offset).b;
+        color = vec3<f32>(r, color.g, b);
+    }
+
+    // ── Bloom ──
+    let bloom = textureSample(bloom_texture, bloom_sampler, uv).rgb;
     color = color + bloom * params.bloom_intensity;
 
-    // Exposure
+    // ── Exposure → Tonemapping → Gamma ──
     color = color * params.exposure;
-
-    // ACES tonemapping
     let mapped = aces_filmic(color);
-
-    // Gamma correction (manual sRGB for visual backward-compatibility)
     var corrected = linear_to_srgb(mapped);
 
-    // Vignette
+    // ── Vignette ──
     if (params.vignette_intensity > 0.0) {
-        let dist = length(in.uv - vec2<f32>(0.5)) * 1.41421356; // sqrt(2)
-        let vignette = 1.0 - pow(dist, params.vignette_smoothness) * params.vignette_intensity;
+        let vdist = dist * 1.41421356;
+        let vignette = 1.0 - pow(vdist, params.vignette_smoothness) * params.vignette_intensity;
         corrected = corrected * max(vignette, 0.0);
     }
 

@@ -180,6 +180,7 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             base_color_texture,
             normal_texture,
             metallic_roughness_texture,
+            use_vertex_color: false,
         });
     }
 

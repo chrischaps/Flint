@@ -12,7 +12,7 @@ use wgpu::util::DeviceExt;
 pub const CASCADE_COUNT: usize = 3;
 
 /// Default shadow map resolution per cascade
-pub const DEFAULT_SHADOW_RESOLUTION: u32 = 1024;
+pub const DEFAULT_SHADOW_RESOLUTION: u32 = 2048;
 
 /// Uniform data for a single shadow draw call
 #[repr(C)]

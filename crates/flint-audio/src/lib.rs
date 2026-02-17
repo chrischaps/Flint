@@ -44,6 +44,11 @@ impl AudioSystem {
         self.engine.update_listener(position, yaw, pitch);
     }
 
+    /// Set the low-pass filter cutoff frequency on the master bus (Hz)
+    pub fn set_filter_cutoff(&mut self, hz: f32) {
+        self.engine.set_filter_cutoff(hz);
+    }
+
     /// Process game events and execute resulting audio commands
     pub fn process_events(&mut self, events: &[GameEvent], world: &FlintWorld) {
         if !self.engine.is_available() {

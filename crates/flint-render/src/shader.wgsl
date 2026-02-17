@@ -214,6 +214,14 @@ fn spot_cone_factor(light_to_frag: vec3<f32>, spot_dir: vec3<f32>, inner_angle: 
 // Compute shadow factor for a world-space position using cascaded shadow maps
 // Returns 1.0 (fully lit) or a value approaching 0.0 (shadowed)
 fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
+    // cascade_splits.z is the shadow far plane — fade out over the last 15%
+    let shadow_far = shadow.cascade_splits.z;
+    let fade_start = shadow_far * 0.75;
+    if (view_depth > shadow_far) {
+        return 1.0;
+    }
+    let distance_fade = 1.0 - smoothstep(fade_start, shadow_far, view_depth);
+
     // Select cascade based on view-space depth
     var cascade: i32 = 0;
     if (view_depth > shadow.cascade_splits.x) {
@@ -230,15 +238,19 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
     // Convert from clip space [-1,1] to texture space [0,1]
     let shadow_uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
 
-    // Out of shadow map bounds — treat as lit
-    if (shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0) {
+    // Fade at shadow map UV edges to avoid hard boundary
+    let edge_fade = min(
+        min(smoothstep(0.0, 0.02, shadow_uv.x), smoothstep(0.0, 0.02, 1.0 - shadow_uv.x)),
+        min(smoothstep(0.0, 0.02, shadow_uv.y), smoothstep(0.0, 0.02, 1.0 - shadow_uv.y))
+    );
+    if (edge_fade <= 0.0) {
         return 1.0;
     }
 
     let depth = proj.z;
 
     // 3x3 PCF (percentage-closer filtering) for soft shadow edges
-    let texel_size = 1.0 / 1024.0; // shadow map resolution
+    let texel_size = 1.0 / 2048.0; // shadow map resolution
     var shadow_sum = 0.0;
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
@@ -253,7 +265,9 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
         }
     }
 
-    return shadow_sum / 9.0;
+    let raw_shadow = shadow_sum / 9.0;
+    // Blend shadow toward 1.0 (lit) based on distance and edge fades
+    return mix(1.0, raw_shadow, distance_fade * edge_fade);
 }
 
 // Evaluate a single directional light using Cook-Torrance BRDF

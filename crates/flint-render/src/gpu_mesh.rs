@@ -106,6 +106,7 @@ impl MeshCache {
             base_color_texture: None,
             normal_texture: None,
             metallic_roughness_texture: None,
+            use_vertex_color: false,
         };
 
         let gpu_meshes: Vec<GpuMesh> = import_result
@@ -198,6 +199,7 @@ impl MeshCache {
             base_color_texture: None,
             normal_texture: None,
             metallic_roughness_texture: None,
+            use_vertex_color: false,
         };
 
         let identity_bones: Vec<[[f32; 4]; 4]> = vec![

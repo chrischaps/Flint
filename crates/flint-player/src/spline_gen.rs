@@ -142,6 +142,8 @@ struct SplineMeshDef {
     height: f32,
     offset: [f32; 2], // [right, up]
     color: [f32; 4],
+    stripe_color: Option<[f32; 4]>,
+    stripe_width: f32,
     friction: f32,
     restitution: f32,
     metallic: f32,
@@ -177,6 +179,21 @@ fn parse_spline_mesh_component(comp: &toml::Value) -> Option<SplineMeshDef> {
         [0.5, 0.5, 0.5, 1.0]
     };
 
+    let stripe_color = if let Some(arr) = comp.get("stripe_color").and_then(|v| v.as_array()) {
+        let vals = toml_f32_array(arr)?;
+        if vals.len() >= 4 {
+            Some([vals[0], vals[1], vals[2], vals[3]])
+        } else if vals.len() >= 3 {
+            Some([vals[0], vals[1], vals[2], 1.0])
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let stripe_width = comp.get("stripe_width").and_then(toml_f32).unwrap_or(2.0);
+
     let friction = comp.get("friction").and_then(toml_f32).unwrap_or(0.5);
     let restitution = comp.get("restitution").and_then(toml_f32).unwrap_or(0.1);
     let metallic = comp.get("metallic").and_then(toml_f32).unwrap_or(0.0);
@@ -188,6 +205,8 @@ fn parse_spline_mesh_component(comp: &toml::Value) -> Option<SplineMeshDef> {
         height,
         offset,
         color,
+        stripe_color,
+        stripe_width,
         friction,
         restitution,
         metallic,
@@ -212,6 +231,9 @@ fn generate_cross_section_mesh(
     height: f32,
     offset: [f32; 2],
     color: [f32; 4],
+    stripe_color: Option<[f32; 4]>,
+    stripe_width: f32,
+    spacing: f32,
 ) -> (Vec<Vertex>, Vec<u32>, Vec<[f32; 3]>, Vec<[u32; 3]>) {
     let n = samples.len();
     if n < 2 {
@@ -253,15 +275,24 @@ fn generate_cross_section_mesh(
         let u0 = seg as f32 / num_segs as f32;
         let u1 = (seg + 1) as f32 / num_segs as f32;
 
+        // Per-segment color: alternate between primary and stripe color
+        let seg_color = if let Some(sc) = stripe_color {
+            let dist = seg as f32 * spacing;
+            let stripe_index = (dist / stripe_width).floor() as i32;
+            if stripe_index % 2 == 0 { color } else { sc }
+        } else {
+            color
+        };
+
         // --- Top face (TL, TR → NTL, NTR) ---
         // Normal: average of up vectors
         let top_normal = ((samples[seg].up + samples[next].up) * 0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_tl.to_array(), normal: top_normal.to_array(), color, uv: [0.0, u0] },
-            Vertex { position: c_tr.to_array(), normal: top_normal.to_array(), color, uv: [1.0, u0] },
-            Vertex { position: n_tl.to_array(), normal: top_normal.to_array(), color, uv: [0.0, u1] },
-            Vertex { position: n_tr.to_array(), normal: top_normal.to_array(), color, uv: [1.0, u1] },
+            Vertex { position: c_tl.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [0.0, u0] },
+            Vertex { position: c_tr.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [1.0, u0] },
+            Vertex { position: n_tl.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [0.0, u1] },
+            Vertex { position: n_tr.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [1.0, u1] },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
@@ -273,10 +304,10 @@ fn generate_cross_section_mesh(
         let bot_normal = ((samples[seg].up + samples[next].up) * -0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_br.to_array(), normal: bot_normal.to_array(), color, uv: [0.0, u0] },
-            Vertex { position: c_bl.to_array(), normal: bot_normal.to_array(), color, uv: [1.0, u0] },
-            Vertex { position: n_br.to_array(), normal: bot_normal.to_array(), color, uv: [0.0, u1] },
-            Vertex { position: n_bl.to_array(), normal: bot_normal.to_array(), color, uv: [1.0, u1] },
+            Vertex { position: c_br.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [0.0, u0] },
+            Vertex { position: c_bl.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [1.0, u0] },
+            Vertex { position: n_br.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [0.0, u1] },
+            Vertex { position: n_bl.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [1.0, u1] },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
@@ -288,10 +319,10 @@ fn generate_cross_section_mesh(
         let left_normal = ((samples[seg].right + samples[next].right) * -0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_bl.to_array(), normal: left_normal.to_array(), color, uv: [0.0, u0] },
-            Vertex { position: c_tl.to_array(), normal: left_normal.to_array(), color, uv: [1.0, u0] },
-            Vertex { position: n_bl.to_array(), normal: left_normal.to_array(), color, uv: [0.0, u1] },
-            Vertex { position: n_tl.to_array(), normal: left_normal.to_array(), color, uv: [1.0, u1] },
+            Vertex { position: c_bl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [0.0, u0] },
+            Vertex { position: c_tl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [1.0, u0] },
+            Vertex { position: n_bl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [0.0, u1] },
+            Vertex { position: n_tl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [1.0, u1] },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
@@ -303,10 +334,10 @@ fn generate_cross_section_mesh(
         let right_normal = ((samples[seg].right + samples[next].right) * 0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_tr.to_array(), normal: right_normal.to_array(), color, uv: [0.0, u0] },
-            Vertex { position: c_br.to_array(), normal: right_normal.to_array(), color, uv: [1.0, u0] },
-            Vertex { position: n_tr.to_array(), normal: right_normal.to_array(), color, uv: [0.0, u1] },
-            Vertex { position: n_br.to_array(), normal: right_normal.to_array(), color, uv: [1.0, u1] },
+            Vertex { position: c_tr.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [0.0, u0] },
+            Vertex { position: c_br.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [1.0, u0] },
+            Vertex { position: n_tr.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [0.0, u1] },
+            Vertex { position: n_br.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [1.0, u1] },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
@@ -393,6 +424,7 @@ pub fn load_splines(
         entity_name: String,
         samples: Vec<SplineSample>,
         closed: bool,
+        spacing: f32,
     }
     let mut spline_infos: Vec<SplineInfo> = Vec::new();
 
@@ -436,6 +468,7 @@ pub fn load_splines(
                         entity_name: entity.name.clone(),
                         samples,
                         closed: def.closed,
+                        spacing: def.spacing,
                     });
                 }
                 None => {
@@ -511,6 +544,9 @@ pub fn load_splines(
             job.def.height,
             job.def.offset,
             job.def.color,
+            job.def.stripe_color,
+            job.def.stripe_width,
+            info.spacing,
         );
 
         if verts.is_empty() {
@@ -537,6 +573,7 @@ pub fn load_splines(
             base_color_texture: None,
             normal_texture: None,
             metallic_roughness_texture: None,
+            use_vertex_color: job.def.stripe_color.is_some(),
         };
         renderer.load_procedural_mesh(device, &job.entity_name, &verts, &indices, material);
 

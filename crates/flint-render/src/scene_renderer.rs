@@ -852,6 +852,9 @@ impl SceneRenderer {
                         material_uniforms.has_base_color_tex = if has_bc { 1 } else { 0 };
                         material_uniforms.has_normal_map = if has_nm { 1 } else { 0 };
                         material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
+                        if gpu_mesh.material.use_vertex_color {
+                            material_uniforms.use_vertex_color = 1;
+                        }
 
                         let (transform_buffer, transform_bind_group) =
                             Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
@@ -934,6 +937,9 @@ impl SceneRenderer {
                         material_uniforms.has_base_color_tex = if has_bc { 1 } else { 0 };
                         material_uniforms.has_normal_map = if has_nm { 1 } else { 0 };
                         material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
+                        if gpu_mesh.material.use_vertex_color {
+                            material_uniforms.use_vertex_color = 1;
+                        }
 
                         let mut draw = Self::create_imported_draw_call(
                             device,
@@ -1849,7 +1855,7 @@ impl SceneRenderer {
                     camera_pos,
                     camera_inv,
                     0.1,
-                    100.0,
+                    200.0,
                 );
 
                 // Write shadow uniforms

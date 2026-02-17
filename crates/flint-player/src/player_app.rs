@@ -89,6 +89,13 @@ pub struct PlayerApp {
     // Scene-level post-processing overrides
     pub scene_post_process: Option<flint_scene::PostProcessDef>,
 
+    // Script-driven post-processing overrides (applied per-frame before render)
+    pp_vignette_override: Option<f32>,
+    pp_bloom_override: Option<f32>,
+    pp_exposure_override: Option<f32>,
+    pp_chromatic_aberration_override: Option<f32>,
+    pp_radial_blur_override: Option<f32>,
+
     // Input config layering + remap persistence
     input_config_override: Option<String>,
     scene_input_config: Option<String>,
@@ -134,6 +141,11 @@ impl PlayerApp {
             cursor_captured: false,
             skybox_path: None,
             scene_post_process: None,
+            pp_vignette_override: None,
+            pp_bloom_override: None,
+            pp_exposure_override: None,
+            pp_chromatic_aberration_override: None,
+            pp_radial_blur_override: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -262,6 +274,7 @@ impl PlayerApp {
             config.bloom_threshold = pp_def.bloom_threshold;
             config.vignette_enabled = pp_def.vignette_enabled;
             config.vignette_intensity = pp_def.vignette_intensity;
+            config.vignette_smoothness = pp_def.vignette_smoothness;
             config.exposure = pp_def.exposure;
             scene_renderer.set_post_process_config(config);
         }
@@ -529,6 +542,33 @@ impl PlayerApp {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Apply script-driven post-processing overrides before rendering
+        if self.pp_vignette_override.is_some()
+            || self.pp_bloom_override.is_some()
+            || self.pp_exposure_override.is_some()
+            || self.pp_chromatic_aberration_override.is_some()
+            || self.pp_radial_blur_override.is_some()
+        {
+            let mut config = renderer.post_process_config().clone();
+            if let Some(v) = self.pp_vignette_override {
+                config.vignette_enabled = v > 0.001;
+                config.vignette_intensity = v;
+            }
+            if let Some(b) = self.pp_bloom_override {
+                config.bloom_intensity = b;
+            }
+            if let Some(e) = self.pp_exposure_override {
+                config.exposure = e;
+            }
+            if let Some(ca) = self.pp_chromatic_aberration_override {
+                config.chromatic_aberration = ca;
+            }
+            if let Some(rb) = self.pp_radial_blur_override {
+                config.radial_blur = rb;
+            }
+            renderer.set_post_process_config(config);
+        }
+
         if let Err(e) = renderer.render(context, &self.camera, &view) {
             eprintln!("Render error: {:?}", e);
         }
@@ -613,12 +653,15 @@ impl PlayerApp {
             .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let (cam_pos_override, cam_target_override) = self.script.take_camera_overrides();
+        let (cam_pos_override, cam_target_override, cam_fov_override) = self.script.take_camera_overrides();
         if let Some(pos) = cam_pos_override {
             self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
         }
         if let Some(target) = cam_target_override {
             self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
+        }
+        if let Some(fov) = cam_fov_override {
+            self.camera.fov = fov;
         }
 
         // Update audio listener for script-driven cameras (chase cam, etc.)
@@ -697,6 +740,19 @@ impl PlayerApp {
                 })
                 .collect();
             renderer.update_particles(&context.device, render_draw_data);
+        }
+
+        // Drain script post-processing overrides for this frame
+        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb) = self.script.take_postprocess_overrides();
+        self.pp_vignette_override = pp_vig;
+        self.pp_bloom_override = pp_bloom;
+        self.pp_exposure_override = pp_exp;
+        self.pp_chromatic_aberration_override = pp_ca;
+        self.pp_radial_blur_override = pp_rb;
+
+        // Apply audio low-pass filter override from scripts
+        if let Some(cutoff) = self.script.take_audio_overrides() {
+            self.audio.set_filter_cutoff(cutoff);
         }
 
         // Clear per-frame input state

@@ -187,4 +187,6 @@ pub struct ImportedMaterial {
     pub base_color_texture: Option<String>,
     pub normal_texture: Option<String>,
     pub metallic_roughness_texture: Option<String>,
+    /// When true, the shader reads per-vertex color instead of the uniform base_color.
+    pub use_vertex_color: bool,
 }

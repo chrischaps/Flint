@@ -28,6 +28,8 @@ pub struct PostProcessDef {
     pub vignette_enabled: bool,
     #[serde(default = "default_vignette_intensity")]
     pub vignette_intensity: f32,
+    #[serde(default = "default_vignette_smoothness")]
+    pub vignette_smoothness: f32,
     #[serde(default = "default_exposure")]
     pub exposure: f32,
 }
@@ -46,6 +48,10 @@ fn default_bloom_threshold() -> f32 {
 
 fn default_vignette_intensity() -> f32 {
     0.3
+}
+
+fn default_vignette_smoothness() -> f32 {
+    2.0
 }
 
 fn default_exposure() -> f32 {

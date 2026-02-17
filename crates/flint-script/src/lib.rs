@@ -94,11 +94,29 @@ impl ScriptSystem {
     }
 
     /// Take camera overrides set by scripts this frame (clears them)
-    pub fn take_camera_overrides(&mut self) -> (Option<[f32; 3]>, Option<[f32; 3]>) {
+    pub fn take_camera_overrides(&mut self) -> (Option<[f32; 3]>, Option<[f32; 3]>, Option<f32>) {
         let mut c = self.engine.ctx.lock().unwrap();
         let pos = c.camera_position_override.take();
         let target = c.camera_target_override.take();
-        (pos, target)
+        let fov = c.camera_fov_override.take();
+        (pos, target, fov)
+    }
+
+    /// Take post-processing overrides set by scripts this frame (clears them)
+    pub fn take_postprocess_overrides(&mut self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        let vignette = c.postprocess_vignette_override.take();
+        let bloom = c.postprocess_bloom_override.take();
+        let exposure = c.postprocess_exposure_override.take();
+        let chromatic_aberration = c.postprocess_chromatic_aberration_override.take();
+        let radial_blur = c.postprocess_radial_blur_override.take();
+        (vignette, bloom, exposure, chromatic_aberration, radial_blur)
+    }
+
+    /// Take audio low-pass filter override set by scripts this frame (clears it)
+    pub fn take_audio_overrides(&mut self) -> Option<f32> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.audio_lowpass_cutoff_override.take()
     }
 }
 
