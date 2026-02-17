@@ -122,6 +122,7 @@ pub struct PlayerApp {
     pp_exposure_override: Option<f32>,
     pp_chromatic_aberration_override: Option<f32>,
     pp_radial_blur_override: Option<f32>,
+    pp_ssao_intensity_override: Option<f32>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -183,6 +184,7 @@ impl PlayerApp {
             pp_exposure_override: None,
             pp_chromatic_aberration_override: None,
             pp_radial_blur_override: None,
+            pp_ssao_intensity_override: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -322,6 +324,9 @@ impl PlayerApp {
             config.vignette_intensity = pp_def.vignette_intensity;
             config.vignette_smoothness = pp_def.vignette_smoothness;
             config.exposure = pp_def.exposure;
+            config.ssao_enabled = pp_def.ssao_enabled;
+            config.ssao_radius = pp_def.ssao_radius;
+            config.ssao_intensity = pp_def.ssao_intensity;
             scene_renderer.set_post_process_config(config);
         }
 
@@ -595,6 +600,7 @@ impl PlayerApp {
             || self.pp_exposure_override.is_some()
             || self.pp_chromatic_aberration_override.is_some()
             || self.pp_radial_blur_override.is_some()
+            || self.pp_ssao_intensity_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -612,6 +618,9 @@ impl PlayerApp {
             }
             if let Some(rb) = self.pp_radial_blur_override {
                 config.radial_blur = rb;
+            }
+            if let Some(si) = self.pp_ssao_intensity_override {
+                config.ssao_intensity = si;
             }
             renderer.set_post_process_config(config);
         }
@@ -835,12 +844,13 @@ impl PlayerApp {
         }
 
         // Drain script post-processing overrides for this frame
-        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb) = self.script.take_postprocess_overrides();
+        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao) = self.script.take_postprocess_overrides();
         self.pp_vignette_override = pp_vig;
         self.pp_bloom_override = pp_bloom;
         self.pp_exposure_override = pp_exp;
         self.pp_chromatic_aberration_override = pp_ca;
         self.pp_radial_blur_override = pp_rb;
+        self.pp_ssao_intensity_override = pp_ssao;
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
@@ -1170,6 +1180,9 @@ impl PlayerApp {
                 config.vignette_enabled = pp_def.vignette_enabled;
                 config.vignette_intensity = pp_def.vignette_intensity;
                 config.exposure = pp_def.exposure;
+                config.ssao_enabled = pp_def.ssao_enabled;
+                config.ssao_radius = pp_def.ssao_radius;
+                config.ssao_intensity = pp_def.ssao_intensity;
                 renderer.set_post_process_config(config);
             }
         }
@@ -1296,6 +1309,14 @@ impl ApplicationHandler for PlayerApp {
                                         let mut config =
                                             renderer.post_process_config().clone();
                                         config.enabled = !config.enabled;
+                                        renderer.set_post_process_config(config);
+                                    }
+                                }
+                                KeyCode::F7 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config =
+                                            renderer.post_process_config().clone();
+                                        config.ssao_enabled = !config.ssao_enabled;
                                         renderer.set_post_process_config(config);
                                     }
                                 }

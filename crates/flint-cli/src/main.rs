@@ -215,6 +215,14 @@ enum Commands {
         /// Exposure multiplier (default: 1.0)
         #[arg(long)]
         exposure: Option<f32>,
+
+        /// SSAO sample radius (default: 0.5)
+        #[arg(long)]
+        ssao_radius: Option<f32>,
+
+        /// SSAO intensity multiplier (default: 1.0, 0 = disabled)
+        #[arg(long)]
+        ssao_intensity: Option<f32>,
     },
 }
 
@@ -305,6 +313,8 @@ fn main() -> Result<()> {
             bloom_intensity,
             bloom_threshold,
             exposure,
+            ssao_radius,
+            ssao_intensity,
         } => render::run(render::RenderArgs {
             scene,
             output,
@@ -327,6 +337,8 @@ fn main() -> Result<()> {
             bloom_intensity,
             bloom_threshold,
             exposure,
+            ssao_radius,
+            ssao_intensity,
         }),
     }
 }
