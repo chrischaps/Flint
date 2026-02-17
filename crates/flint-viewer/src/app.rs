@@ -1,7 +1,9 @@
-//! Main viewer application — combines wgpu scene rendering with egui panels
+//! Main viewer application — combines wgpu scene rendering with egui panels.
+//! Supports an optional spline editor mode for interactive track editing.
 
 use anyhow::{Context, Result};
-use crate::panels::{CameraView, EntityInspector, GizmoAction, RenderStats, SceneTree, ViewGizmo};
+use crate::panels::{CameraView, EntityInspector, GizmoAction, RenderStats, SceneTree, SplinePanelAction, ViewGizmo};
+use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
 use flint_import::import_gltf;
@@ -28,7 +30,7 @@ struct ViewerState {
     needs_reload: bool,
 }
 
-/// Run the viewer application
+/// Run the viewer application (standard viewer mode)
 pub fn run(
     scene_path: &str,
     watch: bool,
@@ -110,6 +112,98 @@ pub fn run(
     Ok(())
 }
 
+/// Run the viewer in editor mode with a spline editor configuration.
+pub fn run_editor(
+    scene_path: &str,
+    watch: bool,
+    schemas_paths: &[&str],
+    editor_config: SplineEditorConfig,
+) -> Result<()> {
+    let existing: Vec<&str> = schemas_paths
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect();
+    let registry = if !existing.is_empty() {
+        SchemaRegistry::load_from_directories(&existing)?
+    } else {
+        println!("Warning: No schemas directories found");
+        SchemaRegistry::new()
+    };
+
+    let constraint_registry = existing
+        .first()
+        .and_then(|p| ConstraintRegistry::load_from_directory(p).ok())
+        .unwrap_or_default();
+
+    let (world, scene_file) = load_scene(scene_path, &registry)?;
+
+    println!("Loaded scene: {}", scene_file.scene.name);
+    println!("Entities: {}", world.entity_count());
+
+    let state = Arc::new(Mutex::new(ViewerState {
+        world,
+        registry,
+        constraint_registry,
+        scene_path: scene_path.to_string(),
+        needs_reload: false,
+    }));
+
+    let _watcher = if watch {
+        let state_clone = Arc::clone(&state);
+        let (tx, rx) = mpsc::channel();
+
+        let mut debouncer = new_debouncer(Duration::from_millis(500), tx)?;
+        let scene_file_path = Path::new(scene_path);
+        let scene_dir = scene_file_path.parent().unwrap_or_else(|| Path::new("."));
+
+        debouncer
+            .watcher()
+            .watch(scene_file_path, RecursiveMode::NonRecursive)?;
+        debouncer
+            .watcher()
+            .watch(scene_dir, RecursiveMode::Recursive)?;
+
+        for sp in schemas_paths {
+            let schemas_dir = Path::new(sp);
+            if schemas_dir.exists() {
+                debouncer
+                    .watcher()
+                    .watch(schemas_dir, RecursiveMode::Recursive)?;
+            }
+        }
+
+        std::thread::spawn(move || {
+            for result in rx {
+                match result {
+                    Ok(_events) => {
+                        if let Ok(mut state) = state_clone.lock() {
+                            state.needs_reload = true;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Watch error: {:?}", e);
+                    }
+                }
+            }
+        });
+
+        println!("Watching for changes...");
+        Some(debouncer)
+    } else {
+        None
+    };
+
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    let editor = SplineEditor::from_config(editor_config);
+    let mut app = ViewerApp::new_editor(state, editor);
+    event_loop.run_app(&mut app)?;
+
+    Ok(())
+}
+
 /// The main viewer application
 pub struct ViewerApp {
     state: Arc<Mutex<ViewerState>>,
@@ -122,6 +216,7 @@ pub struct ViewerApp {
     mouse_pressed: bool,
     last_mouse_pos: Option<(f64, f64)>,
     right_mouse_pressed: bool,
+    middle_mouse_pressed: bool,
     modifiers: ModifiersState,
 
     // egui state
@@ -143,6 +238,9 @@ pub struct ViewerApp {
     // Constraint violations cache
     violation_count: usize,
     violation_messages: Vec<String>,
+
+    // Editor mode (None = standard viewer)
+    editor: Option<SplineEditor>,
 }
 
 impl ViewerApp {
@@ -156,6 +254,7 @@ impl ViewerApp {
             mouse_pressed: false,
             last_mouse_pos: None,
             right_mouse_pressed: false,
+            middle_mouse_pressed: false,
             modifiers: ModifiersState::empty(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
@@ -169,12 +268,47 @@ impl ViewerApp {
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
+            editor: None,
+        }
+    }
+
+    fn new_editor(state: Arc<Mutex<ViewerState>>, editor: SplineEditor) -> Self {
+        Self {
+            state,
+            window: None,
+            render_context: None,
+            scene_renderer: None,
+            camera: Camera::new(),
+            mouse_pressed: false,
+            last_mouse_pos: None,
+            right_mouse_pressed: false,
+            middle_mouse_pressed: false,
+            modifiers: ModifiersState::empty(),
+            egui_ctx: egui::Context::default(),
+            egui_winit: None,
+            egui_renderer: None,
+            show_inspector: true,
+            scene_tree: SceneTree::new(),
+            entity_inspector: EntityInspector::new(),
+            render_stats: RenderStats::new(),
+            view_gizmo: ViewGizmo::new(),
+            camera_snap_target: None,
+            last_frame_time: Instant::now(),
+            violation_count: 0,
+            violation_messages: Vec::new(),
+            editor: Some(editor),
         }
     }
 
     fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        let title = if self.editor.is_some() {
+            "Flint Track Editor"
+        } else {
+            "Flint Viewer"
+        };
+
         let window_attrs = Window::default_attributes()
-            .with_title("Flint Viewer")
+            .with_title(title)
             .with_inner_size(PhysicalSize::new(1600, 900));
 
         let window = Arc::new(
@@ -188,6 +322,23 @@ impl ViewerApp {
             .context("Failed to initialize viewer render context")?;
 
         self.camera.aspect = render_context.aspect_ratio();
+
+        // In editor mode, start with a good birds-eye view
+        if self.editor.is_some() {
+            self.camera.distance = 150.0;
+            self.camera.pitch = 1.0; // ~57 degrees, nearly top-down
+            self.camera.yaw = 0.0;
+            // Center on approximate track center
+            if let Some(editor) = &self.editor {
+                if !editor.control_points.is_empty() {
+                    let n = editor.control_points.len() as f32;
+                    let cx: f32 = editor.control_points.iter().map(|p| p.position[0]).sum::<f32>() / n;
+                    let cz: f32 = editor.control_points.iter().map(|p| p.position[2]).sum::<f32>() / n;
+                    self.camera.target = flint_core::Vec3::new(cx, 0.0, cz);
+                }
+            }
+        }
+
         self.camera.update_orbit();
 
         // Initialize egui
@@ -372,8 +523,11 @@ impl ViewerApp {
         let state = &self.state;
         let view_gizmo = &mut self.view_gizmo;
         let show_panels = self.show_inspector;
+        let editor = &mut self.editor;
 
         let mut gizmo_action = None;
+        let mut panel_actions: Vec<SplinePanelAction> = Vec::new();
+        let camera_ref = &self.camera;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if show_panels {
@@ -385,18 +539,22 @@ impl ViewerApp {
                         scene_tree.ui(ui);
                     });
 
-                // Right side panel: entity inspector
+                // Right side panel: spline editor (in editor mode) or entity inspector
                 egui::SidePanel::right("inspector_panel")
                     .default_width(300.0)
                     .resizable(true)
                     .show(ctx, |ui| {
-                        let selected = scene_tree.selected_entity();
-                        if let Some(entity_id) = selected {
-                            let st = state.lock().unwrap();
-                            entity_inspector.ui(ui, &st.world, entity_id);
+                        if let Some(ed) = editor.as_mut() {
+                            panel_actions = crate::panels::spline_panel::spline_editor_panel(ui, ed);
                         } else {
-                            ui.heading("Entity Inspector");
-                            ui.label("Select an entity in the scene tree.");
+                            let selected = scene_tree.selected_entity();
+                            if let Some(entity_id) = selected {
+                                let st = state.lock().unwrap();
+                                entity_inspector.ui(ui, &st.world, entity_id);
+                            } else {
+                                ui.heading("Entity Inspector");
+                                ui.label("Select an entity in the scene tree.");
+                            }
                         }
                     });
 
@@ -435,7 +593,42 @@ impl ViewerApp {
 
             // View orientation gizmo (always visible)
             gizmo_action = view_gizmo.draw(ctx, &cam_view);
+
+            // Draw spline overlay on the central area
+            if let Some(ed) = editor.as_ref() {
+                let screen_rect = ctx.screen_rect();
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("spline_overlay"),
+                ));
+                ed.draw_overlay(&painter, camera_ref, [screen_rect.width(), screen_rect.height()]);
+            }
         });
+
+        // Process panel actions outside the egui closure
+        for action in panel_actions {
+            if let Some(ed) = &mut self.editor {
+                match action {
+                    SplinePanelAction::Save => {
+                        if let Err(e) = ed.save() {
+                            eprintln!("Save failed: {}", e);
+                        }
+                    }
+                    SplinePanelAction::Undo => {
+                        ed.undo();
+                    }
+                    SplinePanelAction::InsertPoint(idx) => {
+                        ed.insert_point(idx);
+                    }
+                    SplinePanelAction::DeletePoint(idx) => {
+                        ed.delete_point(idx);
+                    }
+                    SplinePanelAction::Resample => {
+                        ed.resample();
+                    }
+                }
+            }
+        }
 
         egui_winit.handle_platform_output(&window, full_output.platform_output);
 
@@ -554,6 +747,184 @@ impl ViewerApp {
             }
         }
     }
+
+    /// Get screen size from render context.
+    fn screen_size(&self) -> [f32; 2] {
+        if let Some(ctx) = &self.render_context {
+            [ctx.config.width as f32, ctx.config.height as f32]
+        } else {
+            [1600.0, 900.0]
+        }
+    }
+
+    // --- Editor-specific input handlers ---
+
+    fn handle_editor_mouse_press(&mut self, button: MouseButton) {
+        match button {
+            MouseButton::Left => {
+                self.mouse_pressed = true;
+                let screen = self.screen_size();
+                let alt_held = self.modifiers.alt_key();
+                // Try to pick a control point
+                if let (Some(editor), Some((mx, my))) = (&mut self.editor, self.last_mouse_pos) {
+                    if let Some(idx) = editor.pick(&self.camera, screen, mx as f32, my as f32) {
+                        editor.selected = Some(idx);
+                        editor.dragging = true;
+                        editor.drag_start_pos = editor.control_points[idx].position;
+                        editor.push_undo();
+                        editor.drag_mode = if alt_held {
+                            DragMode::VerticalY
+                        } else {
+                            DragMode::HorizontalXZ
+                        };
+                    } else {
+                        // Click on empty space: deselect
+                        editor.selected = None;
+                    }
+                }
+            }
+            MouseButton::Middle => {
+                self.middle_mouse_pressed = true;
+            }
+            MouseButton::Right => {
+                self.right_mouse_pressed = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_editor_mouse_release(&mut self, button: MouseButton) {
+        match button {
+            MouseButton::Left => {
+                self.mouse_pressed = false;
+                if let Some(editor) = &mut self.editor {
+                    editor.dragging = false;
+                }
+            }
+            MouseButton::Middle => {
+                self.middle_mouse_pressed = false;
+            }
+            MouseButton::Right => {
+                self.right_mouse_pressed = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_editor_cursor_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+        if let Some((last_x, last_y)) = self.last_mouse_pos {
+            let dx = (position.x - last_x) as f32;
+            let dy = (position.y - last_y) as f32;
+
+            // Middle-drag = orbit (replaces left-drag in standard mode)
+            if self.middle_mouse_pressed {
+                self.camera.orbit_horizontal(-dx * 0.01);
+                self.camera.orbit_vertical(-dy * 0.01);
+                self.camera_snap_target = None;
+                self.camera.orthographic = false;
+            }
+
+            // Right-drag = pan (same as standard mode)
+            if self.right_mouse_pressed {
+                self.camera.pan(-dx * 0.02, dy * 0.02);
+                self.camera_snap_target = None;
+            }
+
+            // Left-drag with dragging = move control point
+            if self.mouse_pressed {
+                let screen = self.screen_size();
+                if let Some(editor) = &mut self.editor {
+                    if editor.dragging {
+                        editor.handle_drag(
+                            &self.camera,
+                            screen,
+                            position.x as f32,
+                            position.y as f32,
+                        );
+                    }
+                }
+            }
+        }
+
+        self.last_mouse_pos = Some((position.x, position.y));
+
+        // Update hover state
+        let screen = self.screen_size();
+        if let Some(editor) = &mut self.editor {
+            editor.update_hover(
+                &self.camera,
+                screen,
+                position.x as f32,
+                position.y as f32,
+            );
+        }
+    }
+
+    fn handle_editor_key(&mut self, key: KeyCode) -> bool {
+        let ctrl = self.modifiers.control_key();
+        let shift = self.modifiers.shift_key();
+
+        match key {
+            KeyCode::KeyS if ctrl => {
+                if let Some(editor) = &mut self.editor {
+                    if let Err(e) = editor.save() {
+                        eprintln!("Save failed: {}", e);
+                    }
+                }
+                true
+            }
+            KeyCode::KeyZ if ctrl => {
+                if let Some(editor) = &mut self.editor {
+                    editor.undo();
+                }
+                true
+            }
+            KeyCode::Delete | KeyCode::Backspace => {
+                if let Some(editor) = &mut self.editor {
+                    if let Some(idx) = editor.selected {
+                        editor.delete_point(idx);
+                    }
+                }
+                true
+            }
+            KeyCode::KeyI => {
+                if let Some(editor) = &mut self.editor {
+                    if let Some(idx) = editor.selected {
+                        editor.insert_point(idx);
+                    }
+                }
+                true
+            }
+            KeyCode::Tab => {
+                if let Some(editor) = &mut self.editor {
+                    let n = editor.control_points.len();
+                    if n > 0 {
+                        editor.selected = Some(match editor.selected {
+                            Some(idx) => {
+                                if shift {
+                                    if idx == 0 { n - 1 } else { idx - 1 }
+                                } else {
+                                    (idx + 1) % n
+                                }
+                            }
+                            None => 0,
+                        });
+                    }
+                }
+                true
+            }
+            KeyCode::Escape => {
+                if let Some(editor) = &mut self.editor {
+                    if editor.dragging {
+                        editor.cancel_drag();
+                        return true;
+                    }
+                }
+                false // Let standard handler process Escape (close window)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Scan the world for entities with model components and load the referenced glTF files
@@ -583,7 +954,17 @@ fn load_models_from_world(
                 continue;
             }
 
-            let model_path = scene_dir.join("models").join(format!("{}.glb", asset_name));
+            // Search scene dir first, then parent (game root)
+            let model_path = {
+                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
+                if p.exists() {
+                    p
+                } else if let Some(parent) = scene_dir.parent() {
+                    parent.join("models").join(format!("{}.glb", asset_name))
+                } else {
+                    p
+                }
+            };
 
             if model_path.exists() {
                 match import_gltf(&model_path) {
@@ -682,25 +1063,33 @@ impl ApplicationHandler for ViewerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        let is_editor = self.editor.is_some();
+
         // Track modifier keys
         if let WindowEvent::ModifiersChanged(mods) = &event {
             self.modifiers = mods.state();
         }
 
-        // Handle Tab as a global shortcut before egui can consume it.
-        // Only toggle when no modifiers are held — prevents Alt+Tab from triggering.
+        // Handle Tab — in editor mode it cycles selection; in viewer mode it toggles inspector.
         if let WindowEvent::KeyboardInput { event: ref key_event, .. } = event {
-            if key_event.state == ElementState::Pressed
-                && !key_event.repeat
-                && key_event.physical_key == PhysicalKey::Code(KeyCode::Tab)
-                && self.modifiers.is_empty()
-            {
-                self.show_inspector = !self.show_inspector;
-                println!(
-                    "Inspector: {}",
-                    if self.show_inspector { "ON" } else { "OFF" }
-                );
-                return;
+            if key_event.state == ElementState::Pressed && !key_event.repeat {
+                if is_editor {
+                    // In editor mode, handle editor-specific keys first
+                    if let PhysicalKey::Code(code) = key_event.physical_key {
+                        if self.handle_editor_key(code) {
+                            return;
+                        }
+                    }
+                } else if key_event.physical_key == PhysicalKey::Code(KeyCode::Tab)
+                    && self.modifiers.is_empty()
+                {
+                    self.show_inspector = !self.show_inspector;
+                    println!(
+                        "Inspector: {}",
+                        if self.show_inspector { "ON" } else { "OFF" }
+                    );
+                    return;
+                }
             }
         }
 
@@ -744,7 +1133,7 @@ impl ApplicationHandler for ViewerApp {
                                 state.needs_reload = true;
                             }
                         }
-                        PhysicalKey::Code(KeyCode::Space) => {
+                        PhysicalKey::Code(KeyCode::Space) if !is_editor => {
                             self.camera = Camera::new();
                             self.camera.update_orbit();
                             if let Some(context) = &self.render_context {
@@ -802,35 +1191,49 @@ impl ApplicationHandler for ViewerApp {
                 }
             }
 
-            WindowEvent::MouseInput { state, button, .. } => match button {
-                MouseButton::Left => {
-                    self.mouse_pressed = state == ElementState::Pressed;
+            WindowEvent::MouseInput { state, button, .. } => {
+                if is_editor {
+                    if state == ElementState::Pressed {
+                        self.handle_editor_mouse_press(button);
+                    } else {
+                        self.handle_editor_mouse_release(button);
+                    }
+                } else {
+                    match button {
+                        MouseButton::Left => {
+                            self.mouse_pressed = state == ElementState::Pressed;
+                        }
+                        MouseButton::Right => {
+                            self.right_mouse_pressed = state == ElementState::Pressed;
+                        }
+                        _ => {}
+                    }
                 }
-                MouseButton::Right => {
-                    self.right_mouse_pressed = state == ElementState::Pressed;
-                }
-                _ => {}
-            },
+            }
 
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some((last_x, last_y)) = self.last_mouse_pos {
-                    let dx = (position.x - last_x) as f32;
-                    let dy = (position.y - last_y) as f32;
+                if is_editor {
+                    self.handle_editor_cursor_moved(position);
+                } else {
+                    if let Some((last_x, last_y)) = self.last_mouse_pos {
+                        let dx = (position.x - last_x) as f32;
+                        let dy = (position.y - last_y) as f32;
 
-                    if self.mouse_pressed {
-                        self.camera.orbit_horizontal(-dx * 0.01);
-                        self.camera.orbit_vertical(-dy * 0.01);
-                        self.camera_snap_target = None;
-                        self.camera.orthographic = false;
+                        if self.mouse_pressed {
+                            self.camera.orbit_horizontal(-dx * 0.01);
+                            self.camera.orbit_vertical(-dy * 0.01);
+                            self.camera_snap_target = None;
+                            self.camera.orthographic = false;
+                        }
+
+                        if self.right_mouse_pressed {
+                            self.camera.pan(-dx * 0.02, dy * 0.02);
+                            self.camera_snap_target = None;
+                        }
                     }
 
-                    if self.right_mouse_pressed {
-                        self.camera.pan(-dx * 0.02, dy * 0.02);
-                        self.camera_snap_target = None;
-                    }
+                    self.last_mouse_pos = Some((position.x, position.y));
                 }
-
-                self.last_mouse_pos = Some((position.x, position.y));
             }
 
             WindowEvent::MouseWheel { delta, .. } => {

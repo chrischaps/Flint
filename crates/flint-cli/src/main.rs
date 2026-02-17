@@ -4,7 +4,7 @@ mod commands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{asset, entity, init, play, query, render, scene, schema, validate};
+use commands::{asset, edit, entity, init, play, query, render, scene, schema, validate};
 
 #[derive(Parser)]
 #[command(name = "flint")]
@@ -71,6 +71,16 @@ enum Commands {
         /// Hide the egui inspector panels (entity tree, inspector, stats)
         #[arg(long)]
         no_inspector: bool,
+    },
+
+    /// Open the interactive track editor for a scene with spline data
+    Edit {
+        /// Path to scene file
+        scene: String,
+
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
     },
 
     /// Validate a scene against constraints
@@ -267,6 +277,7 @@ fn main() -> Result<()> {
             input_config,
         }),
         Commands::Asset(cmd) => asset::run(cmd),
+        Commands::Edit { scene, schemas } => edit::run(edit::EditArgs { scene, schemas }),
         Commands::Serve { scene, watch, schemas, no_inspector } => {
             // Serve uses first schemas path (viewer doesn't need multi-dir yet)
             let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");

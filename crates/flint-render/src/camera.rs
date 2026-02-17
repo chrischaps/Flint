@@ -103,7 +103,7 @@ impl Camera {
 
     /// Zoom in/out
     pub fn zoom(&mut self, delta: f32) {
-        self.distance = (self.distance - delta).max(1.0).min(100.0);
+        self.distance = (self.distance - delta).max(1.0).min(500.0);
         self.update_orbit();
     }
 
