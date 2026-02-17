@@ -35,6 +35,11 @@ impl ParticleSystem {
             rng: rand::ParticleRng::new(seed),
         }
     }
+
+    /// Clear all particle state for a scene transition.
+    pub fn clear(&mut self) {
+        self.sync.clear();
+    }
 }
 
 impl Default for ParticleSystem {

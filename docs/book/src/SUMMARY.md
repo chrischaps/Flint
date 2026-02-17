@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](introduction.md)
+[Quick Reference](quick-reference.md)
 
 ---
 
@@ -28,6 +29,7 @@
 - [Constraints](concepts/constraints.md)
 - [Assets](concepts/assets.md)
 - [Rendering](concepts/rendering.md)
+- [Post-Processing](concepts/post-processing.md)
 - [Audio](concepts/audio.md)
 - [Animation](concepts/animation.md)
 - [Particles](concepts/particles.md)

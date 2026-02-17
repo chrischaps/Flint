@@ -71,6 +71,13 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_rotation(id)` | `Map` | Get entity rotation (euler degrees) as `#{x, y, z}` |
 | `set_rotation(id, x, y, z)` | --- | Set entity rotation (euler degrees) |
 | `distance(a, b)` | `f64` | Euclidean distance between two entities |
+| `set_parent(child_id, parent_id)` | --- | Set an entity's parent in the hierarchy |
+| `get_parent(id)` | `i64` | Get the parent entity ID (`-1` if none) |
+| `get_children(id)` | `Array` | Get child entity IDs as an array |
+| `get_world_position(id)` | `Map` | World-space position as `#{x, y, z}` (accounts for parent transforms) |
+| `set_material_color(id, r, g, b, a)` | --- | Set the material base color (RGBA, 0.0--1.0) |
+| `find_entities_with(component)` | `Array` | All entity IDs that have the given component |
+| `entity_count_with(component)` | `i64` | Count of entities with the given component |
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |
 | `despawn_entity(id)` | --- | Remove an entity from the world |
 
@@ -81,7 +88,7 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `is_action_pressed(action)` | `bool` | Whether an action is currently held |
 | `is_action_just_pressed(action)` | `bool` | Whether an action was pressed this frame |
 | `is_action_just_released(action)` | `bool` | Whether an action was released this frame |
-| `get_action_value(action)` | `f64` | Analog value for Axis1d actions (0.0 if not bound) |
+| `action_value(action)` | `f64` | Analog value for Axis1d actions (0.0 if not bound) |
 | `mouse_delta_x()` | `f64` | Horizontal mouse movement this frame |
 | `mouse_delta_y()` | `f64` | Vertical mouse movement this frame |
 
@@ -180,8 +187,12 @@ Physics functions provide raycasting and camera access for combat, line-of-sight
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `raycast(ox, oy, oz, dx, dy, dz, max_dist)` | `Map` or `()` | Cast a ray from origin in direction. Returns hit info or `()` if nothing hit |
-| `get_camera_direction()` | `Map` | Camera forward vector as `#{x, y, z}` |
+| `move_character(id, dx, dy, dz)` | `Map` or `()` | Collision-corrected kinematic movement. Returns `#{x, y, z, grounded}` |
+| `get_collider_extents(id)` | `Map` or `()` | Collider shape dimensions (see below) |
 | `get_camera_position()` | `Map` | Camera world position as `#{x, y, z}` |
+| `get_camera_direction()` | `Map` | Camera forward vector as `#{x, y, z}` |
+| `set_camera_position(x, y, z)` | --- | Override camera position from script |
+| `set_camera_target(x, y, z)` | --- | Override camera look-at target from script |
 
 The `raycast()` function automatically excludes the calling entity's collider from results. On a hit, it returns a map with these fields:
 
@@ -191,6 +202,30 @@ The `raycast()` function automatically excludes the calling entity's collider fr
 | `distance` | `f64` | Distance from origin to hit point |
 | `point_x`, `point_y`, `point_z` | `f64` | World-space hit position |
 | `normal_x`, `normal_y`, `normal_z` | `f64` | Surface normal at hit point |
+
+**`move_character`** performs collision-corrected kinematic movement using Rapier's shape-sweep. The entity must have `rigidbody` and `collider` components. The returned map contains the corrected position and a `grounded` flag:
+
+```rust
+fn on_update() {
+    let me = self_entity();
+    let dt = delta_time();
+    let result = move_character(me, 0.0, -9.81 * dt, 5.0 * dt);
+    if result != () {
+        set_position(me, result.x, result.y, result.z);
+        if result.grounded {
+            // Can jump
+        }
+    }
+}
+```
+
+**`get_collider_extents`** returns the collider shape dimensions. The returned map varies by shape:
+
+- Box: `#{shape: "box", half_x, half_y, half_z}`
+- Capsule: `#{shape: "capsule", radius, half_height}`
+- Sphere: `#{shape: "sphere", radius}`
+
+Returns `()` if the entity has no collider.
 
 **Example: Hitscan weapon**
 
@@ -209,6 +244,28 @@ fn fire_weapon() {
     }
 }
 ```
+
+### Spline API
+
+Query spline entities for path-following, track layouts, and procedural placement:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `spline_closest_point(spline_id, x, z)` | `Map` or `()` | Nearest point on spline to query position. Returns `#{t, x, y, z, dist_sq}` |
+| `spline_sample_at(spline_id, t)` | `Map` or `()` | Sample spline at parameter `t` (0.0--1.0). Returns `#{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}` |
+
+The `t` parameter wraps for closed splines. The returned forward and right vectors are normalized and can be used for orientation.
+
+### Particle API
+
+| Function | Description |
+|----------|-------------|
+| `emit_burst(entity_id, count)` | Fire N particles immediately |
+| `start_emitter(entity_id)` | Start continuous emission |
+| `stop_emitter(entity_id)` | Stop emission (existing particles finish their lifetime) |
+| `set_emission_rate(entity_id, rate)` | Change emission rate dynamically |
+
+See [Particles](particles.md) for full component schema and recipes.
 
 ### UI Draw API
 

@@ -174,6 +174,15 @@ impl PhysicsSystem {
         }
     }
 
+    /// Reset all physics state for a scene transition.
+    /// Replaces the world, clears sync maps, resets character and event bus.
+    pub fn clear(&mut self) {
+        self.physics_world = PhysicsWorld::new();
+        self.sync.clear();
+        self.character = CharacterController::new();
+        self.event_bus = EventBus::new();
+    }
+
     /// Run the character controller update (called from player app with input access)
     pub fn update_character(&mut self, input: &InputState, world: &mut FlintWorld, dt: f64) {
         self.character.update(

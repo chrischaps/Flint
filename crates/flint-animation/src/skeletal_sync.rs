@@ -57,6 +57,13 @@ impl SkeletalSync {
         }
     }
 
+    /// Clear all skeletal animation state for a scene transition.
+    pub fn clear(&mut self) {
+        self.clips.clear();
+        self.skeletons.clear();
+        self.states.clear();
+    }
+
     /// Register a skeletal clip by name
     pub fn add_clip(&mut self, clip: SkeletalClip) {
         self.clips.insert(clip.name.clone(), clip);

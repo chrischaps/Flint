@@ -30,6 +30,13 @@ impl ScriptSync {
         }
     }
 
+    /// Clear all discovery state for a scene transition.
+    pub fn clear(&mut self) {
+        self.discovered.clear();
+        self.file_timestamps.clear();
+        self.scripts_dir = None;
+    }
+
     /// Set the scripts directory (called during initialization)
     pub fn set_scripts_dir(&mut self, dir: PathBuf) {
         self.scripts_dir = Some(dir);

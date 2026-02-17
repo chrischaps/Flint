@@ -36,6 +36,13 @@ impl ParticleSync {
         }
     }
 
+    /// Clear all emitter states and instance buffers for a scene transition.
+    pub fn clear(&mut self) {
+        self.states.clear();
+        self.instance_buffer.clear();
+        self.instance_ranges.clear();
+    }
+
     /// Scan the world for entities with `particle_emitter` components.
     /// Creates new EmitterState for newly discovered emitters,
     /// and updates config for existing ones (e.g., playing state changes from scripts).

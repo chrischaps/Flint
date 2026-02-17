@@ -26,12 +26,70 @@ flint render levels/tavern.scene.toml \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--output <path>` | `render.png` | Output file path |
-| `--width <px>` | 800 | Image width in pixels |
-| `--height <px>` | 600 | Image height in pixels |
-| `--distance <units>` | 20.0 | Camera distance from origin |
-| `--yaw <degrees>` | 0.0 | Horizontal camera angle |
-| `--pitch <degrees>` | 30.0 | Vertical camera angle |
-| `--schemas <path>` | `schemas` | Path to schemas directory |
+| `--width <px>` | 1920 | Image width in pixels |
+| `--height <px>` | 1080 | Image height in pixels |
+| `--distance <units>` | (auto) | Camera distance from origin |
+| `--yaw <degrees>` | (auto) | Horizontal camera angle |
+| `--pitch <degrees>` | (auto) | Vertical camera angle |
+| `--target <x,y,z>` | (auto) | Camera look-at point (comma-separated) |
+| `--fov <degrees>` | (auto) | Field of view in degrees |
+| `--no-grid` | `false` | Disable ground grid |
+| `--schemas <path>` | `schemas` | Path to schemas directory (repeatable) |
+
+## Post-Processing Flags
+
+Control post-processing from the command line:
+
+```bash
+# Disable all post-processing (raw shader output)
+flint render scene.toml --no-postprocess --output raw.png
+
+# Custom bloom settings
+flint render scene.toml --bloom-intensity 0.08 --bloom-threshold 0.8
+
+# Adjust exposure
+flint render scene.toml --exposure 1.5
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--no-postprocess` | `false` | Disable entire post-processing pipeline |
+| `--bloom-intensity <f32>` | `0.04` | Bloom mix strength |
+| `--bloom-threshold <f32>` | `1.0` | Minimum brightness for bloom |
+| `--exposure <f32>` | `1.0` | Exposure multiplier |
+
+## Debug Rendering Flags
+
+Render debug visualizations for diagnostics:
+
+```bash
+# Wireframe view
+flint render scene.toml --debug-mode wireframe --output wireframe.png
+
+# Surface normals
+flint render scene.toml --debug-mode normals --output normals.png
+
+# Other modes: depth, uv, unlit, metalrough
+flint render scene.toml --debug-mode depth --output depth.png
+
+# Wireframe overlay on solid geometry
+flint render scene.toml --wireframe-overlay --output overlay.png
+
+# Normal arrows
+flint render scene.toml --show-normals --output arrows.png
+
+# Raw linear output (no tonemapping)
+flint render scene.toml --no-tonemapping --output linear.png
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough` |
+| `--wireframe-overlay` | `false` | Draw wireframe edges over solid shading |
+| `--show-normals` | `false` | Draw face-normal direction arrows |
+| `--no-tonemapping` | `false` | Disable tonemapping for raw linear output |
+| `--no-shadows` | `false` | Disable shadow mapping |
+| `--shadow-resolution <px>` | `1024` | Shadow map resolution per cascade |
 
 ## CI Pipeline Integration
 

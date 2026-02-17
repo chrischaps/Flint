@@ -12,6 +12,22 @@ Flint inverts this: **the primary interface is CLI and code**, with visual tools
 
 Every scene is a TOML file you can read, diff, and version. Every operation is a composable CLI command. Every piece of engine state is queryable as structured data. The viewer exists to answer one question: *"Did the agent do what I asked?"*
 
+## Built with Flint
+
+![FlintKart — a low-poly kart racer built with Flint](images/flintkart.png)
+
+*FlintKart: a kart racing game built as a standalone project using Flint's game project architecture — custom schemas, scripts, and assets layered on top of the engine via git subtree.*
+
+## Visual Showcase
+
+![PBR rendering with shadows, materials, and models](images/pbr-showcase.png)
+
+*The Luminarium showcase scene: Cook-Torrance PBR shading with cascaded shadows, textured walls and floors, glTF models, and emissive materials.*
+
+![Wireframe debug visualization](images/debug-wireframe.png)
+
+*Wireframe debug mode (F1) reveals mesh topology — one of seven built-in debug visualizations for inspecting geometry, normals, depth, UVs, and material properties.*
+
 ## What It Looks Like
 
 Create a scene, add entities, query them, and view the result --- all from the command line:
@@ -62,6 +78,10 @@ All five phases of Flint's development are complete. The engine supports:
 - **Rhai scripting** with entity/input/audio/animation APIs, event callbacks, and hot-reload
 - **Interactable entities** with HUD prompts, proximity detection, and scripted behaviors
 - **AI asset generation** with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, batch scene resolution, model validation, and build manifests
+- **Billboard sprites** with camera-facing quads and sprite sheet animation
+- **GPU particle system** with instanced rendering, per-emitter pooling, alpha/additive blending, and configurable emission shapes
+- **Extensible input system** with config-driven bindings for keyboard, mouse, and gamepad with runtime rebinding
+- **Game project architecture** for standalone games that include the engine as a git subtree
 
 See the [Roadmap](roadmap.md) for the full development history.
 

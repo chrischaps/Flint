@@ -39,6 +39,13 @@ impl AudioSystem {
         }
     }
 
+    /// Clear sync and trigger state for a scene transition.
+    /// Preserves the AudioEngine and its sound_cache (reusable across scenes).
+    pub fn clear(&mut self) {
+        self.sync.clear();
+        self.triggers = AudioTrigger::new();
+    }
+
     /// Update the listener position (called from PlayerApp after camera update)
     pub fn update_listener(&mut self, position: Vec3, yaw: f32, pitch: f32) {
         self.engine.update_listener(position, yaw, pitch);
