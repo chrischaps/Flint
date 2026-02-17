@@ -3,6 +3,7 @@
 //! ScriptCallContext is the shared state accessed by Rhai API functions during script execution.
 //! ScriptCommand represents deferred actions (audio, events, logging) collected during a script call.
 
+use crate::ui::UiSystem;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
@@ -156,6 +157,8 @@ pub struct ScriptCallContext {
     pub transition_phase: String,
     /// Path of the currently loaded scene
     pub current_scene_path: String,
+    /// Data-driven UI system
+    pub ui_system: UiSystem,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -198,6 +201,7 @@ impl ScriptCallContext {
             transition_progress: -1.0,
             transition_phase: String::from("idle"),
             current_scene_path: String::new(),
+            ui_system: UiSystem::new(),
         }
     }
 

@@ -352,6 +352,7 @@ impl PlayerApp {
 
         // Initialize scripting
         load_scripts_from_world(&self.scene_path, &mut self.script);
+        self.script.set_current_scene(&self.scene_path);
         self.script
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
@@ -763,8 +764,15 @@ impl PlayerApp {
         // Clear state pointers after script calls
         self.script.clear_state_pointers();
 
-        // Collect draw commands for this frame
-        self.draw_commands = self.script.drain_draw_commands();
+        // Collect draw commands for this frame (scripts + data-driven UI)
+        let mut commands = self.script.drain_draw_commands();
+        let screen_rect = self.egui_ctx.screen_rect();
+        let ui_commands = self.script.generate_ui_draw_commands(
+            screen_rect.width(),
+            screen_rect.height(),
+        );
+        commands.extend(ui_commands);
+        self.draw_commands = commands;
 
         // Audio triggers from game events (skip when paused)
         if config.audio == SystemPolicy::Run {
@@ -1191,6 +1199,7 @@ impl PlayerApp {
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
 
         // Call on_scene_enter on new scripts
+        self.script.set_current_scene(&self.scene_path);
         self.script.set_state_machine(&mut self.state_machine);
         self.script.set_persistent_store(&mut self.persistent_store);
         self.script.call_scene_enters(&mut self.world);

@@ -12,6 +12,7 @@ pub mod api;
 pub mod context;
 pub mod engine;
 pub mod sync;
+pub mod ui;
 
 use context::{InputSnapshot, ScriptCommand};
 pub use context::DrawCommand;
@@ -132,6 +133,12 @@ impl ScriptSystem {
     /// Drain draw commands produced by scripts this frame
     pub fn drain_draw_commands(&mut self) -> Vec<DrawCommand> {
         self.engine.drain_draw_commands()
+    }
+
+    /// Generate draw commands from the data-driven UI system
+    pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawCommand> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.ui_system.generate_draw_commands(screen_w, screen_h)
     }
 
     /// Call on_scene_exit() for all scripts that define it
