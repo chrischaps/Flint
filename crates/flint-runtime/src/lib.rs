@@ -10,6 +10,8 @@ mod clock;
 mod event;
 mod event_bus;
 mod input;
+pub mod persist;
+pub mod state;
 mod system;
 
 pub use clock::GameClock;
@@ -19,4 +21,6 @@ pub use input::{
     ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputState,
     RebindMode,
 };
+pub use persist::PersistentStore;
+pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;

@@ -37,6 +37,14 @@ impl ScriptSystem {
         }
     }
 
+    /// Clear all script state for a scene transition.
+    /// Preserves the Rhai Engine and registered API functions.
+    pub fn clear(&mut self) {
+        self.engine.clear();
+        self.sync.clear();
+        self.pending_events.clear();
+    }
+
     /// Provide input and timing context for the current frame.
     /// Called by PlayerApp before update().
     pub fn provide_context(
@@ -50,12 +58,45 @@ impl ScriptSystem {
         let snapshot = InputSnapshot {
             actions_pressed: snapshot_actions(input, true),
             actions_just_pressed: snapshot_actions(input, false),
+            actions_just_released: snapshot_actions_released(input),
             action_values: snapshot_action_values(input),
             mouse_delta: input.raw_mouse_delta(),
         };
 
         self.engine.provide_context(snapshot, delta_time, total_time);
         self.pending_events = events.to_vec();
+    }
+
+    /// Set the state machine pointer for script access
+    pub fn set_state_machine(&mut self, sm: &mut flint_runtime::GameStateMachine) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.state_machine = sm as *mut flint_runtime::GameStateMachine;
+    }
+
+    /// Set the persistent store pointer for script access
+    pub fn set_persistent_store(&mut self, store: &mut flint_runtime::PersistentStore) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.persistent_store = store as *mut flint_runtime::PersistentStore;
+    }
+
+    /// Clear the state machine and persistent store pointers
+    pub fn clear_state_pointers(&mut self) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.state_machine = std::ptr::null_mut();
+        c.persistent_store = std::ptr::null_mut();
+    }
+
+    /// Set transition state for script access
+    pub fn set_transition_state(&mut self, progress: f64, phase: &str) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.transition_progress = progress;
+        c.transition_phase = phase.to_string();
+    }
+
+    /// Set the current scene path for script access
+    pub fn set_current_scene(&mut self, path: &str) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.current_scene_path = path.to_string();
     }
 
     /// Set the physics system pointer for raycast access from scripts
@@ -91,6 +132,16 @@ impl ScriptSystem {
     /// Drain draw commands produced by scripts this frame
     pub fn drain_draw_commands(&mut self) -> Vec<DrawCommand> {
         self.engine.drain_draw_commands()
+    }
+
+    /// Call on_scene_exit() for all scripts that define it
+    pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
+        self.engine.call_scene_exits(world);
+    }
+
+    /// Call on_scene_enter() for all scripts that define it
+    pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
+        self.engine.call_scene_enters(world);
     }
 
     /// Take camera overrides set by scripts this frame (clears them)
@@ -193,6 +244,14 @@ fn snapshot_actions(input: &InputState, pressed: bool) -> std::collections::Hash
         if active {
             set.insert(action);
         }
+    }
+    set
+}
+
+fn snapshot_actions_released(input: &InputState) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    for action in input.actions_just_released() {
+        set.insert(action);
     }
     set
 }

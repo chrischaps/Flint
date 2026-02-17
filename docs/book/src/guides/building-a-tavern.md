@@ -1,5 +1,7 @@
 # Building a Tavern
 
+![The finished tavern — atmospheric interior with NPCs, fireplace, and furniture](../images/tavern-interior.png)
+
 This tutorial walks through building a complete tavern scene from scratch using Flint's CLI. By the end, you'll have a walkable tavern with physics, audio, animation, scripted NPCs, and interactive objects.
 
 ## 1. Initialize the Project

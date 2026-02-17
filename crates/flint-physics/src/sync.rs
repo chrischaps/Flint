@@ -32,6 +32,13 @@ impl PhysicsSync {
         }
     }
 
+    /// Clear all sync state for a scene transition.
+    pub fn clear(&mut self) {
+        self.body_map.clear();
+        self.collider_map.clear();
+        self.synced_entities.clear();
+    }
+
     /// Push Flint entities with rigidbody/collider components into Rapier
     pub fn sync_to_rapier(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
         // Find entities with rigidbody and/or collider components

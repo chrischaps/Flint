@@ -84,6 +84,9 @@ fn main() -> Result<()> {
     // Pass post-processing settings from scene
     app.scene_post_process = scene_file.post_process.clone();
 
+    // Preserve schema paths for scene transitions
+    app.set_schema_paths(args.schemas);
+
     event_loop.run_app(&mut app)?;
 
     Ok(())

@@ -20,6 +20,27 @@ parent = "<parent_name>"          # Optional parent entity
 field = value
 ```
 
+Scenes may also include optional top-level blocks for post-processing and environment settings:
+
+```toml
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.04
+bloom_threshold = 1.0
+vignette_enabled = true
+vignette_intensity = 0.3
+exposure = 1.0
+
+[environment]
+ambient_color = [0.1, 0.1, 0.15]
+ambient_intensity = 0.3
+fog_enabled = false
+fog_color = [0.5, 0.5, 0.6]
+fog_density = 0.02
+```
+
+The `[post_process]` block configures the HDR post-processing pipeline (see [Post-Processing](../concepts/post-processing.md)). The `[environment]` block sets ambient lighting and fog parameters.
+
 Scenes are loaded by `flint-scene` and can be edited with `flint entity create`, `flint entity delete`, or by hand. The `serve --watch` viewer reloads automatically when the file changes.
 
 ## Component Schemas (`schemas/components/*.toml`)

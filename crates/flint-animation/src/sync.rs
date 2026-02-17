@@ -17,6 +17,11 @@ impl AnimationSync {
         }
     }
 
+    /// Clear all playback states for a scene transition.
+    pub fn clear(&mut self) {
+        self.states.clear();
+    }
+
     /// Number of active animated entities.
     pub fn active_count(&self) -> usize {
         self.states.len()

@@ -59,8 +59,10 @@ These are the built-in defaults. Games can override any binding via input config
 | R | Reload |
 | 1 / 2 | Select weapon slot |
 | Escape | Release cursor / Exit |
-| F1 | Cycle debug rendering mode |
+| F1 | Cycle debug rendering mode (PBR → Wireframe → Normals → Depth → UV → Unlit → Metal/Rough) |
 | F4 | Toggle shadows |
+| F5 | Toggle bloom |
+| F6 | Toggle post-processing pipeline |
 | F11 | Toggle fullscreen |
 
 Gamepad controllers are also supported when connected. Bindings for gamepad buttons and axes can be configured in input config TOML files.
@@ -92,6 +94,65 @@ cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas
 cargo run --manifest-path engine/Cargo.toml --bin flint-player -- \
   scenes/level_1.scene.toml --schemas engine/schemas --schemas schemas
 ```
+
+## The `render` Command
+
+Render a scene to a PNG image without opening a window:
+
+```bash
+flint render demo/phase3_showcase.scene.toml --output hero.png --schemas schemas
+flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output <path>` / `-o` | `render.png` | Output file path |
+| `--width <px>` | `1920` | Image width |
+| `--height <px>` | `1080` | Image height |
+| `--distance <f32>` | (auto) | Camera distance from target |
+| `--yaw <deg>` | (auto) | Horizontal camera angle |
+| `--pitch <deg>` | (auto) | Vertical camera angle |
+| `--target <x,y,z>` | (auto) | Camera look-at point |
+| `--fov <deg>` | (auto) | Field of view |
+| `--no-grid` | `false` | Disable ground grid |
+| `--debug-mode <mode>` | (none) | `wireframe`, `normals`, `depth`, `uv`, `unlit`, `metalrough` |
+| `--wireframe-overlay` | `false` | Wireframe edges on solid geometry |
+| `--show-normals` | `false` | Normal direction arrows |
+| `--no-tonemapping` | `false` | Raw linear output |
+| `--no-shadows` | `false` | Disable shadow mapping |
+| `--shadow-resolution <px>` | `1024` | Shadow map resolution per cascade |
+| `--no-postprocess` | `false` | Disable post-processing |
+| `--bloom-intensity <f32>` | `0.04` | Bloom strength |
+| `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |
+| `--exposure <f32>` | `1.0` | Exposure multiplier |
+| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+
+## The `serve` Command
+
+Launch the interactive scene viewer with hot-reload:
+
+```bash
+flint serve demo/phase3_showcase.scene.toml --watch --schemas schemas
+flint serve scene.toml --no-inspector
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--watch` | `false` | Watch for file changes and auto-reload |
+| `--no-inspector` | `false` | Hide egui inspector panels |
+| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+
+### Viewer Controls
+
+| Input | Action |
+|-------|--------|
+| Left-drag | Orbit camera |
+| Right-drag | Pan camera |
+| Scroll | Zoom |
+| F1 | Cycle debug mode |
+| F2 | Toggle wireframe overlay |
+| F3 | Toggle normal arrows |
+| F4 | Toggle shadows |
 
 ## The `asset generate` Command
 

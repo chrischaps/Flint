@@ -42,6 +42,13 @@ impl AnimationSystem {
             skeletal_sync: SkeletalSync::new(),
         }
     }
+
+    /// Clear all animation state for a scene transition.
+    /// Preserves the AnimationPlayer's clip registry (clips are reloadable).
+    pub fn clear(&mut self) {
+        self.sync.clear();
+        self.skeletal_sync.clear();
+    }
 }
 
 impl Default for AnimationSystem {

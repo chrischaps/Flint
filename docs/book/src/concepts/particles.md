@@ -2,6 +2,8 @@
 
 Flint's particle system provides GPU-instanced visual effects through the `flint-particles` crate. Fire, smoke, sparks, dust motes, magic effects --- any volumetric visual that needs hundreds or thousands of small, short-lived elements.
 
+> **Note:** Particle effects are dynamic simulations that accumulate over time. Use `flint play` to see them in action --- headless `flint render` captures a single frame and won't show accumulated particles.
+
 ## How It Works
 
 Each entity with a `particle_emitter` component owns a **pool** of particles simulated on the CPU and rendered as camera-facing quads via GPU instancing. The pipeline is:

@@ -51,6 +51,18 @@ pub fn run(args: PlayArgs) -> Result<()> {
         args.input_config,
         scene_file.scene.input_config.clone(),
     );
+
+    // Pass skybox path from scene environment settings
+    if let Some(env) = &scene_file.environment {
+        app.skybox_path = env.skybox.clone();
+    }
+
+    // Pass post-processing settings from scene
+    app.scene_post_process = scene_file.post_process.clone();
+
+    // Preserve schema paths for scene transitions
+    app.set_schema_paths(args.schemas);
+
     event_loop.run_app(&mut app)?;
 
     Ok(())

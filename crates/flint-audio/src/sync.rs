@@ -60,6 +60,13 @@ impl AudioSync {
         }
     }
 
+    /// Clear all sync state for a scene transition.
+    pub fn clear(&mut self) {
+        self.spatial_map.clear();
+        self.non_spatial_map.clear();
+        self.synced_entities.clear();
+    }
+
     /// Discover entities with `audio_source` components and create Kira tracks
     pub fn sync_new_sources(&mut self, world: &FlintWorld, engine: &mut AudioEngine) {
         if !engine.is_available() {

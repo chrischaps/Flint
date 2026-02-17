@@ -15,7 +15,8 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, ParticleDrawData, ParticleInstanceGpu, RenderContext, SceneRenderer};
 use flint_runtime::{
-    Binding, GameClock, GameEvent, InputConfig, InputState, RebindMode, RuntimeSystem,
+    Binding, GameClock, GameEvent, GameStateMachine, InputConfig, InputState, PersistentStore,
+    RebindMode, RuntimeSystem, SystemPolicy,
 };
 use flint_script::context::{DrawCommand, LogLevel, ScriptCommand};
 use flint_script::ScriptSystem;
@@ -41,6 +42,32 @@ struct InputConfigPaths {
     game_default: Option<PathBuf>,
     user_override: Option<PathBuf>,
     cli_override: Option<PathBuf>,
+}
+
+/// Scene transition lifecycle phase
+#[derive(Debug, Clone)]
+enum TransitionPhase {
+    /// Normal gameplay
+    Idle,
+    /// Playing exit transition — scripts draw fade-out visuals
+    Exiting {
+        target_scene: String,
+        elapsed: f32,
+    },
+    /// Loading the new scene (synchronous, happens in one frame)
+    Loading {
+        target_scene: String,
+    },
+    /// Playing enter transition — scripts draw fade-in visuals
+    Entering {
+        elapsed: f32,
+    },
+}
+
+impl TransitionPhase {
+    fn is_idle(&self) -> bool {
+        matches!(self, TransitionPhase::Idle)
+    }
 }
 
 pub struct PlayerApp {
@@ -105,6 +132,16 @@ pub struct PlayerApp {
 
     // Optional gamepad backend
     gilrs: Option<Gilrs>,
+
+    // State machine + persistence (survive scene transitions)
+    state_machine: GameStateMachine,
+    persistent_store: PersistentStore,
+
+    // Scene transition lifecycle
+    transition_phase: TransitionPhase,
+
+    // Schema paths preserved across transitions
+    schema_paths: Vec<String>,
 }
 
 impl PlayerApp {
@@ -156,7 +193,16 @@ impl PlayerApp {
             },
             pending_rebind: None,
             gilrs: None,
+            state_machine: GameStateMachine::new(),
+            persistent_store: PersistentStore::new(),
+            transition_phase: TransitionPhase::Idle,
+            schema_paths: Vec::new(),
         }
+    }
+
+    /// Set the schema paths used for scene loading (preserved across transitions).
+    pub fn set_schema_paths(&mut self, paths: Vec<String>) {
+        self.schema_paths = paths;
     }
 
     fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -585,21 +631,26 @@ impl PlayerApp {
         // Advance game clock
         self.clock.tick();
 
+        // Advance transition phase timing
+        self.advance_transition();
+
+        // Read active state config to decide which systems run
+        let config = self.state_machine.active_config().clone();
+
         let has_fps_player = self.physics.character.player_entity().is_some();
 
-        // Fixed-timestep physics loop
+        // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
-            // Only update FPS character controller if a player entity exists
-            if has_fps_player {
-                self.physics.update_character(&self.input, &mut self.world, dt);
+            if config.physics == SystemPolicy::Run {
+                if has_fps_player {
+                    self.physics.update_character(&self.input, &mut self.world, dt);
+                }
+                self.physics
+                    .fixed_update(&mut self.world, dt)
+                    .unwrap_or_else(|e| eprintln!("Physics error: {:?}", e));
             }
-
-            // Step physics simulation
-            self.physics
-                .fixed_update(&mut self.world, dt)
-                .unwrap_or_else(|e| eprintln!("Physics error: {:?}", e));
 
             self.clock.consume_fixed_step();
         }
@@ -615,22 +666,44 @@ impl PlayerApp {
             );
             self.camera.target = cam_target;
 
-            self.audio.update_listener(
-                cam_pos,
-                self.physics.character.yaw,
-                self.physics.character.pitch,
-            );
+            if config.audio == SystemPolicy::Run {
+                self.audio.update_listener(
+                    cam_pos,
+                    self.physics.character.yaw,
+                    self.physics.character.pitch,
+                );
+            }
         }
 
         // Process physics events — scripts + audio both consume them
+        // Always collect events (input always processed so pause/unpause keybinds work)
         let mut game_events = self.physics.event_bus.drain();
-
-        // Generate ActionPressed events from input (drives on_action / on_interact callbacks)
         for action in self.input.actions_just_pressed() {
             game_events.push(flint_runtime::GameEvent::ActionPressed(action));
         }
         for action in self.input.actions_just_released() {
             game_events.push(flint_runtime::GameEvent::ActionReleased(action));
+        }
+
+        // Set state machine + persistent store pointers for script access
+        self.script.set_state_machine(&mut self.state_machine);
+        self.script.set_persistent_store(&mut self.persistent_store);
+        self.script.set_current_scene(&self.scene_path);
+
+        // Set transition state for script access
+        match &self.transition_phase {
+            TransitionPhase::Idle => {
+                self.script.set_transition_state(-1.0, "idle");
+            }
+            TransitionPhase::Exiting { elapsed, .. } => {
+                self.script.set_transition_state(*elapsed as f64, "exiting");
+            }
+            TransitionPhase::Loading { .. } => {
+                self.script.set_transition_state(1.0, "loading");
+            }
+            TransitionPhase::Entering { elapsed } => {
+                self.script.set_transition_state(*elapsed as f64, "entering");
+            }
         }
 
         // Script system: provide physics + camera context, then run updates
@@ -645,12 +718,15 @@ impl PlayerApp {
             self.clock.total_time,
             self.clock.delta_time,
         );
-        // Set screen size for UI draw functions (logical points, not physical pixels)
         let screen_rect = self.egui_ctx.screen_rect();
         self.script.set_screen_size(screen_rect.width(), screen_rect.height());
-        self.script
-            .update(&mut self.world, self.clock.delta_time)
-            .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
+
+        // Only run on_update when scripts are not paused
+        if config.scripts == SystemPolicy::Run {
+            self.script
+                .update(&mut self.world, self.clock.delta_time)
+                .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
+        }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
         let (cam_pos_override, cam_target_override, cam_fov_override) = self.script.take_camera_overrides();
@@ -678,25 +754,32 @@ impl PlayerApp {
             self.audio.update_listener(cam_pos, yaw, pitch);
         }
 
-        // Call on_draw_ui() for all scripts (generates draw commands)
+        // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
         self.script.call_draw_uis(&mut self.world);
 
         let script_commands = self.script.drain_commands();
         self.process_script_commands(script_commands);
 
+        // Clear state pointers after script calls
+        self.script.clear_state_pointers();
+
         // Collect draw commands for this frame
         self.draw_commands = self.script.drain_draw_commands();
 
-        // Audio triggers from game events
-        self.audio.process_events(&game_events, &self.world);
-        self.audio
-            .update(&mut self.world, self.clock.delta_time)
-            .ok();
+        // Audio triggers from game events (skip when paused)
+        if config.audio == SystemPolicy::Run {
+            self.audio.process_events(&game_events, &self.world);
+            self.audio
+                .update(&mut self.world, self.clock.delta_time)
+                .ok();
+        }
 
-        // Advance animations and write results to ECS transforms
-        self.animation
-            .update(&mut self.world, self.clock.delta_time)
-            .ok();
+        // Advance animations (skip when paused)
+        if config.animation == SystemPolicy::Run {
+            self.animation
+                .update(&mut self.world, self.clock.delta_time)
+                .ok();
+        }
 
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) =
@@ -709,12 +792,14 @@ impl PlayerApp {
             }
         }
 
-        // Advance particle simulation (after animation — emitter transforms may be animated)
-        self.particles
-            .update(&mut self.world, self.clock.delta_time)
-            .ok();
+        // Advance particle simulation (skip when paused)
+        if config.particles == SystemPolicy::Run {
+            self.particles
+                .update(&mut self.world, self.clock.delta_time)
+                .ok();
+        }
 
-        // Refresh renderer with updated transforms (animation may have changed positions)
+        // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) =
             (&mut self.scene_renderer, &self.render_context)
         {
@@ -729,7 +814,6 @@ impl PlayerApp {
             let render_draw_data: Vec<ParticleDrawData<'_>> = sync_draw_data
                 .iter()
                 .map(|d| {
-                    // ParticleInstance and ParticleInstanceGpu have identical repr(C) layouts
                     let gpu_instances: &[ParticleInstanceGpu] =
                         bytemuck::cast_slice(bytemuck::cast_slice::<_, u8>(d.instances));
                     ParticleDrawData {
@@ -860,6 +944,23 @@ impl PlayerApp {
                     // One-shot sounds play to completion (same as AudioCommand::Stop)
                 }
                 ScriptCommand::FireEvent { name, data } => {
+                    // Intercept transition completion signal
+                    if name == "__transition_complete" {
+                        match &self.transition_phase {
+                            TransitionPhase::Exiting { target_scene, .. } => {
+                                let target = target_scene.clone();
+                                self.transition_phase = TransitionPhase::Loading {
+                                    target_scene: target,
+                                };
+                            }
+                            TransitionPhase::Entering { .. } => {
+                                self.transition_phase = TransitionPhase::Idle;
+                                println!("[transition] Transition complete");
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     self.physics.event_bus.push(GameEvent::Custom { name, data });
                 }
                 ScriptCommand::Log { level, message } => {
@@ -873,8 +974,234 @@ impl PlayerApp {
                     let eid = flint_core::EntityId(entity_id as u64);
                     self.particles.sync.queue_burst(eid, count as u32);
                 }
+                ScriptCommand::LoadScene { path } => {
+                    if self.transition_phase.is_idle() {
+                        println!("[transition] Starting exit transition → {}", path);
+                        self.transition_phase = TransitionPhase::Exiting {
+                            target_scene: path,
+                            elapsed: 0.0,
+                        };
+                    }
+                }
+                ScriptCommand::ReloadScene => {
+                    if self.transition_phase.is_idle() {
+                        let path = self.scene_path.clone();
+                        println!("[transition] Reloading current scene");
+                        self.transition_phase = TransitionPhase::Exiting {
+                            target_scene: path,
+                            elapsed: 0.0,
+                        };
+                    }
+                }
+                ScriptCommand::PushState { name } => {
+                    if self.state_machine.push_state(&name) {
+                        println!("[state] Pushed '{}'", name);
+                    } else {
+                        eprintln!("[state] Unknown state template: '{}'", name);
+                    }
+                }
+                ScriptCommand::PopState => {
+                    if let Some(popped) = self.state_machine.pop_state() {
+                        println!("[state] Popped '{}'", popped.name);
+                    }
+                }
+                ScriptCommand::ReplaceState { name } => {
+                    if self.state_machine.replace_state(&name) {
+                        println!("[state] Replaced top with '{}'", name);
+                    } else {
+                        eprintln!("[state] Unknown state template: '{}'", name);
+                    }
+                }
             }
         }
+    }
+
+    /// Advance the transition phase based on elapsed time and script signals.
+    fn advance_transition(&mut self) {
+        match &self.transition_phase {
+            TransitionPhase::Idle => {}
+            TransitionPhase::Exiting { target_scene, elapsed } => {
+                let new_elapsed = elapsed + self.clock.delta_time as f32;
+                let target = target_scene.clone();
+                self.transition_phase = TransitionPhase::Exiting {
+                    target_scene: target.clone(),
+                    elapsed: new_elapsed,
+                };
+                // Check if a complete_transition event was fired
+                // (We use a sentinel event name to signal completion)
+            }
+            TransitionPhase::Loading { target_scene } => {
+                let target = target_scene.clone();
+                self.execute_scene_transition(&target);
+                self.transition_phase = TransitionPhase::Entering { elapsed: 0.0 };
+            }
+            TransitionPhase::Entering { elapsed } => {
+                let new_elapsed = elapsed + self.clock.delta_time as f32;
+                self.transition_phase = TransitionPhase::Entering {
+                    elapsed: new_elapsed,
+                };
+            }
+        }
+    }
+
+    /// Unload the current scene and load a new one.
+    fn execute_scene_transition(&mut self, target_scene: &str) {
+        println!("[transition] Unloading current scene...");
+
+        // Call on_scene_exit on all scripts
+        self.script.set_state_machine(&mut self.state_machine);
+        self.script.set_persistent_store(&mut self.persistent_store);
+        self.script.call_scene_exits(&mut self.world);
+        self.script.clear_state_pointers();
+
+        // Clear all systems
+        self.script.clear();
+        self.audio.clear();
+        self.physics.clear();
+        self.animation.clear();
+        self.particles.clear();
+
+        // Clear world
+        self.world = FlintWorld::new();
+
+        // Clear transient rendering state
+        self.skeletal_entity_assets.clear();
+        self.ui_textures.clear();
+        self.draw_commands.clear();
+
+        println!("[transition] Loading scene: {}", target_scene);
+
+        // Resolve scene path relative to current scene
+        let new_scene_path = resolve_scene_path(&self.scene_path, target_scene);
+
+        // Load schema registry
+        let registry = if self.schema_paths.is_empty() {
+            // Try default schemas/ dir
+            flint_schema::SchemaRegistry::load_from_directory("schemas")
+                .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
+        } else {
+            let existing: Vec<&str> = self.schema_paths.iter()
+                .map(|s| s.as_str())
+                .filter(|p| Path::new(p).exists())
+                .collect();
+            if existing.is_empty() {
+                flint_schema::SchemaRegistry::new()
+            } else {
+                flint_schema::SchemaRegistry::load_from_directories(&existing)
+                    .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
+            }
+        };
+
+        // Parse and load scene
+        match flint_scene::load_scene(&new_scene_path, &registry) {
+            Ok((world, scene_file)) => {
+                self.world = world;
+                self.scene_path = new_scene_path.clone();
+                self.skybox_path = scene_file.environment.as_ref()
+                    .and_then(|env| env.skybox.clone());
+                self.scene_post_process = scene_file.post_process.clone();
+                self.scene_input_config = scene_file.scene.input_config.clone();
+            }
+            Err(e) => {
+                eprintln!("[transition] Failed to load scene '{}': {:?}", new_scene_path, e);
+                return;
+            }
+        }
+
+        // Reload models
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            self.skeletal_entity_assets = load_models_from_world(
+                &self.world,
+                renderer,
+                &mut self.animation,
+                &context.device,
+                &context.queue,
+                &self.scene_path,
+                self.catalog.as_ref(),
+                self.content_store.as_ref(),
+            );
+            renderer.update_from_world(&self.world, &context.device);
+
+            // Reload splines
+            crate::spline_gen::load_splines(
+                &self.scene_path,
+                &mut self.world,
+                renderer,
+                Some(&mut self.physics),
+                &context.device,
+            );
+            renderer.update_from_world(&self.world, &context.device);
+
+            // Reload skybox
+            if let Some(skybox_rel) = &self.skybox_path {
+                let scene_dir = Path::new(&self.scene_path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."));
+                let skybox_path = {
+                    let p = scene_dir.join(skybox_rel);
+                    if p.exists() {
+                        p
+                    } else if let Some(parent) = scene_dir.parent() {
+                        parent.join(skybox_rel)
+                    } else {
+                        p
+                    }
+                };
+                if skybox_path.exists() {
+                    renderer.load_skybox(&context.device, &context.queue, &skybox_path);
+                }
+            }
+
+            // Apply post-process config
+            if let Some(pp_def) = &self.scene_post_process {
+                use flint_render::PostProcessConfig;
+                let mut config = PostProcessConfig::default();
+                config.bloom_enabled = pp_def.bloom_enabled;
+                config.bloom_intensity = pp_def.bloom_intensity;
+                config.bloom_threshold = pp_def.bloom_threshold;
+                config.vignette_enabled = pp_def.vignette_enabled;
+                config.vignette_intensity = pp_def.vignette_intensity;
+                config.exposure = pp_def.exposure;
+                renderer.set_post_process_config(config);
+            }
+        }
+
+        // Re-initialize systems
+        self.physics
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Physics init: {:?}", e));
+
+        load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
+        self.audio
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Audio init: {:?}", e));
+
+        load_animations_from_world(&self.scene_path, &mut self.animation);
+        self.animation
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+
+        self.particles
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Particles init: {:?}", e));
+
+        load_scripts_from_world(&self.scene_path, &mut self.script);
+        self.script
+            .initialize(&mut self.world)
+            .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
+
+        // Call on_scene_enter on new scripts
+        self.script.set_state_machine(&mut self.state_machine);
+        self.script.set_persistent_store(&mut self.persistent_store);
+        self.script.call_scene_enters(&mut self.world);
+        self.script.clear_state_pointers();
+
+        // Recapture cursor if player exists
+        if self.physics.character.player_entity().is_some() && !self.cursor_captured {
+            self.capture_cursor();
+        }
+
+        println!("[transition] Scene loaded: {}", self.scene_path);
     }
 }
 
@@ -1378,6 +1705,36 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
             }
         }
     }
+}
+
+/// Resolve a scene path relative to the current scene.
+/// If target is already an absolute path or starts from a known root, use it directly.
+/// Otherwise resolve relative to the current scene's directory.
+fn resolve_scene_path(current_scene: &str, target: &str) -> String {
+    let target_path = Path::new(target);
+    if target_path.is_absolute() || target_path.exists() {
+        return target.to_string();
+    }
+
+    let current_dir = Path::new(current_scene)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    let resolved = current_dir.join(target);
+    if resolved.exists() {
+        return resolved.to_string_lossy().to_string();
+    }
+
+    // Try parent directory (game root)
+    if let Some(parent) = current_dir.parent() {
+        let parent_resolved = parent.join(target);
+        if parent_resolved.exists() {
+            return parent_resolved.to_string_lossy().to_string();
+        }
+    }
+
+    // Return as-is, let scene loader report the error
+    target.to_string()
 }
 
 /// Set up the script system's scripts directory from the scene path

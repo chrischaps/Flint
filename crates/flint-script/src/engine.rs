@@ -26,6 +26,8 @@ pub struct ScriptInstance {
     pub has_on_action: bool,
     pub has_on_interact: bool,
     pub has_on_draw_ui: bool,
+    pub has_on_scene_exit: bool,
+    pub has_on_scene_enter: bool,
     pub init_called: bool,
 }
 
@@ -40,6 +42,8 @@ impl ScriptInstance {
         let has_on_action = has_function(&ast, "on_action");
         let has_on_interact = has_function(&ast, "on_interact");
         let has_on_draw_ui = has_function(&ast, "on_draw_ui");
+        let has_on_scene_exit = has_function(&ast, "on_scene_exit");
+        let has_on_scene_enter = has_function(&ast, "on_scene_enter");
 
         Self {
             ast,
@@ -53,6 +57,8 @@ impl ScriptInstance {
             has_on_action,
             has_on_interact,
             has_on_draw_ui,
+            has_on_scene_exit,
+            has_on_scene_enter,
             init_called: false,
         }
     }
@@ -68,6 +74,8 @@ impl ScriptInstance {
         self.has_on_action = has_function(&ast, "on_action");
         self.has_on_interact = has_function(&ast, "on_interact");
         self.has_on_draw_ui = has_function(&ast, "on_draw_ui");
+        self.has_on_scene_exit = has_function(&ast, "on_scene_exit");
+        self.has_on_scene_enter = has_function(&ast, "on_scene_enter");
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -88,6 +96,8 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     ("on_action", 1),
     ("on_interact", 0),
     ("on_draw_ui", 0),
+    ("on_scene_exit", 0),
+    ("on_scene_enter", 0),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -379,6 +389,68 @@ impl ScriptEngine {
     pub fn drain_commands(&self) -> Vec<ScriptCommand> {
         let mut c = self.ctx.lock().unwrap();
         std::mem::take(&mut c.commands)
+    }
+
+    /// Clear all script instances. Preserves the Rhai Engine and registered API.
+    pub fn clear(&mut self) {
+        self.scripts.clear();
+        let mut c = self.ctx.lock().unwrap();
+        c.commands.clear();
+        c.draw_commands.clear();
+    }
+
+    /// Call on_scene_exit() for all scripts that define it
+    pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = world as *mut FlintWorld;
+        }
+
+        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        for entity_id in entity_ids {
+            let script = self.scripts.get_mut(&entity_id).unwrap();
+            if script.has_on_scene_exit {
+                {
+                    let mut c = self.ctx.lock().unwrap();
+                    c.current_entity = entity_id;
+                }
+                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_scene_exit", ()) {
+                    eprintln!("[script] on_scene_exit error ({}): {}", script.source_path, e);
+                }
+            }
+        }
+
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = std::ptr::null_mut();
+        }
+    }
+
+    /// Call on_scene_enter() for all scripts that define it
+    pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = world as *mut FlintWorld;
+        }
+
+        let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
+        for entity_id in entity_ids {
+            let script = self.scripts.get_mut(&entity_id).unwrap();
+            if script.has_on_scene_enter {
+                {
+                    let mut c = self.ctx.lock().unwrap();
+                    c.current_entity = entity_id;
+                }
+                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_scene_enter", ()) {
+                    eprintln!("[script] on_scene_enter error ({}): {}", script.source_path, e);
+                }
+            }
+        }
+
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = std::ptr::null_mut();
+        }
     }
 }
 

@@ -102,6 +102,47 @@ fullbright = true
 
 Billboard sprites use a **separate pipeline** rather than extending the PBR pipeline. This keeps the PBR shaders clean and allows sprites to opt out of lighting entirely (`fullbright = true`). The `discard`-based alpha approach is simple and avoids the significant complexity of order-independent transparency, at the cost of no partial transparency (pixels are either fully opaque or fully transparent).
 
+## Post-Processing
+
+The renderer includes an HDR post-processing pipeline that applies bloom, tonemapping, and vignette as a final pass. See [Post-Processing](post-processing.md) for full details.
+
+When post-processing is active, all scene pipelines (PBR, skinned, billboard, particle, skybox) render to an `Rgba16Float` HDR intermediate buffer. A composite fullscreen pass then applies exposure, ACES tonemapping, gamma correction, and optional vignette to produce the final sRGB output.
+
+Configure post-processing per-scene via the `[post_process]` TOML block, or override with CLI flags (`--no-postprocess`, `--bloom-intensity`, `--bloom-threshold`, `--exposure`).
+
+## PBR Materials
+
+![PBR material showcase — varying roughness and metallic values](../images/pbr-materials.png)
+
+*PBR materials with varying roughness and metallic values. Left to right: rough dielectric, smooth dielectric, rough metal, polished metal.*
+
+## Debug Visualization
+
+The renderer provides six debug visualization modes, cycled with **F1**:
+
+| Mode | Description |
+|------|-------------|
+| **PBR** | Standard Cook-Torrance shading (default) |
+| **Wireframe** | Edge lines only, no fill |
+| **Normals** | World-space surface normals mapped to RGB |
+| **Depth** | Linearized depth as grayscale |
+| **UV Checker** | UV coordinates as a procedural checkerboard |
+| **Unlit** | Albedo color only, no lighting |
+| **Metal/Rough** | Metallic (red channel) and roughness (green channel) |
+
+Additional debug overlays:
+
+- **Wireframe overlay** (F2 in viewer, `--wireframe-overlay` in render) --- draws edges on top of solid shading
+- **Normal arrows** (F3 in viewer, `--show-normals` in render) --- draws face-normal direction arrows
+
+![Wireframe debug mode](../images/debug-wireframe.png)
+
+*Wireframe debug mode showing mesh topology.*
+
+![Normal visualization](../images/debug-normals.png)
+
+*Normal debug mode mapping world-space normals to RGB channels.*
+
 ## Viewer vs Headless
 
 The renderer operates in two modes:

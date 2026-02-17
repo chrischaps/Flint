@@ -6,6 +6,7 @@
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
+use flint_runtime::{GameStateMachine, PersistentStore};
 use std::collections::HashSet;
 
 /// Snapshot of input state for script access (no winit dependency needed)
@@ -13,6 +14,7 @@ use std::collections::HashSet;
 pub struct InputSnapshot {
     pub actions_pressed: HashSet<String>,
     pub actions_just_pressed: HashSet<String>,
+    pub actions_just_released: HashSet<String>,
     pub action_values: std::collections::HashMap<String, f64>,
     pub mouse_delta: (f64, f64),
 }
@@ -34,6 +36,11 @@ pub enum ScriptCommand {
     FireEvent { name: String, data: toml::Value },
     Log { level: LogLevel, message: String },
     EmitBurst { entity_id: i64, count: i64 },
+    LoadScene { path: String },
+    ReloadScene,
+    PushState { name: String },
+    PopState,
+    ReplaceState { name: String },
 }
 
 /// 2D draw command issued by scripts each frame (immediate mode)
@@ -139,6 +146,16 @@ pub struct ScriptCallContext {
     pub postprocess_radial_blur_override: Option<f32>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
+    /// Raw pointer to the GameStateMachine — valid only during call scope
+    pub state_machine: *mut GameStateMachine,
+    /// Raw pointer to the PersistentStore — valid only during call scope
+    pub persistent_store: *mut PersistentStore,
+    /// Transition progress (0.0-1.0 during transitions, -1.0 when idle)
+    pub transition_progress: f64,
+    /// Current transition phase name ("idle", "exiting", "entering")
+    pub transition_phase: String,
+    /// Path of the currently loaded scene
+    pub current_scene_path: String,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -176,6 +193,11 @@ impl ScriptCallContext {
             postprocess_chromatic_aberration_override: None,
             postprocess_radial_blur_override: None,
             audio_lowpass_cutoff_override: None,
+            state_machine: std::ptr::null_mut(),
+            persistent_store: std::ptr::null_mut(),
+            transition_progress: -1.0,
+            transition_phase: String::from("idle"),
+            current_scene_path: String::new(),
         }
     }
 
