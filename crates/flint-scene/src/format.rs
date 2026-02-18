@@ -38,6 +38,22 @@ pub struct PostProcessDef {
     pub ssao_radius: f32,
     #[serde(default = "default_ssao_intensity")]
     pub ssao_intensity: f32,
+    #[serde(default)]
+    pub fog_enabled: bool,
+    #[serde(default = "default_fog_color")]
+    pub fog_color: [f32; 3],
+    #[serde(default = "default_fog_density")]
+    pub fog_density: f32,
+    #[serde(default = "default_fog_start")]
+    pub fog_start: f32,
+    #[serde(default = "default_fog_end")]
+    pub fog_end: f32,
+    #[serde(default)]
+    pub fog_height_enabled: bool,
+    #[serde(default = "default_fog_height_falloff")]
+    pub fog_height_falloff: f32,
+    #[serde(default)]
+    pub fog_height_origin: f32,
 }
 
 fn default_true() -> bool {
@@ -70,6 +86,26 @@ fn default_ssao_radius() -> f32 {
 
 fn default_ssao_intensity() -> f32 {
     1.0
+}
+
+fn default_fog_color() -> [f32; 3] {
+    [0.7, 0.75, 0.82]
+}
+
+fn default_fog_density() -> f32 {
+    0.02
+}
+
+fn default_fog_start() -> f32 {
+    5.0
+}
+
+fn default_fog_end() -> f32 {
+    100.0
+}
+
+fn default_fog_height_falloff() -> f32 {
+    0.1
 }
 
 /// Environment settings for the scene (skybox, etc.)

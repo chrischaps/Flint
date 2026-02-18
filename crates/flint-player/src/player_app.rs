@@ -327,6 +327,14 @@ impl PlayerApp {
             config.ssao_enabled = pp_def.ssao_enabled;
             config.ssao_radius = pp_def.ssao_radius;
             config.ssao_intensity = pp_def.ssao_intensity;
+            config.fog_enabled = pp_def.fog_enabled;
+            config.fog_color = pp_def.fog_color;
+            config.fog_density = pp_def.fog_density;
+            config.fog_start = pp_def.fog_start;
+            config.fog_end = pp_def.fog_end;
+            config.fog_height_enabled = pp_def.fog_height_enabled;
+            config.fog_height_falloff = pp_def.fog_height_falloff;
+            config.fog_height_origin = pp_def.fog_height_origin;
             scene_renderer.set_post_process_config(config);
         }
 
@@ -1175,6 +1183,14 @@ impl PlayerApp {
                 config.ssao_enabled = pp_def.ssao_enabled;
                 config.ssao_radius = pp_def.ssao_radius;
                 config.ssao_intensity = pp_def.ssao_intensity;
+                config.fog_enabled = pp_def.fog_enabled;
+                config.fog_color = pp_def.fog_color;
+                config.fog_density = pp_def.fog_density;
+                config.fog_start = pp_def.fog_start;
+                config.fog_end = pp_def.fog_end;
+                config.fog_height_enabled = pp_def.fog_height_enabled;
+                config.fog_height_falloff = pp_def.fog_height_falloff;
+                config.fog_height_origin = pp_def.fog_height_origin;
                 renderer.set_post_process_config(config);
             }
         }
@@ -1308,6 +1324,14 @@ impl ApplicationHandler for PlayerApp {
                                         let mut config =
                                             renderer.post_process_config().clone();
                                         config.ssao_enabled = !config.ssao_enabled;
+                                        renderer.set_post_process_config(config);
+                                    }
+                                }
+                                KeyCode::F8 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config =
+                                            renderer.post_process_config().clone();
+                                        config.fog_enabled = !config.fog_enabled;
                                         renderer.set_post_process_config(config);
                                     }
                                 }

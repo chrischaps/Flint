@@ -31,6 +31,14 @@ pub struct PostProcessConfig {
     pub ssao_radius: f32,
     pub ssao_intensity: f32,
     pub ssao_bias: f32,
+    pub fog_enabled: bool,
+    pub fog_color: [f32; 3],
+    pub fog_density: f32,
+    pub fog_start: f32,
+    pub fog_end: f32,
+    pub fog_height_enabled: bool,
+    pub fog_height_falloff: f32,
+    pub fog_height_origin: f32,
 }
 
 impl Default for PostProcessConfig {
@@ -51,6 +59,14 @@ impl Default for PostProcessConfig {
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
             ssao_bias: 0.025,
+            fog_enabled: false,
+            fog_color: [0.7, 0.75, 0.82],
+            fog_density: 0.02,
+            fog_start: 5.0,
+            fog_end: 100.0,
+            fog_height_enabled: false,
+            fog_height_falloff: 0.1,
+            fog_height_origin: 0.0,
         }
     }
 }
@@ -69,6 +85,20 @@ pub struct PostProcessUniforms {
     pub chromatic_aberration: f32,
     pub radial_blur: f32,
     pub _pad: [f32; 2],
+    // Fog parameters
+    pub fog_color: [f32; 3],
+    pub fog_density: f32,
+    pub fog_start: f32,
+    pub fog_end: f32,
+    pub fog_height_falloff: f32,
+    pub fog_height_origin: f32,
+    pub camera_pos: [f32; 3],
+    pub fog_enabled: f32,
+    pub near: f32,
+    pub far: f32,
+    pub fog_height_enabled: f32,
+    pub _pad2: f32,
+    pub inv_view_proj: [[f32; 4]; 4],
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -167,7 +197,7 @@ pub struct PostProcessPipeline {
     pub ssao_blur_uniform_bgl: wgpu::BindGroupLayout,
     pub ssao_blur_texture_bgl: wgpu::BindGroupLayout,
     pub ssao_blur_uniform_buffer: wgpu::Buffer,
-    // Composite group 3: SSAO texture
+    // Composite group 3: SSAO texture + depth texture (for fog)
     pub composite_ssao_bgl: wgpu::BindGroupLayout,
     // 1x1 white R8Unorm fallback when SSAO disabled
     pub white_texture_view: wgpu::TextureView,
@@ -258,10 +288,10 @@ impl PostProcessPipeline {
                 ],
             });
 
-        // Group 3: SSAO texture + sampler
+        // Group 3: SSAO texture + sampler + depth texture + depth sampler (for fog)
         let composite_ssao_bgl =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Composite SSAO BGL"),
+                label: Some("Composite SSAO+Depth BGL"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -277,6 +307,22 @@ impl PostProcessPipeline {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
                 ],
@@ -1244,7 +1290,7 @@ impl PostProcessPipeline {
         queue.submit(std::iter::once(encoder.finish()));
     }
 
-    /// Run the composite pass: combine HDR scene + bloom + SSAO → tonemapped sRGB surface.
+    /// Run the composite pass: combine HDR scene + bloom + SSAO + fog → tonemapped sRGB surface.
     pub fn composite(
         &self,
         device: &wgpu::Device,
@@ -1252,6 +1298,8 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
         target_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_view = if config.enabled && config.ssao_enabled {
@@ -1260,8 +1308,8 @@ impl PostProcessPipeline {
             &self.white_texture_view
         };
 
-        let ssao_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Composite SSAO BG"),
+        let ssao_depth_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Composite SSAO+Depth BG"),
             layout: &self.composite_ssao_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -1271,6 +1319,14 @@ impl PostProcessPipeline {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
                 },
             ],
         });
@@ -1297,6 +1353,19 @@ impl PostProcessPipeline {
             chromatic_aberration: config.chromatic_aberration,
             radial_blur: config.radial_blur,
             _pad: [0.0; 2],
+            fog_color: config.fog_color,
+            fog_density: config.fog_density,
+            fog_start: config.fog_start,
+            fog_end: config.fog_end,
+            fog_height_falloff: config.fog_height_falloff,
+            fog_height_origin: config.fog_height_origin,
+            camera_pos: camera.position_array(),
+            fog_enabled: if effects_on && config.fog_enabled { 1.0 } else { 0.0 },
+            near: camera.near,
+            far: camera.far,
+            fog_height_enabled: if config.fog_height_enabled { 1.0 } else { 0.0 },
+            _pad2: 0.0,
+            inv_view_proj: camera.inverse_view_projection_matrix(),
         };
 
         queue.write_buffer(
@@ -1376,7 +1445,7 @@ impl PostProcessPipeline {
             pass.set_bind_group(0, &uniform_bg, &[]);
             pass.set_bind_group(1, &scene_bg, &[]);
             pass.set_bind_group(2, &bloom_bg, &[]);
-            pass.set_bind_group(3, &ssao_bg, &[]);
+            pass.set_bind_group(3, &ssao_depth_bg, &[]);
             pass.draw(0..3, 0..1);
         }
 

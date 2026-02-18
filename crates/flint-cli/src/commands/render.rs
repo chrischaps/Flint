@@ -33,6 +33,9 @@ pub struct RenderArgs {
     pub exposure: Option<f32>,
     pub ssao_radius: Option<f32>,
     pub ssao_intensity: Option<f32>,
+    pub fog_density: Option<f32>,
+    pub fog_color: Option<[f32; 3]>,
+    pub fog_height_falloff: Option<f32>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -239,6 +242,14 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.ssao_enabled = pp_def.ssao_enabled;
             pp_config.ssao_radius = pp_def.ssao_radius;
             pp_config.ssao_intensity = pp_def.ssao_intensity;
+            pp_config.fog_enabled = pp_def.fog_enabled;
+            pp_config.fog_color = pp_def.fog_color;
+            pp_config.fog_density = pp_def.fog_density;
+            pp_config.fog_start = pp_def.fog_start;
+            pp_config.fog_end = pp_def.fog_end;
+            pp_config.fog_height_enabled = pp_def.fog_height_enabled;
+            pp_config.fog_height_falloff = pp_def.fog_height_falloff;
+            pp_config.fog_height_origin = pp_def.fog_height_origin;
         }
 
         // CLI overrides
@@ -263,6 +274,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
             if intensity <= 0.0 {
                 pp_config.ssao_enabled = false;
             }
+        }
+        if let Some(density) = args.fog_density {
+            pp_config.fog_density = density;
+            pp_config.fog_enabled = density > 0.0;
+        }
+        if let Some(color) = args.fog_color {
+            pp_config.fog_color = color;
+        }
+        if let Some(falloff) = args.fog_height_falloff {
+            pp_config.fog_height_falloff = falloff;
+            pp_config.fog_height_enabled = true;
         }
 
         renderer.set_post_process_config(pp_config);

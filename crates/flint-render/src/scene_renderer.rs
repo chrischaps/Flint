@@ -2486,9 +2486,9 @@ impl SceneRenderer {
                 pp.run_bloom(device, queue, resources, &self.postprocess_config);
             }
 
-            // Composite: HDR + bloom + SSAO → tonemapped sRGB surface
+            // Composite: HDR + bloom + SSAO + fog → tonemapped sRGB surface
             // (always runs — this is what converts Rgba16Float → surface format)
-            pp.composite(device, queue, resources, &self.postprocess_config, target_view);
+            pp.composite(device, queue, resources, &self.postprocess_config, target_view, depth_view, camera);
         }
     }
 }
