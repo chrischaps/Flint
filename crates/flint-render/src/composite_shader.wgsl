@@ -1,7 +1,7 @@
 // Composite post-processing shader
 //
 // Fullscreen triangle that reads from the HDR scene buffer, applies
-// radial blur, chromatic aberration, bloom, exposure, ACES tonemapping,
+// radial blur, chromatic aberration, bloom, fog, exposure, ACES tonemapping,
 // gamma correction, and vignette, then writes to the sRGB surface.
 
 struct PostProcessUniforms {
@@ -15,6 +15,20 @@ struct PostProcessUniforms {
     chromatic_aberration: f32,
     radial_blur: f32,
     _pad: vec2<f32>,
+    // Fog parameters
+    fog_color: vec3<f32>,
+    fog_density: f32,
+    fog_start: f32,
+    fog_end: f32,
+    fog_height_falloff: f32,
+    fog_height_origin: f32,
+    camera_pos: vec3<f32>,
+    fog_enabled: f32,
+    near: f32,
+    far: f32,
+    fog_height_enabled: f32,
+    _pad2: f32,
+    inv_view_proj: mat4x4<f32>,
 };
 
 @group(0) @binding(0)
@@ -34,6 +48,11 @@ var bloom_sampler: sampler;
 var ssao_texture: texture_2d<f32>;
 @group(3) @binding(1)
 var ssao_sampler: sampler;
+
+@group(3) @binding(2)
+var depth_texture: texture_2d<f32>;
+@group(3) @binding(3)
+var depth_sampler_nn: sampler;
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -66,6 +85,42 @@ fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
 // Linear to sRGB gamma correction
 fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
     return pow(color, vec3<f32>(1.0 / 2.2));
+}
+
+// Reconstruct world position from depth buffer UV + depth value
+fn world_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
+    let clip = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);
+    // wgpu clip space has Y flipped relative to UV space
+    let clip_y_flip = vec4<f32>(clip.x, -clip.y, clip.z, 1.0);
+    let world = params.inv_view_proj * clip_y_flip;
+    return world.xyz / world.w;
+}
+
+// Compute fog factor from depth buffer
+fn compute_fog(uv: vec2<f32>) -> f32 {
+    let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
+    // Skip skybox (depth at or near far plane)
+    if (depth >= 0.9999) {
+        return 0.0;
+    }
+
+    let world_pos = world_pos_from_depth(uv, depth);
+    let dist = length(world_pos - params.camera_pos);
+
+    // Exponential distance fog with start offset
+    let dist_factor = max(dist - params.fog_start, 0.0);
+    let dist_fog = 1.0 - exp(-params.fog_density * dist_factor);
+
+    // Height fog (exponential falloff above fog_height_origin)
+    var height_fog = 0.0;
+    if (params.fog_height_enabled > 0.5) {
+        let height_above = max(world_pos.y - params.fog_height_origin, 0.0);
+        height_fog = exp(-params.fog_height_falloff * height_above);
+        // Modulate by distance so nearby objects aren't fully fogged
+        height_fog = height_fog * dist_fog;
+    }
+
+    return clamp(max(dist_fog, height_fog), 0.0, 1.0);
 }
 
 @fragment
@@ -111,6 +166,12 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // ── Bloom ──
     let bloom = textureSample(bloom_texture, bloom_sampler, uv).rgb;
     color = color + bloom * params.bloom_intensity;
+
+    // ── Fog (applied in linear HDR space, before tonemapping) ──
+    if (params.fog_enabled > 0.5) {
+        let fog_factor = compute_fog(uv);
+        color = mix(color, params.fog_color, fog_factor);
+    }
 
     // ── Exposure → Tonemapping → Gamma ──
     color = color * params.exposure;

@@ -227,6 +227,18 @@ enum Commands {
         /// SSAO intensity multiplier (default: 1.0, 0 = disabled)
         #[arg(long)]
         ssao_intensity: Option<f32>,
+
+        /// Fog density (enables fog; default: 0.02, 0 = disabled)
+        #[arg(long)]
+        fog_density: Option<f32>,
+
+        /// Fog color as comma-separated R,G,B (default: 0.7,0.75,0.82)
+        #[arg(long, value_parser = parse_vec3)]
+        fog_color: Option<[f32; 3]>,
+
+        /// Fog height falloff (enables height fog; default: 0.1)
+        #[arg(long)]
+        fog_height_falloff: Option<f32>,
     },
 }
 
@@ -320,6 +332,9 @@ fn main() -> Result<()> {
             exposure,
             ssao_radius,
             ssao_intensity,
+            fog_density,
+            fog_color,
+            fog_height_falloff,
         } => render::run(render::RenderArgs {
             scene,
             output,
@@ -344,6 +359,9 @@ fn main() -> Result<()> {
             exposure,
             ssao_radius,
             ssao_intensity,
+            fog_density,
+            fog_color,
+            fog_height_falloff,
         }),
     }
 }
