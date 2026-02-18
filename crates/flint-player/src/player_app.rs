@@ -1807,19 +1807,34 @@ fn render_draw_commands(
 
     for cmd in &sorted {
         match cmd {
-            DrawCommand::Text { x, y, text, size, color, align, .. } => {
+            DrawCommand::Text { x, y, text, size, color, align, stroke, .. } => {
                 let anchor = match align {
                     1 => egui::Align2::CENTER_TOP,
                     2 => egui::Align2::RIGHT_TOP,
                     _ => egui::Align2::LEFT_TOP,
                 };
-                painter.text(
-                    egui::Pos2::new(*x, *y),
-                    anchor,
-                    text,
-                    egui::FontId::proportional(*size),
-                    to_color32(color),
-                );
+                let font = egui::FontId::proportional(*size);
+                let pos = egui::Pos2::new(*x, *y);
+
+                // Draw stroke (outline) by rendering text at 8 compass offsets
+                if let Some((stroke_color, stroke_width)) = stroke {
+                    let sc = to_color32(stroke_color);
+                    let w = *stroke_width;
+                    for &(dx, dy) in &[
+                        (-w, 0.0), (w, 0.0), (0.0, -w), (0.0, w),
+                        (-w, -w), (w, -w), (-w, w), (w, w),
+                    ] {
+                        painter.text(
+                            egui::Pos2::new(pos.x + dx, pos.y + dy),
+                            anchor,
+                            text,
+                            font.clone(),
+                            sc,
+                        );
+                    }
+                }
+
+                painter.text(pos, anchor, text, font, to_color32(color));
             }
 
             DrawCommand::RectFilled { x, y, w, h, color, rounding, .. } => {

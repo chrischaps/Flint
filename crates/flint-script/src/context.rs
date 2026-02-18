@@ -55,6 +55,8 @@ pub enum DrawCommand {
         layer: i32,
         /// 0 = left (default), 1 = center, 2 = right
         align: u8,
+        /// Optional stroke (outline): color + pixel width
+        stroke: Option<([f32; 4], f32)>,
     },
     RectFilled {
         x: f32, y: f32, w: f32, h: f32,

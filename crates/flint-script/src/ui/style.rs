@@ -43,6 +43,8 @@ pub struct ResolvedStyle {
     pub radius: f32,
     pub layer: i32,
     pub padding: [f32; 4], // L, T, R, B
+    pub stroke_color: [f32; 4],
+    pub stroke_width: f32,
 
     // Layout
     pub layout: LayoutFlow,
@@ -69,6 +71,8 @@ impl Default for ResolvedStyle {
             radius: 0.0,
             layer: 0,
             padding: [0.0; 4],
+            stroke_color: [0.0, 0.0, 0.0, 1.0],
+            stroke_width: 0.0,
             layout: LayoutFlow::Stack,
             margin_bottom: 0.0,
         }
@@ -105,6 +109,8 @@ impl StyleClass {
                 "margin_bottom" => if let StyleValue::Float(v) = val { style.margin_bottom = *v; },
                 "color" => if let StyleValue::Color(c) = val { style.color = *c; },
                 "bg_color" => if let StyleValue::Color(c) = val { style.bg_color = *c; },
+                "stroke_color" => if let StyleValue::Color(c) = val { style.stroke_color = *c; },
+                "stroke_width" => if let StyleValue::Float(v) = val { style.stroke_width = *v; },
                 "text_align" => if let StyleValue::String(s) = val {
                     style.text_align = match s.as_str() {
                         "center" => TextAlign::Center,

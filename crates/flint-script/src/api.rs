@@ -1125,6 +1125,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 color: [r as f32, g as f32, b as f32, a as f32],
                 layer: 0,
                 align: 0,
+                stroke: None,
             });
         });
     }
@@ -1141,6 +1142,26 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 color: [r as f32, g as f32, b as f32, a as f32],
                 layer: layer as i32,
                 align: 0,
+                stroke: None,
+            });
+        });
+    }
+
+    // draw_text_stroked(x, y, text, size, r, g, b, a, stroke_r, stroke_g, stroke_b, stroke_a, stroke_width)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_text_stroked", move |x: f64, y: f64, text: &str, size: f64,
+            r: f64, g: f64, b: f64, a: f64,
+            sr: f64, sg: f64, sb: f64, sa: f64, sw: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Text {
+                x: x as f32, y: y as f32,
+                text: text.to_string(),
+                size: size as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                layer: 0,
+                align: 0,
+                stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
             });
         });
     }

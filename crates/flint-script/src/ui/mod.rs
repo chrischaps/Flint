@@ -117,6 +117,13 @@ impl UiDocument {
                             _ => (rect.x, 0u8),
                         };
 
+                        let stroke = if style.stroke_width > 0.0 {
+                            let mut sc = style.stroke_color;
+                            sc[3] *= opacity;
+                            Some((sc, style.stroke_width))
+                        } else {
+                            None
+                        };
                         commands.push(DrawCommand::Text {
                             x: text_x,
                             y: rect.y,
@@ -125,6 +132,7 @@ impl UiDocument {
                             color,
                             layer: style.layer,
                             align: text_align,
+                            stroke,
                         });
                     }
                 }
