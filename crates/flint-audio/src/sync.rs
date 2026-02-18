@@ -61,7 +61,23 @@ impl AudioSync {
     }
 
     /// Clear all sync state for a scene transition.
+    /// Stops all playing sounds before dropping handles, since Kira sounds
+    /// continue playing even after their handles are dropped.
     pub fn clear(&mut self) {
+        let stop_tween = Tween {
+            duration: Duration::from_millis(16),
+            ..Default::default()
+        };
+        for entry in self.spatial_map.values_mut() {
+            for handle in &mut entry.handles {
+                let _ = handle.stop(stop_tween);
+            }
+        }
+        for entry in self.non_spatial_map.values_mut() {
+            for handle in &mut entry.handles {
+                let _ = handle.stop(stop_tween);
+            }
+        }
         self.spatial_map.clear();
         self.non_spatial_map.clear();
         self.synced_entities.clear();

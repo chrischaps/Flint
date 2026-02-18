@@ -20,6 +20,8 @@ A scannable cheat sheet for daily Flint development.
 | `flint render <scene> -o out.png` | Headless render to PNG |
 | `flint asset generate <type>` | AI asset generation (texture, model, audio) |
 | `flint asset import <file>` | Import file into asset catalog |
+| `flint edit <scene>` | Interactive spline/track editor |
+| `flint prefab view <template>` | Preview a prefab template in the viewer |
 
 ## Keyboard Shortcuts
 
@@ -46,13 +48,32 @@ A scannable cheat sheet for daily Flint development.
 
 | Key | Action |
 |-----|--------|
-| Left-drag | Orbit camera |
+| Left-click | Select entity / pick gizmo axis |
+| Left-drag | Orbit camera (or drag gizmo) |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
+| Ctrl+S | Save scene |
+| Ctrl+Z | Undo position change |
+| Ctrl+Shift+Z | Redo position change |
 | F1 | Cycle debug mode |
 | F2 | Toggle wireframe overlay |
 | F3 | Toggle normal arrows |
 | F4 | Toggle shadows |
+
+### Editor (`flint edit`)
+
+| Key | Action |
+|-----|--------|
+| Left-click | Select control point |
+| Left-drag | Move control point |
+| Alt+drag | Move vertically (Y) |
+| Middle-drag | Orbit |
+| Right-drag | Pan |
+| Tab / Shift+Tab | Cycle control points |
+| I | Insert point |
+| Delete | Remove point |
+| Ctrl+S | Save spline |
+| Ctrl+Z | Undo |
 
 ## Common TOML Snippets
 
@@ -149,6 +170,17 @@ min_distance = 1.0
 max_distance = 15.0
 ```
 
+### Prefab Instance
+
+```toml
+[prefabs.player]
+template = "kart"
+prefix = "player"
+
+[prefabs.player.overrides.kart.transform]
+position = [0, 0, 0]
+```
+
 ## Top Scripting Functions
 
 | Function | Returns | Description |
@@ -168,6 +200,12 @@ max_distance = 15.0
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
 | `spawn_entity(name)` | `i64` | Create a new entity |
+| `load_scene(path)` | --- | Transition to a new scene |
+| `push_state("paused")` | --- | Push a game state (e.g., pause) |
+| `pop_state()` | --- | Pop to previous game state |
+| `persist_set(key, val)` | --- | Store data across scene transitions |
+| `load_ui(path)` | `i64` | Load a data-driven UI document |
+| `ui_set_text(id, text)` | --- | Update UI element text |
 
 ## Render Command Quick Examples
 

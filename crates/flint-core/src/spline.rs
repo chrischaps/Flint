@@ -47,6 +47,16 @@ pub fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
     )
 }
 
+/// Catmull-Rom interpolation for a single scalar value.
+pub fn catmull_rom_scalar(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
 /// Rotate a vector around an axis by an angle in radians (Rodrigues' formula).
 pub fn rotate_around_axis(v: Vec3, axis: Vec3, angle: f32) -> Vec3 {
     let cos_a = angle.cos();
@@ -119,10 +129,12 @@ pub fn sample_closed_spline(points: &[SplineControlPoint], spacing: f32) -> Vec<
 
         let forward = (pos_next - position).normalized();
 
-        // Interpolate twist
+        // Interpolate twist using Catmull-Rom (C1 continuous, matches position)
+        let tw0 = points[(seg + n - 1) % n].twist;
         let tw1 = points[seg].twist;
         let tw2 = points[(seg + 1) % n].twist;
-        let twist = tw1 + (tw2 - tw1) * local_t;
+        let tw3 = points[(seg + 2) % n].twist;
+        let twist = catmull_rom_scalar(tw0, tw1, tw2, tw3, local_t);
         let twist_rad = twist.to_radians();
 
         // Basis vectors with twist
@@ -227,11 +239,12 @@ pub fn sample_open_spline(points: &[SplineControlPoint], spacing: f32) -> Vec<Sp
 
         let forward = (pos_next - position).normalized();
 
-        // Interpolate twist between original points
-        let orig_idx = seg; // maps to extended[seg+1] = points[seg]
-        let tw1 = points[orig_idx].twist;
-        let tw2 = points[(orig_idx + 1).min(n - 1)].twist;
-        let twist = tw1 + (tw2 - tw1) * local_t;
+        // Interpolate twist using Catmull-Rom (C1 continuous, matches position)
+        let tw0 = extended[seg].twist;
+        let tw1 = extended[seg + 1].twist;
+        let tw2 = extended[seg + 2].twist;
+        let tw3 = extended[seg + 3].twist;
+        let twist = catmull_rom_scalar(tw0, tw1, tw2, tw3, local_t);
         let twist_rad = twist.to_radians();
 
         let right_flat = forward.cross(&world_up).normalized();

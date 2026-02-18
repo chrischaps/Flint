@@ -1807,10 +1807,15 @@ fn render_draw_commands(
 
     for cmd in &sorted {
         match cmd {
-            DrawCommand::Text { x, y, text, size, color, .. } => {
+            DrawCommand::Text { x, y, text, size, color, align, .. } => {
+                let anchor = match align {
+                    1 => egui::Align2::CENTER_TOP,
+                    2 => egui::Align2::RIGHT_TOP,
+                    _ => egui::Align2::LEFT_TOP,
+                };
                 painter.text(
                     egui::Pos2::new(*x, *y),
-                    egui::Align2::LEFT_TOP,
+                    anchor,
                     text,
                     egui::FontId::proportional(*size),
                     to_color32(color),

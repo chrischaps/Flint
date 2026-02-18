@@ -48,6 +48,23 @@ Three component schemas define audio behavior:
 | `on_enter` | string | | Sound when entering a trigger volume |
 | `on_exit` | string | | Sound when exiting a trigger volume |
 
+## Dynamic Parameter Sync
+
+Audio source parameters (`volume` and `pitch`) can be changed at runtime via `set_field()` and the engine automatically syncs changes to the playing audio each frame. This enables dynamic audio effects like engine RPM simulation or distance-based volume curves:
+
+```rust
+// Adjust engine sound pitch based on speed
+let rpm_ratio = speed / max_speed;
+set_field(engine_sound, "audio_source", "pitch", 0.5 + rpm_ratio * 1.5);
+set_field(engine_sound, "audio_source", "volume", 0.3 + rpm_ratio * 0.7);
+```
+
+Changes are applied with a 16ms tween for smooth transitions (no clicks or pops).
+
+## Scene Transition Behavior
+
+When a scene transition occurs (via `load_scene()` or `reload_scene()`), all playing sounds are explicitly stopped with a short fade-out before the old scene is unloaded. This prevents audio bleed between scenes --- sounds from the previous scene won't continue playing into the new one.
+
 ## Architecture
 
 The audio system has three main components:

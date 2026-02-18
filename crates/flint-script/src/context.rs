@@ -53,6 +53,8 @@ pub enum DrawCommand {
         size: f32,
         color: [f32; 4],
         layer: i32,
+        /// 0 = left (default), 1 = center, 2 = right
+        align: u8,
     },
     RectFilled {
         x: f32, y: f32, w: f32, h: f32,

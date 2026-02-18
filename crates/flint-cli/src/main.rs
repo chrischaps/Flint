@@ -4,7 +4,7 @@ mod commands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{asset, edit, entity, init, play, query, render, scene, schema, validate};
+use commands::{asset, edit, entity, init, play, prefab, query, render, scene, schema, validate};
 
 #[derive(Parser)]
 #[command(name = "flint")]
@@ -108,6 +108,10 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+
+    /// Prefab operations
+    #[command(subcommand)]
+    Prefab(prefab::PrefabCommands),
 
     /// Asset management operations
     #[command(subcommand)]
@@ -284,6 +288,7 @@ fn main() -> Result<()> {
             fullscreen,
             input_config,
         }),
+        Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),
         Commands::Edit { scene, schemas } => edit::run(edit::EditArgs { scene, schemas }),
         Commands::Serve { scene, watch, schemas, no_inspector } => {

@@ -106,21 +106,25 @@ impl UiDocument {
                         let mut color = style.color;
                         color[3] *= opacity;
 
-                        // Apply text alignment
-                        let text_w = layout::approximate_text_width(text, style.font_size);
-                        let aligned_x = if rect.w > 0.0 {
-                            layout::align_text_x(rect.x, text_w, rect.w, style.text_align)
-                        } else {
-                            rect.x
+                        // Pass alignment to renderer for accurate centering with actual font metrics
+                        let (text_x, text_align) = match style.text_align {
+                            style::TextAlign::Center if rect.w > 0.0 => {
+                                (rect.x + rect.w / 2.0, 1u8)
+                            }
+                            style::TextAlign::Right if rect.w > 0.0 => {
+                                (rect.x + rect.w, 2u8)
+                            }
+                            _ => (rect.x, 0u8),
                         };
 
                         commands.push(DrawCommand::Text {
-                            x: aligned_x,
+                            x: text_x,
                             y: rect.y,
                             text: text.to_string(),
                             size: style.font_size,
                             color,
                             layer: style.layer,
+                            align: text_align,
                         });
                     }
                 }

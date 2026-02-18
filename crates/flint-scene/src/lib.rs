@@ -4,8 +4,9 @@
 
 mod format;
 mod loader;
+mod prefab;
 mod saver;
 
-pub use format::{EntityDef, PostProcessDef, SceneFile, SceneMetadata};
-pub use loader::{load_scene, reload_scene};
+pub use format::{EntityDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata};
+pub use loader::{load_scene, load_scene_string, reload_scene};
 pub use saver::{save_scene, save_scene_string};

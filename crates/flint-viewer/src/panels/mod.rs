@@ -6,7 +6,7 @@ mod scene_tree;
 pub mod spline_panel;
 mod view_gizmo;
 
-pub use entity_inspector::EntityInspector;
+pub use entity_inspector::{EntityInspector, InspectorAction};
 pub use render_stats::RenderStats;
 pub use scene_tree::SceneTree;
 pub use spline_panel::SplinePanelAction;

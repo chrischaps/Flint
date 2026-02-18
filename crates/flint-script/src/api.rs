@@ -1124,6 +1124,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 size: size as f32,
                 color: [r as f32, g as f32, b as f32, a as f32],
                 layer: 0,
+                align: 0,
             });
         });
     }
@@ -1139,6 +1140,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 size: size as f32,
                 color: [r as f32, g as f32, b as f32, a as f32],
                 layer: layer as i32,
+                align: 0,
             });
         });
     }

@@ -28,6 +28,8 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint serve <scene>` | Launch the hot-reload PBR viewer with egui inspector |
 | `flint play <scene>` | Play a scene with first-person controls and physics |
 | `flint render <scene>` | Render a scene to PNG (headless) |
+| `flint edit <scene>` | Launch the interactive spline/track editor |
+| `flint prefab view <template>` | Preview a prefab template in the viewer |
 
 ## The `play` Command
 
@@ -146,13 +148,20 @@ flint serve scene.toml --no-inspector
 
 | Input | Action |
 |-------|--------|
-| Left-drag | Orbit camera |
+| Left-click | Select entity / pick gizmo axis |
+| Left-drag | Orbit camera (or drag gizmo if axis selected) |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
+| Ctrl+S | Save scene to disk |
+| Ctrl+Z | Undo position change |
+| Ctrl+Shift+Z | Redo position change |
+| Escape | Cancel gizmo drag |
 | F1 | Cycle debug mode |
 | F2 | Toggle wireframe overlay |
 | F3 | Toggle normal arrows |
 | F4 | Toggle shadows |
+
+When an entity is selected, a **translate gizmo** appears with colored axis arrows (red = X, green = Y, blue = Z) and plane handles. Click and drag an axis or plane to move the entity. Position changes can be undone/redone and saved back to the scene file.
 
 ## The `asset generate` Command
 
@@ -177,6 +186,54 @@ flint asset generate audio -d "tavern ambient noise" --duration 10.0
 | `--duration` | Audio duration in seconds (default: 3.0) |
 
 Generated assets are automatically stored in content-addressed storage and registered in the asset catalog with a `.asset.toml` sidecar. Models are validated against style constraints after generation.
+
+## The `edit` Command
+
+Launch the interactive spline editor for authoring and modifying track layouts:
+
+```bash
+flint edit scenes/race_track.scene.toml --schemas engine/schemas --schemas schemas
+```
+
+The editor extends the scene viewer with spline-specific tools. It parses the first `.spline.toml` reference found in the scene and provides visual editing of control points.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+
+### Editor Controls
+
+| Input | Action |
+|-------|--------|
+| Left-click | Select / pick control point |
+| Left-drag | Move control point on constraint plane |
+| Alt + drag | Move control point vertically (Y axis) |
+| Middle-drag | Orbit camera |
+| Right-drag | Pan camera |
+| Scroll | Zoom |
+| Tab / Shift+Tab | Cycle through control points |
+| I | Insert a new control point after the selected one |
+| Delete | Remove selected control point |
+| Ctrl+S | Save spline to disk |
+| Ctrl+Z | Undo |
+| Escape | Cancel current drag |
+
+The editor also provides an egui panel with DragValue editors for precise X/Y/Z/Twist control of the selected point.
+
+## The `prefab view` Command
+
+Preview a prefab template in the interactive viewer:
+
+```bash
+flint prefab view prefabs/kart.prefab.toml --schemas engine/schemas --schemas schemas
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--prefix <string>` | `"preview"` | Prefix for `${PREFIX}` substitution |
+| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+
+This command loads the `.prefab.toml` template, performs variable substitution, builds a synthetic scene from the expanded entities, and launches the viewer for visual inspection. Useful for verifying prefab structure and appearance without creating a full scene.
 
 ## Common Flags
 

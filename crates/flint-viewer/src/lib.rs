@@ -6,4 +6,6 @@
 
 pub mod app;
 pub mod panels;
+pub mod projection;
 pub mod spline_editor;
+pub mod transform_gizmo;
