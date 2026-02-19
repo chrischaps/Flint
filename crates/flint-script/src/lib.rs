@@ -161,7 +161,7 @@ impl ScriptSystem {
     }
 
     /// Take post-processing overrides set by scripts this frame (clears them)
-    pub fn take_postprocess_overrides(&mut self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
+    pub fn take_postprocess_overrides(&mut self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
         let mut c = self.engine.ctx.lock().unwrap();
         let vignette = c.postprocess_vignette_override.take();
         let bloom = c.postprocess_bloom_override.take();
@@ -169,7 +169,8 @@ impl ScriptSystem {
         let chromatic_aberration = c.postprocess_chromatic_aberration_override.take();
         let radial_blur = c.postprocess_radial_blur_override.take();
         let ssao_intensity = c.postprocess_ssao_intensity_override.take();
-        (vignette, bloom, exposure, chromatic_aberration, radial_blur, ssao_intensity)
+        let fog_density = c.postprocess_fog_density_override.take();
+        (vignette, bloom, exposure, chromatic_aberration, radial_blur, ssao_intensity, fog_density)
     }
 
     /// Take audio low-pass filter override set by scripts this frame (clears it)

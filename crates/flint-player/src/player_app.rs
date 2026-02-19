@@ -123,6 +123,7 @@ pub struct PlayerApp {
     pp_chromatic_aberration_override: Option<f32>,
     pp_radial_blur_override: Option<f32>,
     pp_ssao_intensity_override: Option<f32>,
+    pp_fog_density_override: Option<f32>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -185,6 +186,7 @@ impl PlayerApp {
             pp_chromatic_aberration_override: None,
             pp_radial_blur_override: None,
             pp_ssao_intensity_override: None,
+            pp_fog_density_override: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -609,6 +611,7 @@ impl PlayerApp {
             || self.pp_chromatic_aberration_override.is_some()
             || self.pp_radial_blur_override.is_some()
             || self.pp_ssao_intensity_override.is_some()
+            || self.pp_fog_density_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -629,6 +632,9 @@ impl PlayerApp {
             }
             if let Some(si) = self.pp_ssao_intensity_override {
                 config.ssao_intensity = si;
+            }
+            if let Some(fd) = self.pp_fog_density_override {
+                config.fog_density = fd;
             }
             renderer.set_post_process_config(config);
         }
@@ -852,13 +858,14 @@ impl PlayerApp {
         }
 
         // Drain script post-processing overrides for this frame
-        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao) = self.script.take_postprocess_overrides();
+        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao, pp_fog) = self.script.take_postprocess_overrides();
         self.pp_vignette_override = pp_vig;
         self.pp_bloom_override = pp_bloom;
         self.pp_exposure_override = pp_exp;
         self.pp_chromatic_aberration_override = pp_ca;
         self.pp_radial_blur_override = pp_rb;
         self.pp_ssao_intensity_override = pp_ssao;
+        self.pp_fog_density_override = pp_fog;
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
