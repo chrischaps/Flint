@@ -3,6 +3,7 @@
 //! ScriptCallContext is the shared state accessed by Rhai API functions during script execution.
 //! ScriptCommand represents deferred actions (audio, events, logging) collected during a script call.
 
+use crate::ui::UiSystem;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
@@ -52,6 +53,10 @@ pub enum DrawCommand {
         size: f32,
         color: [f32; 4],
         layer: i32,
+        /// 0 = left (default), 1 = center, 2 = right
+        align: u8,
+        /// Optional stroke (outline): color + pixel width
+        stroke: Option<([f32; 4], f32)>,
     },
     RectFilled {
         x: f32, y: f32, w: f32, h: f32,
@@ -145,6 +150,7 @@ pub struct ScriptCallContext {
     pub postprocess_chromatic_aberration_override: Option<f32>,
     pub postprocess_radial_blur_override: Option<f32>,
     pub postprocess_ssao_intensity_override: Option<f32>,
+    pub postprocess_fog_density_override: Option<f32>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
     /// Raw pointer to the GameStateMachine — valid only during call scope
@@ -157,6 +163,8 @@ pub struct ScriptCallContext {
     pub transition_phase: String,
     /// Path of the currently loaded scene
     pub current_scene_path: String,
+    /// Data-driven UI system
+    pub ui_system: UiSystem,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -194,12 +202,14 @@ impl ScriptCallContext {
             postprocess_chromatic_aberration_override: None,
             postprocess_radial_blur_override: None,
             postprocess_ssao_intensity_override: None,
+            postprocess_fog_density_override: None,
             audio_lowpass_cutoff_override: None,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),
             transition_progress: -1.0,
             transition_phase: String::from("idle"),
             current_scene_path: String::new(),
+            ui_system: UiSystem::new(),
         }
     }
 

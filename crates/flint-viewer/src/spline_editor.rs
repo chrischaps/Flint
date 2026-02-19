@@ -1,0 +1,432 @@
+//! Spline editor state, overlay rendering, and TOML serialization.
+
+use crate::projection::*;
+use flint_core::spline::{sample_closed_spline, sample_open_spline, SplineControlPoint};
+use flint_core::Vec3;
+use flint_render::Camera;
+
+/// A single editable control point.
+#[derive(Debug, Clone)]
+pub struct ControlPoint {
+    pub position: [f32; 3],
+    pub twist: f32,
+}
+
+/// Drag constraint mode.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DragMode {
+    /// Move on the horizontal XZ plane at the point's current Y.
+    HorizontalXZ,
+    /// Move vertically (Y axis) on a plane facing the camera.
+    VerticalY,
+}
+
+/// Configuration passed from the CLI `edit` command to the viewer.
+pub struct SplineEditorConfig {
+    pub control_points: Vec<ControlPoint>,
+    pub closed: bool,
+    pub spacing: f32,
+    pub name: String,
+    pub file_path: String,
+}
+
+/// Core editor state for spline manipulation.
+pub struct SplineEditor {
+    // Data
+    pub control_points: Vec<ControlPoint>,
+    pub closed: bool,
+    pub spacing: f32,
+    pub name: String,
+    pub file_path: String,
+
+    // Sampled curve (for overlay visualization)
+    pub sampled_curve: Vec<[f32; 3]>,
+
+    // Interaction
+    pub selected: Option<usize>,
+    pub hovered: Option<usize>,
+    pub dragging: bool,
+    pub drag_mode: DragMode,
+    pub drag_start_pos: [f32; 3],
+
+    // Undo
+    pub undo_stack: Vec<Vec<ControlPoint>>,
+    pub modified: bool,
+}
+
+impl SplineEditor {
+    /// Create a new editor from config.
+    pub fn from_config(config: SplineEditorConfig) -> Self {
+        let mut editor = Self {
+            control_points: config.control_points,
+            closed: config.closed,
+            spacing: config.spacing,
+            name: config.name,
+            file_path: config.file_path,
+            sampled_curve: Vec::new(),
+            selected: None,
+            hovered: None,
+            dragging: false,
+            drag_mode: DragMode::HorizontalXZ,
+            drag_start_pos: [0.0; 3],
+            undo_stack: Vec::new(),
+            modified: false,
+        };
+        editor.resample();
+        editor
+    }
+
+    /// Re-sample the spline curve from current control points.
+    pub fn resample(&mut self) {
+        let pts: Vec<SplineControlPoint> = self
+            .control_points
+            .iter()
+            .map(|cp| SplineControlPoint {
+                position: Vec3::new(cp.position[0], cp.position[1], cp.position[2]),
+                twist: cp.twist,
+            })
+            .collect();
+
+        let samples = if self.closed {
+            sample_closed_spline(&pts, self.spacing)
+        } else {
+            sample_open_spline(&pts, self.spacing)
+        };
+
+        self.sampled_curve = samples
+            .iter()
+            .map(|s| [s.position.x, s.position.y, s.position.z])
+            .collect();
+    }
+
+    /// Push current state onto undo stack before a modification.
+    pub fn push_undo(&mut self) {
+        self.undo_stack.push(self.control_points.clone());
+    }
+
+    /// Undo the last modification.
+    pub fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.control_points = prev;
+            self.resample();
+            self.modified = true;
+        }
+    }
+
+    /// Insert a new control point after the given index (midpoint with next).
+    pub fn insert_point(&mut self, after: usize) {
+        let n = self.control_points.len();
+        if n == 0 {
+            return;
+        }
+        self.push_undo();
+
+        let next = if self.closed {
+            (after + 1) % n
+        } else {
+            (after + 1).min(n - 1)
+        };
+
+        let a = &self.control_points[after];
+        let b = &self.control_points[next];
+        let mid = ControlPoint {
+            position: [
+                (a.position[0] + b.position[0]) * 0.5,
+                (a.position[1] + b.position[1]) * 0.5,
+                (a.position[2] + b.position[2]) * 0.5,
+            ],
+            twist: (a.twist + b.twist) * 0.5,
+        };
+
+        self.control_points.insert(after + 1, mid);
+        self.selected = Some(after + 1);
+        self.resample();
+        self.modified = true;
+    }
+
+    /// Delete the control point at the given index (minimum 3 points for closed, 2 for open).
+    pub fn delete_point(&mut self, index: usize) {
+        let min = if self.closed { 3 } else { 2 };
+        if self.control_points.len() <= min {
+            return;
+        }
+        self.push_undo();
+        self.control_points.remove(index);
+        if let Some(sel) = self.selected {
+            if sel >= self.control_points.len() {
+                self.selected = Some(self.control_points.len() - 1);
+            }
+        }
+        self.resample();
+        self.modified = true;
+    }
+
+    /// Serialize control points to `.spline.toml` format string.
+    pub fn to_toml_string(&self) -> String {
+        let mut s = String::new();
+        s.push_str(&format!(
+            "# {} — generated by Flint Track Editor\n\n",
+            self.name
+        ));
+        s.push_str("[spline]\n");
+        s.push_str(&format!("name = \"{}\"\n", self.name));
+        s.push_str(&format!("closed = {}\n", self.closed));
+        s.push_str("\n[sampling]\n");
+        s.push_str(&format!("spacing = {:.1}\n", self.spacing));
+        s.push('\n');
+
+        for cp in &self.control_points {
+            s.push_str("[[control_points]]\n");
+            // Format numbers: use integers when possible, otherwise 1 decimal
+            let fmt = |v: f32| -> String {
+                if v == v.floor() && v.abs() < 100000.0 {
+                    format!("{}", v as i32)
+                } else {
+                    format!("{:.1}", v)
+                }
+            };
+            s.push_str(&format!(
+                "position = [{}, {}, {}]\n",
+                fmt(cp.position[0]),
+                fmt(cp.position[1]),
+                fmt(cp.position[2])
+            ));
+            s.push_str(&format!("twist = {}\n\n", fmt(cp.twist)));
+        }
+
+        s
+    }
+
+    /// Save the spline to its file path.
+    pub fn save(&mut self) -> Result<(), std::io::Error> {
+        let content = self.to_toml_string();
+        std::fs::write(&self.file_path, &content)?;
+        self.modified = false;
+        println!("Saved spline to: {}", self.file_path);
+        Ok(())
+    }
+
+    /// Pick test: find the control point nearest to a screen-space click.
+    /// Returns (index, world_distance_to_ray) if within threshold.
+    pub fn pick(
+        &self,
+        camera: &Camera,
+        screen_size: [f32; 2],
+        mouse_x: f32,
+        mouse_y: f32,
+    ) -> Option<usize> {
+        let (ray_origin, ray_dir) = screen_to_world_ray(camera, screen_size, mouse_x, mouse_y);
+        let threshold = camera.distance * 0.03;
+
+        let mut best: Option<(usize, f32)> = None;
+        for (i, cp) in self.control_points.iter().enumerate() {
+            let dist = ray_point_distance(ray_origin, ray_dir, cp.position);
+            if dist < threshold {
+                if best.is_none() || dist < best.unwrap().1 {
+                    best = Some((i, dist));
+                }
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
+    /// Update hovered state from mouse position.
+    pub fn update_hover(
+        &mut self,
+        camera: &Camera,
+        screen_size: [f32; 2],
+        mouse_x: f32,
+        mouse_y: f32,
+    ) {
+        if self.dragging {
+            return;
+        }
+        self.hovered = self.pick(camera, screen_size, mouse_x, mouse_y);
+    }
+
+    /// Handle drag movement — project cursor onto constraint plane and move the point.
+    pub fn handle_drag(
+        &mut self,
+        camera: &Camera,
+        screen_size: [f32; 2],
+        mouse_x: f32,
+        mouse_y: f32,
+    ) {
+        let Some(idx) = self.selected else { return };
+        let (ray_origin, ray_dir) = screen_to_world_ray(camera, screen_size, mouse_x, mouse_y);
+
+        match self.drag_mode {
+            DragMode::HorizontalXZ => {
+                // Intersect ray with horizontal plane at drag_start Y
+                let plane_y = self.drag_start_pos[1];
+                if ray_dir[1].abs() < 1e-6 {
+                    return;
+                }
+                let t = (plane_y - ray_origin[1]) / ray_dir[1];
+                if t < 0.0 {
+                    return;
+                }
+                self.control_points[idx].position[0] = ray_origin[0] + ray_dir[0] * t;
+                self.control_points[idx].position[2] = ray_origin[2] + ray_dir[2] * t;
+            }
+            DragMode::VerticalY => {
+                // Intersect ray with vertical plane facing camera, through drag start point
+                let cam_fwd = camera.forward_vector();
+                // Use horizontal component of camera forward as plane normal
+                let len = (cam_fwd[0] * cam_fwd[0] + cam_fwd[2] * cam_fwd[2]).sqrt();
+                if len < 1e-6 {
+                    return;
+                }
+                let normal = [cam_fwd[0] / len, 0.0, cam_fwd[2] / len];
+                let d = normal[0] * self.drag_start_pos[0] + normal[2] * self.drag_start_pos[2];
+                let denom =
+                    normal[0] * ray_dir[0] + normal[1] * ray_dir[1] + normal[2] * ray_dir[2];
+                if denom.abs() < 1e-6 {
+                    return;
+                }
+                let t = (d
+                    - normal[0] * ray_origin[0]
+                    - normal[1] * ray_origin[1]
+                    - normal[2] * ray_origin[2])
+                    / denom;
+                if t < 0.0 {
+                    return;
+                }
+                // Only update Y from this intersection
+                self.control_points[idx].position[1] = ray_origin[1] + ray_dir[1] * t;
+            }
+        }
+
+        self.resample();
+        self.modified = true;
+    }
+
+    /// Cancel an in-progress drag, restoring the original position.
+    pub fn cancel_drag(&mut self) {
+        if self.dragging {
+            if let Some(idx) = self.selected {
+                self.control_points[idx].position = self.drag_start_pos;
+                self.resample();
+            }
+            self.dragging = false;
+            // Pop the undo snapshot we pushed at drag start
+            self.undo_stack.pop();
+        }
+    }
+
+    /// Draw the spline overlay (curve + control points) on the egui painter.
+    pub fn draw_overlay(
+        &self,
+        painter: &egui::Painter,
+        camera: &Camera,
+        screen_size: [f32; 2],
+    ) {
+        let curve_color = egui::Color32::from_rgb(80, 200, 120);
+        let polygon_color = egui::Color32::from_rgba_premultiplied(120, 120, 120, 80);
+
+        // 1. Draw sampled spline curve
+        for window in self.sampled_curve.windows(2) {
+            if let (Some(a), Some(b)) = (
+                world_to_screen(camera, screen_size, window[0]),
+                world_to_screen(camera, screen_size, window[1]),
+            ) {
+                painter.line_segment(
+                    [a, b],
+                    egui::Stroke::new(2.5, curve_color),
+                );
+            }
+        }
+        // Close the loop if closed
+        if self.closed && self.sampled_curve.len() > 1 {
+            let first = self.sampled_curve[0];
+            let last = self.sampled_curve[self.sampled_curve.len() - 1];
+            if let (Some(a), Some(b)) = (
+                world_to_screen(camera, screen_size, last),
+                world_to_screen(camera, screen_size, first),
+            ) {
+                painter.line_segment([a, b], egui::Stroke::new(2.5, curve_color));
+            }
+        }
+
+        // 2. Draw control polygon (thin lines connecting control points)
+        let n = self.control_points.len();
+        for i in 0..n {
+            let next = if self.closed { (i + 1) % n } else { i + 1 };
+            if next >= n {
+                break;
+            }
+            if let (Some(a), Some(b)) = (
+                world_to_screen(camera, screen_size, self.control_points[i].position),
+                world_to_screen(camera, screen_size, self.control_points[next].position),
+            ) {
+                painter.line_segment([a, b], egui::Stroke::new(1.0, polygon_color));
+            }
+        }
+
+        // 3. Draw control points as circles with index labels
+        // Sort by depth for correct visual layering (draw far points first)
+        let mut point_depths: Vec<(usize, f32)> = self
+            .control_points
+            .iter()
+            .enumerate()
+            .filter_map(|(i, cp)| {
+                let depth = point_depth(camera, cp.position);
+                if depth > 0.0 {
+                    Some((i, depth))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        point_depths.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (i, _depth) in point_depths {
+            let cp = &self.control_points[i];
+            if let Some(screen_pos) = world_to_screen(camera, screen_size, cp.position) {
+                let (color, radius) = match (self.selected == Some(i), self.hovered == Some(i)) {
+                    (true, _) => (egui::Color32::YELLOW, 10.0),
+                    (_, true) => (egui::Color32::from_rgb(0, 200, 255), 8.0),
+                    _ => (egui::Color32::WHITE, 6.0),
+                };
+
+                // Outer stroke for visibility against any background
+                painter.circle_stroke(
+                    screen_pos,
+                    radius + 1.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(20, 20, 20)),
+                );
+                painter.circle_filled(screen_pos, radius, color);
+
+                // Index label
+                painter.text(
+                    screen_pos + egui::vec2(radius + 4.0, -8.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{}", i),
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+    }
+
+    /// Compute track length from sampled curve.
+    pub fn track_length(&self) -> f32 {
+        let mut len = 0.0f32;
+        for window in self.sampled_curve.windows(2) {
+            let dx = window[1][0] - window[0][0];
+            let dy = window[1][1] - window[0][1];
+            let dz = window[1][2] - window[0][2];
+            len += (dx * dx + dy * dy + dz * dz).sqrt();
+        }
+        if self.closed && self.sampled_curve.len() > 1 {
+            let first = self.sampled_curve[0];
+            let last = self.sampled_curve[self.sampled_curve.len() - 1];
+            let dx = first[0] - last[0];
+            let dy = first[1] - last[1];
+            let dz = first[2] - last[2];
+            len += (dx * dx + dy * dy + dz * dz).sqrt();
+        }
+        len
+    }
+}
+

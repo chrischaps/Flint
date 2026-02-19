@@ -397,6 +397,7 @@ impl ScriptEngine {
         let mut c = self.ctx.lock().unwrap();
         c.commands.clear();
         c.draw_commands.clear();
+        c.ui_system.clear();
     }
 
     /// Call on_scene_exit() for all scripts that define it

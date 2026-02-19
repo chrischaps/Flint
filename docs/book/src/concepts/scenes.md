@@ -165,9 +165,125 @@ position = [-5, 0, 0]
 
 This scene defines 4 rooms, 4 doors, 9 pieces of furniture, and 6 characters --- all in readable, diffable TOML.
 
+## Prefabs
+
+Prefabs are reusable entity group templates that reduce scene file duplication. A prefab defines a set of entities in a `.prefab.toml` file, and scenes instantiate them with variable substitution and optional overrides.
+
+### Defining a Prefab
+
+Prefab files live in the `prefabs/` directory and follow the same entity format as scenes, with a `[prefab]` metadata header:
+
+```toml
+[prefab]
+name = "kart"
+description = "Racing kart with body, wheels, and driver"
+
+[entities.kart]
+
+[entities.kart.transform]
+position = [0, 0, 0]
+
+[entities.kart.model]
+asset = "kart_body"
+
+[entities.wheel_fl]
+parent = "${PREFIX}_kart"
+
+[entities.wheel_fl.transform]
+position = [-0.4, 0.15, 0.55]
+
+[entities.wheel_fl.model]
+asset = "kart_wheel"
+```
+
+All string values containing `${PREFIX}` are substituted with the instance prefix at load time. Entity names are automatically prefixed (e.g., `kart` becomes `player_kart` when the prefix is `"player"`).
+
+### Using Prefabs in a Scene
+
+Scenes reference prefabs in a `[prefabs]` section:
+
+```toml
+[prefabs.player]
+template = "kart"
+prefix = "player"
+
+[prefabs.player.overrides.kart.transform]
+position = [0, 0, 0]
+
+[prefabs.ai1]
+template = "kart"
+prefix = "ai1"
+
+[prefabs.ai1.overrides.kart.transform]
+position = [3, 0, -5]
+```
+
+Each prefab instance specifies:
+- **`template`** --- the prefab name (matches the `.prefab.toml` filename without extension)
+- **`prefix`** --- substituted for `${PREFIX}` in all string values and prepended to entity names
+- **`overrides`** --- per-entity component field overrides (deep-merged with the template)
+
+### Override Deep Merge
+
+Overrides are merged at the field level, not the component level. If a prefab template defines a component with five fields and an override specifies one field, only that one field is replaced --- the other four are preserved from the template.
+
+### Path Resolution
+
+The loader searches for prefab templates in:
+1. `<scene_directory>/prefabs/`
+2. `<scene_directory>/../prefabs/`
+
+This means a `prefabs/` directory at the project root is found when loading scenes from `scenes/`.
+
+### Previewing Prefabs
+
+Use the CLI to visually inspect a prefab template:
+
+```bash
+flint prefab view prefabs/kart.prefab.toml --schemas schemas
+```
+
+## Splines
+
+Splines define smooth paths through 3D space using Catmull-Rom interpolation. They're used for track layouts, camera paths, and procedural geometry generation.
+
+### Spline Component
+
+Attach a spline to an entity with the `spline` component:
+
+```toml
+[entities.track_path]
+
+[entities.track_path.spline]
+source = "oval_plus.spline.toml"
+```
+
+The engine loads the `.spline.toml` file, samples it into a dense point array stored as the `spline_data` ECS component, and makes it available for script queries via the [Spline API](scripting.md#spline-api).
+
+### Spline Meshes
+
+The `spline_mesh` component generates geometry by sweeping a rectangular cross-section along a spline:
+
+```toml
+[entities.road_surface]
+
+[entities.road_surface.spline_mesh]
+spline = "track_path"
+width = 12.0
+height = 0.3
+offset_y = -0.15
+
+[entities.road_surface.material]
+base_color = [0.3, 0.3, 0.3]
+roughness = 0.8
+```
+
+One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and materials.
+
 ## Further Reading
 
 - [Your First Scene](../getting-started/first-scene.md) --- hands-on guide to building a scene
 - [Entities and ECS](entities-and-ecs.md) --- how scene entities map to the ECS
 - [Schemas](schemas.md) --- how component structure is defined
 - [Constraints](constraints.md) --- how to validate scenes
+- [File Formats](../formats/overview.md) --- prefab and spline file format details

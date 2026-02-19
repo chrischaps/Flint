@@ -290,7 +290,7 @@ impl ShadowPass {
             let corners = frustum_corners(cascade_near, cascade_far, near, far, &camera_view_proj_inv);
 
             // Compute tight orthographic bounds from light's perspective
-            let light_vp = compute_light_matrix(&corners, &light_dir_norm, camera_pos);
+            let light_vp = compute_light_matrix(&corners, &light_dir_norm, camera_pos, self.resolution);
             self.shadow_uniforms.cascade_view_proj[i] = light_vp;
         }
     }
@@ -352,11 +352,14 @@ fn frustum_corners(
     world_corners
 }
 
-/// Compute a tight orthographic light view-projection matrix from frustum corners
+/// Compute a tight orthographic light view-projection matrix from frustum corners.
+/// Snaps the shadow origin to texel boundaries to eliminate shadow swimming/shimmering
+/// caused by sub-texel shifts when the camera moves.
 fn compute_light_matrix(
     corners: &[[f32; 3]; 8],
     light_dir: &[f32; 3],
     _camera_pos: [f32; 3],
+    shadow_resolution: u32,
 ) -> [[f32; 4]; 4] {
     // Compute frustum center
     let mut center = [0.0f32; 3];
@@ -394,7 +397,22 @@ fn compute_light_matrix(
     let view = look_at(&eye, &center);
     let proj = ortho(-radius, radius, -radius, radius, 0.0, 2.0 * radius);
 
-    mat4_mul(&proj, &view)
+    let mut light_matrix = mat4_mul(&proj, &view);
+
+    // Snap shadow origin to texel boundaries to prevent shadow swimming.
+    // As the camera moves, the frustum center shifts continuously, causing
+    // the shadow map texels to land on slightly different world positions
+    // each frame. By rounding the projected origin to the nearest texel,
+    // we quantize the shadow map position so it only moves in whole-texel
+    // increments.
+    let half_res = shadow_resolution as f32 * 0.5;
+    // Column-major: m[col][row]. Column 3 holds the translation-like terms.
+    let texel_x = light_matrix[3][0] * half_res;
+    let texel_y = light_matrix[3][1] * half_res;
+    light_matrix[3][0] += (texel_x.round() - texel_x) / half_res;
+    light_matrix[3][1] += (texel_y.round() - texel_y) / half_res;
+
+    light_matrix
 }
 
 fn normalize_3(v: [f32; 3]) -> [f32; 3] {

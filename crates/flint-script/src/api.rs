@@ -20,6 +20,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_math_api(engine);
     register_event_api(engine, ctx.clone());
     register_ui_api(engine, ctx.clone());
+    register_data_ui_api(engine, ctx.clone());
     register_particle_api(engine, ctx.clone());
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
@@ -882,6 +883,15 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // set_fog_density(density) — override fog density from scripts
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_fog_density", move |density: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_fog_density_override = Some(density as f32);
+        });
+    }
+
     // set_audio_lowpass(cutoff_hz) — override audio low-pass filter cutoff from scripts
     {
         let ctx = ctx.clone();
@@ -1123,6 +1133,8 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 size: size as f32,
                 color: [r as f32, g as f32, b as f32, a as f32],
                 layer: 0,
+                align: 0,
+                stroke: None,
             });
         });
     }
@@ -1138,6 +1150,27 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 size: size as f32,
                 color: [r as f32, g as f32, b as f32, a as f32],
                 layer: layer as i32,
+                align: 0,
+                stroke: None,
+            });
+        });
+    }
+
+    // draw_text_stroked(x, y, text, size, r, g, b, a, stroke_r, stroke_g, stroke_b, stroke_a, stroke_width)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("draw_text_stroked", move |x: f64, y: f64, text: &str, size: f64,
+            r: f64, g: f64, b: f64, a: f64,
+            sr: f64, sg: f64, sb: f64, sa: f64, sw: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.draw_commands.push(DrawCommand::Text {
+                x: x as f32, y: y as f32,
+                text: text.to_string(),
+                size: size as f32,
+                color: [r as f32, g as f32, b as f32, a as f32],
+                layer: 0,
+                align: 0,
+                stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
             });
         });
     }
@@ -1378,6 +1411,167 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     map.insert("shape".into(), Dynamic::from("capsule".to_string()));
                     map.insert("radius".into(), Dynamic::from(radius as f64));
                     map.insert("half_height".into(), Dynamic::from(half_height as f64));
+                    Dynamic::from(map)
+                }
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+}
+
+// ─── Data-Driven UI API ───────────────────────────────────
+
+fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    use crate::ui::element::StyleValue;
+
+    // load_ui(layout_path) -> i64 handle
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_ui", move |layout_path: &str| -> i64 {
+            let mut c = ctx.lock().unwrap();
+            // Resolve relative to project root (scene's parent's parent)
+            let scene_dir = if c.current_scene_path.is_empty() {
+                std::path::PathBuf::from(".")
+            } else {
+                let p = std::path::Path::new(&c.current_scene_path);
+                // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
+                let root = p.parent()
+                    .and_then(|dir| dir.parent())
+                    .unwrap_or(std::path::Path::new("."));
+                if root.as_os_str().is_empty() {
+                    std::path::PathBuf::from(".")
+                } else {
+                    root.to_path_buf()
+                }
+            };
+            c.ui_system.load(layout_path, &scene_dir)
+        });
+    }
+
+    // unload_ui(handle)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("unload_ui", move |handle: i64| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.unload(handle);
+        });
+    }
+
+    // ui_set_text(element_id, text)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_text", move |element_id: &str, text: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.set_text(element_id, text);
+        });
+    }
+
+    // ui_show(element_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_show", move |element_id: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.show(element_id);
+        });
+    }
+
+    // ui_hide(element_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_hide", move |element_id: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.hide(element_id);
+        });
+    }
+
+    // ui_set_visible(element_id, visible)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_visible", move |element_id: &str, visible: bool| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.set_visible(element_id, visible);
+        });
+    }
+
+    // ui_set_color(element_id, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_color", move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.set_color(element_id, r as f32, g as f32, b as f32, a as f32);
+        });
+    }
+
+    // ui_set_bg_color(element_id, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_bg_color", move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.set_bg_color(element_id, r as f32, g as f32, b as f32, a as f32);
+        });
+    }
+
+    // ui_set_style(element_id, prop, val)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_style", move |element_id: &str, prop: &str, val: Dynamic| {
+            let mut c = ctx.lock().unwrap();
+            let style_val = if val.is_float() {
+                StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
+            } else if val.is_int() {
+                StyleValue::Float(val.as_int().unwrap_or(0) as f32)
+            } else if val.is_string() {
+                StyleValue::String(val.into_string().unwrap_or_default())
+            } else if val.is_bool() {
+                StyleValue::Bool(val.as_bool().unwrap_or(false))
+            } else {
+                return;
+            };
+            c.ui_system.set_style(element_id, prop, style_val);
+        });
+    }
+
+    // ui_reset_style(element_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_reset_style", move |element_id: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.reset_style(element_id);
+        });
+    }
+
+    // ui_set_class(element_id, class)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_class", move |element_id: &str, class: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.ui_system.set_class(element_id, class);
+        });
+    }
+
+    // ui_exists(element_id) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_exists", move |element_id: &str| -> bool {
+            let c = ctx.lock().unwrap();
+            c.ui_system.exists(element_id)
+        });
+    }
+
+    // ui_get_rect(element_id) -> Map #{x, y, w, h} or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_get_rect", move |element_id: &str| -> Dynamic {
+            let mut c = ctx.lock().unwrap();
+            let sw = c.screen_width;
+            let sh = c.screen_height;
+            match c.ui_system.get_rect(element_id, sw, sh) {
+                Some((x, y, w, h)) => {
+                    let mut map = Map::new();
+                    map.insert("x".into(), Dynamic::from(x as f64));
+                    map.insert("y".into(), Dynamic::from(y as f64));
+                    map.insert("w".into(), Dynamic::from(w as f64));
+                    map.insert("h".into(), Dynamic::from(h as f64));
                     Dynamic::from(map)
                 }
                 None => Dynamic::UNIT,

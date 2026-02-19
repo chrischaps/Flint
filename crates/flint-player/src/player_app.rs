@@ -123,6 +123,7 @@ pub struct PlayerApp {
     pp_chromatic_aberration_override: Option<f32>,
     pp_radial_blur_override: Option<f32>,
     pp_ssao_intensity_override: Option<f32>,
+    pp_fog_density_override: Option<f32>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -185,6 +186,7 @@ impl PlayerApp {
             pp_chromatic_aberration_override: None,
             pp_radial_blur_override: None,
             pp_ssao_intensity_override: None,
+            pp_fog_density_override: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -365,6 +367,7 @@ impl PlayerApp {
 
         // Initialize scripting
         load_scripts_from_world(&self.scene_path, &mut self.script);
+        self.script.set_current_scene(&self.scene_path);
         self.script
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
@@ -608,6 +611,7 @@ impl PlayerApp {
             || self.pp_chromatic_aberration_override.is_some()
             || self.pp_radial_blur_override.is_some()
             || self.pp_ssao_intensity_override.is_some()
+            || self.pp_fog_density_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -628,6 +632,9 @@ impl PlayerApp {
             }
             if let Some(si) = self.pp_ssao_intensity_override {
                 config.ssao_intensity = si;
+            }
+            if let Some(fd) = self.pp_fog_density_override {
+                config.fog_density = fd;
             }
             renderer.set_post_process_config(config);
         }
@@ -780,8 +787,15 @@ impl PlayerApp {
         // Clear state pointers after script calls
         self.script.clear_state_pointers();
 
-        // Collect draw commands for this frame
-        self.draw_commands = self.script.drain_draw_commands();
+        // Collect draw commands for this frame (scripts + data-driven UI)
+        let mut commands = self.script.drain_draw_commands();
+        let screen_rect = self.egui_ctx.screen_rect();
+        let ui_commands = self.script.generate_ui_draw_commands(
+            screen_rect.width(),
+            screen_rect.height(),
+        );
+        commands.extend(ui_commands);
+        self.draw_commands = commands;
 
         // Audio triggers from game events (skip when paused)
         if config.audio == SystemPolicy::Run {
@@ -844,13 +858,14 @@ impl PlayerApp {
         }
 
         // Drain script post-processing overrides for this frame
-        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao) = self.script.take_postprocess_overrides();
+        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao, pp_fog) = self.script.take_postprocess_overrides();
         self.pp_vignette_override = pp_vig;
         self.pp_bloom_override = pp_bloom;
         self.pp_exposure_override = pp_exp;
         self.pp_chromatic_aberration_override = pp_ca;
         self.pp_radial_blur_override = pp_rb;
         self.pp_ssao_intensity_override = pp_ssao;
+        self.pp_fog_density_override = pp_fog;
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
@@ -1220,6 +1235,7 @@ impl PlayerApp {
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
 
         // Call on_scene_enter on new scripts
+        self.script.set_current_scene(&self.scene_path);
         self.script.set_state_machine(&mut self.state_machine);
         self.script.set_persistent_store(&mut self.persistent_store);
         self.script.call_scene_enters(&mut self.world);
@@ -1822,14 +1838,34 @@ fn render_draw_commands(
 
     for cmd in &sorted {
         match cmd {
-            DrawCommand::Text { x, y, text, size, color, .. } => {
-                painter.text(
-                    egui::Pos2::new(*x, *y),
-                    egui::Align2::LEFT_TOP,
-                    text,
-                    egui::FontId::proportional(*size),
-                    to_color32(color),
-                );
+            DrawCommand::Text { x, y, text, size, color, align, stroke, .. } => {
+                let anchor = match align {
+                    1 => egui::Align2::CENTER_TOP,
+                    2 => egui::Align2::RIGHT_TOP,
+                    _ => egui::Align2::LEFT_TOP,
+                };
+                let font = egui::FontId::proportional(*size);
+                let pos = egui::Pos2::new(*x, *y);
+
+                // Draw stroke (outline) by rendering text at 8 compass offsets
+                if let Some((stroke_color, stroke_width)) = stroke {
+                    let sc = to_color32(stroke_color);
+                    let w = *stroke_width;
+                    for &(dx, dy) in &[
+                        (-w, 0.0), (w, 0.0), (0.0, -w), (0.0, w),
+                        (-w, -w), (w, -w), (-w, w), (w, w),
+                    ] {
+                        painter.text(
+                            egui::Pos2::new(pos.x + dx, pos.y + dy),
+                            anchor,
+                            text,
+                            font.clone(),
+                            sc,
+                        );
+                    }
+                }
+
+                painter.text(pos, anchor, text, font, to_color32(color));
             }
 
             DrawCommand::RectFilled { x, y, w, h, color, rounding, .. } => {

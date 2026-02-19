@@ -12,7 +12,34 @@ pub struct SceneFile {
     #[serde(default)]
     pub post_process: Option<PostProcessDef>,
     #[serde(default)]
+    pub prefabs: HashMap<String, PrefabInstance>,
+    #[serde(default)]
     pub entities: HashMap<String, EntityDef>,
+}
+
+/// A prefab template file (.prefab.toml)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefabFile {
+    pub prefab: PrefabMetadata,
+    #[serde(default)]
+    pub entities: HashMap<String, EntityDef>,
+}
+
+/// Metadata for a prefab template
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefabMetadata {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// An instance of a prefab in a scene
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefabInstance {
+    pub template: String,
+    pub prefix: String,
+    #[serde(default)]
+    pub overrides: HashMap<String, HashMap<String, toml::Value>>,
 }
 
 /// Post-processing settings for the scene
@@ -189,6 +216,7 @@ impl SceneFile {
             },
             environment: None,
             post_process: None,
+            prefabs: HashMap::new(),
             entities: HashMap::new(),
         }
     }

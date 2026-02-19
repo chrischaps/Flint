@@ -193,6 +193,7 @@ Physics functions provide raycasting and camera access for combat, line-of-sight
 | `get_camera_direction()` | `Map` | Camera forward vector as `#{x, y, z}` |
 | `set_camera_position(x, y, z)` | --- | Override camera position from script |
 | `set_camera_target(x, y, z)` | --- | Override camera look-at target from script |
+| `set_camera_fov(fov)` | --- | Override camera field of view (degrees) from script |
 
 The `raycast()` function automatically excludes the calling entity's collider from results. On a hit, it returns a map with these fields:
 
@@ -251,7 +252,7 @@ Query spline entities for path-following, track layouts, and procedural placemen
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `spline_closest_point(spline_id, x, z)` | `Map` or `()` | Nearest point on spline to query position. Returns `#{t, x, y, z, dist_sq}` |
+| `spline_closest_point(spline_id, x, y, z)` | `Map` or `()` | Nearest point on spline to query position. Returns `#{t, x, y, z, dist_sq}` |
 | `spline_sample_at(spline_id, t)` | `Map` or `()` | Sample spline at parameter `t` (0.0--1.0). Returns `#{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}` |
 
 The `t` parameter wraps for closed splines. The returned forward and right vectors are normalized and can be used for orientation.
@@ -266,6 +267,104 @@ The `t` parameter wraps for closed splines. The returned forward and right vecto
 | `set_emission_rate(entity_id, rate)` | Change emission rate dynamically |
 
 See [Particles](particles.md) for full component schema and recipes.
+
+### Post-Processing API
+
+Control the HDR post-processing pipeline at runtime from scripts:
+
+| Function | Description |
+|----------|-------------|
+| `set_vignette(intensity)` | Set vignette intensity (0.0 = none, 1.0 = heavy) |
+| `set_bloom_intensity(intensity)` | Set bloom strength (0.0 = none) |
+| `set_exposure(value)` | Set exposure multiplier (1.0 = default) |
+
+These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
+
+### Audio Filter API
+
+| Function | Description |
+|----------|-------------|
+| `set_audio_lowpass(cutoff_hz)` | Set master bus low-pass filter cutoff frequency (Hz) |
+
+The low-pass filter affects all audio output. Pass `20000.0` for no filtering, lower values for a muffled effect. Useful for speed-dependent audio (e.g., wind rush at high speed) or dramatic transitions.
+
+### Scene Transition API
+
+Load new scenes, manage game state, and persist data across transitions:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `load_scene(path)` | --- | Begin transition to a new scene |
+| `reload_scene()` | --- | Reload the current scene |
+| `current_scene()` | `String` | Path of the current scene |
+| `transition_progress()` | `f64` | Progress of the current transition (0.0--1.0) |
+| `transition_phase()` | `String` | Current transition phase (`"idle"`, `"exiting"`, `"loading"`, `"entering"`) |
+| `is_transitioning()` | `bool` | Whether a scene transition is in progress |
+| `complete_transition()` | --- | Advance to the next transition phase |
+
+Scene transitions follow a lifecycle: Idle -> Exiting -> Loading -> Entering -> Idle. During the Exiting and Entering phases, `on_draw_ui()` still runs so scripts can draw fade effects using `transition_progress()`. Call `complete_transition()` to advance phases --- this gives scripts full control over transition timing and visuals.
+
+Two additional callbacks fire during transitions:
+
+| Callback | Signature | When It Fires |
+|----------|-----------|---------------|
+| `on_scene_enter` | `fn on_scene_enter()` | After a new scene is loaded and ready |
+| `on_scene_exit` | `fn on_scene_exit()` | Before the current scene is unloaded |
+
+### Game State Machine API
+
+A pushdown automaton for managing game states (playing, paused, custom):
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `push_state(name)` | --- | Push a named state onto the stack |
+| `pop_state()` | --- | Pop the top state (returns to previous) |
+| `replace_state(name)` | --- | Replace the top state |
+| `current_state()` | `String` | Name of the current (top) state |
+| `state_stack()` | `Array` | All state names from bottom to top |
+| `register_state(name, config)` | --- | Register a custom state template |
+
+Built-in state templates:
+- **`"playing"`** --- all systems run (default)
+- **`"paused"`** --- physics, scripts, animation, particles, and audio are paused; rendering runs; `on_draw_ui()` still fires (for pause menus)
+- **`"loading"`** --- all systems paused
+
+### Persistent Data API
+
+Key-value store that survives scene transitions:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `persist_set(key, value)` | --- | Store a value |
+| `persist_get(key)` | `Dynamic` | Retrieve a value (or `()` if not set) |
+| `persist_has(key)` | `bool` | Check if a key exists |
+| `persist_remove(key)` | --- | Remove a key |
+| `persist_clear()` | --- | Clear all persistent data |
+| `persist_keys()` | `Array` | List all keys |
+| `persist_save(path)` | --- | Save store to a TOML file |
+| `persist_load(path)` | --- | Load store from a TOML file |
+
+### Data-Driven UI API
+
+Load and manipulate TOML-defined UI documents at runtime:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `load_ui(path)` | `i64` | Load a UI document (`.ui.toml`). Returns a handle |
+| `unload_ui(handle)` | --- | Unload a UI document |
+| `ui_set_text(element_id, text)` | --- | Set the text content of a UI element |
+| `ui_show(element_id)` | --- | Show a hidden UI element |
+| `ui_hide(element_id)` | --- | Hide a UI element |
+| `ui_set_visible(element_id, visible)` | --- | Set element visibility |
+| `ui_set_color(element_id, r, g, b, a)` | --- | Set element text/foreground color |
+| `ui_set_bg_color(element_id, r, g, b, a)` | --- | Set element background color |
+| `ui_set_style(element_id, property, value)` | --- | Override a single style property |
+| `ui_reset_style(element_id)` | --- | Remove all style overrides |
+| `ui_set_class(element_id, class_name)` | --- | Change an element's style class |
+| `ui_exists(element_id)` | `bool` | Check if a UI element exists |
+| `ui_get_rect(element_id)` | `Map` | Get resolved position/size as `#{x, y, width, height}` |
+
+UI documents are defined with paired `.ui.toml` (layout) and `.style.toml` (styling) files, following an HTML/CSS/JS-like separation of concerns. See [File Formats](../formats/overview.md) for the format specification.
 
 ### UI Draw API
 

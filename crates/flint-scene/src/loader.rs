@@ -1,75 +1,62 @@
 //! Scene loading from TOML files
 
 use crate::format::SceneFile;
+use crate::prefab;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_schema::SchemaRegistry;
 use std::fs;
 use std::path::Path;
 
-/// Load a scene from a TOML file
+/// Load a scene from a TOML file (with prefab expansion)
 pub fn load_scene<P: AsRef<Path>>(
     path: P,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
+    let path = path.as_ref();
     let content = fs::read_to_string(path)?;
-    load_scene_string(&content, registry)
+    let mut scene_file: SceneFile = toml::from_str(&content)?;
+
+    // Expand prefab instances into entities before building world
+    prefab::expand_prefabs(&mut scene_file, path)?;
+
+    let world = build_world(&scene_file, registry)?;
+    Ok((world, scene_file))
 }
 
-/// Load a scene from a TOML string
+/// Load a scene from a TOML string (no prefab expansion — no filesystem access)
 pub fn load_scene_string(
     content: &str,
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
     let scene_file: SceneFile = toml::from_str(content)?;
-    let mut world = FlintWorld::new();
 
-    // First pass: create all entities
-    for (name, _) in &scene_file.entities {
-        world.spawn(name.clone())?;
+    if !scene_file.prefabs.is_empty() {
+        eprintln!("[scene] Warning: prefabs in scene string will be ignored (no filesystem access)");
     }
 
-    // Second pass: set up components and relationships
-    for (name, entity_def) in &scene_file.entities {
-        let id = world.get_id(name).unwrap();
-
-        // Set archetype
-        if let Some(archetype) = &entity_def.archetype {
-            let components = world.get_components_mut(id).unwrap();
-            components.archetype = Some(archetype.clone());
-
-            // Apply archetype defaults
-            if let Some(arch_schema) = registry.get_archetype(archetype) {
-                for (comp_name, defaults) in &arch_schema.defaults {
-                    if !components.has(comp_name) {
-                        components.set(comp_name.clone(), defaults.clone());
-                    }
-                }
-            }
-        }
-
-        // Set component data
-        for (comp_name, comp_data) in &entity_def.components {
-            world.merge_component(id, comp_name, comp_data.clone())?;
-        }
-
-        // Set parent relationship
-        if let Some(parent_name) = &entity_def.parent {
-            world.set_parent_by_name(name, parent_name)?;
-        }
-    }
-
+    let world = build_world(&scene_file, registry)?;
     Ok((world, scene_file))
 }
 
-/// Reload a scene file, updating the world in place
+/// Reload a scene file, updating the world in place (with prefab expansion)
 pub fn reload_scene<P: AsRef<Path>>(
     path: P,
     world: &mut FlintWorld,
     registry: &SchemaRegistry,
 ) -> Result<SceneFile> {
+    let path = path.as_ref();
     let content = fs::read_to_string(path)?;
-    reload_scene_string(&content, world, registry)
+    let mut scene_file: SceneFile = toml::from_str(&content)?;
+
+    // Expand prefab instances
+    prefab::expand_prefabs(&mut scene_file, path)?;
+
+    // Clear existing world
+    world.clear();
+
+    populate_world(world, &scene_file, registry)?;
+    Ok(scene_file)
 }
 
 /// Reload a scene from a string, updating the world in place
@@ -80,9 +67,30 @@ pub fn reload_scene_string(
 ) -> Result<SceneFile> {
     let scene_file: SceneFile = toml::from_str(content)?;
 
+    if !scene_file.prefabs.is_empty() {
+        eprintln!("[scene] Warning: prefabs in scene string will be ignored (no filesystem access)");
+    }
+
     // Clear existing world
     world.clear();
 
+    populate_world(world, &scene_file, registry)?;
+    Ok(scene_file)
+}
+
+/// Build a new FlintWorld from a parsed (and prefab-expanded) scene file
+fn build_world(scene_file: &SceneFile, registry: &SchemaRegistry) -> Result<FlintWorld> {
+    let mut world = FlintWorld::new();
+    populate_world(&mut world, scene_file, registry)?;
+    Ok(world)
+}
+
+/// Two-pass entity creation: spawn all entities, then set components and relationships
+fn populate_world(
+    world: &mut FlintWorld,
+    scene_file: &SceneFile,
+    registry: &SchemaRegistry,
+) -> Result<()> {
     // First pass: create all entities
     for (name, _) in &scene_file.entities {
         world.spawn(name.clone())?;
@@ -118,7 +126,7 @@ pub fn reload_scene_string(
         }
     }
 
-    Ok(scene_file)
+    Ok(())
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ pub mod api;
 pub mod context;
 pub mod engine;
 pub mod sync;
+pub mod ui;
 
 use context::{InputSnapshot, ScriptCommand};
 pub use context::DrawCommand;
@@ -134,6 +135,12 @@ impl ScriptSystem {
         self.engine.drain_draw_commands()
     }
 
+    /// Generate draw commands from the data-driven UI system
+    pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawCommand> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.ui_system.generate_draw_commands(screen_w, screen_h)
+    }
+
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
         self.engine.call_scene_exits(world);
@@ -154,7 +161,7 @@ impl ScriptSystem {
     }
 
     /// Take post-processing overrides set by scripts this frame (clears them)
-    pub fn take_postprocess_overrides(&mut self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
+    pub fn take_postprocess_overrides(&mut self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
         let mut c = self.engine.ctx.lock().unwrap();
         let vignette = c.postprocess_vignette_override.take();
         let bloom = c.postprocess_bloom_override.take();
@@ -162,7 +169,8 @@ impl ScriptSystem {
         let chromatic_aberration = c.postprocess_chromatic_aberration_override.take();
         let radial_blur = c.postprocess_radial_blur_override.take();
         let ssao_intensity = c.postprocess_ssao_intensity_override.take();
-        (vignette, bloom, exposure, chromatic_aberration, radial_blur, ssao_intensity)
+        let fog_density = c.postprocess_fog_density_override.take();
+        (vignette, bloom, exposure, chromatic_aberration, radial_blur, ssao_intensity, fog_density)
     }
 
     /// Take audio low-pass filter override set by scripts this frame (clears it)

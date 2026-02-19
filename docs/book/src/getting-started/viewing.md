@@ -16,19 +16,41 @@ The viewer uses an orbit camera that rotates around a focus point:
 
 | Input | Action |
 |-------|--------|
-| Left-drag | Orbit around focus |
+| Left-drag | Orbit around focus (or drag gizmo axis when hovering) |
 | Right-drag | Pan the view |
 | Scroll | Zoom in/out |
 | Space | Reset camera |
 | R | Force reload |
-| Escape | Quit |
+| Escape | Quit / cancel gizmo drag |
+
+## Transform Gizmo
+
+When you select an entity in the inspector, a **translate gizmo** appears at its position with colored axis arrows and plane handles:
+
+- **Red arrow** --- drag to move along X axis
+- **Green arrow** --- drag to move along Y axis
+- **Blue arrow** --- drag to move along Z axis
+- **Plane handles** (small squares at axis intersections) --- drag to move in two axes simultaneously
+
+The gizmo uses constraint-plane dragging: for single-axis movement, it automatically picks the plane most perpendicular to your camera view. Inactive axes dim while dragging to clearly show the active constraint.
+
+### Editing Shortcuts
+
+| Input | Action |
+|-------|--------|
+| Ctrl+S | Save scene to disk |
+| Ctrl+Z | Undo position change |
+| Ctrl+Shift+Z | Redo position change |
+| Escape | Cancel current gizmo drag |
+
+All position changes are tracked in an undo/redo stack. Saving writes the modified positions back to the scene TOML file.
 
 ## The Inspector Panel
 
 The egui-based inspector panel (on the left side of the viewer) provides:
 
 - **Entity tree** --- hierarchical list of all entities in the scene, reflecting parent-child relationships
-- **Component editor** --- select an entity to view and edit its component values
+- **Component editor** --- select an entity to view and edit its component values; position fields are editable via drag-value widgets with color-coded labels (red/green/blue matching the gizmo axes)
 - **Constraint overlay** --- validation results from `flint-constraint`, highlighting any rule violations
 
 ## Rendering Features
