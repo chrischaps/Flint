@@ -44,6 +44,7 @@ impl AudioSystem {
     pub fn clear(&mut self) {
         self.sync.clear();
         self.triggers = AudioTrigger::new();
+        self.engine.clear_oneshots();
     }
 
     /// Update the listener position (called from PlayerApp after camera update)
@@ -130,6 +131,9 @@ impl RuntimeSystem for AudioSystem {
 
         // Reload trigger rules for any new entities
         self.triggers.load_rules(world);
+
+        // Clean up finished one-shot spatial sounds
+        self.engine.cleanup_finished_oneshots();
 
         Ok(())
     }

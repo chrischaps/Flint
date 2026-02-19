@@ -1,0 +1,715 @@
+# ================================================================
+#  THE FORGE BETWEEN WORLDS — Scene 2: The Crucible
+# ================================================================
+#
+#  A vast underground forge cavern beneath the tavern. Dark stone,
+#  molten glow, dense ground fog, intense bloom on hot surfaces,
+#  heavy SSAO, ember particles everywhere. The forge spirit NPC
+#  acknowledges how many sparks you've collected from the tavern.
+#
+#  Reached via: hidden passage in the tavern (scene transition)
+#  Or directly: cargo run --bin flint-player -- demo/showcase_crucible.scene.toml --schemas schemas
+#
+#  Controls: same as tavern scene
+# ================================================================
+
+[scene]
+name = "The Forge Between Worlds — The Crucible"
+version = "1.0"
+description = "Showcase: underground forge with heavy post-processing, particles, persistent store, and forge spirit NPC"
+input_config = "demo/input_showcase.toml"
+
+
+# ============================================================
+#  POST-PROCESSING — darker, heavier than tavern
+# ============================================================
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.10
+bloom_threshold = 0.6
+vignette_enabled = true
+vignette_intensity = 0.5
+vignette_smoothness = 1.8
+exposure = 0.9
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 1.4
+fog_enabled = true
+fog_color = [0.08, 0.06, 0.04]
+fog_density = 0.04
+fog_start = 3.0
+fog_end = 25.0
+fog_height_enabled = true
+fog_height_falloff = 0.5
+fog_height_origin = 0.5
+
+
+# ============================================================
+#  PLAYER
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 12]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.script]
+source = "footsteps.rhai"
+
+
+# ============================================================
+#  CONTROLLERS
+# ============================================================
+
+[entities.hud_controller]
+
+[entities.hud_controller.script]
+source = "showcase_hud.rhai"
+
+[entities.game_controller]
+
+[entities.game_controller.script]
+source = "showcase_controller.rhai"
+
+[entities.crucible_ambience_ctrl]
+
+[entities.crucible_ambience_ctrl.transform]
+position = [0, 0, 0]
+
+[entities.crucible_ambience_ctrl.script]
+source = "showcase_ambience.rhai"
+
+
+# ============================================================
+#  LIGHTING — dark cavern with forge glow
+# ============================================================
+
+# Dim directional — faint cave ambient
+[entities.cave_ambient]
+
+[entities.cave_ambient.transform]
+position = [0, 50, 0]
+
+[entities.cave_ambient.light]
+type = "directional"
+direction = [0.2, 0.8, 0.3]
+color = [0.15, 0.12, 0.1]
+intensity = 0.3
+
+# Central forge fire — intense orange glow
+[entities.forge_fire_light]
+
+[entities.forge_fire_light.transform]
+position = [0, 2.5, 0]
+
+[entities.forge_fire_light.light]
+type = "point"
+color = [1.0, 0.5, 0.1]
+intensity = 30.0
+radius = 15.0
+
+[entities.forge_fire_light.script]
+source = "forge_flicker.rhai"
+
+# Entry corridor lantern
+[entities.entry_lantern_light]
+
+[entities.entry_lantern_light.transform]
+position = [0, 3.0, 10]
+
+[entities.entry_lantern_light.light]
+type = "point"
+color = [1.0, 0.75, 0.35]
+intensity = 8.0
+radius = 7.0
+
+[entities.entry_lantern_light.script]
+source = "candle_flicker.rhai"
+
+# Crystal alcove light — blue-white, cool contrast
+[entities.crystal_light]
+
+[entities.crystal_light.transform]
+position = [8, 3, -4]
+
+[entities.crystal_light.light]
+type = "point"
+color = [0.6, 0.7, 1.0]
+intensity = 15.0
+radius = 8.0
+
+# Lava glow spots — floor-level orange
+[entities.lava_glow_1]
+
+[entities.lava_glow_1.transform]
+position = [-3, 0.3, -2]
+
+[entities.lava_glow_1.light]
+type = "point"
+color = [1.0, 0.4, 0.05]
+intensity = 6.0
+radius = 4.0
+
+[entities.lava_glow_2]
+
+[entities.lava_glow_2.transform]
+position = [3, 0.3, -3]
+
+[entities.lava_glow_2.light]
+type = "point"
+color = [1.0, 0.35, 0.05]
+intensity = 5.0
+radius = 3.5
+
+
+# ============================================================
+#  CAVERN STRUCTURE — floor, walls, ceiling
+# ============================================================
+
+# Cavern floor
+[entities.ground]
+archetype = "floor"
+
+[entities.ground.transform]
+position = [0, -0.1, 0]
+
+[entities.ground.bounds]
+min = [-15, -0.1, -12]
+max = [15, 0.0, 15]
+
+[entities.ground.rigidbody]
+body_type = "static"
+
+[entities.ground.collider]
+shape = "box"
+size = [30, 0.2, 27]
+friction = 0.8
+
+[entities.ground.material]
+texture = "textures/stone_wall.png"
+roughness = 0.85
+metallic = 0.05
+
+# Cavern ceiling — high, lost in darkness
+[entities.cave_ceiling]
+archetype = "wall"
+
+[entities.cave_ceiling.transform]
+position = [0, 8, 1.5]
+
+[entities.cave_ceiling.bounds]
+min = [-15, -0.1, -13.5]
+max = [15, 0.1, 13.5]
+
+[entities.cave_ceiling.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+# Entry corridor — narrow passage from tavern
+# Left wall
+[entities.entry_wall_left]
+archetype = "wall"
+
+[entities.entry_wall_left.transform]
+position = [-2, 2.5, 10]
+
+[entities.entry_wall_left.bounds]
+min = [-0.15, -2.5, -3]
+max = [0.15, 2.5, 3]
+
+[entities.entry_wall_left.rigidbody]
+body_type = "static"
+
+[entities.entry_wall_left.collider]
+shape = "box"
+size = [0.3, 5, 6]
+
+[entities.entry_wall_left.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+# Right wall
+[entities.entry_wall_right]
+archetype = "wall"
+
+[entities.entry_wall_right.transform]
+position = [2, 2.5, 10]
+
+[entities.entry_wall_right.bounds]
+min = [-0.15, -2.5, -3]
+max = [0.15, 2.5, 3]
+
+[entities.entry_wall_right.rigidbody]
+body_type = "static"
+
+[entities.entry_wall_right.collider]
+shape = "box"
+size = [0.3, 5, 6]
+
+[entities.entry_wall_right.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+# Main cavern walls
+[entities.wall_north]
+archetype = "wall"
+
+[entities.wall_north.transform]
+position = [0, 3, -10]
+
+[entities.wall_north.bounds]
+min = [-15, -3, -0.15]
+max = [15, 5, 0.15]
+
+[entities.wall_north.rigidbody]
+body_type = "static"
+
+[entities.wall_north.collider]
+shape = "box"
+size = [30, 8, 0.3]
+
+[entities.wall_north.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+[entities.wall_south]
+archetype = "wall"
+
+[entities.wall_south.transform]
+position = [0, 3, 14]
+
+[entities.wall_south.bounds]
+min = [-15, -3, -0.15]
+max = [15, 5, 0.15]
+
+[entities.wall_south.rigidbody]
+body_type = "static"
+
+[entities.wall_south.collider]
+shape = "box"
+size = [30, 8, 0.3]
+
+[entities.wall_south.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+[entities.wall_west]
+archetype = "wall"
+
+[entities.wall_west.transform]
+position = [-12, 3, 2]
+
+[entities.wall_west.bounds]
+min = [-0.15, -3, -12]
+max = [0.15, 5, 12]
+
+[entities.wall_west.rigidbody]
+body_type = "static"
+
+[entities.wall_west.collider]
+shape = "box"
+size = [0.3, 8, 24]
+
+[entities.wall_west.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+[entities.wall_east]
+archetype = "wall"
+
+[entities.wall_east.transform]
+position = [12, 3, 2]
+
+[entities.wall_east.bounds]
+min = [-0.15, -3, -12]
+max = [0.15, 5, 12]
+
+[entities.wall_east.rigidbody]
+body_type = "static"
+
+[entities.wall_east.collider]
+shape = "box"
+size = [0.3, 8, 24]
+
+[entities.wall_east.material]
+texture = "textures/stone_wall.png"
+roughness = 0.9
+
+
+# ============================================================
+#  FORGE PLATFORM — central raised area with anvil
+# ============================================================
+
+# Raised stone platform
+[entities.forge_platform]
+archetype = "furniture"
+
+[entities.forge_platform.transform]
+position = [0, 0, 0]
+
+[entities.forge_platform.bounds]
+min = [-3, 0, -3]
+max = [3, 0.5, 3]
+
+[entities.forge_platform.rigidbody]
+body_type = "static"
+
+[entities.forge_platform.collider]
+shape = "box"
+size = [6, 0.5, 6]
+
+[entities.forge_platform.material]
+texture = "textures/stone_wall.png"
+roughness = 0.8
+metallic = 0.1
+
+# Anvil — interactable, triggers spark bursts
+[entities.forge_anvil]
+archetype = "furniture"
+
+[entities.forge_anvil.transform]
+position = [0, 0.5, 0]
+
+[entities.forge_anvil.bounds]
+min = [-0.4, 0, -0.25]
+max = [0.4, 0.6, 0.25]
+
+[entities.forge_anvil.rigidbody]
+body_type = "static"
+
+[entities.forge_anvil.collider]
+shape = "box"
+size = [0.8, 0.6, 0.5]
+
+[entities.forge_anvil.material]
+texture = "textures/stone_wall.png"
+roughness = 0.3
+metallic = 0.85
+
+[entities.forge_anvil.interactable]
+prompt_text = "Anvil"
+range = 3.0
+interaction_type = "use"
+enabled = true
+
+[entities.forge_anvil.script]
+source = "showcase_anvil.rhai"
+
+
+# ============================================================
+#  CRYSTAL ALCOVE — high PBR surfaces for specular + SSAO
+# ============================================================
+
+# Metal sphere 1 — polished steel
+[entities.crystal_sphere_1]
+archetype = "furniture"
+
+[entities.crystal_sphere_1.transform]
+position = [7.5, 1.0, -5]
+
+[entities.crystal_sphere_1.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+
+[entities.crystal_sphere_1.material]
+roughness = 0.1
+metallic = 1.0
+color = [0.9, 0.9, 0.95]
+
+# Metal sphere 2 — rough bronze
+[entities.crystal_sphere_2]
+archetype = "furniture"
+
+[entities.crystal_sphere_2.transform]
+position = [9.0, 1.0, -3.5]
+
+[entities.crystal_sphere_2.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+
+[entities.crystal_sphere_2.material]
+roughness = 0.5
+metallic = 0.9
+color = [0.8, 0.6, 0.3]
+
+# Metal sphere 3 — oxidized copper
+[entities.crystal_sphere_3]
+archetype = "furniture"
+
+[entities.crystal_sphere_3.transform]
+position = [8.0, 1.0, -2]
+
+[entities.crystal_sphere_3.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+
+[entities.crystal_sphere_3.material]
+roughness = 0.7
+metallic = 0.8
+color = [0.3, 0.7, 0.5]
+
+# Alcove pedestal
+[entities.alcove_pedestal]
+archetype = "furniture"
+
+[entities.alcove_pedestal.transform]
+position = [8.2, 0, -3.5]
+
+[entities.alcove_pedestal.bounds]
+min = [-2.5, 0, -2.5]
+max = [2.5, 0.5, 2.5]
+
+[entities.alcove_pedestal.rigidbody]
+body_type = "static"
+
+[entities.alcove_pedestal.collider]
+shape = "box"
+size = [5, 0.5, 5]
+
+[entities.alcove_pedestal.material]
+texture = "textures/stone_wall.png"
+roughness = 0.6
+metallic = 0.2
+
+
+# ============================================================
+#  ENTRY LANTERN — model in corridor
+# ============================================================
+
+[entities.entry_lantern]
+
+[entities.entry_lantern.transform]
+position = [1.5, 0, 10]
+scale = [0.008, 0.008, 0.008]
+
+[entities.entry_lantern.model]
+asset = "Lantern"
+
+
+# ============================================================
+#  FORGE SPIRIT NPC
+# ============================================================
+
+[entities.forge_spirit]
+archetype = "character"
+
+[entities.forge_spirit.transform]
+position = [-3, 0.5, -2]
+rotation = [90, 45, 0]
+scale = [0.015, 0.015, 0.015]
+
+[entities.forge_spirit.model]
+asset = "YBotWithIdle"
+
+[entities.forge_spirit.skeleton]
+skin = "Armature"
+
+[entities.forge_spirit.animator]
+clip = "mixamo.com.001"
+autoplay = true
+loop = true
+speed = 0.6
+playing = true
+
+[entities.forge_spirit.interactable]
+prompt_text = "Forge Spirit"
+range = 4.0
+interaction_type = "talk"
+enabled = true
+
+[entities.forge_spirit.script]
+source = "showcase_forge_spirit.rhai"
+
+
+# ============================================================
+#  PARTICLE EMITTERS
+# ============================================================
+
+# Forge fire — intense central blaze
+[entities.forge_fire_particles]
+
+[entities.forge_fire_particles.transform]
+position = [0, 0.8, 0]
+
+[entities.forge_fire_particles.particle_emitter]
+emission_rate = 50.0
+max_particles = 300
+lifetime_min = 0.5
+lifetime_max = 1.8
+speed_min = 1.5
+speed_max = 4.0
+direction = [0, 1, 0]
+spread = 20.0
+gravity = [0, 1.0, 0]
+damping = 0.2
+size_start = 0.08
+size_end = 0.03
+color_start = [1.0, 0.8, 0.3, 1.0]
+color_end = [1.0, 0.2, 0.0, 0.0]
+blend_mode = "additive"
+shape = "sphere"
+shape_radius = 0.4
+playing = true
+autoplay = true
+
+# Forge sparks — burst-only on anvil interaction
+[entities.forge_sparks]
+
+[entities.forge_sparks.transform]
+position = [0, 1.1, 0]
+
+[entities.forge_sparks.particle_emitter]
+emission_rate = 0.0
+burst_count = 40
+max_particles = 200
+lifetime_min = 0.3
+lifetime_max = 1.2
+speed_min = 3.0
+speed_max = 8.0
+direction = [0, 1, 0]
+spread = 60.0
+gravity = [0, -9.81, 0]
+damping = 0.1
+size_start = 0.04
+size_end = 0.01
+color_start = [1.0, 0.9, 0.5, 1.0]
+color_end = [1.0, 0.4, 0.0, 0.0]
+blend_mode = "additive"
+shape = "point"
+playing = false
+autoplay = false
+
+# Ember drift — slow floating embers throughout cavern
+[entities.ember_drift]
+
+[entities.ember_drift.transform]
+position = [0, 2.0, 0]
+
+[entities.ember_drift.particle_emitter]
+emission_rate = 8.0
+max_particles = 100
+lifetime_min = 3.0
+lifetime_max = 7.0
+speed_min = 0.1
+speed_max = 0.4
+direction = [0, 1, 0]
+spread = 80.0
+gravity = [0, 0.15, 0]
+damping = 0.6
+size_start = 0.04
+size_end = 0.02
+color_start = [1.0, 0.6, 0.1, 0.8]
+color_end = [0.8, 0.3, 0.0, 0.0]
+blend_mode = "additive"
+shape = "box"
+shape_extents = [6.0, 2.0, 6.0]
+playing = true
+autoplay = true
+
+# Ground fog particles — low rolling mist
+[entities.ground_fog_particles]
+
+[entities.ground_fog_particles.transform]
+position = [0, 0.2, 2]
+
+[entities.ground_fog_particles.particle_emitter]
+emission_rate = 4.0
+max_particles = 40
+lifetime_min = 4.0
+lifetime_max = 8.0
+speed_min = 0.05
+speed_max = 0.2
+direction = [0, 0, -1]
+spread = 45.0
+gravity = [0, -0.01, 0]
+damping = 0.9
+size_start = 0.8
+size_end = 1.5
+color_start = [0.12, 0.1, 0.08, 0.15]
+color_end = [0.08, 0.06, 0.04, 0.0]
+blend_mode = "alpha"
+shape = "box"
+shape_extents = [8.0, 0.1, 8.0]
+playing = true
+autoplay = true
+
+# Forge smoke column
+[entities.forge_smoke]
+
+[entities.forge_smoke.transform]
+position = [0, 3.0, 0]
+
+[entities.forge_smoke.particle_emitter]
+emission_rate = 6.0
+max_particles = 40
+lifetime_min = 2.0
+lifetime_max = 5.0
+speed_min = 0.5
+speed_max = 1.2
+direction = [0, 1, 0]
+spread = 10.0
+gravity = [0, 0.3, 0]
+damping = 0.4
+size_start = 0.2
+size_end = 0.8
+color_start = [0.25, 0.22, 0.18, 0.2]
+color_end = [0.15, 0.13, 0.1, 0.0]
+blend_mode = "alpha"
+shape = "sphere"
+shape_radius = 0.3
+playing = true
+autoplay = true
+
+
+# ============================================================
+#  AUDIO
+# ============================================================
+
+# Deep forge ambience (non-spatial)
+[entities.forge_ambient]
+
+[entities.forge_ambient.transform]
+position = [0, 2, 0]
+
+[entities.forge_ambient.audio_source]
+file = "audio/fire_crackle.ogg"
+volume = 0.6
+spatial = false
+loop = true
+autoplay = true
+
+# Forge fire close-up (spatial, central)
+[entities.forge_fire_sound]
+
+[entities.forge_fire_sound.transform]
+position = [0, 1.0, 0]
+
+[entities.forge_fire_sound.audio_source]
+file = "audio/fire_crackle.ogg"
+volume = 0.9
+spatial = true
+loop = true
+autoplay = true
+min_distance = 1.0
+max_distance = 15.0

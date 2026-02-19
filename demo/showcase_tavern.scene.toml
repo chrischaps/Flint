@@ -1,0 +1,1674 @@
+[scene]
+name = ""
+version = "1.0"
+
+[prefabs]
+
+[entities.game_controller.script]
+source = "showcase_controller.rhai"
+
+[entities.hidden_passage]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.hidden_passage.material]
+metallic = 0.1
+roughness = 0.9
+texture = "textures/stone_wall.png"
+
+[entities.hidden_passage.script]
+source = "showcase_passage.rhai"
+
+[entities.hidden_passage.bounds]
+max = [
+    0.5,
+    1.2,
+    0.5,
+]
+min = [
+    -0.5,
+    -1.2,
+    -0.5,
+]
+
+[entities.hidden_passage.transform]
+position = [
+    -6.5,
+    1.2,
+    -1,
+]
+
+[entities.hidden_passage.interactable]
+enabled = false
+interaction_type = "use"
+prompt_text = "Strange Wall"
+range = 2.5
+
+[entities.bartender]
+archetype = "character"
+parent = "main_hall"
+
+[entities.bartender.interactable]
+enabled = true
+interaction_type = "talk"
+prompt_text = "Bartender"
+range = 3.5
+
+[entities.bartender.animator]
+autoplay = true
+clip = "mixamo.com.001"
+loop = true
+playing = true
+speed = 1.0
+
+[entities.bartender.transform]
+position = [
+    6.2,
+    0,
+    0,
+]
+rotation = [
+    90,
+    -90,
+    0,
+]
+scale = [
+    0.015,
+    0.015,
+    0.015,
+]
+
+[entities.bartender.script]
+source = "npc_bartender.rhai"
+
+[entities.bartender.skeleton]
+skin = "Armature"
+
+[entities.bartender.model]
+asset = "YBotWithIdle"
+
+[entities.mug_patron_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.mug_patron_2.model]
+asset = "Mug"
+
+[entities.mug_patron_2.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.mug_patron_2.transform]
+position = [
+    -2.3,
+    0.81,
+    4.8,
+]
+rotation = [
+    0,
+    195,
+    0,
+]
+scale = [
+    0.0008,
+    0.0008,
+    0.0008,
+]
+
+[entities.wall_north_right]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_north_right.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_north_right.bounds]
+max = [
+    3.125,
+    2.5,
+    0.15,
+]
+min = [
+    -3.125,
+    -2,
+    -0.15,
+]
+
+[entities.wall_north_right.transform]
+position = [
+    3.875,
+    2,
+    -5,
+]
+
+[entities.wall_north_right.rigidbody]
+body_type = "static"
+
+[entities.wall_north_right.collider]
+shape = "box"
+size = [
+    6.25,
+    4.5,
+    0.3,
+]
+
+[entities.hud_controller.script]
+source = "showcase_hud.rhai"
+
+[entities.ambient_sound.audio_source]
+autoplay = true
+file = "audio/ambient_tavern.ogg"
+loop = true
+spatial = false
+volume = 0.3
+
+[entities.ambient_sound.transform]
+position = [
+    0,
+    2,
+    2.5,
+]
+
+[entities.bench_wall]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bench_wall.collider]
+shape = "box"
+size = [
+    1.53,
+    0.4,
+    0.32,
+]
+
+[entities.bench_wall.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.bench_wall.rigidbody]
+body_type = "static"
+
+[entities.bench_wall.model]
+asset = "wooden_bench"
+
+[entities.bench_wall.transform]
+position = [
+    -6.3,
+    0,
+    4,
+]
+rotation = [
+    0,
+    0,
+    0,
+]
+scale = [
+    0.009,
+    0.009,
+    0.009,
+]
+
+[entities.mug_bar_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.mug_bar_1.model]
+asset = "Mug"
+
+[entities.mug_bar_1.transform]
+position = [
+    5,
+    1.16,
+    -0.5,
+]
+rotation = [
+    0,
+    15,
+    0,
+]
+scale = [
+    0.0008,
+    0.0008,
+    0.0008,
+]
+
+[entities.mug_bar_1.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.fireplace]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.fireplace.material]
+roughness = 0.9
+texture = "textures/stone_wall.png"
+
+[entities.fireplace.rigidbody]
+body_type = "static"
+
+[entities.fireplace.collider]
+shape = "box"
+size = [
+    1.0,
+    2.5,
+    2.0,
+]
+
+[entities.fireplace.transform]
+position = [
+    -6.5,
+    0,
+    -3,
+]
+
+[entities.fireplace.bounds]
+max = [
+    0.5,
+    2.5,
+    1,
+]
+min = [
+    -0.5,
+    0,
+    -1,
+]
+
+[entities.fire_smoke]
+parent = "main_hall"
+
+[entities.fire_smoke.particle_emitter]
+autoplay = true
+blend_mode = "alpha"
+color_end = [
+    0.3,
+    0.28,
+    0.25,
+    0.0,
+]
+color_start = [
+    0.4,
+    0.35,
+    0.3,
+    0.25,
+]
+damping = 0.5
+direction = [
+    0,
+    1,
+    0,
+]
+emission_rate = 5.0
+gravity = [
+    0,
+    0.2,
+    0,
+]
+lifetime_max = 4.0
+lifetime_min = 2.0
+max_particles = 30
+playing = true
+shape = "point"
+size_end = 0.5
+size_start = 0.15
+speed_max = 0.8
+speed_min = 0.3
+spread = 15.0
+
+[entities.fire_smoke.transform]
+position = [
+    -6.5,
+    2.0,
+    -3,
+]
+
+[entities.bar_sound]
+parent = "main_hall"
+
+[entities.bar_sound.transform]
+position = [
+    5.5,
+    1,
+    0,
+]
+
+[entities.bar_sound.audio_source]
+autoplay = true
+file = "audio/glasses_clink.ogg"
+loop = true
+max_distance = 8.0
+min_distance = 1.0
+spatial = true
+volume = 0.5
+
+[entities.fire_sound]
+parent = "main_hall"
+
+[entities.fire_sound.audio_source]
+autoplay = true
+file = "audio/fire_crackle.ogg"
+loop = true
+max_distance = 12.0
+min_distance = 1.0
+spatial = true
+volume = 0.9
+
+[entities.fire_sound.transform]
+position = [
+    -6.5,
+    1,
+    -3,
+]
+
+[entities.table_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_2.transform]
+position = [
+    -3,
+    0,
+    7,
+]
+rotation = [
+    0,
+    45,
+    0,
+]
+scale = [
+    1.4,
+    1.4,
+    1.4,
+]
+
+[entities.table_2.rigidbody]
+body_type = "static"
+
+[entities.table_2.model]
+asset = "table"
+
+[entities.table_2.collider]
+shape = "box"
+size = [
+    1.2,
+    0.75,
+    1.2,
+]
+
+[entities.table_2.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.ceiling]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.ceiling.material]
+roughness = 0.75
+texture = "textures/wood_planks.png"
+
+[entities.ceiling.transform]
+position = [
+    0,
+    4.5,
+    2.5,
+]
+
+[entities.ceiling.bounds]
+max = [
+    7,
+    0.1,
+    7.5,
+]
+min = [
+    -7,
+    -0.1,
+    -7.5,
+]
+
+[entities.wall_south_left]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_south_left.bounds]
+max = [
+    3.125,
+    2.5,
+    0.15,
+]
+min = [
+    -3.125,
+    -2,
+    -0.15,
+]
+
+[entities.wall_south_left.rigidbody]
+body_type = "static"
+
+[entities.wall_south_left.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_south_left.collider]
+shape = "box"
+size = [
+    6.25,
+    4.5,
+    0.3,
+]
+
+[entities.wall_south_left.transform]
+position = [
+    -3.875,
+    2,
+    10,
+]
+
+[entities.player]
+archetype = "player"
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+gravity_scale = 0.0
+mass = 80.0
+
+[entities.player.script]
+source = "footsteps.rhai"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.collider]
+friction = 0.0
+restitution = 0.0
+shape = "capsule"
+size = [
+    0.6,
+    1.8,
+    0.6,
+]
+
+[entities.player.character_controller]
+camera_mode = "first_person"
+height = 1.8
+jump_force = 6.0
+move_speed = 5.0
+radius = 0.3
+
+[entities.player.transform]
+position = [
+    0,
+    1.0,
+    8,
+]
+
+[entities.patron_1]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_1.transform]
+position = [
+    -1.2,
+    0,
+    4.0,
+]
+rotation = [
+    90,
+    200,
+    0,
+]
+scale = [
+    0.015,
+    0.015,
+    0.015,
+]
+
+[entities.patron_1.skeleton]
+skin = "Armature"
+
+[entities.patron_1.interactable]
+enabled = true
+interaction_type = "talk"
+prompt_text = "Patron"
+range = 3.0
+
+[entities.patron_1.model]
+asset = "YBotWithIdle"
+
+[entities.patron_1.script]
+source = "npc_patron.rhai"
+
+[entities.patron_1.animator]
+autoplay = true
+clip = "mixamo.com.001"
+loop = true
+playing = true
+speed = 0.9
+
+[entities.kitchen_door]
+archetype = "door"
+parent = "main_hall"
+
+[entities.kitchen_door.material]
+roughness = 0.6
+texture = "textures/wood_planks.png"
+
+[entities.kitchen_door.collider]
+shape = "box"
+size = [
+    1.5,
+    2.5,
+    0.1,
+]
+
+[entities.kitchen_door.animator]
+autoplay = false
+clip = "door_swing"
+loop = false
+speed = 1.0
+
+[entities.kitchen_door.script]
+source = "door_interact_v2.rhai"
+
+[entities.kitchen_door.interactable]
+enabled = true
+interaction_type = "use"
+prompt_text = "Kitchen Door"
+range = 2.5
+
+[entities.kitchen_door.door]
+locked = true
+open_angle = 75.0
+style = "hinged"
+
+[entities.kitchen_door.rigidbody]
+body_type = "kinematic"
+
+[entities.kitchen_door.bounds]
+max = [
+    1.5,
+    2.5,
+    0.05,
+]
+min = [
+    0,
+    0,
+    -0.05,
+]
+
+[entities.kitchen_door.audio_trigger]
+on_interact = "door_open.ogg"
+
+[entities.kitchen_door.transform]
+position = [
+    -0.75,
+    0,
+    -5,
+]
+
+[entities.wall_south_right]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_south_right.transform]
+position = [
+    3.875,
+    2,
+    10,
+]
+
+[entities.wall_south_right.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_south_right.bounds]
+max = [
+    3.125,
+    2.5,
+    0.15,
+]
+min = [
+    -3.125,
+    -2,
+    -0.15,
+]
+
+[entities.wall_south_right.rigidbody]
+body_type = "static"
+
+[entities.wall_south_right.collider]
+shape = "box"
+size = [
+    6.25,
+    4.5,
+    0.3,
+]
+
+[entities.tavern_fire]
+parent = "main_hall"
+
+[entities.tavern_fire.script]
+source = "torch_flicker.rhai"
+
+[entities.tavern_fire.light]
+color = [
+    1.0,
+    0.6,
+    0.15,
+]
+intensity = 22.0
+radius = 15.0
+type = "point"
+
+[entities.tavern_fire.transform]
+position = [
+    -5,
+    2,
+    -3,
+]
+
+[entities.mysterious_stranger]
+archetype = "character"
+parent = "main_hall"
+
+[entities.mysterious_stranger.animator]
+autoplay = true
+clip = "mixamo.com.001"
+loop = true
+playing = true
+speed = 0.5
+
+[entities.mysterious_stranger.interactable]
+enabled = true
+interaction_type = "talk"
+prompt_text = "Stranger"
+range = 4.0
+
+[entities.mysterious_stranger.skeleton]
+skin = "Armature"
+
+[entities.mysterious_stranger.transform]
+position = [
+    -6.0,
+    0,
+    9.0,
+]
+rotation = [
+    90,
+    -45,
+    0,
+]
+scale = [
+    0.015,
+    0.015,
+    0.015,
+]
+
+[entities.mysterious_stranger.model]
+asset = "YBotWithIdle"
+
+[entities.mysterious_stranger.script]
+source = "showcase_stranger.rhai"
+
+[entities.mug_patron_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.mug_patron_1.transform]
+position = [
+    -1.7,
+    0.81,
+    4.3,
+]
+rotation = [
+    0,
+    50,
+    0,
+]
+scale = [
+    0.0008,
+    0.0008,
+    0.0008,
+]
+
+[entities.mug_patron_1.model]
+asset = "Mug"
+
+[entities.mug_patron_1.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.bar_candle]
+parent = "main_hall"
+
+[entities.bar_candle.light]
+color = [
+    1.0,
+    0.78,
+    0.3,
+]
+intensity = 5.0
+radius = 4.0
+type = "point"
+
+[entities.bar_candle.script]
+source = "candle_flicker.rhai"
+
+[entities.bar_candle.transform]
+position = [
+    5,
+    1.2,
+    1,
+]
+
+[entities.wall_west]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_west.rigidbody]
+body_type = "static"
+
+[entities.wall_west.collider]
+shape = "box"
+size = [
+    0.3,
+    4.5,
+    15,
+]
+
+[entities.wall_west.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_west.transform]
+position = [
+    -7,
+    2,
+    2.5,
+]
+
+[entities.wall_west.bounds]
+max = [
+    0.15,
+    2.5,
+    7.5,
+]
+min = [
+    -0.15,
+    -2,
+    -7.5,
+]
+
+[entities.bar_counter]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bar_counter.transform]
+position = [
+    5,
+    0,
+    0,
+]
+
+[entities.bar_counter.rigidbody]
+body_type = "static"
+
+[entities.bar_counter.collider]
+shape = "box"
+size = [
+    1.0,
+    1.1,
+    6.0,
+]
+
+[entities.bar_counter.bounds]
+max = [
+    0.5,
+    1.1,
+    3,
+]
+min = [
+    -0.5,
+    0,
+    -3,
+]
+
+[entities.bar_counter.material]
+roughness = 0.6
+texture = "textures/wood_planks.png"
+
+[entities.corner_light]
+parent = "main_hall"
+
+[entities.corner_light.light]
+color = [
+    0.5,
+    0.4,
+    0.6,
+]
+intensity = 4.0
+radius = 5.0
+type = "point"
+
+[entities.corner_light.transform]
+position = [
+    -5.5,
+    3.2,
+    8.5,
+]
+
+[entities.wall_south_header]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_south_header.rigidbody]
+body_type = "static"
+
+[entities.wall_south_header.bounds]
+max = [
+    0.75,
+    1.25,
+    0.15,
+]
+min = [
+    -0.75,
+    -0.75,
+    -0.15,
+]
+
+[entities.wall_south_header.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_south_header.transform]
+position = [
+    0,
+    3.25,
+    10,
+]
+
+[entities.wall_south_header.collider]
+shape = "box"
+size = [
+    1.5,
+    2.0,
+    0.3,
+]
+
+[entities.mug_bar_3]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.mug_bar_3.transform]
+position = [
+    5,
+    1.16,
+    2.5,
+]
+rotation = [
+    0,
+    265,
+    0,
+]
+scale = [
+    0.0008,
+    0.0008,
+    0.0008,
+]
+
+[entities.mug_bar_3.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.mug_bar_3.model]
+asset = "Mug"
+
+[entities.barrel_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.barrel_1.transform]
+position = [
+    5.5,
+    0,
+    -3.5,
+]
+
+[entities.barrel_1.rigidbody]
+body_type = "static"
+
+[entities.barrel_1.bounds]
+max = [
+    0.3,
+    0.9,
+    0.3,
+]
+min = [
+    -0.3,
+    0,
+    -0.3,
+]
+
+[entities.barrel_1.collider]
+shape = "sphere"
+size = [
+    0.6,
+    0.6,
+    0.6,
+]
+
+[entities.barrel_1.material]
+roughness = 0.7
+texture = "textures/wood_planks.png"
+
+[entities.barrel_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.barrel_2.collider]
+shape = "sphere"
+size = [
+    0.6,
+    0.6,
+    0.6,
+]
+
+[entities.barrel_2.transform]
+position = [
+    6.0,
+    0,
+    -4.0,
+]
+
+[entities.barrel_2.bounds]
+max = [
+    0.3,
+    0.9,
+    0.3,
+]
+min = [
+    -0.3,
+    0,
+    -0.3,
+]
+
+[entities.barrel_2.material]
+roughness = 0.7
+texture = "textures/wood_planks.png"
+
+[entities.barrel_2.rigidbody]
+body_type = "static"
+
+[entities.tavern_dust]
+parent = "main_hall"
+
+[entities.tavern_dust.transform]
+position = [
+    0,
+    2.5,
+    2.5,
+]
+
+[entities.tavern_dust.particle_emitter]
+autoplay = true
+blend_mode = "additive"
+color_end = [
+    0.8,
+    0.7,
+    0.4,
+    0.0,
+]
+color_start = [
+    1.0,
+    0.9,
+    0.6,
+    0.4,
+]
+damping = 0.8
+direction = [
+    0,
+    -1,
+    0,
+]
+emission_rate = 3.0
+gravity = [
+    0,
+    -0.02,
+    0,
+]
+lifetime_max = 8.0
+lifetime_min = 4.0
+max_particles = 50
+playing = true
+shape = "box"
+shape_extents = [
+    5.0,
+    1.5,
+    5.0,
+]
+size_end = 0.02
+size_start = 0.03
+speed_max = 0.15
+speed_min = 0.05
+spread = 90.0
+
+[entities.bench_fireplace]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.bench_fireplace.transform]
+position = [
+    -4.5,
+    0,
+    -3,
+]
+rotation = [
+    0,
+    90,
+    0,
+]
+scale = [
+    0.009,
+    0.009,
+    0.009,
+]
+
+[entities.bench_fireplace.model]
+asset = "wooden_bench"
+
+[entities.bench_fireplace.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.bench_fireplace.rigidbody]
+body_type = "static"
+
+[entities.bench_fireplace.collider]
+shape = "box"
+size = [
+    0.32,
+    0.4,
+    1.53,
+]
+
+[entities.wall_north_left]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_north_left.transform]
+position = [
+    -3.875,
+    2,
+    -5,
+]
+
+[entities.wall_north_left.rigidbody]
+body_type = "static"
+
+[entities.wall_north_left.bounds]
+max = [
+    3.125,
+    2.5,
+    0.15,
+]
+min = [
+    -3.125,
+    -2,
+    -0.15,
+]
+
+[entities.wall_north_left.collider]
+shape = "box"
+size = [
+    6.25,
+    4.5,
+    0.3,
+]
+
+[entities.wall_north_left.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.front_entrance]
+archetype = "door"
+parent = "main_hall"
+
+[entities.front_entrance.interactable]
+enabled = true
+interaction_type = "use"
+prompt_text = "Open Door"
+range = 2.5
+
+[entities.front_entrance.transform]
+position = [
+    -0.75,
+    0,
+    10,
+]
+
+[entities.front_entrance.script]
+source = "door_interact_v2.rhai"
+
+[entities.front_entrance.audio_trigger]
+on_interact = "door_open.ogg"
+
+[entities.front_entrance.material]
+roughness = 0.6
+texture = "textures/wood_planks.png"
+
+[entities.front_entrance.bounds]
+max = [
+    1.5,
+    2.5,
+    0.05,
+]
+min = [
+    0,
+    0,
+    -0.05,
+]
+
+[entities.front_entrance.door]
+locked = false
+open_angle = 90.0
+style = "hinged"
+
+[entities.front_entrance.collider]
+shape = "box"
+size = [
+    1.5,
+    2.5,
+    0.1,
+]
+
+[entities.front_entrance.animator]
+autoplay = false
+clip = "door_swing"
+loop = false
+speed = 1.0
+
+[entities.front_entrance.rigidbody]
+body_type = "kinematic"
+
+[entities.patron_2]
+archetype = "character"
+parent = "main_hall"
+
+[entities.patron_2.animator]
+autoplay = true
+clip = "mixamo.com.001"
+loop = true
+playing = true
+speed = 1.1
+
+[entities.patron_2.script]
+source = "npc_patron.rhai"
+
+[entities.patron_2.interactable]
+enabled = true
+interaction_type = "talk"
+prompt_text = "Patron"
+range = 3.0
+
+[entities.patron_2.skeleton]
+skin = "Armature"
+
+[entities.patron_2.transform]
+position = [
+    -2.8,
+    0,
+    5.0,
+]
+rotation = [
+    90,
+    20,
+    0,
+]
+scale = [
+    0.015,
+    0.015,
+    0.015,
+]
+
+[entities.patron_2.model]
+asset = "YBotWithIdle"
+
+[entities.table_1]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.table_1.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.table_1.model]
+asset = "table"
+
+[entities.table_1.collider]
+shape = "box"
+size = [
+    1.2,
+    0.75,
+    1.2,
+]
+
+[entities.table_1.rigidbody]
+body_type = "static"
+
+[entities.table_1.transform]
+scale = [
+    1.4,
+    1.4,
+    1.4,
+]
+
+[entities.table_1.transform.position]
+x = -2.0
+y = 0.0
+z = 0.15800905227661133
+
+[entities.bar_lamp]
+parent = "main_hall"
+
+[entities.bar_lamp.light]
+color = [
+    0.9,
+    0.8,
+    0.5,
+]
+intensity = 12.0
+radius = 8.0
+type = "point"
+
+[entities.bar_lamp.transform]
+position = [
+    4,
+    3.5,
+    -1,
+]
+
+[entities.east_torch]
+parent = "main_hall"
+
+[entities.east_torch.light]
+color = [
+    1.0,
+    0.55,
+    0.1,
+]
+intensity = 14.0
+radius = 10.0
+type = "point"
+
+[entities.east_torch.script]
+source = "torch_flicker.rhai"
+
+[entities.east_torch.transform]
+position = [
+    6.5,
+    3,
+    4,
+]
+
+[entities.mug_fireplace]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.mug_fireplace.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.mug_fireplace.transform]
+position = [
+    -4.0,
+    0.06,
+    -2.3,
+]
+rotation = [
+    0,
+    170,
+    0,
+]
+scale = [
+    0.0008,
+    0.0008,
+    0.0008,
+]
+
+[entities.mug_fireplace.model]
+asset = "Mug"
+
+[entities.fire_particles]
+parent = "main_hall"
+
+[entities.fire_particles.particle_emitter]
+autoplay = true
+blend_mode = "additive"
+color_end = [
+    0.8,
+    0.2,
+    0.0,
+    0.0,
+]
+color_start = [
+    1.0,
+    0.7,
+    0.2,
+    1.0,
+]
+damping = 0.3
+direction = [
+    0,
+    1,
+    0,
+]
+emission_rate = 35.0
+gravity = [
+    0,
+    0.5,
+    0,
+]
+lifetime_max = 2.5
+lifetime_min = 0.8
+max_particles = 200
+playing = true
+shape = "sphere"
+shape_radius = 0.3
+size_end = 0.02
+size_start = 0.06
+speed_max = 2.5
+speed_min = 0.8
+spread = 25.0
+
+[entities.fire_particles.transform]
+position = [
+    -6.5,
+    0.8,
+    -3,
+]
+
+[entities.ground]
+archetype = "floor"
+
+[entities.ground.bounds]
+max = [
+    20,
+    0.0,
+    20,
+]
+min = [
+    -20,
+    -0.1,
+    -20,
+]
+
+[entities.ground.material]
+roughness = 0.7
+texture = "textures/wood_planks.png"
+
+[entities.ground.transform]
+position = [
+    0,
+    -0.1,
+    0,
+]
+
+[entities.ground.rigidbody]
+body_type = "static"
+
+[entities.ground.collider]
+friction = 0.8
+shape = "box"
+size = [
+    40,
+    0.2,
+    40,
+]
+
+[entities.mug_bar_2]
+archetype = "furniture"
+parent = "main_hall"
+
+[entities.mug_bar_2.bounds]
+max = [
+    1,
+    1,
+    1,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.mug_bar_2.model]
+asset = "Mug"
+
+[entities.mug_bar_2.transform]
+position = [
+    5,
+    1.16,
+    1.2,
+]
+rotation = [
+    0,
+    140,
+    0,
+]
+scale = [
+    0.0008,
+    0.0008,
+    0.0008,
+]
+
+[entities.ambient_controller.script]
+source = "ambient_events.rhai"
+
+[entities.ambient_controller.transform]
+position = [
+    0,
+    0,
+    0,
+]
+
+[entities.wall_east]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_east.bounds]
+max = [
+    0.15,
+    2.5,
+    7.5,
+]
+min = [
+    -0.15,
+    -2,
+    -7.5,
+]
+
+[entities.wall_east.collider]
+shape = "box"
+size = [
+    0.3,
+    4.5,
+    15,
+]
+
+[entities.wall_east.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_east.rigidbody]
+body_type = "static"
+
+[entities.wall_east.transform]
+position = [
+    7,
+    2,
+    2.5,
+]
+
+[entities.main_hall]
+archetype = "room"
+
+[entities.main_hall.transform]
+position = [
+    0,
+    0,
+    0,
+]
+
+[entities.main_hall.bounds]
+max = [
+    10,
+    4,
+    10,
+]
+min = [
+    0,
+    0,
+    0,
+]
+
+[entities.wall_north_header]
+archetype = "wall"
+parent = "main_hall"
+
+[entities.wall_north_header.material]
+roughness = 0.85
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+
+[entities.wall_north_header.transform]
+position = [
+    0,
+    3.25,
+    -5,
+]
+
+[entities.wall_north_header.rigidbody]
+body_type = "static"
+
+[entities.wall_north_header.bounds]
+max = [
+    0.75,
+    1.25,
+    0.15,
+]
+min = [
+    -0.75,
+    -0.75,
+    -0.15,
+]
+
+[entities.wall_north_header.collider]
+shape = "box"
+size = [
+    1.5,
+    2.0,
+    0.3,
+]
+
+[entities.showcase_ambience_ctrl.script]
+source = "showcase_ambience.rhai"
+
+[entities.showcase_ambience_ctrl.transform]
+position = [
+    0,
+    0,
+    0,
+]
+
+[entities.sun.light]
+color = [
+    0.3,
+    0.25,
+    0.2,
+]
+direction = [
+    0.3,
+    0.7,
+    0.4,
+]
+intensity = 1.2
+type = "directional"
+
+[entities.sun.transform]
+position = [
+    0,
+    50,
+    0,
+]
