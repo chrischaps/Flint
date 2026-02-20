@@ -17,6 +17,10 @@ pub struct ImportResult {
     pub skeletons: Vec<ImportedSkeleton>,
     /// Extracted skeletal animation clips
     pub skeletal_clips: Vec<ImportedSkeletalClip>,
+    /// glTF scene graph nodes with transforms
+    pub nodes: Vec<ImportedNode>,
+    /// Indices of top-level (root) nodes in the scene graph
+    pub root_nodes: Vec<usize>,
 }
 
 impl ImportResult {
@@ -26,6 +30,41 @@ impl ImportResult {
             .iter()
             .filter_map(|m| m.bounds())
             .reduce(|a, b| a.union(&b))
+    }
+
+    /// Returns true when the GLB contains multiple mesh-bearing nodes or
+    /// any mesh node with a non-identity transform, meaning child entities
+    /// should be created to preserve the glTF spatial layout.
+    pub fn needs_expansion(&self) -> bool {
+        let mesh_nodes: Vec<&ImportedNode> = self
+            .nodes
+            .iter()
+            .filter(|n| !n.mesh_primitive_indices.is_empty())
+            .collect();
+
+        if mesh_nodes.len() > 1 {
+            return true;
+        }
+
+        // Single mesh node with a non-identity transform
+        if let Some(node) = mesh_nodes.first() {
+            let t = &node.translation;
+            let r = &node.rotation;
+            let s = &node.scale;
+            let is_identity = (t[0].abs() < 1e-6 && t[1].abs() < 1e-6 && t[2].abs() < 1e-6)
+                && (r[0].abs() < 1e-6
+                    && r[1].abs() < 1e-6
+                    && r[2].abs() < 1e-6
+                    && (r[3] - 1.0).abs() < 1e-6)
+                && ((s[0] - 1.0).abs() < 1e-6
+                    && (s[1] - 1.0).abs() < 1e-6
+                    && (s[2] - 1.0).abs() < 1e-6);
+            if !is_identity {
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -165,6 +204,18 @@ pub struct ImportedSkeletalClip {
     pub name: String,
     pub duration: f32,
     pub channels: Vec<ImportedChannel>,
+}
+
+/// A node from the glTF scene graph, preserving transform hierarchy
+#[derive(Debug, Clone)]
+pub struct ImportedNode {
+    pub name: String,
+    pub translation: [f32; 3],
+    pub rotation: [f32; 4], // quaternion [x, y, z, w]
+    pub scale: [f32; 3],
+    pub mesh_primitive_indices: Vec<usize>, // indices into ImportResult.meshes
+    pub children: Vec<usize>,              // indices into ImportResult.nodes
+    pub skin_index: Option<usize>,
 }
 
 /// An imported texture

@@ -2,7 +2,7 @@
 
 use crate::types::{
     ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial, ImportedMesh,
-    ImportedSkeleton, ImportedSkeletalClip, ImportedTexture, JointProperty,
+    ImportedNode, ImportedSkeleton, ImportedSkeletalClip, ImportedTexture, JointProperty,
 };
 use flint_asset::{AssetMeta, AssetType};
 use flint_core::{ContentHash, FlintError, Result};
@@ -44,63 +44,148 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
 
     let mut meshes = Vec::new();
     let mut total_vertices = 0u64;
+    let mut imported_nodes: Vec<ImportedNode> = Vec::new();
+    let mut root_nodes: Vec<usize> = Vec::new();
 
-    for mesh in document.meshes() {
-        let mesh_name = mesh
+    // Track which glTF node index maps to which ImportedNode index
+    let mut gltf_node_to_imported: HashMap<usize, usize> = HashMap::new();
+
+    // Walk the scene graph via scenes → root nodes → recursive children.
+    // This extracts meshes per-node (preserving transforms) instead of per-mesh.
+    let scene_root_nodes: Vec<gltf::Node> = document
+        .scenes()
+        .flat_map(|scene| scene.nodes())
+        .collect();
+
+    // Recursive helper: extract a node and all its children
+    fn walk_node(
+        node: &gltf::Node,
+        buffers: &[gltf::buffer::Data],
+        node_skin_map: &HashMap<usize, usize>,
+        meshes: &mut Vec<ImportedMesh>,
+        imported_nodes: &mut Vec<ImportedNode>,
+        gltf_node_to_imported: &mut HashMap<usize, usize>,
+        total_vertices: &mut u64,
+    ) -> usize {
+        let (translation, rotation, scale) = node.transform().decomposed();
+
+        let node_name = node
             .name()
             .map(String::from)
-            .unwrap_or_else(|| format!("mesh_{}", mesh.index()));
+            .unwrap_or_else(|| format!("node_{}", node.index()));
 
-        let skin_index = node_skin_map.get(&mesh.index()).copied();
+        let skin_index = if node.skin().is_some() {
+            node.skin().map(|s| s.index())
+        } else {
+            // Check if this node's mesh is associated with a skin via another node
+            node.mesh()
+                .and_then(|m| node_skin_map.get(&m.index()).copied())
+        };
 
-        for primitive in mesh.primitives() {
-            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+        // Extract mesh primitives if this node has a mesh
+        let mut mesh_primitive_indices = Vec::new();
+        if let Some(mesh) = node.mesh() {
+            let mesh_name = mesh
+                .name()
+                .map(String::from)
+                .unwrap_or_else(|| node_name.clone());
 
-            let positions: Vec<[f32; 3]> = reader
-                .read_positions()
-                .map(|iter| iter.collect())
-                .unwrap_or_default();
+            for primitive in mesh.primitives() {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-            let normals: Vec<[f32; 3]> = reader
-                .read_normals()
-                .map(|iter| iter.collect())
-                .unwrap_or_default();
+                let positions: Vec<[f32; 3]> = reader
+                    .read_positions()
+                    .map(|iter| iter.collect())
+                    .unwrap_or_default();
 
-            let uvs: Vec<[f32; 2]> = reader
-                .read_tex_coords(0)
-                .map(|iter| iter.into_f32().collect())
-                .unwrap_or_default();
+                let normals: Vec<[f32; 3]> = reader
+                    .read_normals()
+                    .map(|iter| iter.collect())
+                    .unwrap_or_default();
 
-            let indices: Vec<u32> = reader
-                .read_indices()
-                .map(|iter| iter.into_u32().collect())
-                .unwrap_or_default();
+                let uvs: Vec<[f32; 2]> = reader
+                    .read_tex_coords(0)
+                    .map(|iter| iter.into_f32().collect())
+                    .unwrap_or_default();
 
-            let material_index = primitive.material().index();
+                let indices: Vec<u32> = reader
+                    .read_indices()
+                    .map(|iter| iter.into_u32().collect())
+                    .unwrap_or_default();
 
-            // Read joint indices and weights for skinned meshes
-            let joint_indices: Option<Vec<[u16; 4]>> = reader
-                .read_joints(0)
-                .map(|iter| iter.into_u16().collect());
+                let material_index = primitive.material().index();
 
-            let joint_weights: Option<Vec<[f32; 4]>> = reader
-                .read_weights(0)
-                .map(|iter| iter.into_f32().collect());
+                let joint_indices: Option<Vec<[u16; 4]>> = reader
+                    .read_joints(0)
+                    .map(|iter| iter.into_u16().collect());
 
-            total_vertices += positions.len() as u64;
+                let joint_weights: Option<Vec<[f32; 4]>> = reader
+                    .read_weights(0)
+                    .map(|iter| iter.into_f32().collect());
 
-            meshes.push(ImportedMesh {
-                name: mesh_name.clone(),
-                positions,
-                normals,
-                uvs,
-                indices,
-                material_index,
-                joint_indices,
-                joint_weights,
-                skin_index,
-            });
+                *total_vertices += positions.len() as u64;
+
+                let prim_index = meshes.len();
+                meshes.push(ImportedMesh {
+                    name: mesh_name.clone(),
+                    positions,
+                    normals,
+                    uvs,
+                    indices,
+                    material_index,
+                    joint_indices,
+                    joint_weights,
+                    skin_index,
+                });
+                mesh_primitive_indices.push(prim_index);
+            }
         }
+
+        // Reserve this node's index
+        let node_index = imported_nodes.len();
+        gltf_node_to_imported.insert(node.index(), node_index);
+        imported_nodes.push(ImportedNode {
+            name: node_name,
+            translation,
+            rotation,
+            scale,
+            mesh_primitive_indices,
+            children: Vec::new(), // filled in below
+            skin_index,
+        });
+
+        // Recurse into children
+        let child_indices: Vec<usize> = node
+            .children()
+            .map(|child| {
+                walk_node(
+                    &child,
+                    buffers,
+                    node_skin_map,
+                    meshes,
+                    imported_nodes,
+                    gltf_node_to_imported,
+                    total_vertices,
+                )
+            })
+            .collect();
+
+        imported_nodes[node_index].children = child_indices;
+
+        node_index
+    }
+
+    for root_node in &scene_root_nodes {
+        let idx = walk_node(
+            root_node,
+            &buffers,
+            &node_skin_map,
+            &mut meshes,
+            &mut imported_nodes,
+            &mut gltf_node_to_imported,
+            &mut total_vertices,
+        );
+        root_nodes.push(idx);
     }
 
     let mut textures = Vec::new();
@@ -233,6 +318,8 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
         materials,
         skeletons,
         skeletal_clips,
+        nodes: imported_nodes,
+        root_nodes,
     })
 }
 

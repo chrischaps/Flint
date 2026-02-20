@@ -7,7 +7,7 @@ use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::transform_gizmo::{TransformGizmo, UndoEntry};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
-use flint_import::import_gltf;
+use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
@@ -404,13 +404,14 @@ impl ViewerApp {
 
         // Load models and update meshes from world
         {
-            let state = self.state.lock().unwrap();
-            load_models_from_world(
-                &state.world,
+            let mut state = self.state.lock().unwrap();
+            let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+            model_loader::load_models_from_world(
+                &mut state.world,
                 &mut scene_renderer,
                 &render_context.device,
                 &render_context.queue,
-                &state.scene_path,
+                &config,
             );
             scene_renderer.update_from_world(&state.world, &render_context.device);
         }
@@ -836,13 +837,14 @@ impl ViewerApp {
                     if let (Some(context), Some(renderer)) =
                         (&self.render_context, &mut self.scene_renderer)
                     {
-                        let state = self.state.lock().unwrap();
-                        load_models_from_world(
-                            &state.world,
+                        let mut state = self.state.lock().unwrap();
+                        let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+                        model_loader::load_models_from_world(
+                            &mut state.world,
                             renderer,
                             &context.device,
                             &context.queue,
-                            &state.scene_path,
+                            &config,
                         );
                         renderer.update_from_world(&state.world, &context.device);
                     }
@@ -1087,126 +1089,6 @@ impl ViewerApp {
                 drop(state);
                 eprintln!("Save failed: {}", e);
                 self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
-            }
-        }
-    }
-}
-
-/// Scan the world for entities with model components and load the referenced glTF files
-fn load_models_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    for entity in world.all_entities() {
-        let model_asset = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("model").cloned())
-            .and_then(|model| {
-                model
-                    .get("asset")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(asset_name) = model_asset {
-            if renderer.mesh_cache().contains(&asset_name) {
-                continue;
-            }
-
-            // Search scene dir first, then parent (game root)
-            let model_path = {
-                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    parent.join("models").join(format!("{}.glb", asset_name))
-                } else {
-                    p
-                }
-            };
-
-            if model_path.exists() {
-                match import_gltf(&model_path) {
-                    Ok(import_result) => {
-                        println!(
-                            "Loaded model: {} ({} meshes, {} materials)",
-                            asset_name,
-                            import_result.meshes.len(),
-                            import_result.materials.len()
-                        );
-                        renderer.load_model(device, queue, &asset_name, &import_result);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to load model '{}': {:?}", asset_name, e);
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Model file not found: {} (tried {})",
-                    asset_name,
-                    model_path.display()
-                );
-            }
-        }
-    }
-
-    // Also load texture files referenced by material components
-    load_textures_from_world(world, renderer, device, queue, scene_path);
-}
-
-/// Scan the world for entities with material.texture and pre-load the referenced image files
-fn load_textures_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for entity in world.all_entities() {
-        let texture_name = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("material").cloned())
-            .and_then(|material| {
-                material
-                    .get("texture")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(tex_name) = texture_name {
-            if loaded.contains(&tex_name) {
-                continue;
-            }
-            loaded.insert(tex_name.clone());
-
-            let tex_path = scene_dir.join(&tex_name);
-            if tex_path.exists() {
-                match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
-                    Ok(true) => {
-                        println!("Loaded texture: {}", tex_name);
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        eprintln!("Failed to load texture '{}': {}", tex_name, e);
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Texture file not found: {} (tried {})",
-                    tex_name,
-                    tex_path.display()
-                );
             }
         }
     }

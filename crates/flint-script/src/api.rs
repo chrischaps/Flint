@@ -210,6 +210,12 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     toml::Value::Float(y),
                     toml::Value::Float(z),
                 ]));
+                // Clear quaternion so Euler angles take effect
+                if let Some(transform) = comps.get_mut("transform") {
+                    if let Some(table) = transform.as_table_mut() {
+                        table.remove("rotation_quat");
+                    }
+                }
             }
         });
     }
