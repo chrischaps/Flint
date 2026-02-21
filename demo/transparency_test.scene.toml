@@ -1,0 +1,231 @@
+# Transparency Test Scene
+# Validates alpha blending, additive blending, multiply blending,
+# depth sorting, and opacity controls.
+
+[scene]
+name = "Transparency Test"
+version = "1.0"
+description = "Test scene for transparent material rendering"
+
+[post_process]
+enabled = true
+exposure = 1.2
+bloom_enabled = true
+bloom_intensity = 0.3
+bloom_threshold = 1.5
+
+# ============================================================
+#  GROUND PLANE — opaque dark surface to see transparency against
+# ============================================================
+
+[entities.ground]
+[entities.ground.transform]
+position = [0, -0.05, 0]
+[entities.ground.bounds]
+min = [-10, 0, -10]
+max = [10, 0.1, 10]
+[entities.ground.material]
+base_color_r = 0.15
+base_color_g = 0.15
+base_color_b = 0.18
+base_color_a = 1.0
+roughness = 0.9
+
+# ============================================================
+#  OPAQUE REFERENCE OBJECTS — behind the transparent panels
+# ============================================================
+
+[entities.barrel_left]
+archetype = "furniture"
+[entities.barrel_left.transform]
+position = [-3, 0, -2]
+[entities.barrel_left.model]
+asset = "barrel"
+
+[entities.barrel_center]
+archetype = "furniture"
+[entities.barrel_center.transform]
+position = [0, 0, -2]
+[entities.barrel_center.model]
+asset = "barrel"
+
+[entities.barrel_right]
+archetype = "furniture"
+[entities.barrel_right.transform]
+position = [3, 0, -2]
+[entities.barrel_right.model]
+asset = "barrel"
+
+[entities.lantern]
+archetype = "furniture"
+[entities.lantern.transform]
+position = [0, 0, -3.5]
+scale = [2, 2, 2]
+[entities.lantern.model]
+asset = "Lantern"
+
+# ============================================================
+#  TRANSPARENT PANELS — in front of barrels, varying opacity
+# ============================================================
+
+# Red glass panel — 30% opacity (very see-through)
+[entities.red_glass]
+[entities.red_glass.transform]
+position = [-3, 1, 0]
+[entities.red_glass.bounds]
+min = [-1.2, -1, -0.05]
+max = [1.2, 1, 0.05]
+[entities.red_glass.material]
+base_color_r = 0.9
+base_color_g = 0.1
+base_color_b = 0.1
+base_color_a = 1.0
+opacity = 0.3
+roughness = 0.1
+metallic = 0.5
+
+# Blue glass panel — 50% opacity (moderate)
+[entities.blue_glass]
+[entities.blue_glass.transform]
+position = [0, 1, 0]
+[entities.blue_glass.bounds]
+min = [-1.2, -1, -0.05]
+max = [1.2, 1, 0.05]
+[entities.blue_glass.material]
+base_color_r = 0.1
+base_color_g = 0.3
+base_color_b = 0.95
+base_color_a = 1.0
+opacity = 0.5
+roughness = 0.05
+metallic = 0.8
+
+# Green glass panel — 70% opacity (mostly opaque)
+[entities.green_glass]
+[entities.green_glass.transform]
+position = [3, 1, 0]
+[entities.green_glass.bounds]
+min = [-1.2, -1, -0.05]
+max = [1.2, 1, 0.05]
+[entities.green_glass.material]
+base_color_r = 0.1
+base_color_g = 0.85
+base_color_b = 0.2
+base_color_a = 1.0
+opacity = 0.7
+roughness = 0.1
+metallic = 0.3
+
+# ============================================================
+#  BLEND MODE TESTS — additive and multiply
+# ============================================================
+
+# Additive glow cube — energy shield / hologram look
+[entities.additive_glow]
+[entities.additive_glow.transform]
+position = [-5.5, 0.75, 1]
+[entities.additive_glow.bounds]
+min = [-0.75, -0.75, -0.75]
+max = [0.75, 0.75, 0.75]
+[entities.additive_glow.material]
+base_color_r = 0.2
+base_color_g = 0.6
+base_color_b = 1.0
+base_color_a = 1.0
+opacity = 0.5
+blend_mode = "additive"
+roughness = 0.0
+metallic = 1.0
+
+# Multiply dark glass — tinted visor look
+[entities.multiply_glass]
+[entities.multiply_glass.transform]
+position = [5.5, 0.75, 1]
+[entities.multiply_glass.bounds]
+min = [-0.75, -0.75, -0.75]
+max = [0.75, 0.75, 0.75]
+[entities.multiply_glass.material]
+base_color_r = 0.4
+base_color_g = 0.2
+base_color_b = 0.1
+base_color_a = 1.0
+opacity = 0.6
+blend_mode = "multiply"
+roughness = 0.3
+
+# ============================================================
+#  OPACITY GRADIENT — 5 small cubes from nearly invisible to opaque
+# ============================================================
+
+[entities.fade_1]
+[entities.fade_1.transform]
+position = [-3, 0.4, 3.5]
+[entities.fade_1.bounds]
+min = [-0.35, -0.35, -0.35]
+max = [0.35, 0.35, 0.35]
+[entities.fade_1.material]
+base_color_r = 1.0
+base_color_g = 0.8
+base_color_b = 0.0
+opacity = 0.1
+
+[entities.fade_2]
+[entities.fade_2.transform]
+position = [-1.5, 0.4, 3.5]
+[entities.fade_2.bounds]
+min = [-0.35, -0.35, -0.35]
+max = [0.35, 0.35, 0.35]
+[entities.fade_2.material]
+base_color_r = 1.0
+base_color_g = 0.8
+base_color_b = 0.0
+opacity = 0.3
+
+[entities.fade_3]
+[entities.fade_3.transform]
+position = [0, 0.4, 3.5]
+[entities.fade_3.bounds]
+min = [-0.35, -0.35, -0.35]
+max = [0.35, 0.35, 0.35]
+[entities.fade_3.material]
+base_color_r = 1.0
+base_color_g = 0.8
+base_color_b = 0.0
+opacity = 0.5
+
+[entities.fade_4]
+[entities.fade_4.transform]
+position = [1.5, 0.4, 3.5]
+[entities.fade_4.bounds]
+min = [-0.35, -0.35, -0.35]
+max = [0.35, 0.35, 0.35]
+[entities.fade_4.material]
+base_color_r = 1.0
+base_color_g = 0.8
+base_color_b = 0.0
+opacity = 0.7
+
+[entities.fade_5]
+[entities.fade_5.transform]
+position = [3, 0.4, 3.5]
+[entities.fade_5.bounds]
+min = [-0.35, -0.35, -0.35]
+max = [0.35, 0.35, 0.35]
+[entities.fade_5.material]
+base_color_r = 1.0
+base_color_g = 0.8
+base_color_b = 0.0
+opacity = 1.0
+
+# ============================================================
+#  LIGHTING
+# ============================================================
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 10, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.4, -0.8, -0.3]
+color = [1.0, 0.95, 0.9]
+intensity = 2.5

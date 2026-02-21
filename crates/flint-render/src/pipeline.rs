@@ -3,6 +3,17 @@
 use crate::primitives::Vertex;
 use bytemuck::{Pod, Zeroable};
 
+/// Blend mode for transparent materials
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendMode {
+    /// Standard alpha blending (default)
+    Alpha,
+    /// Additive blending (glow, energy, fire)
+    Additive,
+    /// Multiplicative blending (tinted glass, color filters)
+    Multiply,
+}
+
 /// Transform uniform buffer data (bind group 0)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -52,8 +63,8 @@ pub struct MaterialUniforms {
     pub has_normal_map: u32,
     pub has_metallic_roughness_tex: u32,
     pub selection_highlight: u32,
-    pub _pad_sel0: u32,
-    pub _pad_sel1: u32,
+    pub opacity: f32,
+    pub alpha_cutoff: f32,
     pub _pad_sel2: u32,
 }
 
@@ -71,8 +82,8 @@ impl MaterialUniforms {
             has_normal_map: 0,
             has_metallic_roughness_tex: 0,
             selection_highlight: 0,
-            _pad_sel0: 0,
-            _pad_sel1: 0,
+            opacity: 1.0,
+            alpha_cutoff: 0.5,
             _pad_sel2: 0,
         }
     }
@@ -90,8 +101,8 @@ impl MaterialUniforms {
             has_normal_map: 0,
             has_metallic_roughness_tex: 0,
             selection_highlight: 0,
-            _pad_sel0: 0,
-            _pad_sel1: 0,
+            opacity: 1.0,
+            alpha_cutoff: 0.5,
             _pad_sel2: 0,
         }
     }
@@ -237,6 +248,9 @@ pub struct RenderPipeline {
     pub overlay_line_pipeline: wgpu::RenderPipeline,
     pub outline_pipeline: wgpu::RenderPipeline,
     pub depth_prepass_pipeline: wgpu::RenderPipeline,
+    pub transparent_alpha_pipeline: wgpu::RenderPipeline,
+    pub transparent_additive_pipeline: wgpu::RenderPipeline,
+    pub transparent_multiply_pipeline: wgpu::RenderPipeline,
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     pub light_bind_group_layout: wgpu::BindGroupLayout,
@@ -612,12 +626,163 @@ impl RenderPipeline {
                 cache: None,
             });
 
+        // Transparent alpha pipeline: standard alpha blending, no depth write, no backface cull
+        let transparent_alpha_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Transparent Alpha Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Transparent additive pipeline: src*SrcAlpha + dst*One
+        let transparent_additive_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Transparent Additive Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Transparent multiply pipeline: src*DstColor + dst*OneMinusSrcAlpha
+        let transparent_multiply_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Transparent Multiply Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Dst,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Self {
             pipeline,
             line_pipeline,
             overlay_line_pipeline,
             outline_pipeline,
             depth_prepass_pipeline,
+            transparent_alpha_pipeline,
+            transparent_additive_pipeline,
+            transparent_multiply_pipeline,
             transform_bind_group_layout,
             material_bind_group_layout,
             light_bind_group_layout,
