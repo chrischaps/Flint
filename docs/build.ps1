@@ -1,22 +1,23 @@
 #!/usr/bin/env pwsh
 # ============================================================
-#  Flint Documentation Build & Deploy Script
+#  Flint Documentation — Build & Publish
 # ============================================================
 #
 #  Builds mdBook guide + rustdoc API reference, merges them,
-#  and copies the result to the docs.chaps.dev repository.
+#  copies the result to the docs.chaps.dev repo, and optionally
+#  commits and pushes to publish.
 #
 #  Usage:
-#    ./docs/build.ps1              # Build and deploy
-#    ./docs/build.ps1 -SkipRustdoc # Skip cargo doc (faster iteration)
-#    ./docs/build.ps1 -Serve       # Build and serve locally
-#
-#  After running, commit and push ~/dev/docs.chaps.dev/ to deploy.
+#    ./docs/build.ps1                  # Build and deploy locally
+#    ./docs/build.ps1 -Publish         # Build, deploy, commit, push
+#    ./docs/build.ps1 -SkipRustdoc     # Skip cargo doc (faster)
+#    ./docs/build.ps1 -Serve           # Build and serve locally
 #
 # ============================================================
 
 param(
     [switch]$SkipRustdoc,
+    [switch]$Publish,
     [switch]$Serve,
     [string]$DocsRepo = "$env:USERPROFILE\dev\docs.chaps.dev"
 )
@@ -65,7 +66,10 @@ if (-not $SkipRustdoc) {
     $env:RUSTDOCFLAGS = "--html-in-header $RustdocHeader"
     Push-Location $ProjectRoot
     try {
-        cargo doc --workspace --no-deps 2>&1 | ForEach-Object { Write-Host "  $_" }
+        # Temporarily allow stderr (cargo writes progress to stderr)
+        $ErrorActionPreference = "Continue"
+        cargo doc --workspace --no-deps 2>&1 | ForEach-Object { Write-Host "  $($_.ToString())" }
+        $ErrorActionPreference = "Stop"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  cargo doc failed!" -ForegroundColor Red
             exit 1
@@ -76,7 +80,7 @@ if (-not $SkipRustdoc) {
         Pop-Location
     }
 } else {
-    Write-Host "[2/4] Skipping rustdoc (--SkipRustdoc)" -ForegroundColor DarkGray
+    Write-Host "[2/4] Skipping rustdoc (-SkipRustdoc)" -ForegroundColor DarkGray
 }
 
 # ----------------------------------------
@@ -84,7 +88,6 @@ if (-not $SkipRustdoc) {
 # ----------------------------------------
 Write-Host "[3/4] Merging outputs..." -ForegroundColor Yellow
 
-# Copy rustdoc into mdBook output as /api/
 if (-not $SkipRustdoc) {
     $ApiDir = Join-Path $BookOutput "api"
     if (Test-Path $ApiDir) {
@@ -121,15 +124,57 @@ if ($Serve) {
         Remove-Item -Recurse -Force $DeployDir
     }
     Copy-Item -Recurse $BookOutput $DeployDir
-
     Write-Host "  Deployed to $DeployDir" -ForegroundColor Green
+}
+
+# ----------------------------------------
+# Step 5: Publish (commit + push)
+# ----------------------------------------
+if ($Publish -and -not $Serve) {
+    Write-Host ""
+    Write-Host "=== Publishing to docs.chaps.dev ===" -ForegroundColor Cyan
+    Write-Host ""
+
+    if (-not (Test-Path (Join-Path $DocsRepo ".git"))) {
+        Write-Host "  Docs repo not found at $DocsRepo" -ForegroundColor Red
+        exit 1
+    }
+
+    Push-Location $DocsRepo
+    try {
+        git add -A
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  git add failed" -ForegroundColor Red
+            exit 1
+        }
+
+        # Check if there are staged changes
+        git diff --cached --quiet
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  No changes to publish - docs are already up to date." -ForegroundColor Green
+        } else {
+            git commit -m "Update Flint docs"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  git commit failed" -ForegroundColor Red
+                exit 1
+            }
+
+            git push
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  git push failed" -ForegroundColor Red
+                exit 1
+            }
+
+            Write-Host "  Docs published successfully." -ForegroundColor Green
+        }
+    } finally {
+        Pop-Location
+    }
+} elseif (-not $Serve) {
     Write-Host ""
     Write-Host "=== Build complete ===" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  To publish:" -ForegroundColor White
-    Write-Host "    cd $DocsRepo" -ForegroundColor Gray
-    Write-Host "    git add -A" -ForegroundColor Gray
-    Write-Host "    git commit -m 'Update Flint docs'" -ForegroundColor Gray
-    Write-Host "    git push" -ForegroundColor Gray
+    Write-Host "  To publish, run again with -Publish" -ForegroundColor White
+    Write-Host "  Or manually: cd $DocsRepo, then git add/commit/push" -ForegroundColor Gray
     Write-Host ""
 }

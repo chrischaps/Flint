@@ -145,6 +145,46 @@ vignette_intensity = 0.3
 exposure = 1.0
 ```
 
+### UI Layout
+
+```toml
+# ui/hud.ui.toml
+[ui]
+name = "HUD"
+style = "ui/hud.style.toml"
+
+[elements.score_panel]
+type = "panel"
+anchor = "top-right"
+class = "hud-panel"
+
+[elements.score_text]
+type = "text"
+parent = "score_panel"
+class = "score-value"
+text = "0"
+```
+
+### UI Style
+
+```toml
+# ui/hud.style.toml
+[styles.hud-panel]
+width = 160
+height = 50
+bg_color = [0.0, 0.0, 0.0, 0.6]
+rounding = 6
+padding = [10, 8, 10, 8]
+x = -10
+y = 10
+
+[styles.score-value]
+font_size = 28
+color = [1.0, 1.0, 1.0, 1.0]
+text_align = "center"
+width_pct = 100
+```
+
 ### Script Attachment
 
 ```toml
@@ -204,8 +244,10 @@ position = [0, 0, 0]
 | `push_state("paused")` | --- | Push a game state (e.g., pause) |
 | `pop_state()` | --- | Pop to previous game state |
 | `persist_set(key, val)` | --- | Store data across scene transitions |
-| `load_ui(path)` | `i64` | Load a data-driven UI document |
-| `ui_set_text(id, text)` | --- | Update UI element text |
+| `load_ui(path)` | `i64` | Load a `.ui.toml` document (returns handle) |
+| `ui_set_text(id, text)` | --- | Set element text content |
+| `ui_show(id)` / `ui_hide(id)` | --- | Toggle element visibility |
+| `ui_set_style(id, prop, val)` | --- | Override a style property at runtime |
 
 ## Render Command Quick Examples
 

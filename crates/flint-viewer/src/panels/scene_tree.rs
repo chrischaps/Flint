@@ -44,6 +44,11 @@ impl SceneTree {
         self.selected
     }
 
+    /// Programmatically select an entity (e.g. from viewport picking)
+    pub fn select(&mut self, entity_id: Option<EntityId>) {
+        self.selected = entity_id;
+    }
+
     /// Draw the scene tree UI
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Scene Tree");

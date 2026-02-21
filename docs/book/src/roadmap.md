@@ -1,154 +1,181 @@
 # Roadmap
 
-Flint's development is organized into phases. Each phase delivers a usable milestone that builds on the previous one.
+Flint has a solid foundation — PBR rendering, physics, audio, animation, scripting, particles, post-processing, AI asset generation, and a shipped Doom-style FPS demo. The roadmap now focuses on the features needed to ship production games.
 
-## Phase 1: Foundation --- CLI + Query + Schema
+## Visual Scene Tweaking
 
-**Status: Complete**
+**Priority: High**
 
-The foundation phase established the core data model and CLI interface. An agent (or human) can create, query, and modify scenes entirely through commands.
+Flint's core thesis is that scenes are *authored* by AI agents and code — not by dragging objects around a viewport. But AI-generated layouts often need human nudges: a light that's slightly too far left, a prop that clips through a wall, a rotation that's five degrees off. The goal isn't a full scene editor — it's a lightweight adjustment layer on top of the CLI-first workflow.
 
-**Delivered:**
-- `flint-core` --- Entity IDs, content hashing, fundamental types
-- `flint-schema` --- Component registry, archetype definitions, TOML-based introspection
-- `flint-ecs` --- hecs integration with stable IDs, named entities, parent-child hierarchy
-- `flint-scene` --- TOML scene serialization and deserialization
-- `flint-query` --- PEG query language with pest parser
-- `flint-cli` --- CRUD operations for entities and scenes
+- Translate / rotate / scale gizmos for fine-tuning positions
+- Property inspector for tweaking component values in-place
+- Changes write back to the scene TOML (preserving AI-authored structure)
+- Undo / redo for safe experimentation
 
-**Milestone:** `flint entity create --archetype door` works. `flint query "entities"` returns results.
+## Frustum Culling & Level of Detail
 
-## Phase 2: Constraints + Assets
+**Priority: High**
 
-**Status: Complete**
+Without visibility culling, every object renders every frame regardless of whether it's on screen. This is the performance ceiling that blocks larger scenes.
 
-The validation and asset management phase. Scenes can now be checked against declarative rules, and external files can be imported into a content-addressed store.
+- BVH spatial acceleration structure
+- Frustum culling (skip off-screen objects entirely)
+- Mesh LOD switching by camera distance
+- Optional texture streaming for large worlds
 
-**Delivered:**
-- `flint-constraint` --- Constraint definitions, validation engine, auto-fix with cascade detection
-- `flint-asset` --- Content-addressed storage (SHA-256), asset catalog with name/hash/type/tag indexing
-- `flint-import` --- glTF/GLB importer with mesh, material, and texture extraction
+## Navigation Mesh & Pathfinding
 
-**Milestone:** `flint validate --fix` automatically fixes constraint violations. `flint asset import model.glb` stores and catalogs assets.
+**Priority: High**
 
-## Phase 3: Rendering + Visual Validation
+Every game with NPCs needs this. Currently enemies can only do simple raycast-based movement — entire genres are blocked without proper pathfinding.
 
-**Status: Complete**
+- Nav mesh generation from scene geometry
+- A\* pathfinding with dynamic obstacle avoidance
+- Script API: `find_path(from, to)`, `move_along_path()`
+- Optional crowd simulation (RVO) for dense NPC scenes
 
-The visual validation phase. Physically-based rendering with a full-featured scene viewer.
+## Coroutines & Async Scripting
 
-**Delivered:**
-- `flint-render` --- wgpu 23 PBR renderer with Cook-Torrance shading, cascaded shadow mapping, and glTF mesh rendering
-- `flint-viewer` --- egui-based GUI inspector with entity tree, component editing, and constraint overlay
-- Scene viewer with orbit camera, hot-reload via `serve --watch`
-- Headless rendering for CI (`flint render --headless`)
-- Material system with roughness, metallic, emissive, and texture support
+**Priority: High**
 
-**Milestone:** `flint serve --watch` shows a live PBR scene with shadows that updates when files change.
+Rhai scripts today are strictly synchronous per-frame. There's no clean way to express "wait 2 seconds, then open the door, then play a sound" without manually tracking elapsed time in component state.
 
-## Phase 4: Interactive Runtime
+- `yield` / `wait(seconds)` mechanism for time-based sequences
+- Coroutine scheduling integrated with the game loop
+- Cleaner cutscene, tutorial, and event-chain authoring
 
-**Status: Complete**
+## Transparent Material Rendering
 
-The game runtime phase. A playable game loop with physics, audio, animation, scripting, and interactive entities.
+**Priority: High**
 
-**Stage 1 --- Game Loop + Physics: Complete**
-- `flint-runtime` --- GameClock (fixed-timestep accumulator), InputState (keyboard/mouse with action bindings), EventBus, RuntimeSystem trait
-- `flint-physics` --- Rapier 3D integration: PhysicsWorld, PhysicsSync (TOML-to-Rapier bridge), CharacterController (kinematic first-person movement with gravity and jumping)
-- `flint-player` --- Standalone player binary with full game loop
-- First-person camera mode (backward-compatible with orbit)
-- CLI `play` command --- `flint play <scene> [--schemas] [--fullscreen]`
-- Physics schemas --- `rigidbody.toml`, `collider.toml`, `character_controller.toml` components + `player.toml` archetype
-- Demo scene --- walkable tavern with physics colliders on walls, floor, and furniture
+The renderer currently uses binary alpha only — pixels are either fully opaque or discarded. There's no way to render glass, water surfaces, energy shields, smoke, or any translucent material. This is a core rendering capability that gates visual variety across every genre.
 
-**Stage 2 --- Audio: Complete**
-- `flint-audio` --- Kira 0.11 integration: AudioEngine, AudioSync, AudioTrigger, AudioSystem
-- Spatial 3D audio with distance attenuation via SpatialTrackHandle
-- Non-spatial ambient loops on main track
-- Event-driven sound triggers (collision, interaction)
-- Audio component schemas --- `audio_source.toml`, `audio_listener.toml`, `audio_trigger.toml`
-- Graceful degradation when no audio device available (headless/CI)
-- Demo audio --- CC0 OGG assets: fire crackle, ambient tavern, door open, glass clinks
+- Sorted alpha blending pass (back-to-front) for translucent materials
+- `opacity` field on material component (0.0–1.0)
+- Blend modes: alpha, additive, multiply
+- Refraction for glass and water (screen-space distortion)
+- Depth peeling or weighted-blended OIT for overlapping transparencies
 
-**Stage 3 --- Animation: Complete**
-- `flint-animation` --- Two-tier animation system:
-  - **Tier 1: Property tweens** --- TOML-defined `.anim.toml` keyframe clips with Step/Linear/CubicSpline interpolation, `animator` component schema, event firing at keyframe times
-  - **Tier 2: Skeletal animation** --- glTF skin/joint import via `flint-import`, GPU vertex skinning with storage buffer bone matrices, separate `SkinnedVertex` pipeline, crossfade blending between clips
-- `skeleton` component schema for glTF skin references
-- Skinned shadow mapping with dedicated shader entry point
-- Demo animations --- bobbing platform (4s loop), door swing (0.8s), skeletal test scene
+## Script Modules & Shared Code
 
-**Stage 4 --- Scripting: Complete**
-- `flint-script` --- Rhai scripting engine with per-entity scopes and AST management
-- Entity API (read/write components, spawn/despawn, position/rotation, distance)
-- Input API (action pressed/just-pressed, mouse delta)
-- Audio API (play_sound, play_sound_at, stop_sound) via deferred ScriptCommand pattern
-- Animation API (play_clip, stop_clip, blend_to, set_anim_speed) via direct ECS writes
-- Math API (clamp, lerp, random, trig, atan2)
-- Event callbacks: `on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`
-- Hot-reload via file timestamp checking (keeps old AST on compile error)
-- `script` component schema with `source` and `enabled` fields
+**Priority: High**
 
-**Stage 5 --- Integration: Complete**
-- `interactable` component schema (prompt_text, range, interaction_type, enabled)
-- Proximity-based interaction with `find_nearest_interactable()` scanning
-- egui HUD overlay: crosshair + interaction prompt text with fade in/out
-- NPC behavior scripts: bartender (wave + glass clink), patron (random fidget), mysterious stranger (ominous reactions)
-- Footstep sounds synced to player movement
-- Ambient event system (random sounds: glass clinks, chair creaks)
-- Full atmospheric tavern integration demo with scripts, audio, animation, and interactables
+As games grow beyond a handful of scripts, there's no way to share utility functions. Every `.rhai` file is isolated — common code (damage formulas, inventory helpers, math utilities) gets copy-pasted across scripts. This is the biggest developer-productivity bottleneck for larger projects.
 
-**Milestone:** `flint play tavern.scene.toml` launches a first-person walkable scene with physics, spatial audio, animation, scripted NPCs, and interactive objects.
+- `import "utils"` mechanism to load shared `.rhai` modules
+- Module search path: `scripts/lib/` for shared code, game-level overrides
+- Pre-compiled module caching (avoid re-parsing shared code per entity)
+- Hot-reload awareness (recompile dependents when a module changes)
 
-## Phase 5: AI Asset Pipeline
+## ~~UI Layout System~~ Done
 
-**Status: Complete**
+Data-driven UI with layout/style/logic separation. Structure defined in `.ui.toml`, visuals in `.style.toml`, logic in Rhai scripts. The procedural `draw_*` API continues to work alongside the layout system.
 
-Integrated AI generation workflows for textures, meshes, and audio with style consistency and provenance tracking.
+- Anchor-based positioning (9 anchor points: top-left through bottom-right)
+- Flow layouts: vertical stacking (default) and horizontal
+- Percentage-based sizing, auto-height containers, padding and margin
+- Named style classes with runtime overrides from scripts
+- Rhai API: `load_ui`, `unload_ui`, `ui_set_text`, `ui_show`/`ui_hide`, `ui_set_style`, `ui_set_class`, `ui_get_rect`
+- Element types: Panel, Text, Rect, Circle, Image
+- Multi-document support with handle-based load/unload
+- Layout caching with automatic invalidation on screen resize
 
-**Delivered:**
-- `flint-asset-gen` --- pluggable `GenerationProvider` trait with four implementations:
-  - **Flux** --- AI texture generation (PNG output)
-  - **Meshy** --- text-to-3D model generation (GLB output, async job polling)
-  - **ElevenLabs** --- AI sound effect and voice generation
-  - **Mock** --- generates minimal valid files for testing without network access
-- **Style guides** --- TOML-defined visual vocabulary (palette, materials, geometry constraints) that enriches generation prompts for consistent asset aesthetics
-- **Semantic asset definitions** --- `asset_def` component schema mapping intent to generation requests (description, material intent, wear level, size class)
-- **Batch scene resolution** --- `flint asset resolve` with strategies: `ai_generate`, `human_task`, `ai_then_human`
-- **Model validation** --- `validate_model()` checks GLB geometry and materials against style constraints (triangle count, UVs, normals, roughness/metallic ranges)
-- **Build manifests** --- provenance tracking for all generated assets (provider, prompt, content hash)
-- **Layered configuration** --- `~/.flint/config.toml` < `.flint/config.toml` < environment variables for API keys and provider settings
-- **Runtime catalog integration** --- `PlayerApp` resolves assets by name through catalog → hash → content store → file fallback chain
-- **CLI commands** --- `flint asset generate`, `flint asset validate`, `flint asset manifest`, `flint asset regenerate`, `flint asset job status/list`
+## Terrain System
 
-**Milestone:** `flint asset generate texture -d "stone wall" --style medieval_tavern` produces a style-consistent texture, validates it, and stores it in the content-addressed catalog.
+**Priority: Medium-High**
 
-## Phase A: Doom-Style FPS
+The engine excels at interior scenes — taverns, dungeons, arenas — but has no solution for outdoor environments. Height-field terrain is the single biggest genre-unlocking feature missing: open-world, exploration, RTS, and large-scale games all depend on it.
 
-**Status: Complete**
+- Height-field terrain with chunk-based rendering
+- Material splatting (blend grass, dirt, rock, snow by painted weight maps)
+- Chunk LOD for draw-distance scaling
+- Collision mesh generation for physics and character controller
+- Script API: `get_terrain_height(x, z)` for grounding NPCs and objects
 
-A minimum playable Doom-style first-person shooter, demonstrating the engine's capability for real-time action gameplay with billboard sprites, raycasting combat, and game-level logic entirely in scripts.
+## Audio Environment Zones
 
-**Delivered:**
-- **Billboard sprite rendering** --- `BillboardPipeline` with camera-facing quads, sprite sheet animation, binary alpha via `discard`, per-sprite uniform buffers. `sprite` component schema (texture, width, height, frame, frames_x/y, anchor_y, fullbright, visible)
-- **Raycasting** --- `PhysicsWorld::raycast()` with `EntityRaycastHit` struct, collider-to-entity resolution, self-exclusion. Exposed to Rhai scripts as `raycast()`, `get_camera_direction()`, `get_camera_position()`
-- **Script-driven HUD** --- `DrawCommand` pipeline with text, rect, circle, line, and sprite primitives. `on_draw_ui()` callback, `screen_width()`/`screen_height()`, `measure_text()`, `find_nearest_interactable()`. All game UI lives in `.rhai` scripts, not engine code
-- **Mouse button action bindings** --- `mouse_button_map` alongside keyboard `action_map`; `fire` bound to left mouse button by default. `weapon_1`/`weapon_2`/`reload` actions added
-- **Game project pattern** --- `games/<name>/` directory structure with own schemas/scripts/scenes/assets. `--schemas` flag accepts multiple paths with later-path-wins priority
-- **Multi-directory schema loading** --- `SchemaRegistry::load_from_multiple_dirs()` merges engine and game schemas
-- **Enemy AI state machine** --- idle/chase/attack/dead states with line-of-sight checks, patrol patterns, and damage response (all in Rhai scripts)
-- **Health/ammo pickups** --- pickup component with collect-on-proximity logic in scripts
-- **Combat HUD** --- crosshair, health bar, ammo counter, damage flash overlay, weapon name display, interaction prompts (all script-driven via `hud.rhai`)
-- **Additional script APIs** --- `this_entity()` alias, `get_component()`, `play_sound(name, volume)` overload, `log_info()` alias
+**Priority: Medium-High**
 
-**Milestone:** From the Doom FPS game repo: `.\play.bat fps_arena` launches a playable FPS with enemies, weapons, pickups, and a full combat HUD. The game repo includes the engine as a git subtree.
+Walking from a stone cathedral into an open field should *sound* different. The spatial audio system handles positioning well, but there's no environmental modeling. This is the audio equivalent of reflection probes — a massive immersion jump for minimal complexity.
 
-## Beyond Phase A
+- Reverb zones defined as trigger volumes in scenes
+- Preset environments (cathedral, cave, forest, small room, underwater)
+- Smooth crossfade when transitioning between zones
+- Occlusion: sounds behind walls are muffled (raycast-based)
+- Script API: `set_reverb_zone(entity_id, preset)`, `set_reverb_mix(wet, dry)`
 
-These are ideas under consideration, not committed plans. See the Doom FPS game repository's `DOOM_FPS_GAPS.md` for remaining gaps toward a feature-complete Doom clone.
+## Decal System
 
-- **Networking** --- multiplayer support
-- **Post-processing** --- bloom, ambient occlusion, tone mapping, LOD
-- **Plugin system** --- third-party extensions
-- **Package manager** --- share schemas, constraints, and assets between projects
-- **WebAssembly** --- browser-based viewer and potentially runtime
+**Priority: Medium**
+
+Bullet holes, blood splatters, scorch marks, footprints — decals are the detail layer that makes game worlds feel responsive. Currently there's no way to project textures onto existing geometry at runtime.
+
+- Projected-texture decal rendering
+- Configurable lifetime, fade, and layering
+- Script API: `spawn_decal(position, normal, texture)`
+
+## Reflection Probes & Environment Mapping
+
+**Priority: Medium**
+
+The PBR pipeline handles diffuse and specular lighting well, but specular reflections are essentially absent. This is the single biggest visual quality jump available.
+
+- Pre-baked cubemap reflection probes at authored positions
+- Probe blending between adjacent volumes
+- Correct specular reflections on metals, water, glass, and polished surfaces
+
+## Material Instance System
+
+**Priority: Medium**
+
+Each entity currently specifies its own texture paths and PBR parameters. There's no way to define "worn stone" once and apply it to fifty objects.
+
+- Named material definitions (textures + PBR parameters)
+- Material instances that reference and override a base material
+- Material library for cross-scene reuse
+
+## Save & Load Game State
+
+**Priority: Medium**
+
+`PersistentStore` survives scene transitions, but there's no way to snapshot and restore full ECS state mid-scene. Any game longer than a single session needs this.
+
+- Full ECS snapshot (all entities, components, script state) to disk
+- Restore from snapshot with entity ID remapping
+- Checkpoint and quicksave support
+- Script API: `save_game(slot)`, `load_game(slot)`
+
+## 3D Debug Drawing
+
+**Priority: Medium**
+
+The 2D overlay draws in screen-space, but there's no way to visualize 3D information — physics colliders, AI sight cones, pathfinding routes, trigger volumes, raycast results. This is the single most impactful developer tool for iterating on gameplay.
+
+- Script API: `debug_line(from, to, color)`, `debug_box(center, size, color)`, `debug_sphere(center, radius, color)`, `debug_ray(origin, dir, length, color)`
+- Wireframe overlay rendered after scene, before HUD
+- Auto-clear each frame (immediate-mode, like the 2D draw API)
+- Toggle with a debug key (e.g. F10) — zero overhead when disabled
+- Optional built-in modes: visualize physics colliders, trigger volumes, nav meshes
+
+## Performance Profiler Overlay
+
+**Priority: Medium**
+
+Targeted optimization requires knowing where time is spent. Currently there's no visibility into the frame budget breakdown.
+
+- In-engine overlay: frame time, draw calls, triangle count, memory
+- Per-system breakdown (render vs physics vs scripts vs audio)
+- Frame time graph with spike detection
+- Toggle with a debug key (e.g. F9)
+
+## Further Horizon
+
+These are ideas under consideration, not committed plans:
+
+- **Networking** — multiplayer support with entity replication
+- **Plugin system** — third-party engine extensions
+- **Package manager** — share schemas, constraints, and assets between projects
+- **WebAssembly** — browser-based viewer and potentially runtime
+- **Volumetric lighting** — light shafts and fog volumes
+- **Shader graph** — visual shader editing for non-programmers
