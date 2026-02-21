@@ -25,6 +25,8 @@ pub enum AudioCommand {
 #[derive(Debug, Clone, Default)]
 struct TriggerRules {
     on_collision: Option<String>,
+    // Reserved for future targeted interaction events.
+    #[allow(dead_code)]
     on_interact: Option<String>,
     on_enter: Option<String>,
     on_exit: Option<String>,
