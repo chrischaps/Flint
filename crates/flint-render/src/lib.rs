@@ -32,8 +32,8 @@ pub use pipeline::{
     TransformUniforms,
 };
 pub use primitives::{
-    create_box_mesh, generate_normal_arrows, triangles_to_wireframe_indices, Mesh, SkinnedMesh,
-    SkinnedVertex, Vertex,
+    create_box_mesh, create_plane_mesh, generate_normal_arrows, triangles_to_wireframe_indices,
+    Mesh, SkinnedMesh, SkinnedVertex, Vertex,
 };
 pub use postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
