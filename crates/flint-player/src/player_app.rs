@@ -3,6 +3,7 @@
 //! Runs the game loop with physics, input, and first-person camera.
 
 use anyhow::{Context, Result};
+use flint_animation::node_clip::NodeClip;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
@@ -247,6 +248,7 @@ impl PlayerApp {
             &config,
         );
         register_skeletal_data(&load_result, &mut self.animation);
+        register_node_animation_data(&load_result, &mut self.animation);
         self.skeletal_entity_assets = load_result.skinned_entities;
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
@@ -1156,6 +1158,7 @@ impl PlayerApp {
                 &config,
             );
             register_skeletal_data(&load_result, &mut self.animation);
+            register_node_animation_data(&load_result, &mut self.animation);
             self.skeletal_entity_assets = load_result.skinned_entities;
             renderer.update_from_world(&self.world, &context.device);
 
@@ -1509,6 +1512,32 @@ fn register_skeletal_data(
                     animation.skeletal_sync.add_clip(clip);
                 }
             }
+        }
+    }
+}
+
+/// Register node-level animation data from loaded models into the animation system.
+fn register_node_animation_data(
+    load_result: &model_loader::ModelLoadResult,
+    animation: &mut AnimationSystem,
+) {
+    for loaded in &load_result.models {
+        if let Some(ref import_result) = loaded.import_result {
+            for imported_clip in &import_result.node_clips {
+                let clip = NodeClip::from_imported(imported_clip);
+                println!(
+                    "  Node clip: {} ({:.1}s, {} tracks)",
+                    clip.name,
+                    clip.duration,
+                    clip.node_tracks.len()
+                );
+                animation.node_sync.add_clip(clip);
+            }
+        }
+        if let Some(ref node_map) = loaded.node_map {
+            animation
+                .node_sync
+                .register_entity(loaded.entity_id, node_map.clone());
         }
     }
 }

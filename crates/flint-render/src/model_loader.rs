@@ -18,11 +18,14 @@ use std::path::{Path, PathBuf};
 pub struct LoadedModel {
     pub entity_id: EntityId,
     pub asset_name: String,
-    /// The full import result — present only for skinned models that were freshly
-    /// imported (not already cached). Callers use this for skeletal registration.
+    /// The full import result — present for skinned models or models with node
+    /// animations that were freshly imported (not already cached).
     pub import_result: Option<ImportResult>,
     pub is_skinned: bool,
     pub was_expanded: bool,
+    /// For animated multi-node models: maps glTF node names to child entity IDs.
+    /// Used by NodeSync to write animation transforms to the correct entities.
+    pub node_map: Option<HashMap<String, EntityId>>,
 }
 
 /// Result of loading all models from the world.
@@ -235,6 +238,143 @@ fn expand_nodes_flat(
     }
 }
 
+/// Create child entities preserving the glTF parent-child hierarchy.
+///
+/// Unlike `expand_nodes_flat()`, this stores each node's LOCAL TRS on the entity
+/// (no vertex baking) and sets parent to the node's actual parent entity.
+/// This allows the animation system to write to child transforms and have the
+/// renderer's `get_world_matrix()` parent chain compose them correctly.
+///
+/// Returns a map from glTF node names to their corresponding entity IDs, used
+/// by `NodeSync` to route animation tracks to the right entities.
+fn expand_nodes_animated(
+    world: &mut FlintWorld,
+    import_result: &ImportResult,
+    root_node_indices: &[usize],
+    parent_entity_id: EntityId,
+    parent_entity_name: &str,
+    asset_name: &str,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+) -> HashMap<String, EntityId> {
+    let mut node_map: HashMap<String, EntityId> = HashMap::new();
+    // Map from ImportedNode index to spawned EntityId
+    let mut index_to_entity: HashMap<usize, EntityId> = HashMap::new();
+    let default_color = [0.5_f32, 0.5, 0.5, 1.0];
+
+    // Walk the node tree recursively (DFS), creating entities for ALL nodes
+    // (not just mesh-bearing ones) to preserve the full hierarchy.
+    struct StackEntry {
+        node_idx: usize,
+        parent_ecs_id: EntityId,
+        parent_name: String,
+    }
+
+    let mut stack: Vec<StackEntry> = root_node_indices
+        .iter()
+        .rev()
+        .map(|&idx| StackEntry {
+            node_idx: idx,
+            parent_ecs_id: parent_entity_id,
+            parent_name: parent_entity_name.to_string(),
+        })
+        .collect();
+
+    while let Some(entry) = stack.pop() {
+        let node = &import_result.nodes[entry.node_idx];
+        let child_name = format!("{}__{}", entry.parent_name, node.name);
+
+        // Spawn entity for this node
+        let child_id = match world.spawn(&child_name) {
+            Ok(id) => id,
+            Err(e) => {
+                eprintln!("Failed to spawn child entity '{}': {:?}", child_name, e);
+                for &c in node.children.iter().rev() {
+                    stack.push(StackEntry {
+                        node_idx: c,
+                        parent_ecs_id: entry.parent_ecs_id,
+                        parent_name: child_name.clone(),
+                    });
+                }
+                continue;
+            }
+        };
+
+        // Set transform to node's LOCAL TRS (not baked)
+        let transform = toml::Value::Table({
+            let mut t = toml::map::Map::new();
+            t.insert(
+                "position".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::Float(node.translation[0] as f64),
+                    toml::Value::Float(node.translation[1] as f64),
+                    toml::Value::Float(node.translation[2] as f64),
+                ]),
+            );
+            // Store quaternion to preserve exact rotation (avoid Euler conversion)
+            t.insert(
+                "rotation_quat".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::Float(node.rotation[0] as f64),
+                    toml::Value::Float(node.rotation[1] as f64),
+                    toml::Value::Float(node.rotation[2] as f64),
+                    toml::Value::Float(node.rotation[3] as f64),
+                ]),
+            );
+            t.insert(
+                "scale".to_string(),
+                toml::Value::Array(vec![
+                    toml::Value::Float(node.scale[0] as f64),
+                    toml::Value::Float(node.scale[1] as f64),
+                    toml::Value::Float(node.scale[2] as f64),
+                ]),
+            );
+            t
+        });
+        let _ = world.set_component(child_id, "transform", transform);
+
+        // Upload mesh without baking (bake_transform: None)
+        if !node.mesh_primitive_indices.is_empty() {
+            let cache_key = format!("{}/{}", asset_name, node.name);
+            renderer.mesh_cache_mut().upload_mesh_subset(
+                device,
+                &cache_key,
+                import_result,
+                &node.mesh_primitive_indices,
+                default_color,
+                None, // No vertex baking — transforms live on the entity
+            );
+
+            let model = toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("asset".to_string(), toml::Value::String(cache_key));
+                m
+            });
+            let _ = world.set_component(child_id, "model", model);
+        }
+
+        // Set parent to preserve hierarchy
+        let _ = world.set_parent(child_id, entry.parent_ecs_id);
+
+        // Record in maps
+        node_map.insert(node.name.clone(), child_id);
+        index_to_entity.insert(entry.node_idx, child_id);
+
+        println!("  Expanded node: {} (animated, local TRS)", child_name);
+
+        // Push children for traversal
+        for &c in node.children.iter().rev() {
+            stack.push(StackEntry {
+                node_idx: c,
+                parent_ecs_id: child_id,
+                parent_name: child_name.clone(),
+            });
+        }
+    }
+
+    node_map
+}
+
 /// Load all models referenced by entities in the world.
 ///
 /// Handles path resolution, GLB import, multi-node expansion, skinned mesh
@@ -253,15 +393,19 @@ pub fn load_models_from_world(
     };
 
     // Pass 1: Collect entity-model pairs (can't mutate world while iterating)
-    let entity_models: Vec<(EntityId, String, String)> = world
+    // Also collect whether each entity has an animator component (for animated expansion)
+    let entity_models: Vec<(EntityId, String, String, bool)> = world
         .all_entities()
         .iter()
         .filter_map(|e| {
-            let model_asset = world
-                .get_components(e.id)
-                .and_then(|components| components.get("model").cloned())
+            let components = world.get_components(e.id);
+            let model_asset = components
+                .and_then(|c| c.get("model").cloned())
                 .and_then(|model| model.get("asset").and_then(|v| v.as_str().map(String::from)));
-            model_asset.map(|asset| (e.id, e.name.clone(), asset))
+            let has_animator = components
+                .map(|c| c.get("animator").is_some())
+                .unwrap_or(false);
+            model_asset.map(|asset| (e.id, e.name.clone(), asset, has_animator))
         })
         .collect();
 
@@ -270,7 +414,7 @@ pub fn load_models_from_world(
     let mut expansion_cache: HashMap<String, ImportResult> = HashMap::new();
 
     // Pass 2: Load and expand
-    for (entity_id, entity_name, asset_name) in &entity_models {
+    for (entity_id, entity_name, asset_name, has_animator) in &entity_models {
         if renderer.mesh_cache().contains(asset_name) {
             // If this asset was previously expanded (same load call), expand for this entity too
             if let Some(cached_import) = expansion_cache.get(asset_name.as_str()) {
@@ -293,6 +437,7 @@ pub fn load_models_from_world(
                     import_result: None,
                     is_skinned: false,
                     was_expanded: true,
+                    node_map: None,
                 });
                 continue;
             }
@@ -321,6 +466,7 @@ pub fn load_models_from_world(
                             import_result: None,
                             is_skinned: false,
                             was_expanded: true,
+                            node_map: None,
                         });
                         expansion_cache.insert(asset_name.clone(), import_result);
                         continue;
@@ -336,6 +482,7 @@ pub fn load_models_from_world(
                     import_result: None,
                     is_skinned: true,
                     was_expanded: false,
+                    node_map: None,
                 });
             }
             continue;
@@ -382,6 +529,7 @@ pub fn load_models_from_world(
 
                 let was_expanded;
                 let kept_result;
+                let node_map;
 
                 if is_skinned {
                     renderer.load_skinned_model(device, queue, asset_name, &import_result);
@@ -389,38 +537,64 @@ pub fn load_models_from_world(
                     result.skinned_entities.insert(*entity_id, asset_name.clone());
                     was_expanded = false;
                     kept_result = Some(import_result);
+                    node_map = None;
                 } else if import_result.needs_expansion() {
                     // Use the whole-model upload for any code paths that look
                     // up the asset by its base name (e.g. bounds queries).
                     renderer.load_model(device, queue, asset_name, &import_result);
 
-                    // Flatten the glTF node hierarchy: bake each node's
-                    // accumulated world transform into vertex data so entities
-                    // can use identity transforms. This avoids visual distortion
-                    // from non-uniform parent scales in the glTF tree.
-                    expand_nodes_flat(
-                        world,
-                        &import_result,
-                        &import_result.root_nodes,
-                        *entity_id,
-                        entity_name,
-                        asset_name,
-                        renderer,
-                        device,
-                    );
+                    if import_result.has_node_animations() && *has_animator {
+                        // Hierarchy-preserving expansion: keep local TRS on
+                        // each child entity so animation can write to them.
+                        let nmap = expand_nodes_animated(
+                            world,
+                            &import_result,
+                            &import_result.root_nodes,
+                            *entity_id,
+                            entity_name,
+                            asset_name,
+                            renderer,
+                            device,
+                        );
 
-                    if let Some(components) = world.get_components_mut(*entity_id) {
-                        components.remove("model");
+                        if let Some(components) = world.get_components_mut(*entity_id) {
+                            components.remove("model");
+                        }
+
+                        was_expanded = true;
+                        kept_result = Some(import_result);
+                        node_map = Some(nmap);
+                    } else {
+                        // Flatten the glTF node hierarchy: bake each node's
+                        // accumulated world transform into vertex data so entities
+                        // can use identity transforms. This avoids visual distortion
+                        // from non-uniform parent scales in the glTF tree.
+                        expand_nodes_flat(
+                            world,
+                            &import_result,
+                            &import_result.root_nodes,
+                            *entity_id,
+                            entity_name,
+                            asset_name,
+                            renderer,
+                            device,
+                        );
+
+                        if let Some(components) = world.get_components_mut(*entity_id) {
+                            components.remove("model");
+                        }
+
+                        // Cache for subsequent entities referencing the same asset
+                        expansion_cache.insert(asset_name.clone(), import_result);
+                        was_expanded = true;
+                        kept_result = None;
+                        node_map = None;
                     }
-
-                    // Cache for subsequent entities referencing the same asset
-                    expansion_cache.insert(asset_name.clone(), import_result);
-                    was_expanded = true;
-                    kept_result = None;
                 } else {
                     renderer.load_model(device, queue, asset_name, &import_result);
                     was_expanded = false;
                     kept_result = None;
+                    node_map = None;
                 }
 
                 result.models.push(LoadedModel {
@@ -429,6 +603,7 @@ pub fn load_models_from_world(
                     import_result: kept_result,
                     is_skinned,
                     was_expanded,
+                    node_map,
                 });
             }
             Err(e) => {

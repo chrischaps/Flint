@@ -2,8 +2,8 @@
 
 use crate::types::{
     AlphaMode, ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial,
-    ImportedMesh, ImportedNode, ImportedSkeleton, ImportedSkeletalClip, ImportedTexture,
-    JointProperty,
+    ImportedMesh, ImportedNode, ImportedNodeChannel, ImportedNodeClip, ImportedSkeleton,
+    ImportedSkeletalClip, ImportedTexture, JointProperty,
 };
 use flint_asset::{AssetMeta, AssetType};
 use flint_core::{ContentHash, FlintError, Result};
@@ -285,6 +285,9 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
     // --- Extract skeletal animation clips ---
     let skeletal_clips = extract_skeletal_clips(&document, &buffers, &skeletons);
 
+    // --- Extract node-level animation clips ---
+    let node_clips = extract_node_clips(&document, &buffers, &skeletons, &gltf_node_to_imported, &imported_nodes);
+
     let mut properties = HashMap::new();
     properties.insert(
         "vertex_count".to_string(),
@@ -310,6 +313,12 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             toml::Value::Integer(skeletal_clips.len() as i64),
         );
     }
+    if !node_clips.is_empty() {
+        properties.insert(
+            "node_clip_count".to_string(),
+            toml::Value::Integer(node_clips.len() as i64),
+        );
+    }
 
     let asset_meta = AssetMeta {
         name: file_name,
@@ -328,6 +337,7 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
         materials,
         skeletons,
         skeletal_clips,
+        node_clips,
         nodes: imported_nodes,
         root_nodes,
     })
@@ -525,6 +535,135 @@ fn extract_skeletal_clips(
 
         if !channels.is_empty() {
             clips.push(ImportedSkeletalClip {
+                name: clip_name,
+                duration: max_time,
+                channels,
+            });
+        }
+    }
+
+    clips
+}
+
+/// Extract node-level animation clips from glTF animations.
+///
+/// Processes animation channels where the target node is NOT a skeleton joint,
+/// producing node transform animations that can drive entity hierarchies at runtime.
+fn extract_node_clips(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    _skeletons: &[ImportedSkeleton],
+    gltf_node_to_imported: &HashMap<usize, usize>,
+    imported_nodes: &[ImportedNode],
+) -> Vec<ImportedNodeClip> {
+    // Build a set of glTF node indices that are skeleton joints
+    let mut skeleton_joint_nodes: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for skin in document.skins() {
+        for node in skin.joints() {
+            skeleton_joint_nodes.insert(node.index());
+        }
+    }
+
+    let mut clips = Vec::new();
+
+    for animation in document.animations() {
+        let clip_name = animation
+            .name()
+            .map(String::from)
+            .unwrap_or_else(|| format!("clip_{}", animation.index()));
+
+        let mut channels = Vec::new();
+        let mut max_time: f32 = 0.0;
+
+        for channel in animation.channels() {
+            let target_node = channel.target().node().index();
+
+            // Only process channels that target NON-skeleton nodes
+            if skeleton_joint_nodes.contains(&target_node) {
+                continue;
+            }
+
+            // Resolve to imported node index and name
+            let Some(&imported_idx) = gltf_node_to_imported.get(&target_node) else {
+                continue;
+            };
+            let node_name = imported_nodes[imported_idx].name.clone();
+
+            let property = match channel.target().property() {
+                gltf::animation::Property::Translation => JointProperty::Translation,
+                gltf::animation::Property::Rotation => JointProperty::Rotation,
+                gltf::animation::Property::Scale => JointProperty::Scale,
+                _ => continue, // Skip morph targets etc.
+            };
+
+            let reader = channel.reader(|buf| Some(&buffers[buf.index()]));
+
+            let timestamps: Vec<f32> = reader
+                .read_inputs()
+                .map(|iter| iter.collect())
+                .unwrap_or_default();
+
+            let interpolation = match channel.sampler().interpolation() {
+                gltf::animation::Interpolation::Step => "STEP",
+                gltf::animation::Interpolation::Linear => "LINEAR",
+                gltf::animation::Interpolation::CubicSpline => "CUBICSPLINE",
+            };
+
+            let outputs: Vec<Vec<f32>> = match &property {
+                JointProperty::Translation | JointProperty::Scale => {
+                    reader
+                        .read_outputs()
+                        .map(|out| match out {
+                            gltf::animation::util::ReadOutputs::Translations(iter) => {
+                                iter.map(|v| vec![v[0], v[1], v[2]]).collect()
+                            }
+                            gltf::animation::util::ReadOutputs::Scales(iter) => {
+                                iter.map(|v| vec![v[0], v[1], v[2]]).collect()
+                            }
+                            _ => Vec::new(),
+                        })
+                        .unwrap_or_default()
+                }
+                JointProperty::Rotation => {
+                    reader
+                        .read_outputs()
+                        .map(|out| match out {
+                            gltf::animation::util::ReadOutputs::Rotations(iter) => {
+                                iter.into_f32()
+                                    .map(|v| vec![v[0], v[1], v[2], v[3]])
+                                    .collect()
+                            }
+                            _ => Vec::new(),
+                        })
+                        .unwrap_or_default()
+                }
+            };
+
+            let keyframes: Vec<ImportedKeyframe> = timestamps
+                .iter()
+                .zip(outputs.iter())
+                .map(|(&time, value)| {
+                    if time > max_time {
+                        max_time = time;
+                    }
+                    ImportedKeyframe {
+                        time,
+                        value: value.clone(),
+                    }
+                })
+                .collect();
+
+            channels.push(ImportedNodeChannel {
+                node_index: imported_idx,
+                node_name,
+                property,
+                interpolation: interpolation.to_string(),
+                keyframes,
+            });
+        }
+
+        if !channels.is_empty() {
+            clips.push(ImportedNodeClip {
                 name: clip_name,
                 duration: max_time,
                 channels,

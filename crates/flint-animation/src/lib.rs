@@ -7,6 +7,8 @@
 pub mod blend;
 pub mod clip;
 pub mod loader;
+pub mod node_clip;
+pub mod node_sync;
 pub mod player;
 pub mod sampler;
 pub mod skeletal_clip;
@@ -19,6 +21,7 @@ use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::RuntimeSystem;
 
+use node_sync::NodeSync;
 use player::AnimationPlayer;
 use skeletal_sync::SkeletalSync;
 use sync::AnimationSync;
@@ -32,6 +35,7 @@ pub struct AnimationSystem {
     pub player: AnimationPlayer,
     pub sync: AnimationSync,
     pub skeletal_sync: SkeletalSync,
+    pub node_sync: NodeSync,
 }
 
 impl AnimationSystem {
@@ -40,6 +44,7 @@ impl AnimationSystem {
             player: AnimationPlayer::new(),
             sync: AnimationSync::new(),
             skeletal_sync: SkeletalSync::new(),
+            node_sync: NodeSync::new(),
         }
     }
 
@@ -48,6 +53,7 @@ impl AnimationSystem {
     pub fn clear(&mut self) {
         self.sync.clear();
         self.skeletal_sync.clear();
+        self.node_sync.clear();
     }
 }
 
@@ -61,12 +67,15 @@ impl RuntimeSystem for AnimationSystem {
     fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
         self.sync.sync_from_world(world, &self.player);
         self.skeletal_sync.sync_from_world(world);
+        self.node_sync.sync_from_world(world);
         println!(
-            "Animation system initialized ({} property clips, {} skeletal clips, {} property entities, {} skeletal entities)",
+            "Animation system initialized ({} property clips, {} skeletal clips, {} node clips, {} property entities, {} skeletal entities, {} node entities)",
             self.player.clip_count(),
             self.skeletal_sync.clip_count(),
+            self.node_sync.clip_count(),
             self.sync.active_count(),
-            self.skeletal_sync.active_count()
+            self.skeletal_sync.active_count(),
+            self.node_sync.active_count()
         );
         Ok(())
     }
@@ -84,6 +93,10 @@ impl RuntimeSystem for AnimationSystem {
         // Tier 2: Skeletal animation
         self.skeletal_sync.sync_from_world(world);
         self.skeletal_sync.advance_and_compute(dt);
+
+        // Tier 3: Node transform animation
+        self.node_sync.sync_from_world(world);
+        self.node_sync.advance_and_apply(world, dt);
 
         Ok(())
     }

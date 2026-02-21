@@ -17,6 +17,8 @@ pub struct ImportResult {
     pub skeletons: Vec<ImportedSkeleton>,
     /// Extracted skeletal animation clips
     pub skeletal_clips: Vec<ImportedSkeletalClip>,
+    /// Extracted node-level animation clips (non-skeletal transform animations)
+    pub node_clips: Vec<ImportedNodeClip>,
     /// glTF scene graph nodes with transforms
     pub nodes: Vec<ImportedNode>,
     /// Indices of top-level (root) nodes in the scene graph
@@ -30,6 +32,11 @@ impl ImportResult {
             .iter()
             .filter_map(|m| m.bounds())
             .reduce(|a, b| a.union(&b))
+    }
+
+    /// Returns true when the GLB contains node-level (non-skeletal) animation clips
+    pub fn has_node_animations(&self) -> bool {
+        !self.node_clips.is_empty()
     }
 
     /// Returns true when the GLB contains multiple mesh-bearing nodes or
@@ -204,6 +211,26 @@ pub struct ImportedSkeletalClip {
     pub name: String,
     pub duration: f32,
     pub channels: Vec<ImportedChannel>,
+}
+
+// --- Node-level animation import types ---
+
+/// An animation channel targeting a specific node's transform property
+#[derive(Debug, Clone)]
+pub struct ImportedNodeChannel {
+    pub node_index: usize,       // index into ImportResult.nodes
+    pub node_name: String,       // for entity name resolution at runtime
+    pub property: JointProperty, // reuse Translation/Rotation/Scale
+    pub interpolation: String,
+    pub keyframes: Vec<ImportedKeyframe>,
+}
+
+/// A complete node-level animation clip (non-skeletal transform animation)
+#[derive(Debug, Clone)]
+pub struct ImportedNodeClip {
+    pub name: String,
+    pub duration: f32,
+    pub channels: Vec<ImportedNodeChannel>,
 }
 
 /// A node from the glTF scene graph, preserving transform hierarchy
