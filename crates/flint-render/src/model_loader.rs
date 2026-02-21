@@ -7,9 +7,9 @@
 //! Callers can perform skeletal animation registration and catalog pre-resolution
 //! on top of the returned [`ModelLoadResult`].
 
-use flint_core::{mat4_mul, EntityId, Transform, Vec3};
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_import::{import_gltf, ImportResult, ImportedNode};
+use flint_import::{import_gltf, ImportResult};
 use crate::SceneRenderer;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -115,132 +115,9 @@ fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<Path
     None
 }
 
-/// Build a 4x4 column-major matrix from a glTF node's TRS.
-fn node_to_matrix(node: &ImportedNode) -> [[f32; 4]; 4] {
-    Transform {
-        position: Vec3::new(node.translation[0], node.translation[1], node.translation[2]),
-        rotation: Vec3::ZERO,
-        scale: Vec3::new(node.scale[0], node.scale[1], node.scale[2]),
-        rotation_quat: Some(node.rotation),
-    }
-    .to_matrix()
-}
-
-/// Compute the accumulated world matrix for every node, recursing from the
-/// given root node indices with `parent_matrix` as the starting transform.
-fn compute_node_world_matrices(
-    import_result: &ImportResult,
-    node_indices: &[usize],
-    parent_matrix: &[[f32; 4]; 4],
-    out: &mut HashMap<usize, [[f32; 4]; 4]>,
-) {
-    for &idx in node_indices {
-        let node = &import_result.nodes[idx];
-        let local = node_to_matrix(node);
-        let world = mat4_mul(parent_matrix, &local);
-        out.insert(idx, world);
-        if !node.children.is_empty() {
-            compute_node_world_matrices(import_result, &node.children, &world, out);
-        }
-    }
-}
-
-/// Create flat child entities for every mesh-bearing node in the glTF tree.
-///
-/// Unlike a naive hierarchy mirror, this bakes each node's accumulated world
-/// transform into the GPU vertex data at upload time, then stores an identity
-/// transform on the entity. This eliminates visual distortion from non-uniform
-/// parent scales, which is common in Blender exports.
-fn expand_nodes_flat(
-    world: &mut FlintWorld,
-    import_result: &ImportResult,
-    node_indices: &[usize],
-    parent_entity_id: EntityId,
-    parent_entity_name: &str,
-    asset_name: &str,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-) {
-    // Pre-compute world matrices for every node in the tree
-    let identity = Transform::IDENTITY.to_matrix();
-    let mut world_matrices = HashMap::new();
-    compute_node_world_matrices(import_result, node_indices, &identity, &mut world_matrices);
-
-    // Walk the full tree and create a flat entity for each mesh-bearing node
-    let mut stack: Vec<(usize, String)> = node_indices
-        .iter()
-        .rev()
-        .map(|&idx| (idx, parent_entity_name.to_string()))
-        .collect();
-
-    let default_color = [0.5_f32, 0.5, 0.5, 1.0];
-
-    while let Some((node_idx, parent_name)) = stack.pop() {
-        let node = &import_result.nodes[node_idx];
-        let child_name = format!("{}__{}", parent_name, node.name);
-
-        if !node.mesh_primitive_indices.is_empty() {
-            let child_id = match world.spawn(&child_name) {
-                Ok(id) => id,
-                Err(e) => {
-                    eprintln!("Failed to spawn child entity '{}': {:?}", child_name, e);
-                    // Still push children for further traversal
-                    for &c in node.children.iter().rev() {
-                        stack.push((c, child_name.clone()));
-                    }
-                    continue;
-                }
-            };
-
-            // Identity transform — geometry is already in GLB root space
-            let transform = toml::Value::Table({
-                let mut t = toml::map::Map::new();
-                t.insert(
-                    "position".to_string(),
-                    toml::Value::Array(vec![
-                        toml::Value::Float(0.0),
-                        toml::Value::Float(0.0),
-                        toml::Value::Float(0.0),
-                    ]),
-                );
-                t
-            });
-            let _ = world.set_component(child_id, "transform", transform);
-
-            // Upload mesh with baked world transform
-            let cache_key = format!("{}/{}", asset_name, node.name);
-            let world_mat = world_matrices.get(&node_idx).unwrap_or(&identity);
-            renderer.mesh_cache_mut().upload_mesh_subset(
-                device,
-                &cache_key,
-                import_result,
-                &node.mesh_primitive_indices,
-                default_color,
-                Some(world_mat),
-            );
-
-            let model = toml::Value::Table({
-                let mut m = toml::map::Map::new();
-                m.insert("asset".to_string(), toml::Value::String(cache_key));
-                m
-            });
-            let _ = world.set_component(child_id, "model", model);
-
-            // All mesh entities parent directly to the root entity
-            let _ = world.set_parent(child_id, parent_entity_id);
-            println!("  Expanded node: {} (flat, baked transform)", child_name);
-        }
-
-        // Push children for traversal (non-mesh nodes are traversed but not spawned)
-        for &c in node.children.iter().rev() {
-            stack.push((c, child_name.clone()));
-        }
-    }
-}
-
 /// Create child entities preserving the glTF parent-child hierarchy.
 ///
-/// Unlike `expand_nodes_flat()`, this stores each node's LOCAL TRS on the entity
+/// Stores each node's LOCAL TRS on the entity
 /// (no vertex baking) and sets parent to the node's actual parent entity.
 /// This allows the animation system to write to child transforms and have the
 /// renderer's `get_world_matrix()` parent chain compose them correctly.
@@ -418,7 +295,7 @@ pub fn load_models_from_world(
         if renderer.mesh_cache().contains(asset_name) {
             // If this asset was previously expanded (same load call), expand for this entity too
             if let Some(cached_import) = expansion_cache.get(asset_name.as_str()) {
-                expand_nodes_flat(
+                let nmap = expand_nodes_animated(
                     world,
                     cached_import,
                     &cached_import.root_nodes,
@@ -437,7 +314,7 @@ pub fn load_models_from_world(
                     import_result: None,
                     is_skinned: false,
                     was_expanded: true,
-                    node_map: None,
+                    node_map: Some(nmap),
                 });
                 continue;
             }
@@ -447,7 +324,7 @@ pub fn load_models_from_world(
             if let Some(model_path) = resolve_model_path(config, asset_name) {
                 if let Ok(import_result) = import_gltf(&model_path) {
                     if import_result.needs_expansion() {
-                        expand_nodes_flat(
+                        let nmap = expand_nodes_animated(
                             world,
                             &import_result,
                             &import_result.root_nodes,
@@ -466,7 +343,7 @@ pub fn load_models_from_world(
                             import_result: None,
                             is_skinned: false,
                             was_expanded: true,
-                            node_map: None,
+                            node_map: Some(nmap),
                         });
                         expansion_cache.insert(asset_name.clone(), import_result);
                         continue;
@@ -543,53 +420,36 @@ pub fn load_models_from_world(
                     // up the asset by its base name (e.g. bounds queries).
                     renderer.load_model(device, queue, asset_name, &import_result);
 
-                    if import_result.has_node_animations() && *has_animator {
-                        // Hierarchy-preserving expansion: keep local TRS on
-                        // each child entity so animation can write to them.
-                        let nmap = expand_nodes_animated(
-                            world,
-                            &import_result,
-                            &import_result.root_nodes,
-                            *entity_id,
-                            entity_name,
-                            asset_name,
-                            renderer,
-                            device,
-                        );
+                    // Always use hierarchy-preserving expansion: keep local TRS
+                    // on each child entity so (a) the scene tree shows the real
+                    // glTF node hierarchy, and (b) animation can write to them.
+                    let has_animations = import_result.has_node_animations() && *has_animator;
+                    let nmap = expand_nodes_animated(
+                        world,
+                        &import_result,
+                        &import_result.root_nodes,
+                        *entity_id,
+                        entity_name,
+                        asset_name,
+                        renderer,
+                        device,
+                    );
 
-                        if let Some(components) = world.get_components_mut(*entity_id) {
-                            components.remove("model");
-                        }
+                    if let Some(components) = world.get_components_mut(*entity_id) {
+                        components.remove("model");
+                    }
 
-                        was_expanded = true;
+                    was_expanded = true;
+                    if has_animations {
+                        // Animated models need the import result for NodeSync
+                        // registration; also cache for subsequent entities.
                         kept_result = Some(import_result);
-                        node_map = Some(nmap);
                     } else {
-                        // Flatten the glTF node hierarchy: bake each node's
-                        // accumulated world transform into vertex data so entities
-                        // can use identity transforms. This avoids visual distortion
-                        // from non-uniform parent scales in the glTF tree.
-                        expand_nodes_flat(
-                            world,
-                            &import_result,
-                            &import_result.root_nodes,
-                            *entity_id,
-                            entity_name,
-                            asset_name,
-                            renderer,
-                            device,
-                        );
-
-                        if let Some(components) = world.get_components_mut(*entity_id) {
-                            components.remove("model");
-                        }
-
                         // Cache for subsequent entities referencing the same asset
                         expansion_cache.insert(asset_name.clone(), import_result);
-                        was_expanded = true;
                         kept_result = None;
-                        node_map = None;
                     }
+                    node_map = Some(nmap);
                 } else {
                     renderer.load_model(device, queue, asset_name, &import_result);
                     was_expanded = false;
