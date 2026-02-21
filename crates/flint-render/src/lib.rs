@@ -11,6 +11,7 @@ mod context;
 mod debug;
 mod gpu_mesh;
 mod headless;
+pub mod model_loader;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;

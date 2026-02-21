@@ -295,11 +295,13 @@ impl FlintWorld {
         let pos = transform_data.get("position").and_then(|v| parse_vec3(v)).unwrap_or(Vec3::ZERO);
         let rot = transform_data.get("rotation").and_then(|v| parse_vec3(v)).unwrap_or(Vec3::ZERO);
         let scale = transform_data.get("scale").and_then(|v| parse_vec3(v)).unwrap_or(Vec3::ONE);
+        let rotation_quat = transform_data.get("rotation_quat").and_then(|v| parse_quat(v));
 
         Some(Transform {
             position: pos,
             rotation: rot,
-            scale: scale,
+            scale,
+            rotation_quat,
         })
     }
 
@@ -325,6 +327,19 @@ impl FlintWorld {
     pub fn entity_names(&self) -> impl Iterator<Item = &str> {
         self.name_map.keys().map(|s| s.as_str())
     }
+}
+
+fn parse_quat(value: &toml::Value) -> Option<[f32; 4]> {
+    if let Some(arr) = value.as_array() {
+        if arr.len() >= 4 {
+            let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
+            let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
+            let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
+            let w = arr[3].as_float().or_else(|| arr[3].as_integer().map(|i| i as f64)).unwrap_or(1.0) as f32;
+            return Some([x, y, z, w]);
+        }
+    }
+    None
 }
 
 fn parse_vec3(value: &toml::Value) -> Option<Vec3> {

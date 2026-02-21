@@ -949,20 +949,27 @@ impl SceneRenderer {
                         let (mr_view, mr_sampler, has_mr) =
                             Self::resolve_texture(tex_cache_ref, gpu_mesh.material.metallic_roughness_texture.as_deref(), &tex_cache_ref.default_metallic_roughness);
 
-                        let base_color = if let Some(override_color) = world
+                        // Material color override: check entity first, then inherit from parent.
+                        // This lets scripts color a parent entity and have all child meshes
+                        // (e.g. expanded GLB nodes) pick up the tint automatically.
+                        let extract_color = |m: &toml::Value| -> Option<[f32; 4]> {
+                            let r = m.get("base_color_r")?.as_float()? as f32;
+                            let g = m.get("base_color_g")?.as_float()? as f32;
+                            let b = m.get("base_color_b")?.as_float()? as f32;
+                            let a = m.get("base_color_a").and_then(|v| v.as_float()).unwrap_or(1.0) as f32;
+                            Some([r, g, b, a])
+                        };
+                        let base_color = world
                             .get_components(entity.id)
                             .and_then(|c| c.get("material"))
-                            .and_then(|m| {
-                                let r = m.get("base_color_r")?.as_float()? as f32;
-                                let g = m.get("base_color_g")?.as_float()? as f32;
-                                let b = m.get("base_color_b")?.as_float()? as f32;
-                                let a = m.get("base_color_a").and_then(|v| v.as_float()).unwrap_or(1.0) as f32;
-                                Some([r, g, b, a])
-                            }) {
-                            override_color
-                        } else {
-                            gpu_mesh.material.base_color
-                        };
+                            .and_then(|m| extract_color(m))
+                            .or_else(|| {
+                                world.get_parent(entity.id)
+                                    .and_then(|pid| world.get_components(pid))
+                                    .and_then(|c| c.get("material"))
+                                    .and_then(|m| extract_color(m))
+                            })
+                            .unwrap_or(gpu_mesh.material.base_color);
 
                         let mut material_uniforms = MaterialUniforms::from_pbr(
                             base_color,
@@ -1173,13 +1180,14 @@ impl SceneRenderer {
                 }
             }
 
-            // Only draw fallback geometry for entities that explicitly have bounds or material.
-            // Entities without a model, bounds, or material are non-visual (lights, scripts,
-            // particle emitters, splines, etc.) and should not get a default cube.
+            // Only draw fallback geometry for entities that explicitly have bounds.
+            // A `material` component alone does not create geometry — it only modifies
+            // the appearance of existing geometry (bounds box or model mesh).
+            // Entities without a model or bounds are non-visual (lights, scripts,
+            // particle emitters, expanded GLB parents, etc.).
             if let Some(components) = world.get_components(entity.id) {
                 let has_bounds = components.get("bounds").is_some();
-                let has_material = components.get("material").is_some();
-                if !has_bounds && !has_material {
+                if !has_bounds {
                     continue;
                 }
             }

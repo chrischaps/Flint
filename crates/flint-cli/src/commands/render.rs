@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use flint_core::Vec3;
-use flint_import::import_gltf;
 use flint_player::spline_gen;
+use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, DebugMode, HeadlessContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
@@ -89,104 +89,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
         RendererConfig { show_grid: !args.no_grid },
     );
 
-    // Load models from the scene
-    let scene_dir = Path::new(&args.scene)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    for entity in world.all_entities() {
-        let model_asset = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("model").cloned())
-            .and_then(|model| {
-                model
-                    .get("asset")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(asset_name) = model_asset {
-            if renderer.mesh_cache().contains(&asset_name) {
-                continue;
-            }
-
-            // Search scene dir first, then parent (game root)
-            let model_path = {
-                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    parent.join("models").join(format!("{}.glb", asset_name))
-                } else {
-                    p
-                }
-            };
-
-            if model_path.exists() {
-                match import_gltf(&model_path) {
-                    Ok(import_result) => {
-                        println!(
-                            "Loaded model: {} ({} meshes, {} materials)",
-                            asset_name,
-                            import_result.meshes.len(),
-                            import_result.materials.len()
-                        );
-                        renderer.load_model(&ctx.device, &ctx.queue, &asset_name, &import_result);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to load model '{}': {:?}", asset_name, e);
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Model file not found: {} (tried {})",
-                    asset_name,
-                    model_path.display()
-                );
-            }
-        }
-    }
-
-    // Load texture files referenced by material components
-    {
-        let mut loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for entity in world.all_entities() {
-            let texture_name = world
-                .get_components(entity.id)
-                .and_then(|components| components.get("material").cloned())
-                .and_then(|material| {
-                    material
-                        .get("texture")
-                        .and_then(|v| v.as_str().map(String::from))
-                });
-
-            if let Some(tex_name) = texture_name {
-                if loaded.contains(&tex_name) {
-                    continue;
-                }
-                loaded.insert(tex_name.clone());
-
-                let tex_path = scene_dir.join(&tex_name);
-                if tex_path.exists() {
-                    match renderer.load_texture_file(&ctx.device, &ctx.queue, &tex_name, &tex_path) {
-                        Ok(true) => {
-                            println!("Loaded texture: {}", tex_name);
-                        }
-                        Ok(false) => {}
-                        Err(e) => {
-                            eprintln!("Failed to load texture '{}': {}", tex_name, e);
-                        }
-                    }
-                } else {
-                    eprintln!(
-                        "Texture file not found: {} (tried {})",
-                        tex_name,
-                        tex_path.display()
-                    );
-                }
-            }
-        }
-    }
+    // Load models and textures from the scene
+    let config = ModelLoadConfig::from_scene_path(&args.scene);
+    model_loader::load_models_from_world(&mut world, &mut renderer, &ctx.device, &ctx.queue, &config);
 
     // Generate procedural geometry from spline + spline_mesh entities
     spline_gen::load_splines(
@@ -317,3 +222,4 @@ pub fn run(args: RenderArgs) -> Result<()> {
 
     Ok(())
 }
+

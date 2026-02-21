@@ -124,6 +124,10 @@ pub struct Transform {
     /// Rotation in degrees (Euler angles: pitch, yaw, roll)
     pub rotation: Vec3,
     pub scale: Vec3,
+    /// Optional quaternion rotation [x, y, z, w]. When present, takes precedence
+    /// over Euler angles in to_matrix() to avoid gimbal lock.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rotation_quat: Option<[f32; 4]>,
 }
 
 impl Default for Transform {
@@ -132,6 +136,7 @@ impl Default for Transform {
             position: Vec3::ZERO,
             rotation: Vec3::ZERO,
             scale: Vec3::ONE,
+            rotation_quat: None,
         }
     }
 }
@@ -141,6 +146,7 @@ impl Transform {
         position: Vec3::ZERO,
         rotation: Vec3::ZERO,
         scale: Vec3::ONE,
+        rotation_quat: None,
     };
 
     pub fn from_position(position: Vec3) -> Self {
@@ -165,39 +171,60 @@ impl Transform {
         self
     }
 
+    pub fn with_rotation_quat(mut self, q: [f32; 4]) -> Self {
+        self.rotation_quat = Some(q);
+        self
+    }
+
     /// Convert to a 4x4 transformation matrix (column-major)
     pub fn to_matrix(&self) -> [[f32; 4]; 4] {
-        // Convert Euler angles to radians
-        let (px, py, pz) = (
-            self.rotation.x.to_radians(),
-            self.rotation.y.to_radians(),
-            self.rotation.z.to_radians(),
-        );
+        let (r00, r01, r02, r10, r11, r12, r20, r21, r22) =
+            if let Some([x, y, z, w]) = self.rotation_quat {
+                // Build rotation matrix directly from quaternion (no gimbal lock)
+                (
+                    1.0 - 2.0 * (y * y + z * z),
+                    2.0 * (x * y - w * z),
+                    2.0 * (x * z + w * y),
+                    2.0 * (x * y + w * z),
+                    1.0 - 2.0 * (x * x + z * z),
+                    2.0 * (y * z - w * x),
+                    2.0 * (x * z - w * y),
+                    2.0 * (y * z + w * x),
+                    1.0 - 2.0 * (x * x + y * y),
+                )
+            } else {
+                // Euler angles path (ZYX order)
+                let (px, py, pz) = (
+                    self.rotation.x.to_radians(),
+                    self.rotation.y.to_radians(),
+                    self.rotation.z.to_radians(),
+                );
 
-        let (sx, cx) = (px.sin(), px.cos());
-        let (sy, cy) = (py.sin(), py.cos());
-        let (sz, cz) = (pz.sin(), pz.cos());
+                let (sx, cx) = (px.sin(), px.cos());
+                let (sy, cy) = (py.sin(), py.cos());
+                let (sz, cz) = (pz.sin(), pz.cos());
 
-        // Rotation matrix (ZYX order)
-        let r00 = cy * cz;
-        let r01 = sx * sy * cz - cx * sz;
-        let r02 = cx * sy * cz + sx * sz;
-
-        let r10 = cy * sz;
-        let r11 = sx * sy * sz + cx * cz;
-        let r12 = cx * sy * sz - sx * cz;
-
-        let r20 = -sy;
-        let r21 = sx * cy;
-        let r22 = cx * cy;
+                (
+                    cy * cz,
+                    sx * sy * cz - cx * sz,
+                    cx * sy * cz + sx * sz,
+                    cy * sz,
+                    sx * sy * sz + cx * cz,
+                    cx * sy * sz - sx * cz,
+                    -sy,
+                    sx * cy,
+                    cx * cy,
+                )
+            };
 
         // Apply scale and translation
-        [
+        let mat = [
             [r00 * self.scale.x, r10 * self.scale.x, r20 * self.scale.x, 0.0],
             [r01 * self.scale.y, r11 * self.scale.y, r21 * self.scale.y, 0.0],
             [r02 * self.scale.z, r12 * self.scale.z, r22 * self.scale.z, 0.0],
             [self.position.x, self.position.y, self.position.z, 1.0],
-        ]
+        ];
+        mat
     }
 }
 

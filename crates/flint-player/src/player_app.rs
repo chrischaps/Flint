@@ -10,9 +10,9 @@ use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::{FlintError, Vec3 as FlintVec3};
 use flint_ecs::FlintWorld;
-use flint_import::import_gltf;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
+use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, ParticleDrawData, ParticleInstanceGpu, RenderContext, SceneRenderer};
 use flint_runtime::{
     Binding, GameClock, GameEvent, GameStateMachine, InputConfig, InputState, PersistentStore,
@@ -236,16 +236,18 @@ impl PlayerApp {
         let mut scene_renderer = SceneRenderer::new(&render_context, Default::default());
 
         // Load models from world (including skeletal data)
-        self.skeletal_entity_assets = load_models_from_world(
-            &self.world,
+        let config = build_model_load_config(
+            &self.scene_path, &self.world, self.catalog.as_ref(), self.content_store.as_ref(),
+        );
+        let load_result = model_loader::load_models_from_world(
+            &mut self.world,
             &mut scene_renderer,
-            &mut self.animation,
             &render_context.device,
             &render_context.queue,
-            &self.scene_path,
-            self.catalog.as_ref(),
-            self.content_store.as_ref(),
+            &config,
         );
+        register_skeletal_data(&load_result, &mut self.animation);
+        self.skeletal_entity_assets = load_result.skinned_entities;
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
         // Load input configs with deterministic layering.
@@ -1143,16 +1145,18 @@ impl PlayerApp {
 
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            self.skeletal_entity_assets = load_models_from_world(
-                &self.world,
+            let config = build_model_load_config(
+                &self.scene_path, &self.world, self.catalog.as_ref(), self.content_store.as_ref(),
+            );
+            let load_result = model_loader::load_models_from_world(
+                &mut self.world,
                 renderer,
-                &mut self.animation,
                 &context.device,
                 &context.queue,
-                &self.scene_path,
-                self.catalog.as_ref(),
-                self.content_store.as_ref(),
+                &config,
             );
+            register_skeletal_data(&load_result, &mut self.animation);
+            self.skeletal_entity_assets = load_result.skinned_entities;
             renderer.update_from_world(&self.world, &context.device);
 
             // Reload splines
@@ -1426,145 +1430,87 @@ impl ApplicationHandler for PlayerApp {
     }
 }
 
-/// Load glTF models referenced by entities in the world.
-/// Returns a mapping of entity_id → asset_name for skinned entities.
-fn load_models_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    animation: &mut AnimationSystem,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+/// Build a ModelLoadConfig with catalog-resolved path overrides.
+fn build_model_load_config(
     scene_path: &str,
+    world: &FlintWorld,
     catalog: Option<&AssetCatalog>,
     store: Option<&ContentStore>,
-) -> HashMap<flint_core::EntityId, String> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+) -> ModelLoadConfig {
+    let mut config = ModelLoadConfig::from_scene_path(scene_path);
 
-    let mut skeletal_entity_assets = HashMap::new();
+    let (Some(cat), Some(st)) = (catalog, store) else {
+        return config;
+    };
 
     for entity in world.all_entities() {
-        let model_asset = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("model").cloned())
-            .and_then(|model| model.get("asset").and_then(|v| v.as_str().map(String::from)));
-
-        if let Some(asset_name) = model_asset {
-            if renderer.mesh_cache().contains(&asset_name) {
-                // Even if already loaded, check if this entity needs skeletal tracking
-                if renderer.mesh_cache().contains_skinned(&asset_name) {
-                    if !animation.skeletal_sync.has_skeleton(&entity.id) {
-                        // Re-import to get skeleton data (only on first encounter)
-                        // The mesh is already cached, but we need the skeleton
-                    }
-                    skeletal_entity_assets.insert(entity.id, asset_name.clone());
-                }
-                continue;
-            }
-
-            // Try catalog lookup first (content-addressed storage)
-            let catalog_path = catalog
-                .and_then(|cat| cat.get(&asset_name))
-                .and_then(|meta| {
-                    let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
-                    store.and_then(|s| s.get(&hash))
-                });
-
-            let model_path = if let Some(cp) = catalog_path {
-                cp
-            } else {
-                // Search scene dir first, then parent (game root)
-                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    parent.join("models").join(format!("{}.glb", asset_name))
-                } else {
-                    p
-                }
-            };
-
-            if model_path.exists() {
-                match import_gltf(&model_path) {
-                    Ok(import_result) => {
-                        let has_skins = !import_result.skeletons.is_empty();
-                        let has_skinned_meshes = import_result
-                            .meshes
-                            .iter()
-                            .any(|m| m.joint_indices.is_some());
-
-                        let bounds_info = import_result
-                            .bounds()
-                            .map(|b| format!(", bounds: {}", b))
-                            .unwrap_or_default();
-
-                        println!(
-                            "Loaded model: {} ({} meshes, {} materials{}{})",
-                            asset_name,
-                            import_result.meshes.len(),
-                            import_result.materials.len(),
-                            if has_skins {
-                                format!(
-                                    ", {} skins, {} skeletal clips",
-                                    import_result.skeletons.len(),
-                                    import_result.skeletal_clips.len()
-                                )
-                            } else {
-                                String::new()
-                            },
-                            bounds_info,
-                        );
-
-                        if has_skinned_meshes && has_skins {
-                            // Upload as skinned mesh
-                            renderer.load_skinned_model(
-                                device,
-                                queue,
-                                &asset_name,
-                                &import_result,
-                            );
-                            // Also upload static meshes (unskinned parts of the model)
-                            renderer.load_model(device, queue, &asset_name, &import_result);
-
-                            // Register skeletons with the animation system
-                            for imported_skel in &import_result.skeletons {
-                                let skeleton = Skeleton::from_imported(imported_skel);
-                                animation
-                                    .skeletal_sync
-                                    .add_skeleton(entity.id, skeleton);
-                            }
-
-                            // Register skeletal clips
-                            for imported_clip in &import_result.skeletal_clips {
-                                let clip = SkeletalClip::from_imported(imported_clip);
-                                println!(
-                                    "  Skeletal clip: {} ({:.1}s, {} tracks)",
-                                    clip.name,
-                                    clip.duration,
-                                    clip.joint_tracks.len()
-                                );
-                                animation.skeletal_sync.add_clip(clip);
-                            }
-
-                            skeletal_entity_assets.insert(entity.id, asset_name.clone());
-                        } else {
-                            // Standard static mesh upload
-                            renderer.load_model(device, queue, &asset_name, &import_result);
+        if let Some(comps) = world.get_components(entity.id) {
+            // Resolve model assets
+            if let Some(model) = comps.get("model") {
+                if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
+                    if !config.overrides.contains_key(name) {
+                        if let Some(path) = resolve_catalog(cat, st, name) {
+                            config.overrides.insert(name.to_string(), path);
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Failed to load model '{}': {:?}", asset_name, e);
+                }
+            }
+            // Resolve textures
+            for comp_name in &["material", "sprite"] {
+                if let Some(comp) = comps.get(*comp_name) {
+                    if let Some(tex) = comp.get("texture").and_then(|v| v.as_str()) {
+                        if !config.overrides.contains_key(tex) {
+                            if let Some(path) = resolve_catalog(cat, st, tex) {
+                                config.overrides.insert(tex.to_string(), path);
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    // Also load textures
-    load_textures_from_world(world, renderer, device, queue, scene_path, catalog, store);
+    config
+}
 
-    skeletal_entity_assets
+/// Look up an asset name in the catalog and content store.
+fn resolve_catalog(
+    catalog: &AssetCatalog,
+    store: &ContentStore,
+    name: &str,
+) -> Option<PathBuf> {
+    let meta = catalog.get(name)?;
+    let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
+    store.get(&hash)
+}
+
+/// Register skeletal data from loaded models into the animation system.
+fn register_skeletal_data(
+    load_result: &model_loader::ModelLoadResult,
+    animation: &mut AnimationSystem,
+) {
+    for loaded in &load_result.models {
+        if loaded.is_skinned {
+            if let Some(ref import_result) = loaded.import_result {
+                for imported_skel in &import_result.skeletons {
+                    let skeleton = Skeleton::from_imported(imported_skel);
+                    animation
+                        .skeletal_sync
+                        .add_skeleton(loaded.entity_id, skeleton);
+                }
+                for imported_clip in &import_result.skeletal_clips {
+                    let clip = SkeletalClip::from_imported(imported_clip);
+                    println!(
+                        "  Skeletal clip: {} ({:.1}s, {} tracks)",
+                        clip.name,
+                        clip.duration,
+                        clip.joint_tracks.len()
+                    );
+                    animation.skeletal_sync.add_clip(clip);
+                }
+            }
+        }
+    }
 }
 
 /// Load audio files referenced by audio_source components and preload all .ogg files from audio/
@@ -1638,82 +1584,6 @@ fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path
                                 eprintln!("Failed to preload audio '{}': {:?}", rel_name, e);
                             }
                         }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Load texture files referenced by material and sprite components
-fn load_textures_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-    catalog: Option<&AssetCatalog>,
-    store: Option<&ContentStore>,
-) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut loaded = std::collections::HashSet::new();
-
-    for entity in world.all_entities() {
-        let components = world.get_components(entity.id);
-
-        // Collect texture names from material and sprite components
-        let mut tex_names = Vec::new();
-
-        if let Some(comps) = &components {
-            if let Some(material) = comps.get("material") {
-                if let Some(tex) = material.get("texture").and_then(|v| v.as_str()) {
-                    tex_names.push(tex.to_string());
-                }
-            }
-            if let Some(sprite) = comps.get("sprite") {
-                if let Some(tex) = sprite.get("texture").and_then(|v| v.as_str()) {
-                    if !tex.is_empty() {
-                        tex_names.push(tex.to_string());
-                    }
-                }
-            }
-        }
-
-        for tex_name in tex_names {
-            if loaded.contains(&tex_name) {
-                continue;
-            }
-            loaded.insert(tex_name.clone());
-
-            // Try catalog lookup first
-            let catalog_path = catalog
-                .and_then(|cat| cat.get(&tex_name))
-                .and_then(|meta| {
-                    let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
-                    store.and_then(|s| s.get(&hash))
-                });
-
-            let tex_path = if let Some(cp) = catalog_path {
-                cp
-            } else {
-                // Search scene dir first, then parent (game root)
-                let p = scene_dir.join(&tex_name);
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    parent.join(&tex_name)
-                } else {
-                    p
-                }
-            };
-            if tex_path.exists() {
-                match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("Failed to load texture '{}': {}", tex_name, e);
                     }
                 }
             }
