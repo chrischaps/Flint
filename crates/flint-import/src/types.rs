@@ -228,6 +228,17 @@ pub struct ImportedTexture {
     pub data: Vec<u8>,
 }
 
+/// glTF alpha rendering mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlphaMode {
+    /// Fully opaque (default)
+    Opaque,
+    /// Binary alpha test (discard below cutoff)
+    Mask,
+    /// Alpha blending
+    Blend,
+}
+
 /// An imported PBR material
 #[derive(Debug, Clone)]
 pub struct ImportedMaterial {
@@ -240,4 +251,8 @@ pub struct ImportedMaterial {
     pub metallic_roughness_texture: Option<String>,
     /// When true, the shader reads per-vertex color instead of the uniform base_color.
     pub use_vertex_color: bool,
+    /// Alpha rendering mode from glTF
+    pub alpha_mode: AlphaMode,
+    /// Alpha cutoff for Mask mode (default 0.5)
+    pub alpha_cutoff: f32,
 }

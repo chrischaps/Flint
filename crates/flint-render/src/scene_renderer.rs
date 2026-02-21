@@ -7,8 +7,8 @@ use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
 use crate::particle_pipeline::{ParticleDrawCall, ParticleDrawData, ParticlePipeline, ParticleUniforms};
 use crate::pipeline::{
-    DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
-    TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
+    BlendMode, DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline,
+    SpotLight, TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
@@ -58,6 +58,8 @@ struct DrawCall {
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
     entity_id: Option<flint_core::EntityId>,
+    blend_mode: BlendMode,
+    sort_depth: f32,
 }
 
 /// A draw call for a skinned mesh (has bone bind group)
@@ -74,6 +76,8 @@ struct SkinnedDrawCall {
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
     entity_id: Option<flint_core::EntityId>,
+    blend_mode: BlendMode,
+    sort_depth: f32,
 }
 
 /// Configuration for creating a SceneRenderer
@@ -98,6 +102,8 @@ pub struct SceneRenderer {
     grid_draw: Option<DrawCall>,
     entity_draws: Vec<DrawCall>,
     skinned_entity_draws: Vec<SkinnedDrawCall>,
+    transparent_draws: Vec<DrawCall>,
+    transparent_skinned_draws: Vec<SkinnedDrawCall>,
     billboard_draws: Vec<BillboardDrawCall>,
     debug_state: DebugState,
     wireframe_overlay_draws: Vec<DrawCall>,
@@ -190,6 +196,8 @@ impl SceneRenderer {
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
+            transparent_draws: Vec::new(),
+            transparent_skinned_draws: Vec::new(),
             billboard_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
@@ -380,6 +388,8 @@ impl SceneRenderer {
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
+            transparent_draws: Vec::new(),
+            transparent_skinned_draws: Vec::new(),
             billboard_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
@@ -816,6 +826,8 @@ impl SceneRenderer {
     pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
         self.entity_draws.clear();
         self.skinned_entity_draws.clear();
+        self.transparent_draws.clear();
+        self.transparent_skinned_draws.clear();
         self.billboard_draws.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
@@ -912,7 +924,29 @@ impl SceneRenderer {
                             label: Some("Skinned Draw Bone Bind Group"),
                         });
 
-                        self.skinned_entity_draws.push(SkinnedDrawCall {
+                        // Check transparency from glTF material and ECS material component
+                        let gltf_alpha = gpu_mesh.material.base_color[3];
+                        let ecs_opacity = world
+                            .get_components(entity.id)
+                            .and_then(|c| c.get("material"))
+                            .and_then(|m| m.get("opacity"))
+                            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            .unwrap_or(1.0) as f32;
+                        let ecs_blend_mode_str = world
+                            .get_components(entity.id)
+                            .and_then(|c| c.get("material"))
+                            .and_then(|m| m.get("blend_mode"))
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_default();
+                        let blend_mode = parse_blend_mode(&ecs_blend_mode_str);
+                        material_uniforms.opacity = ecs_opacity;
+
+                        let is_transparent = ecs_opacity < 1.0
+                            || gltf_alpha < 1.0
+                            || blend_mode != BlendMode::Alpha
+                            || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
+
+                        let skinned_draw = SkinnedDrawCall {
                             vertex_buffer: gpu_mesh.create_vertex_buffer_copy(device),
                             index_buffer: gpu_mesh.create_index_buffer_copy(device),
                             index_count: gpu_mesh.index_count,
@@ -924,7 +958,15 @@ impl SceneRenderer {
                             model: model_matrix,
                             model_inv_transpose: inv_transpose,
                             entity_id: Some(entity.id),
-                        });
+                            blend_mode,
+                            sort_depth: 0.0,
+                        };
+
+                        if is_transparent {
+                            self.transparent_skinned_draws.push(skinned_draw);
+                        } else {
+                            self.skinned_entity_draws.push(skinned_draw);
+                        }
                     }
                     continue;
                 }
@@ -983,6 +1025,29 @@ impl SceneRenderer {
                             material_uniforms.use_vertex_color = 1;
                         }
 
+                        // Read opacity and blend_mode from ECS material component
+                        let ecs_opacity = world
+                            .get_components(entity.id)
+                            .and_then(|c| c.get("material"))
+                            .and_then(|m| m.get("opacity"))
+                            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            .unwrap_or(1.0) as f32;
+                        let ecs_blend_mode_str = world
+                            .get_components(entity.id)
+                            .and_then(|c| c.get("material"))
+                            .and_then(|m| m.get("blend_mode"))
+                            .and_then(|v| v.as_str().map(String::from))
+                            .unwrap_or_default();
+                        let blend_mode = parse_blend_mode(&ecs_blend_mode_str);
+                        material_uniforms.opacity = ecs_opacity;
+
+                        let gltf_alpha = gpu_mesh.material.base_color[3];
+                        let is_transparent = ecs_opacity < 1.0
+                            || gltf_alpha < 1.0
+                            || base_color[3] < 1.0
+                            || blend_mode != BlendMode::Alpha
+                            || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
+
                         let mut draw = Self::create_imported_draw_call(
                             device,
                             &self.pipeline,
@@ -994,7 +1059,13 @@ impl SceneRenderer {
                             mr_view, mr_sampler,
                         );
                         draw.entity_id = Some(entity.id);
-                        self.entity_draws.push(draw);
+                        draw.blend_mode = blend_mode;
+
+                        if is_transparent {
+                            self.transparent_draws.push(draw);
+                        } else {
+                            self.entity_draws.push(draw);
+                        }
 
                         // Generate wireframe overlay for imported meshes
                         if need_overlay {
@@ -1238,6 +1309,21 @@ impl SceneRenderer {
                 .as_ref()
                 .and_then(|m| m.get("texture").and_then(|v| v.as_str().map(String::from)));
 
+            // Extract opacity and blend_mode for procedural geometry
+            let proc_opacity = material_component
+                .as_ref()
+                .and_then(|m| m.get("opacity"))
+                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                .unwrap_or(1.0) as f32;
+            let proc_blend_mode_str = material_component
+                .as_ref()
+                .and_then(|m| m.get("blend_mode"))
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            let proc_blend_mode = parse_blend_mode(&proc_blend_mode_str);
+            let proc_is_transparent = proc_opacity < 1.0
+                || proc_blend_mode != BlendMode::Alpha;
+
             if !visual.wireframe {
                 if let Some(tex_name) = &material_texture {
                     let (bc_view, bc_sampler, has_bc) =
@@ -1261,6 +1347,7 @@ impl SceneRenderer {
                             roughness,
                         );
                         material_uniforms.has_base_color_tex = 1;
+                        material_uniforms.opacity = proc_opacity;
 
                         let mut draw = Self::create_textured_draw_call(
                             device,
@@ -1273,7 +1360,12 @@ impl SceneRenderer {
                             &tex_cache_ref.default_metallic_roughness.view, &tex_cache_ref.default_metallic_roughness.sampler,
                         );
                         draw.entity_id = Some(entity.id);
-                        self.entity_draws.push(draw);
+                        draw.blend_mode = proc_blend_mode;
+                        if proc_is_transparent {
+                            self.transparent_draws.push(draw);
+                        } else {
+                            self.entity_draws.push(draw);
+                        }
                     } else {
                         let mut draw = Self::create_draw_call(
                             device,
@@ -1294,7 +1386,7 @@ impl SceneRenderer {
                         .and_then(|m| m.get("color"))
                         .and_then(|v| extract_color(v));
 
-                    let mat_uniforms = if let Some(color) = mat_color {
+                    let mut mat_uniforms = if let Some(color) = mat_color {
                         let metallic = material_component
                             .as_ref()
                             .and_then(|m| m.get("metallic"))
@@ -1309,6 +1401,7 @@ impl SceneRenderer {
                     } else {
                         MaterialUniforms::procedural()
                     };
+                    mat_uniforms.opacity = proc_opacity;
 
                     let mut draw = Self::create_draw_call(
                         device,
@@ -1320,7 +1413,12 @@ impl SceneRenderer {
                         tex_cache_ref,
                     );
                     draw.entity_id = Some(entity.id);
-                    self.entity_draws.push(draw);
+                    draw.blend_mode = proc_blend_mode;
+                    if proc_is_transparent {
+                        self.transparent_draws.push(draw);
+                    } else {
+                        self.entity_draws.push(draw);
+                    }
                 }
             } else {
                 let mut draw = Self::create_draw_call(
@@ -1439,6 +1537,8 @@ impl SceneRenderer {
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
             entity_id: None,
+            blend_mode: BlendMode::Alpha,
+            sort_depth: 0.0,
         }
     }
 
@@ -1495,6 +1595,8 @@ impl SceneRenderer {
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
             entity_id: None,
+            blend_mode: BlendMode::Alpha,
+            sort_depth: 0.0,
         }
     }
 
@@ -1539,6 +1641,8 @@ impl SceneRenderer {
             model: transform_uniforms.model,
             model_inv_transpose: transform_uniforms.model_inv_transpose,
             entity_id: None,
+            blend_mode: BlendMode::Alpha,
+            sort_depth: 0.0,
         }
     }
 
@@ -1971,6 +2075,43 @@ impl SceneRenderer {
                             pass.draw_indexed(0..draw.index_count, 0, 0..1);
                         }
 
+                        // Render transparent entities into shadow map (skip very transparent)
+                        for draw in &self.transparent_draws {
+                            if draw.is_wireframe {
+                                continue;
+                            }
+
+                            let shadow_uniforms = ShadowDrawUniforms {
+                                light_view_proj: cascade_vp,
+                                model: draw.model,
+                            };
+
+                            let shadow_buffer = device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("Transparent Shadow Draw Uniform"),
+                                    contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                                    usage: wgpu::BufferUsages::UNIFORM,
+                                },
+                            );
+
+                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &shadow_pass.shadow_bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: shadow_buffer.as_entire_binding(),
+                                }],
+                                label: Some("Transparent Shadow Draw Bind Group"),
+                            });
+
+                            pass.set_bind_group(0, &shadow_bind, &[]);
+                            pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+
                         // Render skinned entities into shadow map
                         pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
 
@@ -2089,6 +2230,76 @@ impl SceneRenderer {
                 32,
                 bytemuck::cast_slice(&[tonemapping_u32]),
             );
+        }
+
+        // Update transparent entity transforms
+        for draw in &self.transparent_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update transparent skinned entity transforms
+        for draw in &self.transparent_skinned_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Sort transparent draws back-to-front (descending distance from camera)
+        {
+            let cam = camera_pos;
+            for draw in &mut self.transparent_draws {
+                let dx = draw.model[3][0] - cam[0];
+                let dy = draw.model[3][1] - cam[1];
+                let dz = draw.model[3][2] - cam[2];
+                draw.sort_depth = dx * dx + dy * dy + dz * dz;
+            }
+            self.transparent_draws.sort_by(|a, b| {
+                b.sort_depth.partial_cmp(&a.sort_depth).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            for draw in &mut self.transparent_skinned_draws {
+                let dx = draw.model[3][0] - cam[0];
+                let dy = draw.model[3][1] - cam[1];
+                let dz = draw.model[3][2] - cam[2];
+                draw.sort_depth = dx * dx + dy * dy + dz * dz;
+            }
+            self.transparent_skinned_draws.sort_by(|a, b| {
+                b.sort_depth.partial_cmp(&a.sort_depth).unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         // Update wireframe overlay transforms
@@ -2250,7 +2461,7 @@ impl SceneRenderer {
                     // Step 1: Depth prepass — write front-face depth (no color)
                     // so the outline interior is blocked by the depth buffer.
                     render_pass.set_pipeline(&self.pipeline.depth_prepass_pipeline);
-                    for draw in &self.entity_draws {
+                    for draw in self.entity_draws.iter().chain(self.transparent_draws.iter()) {
                         if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2264,7 +2475,7 @@ impl SceneRenderer {
 
                     if let Some(sp) = &self.skinned_pipeline {
                         render_pass.set_pipeline(&sp.depth_prepass_pipeline);
-                        for draw in &self.skinned_entity_draws {
+                        for draw in self.skinned_entity_draws.iter().chain(self.transparent_skinned_draws.iter()) {
                             if draw.entity_id == Some(sel_id) {
                                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                                 render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
@@ -2280,7 +2491,7 @@ impl SceneRenderer {
 
                     // Step 2: Outline — back faces pushed out, only visible at silhouette
                     render_pass.set_pipeline(&self.pipeline.outline_pipeline);
-                    for draw in &self.entity_draws {
+                    for draw in self.entity_draws.iter().chain(self.transparent_draws.iter()) {
                         if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2294,7 +2505,7 @@ impl SceneRenderer {
 
                     if let Some(sp) = &self.skinned_pipeline {
                         render_pass.set_pipeline(&sp.outline_pipeline);
-                        for draw in &self.skinned_entity_draws {
+                        for draw in self.skinned_entity_draws.iter().chain(self.transparent_skinned_draws.iter()) {
                             if draw.entity_id == Some(sel_id) {
                                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                                 render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
@@ -2341,7 +2552,7 @@ impl SceneRenderer {
                 // Outline pass for selected standard entities (before normal rendering)
                 if let Some(sel_id) = self.selected_entity {
                     render_pass.set_pipeline(&self.pipeline.outline_pipeline);
-                    for draw in &self.entity_draws {
+                    for draw in self.entity_draws.iter().chain(self.transparent_draws.iter()) {
                         if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2375,7 +2586,7 @@ impl SceneRenderer {
                 if let Some(sel_id) = self.selected_entity {
                     if let Some(sp) = &self.skinned_pipeline {
                         render_pass.set_pipeline(&sp.outline_pipeline);
-                        for draw in &self.skinned_entity_draws {
+                        for draw in self.skinned_entity_draws.iter().chain(self.transparent_skinned_draws.iter()) {
                             if draw.entity_id == Some(sel_id) {
                                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                                 render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
@@ -2443,7 +2654,57 @@ impl SceneRenderer {
                     }
                 }
 
-                // Particle systems (after billboards, before wireframe overlay)
+                // Transparent PBR entities (sorted back-to-front, depth write OFF)
+                if !self.transparent_draws.is_empty() {
+                    // Re-bind lights for group 2 (may have been displaced by billboard binds)
+                    render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+                    for draw in &self.transparent_draws {
+                        if draw.is_wireframe {
+                            continue;
+                        }
+                        let pipeline = match draw.blend_mode {
+                            BlendMode::Alpha => &self.pipeline.transparent_alpha_pipeline,
+                            BlendMode::Additive => &self.pipeline.transparent_additive_pipeline,
+                            BlendMode::Multiply => &self.pipeline.transparent_multiply_pipeline,
+                        };
+                        render_pass.set_pipeline(pipeline);
+                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            draw.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                }
+
+                // Transparent skinned entities (sorted back-to-front, depth write OFF)
+                if let Some(sp) = &self.skinned_pipeline {
+                    if !self.transparent_skinned_draws.is_empty() {
+                        for draw in &self.transparent_skinned_draws {
+                            let pipeline = match draw.blend_mode {
+                                BlendMode::Alpha => &sp.transparent_alpha_pipeline,
+                                BlendMode::Additive => &sp.transparent_additive_pipeline,
+                                BlendMode::Multiply => &sp.transparent_multiply_pipeline,
+                            };
+                            render_pass.set_pipeline(pipeline);
+                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                            render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                            render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
+                // Particle systems (after billboards + transparent, before wireframe overlay)
                 // Alpha-blended particles first, then additive
                 if let Some(pp) = &self.particle_pipeline {
                     if !self.particle_draws.is_empty() {
@@ -2651,4 +2912,13 @@ fn extract_color(value: &toml::Value) -> Option<[f32; 4]> {
         1.0
     };
     Some([r, g, b, a])
+}
+
+/// Parse a blend mode string from TOML into the BlendMode enum
+fn parse_blend_mode(s: &str) -> BlendMode {
+    match s {
+        "additive" => BlendMode::Additive,
+        "multiply" => BlendMode::Multiply,
+        _ => BlendMode::Alpha,
+    }
 }

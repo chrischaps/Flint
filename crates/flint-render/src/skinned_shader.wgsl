@@ -21,8 +21,8 @@ struct MaterialUniforms {
     has_normal_map: u32,
     has_metallic_roughness_tex: u32,
     selection_highlight: u32,
-    _pad_sel0: u32,
-    _pad_sel1: u32,
+    opacity: f32,
+    alpha_cutoff: f32,
     _pad_sel2: u32,
 };
 
@@ -423,11 +423,13 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var color = ambient + Lo;
 
+    let final_alpha = alpha * material.opacity;
+
     if (material.enable_tonemapping == 1u) {
         let mapped = aces_filmic(color);
         let corrected = linear_to_srgb(mapped);
-        return vec4<f32>(corrected, alpha);
+        return vec4<f32>(corrected, final_alpha);
     }
 
-    return vec4<f32>(color, alpha);
+    return vec4<f32>(color, final_alpha);
 }

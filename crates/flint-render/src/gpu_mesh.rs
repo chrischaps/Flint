@@ -107,6 +107,8 @@ impl MeshCache {
             normal_texture: None,
             metallic_roughness_texture: None,
             use_vertex_color: false,
+            alpha_mode: flint_import::AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
         };
 
         let gpu_meshes: Vec<GpuMesh> = import_result
@@ -210,6 +212,8 @@ impl MeshCache {
             normal_texture: None,
             metallic_roughness_texture: None,
             use_vertex_color: false,
+            alpha_mode: flint_import::AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
         };
 
         let gpu_meshes: Vec<GpuMesh> = mesh_indices
@@ -328,6 +332,8 @@ impl MeshCache {
             normal_texture: None,
             metallic_roughness_texture: None,
             use_vertex_color: false,
+            alpha_mode: flint_import::AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
         };
 
         let identity_bones: Vec<[[f32; 4]; 4]> = vec![

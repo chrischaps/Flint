@@ -1,8 +1,9 @@
 //! glTF/GLB file importer
 
 use crate::types::{
-    ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial, ImportedMesh,
-    ImportedNode, ImportedSkeleton, ImportedSkeletalClip, ImportedTexture, JointProperty,
+    AlphaMode, ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial,
+    ImportedMesh, ImportedNode, ImportedSkeleton, ImportedSkeletalClip, ImportedTexture,
+    JointProperty,
 };
 use flint_asset::{AssetMeta, AssetType};
 use flint_core::{ContentHash, FlintError, Result};
@@ -257,6 +258,13 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
                     .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
             });
 
+        let alpha_mode = match material.alpha_mode() {
+            gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+            gltf::material::AlphaMode::Mask => AlphaMode::Mask,
+            gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+        };
+        let alpha_cutoff = material.alpha_cutoff().unwrap_or(0.5);
+
         materials.push(ImportedMaterial {
             name: mat_name,
             base_color,
@@ -266,6 +274,8 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             normal_texture,
             metallic_roughness_texture,
             use_vertex_color: false,
+            alpha_mode,
+            alpha_cutoff,
         });
     }
 
