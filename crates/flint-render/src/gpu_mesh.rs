@@ -300,6 +300,11 @@ impl MeshCache {
         self.meshes.get(name)
     }
 
+    /// Get mutable reference to cached GPU meshes by asset name
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Vec<GpuMesh>> {
+        self.meshes.get_mut(name)
+    }
+
     /// Check if a model is already cached
     pub fn contains(&self, name: &str) -> bool {
         self.meshes.contains_key(name) || self.skinned_meshes.contains_key(name)

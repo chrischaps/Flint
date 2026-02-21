@@ -2,14 +2,19 @@
 //! Supports an optional spline editor mode for interactive track editing.
 
 use anyhow::{Context, Result};
-use crate::panels::{CameraView, EntityInspector, GizmoAction, InspectorAction, RenderStats, SceneTree, SplinePanelAction, ViewGizmo};
+use crate::panels::{
+    CameraView, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree,
+    SplinePanelAction, TransformGizmo, ViewGizmo,
+};
+use crate::panels::transform_gizmo::apply_gizmo_delta;
+use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
-use crate::transform_gizmo::{TransformGizmo, UndoEntry};
+use crate::undo::{EditAction, UndoCommand, UndoStack};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
-use flint_scene::load_scene;
+use flint_scene::{load_scene, save_scene, SceneDocument};
 use flint_schema::SchemaRegistry;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
@@ -29,6 +34,7 @@ struct ViewerState {
     constraint_registry: ConstraintRegistry,
     scene_path: String,
     needs_reload: bool,
+    scene_doc: Option<SceneDocument>,
 }
 
 /// Run the viewer application (standard viewer mode)
@@ -53,12 +59,16 @@ pub fn run(
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
 
+    // Parse the scene file as an editable document for structure-preserving saves
+    let scene_doc = SceneDocument::from_file(scene_path).ok();
+
     let state = Arc::new(Mutex::new(ViewerState {
         world,
         registry,
         constraint_registry,
         scene_path: scene_path.to_string(),
         needs_reload: false,
+        scene_doc,
     }));
 
     let _watcher = if watch {
@@ -131,6 +141,7 @@ pub fn run_with_world(
         constraint_registry,
         scene_path: scene_path_anchor.to_string(),
         needs_reload: false,
+        scene_doc: None,
     }));
 
     let event_loop = EventLoop::new()?;
@@ -177,6 +188,7 @@ pub fn run_editor(
         constraint_registry,
         scene_path: scene_path.to_string(),
         needs_reload: false,
+        scene_doc: None,
     }));
 
     let _watcher = if watch {
@@ -260,6 +272,7 @@ pub struct ViewerApp {
     entity_inspector: EntityInspector,
     render_stats: RenderStats,
     view_gizmo: ViewGizmo,
+    transform_gizmo: TransformGizmo,
 
     // Camera snap animation
     camera_snap_target: Option<(f32, f32)>,
@@ -272,9 +285,26 @@ pub struct ViewerApp {
     // Editor mode (None = standard viewer)
     editor: Option<SplineEditor>,
 
-    // Transform gizmo (active in non-editor viewer mode)
-    transform_gizmo: TransformGizmo,
-    gizmo_suppresses_orbit: bool,
+    // Undo/redo
+    undo_stack: UndoStack,
+
+    // Dirty tracking + save
+    dirty: bool,
+    last_save_time: Option<Instant>,
+    suppress_reload_until: Option<Instant>,
+
+    // Pending edit actions from inspector (collected inside egui closure, applied after)
+    pending_edits: Vec<EditAction>,
+
+    // Gizmo undo coalescing: when a drag ends, we push a single undo command
+    // from the stored start transform to the current transform
+    gizmo_drag_ended: bool,
+
+    // Dirty field tracking for structure-preserving saves
+    // Each entry is (entity_name, component, field)
+    dirty_fields: std::collections::HashSet<(String, String, String)>,
+
+    // Status message (e.g., "Saved!" in editor mode)
     status_message: Option<(String, Instant)>,
 }
 
@@ -299,13 +329,19 @@ impl ViewerApp {
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
             view_gizmo: ViewGizmo::new(),
+            transform_gizmo: TransformGizmo::new(),
             camera_snap_target: None,
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
             editor: None,
-            transform_gizmo: TransformGizmo::new(),
-            gizmo_suppresses_orbit: false,
+            undo_stack: UndoStack::new(),
+            dirty: false,
+            last_save_time: None,
+            suppress_reload_until: None,
+            pending_edits: Vec::new(),
+            gizmo_drag_ended: false,
+            dirty_fields: std::collections::HashSet::new(),
             status_message: None,
         }
     }
@@ -330,13 +366,19 @@ impl ViewerApp {
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
             view_gizmo: ViewGizmo::new(),
+            transform_gizmo: TransformGizmo::new(),
             camera_snap_target: None,
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
             editor: Some(editor),
-            transform_gizmo: TransformGizmo::new(),
-            gizmo_suppresses_orbit: false,
+            undo_stack: UndoStack::new(),
+            dirty: false,
+            last_save_time: None,
+            suppress_reload_until: None,
+            pending_edits: Vec::new(),
+            gizmo_drag_ended: false,
+            dirty_fields: std::collections::HashSet::new(),
             status_message: None,
         }
     }
@@ -511,6 +553,15 @@ impl ViewerApp {
             }
         }
 
+        // Apply any pending inspector edits (outside egui closure to avoid borrow conflicts)
+        self.apply_pending_edits();
+
+        // Handle gizmo drag end -> push undo
+        if self.gizmo_drag_ended {
+            self.gizmo_drag_ended = false;
+            self.finalize_gizmo_undo();
+        }
+
         output.present();
     }
 
@@ -564,15 +615,19 @@ impl ViewerApp {
         let violation_messages = &self.violation_messages;
         let state = &self.state;
         let view_gizmo = &mut self.view_gizmo;
+        let transform_gizmo = &mut self.transform_gizmo;
         let show_panels = self.show_inspector;
         let editor = &mut self.editor;
-        let transform_gizmo = &self.transform_gizmo;
+        let camera = &self.camera;
+        let dirty = self.dirty;
+        let undo_stack = &self.undo_stack;
         let status_message = &self.status_message;
 
         let mut gizmo_action = None;
         let mut panel_actions: Vec<SplinePanelAction> = Vec::new();
-        let mut inspector_action = InspectorAction::None;
-        let camera_ref = &self.camera;
+        let mut inspector_edits: Vec<EditAction> = Vec::new();
+        let mut gizmo_edits: Vec<EditAction> = Vec::new();
+        let mut gizmo_drag_just_ended = false;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if show_panels {
@@ -595,7 +650,13 @@ impl ViewerApp {
                             let selected = scene_tree.selected_entity();
                             if let Some(entity_id) = selected {
                                 let st = state.lock().unwrap();
-                                inspector_action = entity_inspector.ui(ui, &st.world, entity_id);
+                                let edits = entity_inspector.edit_ui(
+                                    ui,
+                                    &st.world,
+                                    &st.registry,
+                                    entity_id,
+                                );
+                                inspector_edits.extend(edits);
                             } else {
                                 ui.heading("Entity Inspector");
                                 ui.label("Select an entity in the scene tree.");
@@ -603,7 +664,7 @@ impl ViewerApp {
                         }
                     });
 
-                // Bottom panel: stats + constraint violations + mode indicator
+                // Bottom panel: stats + constraint violations + mode indicator + undo info
                 egui::TopBottomPanel::bottom("status_panel")
                     .default_height(100.0)
                     .resizable(true)
@@ -624,13 +685,33 @@ impl ViewerApp {
                                 );
                             }
 
-                            // Mode indicator for non-editor mode
+                            ui.separator();
+
+                            // Dirty indicator
+                            if dirty {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 200, 80),
+                                    "Modified",
+                                );
+                            }
+
+                            // Gizmo mode indicator (non-editor mode)
                             if editor.is_none() {
                                 ui.separator();
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(180, 180, 200),
-                                    "Translate",
-                                );
+                                let mode_label = match transform_gizmo.mode {
+                                    GizmoMode::Translate => "W: Move",
+                                    GizmoMode::Rotate => "E: Rotate",
+                                    GizmoMode::Scale => "R: Scale",
+                                };
+                                ui.label(mode_label);
+                            }
+
+                            // Undo/redo info
+                            if undo_stack.can_undo() {
+                                ui.separator();
+                                if let Some(desc) = undo_stack.undo_description() {
+                                    ui.label(format!("Undo: {}", desc));
+                                }
                             }
 
                             // Status message (e.g., "Saved!" or "Save not supported")
@@ -661,42 +742,57 @@ impl ViewerApp {
                     });
             }
 
+            // Transform gizmo for selected entity (non-editor mode only)
+            if editor.is_none() {
+                if let Some(entity_id) = scene_tree.selected_entity() {
+                    let st = state.lock().unwrap();
+                    let transform = st.world.get_transform(entity_id).unwrap_or_default();
+                    let pos = [transform.position.x, transform.position.y, transform.position.z];
+                    let rot = [transform.rotation.x, transform.rotation.y, transform.rotation.z];
+                    let scl = [transform.scale.x, transform.scale.y, transform.scale.z];
+                    // Use world position for gizmo placement (accounts for parent transforms)
+                    let world_pos = st.world.get_world_position(entity_id)
+                        .map(|p| [p.x, p.y, p.z])
+                        .unwrap_or(pos);
+                    drop(st); // Release lock before gizmo draw (it reads ctx.input)
+
+                    let render_rect = ctx.screen_rect();
+                    let clip_rect = ctx.available_rect();
+
+                    if let Some(delta) = transform_gizmo.draw(
+                        ctx,
+                        camera,
+                        entity_id,
+                        world_pos, rot, scl,
+                        render_rect,
+                        clip_rect,
+                    ) {
+                        let edits = apply_gizmo_delta(&delta, pos, rot, scl);
+                        gizmo_edits.extend(edits);
+                    }
+
+                    // Detect drag end for undo coalescing
+                    if !transform_gizmo.is_dragging() && transform_gizmo.drag_start_transform().is_some() {
+                        gizmo_drag_just_ended = true;
+                    }
+                }
+            }
+
             // View orientation gizmo (always visible)
             gizmo_action = view_gizmo.draw(ctx, &cam_view);
 
-            // Draw spline overlay on the central area
+            // Draw spline overlay on the central area (editor mode)
             if let Some(ed) = editor.as_ref() {
                 let screen_rect = ctx.screen_rect();
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("spline_overlay"),
                 ));
-                ed.draw_overlay(&painter, camera_ref, [screen_rect.width(), screen_rect.height()]);
-            }
-
-            // Draw transform gizmo overlay when entity selected in non-editor mode
-            if editor.is_none() {
-                if let Some(entity_id) = scene_tree.selected_entity() {
-                    let st = state.lock().unwrap();
-                    if let Some(world_pos) = st.world.get_world_position(entity_id) {
-                        let pos = [world_pos.x, world_pos.y, world_pos.z];
-                        let screen_rect = ctx.screen_rect();
-                        let painter = ctx.layer_painter(egui::LayerId::new(
-                            egui::Order::Foreground,
-                            egui::Id::new("transform_gizmo_overlay"),
-                        ));
-                        transform_gizmo.draw_overlay(
-                            &painter,
-                            camera_ref,
-                            [screen_rect.width(), screen_rect.height()],
-                            pos,
-                        );
-                    }
-                }
+                ed.draw_overlay(&painter, camera, [screen_rect.width(), screen_rect.height()]);
             }
         });
 
-        // Process panel actions outside the egui closure
+        // Process spline panel actions outside the egui closure
         for action in panel_actions {
             if let Some(ed) = &mut self.editor {
                 match action {
@@ -719,6 +815,28 @@ impl ViewerApp {
                     }
                 }
             }
+        }
+
+        // Store inspector results for processing outside the closure
+        self.pending_edits.extend(inspector_edits);
+
+        // Apply gizmo edits immediately (for smooth visual feedback during drag)
+        if !gizmo_edits.is_empty() {
+            let mut st = self.state.lock().unwrap();
+            for edit in &gizmo_edits {
+                if let Some(components) = st.world.get_components_mut(edit.entity_id) {
+                    components.set_field(&edit.component, &edit.field, edit.new_value.clone());
+                }
+            }
+            // Update renderer
+            if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+                renderer.update_from_world(&st.world, &ctx.device);
+            }
+            self.dirty = true;
+        }
+
+        if gizmo_drag_just_ended {
+            self.gizmo_drag_ended = true;
         }
 
         egui_winit.handle_platform_output(&window, full_output.platform_output);
@@ -783,32 +901,298 @@ impl ViewerApp {
 
         self.egui_renderer = Some(egui_renderer);
 
-        // Process inspector action (deferred to avoid borrow conflicts with egui).
-        // Skip while gizmo is dragging — the gizmo already moves the entity each frame,
-        // and the inspector would detect those changes as edits, flooding the undo stack.
-        if !self.transform_gizmo.is_dragging() {
-            if let InspectorAction::TransformChanged {
-                entity_id,
-                entity_name,
-                old_position,
-                new_position,
-            } = inspector_action
-            {
-                self.apply_entity_position(entity_id, new_position);
-                self.transform_gizmo.push_undo(UndoEntry {
-                    entity_id: entity_id.raw(),
-                    entity_name,
-                    old_position,
-                    new_position,
-                });
-                self.refresh_renderer();
-            }
-        }
-
         gizmo_action
     }
 
+    /// Apply pending inspector edits to the world and push undo
+    fn apply_pending_edits(&mut self) {
+        if self.pending_edits.is_empty() {
+            return;
+        }
+
+        let edits: Vec<EditAction> = self.pending_edits.drain(..).collect();
+
+        {
+            let mut st = self.state.lock().unwrap();
+            for edit in &edits {
+                // Track dirty fields for structure-preserving save
+                if let Some(name) = st.world.get_name(edit.entity_id) {
+                    self.dirty_fields.insert((
+                        name.to_string(),
+                        edit.component.clone(),
+                        edit.field.clone(),
+                    ));
+                }
+                if let Some(components) = st.world.get_components_mut(edit.entity_id) {
+                    components.set_field(&edit.component, &edit.field, edit.new_value.clone());
+                }
+            }
+        }
+
+        // Update renderer
+        {
+            let st = self.state.lock().unwrap();
+            if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+                renderer.update_from_world(&st.world, &ctx.device);
+            }
+        }
+
+        // Push undo
+        let desc = if edits.len() == 1 {
+            format!("Edit {}.{}", edits[0].component, edits[0].field)
+        } else {
+            format!("Edit {} fields", edits.len())
+        };
+        self.undo_stack.push(UndoCommand {
+            actions: edits,
+            description: desc,
+        });
+        self.dirty = true;
+    }
+
+    /// Finalize a gizmo drag into a single undo command
+    fn finalize_gizmo_undo(&mut self) {
+        let start = self.transform_gizmo.drag_start_transform();
+        let entity_id = self.transform_gizmo.drag_entity();
+
+        if let (Some((start_pos, start_rot, start_scl)), Some(eid)) = (start, entity_id) {
+            let st = self.state.lock().unwrap();
+            let current = st.world.get_transform(eid).unwrap_or_default();
+            let cur_pos = [current.position.x, current.position.y, current.position.z];
+            let cur_rot = [current.rotation.x, current.rotation.y, current.rotation.z];
+            let cur_scl = [current.scale.x, current.scale.y, current.scale.z];
+            let entity_name = st.world.get_name(eid).map(|n| n.to_string());
+            drop(st);
+
+            let mut actions = Vec::new();
+
+            if (0..3).any(|i| (cur_pos[i] - start_pos[i]).abs() > 1e-4) {
+                actions.push(EditAction {
+                    entity_id: eid,
+                    component: "transform".to_string(),
+                    field: "position".to_string(),
+                    old_value: vec3_to_toml(start_pos),
+                    new_value: vec3_to_toml(cur_pos),
+                });
+            }
+            if (0..3).any(|i| (cur_rot[i] - start_rot[i]).abs() > 1e-4) {
+                actions.push(EditAction {
+                    entity_id: eid,
+                    component: "transform".to_string(),
+                    field: "rotation".to_string(),
+                    old_value: vec3_to_toml(start_rot),
+                    new_value: vec3_to_toml(cur_rot),
+                });
+            }
+            if (0..3).any(|i| (cur_scl[i] - start_scl[i]).abs() > 1e-4) {
+                actions.push(EditAction {
+                    entity_id: eid,
+                    component: "transform".to_string(),
+                    field: "scale".to_string(),
+                    old_value: vec3_to_toml(start_scl),
+                    new_value: vec3_to_toml(cur_scl),
+                });
+            }
+
+            if !actions.is_empty() {
+                // Track dirty fields for patcher
+                if let Some(name) = &entity_name {
+                    for action in &actions {
+                        self.dirty_fields.insert((
+                            name.clone(),
+                            action.component.clone(),
+                            action.field.clone(),
+                        ));
+                    }
+                }
+
+                let mode_name = match self.transform_gizmo.mode {
+                    GizmoMode::Translate => "Move",
+                    GizmoMode::Rotate => "Rotate",
+                    GizmoMode::Scale => "Scale",
+                };
+                self.undo_stack.push(UndoCommand {
+                    actions,
+                    description: format!("{} entity", mode_name),
+                });
+            }
+        }
+
+        self.transform_gizmo.clear_drag_start();
+    }
+
+    /// Undo the last edit
+    fn undo(&mut self) {
+        if let Some(cmd) = self.undo_stack.undo() {
+            let mut st = self.state.lock().unwrap();
+            for action in &cmd.actions {
+                if let Some(components) = st.world.get_components_mut(action.entity_id) {
+                    components.set_field(&action.component, &action.field, action.old_value.clone());
+                }
+            }
+            drop(st);
+            self.refresh_renderer();
+            println!("Undo: {}", cmd.description);
+        }
+    }
+
+    /// Redo the last undone edit
+    fn redo(&mut self) {
+        if let Some(cmd) = self.undo_stack.redo() {
+            let mut st = self.state.lock().unwrap();
+            for action in &cmd.actions {
+                if let Some(components) = st.world.get_components_mut(action.entity_id) {
+                    components.set_field(&action.component, &action.field, action.new_value.clone());
+                }
+            }
+            drop(st);
+            self.refresh_renderer();
+            println!("Redo: {}", cmd.description);
+        }
+    }
+
+    /// Save the scene to disk using structure-preserving patcher when possible
+    fn save(&mut self) {
+        let mut st = self.state.lock().unwrap();
+        let scene_path = st.scene_path.clone();
+        let has_doc = st.scene_doc.is_some();
+
+        // Try structure-preserving save via patcher
+        if has_doc && !self.dirty_fields.is_empty() {
+            // Collect patch data from world first (immutable borrow of world)
+            let patches: Vec<(String, String, String, toml::Value)> = self.dirty_fields.iter()
+                .filter_map(|(entity_name, component, field)| {
+                    let eid = st.world.get_id(entity_name)?;
+                    let components = st.world.get_components(eid)?;
+                    let value = components.get_field(component, field)?;
+                    Some((entity_name.clone(), component.clone(), field.clone(), value.clone()))
+                })
+                .collect();
+
+            // Now apply patches (mutable borrow of doc only)
+            let doc = st.scene_doc.as_mut().unwrap();
+            for (entity_name, component, field, value) in &patches {
+                if let Err(e) = doc.patch_field(entity_name, component, field, value) {
+                    eprintln!("Patch error: {}", e);
+                }
+            }
+
+            match doc.save(&scene_path) {
+                Ok(()) => {
+                    drop(st);
+                    self.dirty = false;
+                    self.dirty_fields.clear();
+                    self.last_save_time = Some(Instant::now());
+                    self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
+                    self.update_window_title();
+                    self.status_message = Some(("Saved!".to_string(), Instant::now()));
+                    println!("Saved scene to {} (structure-preserving)", scene_path);
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("Patcher save failed, falling back to full save: {}", e);
+                }
+            }
+        }
+
+        // Fallback: full serialize save
+        let scene_name = Path::new(&scene_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("scene")
+            .to_string();
+
+        match save_scene(&scene_path, &st.world, &scene_name) {
+            Ok(()) => {
+                // Re-parse the document after full save so future patches work
+                st.scene_doc = SceneDocument::from_file(&scene_path).ok();
+                drop(st);
+                self.dirty = false;
+                self.dirty_fields.clear();
+                self.last_save_time = Some(Instant::now());
+                self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
+                self.update_window_title();
+                self.status_message = Some(("Saved!".to_string(), Instant::now()));
+                println!("Saved scene to {}", scene_path);
+            }
+            Err(e) => {
+                eprintln!("Failed to save scene: {:?}", e);
+                drop(st);
+                self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
+            }
+        }
+    }
+
+    /// Update the window title to reflect dirty state
+    fn update_window_title(&self) {
+        if let Some(window) = &self.window {
+            let base = if self.editor.is_some() {
+                "Flint Track Editor"
+            } else {
+                "Flint Viewer"
+            };
+            let title = if self.dirty {
+                format!("{} *", base)
+            } else {
+                base.to_string()
+            };
+            window.set_title(&title);
+        }
+    }
+
+    /// Refresh renderer from current world state
+    fn refresh_renderer(&mut self) {
+        let st = self.state.lock().unwrap();
+        if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+            renderer.update_from_world(&st.world, &ctx.device);
+        }
+    }
+
+    /// Handle mouse click picking in the viewport
+    fn try_pick_entity(&mut self, x: f64, y: f64) {
+        let context = match &self.render_context {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Check if pointer is over egui panels
+        if self.egui_ctx.is_pointer_over_area() {
+            return;
+        }
+
+        // Don't pick while gizmo is active
+        if self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered() {
+            return;
+        }
+
+        let st = self.state.lock().unwrap();
+        let targets = build_pick_targets(&st.world);
+        drop(st);
+
+        let vw = context.config.width as f32;
+        let vh = context.config.height as f32;
+
+        if let Some((entity_id, _dist)) = pick_entity(x as f32, y as f32, vw, vh, &self.camera, &targets) {
+            self.scene_tree.select(Some(entity_id));
+        } else {
+            self.scene_tree.select(None);
+        }
+    }
+
     fn check_reload(&mut self) {
+        // Suppress reload if we just saved
+        if let Some(until) = self.suppress_reload_until {
+            if Instant::now() < until {
+                // Clear the needs_reload flag silently
+                if let Ok(mut state) = self.state.lock() {
+                    state.needs_reload = false;
+                }
+                return;
+            } else {
+                self.suppress_reload_until = None;
+            }
+        }
+
         let (needs_reload, scene_path) = {
             let state = self.state.lock().unwrap();
             (state.needs_reload, state.scene_path.clone())
@@ -854,6 +1238,18 @@ impl ViewerApp {
                         self.scene_tree.update(&state.world);
                     }
                     self.update_constraints();
+
+                    // External reload clears undo and dirty state
+                    self.undo_stack.clear();
+                    self.dirty = false;
+                    self.dirty_fields.clear();
+                    self.update_window_title();
+
+                    // Re-parse scene document for patcher
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        state.scene_doc = SceneDocument::from_file(&scene_path).ok();
+                    }
                 }
                 Err(e) => {
                     eprintln!("Failed to reload scene: {:?}", e);
@@ -1039,59 +1435,6 @@ impl ViewerApp {
             _ => false,
         }
     }
-
-    // --- Transform gizmo helpers ---
-
-    /// Apply a new position to an entity in the world via merge_component.
-    fn apply_entity_position(&mut self, entity_id: flint_core::EntityId, pos: [f32; 3]) {
-        let mut state = self.state.lock().unwrap();
-        let mut table = toml::value::Table::new();
-        let mut pos_table = toml::value::Table::new();
-        pos_table.insert("x".to_string(), toml::Value::Float(pos[0] as f64));
-        pos_table.insert("y".to_string(), toml::Value::Float(pos[1] as f64));
-        pos_table.insert("z".to_string(), toml::Value::Float(pos[2] as f64));
-        table.insert("position".to_string(), toml::Value::Table(pos_table));
-        let _ = state.world.merge_component(entity_id, "transform", toml::Value::Table(table));
-    }
-
-    /// Refresh the scene renderer from the current world state.
-    fn refresh_renderer(&mut self) {
-        if let (Some(context), Some(renderer)) =
-            (&self.render_context, &mut self.scene_renderer)
-        {
-            let state = self.state.lock().unwrap();
-            renderer.update_from_world(&state.world, &context.device);
-        }
-    }
-
-    /// Save the current world state back to the scene file.
-    fn save_scene(&mut self) {
-        let state = self.state.lock().unwrap();
-        let scene_path = state.scene_path.clone();
-        drop(state);
-
-        // Check if scene path looks like a real scene file (not a prefab anchor)
-        if !scene_path.ends_with(".scene.toml") {
-            self.status_message = Some(("Save not supported for this view".to_string(), Instant::now()));
-            return;
-        }
-
-        let state = self.state.lock().unwrap();
-        // Use save_scene which rebuilds from the world
-        match flint_scene::save_scene(&scene_path, &state.world, "") {
-            Ok(()) => {
-                drop(state);
-                println!("Saved scene: {}", scene_path);
-                self.status_message = Some(("Saved!".to_string(), Instant::now()));
-                self.transform_gizmo.modified = false;
-            }
-            Err(e) => {
-                drop(state);
-                eprintln!("Save failed: {}", e);
-                self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
-            }
-        }
-    }
 }
 
 impl ApplicationHandler for ViewerApp {
@@ -1117,7 +1460,11 @@ impl ApplicationHandler for ViewerApp {
             self.modifiers = mods.state();
         }
 
-        // Handle Tab — in editor mode it cycles selection; in viewer mode it toggles inspector.
+        // Handle gizmo input priority: if gizmo is hovered/dragging, suppress camera orbit
+        // but still let egui process the event for gizmo interaction
+        let gizmo_active = self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered();
+
+        // Handle Tab and other global shortcuts before egui can consume them.
         if let WindowEvent::KeyboardInput { event: ref key_event, .. } = event {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
                 if is_editor {
@@ -1141,41 +1488,43 @@ impl ApplicationHandler for ViewerApp {
                             }
                             KeyCode::KeyZ if self.modifiers.control_key() && self.modifiers.shift_key() => {
                                 // Ctrl+Shift+Z = redo
-                                if let Some(entry) = self.transform_gizmo.redo() {
-                                    self.apply_entity_position(
-                                        flint_core::EntityId::from_raw(entry.entity_id),
-                                        entry.new_position,
-                                    );
-                                    self.entity_inspector.invalidate_cache();
-                                    self.refresh_renderer();
-                                }
+                                self.redo();
                                 return;
                             }
                             KeyCode::KeyZ if self.modifiers.control_key() => {
                                 // Ctrl+Z = undo
-                                if let Some(entry) = self.transform_gizmo.undo() {
-                                    self.apply_entity_position(
-                                        flint_core::EntityId::from_raw(entry.entity_id),
-                                        entry.old_position,
-                                    );
-                                    self.entity_inspector.invalidate_cache();
-                                    self.refresh_renderer();
-                                }
+                                self.undo();
+                                return;
+                            }
+                            KeyCode::KeyY if self.modifiers.control_key() => {
+                                // Ctrl+Y = redo
+                                self.redo();
                                 return;
                             }
                             KeyCode::KeyS if self.modifiers.control_key() => {
                                 // Ctrl+S = save scene
-                                self.save_scene();
+                                self.save();
                                 return;
                             }
-                            KeyCode::Escape if self.transform_gizmo.is_dragging() => {
-                                // Cancel gizmo drag
-                                if let Some(old_pos) = self.transform_gizmo.cancel_drag() {
-                                    if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                        self.apply_entity_position(entity_id, old_pos);
-                                        self.entity_inspector.invalidate_cache();
-                                        self.refresh_renderer();
-                                    }
+                            // W = Translate gizmo mode
+                            KeyCode::KeyW if self.modifiers.is_empty() => {
+                                self.transform_gizmo.mode = GizmoMode::Translate;
+                                return;
+                            }
+                            // E = Rotate gizmo mode
+                            KeyCode::KeyE if self.modifiers.is_empty() => {
+                                self.transform_gizmo.mode = GizmoMode::Rotate;
+                                return;
+                            }
+                            // R = Scale gizmo mode
+                            KeyCode::KeyR if self.modifiers.is_empty() => {
+                                self.transform_gizmo.mode = GizmoMode::Scale;
+                                return;
+                            }
+                            // Ctrl+R = Reload
+                            KeyCode::KeyR if self.modifiers.control_key() => {
+                                if let Ok(mut state) = self.state.lock() {
+                                    state.needs_reload = true;
                                 }
                                 return;
                             }
@@ -1221,11 +1570,8 @@ impl ApplicationHandler for ViewerApp {
                         PhysicalKey::Code(KeyCode::Escape) if !self.transform_gizmo.is_dragging() => {
                             event_loop.exit();
                         }
-                        PhysicalKey::Code(KeyCode::KeyR) => {
-                            if let Ok(mut state) = self.state.lock() {
-                                state.needs_reload = true;
-                            }
-                        }
+
+
                         PhysicalKey::Code(KeyCode::Space) if !is_editor => {
                             self.camera = Camera::new();
                             self.camera.update_orbit();
@@ -1294,55 +1640,14 @@ impl ApplicationHandler for ViewerApp {
                 } else {
                     match button {
                         MouseButton::Left => {
-                            if state == ElementState::Pressed {
-                                // Check gizmo pick before orbit
-                                let screen = self.screen_size();
-                                if let Some((mx, my)) = self.last_mouse_pos {
-                                    if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                        let world_pos = {
-                                            let st = self.state.lock().unwrap();
-                                            st.world.get_world_position(entity_id)
-                                                .map(|p| [p.x, p.y, p.z])
-                                        };
-                                        if let Some(pos) = world_pos {
-                                            if let Some(axis) = self.transform_gizmo.pick(
-                                                &self.camera, screen,
-                                                mx as f32, my as f32, pos,
-                                            ) {
-                                                self.transform_gizmo.begin_drag(
-                                                    axis, &self.camera, screen,
-                                                    mx as f32, my as f32, pos,
-                                                );
-                                                self.gizmo_suppresses_orbit = true;
-                                                self.mouse_pressed = true;
-                                                return;
-                                            }
-                                        }
-                                    }
+                            let was_pressed = self.mouse_pressed;
+                            self.mouse_pressed = state == ElementState::Pressed;
+
+                            // On click release (not drag), try picking
+                            if state == ElementState::Released && was_pressed && !gizmo_active {
+                                if let Some((x, y)) = self.last_mouse_pos {
+                                    self.try_pick_entity(x, y);
                                 }
-                                self.mouse_pressed = true;
-                            } else {
-                                // Release
-                                if self.transform_gizmo.is_dragging() {
-                                    if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                        let (name, world_pos) = {
-                                            let st = self.state.lock().unwrap();
-                                            let name = st.world.all_entities().iter()
-                                                .find(|e| e.id == entity_id)
-                                                .map(|e| e.name.clone())
-                                                .unwrap_or_default();
-                                            let pos = st.world.get_world_position(entity_id)
-                                                .map(|p| [p.x, p.y, p.z])
-                                                .unwrap_or([0.0; 3]);
-                                            (name, pos)
-                                        };
-                                        self.transform_gizmo.end_drag(
-                                            entity_id.raw(), &name, world_pos,
-                                        );
-                                    }
-                                    self.gizmo_suppresses_orbit = false;
-                                }
-                                self.mouse_pressed = false;
                             }
                         }
                         MouseButton::Right => {
@@ -1357,50 +1662,21 @@ impl ApplicationHandler for ViewerApp {
                 if is_editor {
                     self.handle_editor_cursor_moved(position);
                 } else {
-                    if self.transform_gizmo.is_dragging() {
-                        // Gizmo drag in progress — move entity
-                        let screen = self.screen_size();
-                        if let Some(new_pos) = self.transform_gizmo.handle_drag(
-                            &self.camera, screen,
-                            position.x as f32, position.y as f32,
-                        ) {
-                            if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                self.apply_entity_position(entity_id, new_pos);
-                                self.refresh_renderer();
-                            }
-                        }
-                    } else {
-                        if let Some((last_x, last_y)) = self.last_mouse_pos {
-                            let dx = (position.x - last_x) as f32;
-                            let dy = (position.y - last_y) as f32;
+                    if let Some((last_x, last_y)) = self.last_mouse_pos {
+                        let dx = (position.x - last_x) as f32;
+                        let dy = (position.y - last_y) as f32;
 
-                            if self.mouse_pressed && !self.gizmo_suppresses_orbit {
-                                self.camera.orbit_horizontal(-dx * 0.01);
-                                self.camera.orbit_vertical(-dy * 0.01);
-                                self.camera_snap_target = None;
-                                self.camera.orthographic = false;
-                            }
-
-                            if self.right_mouse_pressed {
-                                self.camera.pan(-dx * 0.02, dy * 0.02);
-                                self.camera_snap_target = None;
-                            }
+                        // Only orbit if gizmo is not active
+                        if self.mouse_pressed && !gizmo_active {
+                            self.camera.orbit_horizontal(-dx * 0.01);
+                            self.camera.orbit_vertical(-dy * 0.01);
+                            self.camera_snap_target = None;
+                            self.camera.orthographic = false;
                         }
 
-                        // Update gizmo hover state
-                        if let Some(entity_id) = self.scene_tree.selected_entity() {
-                            let world_pos = {
-                                let st = self.state.lock().unwrap();
-                                st.world.get_world_position(entity_id)
-                                    .map(|p| [p.x, p.y, p.z])
-                            };
-                            if let Some(pos) = world_pos {
-                                let screen = self.screen_size();
-                                self.transform_gizmo.update_hover(
-                                    &self.camera, screen,
-                                    position.x as f32, position.y as f32, pos,
-                                );
-                            }
+                        if self.right_mouse_pressed {
+                            self.camera.pan(-dx * 0.02, dy * 0.02);
+                            self.camera_snap_target = None;
                         }
                     }
 
@@ -1432,7 +1708,15 @@ impl ApplicationHandler for ViewerApp {
     }
 }
 
-// --- Angle interpolation helpers ---
+// --- Helpers ---
+
+fn vec3_to_toml(v: [f32; 3]) -> toml::Value {
+    toml::Value::Array(vec![
+        toml::Value::Float(v[0] as f64),
+        toml::Value::Float(v[1] as f64),
+        toml::Value::Float(v[2] as f64),
+    ])
+}
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t

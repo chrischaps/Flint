@@ -263,58 +263,53 @@ twist = 5.0               # Banked turn
 
 The engine samples the control points into a dense array using Catmull-Rom interpolation, stored as the `spline_data` ECS component. Scripts can query this data via `spline_closest_point()` and `spline_sample_at()`.
 
-## UI Layout Files (`ui/*.ui.toml`)
+## UI Layouts (`ui/*.ui.toml`)
 
-Define the structure of data-driven UI documents. Paired with a `.style.toml` file for styling.
+Data-driven UI element trees. Loaded by scripts via `load_ui()`. Each layout file references a companion style file.
 
 ```toml
-style = "hud.style.toml"
+[ui]
+name = "Race HUD"
+style = "ui/race_hud.style.toml"
 
-[[elements]]
-id = "score_panel"
-type = "panel"
-anchor = "top_right"
-x = -20
-y = 20
-
-[[elements]]
-id = "score_label"
-type = "text"
-parent = "score_panel"
-class = "hud_text"
-text = "Score: 0"
+[elements.<id>]
+type = "panel"                     # panel, text, rect, circle, image
+anchor = "bottom-center"           # Screen anchor (root elements only)
+class = "hud-panel"                # Style class from .style.toml
+parent = "parent_id"               # Optional parent element
+text = "Default text"              # For text elements
+src = "logo.png"                   # For image elements
+visible = true
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `style` | string | Path to the companion `.style.toml` file |
-| `elements[].id` | string | Unique element identifier (used by script API) |
-| `elements[].type` | string | Element type: `panel`, `text`, `rect`, `circle`, `image` |
-| `elements[].parent` | string | Parent element ID (for nesting) |
-| `elements[].anchor` | string | Screen anchor: `top_left`, `top_center`, `top_right`, `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right` |
-| `elements[].class` | string | Style class name (defined in the `.style.toml`) |
-| `elements[].text` | string | Initial text content (for `text` elements) |
-| `elements[].x`, `y` | f32 | Offset from anchor position |
+Element types: `panel` (container with background), `text` (styled text), `rect` (filled or outlined rectangle), `circle` (filled circle), `image` (sprite).
 
-## UI Style Files (`ui/*.style.toml`)
+Anchor points: `top-left`, `top-center`, `top-right`, `center-left`, `center`, `center-right`, `bottom-left`, `bottom-center`, `bottom-right`.
 
-Define named style classes referenced by UI layout elements.
+See [Scripting: Data-Driven UI](../concepts/scripting.md#data-driven-ui-system) for the full layout/style/API reference.
+
+## UI Styles (`ui/*.style.toml`)
+
+Named style classes for UI elements. Referenced by `.ui.toml` layout files.
 
 ```toml
-[classes.hud_text]
-font_size = 18
-color = [1.0, 1.0, 1.0, 1.0]
-text_align = "center"
-
-[classes.panel_bg]
-bg_color = [0.0, 0.0, 0.0, 0.5]
+[styles.<class-name>]
 width = 200
-height = 40
-rounding = 4
-thickness = 0
+height = 60
+color = [1.0, 1.0, 1.0, 1.0]     # Primary color (RGBA)
+bg_color = [0.0, 0.0, 0.0, 0.6]  # Background color
+font_size = 24
+text_align = "center"              # left, center, right
+rounding = 8
+opacity = 1.0
+padding = [12, 8, 12, 8]          # [left, top, right, bottom]
+layout = "stack"                   # stack (vertical) or horizontal
+layer = 0                          # Render depth ordering
+width_pct = 100                    # Percentage of parent width
+margin_bottom = 4                  # Spacing in flow layout
 ```
 
-Supported style properties: `x`, `y`, `width`, `height`, `color`, `bg_color`, `font_size`, `rounding`, `layer`, `padding`, `opacity`, `text_align` (`"left"`, `"center"`, `"right"`), `layout` (`"vertical"`, `"horizontal"`), `thickness`.
+Style properties support float, color (`[r,g,b,a]`), string, and boolean values. See [Scripting: Style Properties](../concepts/scripting.md#file-format-styletoml) for the complete property table.
 
 ## Rhai Scripts (`scripts/*.rhai`)
 

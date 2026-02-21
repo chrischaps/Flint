@@ -1,10 +1,12 @@
 // ─── footsteps.rhai ──────────────────────────────────────
 // Plays footstep sounds at regular intervals when the player
-// is moving. Faster interval when sprinting.
+// is moving. Faster interval when sprinting. Randomly picks
+// from 7 individual step samples for natural variation.
 
 let step_timer = 0.0;
 let step_interval = 0.4;
 let sprint_interval = 0.25;
+let num_steps = 7;
 
 fn on_update() {
     let dt = delta_time();
@@ -27,7 +29,9 @@ fn on_update() {
     step_timer += dt;
     if step_timer >= interval {
         step_timer -= interval;
-        let pos = get_position(me);
-        play_sound_at("audio/footstep_stone.wav", pos.x, pos.y, pos.z, 0.5);
+        let idx = to_int(floor(random() * num_steps)) + 1;
+        if idx > num_steps { idx = num_steps; }
+        let file = "audio/footstep_stone_" + idx + ".ogg";
+        play_sound(file, 0.5);
     }
 }

@@ -421,10 +421,28 @@ impl SceneRenderer {
         self.mesh_cache
             .upload_imported(device, name, import_result, default_color);
 
-        // Upload textures referenced by materials
+        // Upload textures referenced by materials, namespaced by asset name
+        // to prevent collisions between models with generic texture names like "texture_0"
         if let Some(cache) = &mut self.texture_cache {
             for texture in &import_result.textures {
-                cache.upload(device, queue, &texture.name, texture);
+                let namespaced = format!("{}::{}", name, texture.name);
+                cache.upload(device, queue, &namespaced, texture);
+            }
+        }
+
+        // Patch material texture references on cached meshes to use namespaced names
+        if let Some(gpu_meshes) = self.mesh_cache.get_mut(name) {
+            for mesh in gpu_meshes.iter_mut() {
+                if let Some(ref tex) = mesh.material.base_color_texture {
+                    mesh.material.base_color_texture = Some(format!("{}::{}", name, tex));
+                }
+                if let Some(ref tex) = mesh.material.normal_texture {
+                    mesh.material.normal_texture = Some(format!("{}::{}", name, tex));
+                }
+                if let Some(ref tex) = mesh.material.metallic_roughness_texture {
+                    mesh.material.metallic_roughness_texture =
+                        Some(format!("{}::{}", name, tex));
+                }
             }
         }
     }
@@ -453,10 +471,27 @@ impl SceneRenderer {
             );
         }
 
-        // Also upload textures
+        // Also upload textures, namespaced by asset name
         if let Some(cache) = &mut self.texture_cache {
             for texture in &import_result.textures {
-                cache.upload(device, queue, &texture.name, texture);
+                let namespaced = format!("{}::{}", name, texture.name);
+                cache.upload(device, queue, &namespaced, texture);
+            }
+        }
+
+        // Patch material texture references on cached skinned meshes
+        if let Some(gpu_meshes) = self.mesh_cache.get_skinned_mut(name) {
+            for mesh in gpu_meshes.iter_mut() {
+                if let Some(ref tex) = mesh.material.base_color_texture {
+                    mesh.material.base_color_texture = Some(format!("{}::{}", name, tex));
+                }
+                if let Some(ref tex) = mesh.material.normal_texture {
+                    mesh.material.normal_texture = Some(format!("{}::{}", name, tex));
+                }
+                if let Some(ref tex) = mesh.material.metallic_roughness_texture {
+                    mesh.material.metallic_roughness_texture =
+                        Some(format!("{}::{}", name, tex));
+                }
             }
         }
     }

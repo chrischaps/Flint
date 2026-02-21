@@ -19,6 +19,8 @@ pub struct AudioEngine {
     sound_cache: HashMap<String, StaticSoundData>,
     master_volume: f64,
     filter_handle: Option<FilterHandle>,
+    /// Keeps spatial track + sound handles alive until one-shot sounds finish
+    oneshot_tracks: Vec<(SpatialTrackHandle, StaticSoundHandle)>,
 }
 
 impl Default for AudioEngine {
@@ -49,6 +51,7 @@ impl AudioEngine {
             sound_cache: HashMap::new(),
             master_volume: 1.0,
             filter_handle: if has_audio { Some(filter_handle) } else { None },
+            oneshot_tracks: Vec::new(),
         }
     }
 
@@ -215,7 +218,8 @@ impl AudioEngine {
         Ok(handle)
     }
 
-    /// Play a one-shot sound at a 3D position (creates a temporary spatial track)
+    /// Play a one-shot sound at a 3D position (creates a temporary spatial track).
+    /// The track and sound handles are kept alive until the sound finishes playing.
     pub fn play_at_position(
         &mut self,
         sound_name: &str,
@@ -223,9 +227,21 @@ impl AudioEngine {
         volume: f64,
     ) -> Result<()> {
         let mut track = self.create_spatial_track(position, 1.0, 25.0)?;
-        let _handle = self.play_on_spatial_track(sound_name, &mut track, volume, 1.0, false)?;
-        // Track handle is dropped but the sound continues playing until finished
+        let handle = self.play_on_spatial_track(sound_name, &mut track, volume, 1.0, false)?;
+        self.oneshot_tracks.push((track, handle));
         Ok(())
+    }
+
+    /// Remove finished one-shot spatial sounds. Call once per frame.
+    pub fn cleanup_finished_oneshots(&mut self) {
+        self.oneshot_tracks.retain(|(_track, sound)| {
+            sound.state() != kira::sound::PlaybackState::Stopped
+        });
+    }
+
+    /// Drop all one-shot spatial handles (for scene transitions).
+    pub fn clear_oneshots(&mut self) {
+        self.oneshot_tracks.clear();
     }
 
     /// Check if a sound is already loaded

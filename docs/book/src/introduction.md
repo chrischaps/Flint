@@ -56,7 +56,7 @@ flint play levels/tavern.scene.toml
 
 ## Current Status
 
-All five phases of Flint's development are complete. The engine supports:
+The engine supports:
 
 - **Entity CRUD** via CLI with archetype-based creation
 - **Scene serialization** in human-readable TOML
@@ -81,6 +81,7 @@ All five phases of Flint's development are complete. The engine supports:
 - **Billboard sprites** with camera-facing quads and sprite sheet animation
 - **GPU particle system** with instanced rendering, per-emitter pooling, alpha/additive blending, and configurable emission shapes
 - **Extensible input system** with config-driven bindings for keyboard, mouse, and gamepad with runtime rebinding
+- **Data-driven UI system** with TOML-defined layouts, style classes, anchor-based positioning, flow layouts, and runtime scripting API
 - **Game project architecture** for standalone games that include the engine as a git subtree
 
 See the [Roadmap](roadmap.md) for the full development history.

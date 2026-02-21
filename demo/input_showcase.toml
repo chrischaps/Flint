@@ -1,0 +1,8 @@
+version = 1
+game_id = "showcase"
+
+[actions.pause]
+kind = "button"
+[[actions.pause.bindings]]
+type = "key"
+code = "Escape"

@@ -1,46 +1,29 @@
-//! Entity inspector panel — displays components and provides editable transform fields
+//! Editable entity inspector panel — schema-driven widgets for component properties
 
+use crate::undo::EditAction;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
+use flint_schema::{FieldType, SchemaRegistry};
 
-/// Action returned from the inspector when a transform is edited.
-pub enum InspectorAction {
-    None,
-    TransformChanged {
-        entity_id: EntityId,
-        entity_name: String,
-        old_position: [f32; 3],
-        new_position: [f32; 3],
-    },
-}
-
-/// Entity inspector — displays all components for a selected entity,
-/// with editable DragValue fields for the transform.
-pub struct EntityInspector {
-    // Cached values for DragValue editing (egui needs mutable references)
-    pos: [f32; 3],
-    rot: [f32; 3],
-    scale: [f32; 3],
-    cached_entity: Option<EntityId>,
-}
-
-impl Default for EntityInspector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// Entity inspector — editable display of all components for a selected entity
+#[derive(Default)]
+pub struct EntityInspector;
 
 impl EntityInspector {
     pub fn new() -> Self {
-        Self {
-            pos: [0.0; 3],
-            rot: [0.0; 3],
-            scale: [1.0, 1.0, 1.0],
-            cached_entity: None,
-        }
+        Self
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, world: &FlintWorld, entity_id: EntityId) -> InspectorAction {
+    /// Draw the interactive inspector, returning any edit actions produced
+    pub fn edit_ui(
+        &self,
+        ui: &mut egui::Ui,
+        world: &FlintWorld,
+        registry: &SchemaRegistry,
+        entity_id: EntityId,
+    ) -> Vec<EditAction> {
+        let mut actions = Vec::new();
+
         ui.heading("Entity Inspector");
         ui.separator();
 
@@ -50,7 +33,7 @@ impl EntityInspector {
 
         let Some(entity) = entity else {
             ui.label("Entity not found");
-            return InspectorAction::None;
+            return actions;
         };
 
         let entity_name = entity.name.clone();
@@ -62,94 +45,339 @@ impl EntityInspector {
         ));
         ui.label(format!("ID: {}", entity.id.raw()));
 
-        // Refresh cached values when entity changes or on first load
+        // Transform (always present, special handling)
         let transform = world.get_transform(entity_id).unwrap_or_default();
-        if self.cached_entity != Some(entity_id) {
-            self.pos = [transform.position.x, transform.position.y, transform.position.z];
-            self.rot = [transform.rotation.x, transform.rotation.y, transform.rotation.z];
-            self.scale = [transform.scale.x, transform.scale.y, transform.scale.z];
-            self.cached_entity = Some(entity_id);
-        }
-
-        // Sync from world if not actively dragging (handles external changes like gizmo drags)
-        // We detect "not dragging" by comparing — if values match world, keep ours; if world changed, sync.
-        let world_pos = [transform.position.x, transform.position.y, transform.position.z];
-        let world_rot = [transform.rotation.x, transform.rotation.y, transform.rotation.z];
-        let world_scale = [transform.scale.x, transform.scale.y, transform.scale.z];
-
-        // Transform section with editable DragValues
-        let mut action = InspectorAction::None;
 
         ui.separator();
-        egui::CollapsingHeader::new("Transform").default_open(true).show(ui, |ui| {
-            let old_pos = self.pos;
+        egui::CollapsingHeader::new("Transform")
+            .default_open(true)
+            .show(ui, |ui| {
+                // Position
+                let pos = [transform.position.x, transform.position.y, transform.position.z];
+                if let Some(new_pos) = vec3_edit(ui, "Position", pos, 0.1) {
+                    let old_val = vec3_to_toml(pos);
+                    let new_val = vec3_to_toml(new_pos);
+                    actions.push(EditAction {
+                        entity_id,
+                        component: "transform".to_string(),
+                        field: "position".to_string(),
+                        old_value: old_val,
+                        new_value: new_val,
+                    });
+                }
 
-            // Sync position from world when it changes externally
-            if !ui.ctx().is_using_pointer() {
-                self.pos = world_pos;
-            }
+                // Rotation
+                let rot = [transform.rotation.x, transform.rotation.y, transform.rotation.z];
+                if let Some(new_rot) = vec3_edit(ui, "Rotation", rot, 1.0) {
+                    let old_val = vec3_to_toml(rot);
+                    let new_val = vec3_to_toml(new_rot);
+                    actions.push(EditAction {
+                        entity_id,
+                        component: "transform".to_string(),
+                        field: "rotation".to_string(),
+                        old_value: old_val,
+                        new_value: new_val,
+                    });
+                }
 
-            ui.horizontal(|ui| {
-                ui.label("Position:");
-                ui.colored_label(egui::Color32::from_rgb(214, 67, 67), "X");
-                ui.add(egui::DragValue::new(&mut self.pos[0]).speed(0.1).range(f32::MIN..=f32::MAX));
-                ui.colored_label(egui::Color32::from_rgb(67, 172, 67), "Y");
-                ui.add(egui::DragValue::new(&mut self.pos[1]).speed(0.1).range(f32::MIN..=f32::MAX));
-                ui.colored_label(egui::Color32::from_rgb(67, 118, 214), "Z");
-                ui.add(egui::DragValue::new(&mut self.pos[2]).speed(0.1).range(f32::MIN..=f32::MAX));
+                // Scale
+                let scl = [transform.scale.x, transform.scale.y, transform.scale.z];
+                if let Some(new_scl) = vec3_edit(ui, "Scale", scl, 0.01) {
+                    let old_val = vec3_to_toml(scl);
+                    let new_val = vec3_to_toml(new_scl);
+                    actions.push(EditAction {
+                        entity_id,
+                        component: "transform".to_string(),
+                        field: "scale".to_string(),
+                        old_value: old_val,
+                        new_value: new_val,
+                    });
+                }
             });
-
-            // Detect if position changed via DragValue
-            if (self.pos[0] - old_pos[0]).abs() > 1e-6
-                || (self.pos[1] - old_pos[1]).abs() > 1e-6
-                || (self.pos[2] - old_pos[2]).abs() > 1e-6
-            {
-                action = InspectorAction::TransformChanged {
-                    entity_id,
-                    entity_name: entity_name.clone(),
-                    old_position: world_pos,
-                    new_position: self.pos,
-                };
-            }
-
-            // Rotation (read-only for now — editable rotation comes later)
-            self.rot = world_rot;
-            ui.horizontal(|ui| {
-                ui.label("Rotation:");
-                ui.monospace(format!(
-                    "[{:.2}, {:.2}, {:.2}]",
-                    self.rot[0], self.rot[1], self.rot[2]
-                ));
-            });
-
-            // Scale (read-only for now)
-            self.scale = world_scale;
-            ui.horizontal(|ui| {
-                ui.label("Scale:");
-                ui.monospace(format!(
-                    "[{:.2}, {:.2}, {:.2}]",
-                    self.scale[0], self.scale[1], self.scale[2]
-                ));
-            });
-        });
 
         // Dynamic components
         if let Some(components) = world.get_components(entity_id) {
             for (comp_name, comp_value) in components.data.iter() {
+                if comp_name == "transform" {
+                    continue; // Already handled above
+                }
+
+                let schema = registry.get_component(comp_name);
                 ui.separator();
-                egui::CollapsingHeader::new(comp_name).default_open(true).show(ui, |ui| {
-                    display_toml_value(ui, comp_value);
-                });
+                egui::CollapsingHeader::new(comp_name)
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        if let Some(table) = comp_value.as_table() {
+                            for (field_name, field_value) in table {
+                                let field_schema = schema.and_then(|s| s.get_field(field_name));
+
+                                if let Some(fs) = field_schema {
+                                    if let Some(new_val) = edit_field(
+                                        ui,
+                                        field_name,
+                                        field_value,
+                                        &fs.field_type,
+                                        fs.min,
+                                        fs.max,
+                                    ) {
+                                        actions.push(EditAction {
+                                            entity_id,
+                                            component: comp_name.clone(),
+                                            field: field_name.clone(),
+                                            old_value: field_value.clone(),
+                                            new_value: new_val,
+                                        });
+                                    }
+                                } else {
+                                    // No schema — read-only fallback
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("{}:", field_name));
+                                        ui.monospace(format_toml_leaf(field_value));
+                                    });
+                                }
+                            }
+                        } else {
+                            display_toml_value(ui, comp_value);
+                        }
+                    });
             }
         }
 
-        action
+        actions
     }
+}
 
-    /// Force-refresh cached values from the world (after undo/redo or gizmo drag).
-    pub fn invalidate_cache(&mut self) {
-        self.cached_entity = None;
+/// Edit a field based on its schema type. Returns Some(new_value) if changed.
+fn edit_field(
+    ui: &mut egui::Ui,
+    name: &str,
+    value: &toml::Value,
+    field_type: &FieldType,
+    min: Option<f64>,
+    max: Option<f64>,
+) -> Option<toml::Value> {
+    match field_type {
+        FieldType::Bool => {
+            let mut b = value.as_bool().unwrap_or(false);
+            let original = b;
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut b, name);
+            });
+            if b != original {
+                Some(toml::Value::Boolean(b))
+            } else {
+                None
+            }
+        }
+
+        FieldType::I32 | FieldType::I64 => {
+            let mut v = value.as_integer().unwrap_or(0);
+            let original = v;
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", name));
+                let mut drag = egui::DragValue::new(&mut v).speed(1);
+                if let Some(lo) = min {
+                    drag = drag.range(lo as i64..=max.unwrap_or(f64::MAX) as i64);
+                }
+                ui.add(drag);
+            });
+            if v != original {
+                Some(toml::Value::Integer(v))
+            } else {
+                None
+            }
+        }
+
+        FieldType::F32 | FieldType::F64 => {
+            let mut v = value
+                .as_float()
+                .or_else(|| value.as_integer().map(|i| i as f64))
+                .unwrap_or(0.0);
+            let original = v;
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", name));
+                let mut drag = egui::DragValue::new(&mut v).speed(0.01).max_decimals(4);
+                if let Some(lo) = min {
+                    drag = drag.range(lo..=max.unwrap_or(f64::MAX));
+                }
+                ui.add(drag);
+            });
+            if (v - original).abs() > f64::EPSILON {
+                Some(toml::Value::Float(v))
+            } else {
+                None
+            }
+        }
+
+        FieldType::String => {
+            let mut s = value.as_str().unwrap_or("").to_string();
+            let original = s.clone();
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", name));
+                ui.text_edit_singleline(&mut s);
+            });
+            if s != original {
+                Some(toml::Value::String(s))
+            } else {
+                None
+            }
+        }
+
+        FieldType::Vec3 => {
+            let arr = extract_vec3_f32(value).unwrap_or([0.0, 0.0, 0.0]);
+            if let Some(new_arr) = vec3_edit(ui, name, arr, 0.1) {
+                Some(vec3_to_toml(new_arr))
+            } else {
+                None
+            }
+        }
+
+        FieldType::Color => {
+            let arr = extract_color_f32(value).unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let mut rgba = arr;
+            let original = arr;
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", name));
+                ui.color_edit_button_rgba_unmultiplied(&mut rgba);
+            });
+            let changed = (0..4).any(|i| (rgba[i] - original[i]).abs() > f32::EPSILON);
+            if changed {
+                Some(color_to_toml(rgba))
+            } else {
+                None
+            }
+        }
+
+        FieldType::Enum { values } => {
+            let mut current = value.as_str().unwrap_or("").to_string();
+            let original = current.clone();
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", name));
+                egui::ComboBox::from_id_salt(name)
+                    .selected_text(&current)
+                    .show_ui(ui, |ui| {
+                        for v in values {
+                            ui.selectable_value(&mut current, v.clone(), v);
+                        }
+                    });
+            });
+            if current != original {
+                Some(toml::Value::String(current))
+            } else {
+                None
+            }
+        }
+
+        FieldType::Transform => {
+            // Transform sub-fields rendered as 3 vec3 rows
+            ui.label(format!("{}:", name));
+            None // Transform fields are handled by the top-level Transform section
+        }
+
+        FieldType::Array { .. } => {
+            // Read-only for arrays
+            ui.horizontal(|ui| {
+                ui.label(format!("{}:", name));
+                ui.monospace(format_toml_leaf(value));
+            });
+            None
+        }
     }
+}
+
+/// Vec3 editor: returns Some([x, y, z]) if any component changed
+fn vec3_edit(ui: &mut egui::Ui, label: &str, val: [f32; 3], speed: f64) -> Option<[f32; 3]> {
+    let mut result = val;
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        ui.label(format!("{}:", label));
+
+        // X (red tint)
+        ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(220, 80, 80);
+        if ui
+            .add(egui::DragValue::new(&mut result[0]).speed(speed).max_decimals(3).prefix("X ").custom_formatter(|v, _| format!("{:.3}", v)))
+            .changed()
+        {
+            changed = true;
+        }
+
+        // Y (green tint)
+        ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(80, 180, 80);
+        if ui
+            .add(egui::DragValue::new(&mut result[1]).speed(speed).max_decimals(3).prefix("Y ").custom_formatter(|v, _| format!("{:.3}", v)))
+            .changed()
+        {
+            changed = true;
+        }
+
+        // Z (blue tint)
+        ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(80, 120, 220);
+        if ui
+            .add(egui::DragValue::new(&mut result[2]).speed(speed).max_decimals(3).prefix("Z ").custom_formatter(|v, _| format!("{:.3}", v)))
+            .changed()
+        {
+            changed = true;
+        }
+
+        // Reset visuals
+        ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(180, 180, 180);
+    });
+
+    if changed { Some(result) } else { None }
+}
+
+// --- Value conversion helpers ---
+
+fn vec3_to_toml(v: [f32; 3]) -> toml::Value {
+    toml::Value::Array(vec![
+        toml::Value::Float(v[0] as f64),
+        toml::Value::Float(v[1] as f64),
+        toml::Value::Float(v[2] as f64),
+    ])
+}
+
+fn color_to_toml(c: [f32; 4]) -> toml::Value {
+    toml::Value::Array(vec![
+        toml::Value::Float(c[0] as f64),
+        toml::Value::Float(c[1] as f64),
+        toml::Value::Float(c[2] as f64),
+        toml::Value::Float(c[3] as f64),
+    ])
+}
+
+fn extract_vec3_f32(value: &toml::Value) -> Option<[f32; 3]> {
+    if let Some(arr) = value.as_array() {
+        if arr.len() >= 3 {
+            let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+            let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+            let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+            return Some([x, y, z]);
+        }
+    }
+    if let Some(table) = value.as_table() {
+        let x = table.get("x").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))? as f32;
+        let y = table.get("y").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))? as f32;
+        let z = table.get("z").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))? as f32;
+        return Some([x, y, z]);
+    }
+    None
+}
+
+fn extract_color_f32(value: &toml::Value) -> Option<[f32; 4]> {
+    let arr = value.as_array()?;
+    if arr.len() < 3 {
+        return None;
+    }
+    let r = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+    let g = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+    let b = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+    let a = if arr.len() >= 4 {
+        arr[3].as_float().or_else(|| arr[3].as_integer().map(|i| i as f64)).unwrap_or(1.0) as f32
+    } else {
+        1.0
+    };
+    Some([r, g, b, a])
 }
 
 /// Recursively display a TOML value as a read-only tree
