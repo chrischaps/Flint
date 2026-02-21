@@ -19,6 +19,7 @@ members = [
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
+    "crates/flint-terrain",
     "crates/flint-cli",
 ]
 
@@ -109,4 +110,5 @@ flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
+flint-terrain = { path = "crates/flint-terrain" }
 flint-player = { path = "crates/flint-player" }

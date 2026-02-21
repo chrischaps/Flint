@@ -165,6 +165,8 @@ pub struct ScriptCallContext {
     pub current_scene_path: String,
     /// Data-driven UI system
     pub ui_system: UiSystem,
+    /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
+    pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -210,6 +212,7 @@ impl ScriptCallContext {
             transition_phase: String::from("idle"),
             current_scene_path: String::new(),
             ui_system: UiSystem::new(),
+            terrain_height_fn: None,
         }
     }
 

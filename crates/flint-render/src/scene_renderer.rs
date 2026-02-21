@@ -14,6 +14,7 @@ use crate::postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessReso
 use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::skinned_pipeline::SkinnedPipeline;
+use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
 use crate::primitives::{
     create_box_mesh, create_grid_mesh, create_wireframe_box_mesh, generate_normal_arrows,
@@ -120,6 +121,11 @@ pub struct SceneRenderer {
     skybox_uniform_buffer: Option<wgpu::Buffer>,
     skybox_uniform_bind_group: Option<wgpu::BindGroup>,
     skybox_texture_bind_group: Option<wgpu::BindGroup>,
+    // Terrain
+    terrain_pipeline: Option<TerrainPipeline>,
+    terrain_draws: Vec<TerrainDrawCall>,
+    terrain_material_bind_group: Option<wgpu::BindGroup>,
+    terrain_material_buffer: Option<wgpu::Buffer>,
     // Particles
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
@@ -175,6 +181,12 @@ impl SceneRenderer {
         );
 
         let billboard_pipeline = BillboardPipeline::new(&context.device, scene_format);
+        let terrain_pipeline = TerrainPipeline::new(
+            &context.device,
+            scene_format,
+            &pipeline.transform_bind_group_layout,
+            &pipeline.light_bind_group_layout,
+        );
         let particle_pipeline = ParticlePipeline::new(&context.device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
 
@@ -213,6 +225,10 @@ impl SceneRenderer {
             skybox_uniform_buffer: None,
             skybox_uniform_bind_group: None,
             skybox_texture_bind_group: None,
+            terrain_pipeline: Some(terrain_pipeline),
+            terrain_draws: Vec::new(),
+            terrain_material_bind_group: None,
+            terrain_material_buffer: None,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
             postprocess_pipeline: Some(postprocess_pipeline),
@@ -321,6 +337,210 @@ impl SceneRenderer {
         }
     }
 
+    /// Load terrain chunks and create GPU resources for terrain rendering.
+    ///
+    /// `chunks` is the list of terrain chunks from `flint_terrain::Terrain`.
+    /// `transform` is the entity transform (translation of the terrain origin).
+    /// `texture_paths` maps (splat_map, layer0, layer1, layer2, layer3) file paths.
+    /// `scene_dir` is the base directory for resolving relative texture paths.
+    pub fn load_terrain(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chunks: &[flint_terrain::TerrainChunk],
+        transform: &Transform,
+        texture_tile: f32,
+        metallic: f32,
+        roughness: f32,
+        splat_path: &str,
+        layer_paths: &[String; 4],
+        scene_dir: &Path,
+    ) {
+        let tp = match &self.terrain_pipeline {
+            Some(tp) => tp,
+            None => return,
+        };
+
+        // Load textures into texture cache
+        let tc = match &mut self.texture_cache {
+            Some(tc) => tc,
+            None => return,
+        };
+
+        // Load splat map
+        if !splat_path.is_empty() {
+            let path = scene_dir.join(splat_path);
+            if path.exists() {
+                let _ = tc.load_file(device, queue, "terrain_splat", &path);
+            }
+        }
+
+        // Load layer textures
+        for (i, layer_path) in layer_paths.iter().enumerate() {
+            if !layer_path.is_empty() {
+                let path = scene_dir.join(layer_path);
+                if path.exists() {
+                    let name = format!("terrain_layer{}", i);
+                    let _ = tc.load_file(device, queue, &name, &path);
+                }
+            }
+        }
+
+        // Get texture references (fallback to white)
+        let tc = self.texture_cache.as_ref().unwrap();
+
+        let splat_tex = tc.get("terrain_splat").unwrap_or(&tc.default_white);
+        let layer0_tex = tc.get("terrain_layer0").unwrap_or(&tc.default_white);
+        let layer1_tex = tc.get("terrain_layer1").unwrap_or(&tc.default_white);
+        let layer2_tex = tc.get("terrain_layer2").unwrap_or(&tc.default_white);
+        let layer3_tex = tc.get("terrain_layer3").unwrap_or(&tc.default_white);
+
+        // Create terrain uniform buffer
+        let terrain_uniforms = TerrainUniforms {
+            texture_tile,
+            metallic,
+            roughness,
+            enable_tonemapping: 0, // Will be updated per-frame
+        };
+
+        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[terrain_uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // Create material bind group (shared across all terrain chunks)
+        let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &tp.material_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&splat_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&splat_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&layer0_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&layer0_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&layer1_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(&layer1_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&layer2_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(&layer2_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(&layer3_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(&layer3_tex.sampler),
+                },
+            ],
+            label: Some("Terrain Material Bind Group"),
+        });
+
+        self.terrain_material_buffer = Some(material_buffer);
+        self.terrain_material_bind_group = Some(material_bind_group);
+
+        // Create per-chunk draw calls
+        self.terrain_draws.clear();
+
+        let model = transform.to_matrix();
+        let model_inv_transpose = mat4_inv_transpose(&model);
+
+        for chunk in chunks {
+            // Build Vertex array from chunk data
+            let vertices: Vec<crate::primitives::Vertex> = (0..chunk.positions.len())
+                .map(|i| crate::primitives::Vertex {
+                    position: chunk.positions[i],
+                    normal: chunk.normals[i],
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    uv: chunk.uvs[i],
+                })
+                .collect();
+
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Vertex Buffer"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Index Buffer"),
+                contents: bytemuck::cast_slice(&chunk.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+            let transform_uniforms = TransformUniforms {
+                view_proj: [[0.0; 4]; 4], // Updated per frame
+                model,
+                model_inv_transpose,
+                camera_pos: [0.0; 3],
+                _pad: 0.0,
+            };
+
+            let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Transform Buffer"),
+                contents: bytemuck::cast_slice(&[transform_uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+            let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.pipeline.transform_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: transform_buffer.as_entire_binding(),
+                }],
+                label: Some("Terrain Chunk Transform Bind Group"),
+            });
+
+            self.terrain_draws.push(TerrainDrawCall {
+                vertex_buffer,
+                index_buffer,
+                index_count: chunk.indices.len() as u32,
+                transform_buffer,
+                transform_bind_group,
+                model,
+                model_inv_transpose,
+            });
+        }
+
+        eprintln!(
+            "[terrain] Loaded {} chunks ({} draw calls)",
+            chunks.len(),
+            self.terrain_draws.len()
+        );
+    }
+
+    /// Clear terrain draw calls (for scene transitions)
+    pub fn clear_terrain(&mut self) {
+        self.terrain_draws.clear();
+        self.terrain_material_bind_group = None;
+        self.terrain_material_buffer = None;
+    }
+
     /// Create a renderer for headless (offscreen) use with explicit device and format
     pub fn new_headless(
         device: &wgpu::Device,
@@ -371,6 +591,12 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
 
+        let terrain_pipeline = TerrainPipeline::new(
+            device,
+            scene_format,
+            &pipeline.transform_bind_group_layout,
+            &pipeline.light_bind_group_layout,
+        );
         let billboard_pipeline = BillboardPipeline::new(device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
 
@@ -405,6 +631,10 @@ impl SceneRenderer {
             skybox_uniform_buffer: None,
             skybox_uniform_bind_group: None,
             skybox_texture_bind_group: None,
+            terrain_pipeline: Some(terrain_pipeline),
+            terrain_draws: Vec::new(),
+            terrain_material_bind_group: None,
+            terrain_material_buffer: None,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
             postprocess_pipeline: Some(postprocess_pipeline),
@@ -2075,6 +2305,39 @@ impl SceneRenderer {
                             pass.draw_indexed(0..draw.index_count, 0, 0..1);
                         }
 
+                        // Render terrain chunks into shadow map
+                        for draw in &self.terrain_draws {
+                            let shadow_uniforms = ShadowDrawUniforms {
+                                light_view_proj: cascade_vp,
+                                model: draw.model,
+                            };
+
+                            let shadow_buffer = device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("Terrain Shadow Draw Uniform"),
+                                    contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                                    usage: wgpu::BufferUsages::UNIFORM,
+                                },
+                            );
+
+                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &shadow_pass.shadow_bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: shadow_buffer.as_entire_binding(),
+                                }],
+                                label: Some("Terrain Shadow Draw Bind Group"),
+                            });
+
+                            pass.set_bind_group(0, &shadow_bind, &[]);
+                            pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+
                         // Render transparent entities into shadow map (skip very transparent)
                         for draw in &self.transparent_draws {
                             if draw.is_wireframe {
@@ -2276,6 +2539,24 @@ impl SceneRenderer {
                 32,
                 bytemuck::cast_slice(&[tonemapping_u32]),
             );
+        }
+
+        // Update terrain chunk transforms
+        for draw in &self.terrain_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update terrain material buffer (tonemapping flag)
+        if let Some(buf) = &self.terrain_material_buffer {
+            // enable_tonemapping is at byte offset 12 (texture_tile(4) + metallic(4) + roughness(4))
+            queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
         }
 
         // Sort transparent draws back-to-front (descending distance from camera)
@@ -2549,6 +2830,25 @@ impl SceneRenderer {
                     }
                 }
             } else {
+                // Terrain rendering (early in pass — fills depth buffer for occlusion)
+                if let (Some(tp), Some(mat_bg)) = (&self.terrain_pipeline, &self.terrain_material_bind_group) {
+                    if !self.terrain_draws.is_empty() {
+                        render_pass.set_pipeline(&tp.pipeline);
+                        render_pass.set_bind_group(1, mat_bg, &[]);
+                        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+                        for draw in &self.terrain_draws {
+                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                            render_pass.set_index_buffer(
+                                draw.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                        }
+                    }
+                }
+
                 // Outline pass for selected standard entities (before normal rendering)
                 if let Some(sel_id) = self.selected_entity {
                     render_pass.set_pipeline(&self.pipeline.outline_pipeline);

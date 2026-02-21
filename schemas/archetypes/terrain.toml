@@ -1,0 +1,11 @@
+[archetype.terrain]
+description = "Heightmap-based outdoor terrain"
+components = ["transform", "terrain"]
+
+[archetype.terrain.defaults.terrain]
+width = 256.0
+depth = 256.0
+height_scale = 50.0
+chunk_resolution = 64
+texture_tile = 16.0
+roughness = 0.85
