@@ -26,6 +26,7 @@ flint-import = { workspace = true }
 flint-audio = { workspace = true }
 flint-animation = { workspace = true }
 flint-particles = { workspace = true }
+flint-terrain = { workspace = true }
 flint-script = { workspace = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }

@@ -1,0 +1,17 @@
+[component.terrain]
+description = "Heightmap-based terrain with splat-map texture blending"
+
+[component.terrain.fields]
+heightmap = { type = "string", description = "Path to grayscale heightmap PNG" }
+width = { type = "float", description = "World X extent in units", default = 256.0 }
+depth = { type = "float", description = "World Z extent in units", default = 256.0 }
+height_scale = { type = "float", description = "Maximum Y height (heightmap 1.0 maps to this)", default = 50.0 }
+chunk_resolution = { type = "integer", description = "Quads per chunk edge", default = 64 }
+texture_tile = { type = "float", description = "UV tiling factor for layer textures", default = 16.0 }
+splat_map = { type = "string", description = "Path to RGBA splat map PNG", default = "" }
+layer0_texture = { type = "string", description = "Texture for splat R channel (e.g. grass)", default = "" }
+layer1_texture = { type = "string", description = "Texture for splat G channel (e.g. dirt)", default = "" }
+layer2_texture = { type = "string", description = "Texture for splat B channel (e.g. rock)", default = "" }
+layer3_texture = { type = "string", description = "Texture for splat A channel (e.g. sand)", default = "" }
+metallic = { type = "float", description = "PBR metallic factor 0.0-1.0", default = 0.0 }
+roughness = { type = "float", description = "PBR roughness factor 0.0-1.0", default = 0.85 }

@@ -20,6 +20,7 @@ mod scene_renderer;
 pub mod shadow;
 pub mod skybox_pipeline;
 pub mod skinned_pipeline;
+pub mod terrain_pipeline;
 mod texture_cache;
 
 pub use camera::{Camera, CameraMode};
@@ -43,6 +44,7 @@ pub use particle_pipeline::{
 };
 pub use skybox_pipeline::SkyboxPipeline;
 pub use skinned_pipeline::SkinnedPipeline;
+pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::TextureCache;
 
 #[cfg(test)]
@@ -75,6 +77,12 @@ mod tests {
     fn particle_shader_wgsl_parses() {
         let source = include_str!("particle_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("particle_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn terrain_shader_wgsl_parses() {
+        let source = include_str!("terrain_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("terrain_shader.wgsl failed to parse");
     }
 
     #[test]

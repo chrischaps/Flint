@@ -1297,6 +1297,7 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "flint-viewer",
  "image",
  "notify",
@@ -1404,6 +1405,7 @@ dependencies = [
  "flint-scene",
  "flint-schema",
  "flint-script",
+ "flint-terrain",
  "gilrs",
  "image",
  "pollster",
@@ -1434,6 +1436,7 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-import",
+ "flint-terrain",
  "image",
  "naga",
  "pollster",
@@ -1487,6 +1490,14 @@ dependencies = [
  "flint-runtime",
  "rhai",
  "toml",
+]
+
+[[package]]
+name = "flint-terrain"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "image",
 ]
 
 [[package]]

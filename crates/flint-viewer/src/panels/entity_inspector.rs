@@ -36,8 +36,6 @@ impl EntityInspector {
             return actions;
         };
 
-        let entity_name = entity.name.clone();
-
         ui.label(format!("Name: {}", entity.name));
         ui.label(format!(
             "Archetype: {}",

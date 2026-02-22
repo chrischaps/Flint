@@ -24,6 +24,7 @@ flint-animation = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-player = { workspace = true }
+flint-terrain = { workspace = true }
 flint-viewer = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

@@ -25,6 +25,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
+    register_terrain_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -1945,6 +1946,24 @@ fn map_to_toml_from_dynamic(val: &Dynamic) -> toml::Value {
         return map_to_toml(&map);
     }
     toml::Value::String(val.to_string())
+}
+
+// ─── Terrain API ──────────────────────────────────────────
+
+fn register_terrain_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // terrain_height(x: f64, z: f64) -> f64
+    // Returns the world-space Y height of the terrain at (x, z), or 0.0 if no terrain is loaded.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("terrain_height", move |x: f64, z: f64| -> f64 {
+            let c = ctx.lock().unwrap();
+            if let Some(ref height_fn) = c.terrain_height_fn {
+                height_fn(x as f32, z as f32) as f64
+            } else {
+                0.0
+            }
+        });
+    }
 }
 
 #[cfg(test)]

@@ -32,6 +32,7 @@
 - [Post-Processing](concepts/post-processing.md)
 - [Audio](concepts/audio.md)
 - [Animation](concepts/animation.md)
+- [Terrain](concepts/terrain.md)
 - [Particles](concepts/particles.md)
 - [Physics and Runtime](concepts/physics-and-runtime.md)
 - [Scripting](concepts/scripting.md)

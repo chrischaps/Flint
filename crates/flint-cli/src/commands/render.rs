@@ -195,6 +195,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.set_post_process_config(pp_config);
     }
 
+    // Load terrain (if any)
+    load_terrain_for_render(&world, &args.scene, &ctx.device, &ctx.queue, &mut renderer);
+
     renderer.update_from_world(&world, &ctx.device);
 
     // Render
@@ -221,5 +224,126 @@ pub fn run(args: RenderArgs) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Load terrain from world entities for headless rendering (no physics).
+fn load_terrain_for_render(
+    world: &flint_ecs::FlintWorld,
+    scene_path: &str,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut SceneRenderer,
+) {
+    use flint_core::Transform;
+    use flint_terrain::{Heightmap, Terrain, TerrainConfig};
+
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    for entity in world.all_entities() {
+        let terrain_comp = match world.get_component(entity.id, "terrain") {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let heightmap_rel = match terrain_comp.get("heightmap").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+
+        let hm_path = {
+            let p = scene_dir.join(&heightmap_rel);
+            if p.exists() {
+                p
+            } else if let Some(parent) = scene_dir.parent() {
+                let pp = parent.join(&heightmap_rel);
+                if pp.exists() { pp } else { p }
+            } else {
+                p
+            }
+        };
+
+        let heightmap = match Heightmap::from_png(&hm_path) {
+            Ok(hm) => hm,
+            Err(e) => {
+                eprintln!("[terrain] Failed to load heightmap: {}", e);
+                continue;
+            }
+        };
+
+        let get_f32 = |key: &str, default: f32| -> f32 {
+            terrain_comp
+                .get(key)
+                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                .map(|f| f as f32)
+                .unwrap_or(default)
+        };
+
+        let get_i32 = |key: &str, default: i32| -> i32 {
+            terrain_comp.get(key).and_then(|v| v.as_integer()).map(|i| i as i32).unwrap_or(default)
+        };
+
+        let get_str = |key: &str| -> String {
+            terrain_comp.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+        };
+
+        let config = TerrainConfig {
+            heightmap_path: heightmap_rel,
+            width: get_f32("width", 256.0),
+            depth: get_f32("depth", 256.0),
+            height_scale: get_f32("height_scale", 50.0),
+            chunk_resolution: get_i32("chunk_resolution", 64) as u32,
+            texture_tile: get_f32("texture_tile", 16.0),
+            splat_map_path: get_str("splat_map"),
+            layer_textures: [
+                get_str("layer0_texture"),
+                get_str("layer1_texture"),
+                get_str("layer2_texture"),
+                get_str("layer3_texture"),
+            ],
+            metallic: get_f32("metallic", 0.0),
+            roughness: get_f32("roughness", 0.85),
+        };
+
+        let terrain = Terrain::generate(&heightmap, &config);
+
+        let transform = world
+            .get_component(entity.id, "transform")
+            .and_then(|t| {
+                let arr = t.get("position")?.as_array()?;
+                if arr.len() >= 3 {
+                    let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+                    let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+                    let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+                    Some(Transform {
+                        position: Vec3::new(x, y, z),
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        renderer.load_terrain(
+            device,
+            queue,
+            &terrain.chunks,
+            &transform,
+            config.texture_tile,
+            config.metallic,
+            config.roughness,
+            &config.splat_map_path,
+            &config.layer_textures,
+            scene_dir,
+        );
+
+        println!(
+            "[terrain] Loaded terrain: {}x{} heightmap, {} chunks",
+            heightmap.width, heightmap.depth, terrain.chunks.len()
+        );
+        break; // Only one terrain for now
+    }
 }
 

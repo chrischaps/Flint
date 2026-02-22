@@ -178,6 +178,12 @@ impl ScriptSystem {
         let mut c = self.engine.ctx.lock().unwrap();
         c.audio_lowpass_cutoff_override.take()
     }
+
+    /// Set the terrain height sampling callback for scripts
+    pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.terrain_height_fn = f;
+    }
 }
 
 impl Default for ScriptSystem {

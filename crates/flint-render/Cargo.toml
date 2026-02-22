@@ -9,6 +9,7 @@ description = "wgpu renderer for Flint"
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-import = { workspace = true }
+flint-terrain = { workspace = true }
 toml = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }

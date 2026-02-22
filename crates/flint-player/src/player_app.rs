@@ -145,6 +145,9 @@ pub struct PlayerApp {
 
     // Schema paths preserved across transitions
     schema_paths: Vec<String>,
+
+    // Terrain data for height queries
+    terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 }
 
 impl PlayerApp {
@@ -202,6 +205,7 @@ impl PlayerApp {
             persistent_store: PersistentStore::new(),
             transition_phase: TransitionPhase::Idle,
             schema_paths: Vec::new(),
+            terrain: None,
         }
     }
 
@@ -319,6 +323,12 @@ impl PlayerApp {
             }
         }
 
+        // Load terrain from world
+        self.load_terrain_from_world(&render_context.device, &render_context.queue, &mut scene_renderer);
+
+        // Set terrain height callback for scripts
+        self.update_terrain_height_fn();
+
         // Apply scene-level post-processing config
         if let Some(pp_def) = &self.scene_post_process {
             use flint_render::PostProcessConfig;
@@ -390,6 +400,64 @@ impl PlayerApp {
             action: action.into(),
             mode,
         });
+    }
+
+    /// Scan world entities for `terrain` component, load heightmap, generate chunks,
+    /// upload GPU resources, and register physics colliders.
+    fn load_terrain_from_world(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene_renderer: &mut SceneRenderer,
+    ) {
+        load_terrain_from_world_inner(
+            &self.world,
+            &self.scene_path,
+            device,
+            queue,
+            scene_renderer,
+            &mut self.physics,
+            &mut self.terrain,
+        );
+    }
+
+    /// Update the terrain height callback on the script system.
+    /// Call after terrain loading or clearing.
+    fn update_terrain_height_fn(&mut self) {
+        if let Some((ref terrain, ref config)) = self.terrain {
+            let heights = terrain.heightmap.clone_heights();
+            let hm_w = terrain.heightmap.width;
+            let hm_d = terrain.heightmap.depth;
+            let world_w = config.width;
+            let world_d = config.depth;
+            let height_scale = config.height_scale;
+            self.script.set_terrain_height_fn(Some(Box::new(move |x: f32, z: f32| {
+                // Convert world coords to normalized UV
+                let u = x / world_w;
+                let v = z / world_d;
+                // Bilinear sample from heights array
+                let fx = u * (hm_w as f32 - 1.0);
+                let fz = v * (hm_d as f32 - 1.0);
+                let ix = (fx as u32).min(hm_w - 2);
+                let iz = (fz as u32).min(hm_d - 2);
+                let tx = fx - ix as f32;
+                let tz = fz - iz as f32;
+                let idx = |col: u32, row: u32| -> f32 {
+                    heights[(row * hm_w + col) as usize]
+                };
+                let h00 = idx(ix, iz);
+                let h10 = idx(ix + 1, iz);
+                let h01 = idx(ix, iz + 1);
+                let h11 = idx(ix + 1, iz + 1);
+                let h = h00 * (1.0 - tx) * (1.0 - tz)
+                    + h10 * tx * (1.0 - tz)
+                    + h01 * (1.0 - tx) * tz
+                    + h11 * tx * tz;
+                h * height_scale
+            })));
+        } else {
+            self.script.set_terrain_height_fn(None);
+        }
     }
 
     fn configure_input_bindings(&mut self) -> Result<()> {
@@ -1101,6 +1169,12 @@ impl PlayerApp {
         // Clear world
         self.world = FlintWorld::new();
 
+        // Clear terrain
+        self.terrain = None;
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.clear_terrain();
+        }
+
         // Clear transient rendering state
         self.skeletal_entity_assets.clear();
         self.ui_textures.clear();
@@ -1216,6 +1290,22 @@ impl PlayerApp {
                 renderer.set_post_process_config(config);
             }
         }
+
+        // Reload terrain
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            load_terrain_from_world_inner(
+                &self.world,
+                &self.scene_path,
+                &context.device,
+                &context.queue,
+                renderer,
+                &mut self.physics,
+                &mut self.terrain,
+            );
+        }
+
+        // Update terrain height callback for scripts
+        self.update_terrain_height_fn();
 
         // Re-initialize systems
         self.physics
@@ -1434,6 +1524,176 @@ impl ApplicationHandler for PlayerApp {
 }
 
 /// Build a ModelLoadConfig with catalog-resolved path overrides.
+/// Load terrain from world entities. Free function to avoid borrow conflicts.
+fn load_terrain_from_world_inner(
+    world: &FlintWorld,
+    scene_path: &str,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene_renderer: &mut SceneRenderer,
+    physics: &mut PhysicsSystem,
+    terrain_out: &mut Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
+) {
+    use flint_core::Transform;
+    use flint_terrain::{Heightmap, Terrain, TerrainConfig};
+
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    for entity in world.all_entities() {
+        let terrain_comp = match world.get_component(entity.id, "terrain") {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let heightmap_rel = match terrain_comp.get("heightmap").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                eprintln!("[terrain] Entity '{}': missing heightmap path", entity.name);
+                continue;
+            }
+        };
+
+        // Resolve heightmap path (scene dir, then parent)
+        let hm_path = {
+            let p = scene_dir.join(&heightmap_rel);
+            if p.exists() {
+                p
+            } else if let Some(parent) = scene_dir.parent() {
+                let pp = parent.join(&heightmap_rel);
+                if pp.exists() { pp } else { p }
+            } else {
+                p
+            }
+        };
+
+        let heightmap = match Heightmap::from_png(&hm_path) {
+            Ok(hm) => hm,
+            Err(e) => {
+                eprintln!("[terrain] Failed to load heightmap: {}", e);
+                continue;
+            }
+        };
+
+        let get_f32 = |key: &str, default: f32| -> f32 {
+            terrain_comp
+                .get(key)
+                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                .map(|f| f as f32)
+                .unwrap_or(default)
+        };
+
+        let get_i32 = |key: &str, default: i32| -> i32 {
+            terrain_comp
+                .get(key)
+                .and_then(|v| v.as_integer())
+                .map(|i| i as i32)
+                .unwrap_or(default)
+        };
+
+        let get_str = |key: &str| -> String {
+            terrain_comp
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+
+        let config = TerrainConfig {
+            heightmap_path: heightmap_rel,
+            width: get_f32("width", 256.0),
+            depth: get_f32("depth", 256.0),
+            height_scale: get_f32("height_scale", 50.0),
+            chunk_resolution: get_i32("chunk_resolution", 64) as u32,
+            texture_tile: get_f32("texture_tile", 16.0),
+            splat_map_path: get_str("splat_map"),
+            layer_textures: [
+                get_str("layer0_texture"),
+                get_str("layer1_texture"),
+                get_str("layer2_texture"),
+                get_str("layer3_texture"),
+            ],
+            metallic: get_f32("metallic", 0.0),
+            roughness: get_f32("roughness", 0.85),
+        };
+
+        let terrain = Terrain::generate(&heightmap, &config);
+
+        // Get entity transform
+        let transform = world
+            .get_component(entity.id, "transform")
+            .and_then(|t| {
+                let pos = t.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
+                Some(Transform {
+                    position: FlintVec3 {
+                        x: pos[0],
+                        y: pos[1],
+                        z: pos[2],
+                    },
+                    ..Default::default()
+                })
+            })
+            .unwrap_or_default();
+
+        // Upload to GPU
+        scene_renderer.load_terrain(
+            device,
+            queue,
+            &terrain.chunks,
+            &transform,
+            config.texture_tile,
+            config.metallic,
+            config.roughness,
+            &config.splat_map_path,
+            &config.layer_textures,
+            scene_dir,
+        );
+
+        // Register physics collider
+        let (verts, tris) = terrain.trimesh_data();
+        let offset = [transform.position.x, transform.position.y, transform.position.z];
+        let offset_verts: Vec<[f32; 3]> = verts
+            .iter()
+            .map(|v| [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]])
+            .collect();
+        physics.sync.register_static_trimesh(
+            entity.id,
+            &mut physics.physics_world,
+            offset_verts,
+            tris,
+            0.8,
+            0.1,
+        );
+
+        eprintln!(
+            "[terrain] Loaded terrain '{}': {}x{} heightmap, {} chunks, {}x{} world units",
+            entity.name,
+            heightmap.width,
+            heightmap.depth,
+            terrain.chunks.len(),
+            config.width,
+            config.depth,
+        );
+
+        *terrain_out = Some((terrain, config));
+        break; // Only one terrain entity for now
+    }
+}
+
+/// Extract a [f32; 3] from a TOML array value (handling int/float coercion)
+fn toml_vec3(value: &toml::Value) -> Option<[f32; 3]> {
+    let arr = value.as_array()?;
+    if arr.len() >= 3 {
+        let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+        let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+        let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+        Some([x, y, z])
+    } else {
+        None
+    }
+}
+
 fn build_model_load_config(
     scene_path: &str,
     world: &FlintWorld,
