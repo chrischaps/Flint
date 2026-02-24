@@ -84,12 +84,7 @@ impl Mesh {
 }
 
 /// Create a box mesh with the given dimensions and color
-pub fn create_box_mesh(
-    width: f32,
-    height: f32,
-    depth: f32,
-    color: [f32; 4],
-) -> Mesh {
+pub fn create_box_mesh(width: f32, height: f32, depth: f32, color: [f32; 4]) -> Mesh {
     let hw = width / 2.0;
     let hh = height / 2.0;
     let hd = depth / 2.0;
@@ -122,35 +117,155 @@ pub fn create_box_mesh(
     // World-space UVs: 1 UV unit = 1 world unit, so textures tile naturally.
     let vertices = vec![
         // Back face (z-), normal [0,0,-1] — U spans width, V spans height
-        Vertex { position: positions[0], normal: normals[0], color, uv: [0.0, 0.0] },
-        Vertex { position: positions[3], normal: normals[0], color, uv: [0.0, height] },
-        Vertex { position: positions[2], normal: normals[0], color, uv: [width, height] },
-        Vertex { position: positions[1], normal: normals[0], color, uv: [width, 0.0] },
+        Vertex {
+            position: positions[0],
+            normal: normals[0],
+            color,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: positions[3],
+            normal: normals[0],
+            color,
+            uv: [0.0, height],
+        },
+        Vertex {
+            position: positions[2],
+            normal: normals[0],
+            color,
+            uv: [width, height],
+        },
+        Vertex {
+            position: positions[1],
+            normal: normals[0],
+            color,
+            uv: [width, 0.0],
+        },
         // Front face (z+), normal [0,0,1] — U spans width, V spans height
-        Vertex { position: positions[4], normal: normals[1], color, uv: [0.0, 0.0] },
-        Vertex { position: positions[5], normal: normals[1], color, uv: [width, 0.0] },
-        Vertex { position: positions[6], normal: normals[1], color, uv: [width, height] },
-        Vertex { position: positions[7], normal: normals[1], color, uv: [0.0, height] },
+        Vertex {
+            position: positions[4],
+            normal: normals[1],
+            color,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: positions[5],
+            normal: normals[1],
+            color,
+            uv: [width, 0.0],
+        },
+        Vertex {
+            position: positions[6],
+            normal: normals[1],
+            color,
+            uv: [width, height],
+        },
+        Vertex {
+            position: positions[7],
+            normal: normals[1],
+            color,
+            uv: [0.0, height],
+        },
         // Left face (x-), normal [-1,0,0] — U spans depth, V spans height
-        Vertex { position: positions[0], normal: normals[2], color, uv: [0.0, 0.0] },
-        Vertex { position: positions[4], normal: normals[2], color, uv: [depth, 0.0] },
-        Vertex { position: positions[7], normal: normals[2], color, uv: [depth, height] },
-        Vertex { position: positions[3], normal: normals[2], color, uv: [0.0, height] },
+        Vertex {
+            position: positions[0],
+            normal: normals[2],
+            color,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: positions[4],
+            normal: normals[2],
+            color,
+            uv: [depth, 0.0],
+        },
+        Vertex {
+            position: positions[7],
+            normal: normals[2],
+            color,
+            uv: [depth, height],
+        },
+        Vertex {
+            position: positions[3],
+            normal: normals[2],
+            color,
+            uv: [0.0, height],
+        },
         // Right face (x+), normal [1,0,0] — U spans depth, V spans height
-        Vertex { position: positions[5], normal: normals[3], color, uv: [0.0, 0.0] },
-        Vertex { position: positions[1], normal: normals[3], color, uv: [depth, 0.0] },
-        Vertex { position: positions[2], normal: normals[3], color, uv: [depth, height] },
-        Vertex { position: positions[6], normal: normals[3], color, uv: [0.0, height] },
+        Vertex {
+            position: positions[5],
+            normal: normals[3],
+            color,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: positions[1],
+            normal: normals[3],
+            color,
+            uv: [depth, 0.0],
+        },
+        Vertex {
+            position: positions[2],
+            normal: normals[3],
+            color,
+            uv: [depth, height],
+        },
+        Vertex {
+            position: positions[6],
+            normal: normals[3],
+            color,
+            uv: [0.0, height],
+        },
         // Bottom face (y-), normal [0,-1,0] — U spans width, V spans depth
-        Vertex { position: positions[0], normal: normals[4], color, uv: [0.0, 0.0] },
-        Vertex { position: positions[1], normal: normals[4], color, uv: [width, 0.0] },
-        Vertex { position: positions[5], normal: normals[4], color, uv: [width, depth] },
-        Vertex { position: positions[4], normal: normals[4], color, uv: [0.0, depth] },
+        Vertex {
+            position: positions[0],
+            normal: normals[4],
+            color,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: positions[1],
+            normal: normals[4],
+            color,
+            uv: [width, 0.0],
+        },
+        Vertex {
+            position: positions[5],
+            normal: normals[4],
+            color,
+            uv: [width, depth],
+        },
+        Vertex {
+            position: positions[4],
+            normal: normals[4],
+            color,
+            uv: [0.0, depth],
+        },
         // Top face (y+), normal [0,1,0] — U spans width, V spans depth
-        Vertex { position: positions[3], normal: normals[5], color, uv: [0.0, 0.0] },
-        Vertex { position: positions[7], normal: normals[5], color, uv: [0.0, depth] },
-        Vertex { position: positions[6], normal: normals[5], color, uv: [width, depth] },
-        Vertex { position: positions[2], normal: normals[5], color, uv: [width, 0.0] },
+        Vertex {
+            position: positions[3],
+            normal: normals[5],
+            color,
+            uv: [0.0, 0.0],
+        },
+        Vertex {
+            position: positions[7],
+            normal: normals[5],
+            color,
+            uv: [0.0, depth],
+        },
+        Vertex {
+            position: positions[6],
+            normal: normals[5],
+            color,
+            uv: [width, depth],
+        },
+        Vertex {
+            position: positions[2],
+            normal: normals[5],
+            color,
+            uv: [width, 0.0],
+        },
     ];
 
     // Indices (two triangles per face)
@@ -165,12 +280,7 @@ pub fn create_box_mesh(
 }
 
 /// Create a wireframe box (edges only)
-pub fn create_wireframe_box_mesh(
-    width: f32,
-    height: f32,
-    depth: f32,
-    color: [f32; 4],
-) -> Mesh {
+pub fn create_wireframe_box_mesh(width: f32, height: f32, depth: f32, color: [f32; 4]) -> Mesh {
     let hw = width / 2.0;
     let hh = height / 2.0;
     let hd = depth / 2.0;
@@ -199,10 +309,8 @@ pub fn create_wireframe_box_mesh(
     // Line indices for 12 edges
     let indices: Vec<u32> = vec![
         // Bottom face edges
-        0, 1, 1, 5, 5, 4, 4, 0,
-        // Top face edges
-        3, 2, 2, 6, 6, 7, 7, 3,
-        // Vertical edges
+        0, 1, 1, 5, 5, 4, 4, 0, // Top face edges
+        3, 2, 2, 6, 6, 7, 7, 3, // Vertical edges
         0, 3, 1, 2, 5, 6, 4, 7,
     ];
 

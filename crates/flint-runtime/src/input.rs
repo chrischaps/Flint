@@ -177,7 +177,10 @@ impl InputConfig {
                 action.into(),
                 ActionConfig {
                     kind: ActionKind::Button,
-                    bindings: vec![Binding::Key { code: key.into(), scale: 1.0 }],
+                    bindings: vec![Binding::Key {
+                        code: key.into(),
+                        scale: 1.0,
+                    }],
                 },
             );
         }
@@ -325,22 +328,35 @@ impl InputState {
         Ok(())
     }
 
-    pub fn rebind_action(&mut self, action: &str, binding: Binding, mode: RebindMode) -> Result<()> {
+    pub fn rebind_action(
+        &mut self,
+        action: &str,
+        binding: Binding,
+        mode: RebindMode,
+    ) -> Result<()> {
         validate_binding(&binding, action)?;
 
         match mode {
             RebindMode::Replace => {
-                let entry = self.config.actions.entry(action.into()).or_insert_with(|| ActionConfig {
-                    kind: infer_action_kind_for_new_action(&binding),
-                    bindings: Vec::new(),
-                });
+                let entry =
+                    self.config
+                        .actions
+                        .entry(action.into())
+                        .or_insert_with(|| ActionConfig {
+                            kind: infer_action_kind_for_new_action(&binding),
+                            bindings: Vec::new(),
+                        });
                 entry.bindings = vec![binding];
             }
             RebindMode::Add => {
-                let entry = self.config.actions.entry(action.into()).or_insert_with(|| ActionConfig {
-                    kind: infer_action_kind_for_new_action(&binding),
-                    bindings: Vec::new(),
-                });
+                let entry =
+                    self.config
+                        .actions
+                        .entry(action.into())
+                        .or_insert_with(|| ActionConfig {
+                            kind: infer_action_kind_for_new_action(&binding),
+                            bindings: Vec::new(),
+                        });
                 if !entry.bindings.contains(&binding) {
                     entry.bindings.push(binding);
                 }
@@ -349,10 +365,14 @@ impl InputState {
                 for cfg in self.config.actions.values_mut() {
                     cfg.bindings.retain(|b| b != &binding);
                 }
-                let entry = self.config.actions.entry(action.into()).or_insert_with(|| ActionConfig {
-                    kind: infer_action_kind_for_new_action(&binding),
-                    bindings: Vec::new(),
-                });
+                let entry =
+                    self.config
+                        .actions
+                        .entry(action.into())
+                        .or_insert_with(|| ActionConfig {
+                            kind: infer_action_kind_for_new_action(&binding),
+                            bindings: Vec::new(),
+                        });
                 entry.bindings.clear();
                 entry.bindings.push(binding);
             }
@@ -452,7 +472,12 @@ impl InputState {
 
     /// Store the analog value for a gamepad button (e.g. trigger pressure).
     /// gilrs fires ButtonChanged events with a 0.0–1.0 value for analog buttons.
-    pub fn process_gamepad_button_changed(&mut self, gamepad: u32, button: impl Into<String>, value: f32) {
+    pub fn process_gamepad_button_changed(
+        &mut self,
+        gamepad: u32,
+        button: impl Into<String>,
+        value: f32,
+    ) {
         self.gamepad_button_values
             .insert((gamepad, button.into()), value.clamp(0.0, 1.0));
     }
@@ -554,7 +579,7 @@ impl InputState {
         self.raw_mouse_delta
     }
 
-pub fn is_mouse_button_down(&self, button: u32) -> bool {
+    pub fn is_mouse_button_down(&self, button: u32) -> bool {
         self.mouse_buttons_down.contains(&button)
     }
 }
@@ -615,9 +640,12 @@ impl InputState {
 
     fn binding_value(&self, binding: &Binding) -> f32 {
         match binding {
-            Binding::Key { code, scale } => parse_key_code(code)
-                .map(|key| self.keys_down.contains(&key))
-                .unwrap_or(false) as i32 as f32 * *scale,
+            Binding::Key { code, scale } => {
+                parse_key_code(code)
+                    .map(|key| self.keys_down.contains(&key))
+                    .unwrap_or(false) as i32 as f32
+                    * *scale
+            }
             Binding::MouseButton { button } => parse_mouse_button(button)
                 .map(|btn| self.mouse_buttons_down.contains(&btn))
                 .unwrap_or(false) as i32 as f32,
@@ -668,7 +696,11 @@ impl InputState {
                     *direction,
                 );
                 if let Some(threshold) = threshold {
-                    if filtered.abs() >= *threshold { 1.0 } else { 0.0 }
+                    if filtered.abs() >= *threshold {
+                        1.0
+                    } else {
+                        0.0
+                    }
                 } else {
                     filtered * *scale
                 }
@@ -1155,9 +1187,10 @@ code = "NotARealKey"
     #[test]
     fn test_gamepad_button_binding() {
         let mut input = InputState::new();
-        input.load_bindings(
-            InputConfig::from_toml_str(
-                r#"
+        input
+            .load_bindings(
+                InputConfig::from_toml_str(
+                    r#"
 version = 1
 [actions.fire]
 kind = "button"
@@ -1166,10 +1199,10 @@ type = "gamepad_button"
 button = "RightTrigger"
 gamepad = "any"
 "#,
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        )
-        .unwrap();
+            .unwrap();
 
         input.process_gamepad_button_down(0, "RightTrigger");
         assert!(input.is_action_pressed("fire"));
@@ -1181,9 +1214,10 @@ gamepad = "any"
     #[test]
     fn test_axis_value_mouse_delta() {
         let mut input = InputState::new();
-        input.load_bindings(
-            InputConfig::from_toml_str(
-                r#"
+        input
+            .load_bindings(
+                InputConfig::from_toml_str(
+                    r#"
 version = 1
 [actions.look_x]
 kind = "axis1d"
@@ -1192,10 +1226,10 @@ type = "mouse_delta"
 axis = "x"
 scale = 2.0
 "#,
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        )
-        .unwrap();
+            .unwrap();
 
         input.process_mouse_raw_delta(3.0, 0.0);
         assert!((input.action_value("look_x") - 6.0).abs() < 1e-10);

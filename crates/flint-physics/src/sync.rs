@@ -116,10 +116,7 @@ impl PhysicsSync {
                     .and_then(|v| v.as_str())
                     .unwrap_or("box");
 
-                let size = read_vec3_from_value(
-                    col_data.get("size"),
-                    Vec3::new(1.0, 1.0, 1.0),
-                );
+                let size = read_vec3_from_value(col_data.get("size"), Vec3::new(1.0, 1.0, 1.0));
 
                 let collider_shape: SharedShape = match shape_str {
                     "sphere" => SharedShape::ball(size.x * 0.5),
@@ -249,11 +246,8 @@ impl PhysicsSync {
                 .unwrap_or([0.0, 0.0, 0.0]);
 
             // Rotate the bounds center by the entity's rotation
-            let offset = rotation_f32 * na::Vector3::new(
-                bounds_center[0],
-                bounds_center[1],
-                bounds_center[2],
-            );
+            let offset = rotation_f32
+                * na::Vector3::new(bounds_center[0], bounds_center[1], bounds_center[2]);
 
             let translation = na::Vector3::new(
                 transform.position.x + offset.x,
@@ -261,10 +255,7 @@ impl PhysicsSync {
                 transform.position.z + offset.z,
             );
 
-            let iso = Isometry::from_parts(
-                translation.into(),
-                rotation_f32,
-            );
+            let iso = Isometry::from_parts(translation.into(), rotation_f32);
 
             // Get mutable body and set next kinematic position
             if let Some(body_mut) = physics.get_rigid_body_mut(*body_handle) {
@@ -353,7 +344,15 @@ impl PhysicsSync {
         let body_handle = physics.insert_rigid_body(body);
         self.body_map.insert(entity_id, body_handle);
 
-        self.register_trimesh(entity_id, physics, vertices, indices, body_handle, friction, restitution);
+        self.register_trimesh(
+            entity_id,
+            physics,
+            vertices,
+            indices,
+            body_handle,
+            friction,
+            restitution,
+        );
     }
 }
 
@@ -376,9 +375,15 @@ fn compute_bounds_center(bounds: &toml::Value) -> Option<[f32; 3]> {
 fn extract_toml_vec3(value: &toml::Value) -> Option<[f32; 3]> {
     let arr = value.as_array()?;
     if arr.len() >= 3 {
-        let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-        let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-        let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+        let x = arr[0]
+            .as_float()
+            .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+        let y = arr[1]
+            .as_float()
+            .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+        let z = arr[2]
+            .as_float()
+            .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
         Some([x, y, z])
     } else {
         None
@@ -459,7 +464,9 @@ mod tests {
             );
             t
         });
-        flint_world.set_component(id, "transform", transform_data).unwrap();
+        flint_world
+            .set_component(id, "transform", transform_data)
+            .unwrap();
 
         // Set rigidbody
         let rb_data = toml::Value::Table({
@@ -513,7 +520,9 @@ mod tests {
             );
             t
         });
-        flint_world.set_component(id, "transform", transform_data).unwrap();
+        flint_world
+            .set_component(id, "transform", transform_data)
+            .unwrap();
 
         let rb_data = toml::Value::Table({
             let mut t = toml::map::Map::new();

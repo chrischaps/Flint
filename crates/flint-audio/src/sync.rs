@@ -157,17 +157,22 @@ impl AudioSync {
                     Ok(mut track) => {
                         let mut handles = Vec::new();
                         if autoplay && engine.has_sound(file) {
-                            match engine.play_on_spatial_track(file, &mut track, volume, pitch, looping) {
+                            match engine
+                                .play_on_spatial_track(file, &mut track, volume, pitch, looping)
+                            {
                                 Ok(handle) => handles.push(handle),
                                 Err(e) => eprintln!("Audio: failed to play '{}': {:?}", file, e),
                             }
                         }
-                        self.spatial_map.insert(entity.id, SpatialEntry {
-                            track,
-                            handles,
-                            last_volume: volume,
-                            last_pitch: pitch,
-                        });
+                        self.spatial_map.insert(
+                            entity.id,
+                            SpatialEntry {
+                                track,
+                                handles,
+                                last_volume: volume,
+                                last_pitch: pitch,
+                            },
+                        );
                     }
                     Err(e) => {
                         eprintln!("Audio: failed to create spatial track: {:?}", e);
@@ -179,14 +184,19 @@ impl AudioSync {
                 if autoplay && engine.has_sound(file) {
                     match engine.play_non_spatial(file, volume, pitch, looping) {
                         Ok(handle) => handles.push(handle),
-                        Err(e) => eprintln!("Audio: failed to play non-spatial '{}': {:?}", file, e),
+                        Err(e) => {
+                            eprintln!("Audio: failed to play non-spatial '{}': {:?}", file, e)
+                        }
                     }
                 }
-                self.non_spatial_map.insert(entity.id, NonSpatialEntry {
-                    handles,
-                    last_volume: volume,
-                    last_pitch: pitch,
-                });
+                self.non_spatial_map.insert(
+                    entity.id,
+                    NonSpatialEntry {
+                        handles,
+                        last_volume: volume,
+                        last_pitch: pitch,
+                    },
+                );
             }
 
             self.synced_entities.insert(entity.id);
@@ -325,7 +335,10 @@ mod tests {
         // Add audio_source
         let audio = toml::Value::Table({
             let mut t = toml::map::Map::new();
-            t.insert("file".into(), toml::Value::String("fire_crackle.ogg".into()));
+            t.insert(
+                "file".into(),
+                toml::Value::String("fire_crackle.ogg".into()),
+            );
             t.insert("spatial".into(), toml::Value::Boolean(true));
             t.insert("loop".into(), toml::Value::Boolean(true));
             t.insert("volume".into(), toml::Value::Float(0.8));

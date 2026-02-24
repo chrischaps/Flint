@@ -112,11 +112,8 @@ pub fn ray_plane_intersect(
     if denom.abs() < 1e-6 {
         return None;
     }
-    let t = (plane_d
-        - plane_n[0] * ray_o[0]
-        - plane_n[1] * ray_o[1]
-        - plane_n[2] * ray_o[2])
-        / denom;
+    let t =
+        (plane_d - plane_n[0] * ray_o[0] - plane_n[1] * ray_o[1] - plane_n[2] * ray_o[2]) / denom;
     if t < 0.0 {
         return None;
     }

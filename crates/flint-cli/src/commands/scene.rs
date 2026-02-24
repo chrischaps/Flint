@@ -158,7 +158,11 @@ fn info(path: &str) -> Result<()> {
         println!("Entity list:");
         for (name, def) in &scene.entities {
             let archetype = def.archetype.as_deref().unwrap_or("(none)");
-            let parent = def.parent.as_deref().map(|p| format!(" -> {}", p)).unwrap_or_default();
+            let parent = def
+                .parent
+                .as_deref()
+                .map(|p| format!(" -> {}", p))
+                .unwrap_or_default();
             println!("  {} [{}]{}", name, archetype, parent);
         }
     }

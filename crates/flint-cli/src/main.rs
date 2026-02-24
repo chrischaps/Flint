@@ -4,7 +4,9 @@ mod commands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{asset, edit, entity, init, play, prefab, query, render, scene, schema, validate};
+use commands::{
+    asset, edit, entity, init, play, prefab, preview, query, render, scene, schema, validate,
+};
 
 #[derive(Parser)]
 #[command(name = "flint")]
@@ -135,6 +137,68 @@ enum Commands {
         input_config: Option<String>,
     },
 
+    /// Preview a 3D model file (GLB/glTF) with orbit camera
+    Preview {
+        /// Path to model file (.glb or .gltf). If omitted, opens an empty window for drag-and-drop.
+        model: Option<String>,
+
+        /// Render to a PNG file instead of opening a window
+        #[arg(long)]
+        render: Option<String>,
+
+        /// Image width in pixels
+        #[arg(long, default_value = "1280")]
+        width: u32,
+
+        /// Image height in pixels
+        #[arg(long, default_value = "720")]
+        height: u32,
+
+        /// Camera orbit distance
+        #[arg(long)]
+        distance: Option<f32>,
+
+        /// Camera horizontal angle in degrees
+        #[arg(long)]
+        yaw: Option<f32>,
+
+        /// Camera vertical angle in degrees
+        #[arg(long)]
+        pitch: Option<f32>,
+
+        /// Camera look-at point (comma-separated x,y,z)
+        #[arg(long, value_parser = parse_vec3)]
+        target: Option<[f32; 3]>,
+
+        /// Field of view in degrees
+        #[arg(long)]
+        fov: Option<f32>,
+
+        /// Disable ground grid
+        #[arg(long)]
+        no_grid: bool,
+
+        /// Watch model file for changes and auto-reload
+        #[arg(long)]
+        watch: bool,
+
+        /// Disable animation playback (animations play by default when present)
+        #[arg(long)]
+        no_animate: bool,
+
+        /// Start with a specific animation clip by name
+        #[arg(long)]
+        clip: Option<String>,
+
+        /// Animation playback speed multiplier (default: 1.0)
+        #[arg(long, default_value = "1.0")]
+        anim_speed: f32,
+
+        /// Sample animation at a specific time in seconds (headless --render mode only)
+        #[arg(long)]
+        anim_time: Option<f32>,
+    },
+
     /// Render a scene to a PNG image (headless)
     Render {
         /// Path to scene file
@@ -255,11 +319,23 @@ fn parse_debug_mode(s: &str) -> Result<String, String> {
 fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 3 {
-        return Err(format!("expected 3 comma-separated values, got {}", parts.len()));
+        return Err(format!(
+            "expected 3 comma-separated values, got {}",
+            parts.len()
+        ));
     }
-    let x: f32 = parts[0].trim().parse().map_err(|e| format!("invalid x: {}", e))?;
-    let y: f32 = parts[1].trim().parse().map_err(|e| format!("invalid y: {}", e))?;
-    let z: f32 = parts[2].trim().parse().map_err(|e| format!("invalid z: {}", e))?;
+    let x: f32 = parts[0]
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid x: {}", e))?;
+    let y: f32 = parts[1]
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid y: {}", e))?;
+    let z: f32 = parts[2]
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid z: {}", e))?;
     Ok([x, y, z])
 }
 
@@ -270,10 +346,15 @@ fn main() -> Result<()> {
         Commands::Init { name } => init::run(&name),
         Commands::Entity(cmd) => entity::run(cmd),
         Commands::Scene(cmd) => scene::run(cmd),
-        Commands::Query { query, scene, format } => {
-            query::run(&query, scene.as_deref(), &format)
-        }
-        Commands::Schema { name, schemas } => schema::run(&name, &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+        Commands::Query {
+            query,
+            scene,
+            format,
+        } => query::run(&query, scene.as_deref(), &format),
+        Commands::Schema { name, schemas } => schema::run(
+            &name,
+            &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        ),
         Commands::Validate {
             scene,
             fix,
@@ -303,7 +384,45 @@ fn main() -> Result<()> {
         Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),
         Commands::Edit { scene, schemas } => edit::run(edit::EditArgs { scene, schemas }),
-        Commands::Serve { scene, watch, schemas, no_inspector } => {
+        Commands::Preview {
+            model,
+            render: render_output,
+            width,
+            height,
+            distance,
+            yaw,
+            pitch,
+            target,
+            fov,
+            no_grid,
+            watch,
+            no_animate,
+            clip,
+            anim_speed,
+            anim_time,
+        } => preview::run(preview::PreviewArgs {
+            model,
+            render: render_output,
+            width,
+            height,
+            distance,
+            yaw,
+            pitch,
+            target,
+            fov,
+            no_grid,
+            watch,
+            no_animate,
+            clip,
+            anim_speed,
+            anim_time,
+        }),
+        Commands::Serve {
+            scene,
+            watch,
+            schemas,
+            no_inspector,
+        } => {
             // Serve uses first schemas path (viewer doesn't need multi-dir yet)
             let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");
             flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector)

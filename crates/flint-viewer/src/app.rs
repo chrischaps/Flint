@@ -1,15 +1,15 @@
 //! Main viewer application — combines wgpu scene rendering with egui panels.
 //! Supports an optional spline editor mode for interactive track editing.
 
-use anyhow::{Context, Result};
-use crate::panels::{
-    CameraView, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree,
-    SplinePanelAction, TransformGizmo, ViewGizmo,
-};
 use crate::panels::transform_gizmo::apply_gizmo_delta;
+use crate::panels::{
+    CameraView, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree, SplinePanelAction,
+    TransformGizmo, ViewGizmo,
+};
 use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
+use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
@@ -38,12 +38,7 @@ struct ViewerState {
 }
 
 /// Run the viewer application (standard viewer mode)
-pub fn run(
-    scene_path: &str,
-    watch: bool,
-    schemas_path: &str,
-    inspector: bool,
-) -> Result<()> {
+pub fn run(scene_path: &str, watch: bool, schemas_path: &str, inspector: bool) -> Result<()> {
     let registry = if Path::new(schemas_path).exists() {
         SchemaRegistry::load_from_directory(schemas_path)?
     } else {
@@ -415,8 +410,18 @@ impl ViewerApp {
             if let Some(editor) = &self.editor {
                 if !editor.control_points.is_empty() {
                     let n = editor.control_points.len() as f32;
-                    let cx: f32 = editor.control_points.iter().map(|p| p.position[0]).sum::<f32>() / n;
-                    let cz: f32 = editor.control_points.iter().map(|p| p.position[2]).sum::<f32>() / n;
+                    let cx: f32 = editor
+                        .control_points
+                        .iter()
+                        .map(|p| p.position[0])
+                        .sum::<f32>()
+                        / n;
+                    let cz: f32 = editor
+                        .control_points
+                        .iter()
+                        .map(|p| p.position[2])
+                        .sum::<f32>()
+                        / n;
                     self.camera.target = flint_core::Vec3::new(cx, 0.0, cz);
                 }
             }
@@ -442,7 +447,8 @@ impl ViewerApp {
             false,
         );
 
-        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
+        let mut scene_renderer =
+            SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
 
         // Load models and update meshes from world
         {
@@ -477,11 +483,8 @@ impl ViewerApp {
 
     fn update_constraints(&mut self) {
         let state = self.state.lock().unwrap();
-        let evaluator = ConstraintEvaluator::new(
-            &state.world,
-            &state.registry,
-            &state.constraint_registry,
-        );
+        let evaluator =
+            ConstraintEvaluator::new(&state.world, &state.registry, &state.constraint_registry);
         let report = evaluator.validate();
         self.violation_count = report.violations.len();
         self.violation_messages = report
@@ -492,10 +495,7 @@ impl ViewerApp {
     }
 
     fn render(&mut self) {
-        if self.render_context.is_none()
-            || self.scene_renderer.is_none()
-            || self.window.is_none()
-        {
+        if self.render_context.is_none() || self.scene_renderer.is_none() || self.window.is_none() {
             return;
         }
 
@@ -645,7 +645,8 @@ impl ViewerApp {
                     .resizable(true)
                     .show(ctx, |ui| {
                         if let Some(ed) = editor.as_mut() {
-                            panel_actions = crate::panels::spline_panel::spline_editor_panel(ui, ed);
+                            panel_actions =
+                                crate::panels::spline_panel::spline_editor_panel(ui, ed);
                         } else {
                             let selected = scene_tree.selected_entity();
                             if let Some(entity_id) = selected {
@@ -689,10 +690,7 @@ impl ViewerApp {
 
                             // Dirty indicator
                             if dirty {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(255, 200, 80),
-                                    "Modified",
-                                );
+                                ui.colored_label(egui::Color32::from_rgb(255, 200, 80), "Modified");
                             }
 
                             // Gizmo mode indicator (non-editor mode)
@@ -722,7 +720,9 @@ impl ViewerApp {
                                     let alpha = ((3.0 - elapsed) / 0.5).min(1.0);
                                     ui.colored_label(
                                         egui::Color32::from_rgba_unmultiplied(
-                                            200, 220, 255,
+                                            200,
+                                            220,
+                                            255,
                                             (alpha * 255.0) as u8,
                                         ),
                                         msg,
@@ -733,11 +733,13 @@ impl ViewerApp {
 
                         if !violation_messages.is_empty() {
                             ui.separator();
-                            egui::ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
-                                for msg in violation_messages {
-                                    ui.label(msg);
-                                }
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(60.0)
+                                .show(ui, |ui| {
+                                    for msg in violation_messages {
+                                        ui.label(msg);
+                                    }
+                                });
                         }
                     });
             }
@@ -747,11 +749,21 @@ impl ViewerApp {
                 if let Some(entity_id) = scene_tree.selected_entity() {
                     let st = state.lock().unwrap();
                     let transform = st.world.get_transform(entity_id).unwrap_or_default();
-                    let pos = [transform.position.x, transform.position.y, transform.position.z];
-                    let rot = [transform.rotation.x, transform.rotation.y, transform.rotation.z];
+                    let pos = [
+                        transform.position.x,
+                        transform.position.y,
+                        transform.position.z,
+                    ];
+                    let rot = [
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                    ];
                     let scl = [transform.scale.x, transform.scale.y, transform.scale.z];
                     // Use world position for gizmo placement (accounts for parent transforms)
-                    let world_pos = st.world.get_world_position(entity_id)
+                    let world_pos = st
+                        .world
+                        .get_world_position(entity_id)
                         .map(|p| [p.x, p.y, p.z])
                         .unwrap_or(pos);
                     drop(st); // Release lock before gizmo draw (it reads ctx.input)
@@ -763,7 +775,9 @@ impl ViewerApp {
                         ctx,
                         camera,
                         entity_id,
-                        world_pos, rot, scl,
+                        world_pos,
+                        rot,
+                        scl,
                         render_rect,
                         clip_rect,
                     ) {
@@ -772,7 +786,9 @@ impl ViewerApp {
                     }
 
                     // Detect drag end for undo coalescing
-                    if !transform_gizmo.is_dragging() && transform_gizmo.drag_start_transform().is_some() {
+                    if !transform_gizmo.is_dragging()
+                        && transform_gizmo.drag_start_transform().is_some()
+                    {
                         gizmo_drag_just_ended = true;
                     }
                 }
@@ -788,7 +804,11 @@ impl ViewerApp {
                     egui::Order::Foreground,
                     egui::Id::new("spline_overlay"),
                 ));
-                ed.draw_overlay(&painter, camera, [screen_rect.width(), screen_rect.height()]);
+                ed.draw_overlay(
+                    &painter,
+                    camera,
+                    [screen_rect.width(), screen_rect.height()],
+                );
             }
         });
 
@@ -852,12 +872,11 @@ impl ViewerApp {
 
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        let mut encoder =
-            context
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("egui Encoder"),
-                });
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("egui Encoder"),
+            });
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -891,9 +910,7 @@ impl ViewerApp {
             egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
 
-        context
-            .queue
-            .submit(std::iter::once(encoder.finish()));
+        context.queue.submit(std::iter::once(encoder.finish()));
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
@@ -1027,7 +1044,11 @@ impl ViewerApp {
             let mut st = self.state.lock().unwrap();
             for action in &cmd.actions {
                 if let Some(components) = st.world.get_components_mut(action.entity_id) {
-                    components.set_field(&action.component, &action.field, action.old_value.clone());
+                    components.set_field(
+                        &action.component,
+                        &action.field,
+                        action.old_value.clone(),
+                    );
                 }
             }
             drop(st);
@@ -1042,7 +1063,11 @@ impl ViewerApp {
             let mut st = self.state.lock().unwrap();
             for action in &cmd.actions {
                 if let Some(components) = st.world.get_components_mut(action.entity_id) {
-                    components.set_field(&action.component, &action.field, action.new_value.clone());
+                    components.set_field(
+                        &action.component,
+                        &action.field,
+                        action.new_value.clone(),
+                    );
                 }
             }
             drop(st);
@@ -1060,12 +1085,19 @@ impl ViewerApp {
         // Try structure-preserving save via patcher
         if has_doc && !self.dirty_fields.is_empty() {
             // Collect patch data from world first (immutable borrow of world)
-            let patches: Vec<(String, String, String, toml::Value)> = self.dirty_fields.iter()
+            let patches: Vec<(String, String, String, toml::Value)> = self
+                .dirty_fields
+                .iter()
                 .filter_map(|(entity_name, component, field)| {
                     let eid = st.world.get_id(entity_name)?;
                     let components = st.world.get_components(eid)?;
                     let value = components.get_field(component, field)?;
-                    Some((entity_name.clone(), component.clone(), field.clone(), value.clone()))
+                    Some((
+                        entity_name.clone(),
+                        component.clone(),
+                        field.clone(),
+                        value.clone(),
+                    ))
                 })
                 .collect();
 
@@ -1172,7 +1204,9 @@ impl ViewerApp {
         let vw = context.config.width as f32;
         let vh = context.config.height as f32;
 
-        if let Some((entity_id, _dist)) = pick_entity(x as f32, y as f32, vw, vh, &self.camera, &targets) {
+        if let Some((entity_id, _dist)) =
+            pick_entity(x as f32, y as f32, vw, vh, &self.camera, &targets)
+        {
             self.scene_tree.select(Some(entity_id));
         } else {
             self.scene_tree.select(None);
@@ -1361,12 +1395,7 @@ impl ViewerApp {
         // Update hover state
         let screen = self.screen_size();
         if let Some(editor) = &mut self.editor {
-            editor.update_hover(
-                &self.camera,
-                screen,
-                position.x as f32,
-                position.y as f32,
-            );
+            editor.update_hover(&self.camera, screen, position.x as f32, position.y as f32);
         }
     }
 
@@ -1412,7 +1441,11 @@ impl ViewerApp {
                         editor.selected = Some(match editor.selected {
                             Some(idx) => {
                                 if shift {
-                                    if idx == 0 { n - 1 } else { idx - 1 }
+                                    if idx == 0 {
+                                        n - 1
+                                    } else {
+                                        idx - 1
+                                    }
                                 } else {
                                     (idx + 1) % n
                                 }
@@ -1465,7 +1498,11 @@ impl ApplicationHandler for ViewerApp {
         let gizmo_active = self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered();
 
         // Handle Tab and other global shortcuts before egui can consume them.
-        if let WindowEvent::KeyboardInput { event: ref key_event, .. } = event {
+        if let WindowEvent::KeyboardInput {
+            event: ref key_event,
+            ..
+        } = event
+        {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
                 if is_editor {
                     // In editor mode, handle editor-specific keys first
@@ -1486,7 +1523,9 @@ impl ApplicationHandler for ViewerApp {
                                 );
                                 return;
                             }
-                            KeyCode::KeyZ if self.modifiers.control_key() && self.modifiers.shift_key() => {
+                            KeyCode::KeyZ
+                                if self.modifiers.control_key() && self.modifiers.shift_key() =>
+                            {
                                 // Ctrl+Shift+Z = redo
                                 self.redo();
                                 return;
@@ -1567,10 +1606,11 @@ impl ApplicationHandler for ViewerApp {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) if !self.transform_gizmo.is_dragging() => {
+                        PhysicalKey::Code(KeyCode::Escape)
+                            if !self.transform_gizmo.is_dragging() =>
+                        {
                             event_loop.exit();
                         }
-
 
                         PhysicalKey::Code(KeyCode::Space) if !is_editor => {
                             self.camera = Camera::new();
@@ -1594,10 +1634,7 @@ impl ApplicationHandler for ViewerApp {
                         PhysicalKey::Code(KeyCode::F2) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_wireframe_overlay();
-                                println!(
-                                    "Wireframe overlay: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
+                                println!("Wireframe overlay: {}", if on { "ON" } else { "OFF" });
 
                                 if let Some(context) = &self.render_context {
                                     let state = self.state.lock().unwrap();
@@ -1608,10 +1645,7 @@ impl ApplicationHandler for ViewerApp {
                         PhysicalKey::Code(KeyCode::F3) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_normal_arrows();
-                                println!(
-                                    "Normal arrows: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
+                                println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
 
                                 if let Some(context) = &self.render_context {
                                     let state = self.state.lock().unwrap();

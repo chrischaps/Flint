@@ -1,7 +1,7 @@
 //! 3D Camera with orbit and first-person controls
 
-use flint_core::Vec3;
 pub use flint_core::mat4_mul;
+use flint_core::Vec3;
 
 /// Camera operating mode
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -80,11 +80,7 @@ impl Camera {
         let y = self.distance * self.pitch.sin();
         let z = self.distance * self.pitch.cos() * self.yaw.cos();
 
-        self.position = Vec3::new(
-            self.target.x + x,
-            self.target.y + y,
-            self.target.z + z,
-        );
+        self.position = Vec3::new(self.target.x + x, self.target.y + y, self.target.z + z);
     }
 
     /// Orbit horizontally (rotate around target)
@@ -243,29 +239,29 @@ pub(crate) fn mat4_inverse(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     // Flatten column-major to indexable
     let s = |col: usize, row: usize| -> f32 { m[col][row] };
 
-    let c00 = s(2,2)*s(3,3) - s(3,2)*s(2,3);
-    let c02 = s(1,2)*s(3,3) - s(3,2)*s(1,3);
-    let c03 = s(1,2)*s(2,3) - s(2,2)*s(1,3);
+    let c00 = s(2, 2) * s(3, 3) - s(3, 2) * s(2, 3);
+    let c02 = s(1, 2) * s(3, 3) - s(3, 2) * s(1, 3);
+    let c03 = s(1, 2) * s(2, 3) - s(2, 2) * s(1, 3);
 
-    let c04 = s(2,1)*s(3,3) - s(3,1)*s(2,3);
-    let c06 = s(1,1)*s(3,3) - s(3,1)*s(1,3);
-    let c07 = s(1,1)*s(2,3) - s(2,1)*s(1,3);
+    let c04 = s(2, 1) * s(3, 3) - s(3, 1) * s(2, 3);
+    let c06 = s(1, 1) * s(3, 3) - s(3, 1) * s(1, 3);
+    let c07 = s(1, 1) * s(2, 3) - s(2, 1) * s(1, 3);
 
-    let c08 = s(2,1)*s(3,2) - s(3,1)*s(2,2);
-    let c10 = s(1,1)*s(3,2) - s(3,1)*s(1,2);
-    let c11 = s(1,1)*s(2,2) - s(2,1)*s(1,2);
+    let c08 = s(2, 1) * s(3, 2) - s(3, 1) * s(2, 2);
+    let c10 = s(1, 1) * s(3, 2) - s(3, 1) * s(1, 2);
+    let c11 = s(1, 1) * s(2, 2) - s(2, 1) * s(1, 2);
 
-    let c12 = s(2,0)*s(3,3) - s(3,0)*s(2,3);
-    let c14 = s(1,0)*s(3,3) - s(3,0)*s(1,3);
-    let c15 = s(1,0)*s(2,3) - s(2,0)*s(1,3);
+    let c12 = s(2, 0) * s(3, 3) - s(3, 0) * s(2, 3);
+    let c14 = s(1, 0) * s(3, 3) - s(3, 0) * s(1, 3);
+    let c15 = s(1, 0) * s(2, 3) - s(2, 0) * s(1, 3);
 
-    let c16 = s(2,0)*s(3,2) - s(3,0)*s(2,2);
-    let c18 = s(1,0)*s(3,2) - s(3,0)*s(1,2);
-    let c19 = s(1,0)*s(2,2) - s(2,0)*s(1,2);
+    let c16 = s(2, 0) * s(3, 2) - s(3, 0) * s(2, 2);
+    let c18 = s(1, 0) * s(3, 2) - s(3, 0) * s(1, 2);
+    let c19 = s(1, 0) * s(2, 2) - s(2, 0) * s(1, 2);
 
-    let c20 = s(2,0)*s(3,1) - s(3,0)*s(2,1);
-    let c22 = s(1,0)*s(3,1) - s(3,0)*s(1,1);
-    let c23 = s(1,0)*s(2,1) - s(2,0)*s(1,1);
+    let c20 = s(2, 0) * s(3, 1) - s(3, 0) * s(2, 1);
+    let c22 = s(1, 0) * s(3, 1) - s(3, 0) * s(1, 1);
+    let c23 = s(1, 0) * s(2, 1) - s(2, 0) * s(1, 1);
 
     let f0 = [c00, c00, c02, c03];
     let f1 = [c04, c04, c06, c07];
@@ -274,26 +270,31 @@ pub(crate) fn mat4_inverse(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     let f4 = [c16, c16, c18, c19];
     let f5 = [c20, c20, c22, c23];
 
-    let v0 = [s(1,0), s(0,0), s(0,0), s(0,0)];
-    let v1 = [s(1,1), s(0,1), s(0,1), s(0,1)];
-    let v2 = [s(1,2), s(0,2), s(0,2), s(0,2)];
-    let v3 = [s(1,3), s(0,3), s(0,3), s(0,3)];
+    let v0 = [s(1, 0), s(0, 0), s(0, 0), s(0, 0)];
+    let v1 = [s(1, 1), s(0, 1), s(0, 1), s(0, 1)];
+    let v2 = [s(1, 2), s(0, 2), s(0, 2), s(0, 2)];
+    let v3 = [s(1, 3), s(0, 3), s(0, 3), s(0, 3)];
 
     let mut inv = [[0.0f32; 4]; 4];
     let sign_a = [1.0, -1.0, 1.0, -1.0];
     let sign_b = [-1.0, 1.0, -1.0, 1.0];
 
     for i in 0..4 {
-        inv[0][i] = sign_a[i] * (v1[i]*f0[i] - v2[i]*f1[i] + v3[i]*f2[i]);
-        inv[1][i] = sign_b[i] * (v0[i]*f0[i] - v2[i]*f3[i] + v3[i]*f4[i]);
-        inv[2][i] = sign_a[i] * (v0[i]*f1[i] - v1[i]*f3[i] + v3[i]*f5[i]);
-        inv[3][i] = sign_b[i] * (v0[i]*f2[i] - v1[i]*f4[i] + v2[i]*f5[i]);
+        inv[0][i] = sign_a[i] * (v1[i] * f0[i] - v2[i] * f1[i] + v3[i] * f2[i]);
+        inv[1][i] = sign_b[i] * (v0[i] * f0[i] - v2[i] * f3[i] + v3[i] * f4[i]);
+        inv[2][i] = sign_a[i] * (v0[i] * f1[i] - v1[i] * f3[i] + v3[i] * f5[i]);
+        inv[3][i] = sign_b[i] * (v0[i] * f2[i] - v1[i] * f4[i] + v2[i] * f5[i]);
     }
 
-    let det = s(0,0)*inv[0][0] + s(1,0)*inv[0][1] + s(2,0)*inv[0][2] + s(3,0)*inv[0][3];
+    let det = s(0, 0) * inv[0][0] + s(1, 0) * inv[0][1] + s(2, 0) * inv[0][2] + s(3, 0) * inv[0][3];
 
     if det.abs() < 1e-10 {
-        return [[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0]];
+        return [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
     }
 
     let inv_det = 1.0 / det;

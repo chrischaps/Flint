@@ -315,12 +315,7 @@ impl SplineEditor {
     }
 
     /// Draw the spline overlay (curve + control points) on the egui painter.
-    pub fn draw_overlay(
-        &self,
-        painter: &egui::Painter,
-        camera: &Camera,
-        screen_size: [f32; 2],
-    ) {
+    pub fn draw_overlay(&self, painter: &egui::Painter, camera: &Camera, screen_size: [f32; 2]) {
         let curve_color = egui::Color32::from_rgb(80, 200, 120);
         let polygon_color = egui::Color32::from_rgba_premultiplied(120, 120, 120, 80);
 
@@ -330,10 +325,7 @@ impl SplineEditor {
                 world_to_screen(camera, screen_size, window[0]),
                 world_to_screen(camera, screen_size, window[1]),
             ) {
-                painter.line_segment(
-                    [a, b],
-                    egui::Stroke::new(2.5, curve_color),
-                );
+                painter.line_segment([a, b], egui::Stroke::new(2.5, curve_color));
             }
         }
         // Close the loop if closed
@@ -429,4 +421,3 @@ impl SplineEditor {
         len
     }
 }
-

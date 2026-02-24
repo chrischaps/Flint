@@ -6,6 +6,7 @@ pub mod entity;
 pub mod init;
 pub mod play;
 pub mod prefab;
+pub mod preview;
 pub mod query;
 pub mod render;
 pub mod scene;

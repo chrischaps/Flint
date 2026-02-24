@@ -88,9 +88,7 @@ pub fn validate_model(path: &Path, style: Option<&StyleGuide>) -> Result<Validat
 
         // UV check
         if mesh.uvs.is_empty() {
-            let should_fail = style
-                .and_then(|s| s.geometry.require_uvs)
-                .unwrap_or(false);
+            let should_fail = style.and_then(|s| s.geometry.require_uvs).unwrap_or(false);
             checks.push(ValidationCheck {
                 name: format!("{}: UVs", mesh.name),
                 status: if should_fail {
@@ -211,10 +209,8 @@ mod tests {
     #[test]
     fn test_validate_mock_model() {
         // Generate a mock GLB first, then validate it
-        let dir = std::env::temp_dir().join(format!(
-            "flint_validate_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("flint_validate_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
 
         let provider = crate::providers::mock::MockProvider::new();
@@ -228,9 +224,7 @@ mod tests {
             tags: vec![],
         };
 
-        let result = provider
-            .generate(&request, None, &dir)
-            .unwrap();
+        let result = provider.generate(&request, None, &dir).unwrap();
 
         let report = validate_model(Path::new(&result.output_path), None).unwrap();
         assert!(report.passed);
@@ -259,9 +253,7 @@ mod tests {
             tags: vec![],
         };
 
-        let result = provider
-            .generate(&request, None, &dir)
-            .unwrap();
+        let result = provider.generate(&request, None, &dir).unwrap();
 
         // Style with very low triangle limit to force a failure
         let strict_style = StyleGuide {

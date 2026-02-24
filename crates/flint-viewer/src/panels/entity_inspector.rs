@@ -51,7 +51,11 @@ impl EntityInspector {
             .default_open(true)
             .show(ui, |ui| {
                 // Position
-                let pos = [transform.position.x, transform.position.y, transform.position.z];
+                let pos = [
+                    transform.position.x,
+                    transform.position.y,
+                    transform.position.z,
+                ];
                 if let Some(new_pos) = vec3_edit(ui, "Position", pos, 0.1) {
                     let old_val = vec3_to_toml(pos);
                     let new_val = vec3_to_toml(new_pos);
@@ -65,7 +69,11 @@ impl EntityInspector {
                 }
 
                 // Rotation
-                let rot = [transform.rotation.x, transform.rotation.y, transform.rotation.z];
+                let rot = [
+                    transform.rotation.x,
+                    transform.rotation.y,
+                    transform.rotation.z,
+                ];
                 if let Some(new_rot) = vec3_edit(ui, "Rotation", rot, 1.0) {
                     let old_val = vec3_to_toml(rot);
                     let new_val = vec3_to_toml(new_rot);
@@ -294,7 +302,13 @@ fn vec3_edit(ui: &mut egui::Ui, label: &str, val: [f32; 3], speed: f64) -> Optio
         // X (red tint)
         ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(220, 80, 80);
         if ui
-            .add(egui::DragValue::new(&mut result[0]).speed(speed).max_decimals(3).prefix("X ").custom_formatter(|v, _| format!("{:.3}", v)))
+            .add(
+                egui::DragValue::new(&mut result[0])
+                    .speed(speed)
+                    .max_decimals(3)
+                    .prefix("X ")
+                    .custom_formatter(|v, _| format!("{:.3}", v)),
+            )
             .changed()
         {
             changed = true;
@@ -303,7 +317,13 @@ fn vec3_edit(ui: &mut egui::Ui, label: &str, val: [f32; 3], speed: f64) -> Optio
         // Y (green tint)
         ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(80, 180, 80);
         if ui
-            .add(egui::DragValue::new(&mut result[1]).speed(speed).max_decimals(3).prefix("Y ").custom_formatter(|v, _| format!("{:.3}", v)))
+            .add(
+                egui::DragValue::new(&mut result[1])
+                    .speed(speed)
+                    .max_decimals(3)
+                    .prefix("Y ")
+                    .custom_formatter(|v, _| format!("{:.3}", v)),
+            )
             .changed()
         {
             changed = true;
@@ -312,7 +332,13 @@ fn vec3_edit(ui: &mut egui::Ui, label: &str, val: [f32; 3], speed: f64) -> Optio
         // Z (blue tint)
         ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(80, 120, 220);
         if ui
-            .add(egui::DragValue::new(&mut result[2]).speed(speed).max_decimals(3).prefix("Z ").custom_formatter(|v, _| format!("{:.3}", v)))
+            .add(
+                egui::DragValue::new(&mut result[2])
+                    .speed(speed)
+                    .max_decimals(3)
+                    .prefix("Z ")
+                    .custom_formatter(|v, _| format!("{:.3}", v)),
+            )
             .changed()
         {
             changed = true;
@@ -322,7 +348,11 @@ fn vec3_edit(ui: &mut egui::Ui, label: &str, val: [f32; 3], speed: f64) -> Optio
         ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(180, 180, 180);
     });
 
-    if changed { Some(result) } else { None }
+    if changed {
+        Some(result)
+    } else {
+        None
+    }
 }
 
 // --- Value conversion helpers ---
@@ -347,16 +377,31 @@ fn color_to_toml(c: [f32; 4]) -> toml::Value {
 fn extract_vec3_f32(value: &toml::Value) -> Option<[f32; 3]> {
     if let Some(arr) = value.as_array() {
         if arr.len() >= 3 {
-            let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-            let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-            let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+            let x = arr[0]
+                .as_float()
+                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+            let y = arr[1]
+                .as_float()
+                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+            let z = arr[2]
+                .as_float()
+                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
             return Some([x, y, z]);
         }
     }
     if let Some(table) = value.as_table() {
-        let x = table.get("x").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))? as f32;
-        let y = table.get("y").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))? as f32;
-        let z = table.get("z").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))? as f32;
+        let x = table
+            .get("x")
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))?
+            as f32;
+        let y = table
+            .get("y")
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))?
+            as f32;
+        let z = table
+            .get("z")
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))?
+            as f32;
         return Some([x, y, z]);
     }
     None
@@ -367,11 +412,20 @@ fn extract_color_f32(value: &toml::Value) -> Option<[f32; 4]> {
     if arr.len() < 3 {
         return None;
     }
-    let r = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-    let g = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-    let b = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+    let r = arr[0]
+        .as_float()
+        .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+    let g = arr[1]
+        .as_float()
+        .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+    let b = arr[2]
+        .as_float()
+        .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
     let a = if arr.len() >= 4 {
-        arr[3].as_float().or_else(|| arr[3].as_integer().map(|i| i as f64)).unwrap_or(1.0) as f32
+        arr[3]
+            .as_float()
+            .or_else(|| arr[3].as_integer().map(|i| i as f64))
+            .unwrap_or(1.0) as f32
     } else {
         1.0
     };

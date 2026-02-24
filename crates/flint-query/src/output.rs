@@ -42,11 +42,15 @@ pub fn format_json(result: &QueryResult) -> String {
 pub fn format_toml(result: &QueryResult) -> String {
     match result {
         QueryResult::Entities(entities) => {
-            let wrapper = EntityListWrapper { entities: entities.clone() };
+            let wrapper = EntityListWrapper {
+                entities: entities.clone(),
+            };
             toml::to_string_pretty(&wrapper).unwrap_or_else(|_| "".to_string())
         }
         QueryResult::Components(components) => {
-            let wrapper = ComponentListWrapper { components: components.clone() };
+            let wrapper = ComponentListWrapper {
+                components: components.clone(),
+            };
             toml::to_string_pretty(&wrapper).unwrap_or_else(|_| "".to_string())
         }
     }
@@ -69,10 +73,7 @@ mod tests {
 
     #[test]
     fn test_format_json() {
-        let result = QueryResult::Entities(vec![EntityInfo::new(
-            EntityId::from_raw(1),
-            "test",
-        )]);
+        let result = QueryResult::Entities(vec![EntityInfo::new(EntityId::from_raw(1), "test")]);
 
         let json = format_json(&result);
         assert!(json.contains("test"));

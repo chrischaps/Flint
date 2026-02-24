@@ -169,10 +169,7 @@ impl MeshyProvider {
             match response {
                 Ok(mut ok) => {
                     return ok.body_mut().read_json().map_err(|e| {
-                        FlintError::GenerationError(format!(
-                            "Failed to parse poll response: {}",
-                            e
-                        ))
+                        FlintError::GenerationError(format!("Failed to parse poll response: {}", e))
                     });
                 }
                 Err(e) => {
@@ -180,7 +177,10 @@ impl MeshyProvider {
                         sleep_backoff(attempt);
                         continue;
                     }
-                    return Err(FlintError::GenerationError(format!("Meshy poll failed: {}", e)));
+                    return Err(FlintError::GenerationError(format!(
+                        "Meshy poll failed: {}",
+                        e
+                    )));
                 }
             }
         }
@@ -329,9 +329,10 @@ impl GenerationProvider for MeshyProvider {
     }
 
     fn poll_job(&self, job: &GenerationJob) -> Result<JobPollResult> {
-        let remote_id = job.remote_id.as_deref().ok_or_else(|| {
-            FlintError::GenerationError("Job has no remote ID".to_string())
-        })?;
+        let remote_id = job
+            .remote_id
+            .as_deref()
+            .ok_or_else(|| FlintError::GenerationError("Job has no remote ID".to_string()))?;
 
         match self.poll_task(remote_id)? {
             MeshyTaskStatus::Processing(p) => Ok(JobPollResult::Processing(p)),
@@ -341,9 +342,10 @@ impl GenerationProvider for MeshyProvider {
     }
 
     fn download_result(&self, job: &GenerationJob, output_dir: &Path) -> Result<GenerateResult> {
-        let remote_id = job.remote_id.as_deref().ok_or_else(|| {
-            FlintError::GenerationError("Job has no remote ID".to_string())
-        })?;
+        let remote_id = job
+            .remote_id
+            .as_deref()
+            .ok_or_else(|| FlintError::GenerationError("Job has no remote ID".to_string()))?;
 
         // Poll one more time to get the model URL
         match self.poll_task(remote_id)? {
@@ -372,10 +374,9 @@ impl GenerationProvider for MeshyProvider {
             MeshyTaskStatus::Processing(_) => Err(FlintError::GenerationError(
                 "Job not yet complete".to_string(),
             )),
-            MeshyTaskStatus::Failed(msg) => Err(FlintError::GenerationError(format!(
-                "Job failed: {}",
-                msg
-            ))),
+            MeshyTaskStatus::Failed(msg) => {
+                Err(FlintError::GenerationError(format!("Job failed: {}", msg)))
+            }
         }
     }
 

@@ -130,10 +130,12 @@ impl TransformGizmo {
         };
         let scale_factor = (cam_dist / 10.0).clamp(0.3, 3.0);
 
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("transform_gizmo"),
-        )).with_clip_rect(clip_rect);
+        let painter = ctx
+            .layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("transform_gizmo"),
+            ))
+            .with_clip_rect(clip_rect);
 
         // Project axis directions to screen space using the same VP matrix as the center point
         let axis_dirs = self.compute_axis_screen_dirs(&vp, entity_pos, center, render_rect);
@@ -165,7 +167,8 @@ impl TransformGizmo {
 
         // Compute drag delta
         let mut result = None;
-        if let (Some(axis), Some(current_pos), true) = (self.active_axis, pointer_pos, primary_down) {
+        if let (Some(axis), Some(current_pos), true) = (self.active_axis, pointer_pos, primary_down)
+        {
             if let Some(last_pos) = self.last_mouse_pos {
                 let mouse_delta = current_pos - last_pos;
                 if mouse_delta.length() > 0.0 {
@@ -220,11 +223,7 @@ impl TransformGizmo {
     ) -> [[f32; 2]; 3] {
         // Project points along each world axis through the full VP matrix so that
         // perspective is accounted for (matching how the gizmo center is projected).
-        let world_axes: [[f32; 3]; 3] = [
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-        ];
+        let world_axes: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let mut screen_dirs = [[0.0f32; 2]; 3];
 
         for (i, axis) in world_axes.iter().enumerate() {
@@ -303,7 +302,9 @@ impl TransformGizmo {
                         // The ring for axis i is projected differently depending on view
                         // Simplified: accept any angle for now, differentiate by which
                         // sector the mouse is in
-                        let sector = ((angle + std::f32::consts::PI) / (std::f32::consts::TAU / 3.0)) as usize;
+                        let sector = ((angle + std::f32::consts::PI)
+                            / (std::f32::consts::TAU / 3.0))
+                            as usize;
                         if sector == i || (i == 2 && sector >= 2) {
                             return Some(*axis);
                         }
@@ -317,10 +318,12 @@ impl TransformGizmo {
                     let forward = [0.0, 0.0, 1.0]; // approximate
                     let mut best = GizmoAxis::Y;
                     let mut best_dot = 0.0f32;
-                    let world_axes: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+                    let world_axes: [[f32; 3]; 3] =
+                        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
                     let gizmo_axes = [GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z];
                     for (i, wa) in world_axes.iter().enumerate() {
-                        let d = (wa[0] * forward[0] + wa[1] * forward[1] + wa[2] * forward[2]).abs();
+                        let d =
+                            (wa[0] * forward[0] + wa[1] * forward[1] + wa[2] * forward[2]).abs();
                         // Higher dot = axis more parallel to view = ring more visible
                         let ring_visibility = 1.0 - d;
                         if ring_visibility > best_dot {
@@ -446,8 +449,13 @@ impl TransformGizmo {
             let db = egui::vec2(axis_dirs[*b][0], axis_dirs[*b][1]) * plane_len;
             let c = colors[*a];
 
-            let is_active = self.active_axis == Some(*plane_axis) || self.hovered_axis == Some(*plane_axis);
-            let alpha = if is_active { PLANE_ALPHA + 40 } else { PLANE_ALPHA };
+            let is_active =
+                self.active_axis == Some(*plane_axis) || self.hovered_axis == Some(*plane_axis);
+            let alpha = if is_active {
+                PLANE_ALPHA + 40
+            } else {
+                PLANE_ALPHA
+            };
 
             let fill = egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha);
             let p0 = center;
@@ -467,7 +475,11 @@ impl TransformGizmo {
             let dir = egui::vec2(axis_dirs[i][0], axis_dirs[i][1]);
             let end = center + dir * length;
             let is_active = self.active_axis == Some(*axis) || self.hovered_axis == Some(*axis);
-            let color = if is_active { hover_colors[i] } else { colors[i] };
+            let color = if is_active {
+                hover_colors[i]
+            } else {
+                colors[i]
+            };
             let width = if is_active { 3.0 } else { 2.0 };
 
             // Line
@@ -504,7 +516,11 @@ impl TransformGizmo {
         // Draw three rings, each perpendicular to its axis
         for (i, axis) in axes.iter().enumerate() {
             let is_active = self.active_axis == Some(*axis) || self.hovered_axis == Some(*axis);
-            let color = if is_active { hover_colors[i] } else { colors[i] };
+            let color = if is_active {
+                hover_colors[i]
+            } else {
+                colors[i]
+            };
             let width = if is_active { 2.5 } else { 1.5 };
 
             // Get the two axes perpendicular to this one
@@ -522,10 +538,7 @@ impl TransformGizmo {
             }
 
             for j in 0..RING_SEGMENTS {
-                painter.line_segment(
-                    [points[j], points[j + 1]],
-                    egui::Stroke::new(width, color),
-                );
+                painter.line_segment([points[j], points[j + 1]], egui::Stroke::new(width, color));
             }
         }
 
@@ -550,7 +563,11 @@ impl TransformGizmo {
             let dir = egui::vec2(axis_dirs[i][0], axis_dirs[i][1]);
             let end = center + dir * length;
             let is_active = self.active_axis == Some(*axis) || self.hovered_axis == Some(*axis);
-            let color = if is_active { hover_colors[i] } else { colors[i] };
+            let color = if is_active {
+                hover_colors[i]
+            } else {
+                colors[i]
+            };
             let width = if is_active { 3.0 } else { 2.0 };
 
             // Line
@@ -643,11 +660,7 @@ fn vec3_to_toml(v: [f32; 3]) -> toml::Value {
 }
 
 /// Project a 3D world point to screen coordinates
-fn project_point(
-    vp: &[[f32; 4]; 4],
-    point: [f32; 3],
-    viewport: egui::Rect,
-) -> Option<egui::Pos2> {
+fn project_point(vp: &[[f32; 4]; 4], point: [f32; 3], viewport: egui::Rect) -> Option<egui::Pos2> {
     let clip = [
         vp[0][0] * point[0] + vp[1][0] * point[1] + vp[2][0] * point[2] + vp[3][0],
         vp[0][1] * point[0] + vp[1][1] * point[1] + vp[2][1] * point[2] + vp[3][1],

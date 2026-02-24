@@ -9,7 +9,7 @@ use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptComman
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
-use rhai::{AST, Engine, Scope};
+use rhai::{Engine, Scope, AST};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -112,7 +112,11 @@ fn validate_callbacks(ast: &AST, source_path: &str) {
                 };
                 eprintln!(
                     "[script] warning ({}): `fn {}` expects {} parameter(s) but has {}.{}",
-                    source_path, name, expected, func.params.len(), hint
+                    source_path,
+                    name,
+                    expected,
+                    func.params.len(),
+                    hint
                 );
             }
         }
@@ -162,8 +166,14 @@ impl ScriptEngine {
         // Evaluate top-level statements to populate scope with module-level variables.
         // Without this, `let x = 0.0;` at the top of a script never enters the Scope,
         // so `call_fn` can't find it from within `on_init`/`on_update`.
-        if let Err(e) = self.engine.run_ast_with_scope(&mut instance.scope, &instance.ast) {
-            eprintln!("[script] module init error ({}): {}", instance.source_path, e);
+        if let Err(e) = self
+            .engine
+            .run_ast_with_scope(&mut instance.scope, &instance.ast)
+        {
+            eprintln!(
+                "[script] module init error ({}): {}",
+                instance.source_path, e
+            );
         }
         self.scripts.insert(entity, instance);
     }
@@ -193,7 +203,10 @@ impl ScriptEngine {
                     c.current_entity = entity_id;
                 }
                 script.init_called = true;
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_init", ()) {
+                if let Err(e) =
+                    self.engine
+                        .call_fn::<()>(&mut script.scope, &script.ast, "on_init", ())
+                {
                     eprintln!("[script] on_init error ({}): {}", script.source_path, e);
                 }
             }
@@ -221,7 +234,10 @@ impl ScriptEngine {
                     let mut c = self.ctx.lock().unwrap();
                     c.current_entity = entity_id;
                 }
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_update", ()) {
+                if let Err(e) =
+                    self.engine
+                        .call_fn::<()>(&mut script.scope, &script.ast, "on_update", ())
+                {
                     eprintln!("[script] on_update error ({}): {}", script.source_path, e);
                 }
             }
@@ -248,7 +264,10 @@ impl ScriptEngine {
                     let mut c = self.ctx.lock().unwrap();
                     c.current_entity = entity_id;
                 }
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_draw_ui", ()) {
+                if let Err(e) =
+                    self.engine
+                        .call_fn::<()>(&mut script.scope, &script.ast, "on_draw_ui", ())
+                {
                     eprintln!("[script] on_draw_ui error ({}): {}", script.source_path, e);
                 }
             }
@@ -310,8 +329,16 @@ impl ScriptEngine {
                     c.current_entity = entity;
                 }
                 let other_id = other.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_collision", (other_id,)) {
-                    eprintln!("[script] on_collision error ({}): {}", script.source_path, e);
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    "on_collision",
+                    (other_id,),
+                ) {
+                    eprintln!(
+                        "[script] on_collision error ({}): {}",
+                        script.source_path, e
+                    );
                 }
             }
         }
@@ -325,8 +352,16 @@ impl ScriptEngine {
                     c.current_entity = trigger;
                 }
                 let entity_id = entity.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_trigger_enter", (entity_id,)) {
-                    eprintln!("[script] on_trigger_enter error ({}): {}", script.source_path, e);
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    "on_trigger_enter",
+                    (entity_id,),
+                ) {
+                    eprintln!(
+                        "[script] on_trigger_enter error ({}): {}",
+                        script.source_path, e
+                    );
                 }
             }
         }
@@ -340,8 +375,16 @@ impl ScriptEngine {
                     c.current_entity = trigger;
                 }
                 let entity_id = entity.raw() as i64;
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_trigger_exit", (entity_id,)) {
-                    eprintln!("[script] on_trigger_exit error ({}): {}", script.source_path, e);
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    "on_trigger_exit",
+                    (entity_id,),
+                ) {
+                    eprintln!(
+                        "[script] on_trigger_exit error ({}): {}",
+                        script.source_path, e
+                    );
                 }
             }
         }
@@ -359,7 +402,12 @@ impl ScriptEngine {
                     c.current_entity = entity_id;
                 }
                 let action_str = action.to_string();
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_action", (action_str,)) {
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    "on_action",
+                    (action_str,),
+                ) {
                     eprintln!("[script] on_action error ({}): {}", script.source_path, e);
                 }
             }
@@ -377,7 +425,10 @@ impl ScriptEngine {
                         let mut c = self.ctx.lock().unwrap();
                         c.current_entity = entity_id;
                     }
-                    if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_interact", ()) {
+                    if let Err(e) =
+                        self.engine
+                            .call_fn::<()>(&mut script.scope, &script.ast, "on_interact", ())
+                    {
                         eprintln!("[script] on_interact error ({}): {}", script.source_path, e);
                     }
                 }
@@ -415,8 +466,14 @@ impl ScriptEngine {
                     let mut c = self.ctx.lock().unwrap();
                     c.current_entity = entity_id;
                 }
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_scene_exit", ()) {
-                    eprintln!("[script] on_scene_exit error ({}): {}", script.source_path, e);
+                if let Err(e) =
+                    self.engine
+                        .call_fn::<()>(&mut script.scope, &script.ast, "on_scene_exit", ())
+                {
+                    eprintln!(
+                        "[script] on_scene_exit error ({}): {}",
+                        script.source_path, e
+                    );
                 }
             }
         }
@@ -442,8 +499,14 @@ impl ScriptEngine {
                     let mut c = self.ctx.lock().unwrap();
                     c.current_entity = entity_id;
                 }
-                if let Err(e) = self.engine.call_fn::<()>(&mut script.scope, &script.ast, "on_scene_enter", ()) {
-                    eprintln!("[script] on_scene_enter error ({}): {}", script.source_path, e);
+                if let Err(e) =
+                    self.engine
+                        .call_fn::<()>(&mut script.scope, &script.ast, "on_scene_enter", ())
+                {
+                    eprintln!(
+                        "[script] on_scene_enter error ({}): {}",
+                        script.source_path, e
+                    );
                 }
             }
         }
@@ -493,9 +556,12 @@ pub struct NearestInteractable {
 /// Checks all entities with an `interactable` component that are enabled and within range.
 pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractable> {
     // Find player entity
-    let player_id = world.all_entities().iter()
+    let player_id = world
+        .all_entities()
+        .iter()
         .find(|e| {
-            world.get_components(e.id)
+            world
+                .get_components(e.id)
                 .map(|c| c.has("character_controller"))
                 .unwrap_or(false)
         })
@@ -505,10 +571,17 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
     let mut best: Option<NearestInteractable> = None;
 
     for entity in world.all_entities() {
-        let Some(comps) = world.get_components(entity.id) else { continue; };
-        let Some(interactable) = comps.get("interactable") else { continue; };
+        let Some(comps) = world.get_components(entity.id) else {
+            continue;
+        };
+        let Some(interactable) = comps.get("interactable") else {
+            continue;
+        };
 
-        let enabled = interactable.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let enabled = interactable
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         if !enabled {
             continue;
         }
@@ -518,7 +591,9 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
             .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
             .unwrap_or(3.0);
 
-        let Some(et) = world.get_transform(entity.id) else { continue; };
+        let Some(et) = world.get_transform(entity.id) else {
+            continue;
+        };
         let dx = (pt.position.x - et.position.x) as f64;
         let dy = (pt.position.y - et.position.y) as f64;
         let dz = (pt.position.z - et.position.z) as f64;
@@ -553,17 +628,26 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
 /// Check if an entity is within `range` distance of the player entity
 fn is_near_player(entity: EntityId, world: &FlintWorld, range: f64) -> bool {
     // Find player entity (entity with character_controller component)
-    let player_id = world.all_entities().iter()
+    let player_id = world
+        .all_entities()
+        .iter()
         .find(|e| {
-            world.get_components(e.id)
+            world
+                .get_components(e.id)
                 .map(|c| c.has("character_controller"))
                 .unwrap_or(false)
         })
         .map(|e| e.id);
 
-    let Some(player) = player_id else { return false; };
-    let Some(pt) = world.get_transform(player) else { return false; };
-    let Some(et) = world.get_transform(entity) else { return false; };
+    let Some(player) = player_id else {
+        return false;
+    };
+    let Some(pt) = world.get_transform(player) else {
+        return false;
+    };
+    let Some(et) = world.get_transform(entity) else {
+        return false;
+    };
 
     let dx = (pt.position.x - et.position.x) as f64;
     let dy = (pt.position.y - et.position.y) as f64;
@@ -598,11 +682,15 @@ mod tests {
     #[test]
     fn test_callback_detection() {
         let engine = ScriptEngine::new();
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_init() {}
             fn on_update() {}
             fn on_collision(other) {}
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let instance = ScriptInstance::new(ast, "test.rhai".into());
         assert!(instance.has_on_init);
@@ -620,28 +708,42 @@ mod tests {
         let id = world.spawn("test_entity").unwrap();
 
         // Set a component
-        world.set_component(id, "health", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("current".into(), toml::Value::Integer(100));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                id,
+                "health",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("current".into(), toml::Value::Integer(100));
+                    m
+                }),
+            )
+            .unwrap();
 
         // Compile a script that reads and writes
-        let ast = engine.compile(&format!(r#"
+        let ast = engine
+            .compile(&format!(
+                r#"
             fn on_init() {{
                 let me = self_entity();
                 let hp = get_field(me, "health", "current");
                 set_field(me, "health", "current", hp - 25);
             }}
-        "#)).unwrap();
+        "#
+            ))
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
 
         // Check that health was modified
-        let hp = world.get_components(id).unwrap()
-            .get_field("health", "current").unwrap()
-            .as_integer().unwrap();
+        let hp = world
+            .get_components(id)
+            .unwrap()
+            .get_field("health", "current")
+            .unwrap()
+            .as_integer()
+            .unwrap();
         assert_eq!(hp, 75);
     }
 
@@ -651,20 +753,30 @@ mod tests {
         let mut world = FlintWorld::new();
         let id = world.spawn("mover").unwrap();
 
-        world.set_component(id, "state", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("accumulated".into(), toml::Value::Float(0.0));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                id,
+                "state",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("accumulated".into(), toml::Value::Float(0.0));
+                    m
+                }),
+            )
+            .unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_update() {
                 let dt = delta_time();
                 let me = self_entity();
                 let acc = get_field(me, "state", "accumulated");
                 set_field(me, "state", "accumulated", acc + dt);
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
 
@@ -674,9 +786,13 @@ mod tests {
         engine.call_updates(&mut world);
         engine.call_updates(&mut world);
 
-        let acc = world.get_components(id).unwrap()
-            .get_field("state", "accumulated").unwrap()
-            .as_float().unwrap();
+        let acc = world
+            .get_components(id)
+            .unwrap()
+            .get_field("state", "accumulated")
+            .unwrap()
+            .as_float()
+            .unwrap();
         assert!((acc - 0.048).abs() < 1e-10);
     }
 
@@ -686,20 +802,30 @@ mod tests {
         let mut world = FlintWorld::new();
         let id = world.spawn("input_test").unwrap();
 
-        world.set_component(id, "result", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("jumped".into(), toml::Value::Boolean(false));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                id,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("jumped".into(), toml::Value::Boolean(false));
+                    m
+                }),
+            )
+            .unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_update() {
                 let me = self_entity();
                 if is_action_just_pressed("jump") {
                     set_field(me, "result", "jumped", true);
                 }
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
 
@@ -708,9 +834,13 @@ mod tests {
         engine.provide_context(input, 0.016, 0.0);
         engine.call_updates(&mut world);
 
-        let jumped = world.get_components(id).unwrap()
-            .get_field("result", "jumped").unwrap()
-            .as_bool().unwrap();
+        let jumped = world
+            .get_components(id)
+            .unwrap()
+            .get_field("result", "jumped")
+            .unwrap()
+            .as_bool()
+            .unwrap();
         assert!(jumped);
     }
 
@@ -720,11 +850,15 @@ mod tests {
         let mut world = FlintWorld::new();
         let id = world.spawn("snd_test").unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_init() {
                 play_sound("bang.ogg");
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
@@ -746,11 +880,15 @@ mod tests {
         let mut world = FlintWorld::new();
         let id = world.spawn("evt_test").unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_init() {
                 fire_event("door_opened");
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
@@ -772,31 +910,42 @@ mod tests {
         let entity_a = world.spawn("entity_a").unwrap();
         let entity_b = world.spawn("entity_b").unwrap();
 
-        world.set_component(entity_a, "hits", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("count".into(), toml::Value::Integer(0));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                entity_a,
+                "hits",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("count".into(), toml::Value::Integer(0));
+                    m
+                }),
+            )
+            .unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_collision(other) {
                 let me = self_entity();
                 let count = get_field(me, "hits", "count");
                 set_field(me, "hits", "count", count + 1);
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(entity_a, ast, "test.rhai".into());
 
-        let events = vec![GameEvent::CollisionStarted {
-            entity_a,
-            entity_b,
-        }];
+        let events = vec![GameEvent::CollisionStarted { entity_a, entity_b }];
         engine.process_events(&events, &mut world);
 
-        let count = world.get_components(entity_a).unwrap()
-            .get_field("hits", "count").unwrap()
-            .as_integer().unwrap();
+        let count = world
+            .get_components(entity_a)
+            .unwrap()
+            .get_field("hits", "count")
+            .unwrap()
+            .as_integer()
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -807,30 +956,48 @@ mod tests {
         let id = world.spawn("anim_test").unwrap();
 
         // Set up an animator component
-        world.set_component(id, "animator", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("clip".into(), toml::Value::String("idle".into()));
-            m.insert("playing".into(), toml::Value::Boolean(false));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                id,
+                "animator",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("clip".into(), toml::Value::String("idle".into()));
+                    m.insert("playing".into(), toml::Value::Boolean(false));
+                    m
+                }),
+            )
+            .unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_init() {
                 let me = self_entity();
                 play_clip(me, "run");
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
 
-        let clip = world.get_components(id).unwrap()
-            .get_field("animator", "clip").unwrap()
-            .as_str().unwrap()
+        let clip = world
+            .get_components(id)
+            .unwrap()
+            .get_field("animator", "clip")
+            .unwrap()
+            .as_str()
+            .unwrap()
             .to_string();
-        let playing = world.get_components(id).unwrap()
-            .get_field("animator", "playing").unwrap()
-            .as_bool().unwrap();
+        let playing = world
+            .get_components(id)
+            .unwrap()
+            .get_field("animator", "playing")
+            .unwrap()
+            .as_bool()
+            .unwrap();
         assert_eq!(clip, "run");
         assert!(playing);
     }
@@ -842,23 +1009,36 @@ mod tests {
         let id = world.spawn("pos_test").unwrap();
 
         // Set up transform
-        world.set_component(id, "transform", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("position".into(), toml::Value::Array(vec![
-                toml::Value::Float(1.0),
-                toml::Value::Float(2.0),
-                toml::Value::Float(3.0),
-            ]));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                id,
+                "transform",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert(
+                        "position".into(),
+                        toml::Value::Array(vec![
+                            toml::Value::Float(1.0),
+                            toml::Value::Float(2.0),
+                            toml::Value::Float(3.0),
+                        ]),
+                    );
+                    m
+                }),
+            )
+            .unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_init() {
                 let me = self_entity();
                 let pos = get_position(me);
                 set_position(me, pos.x + 10.0, pos.y, pos.z);
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
@@ -875,7 +1055,9 @@ mod tests {
         let id = world.spawn("reload_test").unwrap();
 
         // First version: set a persistent variable
-        let ast1 = engine.compile(r#"
+        let ast1 = engine
+            .compile(
+                r#"
             fn on_init() {
                 // No persistent state in this version
             }
@@ -883,18 +1065,24 @@ mod tests {
                 let me = self_entity();
                 log("v1 running");
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast1, "test.rhai".into());
         engine.call_inits(&mut world);
 
         // Hot-reload with new version
-        let ast2 = engine.compile(r#"
+        let ast2 = engine
+            .compile(
+                r#"
             fn on_update() {
                 let me = self_entity();
                 log("v2 running");
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let script = engine.scripts.get_mut(&id).unwrap();
         script.hot_reload(ast2);
@@ -913,13 +1101,21 @@ mod tests {
         let mut world = FlintWorld::new();
         let id = world.spawn("persist_test").unwrap();
 
-        world.set_component(id, "state", toml::Value::Table({
-            let mut m = toml::map::Map::new();
-            m.insert("value".into(), toml::Value::Float(0.0));
-            m
-        })).unwrap();
+        world
+            .set_component(
+                id,
+                "state",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("value".into(), toml::Value::Float(0.0));
+                    m
+                }),
+            )
+            .unwrap();
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             let counter = 10.0;
 
             fn on_init() {
@@ -932,29 +1128,46 @@ mod tests {
                 let me = self_entity();
                 set_field(me, "state", "value", counter);
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         engine.add_script(id, ast, "test.rhai".into());
         engine.call_inits(&mut world);
         engine.call_updates(&mut world);
 
-        let value = world.get_components(id).unwrap()
-            .get_field("state", "value").unwrap()
-            .as_float().unwrap();
-        assert!((value - 42.0).abs() < 1e-10, "Module-level var should persist: got {}", value);
+        let value = world
+            .get_components(id)
+            .unwrap()
+            .get_field("state", "value")
+            .unwrap()
+            .as_float()
+            .unwrap();
+        assert!(
+            (value - 42.0).abs() < 1e-10,
+            "Module-level var should persist: got {}",
+            value
+        );
     }
 
     #[test]
     fn test_arity_mismatch_still_detects_function() {
         // A script with the wrong arity should still be detected (warning, not error)
         let engine = ScriptEngine::new();
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn on_update(dt) {
                 // Wrong arity — should warn but still detect
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let instance = ScriptInstance::new(ast, "test_mismatch.rhai".into());
-        assert!(instance.has_on_update, "has_on_update should be true even with wrong arity");
+        assert!(
+            instance.has_on_update,
+            "has_on_update should be true even with wrong arity"
+        );
     }
 }

@@ -166,9 +166,7 @@ impl<'a> ConstraintEvaluator<'a> {
         let value = components.get_field(parts[0], parts[1]);
         match value {
             Some(v) => {
-                let num = v
-                    .as_float()
-                    .or_else(|| v.as_integer().map(|i| i as f64));
+                let num = v.as_float().or_else(|| v.as_integer().map(|i| i as f64));
                 match num {
                     Some(n) => n < min || n > max,
                     None => false, // Non-numeric field, not a range violation
@@ -247,7 +245,10 @@ mod tests {
             "door",
             toml::Value::Table({
                 let mut m = toml::map::Map::new();
-                m.insert("style".to_string(), toml::Value::String("hinged".to_string()));
+                m.insert(
+                    "style".to_string(),
+                    toml::Value::String("hinged".to_string()),
+                );
                 m.insert("locked".to_string(), toml::Value::Boolean(false));
                 m.insert("open_angle".to_string(), toml::Value::Float(90.0));
                 m

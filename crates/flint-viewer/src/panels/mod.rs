@@ -11,5 +11,5 @@ pub use entity_inspector::EntityInspector;
 pub use render_stats::RenderStats;
 pub use scene_tree::SceneTree;
 pub use spline_panel::SplinePanelAction;
-pub use transform_gizmo::{TransformGizmo, GizmoMode};
+pub use transform_gizmo::{GizmoMode, TransformGizmo};
 pub use view_gizmo::{CameraView, GizmoAction, ViewGizmo};

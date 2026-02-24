@@ -7,7 +7,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum LayoutFlow {
     #[default]
-    Stack,      // Vertical stacking (default)
+    Stack, // Vertical stacking (default)
     Horizontal, // Horizontal flow
 }
 
@@ -93,41 +93,119 @@ impl StyleClass {
 
         for (key, val) in &self.properties {
             match key.as_str() {
-                "x" => if let StyleValue::Float(v) = val { style.x = *v; },
-                "y" => if let StyleValue::Float(v) = val { style.y = *v; },
-                "width" => if let StyleValue::Float(v) = val { style.width = *v; },
-                "height" => if let StyleValue::Float(v) = val { style.height = *v; },
-                "width_pct" => if let StyleValue::Float(v) = val { style.width_pct = Some(*v); },
-                "height_pct" => if let StyleValue::Float(v) = val { style.height_pct = Some(*v); },
-                "height_auto" => if let StyleValue::Bool(v) = val { style.height_auto = *v; },
-                "font_size" => if let StyleValue::Float(v) = val { style.font_size = *v; },
-                "rounding" => if let StyleValue::Float(v) = val { style.rounding = *v; },
-                "opacity" => if let StyleValue::Float(v) = val { style.opacity = *v; },
-                "thickness" => if let StyleValue::Float(v) = val { style.thickness = *v; },
-                "radius" => if let StyleValue::Float(v) = val { style.radius = *v; },
-                "layer" => if let StyleValue::Float(v) = val { style.layer = *v as i32; },
-                "margin_bottom" => if let StyleValue::Float(v) = val { style.margin_bottom = *v; },
-                "color" => if let StyleValue::Color(c) = val { style.color = *c; },
-                "bg_color" => if let StyleValue::Color(c) = val { style.bg_color = *c; },
-                "stroke_color" => if let StyleValue::Color(c) = val { style.stroke_color = *c; },
-                "stroke_width" => if let StyleValue::Float(v) = val { style.stroke_width = *v; },
-                "text_align" => if let StyleValue::String(s) = val {
-                    style.text_align = match s.as_str() {
-                        "center" => TextAlign::Center,
-                        "right" => TextAlign::Right,
-                        _ => TextAlign::Left,
-                    };
-                },
-                "layout" => if let StyleValue::String(s) = val {
-                    style.layout = match s.as_str() {
-                        "horizontal" => LayoutFlow::Horizontal,
-                        _ => LayoutFlow::Stack,
-                    };
-                },
-                "padding" => if let StyleValue::Color(p) = val {
-                    // Reuse Color([f32;4]) for 4-value padding
-                    style.padding = *p;
-                },
+                "x" => {
+                    if let StyleValue::Float(v) = val {
+                        style.x = *v;
+                    }
+                }
+                "y" => {
+                    if let StyleValue::Float(v) = val {
+                        style.y = *v;
+                    }
+                }
+                "width" => {
+                    if let StyleValue::Float(v) = val {
+                        style.width = *v;
+                    }
+                }
+                "height" => {
+                    if let StyleValue::Float(v) = val {
+                        style.height = *v;
+                    }
+                }
+                "width_pct" => {
+                    if let StyleValue::Float(v) = val {
+                        style.width_pct = Some(*v);
+                    }
+                }
+                "height_pct" => {
+                    if let StyleValue::Float(v) = val {
+                        style.height_pct = Some(*v);
+                    }
+                }
+                "height_auto" => {
+                    if let StyleValue::Bool(v) = val {
+                        style.height_auto = *v;
+                    }
+                }
+                "font_size" => {
+                    if let StyleValue::Float(v) = val {
+                        style.font_size = *v;
+                    }
+                }
+                "rounding" => {
+                    if let StyleValue::Float(v) = val {
+                        style.rounding = *v;
+                    }
+                }
+                "opacity" => {
+                    if let StyleValue::Float(v) = val {
+                        style.opacity = *v;
+                    }
+                }
+                "thickness" => {
+                    if let StyleValue::Float(v) = val {
+                        style.thickness = *v;
+                    }
+                }
+                "radius" => {
+                    if let StyleValue::Float(v) = val {
+                        style.radius = *v;
+                    }
+                }
+                "layer" => {
+                    if let StyleValue::Float(v) = val {
+                        style.layer = *v as i32;
+                    }
+                }
+                "margin_bottom" => {
+                    if let StyleValue::Float(v) = val {
+                        style.margin_bottom = *v;
+                    }
+                }
+                "color" => {
+                    if let StyleValue::Color(c) = val {
+                        style.color = *c;
+                    }
+                }
+                "bg_color" => {
+                    if let StyleValue::Color(c) = val {
+                        style.bg_color = *c;
+                    }
+                }
+                "stroke_color" => {
+                    if let StyleValue::Color(c) = val {
+                        style.stroke_color = *c;
+                    }
+                }
+                "stroke_width" => {
+                    if let StyleValue::Float(v) = val {
+                        style.stroke_width = *v;
+                    }
+                }
+                "text_align" => {
+                    if let StyleValue::String(s) = val {
+                        style.text_align = match s.as_str() {
+                            "center" => TextAlign::Center,
+                            "right" => TextAlign::Right,
+                            _ => TextAlign::Left,
+                        };
+                    }
+                }
+                "layout" => {
+                    if let StyleValue::String(s) = val {
+                        style.layout = match s.as_str() {
+                            "horizontal" => LayoutFlow::Horizontal,
+                            _ => LayoutFlow::Stack,
+                        };
+                    }
+                }
+                "padding" => {
+                    if let StyleValue::Color(p) = val {
+                        // Reuse Color([f32;4]) for 4-value padding
+                        style.padding = *p;
+                    }
+                }
                 _ => {}
             }
         }
@@ -139,16 +217,56 @@ impl StyleClass {
     pub fn apply_overrides(style: &mut ResolvedStyle, overrides: &HashMap<String, StyleValue>) {
         for (key, val) in overrides {
             match key.as_str() {
-                "x" => if let StyleValue::Float(v) = val { style.x = *v; },
-                "y" => if let StyleValue::Float(v) = val { style.y = *v; },
-                "width" => if let StyleValue::Float(v) = val { style.width = *v; },
-                "height" => if let StyleValue::Float(v) = val { style.height = *v; },
-                "font_size" => if let StyleValue::Float(v) = val { style.font_size = *v; },
-                "rounding" => if let StyleValue::Float(v) = val { style.rounding = *v; },
-                "opacity" => if let StyleValue::Float(v) = val { style.opacity = *v; },
-                "layer" => if let StyleValue::Float(v) = val { style.layer = *v as i32; },
-                "color" => if let StyleValue::Color(c) = val { style.color = *c; },
-                "bg_color" => if let StyleValue::Color(c) = val { style.bg_color = *c; },
+                "x" => {
+                    if let StyleValue::Float(v) = val {
+                        style.x = *v;
+                    }
+                }
+                "y" => {
+                    if let StyleValue::Float(v) = val {
+                        style.y = *v;
+                    }
+                }
+                "width" => {
+                    if let StyleValue::Float(v) = val {
+                        style.width = *v;
+                    }
+                }
+                "height" => {
+                    if let StyleValue::Float(v) = val {
+                        style.height = *v;
+                    }
+                }
+                "font_size" => {
+                    if let StyleValue::Float(v) = val {
+                        style.font_size = *v;
+                    }
+                }
+                "rounding" => {
+                    if let StyleValue::Float(v) = val {
+                        style.rounding = *v;
+                    }
+                }
+                "opacity" => {
+                    if let StyleValue::Float(v) = val {
+                        style.opacity = *v;
+                    }
+                }
+                "layer" => {
+                    if let StyleValue::Float(v) = val {
+                        style.layer = *v as i32;
+                    }
+                }
+                "color" => {
+                    if let StyleValue::Color(c) = val {
+                        style.color = *c;
+                    }
+                }
+                "bg_color" => {
+                    if let StyleValue::Color(c) = val {
+                        style.bg_color = *c;
+                    }
+                }
                 _ => {}
             }
         }

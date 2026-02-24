@@ -85,8 +85,16 @@ impl AABB {
     /// Create from center position and half-extents
     pub fn from_center_half(center: [f32; 3], half: [f32; 3]) -> Self {
         Self {
-            min: [center[0] - half[0], center[1] - half[1], center[2] - half[2]],
-            max: [center[0] + half[0], center[1] + half[1], center[2] + half[2]],
+            min: [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[2] - half[2],
+            ],
+            max: [
+                center[0] + half[0],
+                center[1] + half[1],
+                center[2] + half[2],
+            ],
         }
     }
 
@@ -112,7 +120,10 @@ impl AABB {
             }
         }
 
-        Self { min: new_min, max: new_max }
+        Self {
+            min: new_min,
+            max: new_max,
+        }
     }
 }
 
@@ -194,7 +205,8 @@ pub fn build_pick_targets(world: &flint_ecs::FlintWorld) -> Vec<PickTarget> {
 
     for entity in world.all_entities() {
         let transform = world.get_transform(entity.id).unwrap_or_default();
-        let world_mat = world.get_world_matrix(entity.id)
+        let world_mat = world
+            .get_world_matrix(entity.id)
             .unwrap_or_else(|| transform.to_matrix());
 
         // Try to get bounds component for size, else use a 1x1x1 default
@@ -236,9 +248,15 @@ fn extract_bounds_min_max(bounds: &toml::Value) -> Option<([f32; 3], [f32; 3])> 
 fn extract_vec3(value: &toml::Value) -> Option<[f32; 3]> {
     if let Some(arr) = value.as_array() {
         if arr.len() >= 3 {
-            let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-            let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-            let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+            let x = arr[0]
+                .as_float()
+                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+            let y = arr[1]
+                .as_float()
+                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+            let z = arr[2]
+                .as_float()
+                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
             return Some([x, y, z]);
         }
     }

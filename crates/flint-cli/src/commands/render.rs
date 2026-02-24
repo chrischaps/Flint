@@ -40,7 +40,12 @@ pub struct RenderArgs {
 
 pub fn run(args: RenderArgs) -> Result<()> {
     // Load schemas from all directories
-    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| Path::new(p).exists()).collect();
+    let existing: Vec<&str> = args
+        .schemas
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|p| Path::new(p).exists())
+        .collect();
     let registry = if !existing.is_empty() {
         SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
     } else {
@@ -86,21 +91,23 @@ pub fn run(args: RenderArgs) -> Result<()> {
         ctx.format,
         ctx.width,
         ctx.height,
-        RendererConfig { show_grid: !args.no_grid },
+        RendererConfig {
+            show_grid: !args.no_grid,
+        },
     );
 
     // Load models and textures from the scene
     let config = ModelLoadConfig::from_scene_path(&args.scene);
-    model_loader::load_models_from_world(&mut world, &mut renderer, &ctx.device, &ctx.queue, &config);
-
-    // Generate procedural geometry from spline + spline_mesh entities
-    spline_gen::load_splines(
-        &args.scene,
+    model_loader::load_models_from_world(
         &mut world,
         &mut renderer,
-        None,
         &ctx.device,
+        &ctx.queue,
+        &config,
     );
+
+    // Generate procedural geometry from spline + spline_mesh entities
+    spline_gen::load_splines(&args.scene, &mut world, &mut renderer, None, &ctx.device);
 
     // Apply debug state
     if let Some(mode_str) = &args.debug_mode {
@@ -258,7 +265,11 @@ fn load_terrain_for_render(
                 p
             } else if let Some(parent) = scene_dir.parent() {
                 let pp = parent.join(&heightmap_rel);
-                if pp.exists() { pp } else { p }
+                if pp.exists() {
+                    pp
+                } else {
+                    p
+                }
             } else {
                 p
             }
@@ -281,11 +292,19 @@ fn load_terrain_for_render(
         };
 
         let get_i32 = |key: &str, default: i32| -> i32 {
-            terrain_comp.get(key).and_then(|v| v.as_integer()).map(|i| i as i32).unwrap_or(default)
+            terrain_comp
+                .get(key)
+                .and_then(|v| v.as_integer())
+                .map(|i| i as i32)
+                .unwrap_or(default)
         };
 
         let get_str = |key: &str| -> String {
-            terrain_comp.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
+            terrain_comp
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
         };
 
         let config = TerrainConfig {
@@ -313,9 +332,18 @@ fn load_terrain_for_render(
             .and_then(|t| {
                 let arr = t.get("position")?.as_array()?;
                 if arr.len() >= 3 {
-                    let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-                    let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-                    let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+                    let x = arr[0]
+                        .as_float()
+                        .or_else(|| arr[0].as_integer().map(|i| i as f64))?
+                        as f32;
+                    let y = arr[1]
+                        .as_float()
+                        .or_else(|| arr[1].as_integer().map(|i| i as f64))?
+                        as f32;
+                    let z = arr[2]
+                        .as_float()
+                        .or_else(|| arr[2].as_integer().map(|i| i as f64))?
+                        as f32;
                     Some(Transform {
                         position: Vec3::new(x, y, z),
                         ..Default::default()
@@ -341,9 +369,10 @@ fn load_terrain_for_render(
 
         println!(
             "[terrain] Loaded terrain: {}x{} heightmap, {} chunks",
-            heightmap.width, heightmap.depth, terrain.chunks.len()
+            heightmap.width,
+            heightmap.depth,
+            terrain.chunks.len()
         );
         break; // Only one terrain for now
     }
 }
-

@@ -12,9 +12,9 @@ pub mod style;
 use crate::context::DrawCommand;
 use element::{ElementType, UiElement};
 use layout::ResolvedRect;
-use style::{ResolvedStyle, StyleClass};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use style::{ResolvedStyle, StyleClass};
 
 /// A loaded UI document (one layout + style pair)
 pub struct UiDocument {
@@ -36,7 +36,8 @@ impl UiDocument {
             || (self.cached_screen_h - screen_h).abs() > 0.5
             || self.cached_rects.is_empty()
         {
-            self.cached_rects = layout::resolve_layout(&self.elements, &self.styles, screen_w, screen_h);
+            self.cached_rects =
+                layout::resolve_layout(&self.elements, &self.styles, screen_w, screen_h);
             self.cached_screen_w = screen_w;
             self.cached_screen_h = screen_h;
         }
@@ -76,7 +77,8 @@ impl UiDocument {
                 }
             }
 
-            let (rect, style): (ResolvedRect, ResolvedStyle) = match self.cached_rects.get(&elem.id) {
+            let (rect, style): (ResolvedRect, ResolvedStyle) = match self.cached_rects.get(&elem.id)
+            {
                 Some(r) => r.clone(),
                 None => continue,
             };
@@ -111,9 +113,7 @@ impl UiDocument {
                             style::TextAlign::Center if rect.w > 0.0 => {
                                 (rect.x + rect.w / 2.0, 1u8)
                             }
-                            style::TextAlign::Right if rect.w > 0.0 => {
-                                (rect.x + rect.w, 2u8)
-                            }
+                            style::TextAlign::Right if rect.w > 0.0 => (rect.x + rect.w, 2u8),
                             _ => (rect.x, 0u8),
                         };
 
@@ -182,7 +182,12 @@ impl UiDocument {
                             h: rect.h,
                             name: elem.src.clone(),
                             uv: [0.0, 0.0, 1.0, 1.0],
-                            tint: [style.color[0], style.color[1], style.color[2], style.color[3] * opacity],
+                            tint: [
+                                style.color[0],
+                                style.color[1],
+                                style.color[2],
+                                style.color[3] * opacity,
+                            ],
                             layer: style.layer,
                         });
                     }
@@ -211,7 +216,7 @@ impl UiSystem {
     }
 
     /// Load a UI document from a layout file path.
-    /// The style path is read from the [ui].style field in the layout file.
+    /// The style path is read from the `[ui].style` field in the layout file.
     /// Returns a handle for future operations, or -1 on error.
     pub fn load(&mut self, layout_path: &str, scene_dir: &Path) -> i64 {
         let layout_file = scene_dir.join(layout_path);
@@ -377,11 +382,18 @@ impl UiSystem {
 
     /// Check if an element exists in any loaded document
     pub fn exists(&self, element_id: &str) -> bool {
-        self.documents.iter().any(|doc| doc.find_element(element_id).is_some())
+        self.documents
+            .iter()
+            .any(|doc| doc.find_element(element_id).is_some())
     }
 
     /// Get the resolved screen rect for an element
-    pub fn get_rect(&mut self, element_id: &str, screen_w: f32, screen_h: f32) -> Option<(f32, f32, f32, f32)> {
+    pub fn get_rect(
+        &mut self,
+        element_id: &str,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> Option<(f32, f32, f32, f32)> {
         for doc in &mut self.documents {
             doc.ensure_layout(screen_w, screen_h);
             if let Some((rect, _)) = doc.cached_rects.get(element_id) {

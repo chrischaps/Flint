@@ -14,8 +14,8 @@ pub mod engine;
 pub mod sync;
 pub mod ui;
 
-use context::{InputSnapshot, ScriptCommand};
 pub use context::DrawCommand;
+use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
@@ -64,7 +64,8 @@ impl ScriptSystem {
             mouse_delta: input.raw_mouse_delta(),
         };
 
-        self.engine.provide_context(snapshot, delta_time, total_time);
+        self.engine
+            .provide_context(snapshot, delta_time, total_time);
         self.pending_events = events.to_vec();
     }
 
@@ -161,7 +162,17 @@ impl ScriptSystem {
     }
 
     /// Take post-processing overrides set by scripts this frame (clears them)
-    pub fn take_postprocess_overrides(&mut self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
+    pub fn take_postprocess_overrides(
+        &mut self,
+    ) -> (
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+    ) {
         let mut c = self.engine.ctx.lock().unwrap();
         let vignette = c.postprocess_vignette_override.take();
         let bloom = c.postprocess_bloom_override.take();
@@ -170,7 +181,15 @@ impl ScriptSystem {
         let radial_blur = c.postprocess_radial_blur_override.take();
         let ssao_intensity = c.postprocess_ssao_intensity_override.take();
         let fog_density = c.postprocess_fog_density_override.take();
-        (vignette, bloom, exposure, chromatic_aberration, radial_blur, ssao_intensity, fog_density)
+        (
+            vignette,
+            bloom,
+            exposure,
+            chromatic_aberration,
+            radial_blur,
+            ssao_intensity,
+            fog_density,
+        )
     }
 
     /// Take audio low-pass filter override set by scripts this frame (clears it)

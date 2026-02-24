@@ -62,10 +62,7 @@ pub struct ShadowPass {
 }
 
 impl ShadowPass {
-    pub fn new(
-        device: &wgpu::Device,
-        resolution: u32,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, resolution: u32) -> Self {
         let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shadow Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shadow_shader.wgsl").into()),
@@ -94,41 +91,40 @@ impl ShadowPass {
                 push_constant_ranges: &[],
             });
 
-        let shadow_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Shadow Depth Pipeline"),
-                layout: Some(&shadow_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shadow_shader,
-                    entry_point: Some("vs_shadow"),
-                    buffers: &[Vertex::desc()],
-                    compilation_options: Default::default(),
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Shadow Depth Pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shadow_shader,
+                entry_point: Some("vs_shadow"),
+                buffers: &[Vertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: None, // Depth only, no fragment shader
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
                 },
-                fragment: None, // Depth only, no fragment shader
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: 2,
-                        slope_scale: 2.0,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
         // Skinned shadow pipeline: bind group 0 = shadow uniforms, bind group 1 = bone matrices
         let skinned_shadow_bone_layout =
@@ -201,8 +197,7 @@ impl ShadowPass {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
@@ -237,12 +232,11 @@ impl ShadowPass {
 
         // Shadow uniforms for the main shader (cascade matrices + splits)
         let shadow_uniforms = ShadowUniforms::default();
-        let shadow_uniforms_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Shadow Uniforms Buffer"),
-                contents: bytemuck::cast_slice(&[shadow_uniforms]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        let shadow_uniforms_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Shadow Uniforms Buffer"),
+            contents: bytemuck::cast_slice(&[shadow_uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         Self {
             shadow_pipeline,
@@ -273,12 +267,7 @@ impl ShadowPass {
         let lambda = 0.5f32; // blend factor
         let splits = compute_cascade_splits(near, far, CASCADE_COUNT, lambda);
 
-        self.shadow_uniforms.cascade_splits = [
-            splits[1],
-            splits[2],
-            splits[3],
-            0.0,
-        ];
+        self.shadow_uniforms.cascade_splits = [splits[1], splits[2], splits[3], 0.0];
 
         let light_dir_norm = normalize_3(light_dir);
 
@@ -287,10 +276,12 @@ impl ShadowPass {
             let cascade_far = splits[i + 1];
 
             // Compute frustum corners for this cascade
-            let corners = frustum_corners(cascade_near, cascade_far, near, far, &camera_view_proj_inv);
+            let corners =
+                frustum_corners(cascade_near, cascade_far, near, far, &camera_view_proj_inv);
 
             // Compute tight orthographic bounds from light's perspective
-            let light_vp = compute_light_matrix(&corners, &light_dir_norm, camera_pos, self.resolution);
+            let light_vp =
+                compute_light_matrix(&corners, &light_dir_norm, camera_pos, self.resolution);
             self.shadow_uniforms.cascade_view_proj[i] = light_vp;
         }
     }
@@ -335,13 +326,13 @@ fn frustum_corners(
 
     let ndc_corners = [
         [-1.0, -1.0, ndc_near],
-        [ 1.0, -1.0, ndc_near],
-        [ 1.0,  1.0, ndc_near],
-        [-1.0,  1.0, ndc_near],
+        [1.0, -1.0, ndc_near],
+        [1.0, 1.0, ndc_near],
+        [-1.0, 1.0, ndc_near],
         [-1.0, -1.0, ndc_far],
-        [ 1.0, -1.0, ndc_far],
-        [ 1.0,  1.0, ndc_far],
-        [-1.0,  1.0, ndc_far],
+        [1.0, -1.0, ndc_far],
+        [1.0, 1.0, ndc_far],
+        [-1.0, 1.0, ndc_far],
     ];
 
     let mut world_corners = [[0.0f32; 3]; 8];
@@ -437,11 +428,7 @@ fn dot(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 
 /// Look-at view matrix (column-major for wgpu)
 fn look_at(eye: &[f32; 3], target: &[f32; 3]) -> [[f32; 4]; 4] {
-    let f = normalize_3([
-        target[0] - eye[0],
-        target[1] - eye[1],
-        target[2] - eye[2],
-    ]);
+    let f = normalize_3([target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]]);
     let up = [0.0, 1.0, 0.0];
     let s = normalize_3(cross(&f, &up));
     let u = cross(&s, &f);

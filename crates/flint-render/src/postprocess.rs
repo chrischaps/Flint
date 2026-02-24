@@ -207,7 +207,11 @@ pub struct PostProcessPipeline {
 
 impl PostProcessPipeline {
     /// Create all post-processing pipelines and shared resources.
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("PostProcess Linear Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -340,43 +344,41 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let composite_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Composite Pipeline"),
-                layout: Some(&composite_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &composite_shader,
-                    entry_point: Some("vs_composite"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &composite_shader,
-                    entry_point: Some("fs_composite"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Composite Pipeline"),
+            layout: Some(&composite_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &composite_shader,
+                entry_point: Some("vs_composite"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &composite_shader,
+                entry_point: Some("fs_composite"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
-        let composite_uniform_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("PostProcess Uniform Buffer"),
-                size: std::mem::size_of::<PostProcessUniforms>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let composite_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PostProcess Uniform Buffer"),
+            size: std::mem::size_of::<PostProcessUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // --- Bloom pipelines ---
         let bloom_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -385,44 +387,42 @@ impl PostProcessPipeline {
         });
 
         // Bloom group 0: BloomUniforms
-        let bloom_uniform_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bloom Uniform BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let bloom_uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bloom Uniform BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         // Bloom group 1: source texture + sampler
-        let bloom_texture_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bloom Texture BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let bloom_texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bloom Texture BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let bloom_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -533,13 +533,12 @@ impl PostProcessPipeline {
                 cache: None,
             });
 
-        let bloom_uniform_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Bloom Uniform Buffer"),
-                size: std::mem::size_of::<BloomUniforms>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let bloom_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Bloom Uniform Buffer"),
+            size: std::mem::size_of::<BloomUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // 1x1 black texture for when bloom is disabled
         let black_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -556,8 +555,7 @@ impl PostProcessPipeline {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let black_texture_view =
-            black_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let black_texture_view = black_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // --- SSAO pipelines ---
         let ssao_kernel = generate_ssao_kernel();
@@ -654,8 +652,7 @@ impl PostProcessPipeline {
                 depth_or_array_layers: 1,
             },
         );
-        let white_texture_view =
-            white_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let white_texture_view = white_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // SSAO shader
         let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -664,113 +661,107 @@ impl PostProcessPipeline {
         });
 
         // SSAO Group 0: SsaoUniforms
-        let ssao_uniform_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("SSAO Uniform BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let ssao_uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SSAO Uniform BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
         // SSAO Group 1: depth texture (non-filterable) + non-filtering sampler
-        let ssao_depth_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("SSAO Depth BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let ssao_depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SSAO Depth BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
 
         // SSAO Group 2: noise texture (filterable) + repeat sampler
-        let ssao_noise_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("SSAO Noise BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let ssao_noise_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SSAO Noise BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let ssao_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("SSAO Pipeline Layout"),
-                bind_group_layouts: &[&ssao_uniform_bgl, &ssao_depth_bgl, &ssao_noise_bgl],
-                push_constant_ranges: &[],
-            });
-
-        let ssao_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("SSAO Pipeline"),
-                layout: Some(&ssao_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &ssao_shader,
-                    entry_point: Some("vs_ssao"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
+                    count: None,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &ssao_shader,
-                    entry_point: Some("fs_ssao"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: SSAO_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
                 },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+            ],
+        });
 
-        let ssao_uniform_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("SSAO Uniform Buffer"),
-                size: std::mem::size_of::<SsaoUniforms>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let ssao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("SSAO Pipeline Layout"),
+            bind_group_layouts: &[&ssao_uniform_bgl, &ssao_depth_bgl, &ssao_noise_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let ssao_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("SSAO Pipeline"),
+            layout: Some(&ssao_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &ssao_shader,
+                entry_point: Some("vs_ssao"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &ssao_shader,
+                entry_point: Some("fs_ssao"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: SSAO_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let ssao_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SSAO Uniform Buffer"),
+            size: std::mem::size_of::<SsaoUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // SSAO blur shader
         let ssao_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -825,43 +816,41 @@ impl PostProcessPipeline {
                 push_constant_ranges: &[],
             });
 
-        let ssao_blur_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("SSAO Blur Pipeline"),
-                layout: Some(&ssao_blur_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &ssao_blur_shader,
-                    entry_point: Some("vs_ssao_blur"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &ssao_blur_shader,
-                    entry_point: Some("fs_ssao_blur"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: SSAO_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let ssao_blur_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("SSAO Blur Pipeline"),
+            layout: Some(&ssao_blur_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &ssao_blur_shader,
+                entry_point: Some("vs_ssao_blur"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &ssao_blur_shader,
+                entry_point: Some("fs_ssao_blur"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: SSAO_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
-        let ssao_blur_uniform_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("SSAO Blur Uniform Buffer"),
-                size: std::mem::size_of::<SsaoBlurUniforms>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let ssao_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SSAO Blur Uniform Buffer"),
+            size: std::mem::size_of::<SsaoBlurUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Self {
             composite_pipeline,
@@ -911,10 +900,7 @@ impl PostProcessPipeline {
         // Step 1: Threshold — extract bright pixels from HDR into mip[0]
         {
             let bloom_uniforms = BloomUniforms {
-                texel_size: [
-                    1.0 / resources.width as f32,
-                    1.0 / resources.height as f32,
-                ],
+                texel_size: [1.0 / resources.width as f32, 1.0 / resources.height as f32],
                 threshold: config.bloom_threshold,
                 soft_threshold: config.bloom_soft_threshold,
             };
@@ -948,10 +934,9 @@ impl PostProcessPipeline {
                 }],
             });
 
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Bloom Threshold Encoder"),
-                });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Bloom Threshold Encoder"),
+            });
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1018,10 +1003,9 @@ impl PostProcessPipeline {
                 }],
             });
 
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(&format!("Bloom Downsample {} Encoder", i)),
-                });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(&format!("Bloom Downsample {} Encoder", i)),
+            });
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1089,10 +1073,9 @@ impl PostProcessPipeline {
                 }],
             });
 
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(&format!("Bloom Upsample {} Encoder", i)),
-                });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(&format!("Bloom Upsample {} Encoder", i)),
+            });
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1136,10 +1119,7 @@ impl PostProcessPipeline {
             inv_projection: camera.inverse_projection_matrix(),
             projection: camera.projection_matrix(),
             kernel: self.ssao_kernel,
-            noise_scale: [
-                resources.width as f32 / 4.0,
-                resources.height as f32 / 4.0,
-            ],
+            noise_scale: [resources.width as f32 / 4.0, resources.height as f32 / 4.0],
             radius: config.ssao_radius,
             bias: config.ssao_bias,
             intensity: config.ssao_intensity,
@@ -1225,10 +1205,7 @@ impl PostProcessPipeline {
 
         // Blur pass → reads ssao_view, writes ssao_blur_view
         let blur_uniforms = SsaoBlurUniforms {
-            texel_size: [
-                1.0 / resources.width as f32,
-                1.0 / resources.height as f32,
-            ],
+            texel_size: [1.0 / resources.width as f32, 1.0 / resources.height as f32],
             _pad: [0.0; 2],
         };
         queue.write_buffer(
@@ -1346,10 +1323,7 @@ impl PostProcessPipeline {
                 0.0
             },
             vignette_smoothness: config.vignette_smoothness,
-            texel_size: [
-                1.0 / resources.width as f32,
-                1.0 / resources.height as f32,
-            ],
+            texel_size: [1.0 / resources.width as f32, 1.0 / resources.height as f32],
             chromatic_aberration: config.chromatic_aberration,
             radial_blur: config.radial_blur,
             _pad: [0.0; 2],
@@ -1360,7 +1334,11 @@ impl PostProcessPipeline {
             fog_height_falloff: config.fog_height_falloff,
             fog_height_origin: config.fog_height_origin,
             camera_pos: camera.position_array(),
-            fog_enabled: if effects_on && config.fog_enabled { 1.0 } else { 0.0 },
+            fog_enabled: if effects_on && config.fog_enabled {
+                1.0
+            } else {
+                0.0
+            },
             near: camera.near,
             far: camera.far,
             fog_height_enabled: if config.fog_height_enabled { 1.0 } else { 0.0 },
@@ -1420,10 +1398,9 @@ impl PostProcessPipeline {
             ],
         });
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Composite Encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Composite Encoder"),
+        });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1543,8 +1520,7 @@ impl PostProcessResources {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let ssao_blur_view =
-            ssao_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ssao_blur_view = ssao_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         Self {
             hdr_texture,

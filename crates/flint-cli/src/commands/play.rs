@@ -15,7 +15,12 @@ pub struct PlayArgs {
 
 pub fn run(args: PlayArgs) -> Result<()> {
     // Load schemas from all directories
-    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| Path::new(p).exists()).collect();
+    let existing: Vec<&str> = args
+        .schemas
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|p| Path::new(p).exists())
+        .collect();
     let registry = if !existing.is_empty() {
         SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
     } else {
@@ -24,8 +29,7 @@ pub fn run(args: PlayArgs) -> Result<()> {
     };
 
     // Load scene
-    let (world, scene_file) =
-        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());

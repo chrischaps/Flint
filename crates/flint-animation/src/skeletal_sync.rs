@@ -84,6 +84,16 @@ impl SkeletalSync {
         self.states.len()
     }
 
+    /// Return the names of all registered skeletal clips
+    pub fn clip_names(&self) -> Vec<String> {
+        self.clips.keys().cloned().collect()
+    }
+
+    /// Reset playback state for an entity (used when externally switching clips)
+    pub fn reset_state(&mut self, entity_id: &EntityId) {
+        self.states.remove(entity_id);
+    }
+
     /// Check if an entity has a skeleton registered
     pub fn has_skeleton(&self, entity_id: &EntityId) -> bool {
         self.skeletons.contains_key(entity_id)
@@ -221,8 +231,7 @@ impl SkeletalSync {
             Self::sample_clip_into_poses(clip, state.time, &mut skeleton.local_poses);
 
             // Handle crossfade blending
-            let is_blending = !state.blend_target.is_empty()
-                && state.blend_duration > 0.0;
+            let is_blending = !state.blend_target.is_empty() && state.blend_duration > 0.0;
 
             if is_blending {
                 let target_clip_name = state.blend_target.clone();
@@ -271,11 +280,7 @@ impl SkeletalSync {
     }
 
     /// Sample a clip's joint tracks into a pose array
-    fn sample_clip_into_poses(
-        clip: &SkeletalClip,
-        time: f64,
-        poses: &mut [JointPose],
-    ) {
+    fn sample_clip_into_poses(clip: &SkeletalClip, time: f64, poses: &mut [JointPose]) {
         for track in &clip.joint_tracks {
             let value = sample_joint_track(track, time);
             let idx = track.joint_index;
@@ -301,6 +306,23 @@ impl SkeletalSync {
                 }
             }
         }
+    }
+
+    /// Get the playback state for a given entity
+    pub fn get_playback_state(&self, entity_id: &EntityId) -> Option<&SkeletalPlaybackState> {
+        self.states.get(entity_id)
+    }
+
+    /// Set the playback time for a given entity (used for timeline scrubbing)
+    pub fn set_playback_time(&mut self, entity_id: &EntityId, time: f64) {
+        if let Some(state) = self.states.get_mut(entity_id) {
+            state.time = time;
+        }
+    }
+
+    /// Get the duration of a clip by name
+    pub fn get_clip_duration(&self, clip_name: &str) -> Option<f64> {
+        self.clips.get(clip_name).map(|c| c.duration)
     }
 
     /// Get bone matrices for a given entity (for GPU upload)

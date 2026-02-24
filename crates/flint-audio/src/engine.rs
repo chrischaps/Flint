@@ -36,7 +36,7 @@ impl AudioEngine {
         let filter_handle = settings.main_track_builder.add_effect(
             FilterBuilder::new()
                 .mode(FilterMode::LowPass)
-                .cutoff(20000.0)
+                .cutoff(20000.0),
         );
 
         // Try to create the audio manager; gracefully fail if no device
@@ -66,8 +66,13 @@ impl AudioEngine {
             return Ok(());
         }
 
-        let sound_data = StaticSoundData::from_file(path)
-            .map_err(|e| flint_core::FlintError::AudioError(format!("Failed to load '{}': {}", path.display(), e)))?;
+        let sound_data = StaticSoundData::from_file(path).map_err(|e| {
+            flint_core::FlintError::AudioError(format!(
+                "Failed to load '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
 
         self.sound_cache.insert(name.to_string(), sound_data);
         Ok(())
@@ -83,9 +88,9 @@ impl AudioEngine {
         let pos = to_glam_vec3(position);
         let orientation = glam::Quat::IDENTITY;
 
-        let handle = manager
-            .add_listener(pos, orientation)
-            .map_err(|e| flint_core::FlintError::AudioError(format!("Failed to create listener: {e}")))?;
+        let handle = manager.add_listener(pos, orientation).map_err(|e| {
+            flint_core::FlintError::AudioError(format!("Failed to create listener: {e}"))
+        })?;
 
         self.listener = Some(handle);
         Ok(())
@@ -119,9 +124,7 @@ impl AudioEngine {
         let manager = match &mut self.manager {
             Some(m) => m,
             None => {
-                return Err(flint_core::FlintError::AudioError(
-                    "No audio device".into(),
-                ));
+                return Err(flint_core::FlintError::AudioError("No audio device".into()));
             }
         };
 
@@ -145,7 +148,9 @@ impl AudioEngine {
 
         let handle = manager
             .add_spatial_sub_track(listener_id, pos, builder)
-            .map_err(|e| flint_core::FlintError::AudioError(format!("Failed to create spatial track: {e}")))?;
+            .map_err(|e| {
+                flint_core::FlintError::AudioError(format!("Failed to create spatial track: {e}"))
+            })?;
 
         Ok(handle)
     }
@@ -162,7 +167,9 @@ impl AudioEngine {
         let sound_data = self
             .sound_cache
             .get(sound_name)
-            .ok_or_else(|| flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}")))?
+            .ok_or_else(|| {
+                flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}"))
+            })?
             .clone();
 
         let mut data = sound_data
@@ -173,9 +180,9 @@ impl AudioEngine {
             data = data.loop_region(..);
         }
 
-        let handle = track
-            .play(data)
-            .map_err(|e| flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}")))?;
+        let handle = track.play(data).map_err(|e| {
+            flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
+        })?;
 
         Ok(handle)
     }
@@ -191,16 +198,16 @@ impl AudioEngine {
         let manager = match &mut self.manager {
             Some(m) => m,
             None => {
-                return Err(flint_core::FlintError::AudioError(
-                    "No audio device".into(),
-                ));
+                return Err(flint_core::FlintError::AudioError("No audio device".into()));
             }
         };
 
         let sound_data = self
             .sound_cache
             .get(sound_name)
-            .ok_or_else(|| flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}")))?
+            .ok_or_else(|| {
+                flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}"))
+            })?
             .clone();
 
         let mut data = sound_data
@@ -211,9 +218,9 @@ impl AudioEngine {
             data = data.loop_region(..);
         }
 
-        let handle = manager
-            .play(data)
-            .map_err(|e| flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}")))?;
+        let handle = manager.play(data).map_err(|e| {
+            flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
+        })?;
 
         Ok(handle)
     }
@@ -234,9 +241,8 @@ impl AudioEngine {
 
     /// Remove finished one-shot spatial sounds. Call once per frame.
     pub fn cleanup_finished_oneshots(&mut self) {
-        self.oneshot_tracks.retain(|(_track, sound)| {
-            sound.state() != kira::sound::PlaybackState::Stopped
-        });
+        self.oneshot_tracks
+            .retain(|(_track, sound)| sound.state() != kira::sound::PlaybackState::Stopped);
     }
 
     /// Drop all one-shot spatial handles (for scene transitions).

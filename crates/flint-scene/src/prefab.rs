@@ -13,9 +13,7 @@ pub fn expand_prefabs(scene: &mut SceneFile, scene_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let scene_dir = scene_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
 
     // Cache loaded prefab templates by template name
     let mut cache: HashMap<String, PrefabFile> = HashMap::new();

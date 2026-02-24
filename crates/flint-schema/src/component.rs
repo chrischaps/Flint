@@ -17,8 +17,12 @@ pub enum FieldType {
     Transform,
     Color,
     #[serde(rename = "enum")]
-    Enum { values: Vec<String> },
-    Array { element: Box<FieldType> },
+    Enum {
+        values: Vec<String>,
+    },
+    Array {
+        element: Box<FieldType>,
+    },
 }
 
 impl FieldType {
@@ -137,7 +141,11 @@ impl FieldSchemaDefinition {
                 max: None,
             },
             FieldSchemaDefinition::Detailed(d) => FieldSchema {
-                field_type: parse_field_type(&d.field_type, d.values.as_ref(), d.element.as_deref()),
+                field_type: parse_field_type(
+                    &d.field_type,
+                    d.values.as_ref(),
+                    d.element.as_deref(),
+                ),
                 default: d.default,
                 required: d.required.unwrap_or(false),
                 description: d.description,

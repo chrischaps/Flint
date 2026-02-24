@@ -162,7 +162,11 @@ impl PhysicsWorld {
                     collider_handle,
                     distance: intersection.time_of_impact,
                     point: [point.x, point.y, point.z],
-                    normal: [intersection.normal.x, intersection.normal.y, intersection.normal.z],
+                    normal: [
+                        intersection.normal.x,
+                        intersection.normal.y,
+                        intersection.normal.z,
+                    ],
                 }
             })
     }
@@ -222,22 +226,14 @@ mod tests {
         let collider = ColliderBuilder::ball(0.5).build();
         world.insert_collider_with_parent(collider, handle);
 
-        let initial_y = world
-            .get_rigid_body(handle)
-            .unwrap()
-            .translation()
-            .y;
+        let initial_y = world.get_rigid_body(handle).unwrap().translation().y;
 
         // Step several times
         for _ in 0..60 {
             world.step(1.0 / 60.0);
         }
 
-        let final_y = world
-            .get_rigid_body(handle)
-            .unwrap()
-            .translation()
-            .y;
+        let final_y = world.get_rigid_body(handle).unwrap().translation().y;
 
         // Object should have fallen due to gravity
         assert!(final_y < initial_y);

@@ -271,10 +271,22 @@ mod tests {
 
     fn make_square_loop() -> Vec<SplineControlPoint> {
         vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0 },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 10.0),
+                twist: 0.0,
+            },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 10.0),
+                twist: 0.0,
+            },
         ]
     }
 
@@ -291,9 +303,18 @@ mod tests {
     #[test]
     fn open_spline_produces_samples() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(5.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0 },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+            },
+            SplineControlPoint {
+                position: Vec3::new(5.0, 0.0, 0.0),
+                twist: 0.0,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+            },
         ];
         let samples = sample_open_spline(&pts, 1.0);
         assert!(samples.len() >= 10);
@@ -307,8 +328,14 @@ mod tests {
     #[test]
     fn too_few_points_returns_empty() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(1.0, 0.0, 0.0), twist: 0.0 },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+            },
+            SplineControlPoint {
+                position: Vec3::new(1.0, 0.0, 0.0),
+                twist: 0.0,
+            },
         ];
         assert!(sample_closed_spline(&pts, 1.0).is_empty());
     }

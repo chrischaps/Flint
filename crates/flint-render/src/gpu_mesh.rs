@@ -190,16 +190,34 @@ impl MeshCache {
     ) {
         // Compute the normal matrix (inverse-transpose of upper-left 3x3) if baking
         let normal_mat = bake_transform.map(|m| {
-            let a = m[0][0]; let b = m[1][0]; let c = m[2][0];
-            let d = m[0][1]; let e = m[1][1]; let f = m[2][1];
-            let g = m[0][2]; let h = m[1][2]; let i = m[2][2];
+            let a = m[0][0];
+            let b = m[1][0];
+            let c = m[2][0];
+            let d = m[0][1];
+            let e = m[1][1];
+            let f = m[2][1];
+            let g = m[0][2];
+            let h = m[1][2];
+            let i = m[2][2];
             let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
             let inv_det = if det.abs() > 1e-10 { 1.0 / det } else { 1.0 };
             // Cofactor matrix rows (= inverse-transpose columns)
             [
-                [(e * i - f * h) * inv_det, (f * g - d * i) * inv_det, (d * h - e * g) * inv_det],
-                [(c * h - b * i) * inv_det, (a * i - c * g) * inv_det, (b * g - a * h) * inv_det],
-                [(b * f - c * e) * inv_det, (c * d - a * f) * inv_det, (a * e - b * d) * inv_det],
+                [
+                    (e * i - f * h) * inv_det,
+                    (f * g - d * i) * inv_det,
+                    (d * h - e * g) * inv_det,
+                ],
+                [
+                    (c * h - b * i) * inv_det,
+                    (a * i - c * g) * inv_det,
+                    (b * g - a * h) * inv_det,
+                ],
+                [
+                    (b * f - c * e) * inv_det,
+                    (c * d - a * f) * inv_det,
+                    (a * e - b * d) * inv_det,
+                ],
             ]
         });
 
@@ -405,27 +423,24 @@ impl MeshCache {
                 let vertex_data = bytemuck::cast_slice(&vertices).to_vec();
                 let index_data = bytemuck::cast_slice(&mesh.indices).to_vec();
 
-                let vertex_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(&format!("{} Skinned Vertex Buffer", name)),
-                        contents: &vertex_data,
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
+                let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("{} Skinned Vertex Buffer", name)),
+                    contents: &vertex_data,
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
 
-                let index_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(&format!("{} Skinned Index Buffer", name)),
-                        contents: &index_data,
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
+                let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("{} Skinned Index Buffer", name)),
+                    contents: &index_data,
+                    usage: wgpu::BufferUsages::INDEX,
+                });
 
                 // Create bone storage buffer initialized to identity
-                let bone_buffer =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(&format!("{} Bone Buffer", name)),
-                        contents: bytemuck::cast_slice(&identity_bones),
-                        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    });
+                let bone_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(&format!("{} Bone Buffer", name)),
+                    contents: bytemuck::cast_slice(&identity_bones),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
 
                 let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: bone_bind_group_layout,
@@ -504,5 +519,11 @@ impl MeshCache {
     /// Check if a model has skinned meshes cached
     pub fn contains_skinned(&self, name: &str) -> bool {
         self.skinned_meshes.contains_key(name)
+    }
+
+    /// Clear all cached meshes (static and skinned)
+    pub fn clear(&mut self) {
+        self.meshes.clear();
+        self.skinned_meshes.clear();
     }
 }

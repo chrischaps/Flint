@@ -92,8 +92,12 @@ impl MeshBounds {
         let mut max = positions[0];
         for p in positions.iter().skip(1) {
             for i in 0..3 {
-                if p[i] < min[i] { min[i] = p[i]; }
-                if p[i] > max[i] { max[i] = p[i]; }
+                if p[i] < min[i] {
+                    min[i] = p[i];
+                }
+                if p[i] > max[i] {
+                    max[i] = p[i];
+                }
             }
         }
         Some(Self { min, max })
@@ -131,9 +135,15 @@ impl std::fmt::Display for MeshBounds {
         write!(
             f,
             "{:.2} x {:.2} x {:.2} (min [{:.2}, {:.2}, {:.2}], max [{:.2}, {:.2}, {:.2}])",
-            s[0], s[1], s[2],
-            self.min[0], self.min[1], self.min[2],
-            self.max[0], self.max[1], self.max[2],
+            s[0],
+            s[1],
+            s[2],
+            self.min[0],
+            self.min[1],
+            self.min[2],
+            self.max[0],
+            self.max[1],
+            self.max[2],
         )
     }
 }
@@ -241,7 +251,7 @@ pub struct ImportedNode {
     pub rotation: [f32; 4], // quaternion [x, y, z, w]
     pub scale: [f32; 3],
     pub mesh_primitive_indices: Vec<usize>, // indices into ImportResult.meshes
-    pub children: Vec<usize>,              // indices into ImportResult.nodes
+    pub children: Vec<usize>,               // indices into ImportResult.nodes
     pub skin_index: Option<usize>,
 }
 

@@ -127,7 +127,8 @@ pub fn extract_semantic_defs(scene_path: &str) -> Vec<SemanticAssetDef> {
     if let Some(entities) = scene.get("entities").and_then(|e| e.as_table()) {
         for (_entity_name, entity_data) in entities {
             if let Some(asset_def) = entity_data.get("asset_def").and_then(|v| v.as_table()) {
-                if let Ok(def) = toml::Value::Table(asset_def.clone()).try_into::<SemanticAssetDef>()
+                if let Ok(def) =
+                    toml::Value::Table(asset_def.clone()).try_into::<SemanticAssetDef>()
                 {
                     defs.push(def);
                 }

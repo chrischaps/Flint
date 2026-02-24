@@ -1283,6 +1283,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
  "flint-animation",
  "flint-asset",
  "flint-asset-gen",

@@ -21,3 +21,9 @@ Thumbs.db
 # Generated docs (rebuild with mdbook build / cargo doc)
 docs/book/book/
 nul
+
+# Test screenshots and render output
+screenshots/
+
+# Raw/source assets (untracked)
+raw_assets/
