@@ -10,6 +10,10 @@ pub struct GpuTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    /// Texture width in pixels
+    pub width: u32,
+    /// Texture height in pixels
+    pub height: u32,
 }
 
 /// Cache of GPU textures, keyed by name, with built-in defaults
@@ -80,6 +84,8 @@ impl TextureCache {
             texture,
             view,
             sampler,
+            width: 1,
+            height: 1,
         }
     }
 
@@ -147,6 +153,8 @@ impl TextureCache {
                 texture,
                 view,
                 sampler,
+                width: imported.width,
+                height: imported.height,
             },
         );
     }
@@ -212,6 +220,8 @@ impl TextureCache {
                 texture,
                 view,
                 sampler,
+                width,
+                height,
             },
         );
 
@@ -221,6 +231,11 @@ impl TextureCache {
     /// Get a texture by name, returning None if not found
     pub fn get(&self, name: &str) -> Option<&GpuTexture> {
         self.textures.get(name)
+    }
+
+    /// Get the pixel dimensions of a cached texture
+    pub fn get_dimensions(&self, name: &str) -> Option<(u32, u32)> {
+        self.textures.get(name).map(|t| (t.width, t.height))
     }
 
     /// Clear all user-loaded textures (preserves built-in defaults)

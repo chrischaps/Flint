@@ -27,3 +27,11 @@ screenshots/
 
 # Raw/source assets (untracked)
 raw_assets/
+
+# Android build artifacts
+android/app/build/
+android/build/
+android/.gradle/
+android/app/src/main/jniLibs/
+android/app/src/main/assets/
+android/local.properties

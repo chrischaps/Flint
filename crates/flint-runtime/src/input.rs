@@ -5,7 +5,25 @@ use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::time::Instant;
 use winit::keyboard::KeyCode;
+
+#[derive(Debug, Clone)]
+pub struct TouchPoint {
+    pub id: u64,
+    pub position: (f64, f64),
+    pub start_position: (f64, f64),
+    pub phase: TouchPhase,
+    pub start_time: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputConfig {
@@ -121,6 +139,11 @@ pub enum Binding {
         threshold: Option<f32>,
         #[serde(default)]
         direction: Option<AxisDirection>,
+    },
+    TouchZone {
+        zone: String,
+        #[serde(default = "default_scale")]
+        scale: f32,
     },
 }
 
@@ -261,6 +284,14 @@ pub struct InputState {
     raw_mouse_delta: (f64, f64),
     mouse_wheel_delta: (f32, f32),
 
+    touches: HashMap<u64, TouchPoint>,
+    touches_just_started: HashSet<u64>,
+    touches_just_ended: HashSet<u64>,
+    touch_tap_just_fired: Vec<(f64, f64)>,
+    screen_size: (f64, f64),
+    emulate_touch_from_mouse: bool,
+    mouse_touch_active: bool,
+
     config: InputConfig,
     last_frame_pressed_actions: HashSet<String>,
 }
@@ -290,6 +321,13 @@ impl InputState {
             mouse_delta: (0.0, 0.0),
             raw_mouse_delta: (0.0, 0.0),
             mouse_wheel_delta: (0.0, 0.0),
+            touches: HashMap::new(),
+            touches_just_started: HashSet::new(),
+            touches_just_ended: HashSet::new(),
+            touch_tap_just_fired: Vec::new(),
+            screen_size: (1280.0, 720.0),
+            emulate_touch_from_mouse: true,
+            mouse_touch_active: false,
             config: InputConfig::built_in_defaults(),
             last_frame_pressed_actions: HashSet::new(),
         }
@@ -432,17 +470,34 @@ impl InputState {
             self.mouse_buttons_just_pressed.insert(button);
         }
         self.mouse_buttons_down.insert(button);
+
+        // Mouse-as-touch emulation: left click starts touch finger 0
+        if self.emulate_touch_from_mouse && button == 0 {
+            self.mouse_touch_active = true;
+            self.process_touch_start(0, self.mouse_position.0, self.mouse_position.1);
+        }
     }
 
     pub fn process_mouse_button_up(&mut self, button: u32) {
         self.mouse_buttons_down.remove(&button);
         self.mouse_buttons_just_released.insert(button);
+
+        // Mouse-as-touch emulation: left release ends touch finger 0
+        if self.emulate_touch_from_mouse && button == 0 && self.mouse_touch_active {
+            self.mouse_touch_active = false;
+            self.process_touch_end(0);
+        }
     }
 
     pub fn process_mouse_move(&mut self, x: f64, y: f64) {
         self.mouse_delta.0 += x - self.mouse_position.0;
         self.mouse_delta.1 += y - self.mouse_position.1;
         self.mouse_position = (x, y);
+
+        // Mouse-as-touch emulation: cursor move updates touch finger 0 if active
+        if self.emulate_touch_from_mouse && self.mouse_touch_active {
+            self.process_touch_move(0, x, y);
+        }
     }
 
     pub fn process_mouse_raw_delta(&mut self, dx: f64, dy: f64) {
@@ -453,6 +508,107 @@ impl InputState {
     pub fn process_mouse_wheel(&mut self, dx: f32, dy: f32) {
         self.mouse_wheel_delta.0 += dx;
         self.mouse_wheel_delta.1 += dy;
+    }
+
+    // ─── Touch input ──────────────────────────────────────────
+
+    pub fn set_screen_size(&mut self, w: f64, h: f64) {
+        self.screen_size = (w.max(1.0), h.max(1.0));
+    }
+
+    pub fn screen_size(&self) -> (f64, f64) {
+        self.screen_size
+    }
+
+    /// Disable mouse-as-touch emulation (called when a real touch event arrives)
+    pub fn disable_touch_emulation(&mut self) {
+        self.emulate_touch_from_mouse = false;
+    }
+
+    pub fn touch_emulation_active(&self) -> bool {
+        self.emulate_touch_from_mouse
+    }
+
+    fn normalize_touch(&self, x: f64, y: f64) -> (f64, f64) {
+        (x / self.screen_size.0, y / self.screen_size.1)
+    }
+
+    pub fn process_touch_start(&mut self, id: u64, x: f64, y: f64) {
+        let norm = self.normalize_touch(x, y);
+        self.touches.insert(
+            id,
+            TouchPoint {
+                id,
+                position: norm,
+                start_position: norm,
+                phase: TouchPhase::Started,
+                start_time: Instant::now(),
+            },
+        );
+        self.touches_just_started.insert(id);
+    }
+
+    pub fn process_touch_move(&mut self, id: u64, x: f64, y: f64) {
+        let norm = self.normalize_touch(x, y);
+        if let Some(touch) = self.touches.get_mut(&id) {
+            touch.position = norm;
+            touch.phase = TouchPhase::Moved;
+        }
+    }
+
+    pub fn process_touch_end(&mut self, id: u64) {
+        if let Some(touch) = self.touches.remove(&id) {
+            // Tap detection: short duration + small movement
+            let elapsed = touch.start_time.elapsed().as_millis();
+            let dx = (touch.position.0 - touch.start_position.0) * self.screen_size.0;
+            let dy = (touch.position.1 - touch.start_position.1) * self.screen_size.1;
+            let dist_sq = dx * dx + dy * dy;
+            if elapsed < 300 && dist_sq < 20.0 * 20.0 {
+                self.touch_tap_just_fired.push(touch.position);
+            }
+        }
+        self.touches_just_ended.insert(id);
+    }
+
+    pub fn process_touch_cancel(&mut self, id: u64) {
+        self.touches.remove(&id);
+        self.touches_just_ended.insert(id);
+    }
+
+    pub fn touch_count(&self) -> usize {
+        self.touches.len()
+    }
+
+    pub fn touch_position(&self, id: u64) -> Option<(f64, f64)> {
+        self.touches.get(&id).map(|t| t.position)
+    }
+
+    pub fn touch_active(&self, id: u64) -> bool {
+        self.touches.contains_key(&id)
+    }
+
+    pub fn touch_just_started(&self, id: u64) -> bool {
+        self.touches_just_started.contains(&id)
+    }
+
+    pub fn touch_just_ended(&self, id: u64) -> bool {
+        self.touches_just_ended.contains(&id)
+    }
+
+    pub fn touch_taps(&self) -> &[(f64, f64)] {
+        &self.touch_tap_just_fired
+    }
+
+    pub fn active_touches(&self) -> &HashMap<u64, TouchPoint> {
+        &self.touches
+    }
+
+    pub fn touches_just_started_set(&self) -> &HashSet<u64> {
+        &self.touches_just_started
+    }
+
+    pub fn touches_just_ended_set(&self) -> &HashSet<u64> {
+        &self.touches_just_ended
     }
 
     pub fn process_gamepad_button_down(&mut self, gamepad: u32, button: impl Into<String>) {
@@ -513,6 +669,9 @@ impl InputState {
         self.mouse_delta = (0.0, 0.0);
         self.raw_mouse_delta = (0.0, 0.0);
         self.mouse_wheel_delta = (0.0, 0.0);
+        self.touches_just_started.clear();
+        self.touches_just_ended.clear();
+        self.touch_tap_just_fired.clear();
     }
 
     pub fn is_key_down(&self, key: KeyCode) -> bool {
@@ -705,6 +864,17 @@ impl InputState {
                     filtered * *scale
                 }
             }
+            Binding::TouchZone { zone, scale } => {
+                let any_in_zone = self
+                    .touches
+                    .values()
+                    .any(|t| point_in_zone(t.position.0, t.position.1, zone));
+                if any_in_zone {
+                    *scale
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -752,6 +922,12 @@ impl InputState {
                 );
                 current.abs() >= *threshold && previous.abs() < *threshold
             }
+            Binding::TouchZone { zone, .. } => self.touches_just_started.iter().any(|id| {
+                self.touches
+                    .get(id)
+                    .map(|t| point_in_zone(t.position.0, t.position.1, zone))
+                    .unwrap_or(false)
+            }),
             _ => false,
         }
     }
@@ -800,6 +976,11 @@ impl InputState {
                 );
                 current.abs() < *threshold && previous.abs() >= *threshold
             }
+            Binding::TouchZone { zone: _, .. } => {
+                // Touch zone "just released" is detected by the evaluate_action
+                // fallback: was pressed last frame, not pressed this frame.
+                false
+            }
             _ => false,
         }
     }
@@ -845,6 +1026,26 @@ struct EvaluatedAction {
     pressed: bool,
     just_pressed: bool,
     just_released: bool,
+}
+
+/// Returns the normalized rect (x, y, w, h) for a named touch zone.
+fn touch_zone_rect(zone: &str) -> Option<(f64, f64, f64, f64)> {
+    match zone {
+        "full_screen" => Some((0.0, 0.0, 1.0, 1.0)),
+        "left_half" => Some((0.0, 0.0, 0.5, 1.0)),
+        "right_half" => Some((0.5, 0.0, 0.5, 1.0)),
+        "top_half" => Some((0.0, 0.0, 1.0, 0.5)),
+        "bottom_half" => Some((0.0, 0.5, 1.0, 0.5)),
+        _ => None,
+    }
+}
+
+fn point_in_zone(px: f64, py: f64, zone: &str) -> bool {
+    if let Some((zx, zy, zw, zh)) = touch_zone_rect(zone) {
+        px >= zx && px < zx + zw && py >= zy && py < zy + zh
+    } else {
+        false
+    }
 }
 
 fn infer_action_kind_for_new_action(binding: &Binding) -> ActionKind {
@@ -932,6 +1133,18 @@ fn validate_binding(binding: &Binding, action_name: &str) -> Result<()> {
                 }
             }
         }
+        Binding::TouchZone { zone, scale } => {
+            if touch_zone_rect(zone).is_none() {
+                return Err(FlintError::RuntimeError(format!(
+                    "action '{action_name}' has unknown touch zone '{zone}', expected one of: full_screen, left_half, right_half, top_half, bottom_half"
+                )));
+            }
+            if !scale.is_finite() {
+                return Err(FlintError::RuntimeError(format!(
+                    "action '{action_name}' has non-finite touch zone scale"
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -965,6 +1178,7 @@ fn binding_label(binding: &Binding) -> String {
                 format!("Pad:{axis}{dir}")
             }
         }
+        Binding::TouchZone { zone, .. } => format!("Touch:{zone}"),
     }
 }
 
@@ -1233,5 +1447,178 @@ scale = 2.0
 
         input.process_mouse_raw_delta(3.0, 0.0);
         assert!((input.action_value("look_x") - 6.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_touch_start_end() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        input.process_touch_start(1, 500.0, 500.0);
+        assert!(input.touch_active(1));
+        assert!(input.touch_just_started(1));
+        assert_eq!(input.touch_count(), 1);
+
+        let pos = input.touch_position(1).unwrap();
+        assert!((pos.0 - 0.5).abs() < 1e-10);
+        assert!((pos.1 - 0.5).abs() < 1e-10);
+
+        input.end_frame();
+        assert!(input.touch_active(1));
+        assert!(!input.touch_just_started(1));
+
+        input.process_touch_end(1);
+        assert!(!input.touch_active(1));
+        assert!(input.touch_just_ended(1));
+
+        input.end_frame();
+        assert!(!input.touch_just_ended(1));
+    }
+
+    #[test]
+    fn test_touch_zone_binding() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+        input
+            .load_bindings(
+                InputConfig::from_toml_str(
+                    r#"
+version = 1
+[actions.go_left]
+kind = "button"
+[[actions.go_left.bindings]]
+type = "touch_zone"
+zone = "left_half"
+"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        // Touch in the left half (x=200 → 0.2 normalized)
+        input.process_touch_start(1, 200.0, 500.0);
+        assert!(input.is_action_pressed("go_left"));
+        assert!(input.is_action_just_pressed("go_left"));
+
+        input.end_frame();
+        assert!(input.is_action_pressed("go_left"));
+        assert!(!input.is_action_just_pressed("go_left"));
+
+        // Touch in the right half should NOT trigger left action
+        input.process_touch_end(1);
+        input.end_frame();
+        input.process_touch_start(2, 800.0, 500.0);
+        assert!(!input.is_action_pressed("go_left"));
+    }
+
+    #[test]
+    fn test_touch_tap_detection() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        // Quick tap: start + end with no movement
+        input.process_touch_start(1, 500.0, 500.0);
+        input.process_touch_end(1);
+
+        assert_eq!(input.touch_taps().len(), 1);
+        let tap = input.touch_taps()[0];
+        assert!((tap.0 - 0.5).abs() < 1e-10);
+        assert!((tap.1 - 0.5).abs() < 1e-10);
+
+        input.end_frame();
+        assert!(input.touch_taps().is_empty());
+    }
+
+    #[test]
+    fn test_touch_tap_no_fire_on_drag() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        // Drag: start, move far, end
+        input.process_touch_start(1, 100.0, 500.0);
+        input.process_touch_move(1, 500.0, 500.0); // 400px movement
+        input.process_touch_end(1);
+
+        assert!(input.touch_taps().is_empty(), "drag should not fire tap");
+    }
+
+    #[test]
+    fn test_mouse_touch_emulation() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+        assert!(input.touch_emulation_active());
+
+        // Move mouse to position first
+        input.process_mouse_move(300.0, 500.0);
+
+        // Mouse left click should create touch finger 0
+        input.process_mouse_button_down(0);
+        assert!(input.touch_active(0));
+        assert!(input.touch_just_started(0));
+
+        let pos = input.touch_position(0).unwrap();
+        assert!((pos.0 - 0.3).abs() < 1e-10);
+
+        // Mouse move updates touch
+        input.process_mouse_move(600.0, 500.0);
+        let pos2 = input.touch_position(0).unwrap();
+        assert!((pos2.0 - 0.6).abs() < 1e-10);
+
+        // Mouse release ends touch
+        input.process_mouse_button_up(0);
+        assert!(!input.touch_active(0));
+        assert!(input.touch_just_ended(0));
+    }
+
+    #[test]
+    fn test_multi_touch() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        input.process_touch_start(1, 100.0, 100.0);
+        input.process_touch_start(2, 900.0, 900.0);
+
+        assert_eq!(input.touch_count(), 2);
+        assert!(input.touch_active(1));
+        assert!(input.touch_active(2));
+
+        let p1 = input.touch_position(1).unwrap();
+        let p2 = input.touch_position(2).unwrap();
+        assert!((p1.0 - 0.1).abs() < 1e-10);
+        assert!((p2.0 - 0.9).abs() < 1e-10);
+
+        input.process_touch_end(1);
+        assert_eq!(input.touch_count(), 1);
+        assert!(!input.touch_active(1));
+        assert!(input.touch_active(2));
+    }
+
+    #[test]
+    fn test_touch_zone_validation() {
+        // Valid zone
+        let config = InputConfig::from_toml_str(
+            r#"
+version = 1
+[actions.test]
+kind = "button"
+[[actions.test.bindings]]
+type = "touch_zone"
+zone = "left_half"
+"#,
+        );
+        assert!(config.is_ok());
+
+        // Invalid zone
+        let config = InputConfig::from_toml_str(
+            r#"
+version = 1
+[actions.test]
+kind = "button"
+[[actions.test.bindings]]
+type = "touch_zone"
+zone = "invalid_zone"
+"#,
+        );
+        assert!(config.is_err());
     }
 }

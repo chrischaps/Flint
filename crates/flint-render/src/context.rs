@@ -27,6 +27,10 @@ pub struct RenderContext {
     pub size: winit::dpi::PhysicalSize<u32>,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
+    // Retained for surface recreation on Android resume
+    instance: wgpu::Instance,
+    #[allow(dead_code)] // Used by recreate_surface(); adapter must outlive surfaces
+    adapter: wgpu::Adapter,
 }
 
 impl RenderContext {
@@ -52,12 +56,24 @@ impl RenderContext {
             .await
             .ok_or(RenderError::AdapterNotFound)?;
 
+        #[cfg(target_os = "android")]
+        let limits = {
+            let mut lim = wgpu::Limits::downlevel_defaults();
+            // Use the adapter's actual max texture size so the surface can
+            // match the device's full screen resolution (often > 2048px).
+            let adapter_limits = adapter.limits();
+            lim.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
+            lim
+        };
+        #[cfg(not(target_os = "android"))]
+        let limits = wgpu::Limits::default();
+
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("Flint Device"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_limits: limits,
                     memory_hints: Default::default(),
                 },
                 None,
@@ -95,7 +111,38 @@ impl RenderContext {
             size,
             depth_texture,
             depth_view,
+            instance,
+            adapter,
         })
+    }
+
+    /// Recreate the surface from a new window handle.
+    ///
+    /// On Android, the native surface is destroyed when the app is paused and a
+    /// new one is provided when resumed. This method creates a fresh surface,
+    /// reconfigures it with the existing device/format settings, and rebuilds
+    /// the depth texture.
+    pub fn recreate_surface(&mut self, window: Arc<Window>) -> Result<(), RenderError> {
+        let size = window.inner_size();
+
+        let surface = self
+            .instance
+            .create_surface(window)
+            .map_err(|e| RenderError::SurfaceCreation(e.to_string()))?;
+
+        // Reconfigure with current format but new dimensions
+        self.config.width = size.width.max(1);
+        self.config.height = size.height.max(1);
+        surface.configure(&self.device, &self.config);
+
+        let (depth_texture, depth_view) = create_depth_texture(&self.device, &self.config);
+
+        self.surface = surface;
+        self.size = size;
+        self.depth_texture = depth_texture;
+        self.depth_view = depth_view;
+
+        Ok(())
     }
 
     /// Resize the surface

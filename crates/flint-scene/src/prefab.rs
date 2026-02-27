@@ -166,7 +166,7 @@ fn deep_merge_component(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::{PrefabInstance, SceneMetadata};
+    use crate::format::{EntityDef, PrefabInstance, SceneMetadata};
 
     fn default_version() -> String {
         "1.0".to_string()
@@ -249,6 +249,7 @@ mod tests {
                 description: None,
                 input_config: None,
             },
+            camera: None,
             environment: None,
             post_process: None,
             prefabs: HashMap::new(),

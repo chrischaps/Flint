@@ -1,0 +1,88 @@
+[scene]
+name = "Sprite2D Test"
+version = "1.0"
+description = "Test scene for WP1: orthographic camera + 2D sprite rendering"
+
+[camera]
+projection = "orthographic"
+ortho_height = 10.0
+position = [0.0, 0.0, 50.0]
+target = [0.0, 0.0, 0.0]
+
+# Background sprite at layer 0
+[entities.bg]
+archetype = "sprite"
+[entities.bg.transform]
+position = [0.0, 0.0, 0.0]
+[entities.bg.sprite]
+mode = "sprite2d"
+texture = ""
+width = 20.0
+height = 20.0
+layer = 0
+tint = [0.2, 0.15, 0.3, 1.0]
+
+# Player sprite at layer 10
+[entities.player]
+archetype = "sprite"
+[entities.player.transform]
+position = [0.0, 2.0, 0.0]
+[entities.player.sprite]
+mode = "sprite2d"
+texture = ""
+width = 1.0
+height = 2.0
+layer = 10
+tint = [1.0, 0.8, 0.4, 1.0]
+
+# Ground sprite at layer 5
+[entities.ground]
+archetype = "sprite"
+[entities.ground.transform]
+position = [0.0, -3.0, 0.0]
+[entities.ground.sprite]
+mode = "sprite2d"
+texture = ""
+width = 16.0
+height = 2.0
+layer = 5
+tint = [0.4, 0.6, 0.3, 1.0]
+
+# Foreground particle-like sprites at layer 20
+[entities.spark1]
+archetype = "sprite"
+[entities.spark1.transform]
+position = [2.0, 1.0, 0.0]
+[entities.spark1.sprite]
+mode = "sprite2d"
+texture = ""
+width = 0.3
+height = 0.3
+layer = 20
+tint = [1.0, 0.5, 0.1, 0.8]
+
+[entities.spark2]
+archetype = "sprite"
+[entities.spark2.transform]
+position = [-1.5, 3.0, 0.0]
+[entities.spark2.sprite]
+mode = "sprite2d"
+texture = ""
+width = 0.4
+height = 0.4
+layer = 20
+tint = [1.0, 0.3, 0.0, 0.6]
+
+# Test flip
+[entities.flipped]
+archetype = "sprite"
+[entities.flipped.transform]
+position = [-3.0, 2.0, 0.0]
+[entities.flipped.sprite]
+mode = "sprite2d"
+texture = ""
+width = 1.0
+height = 2.0
+layer = 10
+tint = [0.4, 0.8, 1.0, 1.0]
+flip_x = true

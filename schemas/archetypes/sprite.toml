@@ -1,0 +1,6 @@
+[archetype.sprite]
+description = "A 2D sprite entity with transform and sprite component"
+components = ["transform", "sprite"]
+
+[archetype.sprite.defaults.sprite]
+mode = "sprite2d"

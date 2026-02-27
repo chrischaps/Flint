@@ -1,0 +1,41 @@
+[scene]
+name = "Sprite Animation Test"
+version = "1.0"
+description = "Test scene for WP2: sprite sheet animation with TOML clips and Rhai control"
+
+[camera]
+projection = "orthographic"
+ortho_height = 10.0
+position = [0.0, 0.0, 50.0]
+target = [0.0, 0.0, 0.0]
+
+# Animated character sprite — controlled by Rhai script
+[entities.character]
+archetype = "animated_sprite"
+[entities.character.transform]
+position = [0.0, 0.0, 0.0]
+[entities.character.sprite]
+mode = "sprite2d"
+texture = "character_sheet.png"
+width = 2.0
+height = 2.0
+layer = 10
+[entities.character.sprite_animator]
+clip = "idle"
+playing = true
+speed = 1.0
+[entities.character.script]
+source = "sprite_anim_controller.rhai"
+
+# Ground
+[entities.ground]
+archetype = "sprite"
+[entities.ground.transform]
+position = [0.0, -4.0, 0.0]
+[entities.ground.sprite]
+mode = "sprite2d"
+texture = ""
+width = 16.0
+height = 2.0
+layer = 0
+tint = [0.3, 0.5, 0.25, 1.0]

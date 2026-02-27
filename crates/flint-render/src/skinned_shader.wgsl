@@ -425,10 +425,10 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let final_alpha = alpha * material.opacity;
 
+    // Output stays LINEAR — the sRGB render target applies gamma encoding.
     if (material.enable_tonemapping == 1u) {
         let mapped = aces_filmic(color);
-        let corrected = linear_to_srgb(mapped);
-        return vec4<f32>(corrected, final_alpha);
+        return vec4<f32>(mapped, final_alpha);
     }
 
     return vec4<f32>(color, final_alpha);

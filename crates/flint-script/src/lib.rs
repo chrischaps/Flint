@@ -56,12 +56,37 @@ impl ScriptSystem {
         delta_time: f64,
     ) {
         // Snapshot input state
+        let touches: Vec<(i64, f64, f64)> = input
+            .active_touches()
+            .values()
+            .map(|t| (t.id as i64, t.position.0, t.position.1))
+            .collect();
+        let touch_just_started: Vec<(i64, f64, f64)> = input
+            .touches_just_started_set()
+            .iter()
+            .filter_map(|id| {
+                input
+                    .touch_position(*id)
+                    .map(|(x, y)| (*id as i64, x, y))
+            })
+            .collect();
+        let touch_just_ended: Vec<i64> = input
+            .touches_just_ended_set()
+            .iter()
+            .map(|id| *id as i64)
+            .collect();
+        let touch_taps: Vec<(f64, f64)> = input.touch_taps().to_vec();
+
         let snapshot = InputSnapshot {
             actions_pressed: snapshot_actions(input, true),
             actions_just_pressed: snapshot_actions(input, false),
             actions_just_released: snapshot_actions_released(input),
             action_values: snapshot_action_values(input),
             mouse_delta: input.raw_mouse_delta(),
+            touches,
+            touch_just_started,
+            touch_just_ended,
+            touch_taps,
         };
 
         self.engine
@@ -142,6 +167,15 @@ impl ScriptSystem {
         c.ui_system.generate_draw_commands(screen_w, screen_h)
     }
 
+    /// Call on_animation_end(clip_name) for entities whose sprite animation finished
+    pub fn call_sprite_anim_ends(
+        &mut self,
+        world: &mut FlintWorld,
+        events: &[flint_animation::sprite_sync::SpriteAnimEndEvent],
+    ) {
+        self.engine.call_sprite_anim_ends(world, events);
+    }
+
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
         self.engine.call_scene_exits(world);
@@ -153,12 +187,22 @@ impl ScriptSystem {
     }
 
     /// Take camera overrides set by scripts this frame (clears them)
-    pub fn take_camera_overrides(&mut self) -> (Option<[f32; 3]>, Option<[f32; 3]>, Option<f32>) {
+    pub fn take_camera_overrides(
+        &mut self,
+    ) -> (
+        Option<[f32; 3]>,
+        Option<[f32; 3]>,
+        Option<f32>,
+        Option<bool>,
+        Option<f32>,
+    ) {
         let mut c = self.engine.ctx.lock().unwrap();
         let pos = c.camera_position_override.take();
         let target = c.camera_target_override.take();
         let fov = c.camera_fov_override.take();
-        (pos, target, fov)
+        let orthographic = c.camera_orthographic_override.take();
+        let ortho_height = c.camera_ortho_height_override.take();
+        (pos, target, fov, orthographic, ortho_height)
     }
 
     /// Take post-processing overrides set by scripts this frame (clears them)

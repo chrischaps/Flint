@@ -8,6 +8,8 @@ use std::collections::HashMap;
 pub struct SceneFile {
     pub scene: SceneMetadata,
     #[serde(default)]
+    pub camera: Option<CameraDef>,
+    #[serde(default)]
     pub environment: Option<EnvironmentDef>,
     #[serde(default)]
     pub post_process: Option<PostProcessDef>,
@@ -135,6 +137,36 @@ fn default_fog_height_falloff() -> f32 {
     0.1
 }
 
+/// Camera configuration for the scene
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraDef {
+    /// Projection type: "perspective" or "orthographic"
+    #[serde(default = "default_projection")]
+    pub projection: String,
+    /// Orthographic half-height in world units (only used when projection = "orthographic")
+    #[serde(default)]
+    pub ortho_height: f32,
+    /// Camera position [x, y, z]
+    #[serde(default)]
+    pub position: Option<[f32; 3]>,
+    /// Camera look-at target [x, y, z]
+    #[serde(default)]
+    pub target: Option<[f32; 3]>,
+    /// Field of view in degrees (perspective only)
+    #[serde(default)]
+    pub fov: Option<f32>,
+    /// Near clipping plane
+    #[serde(default)]
+    pub near: Option<f32>,
+    /// Far clipping plane
+    #[serde(default)]
+    pub far: Option<f32>,
+}
+
+fn default_projection() -> String {
+    "perspective".to_string()
+}
+
 /// Environment settings for the scene (skybox, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentDef {
@@ -214,6 +246,7 @@ impl SceneFile {
                 description: None,
                 input_config: None,
             },
+            camera: None,
             environment: None,
             post_process: None,
             prefabs: HashMap::new(),

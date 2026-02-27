@@ -26,6 +26,9 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
     register_terrain_api(engine, ctx.clone());
+    register_sprite_api(engine, ctx.clone());
+    register_sprite_animation_api(engine, ctx.clone());
+    register_touch_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -949,6 +952,24 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // set_camera_orthographic(enabled) — switch between orthographic and perspective
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_orthographic", move |enabled: bool| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_orthographic_override = Some(enabled);
+        });
+    }
+
+    // set_camera_ortho_height(height) — set orthographic half-height in world units
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_ortho_height", move |height: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_ortho_height_override = Some(height as f32);
+        });
+    }
+
     // set_vignette(intensity) — override vignette intensity from scripts
     {
         let ctx = ctx.clone();
@@ -1416,6 +1437,24 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // draw_circle_ex(x, y, radius, r, g, b, a, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_circle_ex",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::CircleFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
     // draw_circle_outline(x, y, radius, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
@@ -1430,6 +1469,25 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     color: [r as f32, g as f32, b as f32, a as f32],
                     thickness: thickness as f32,
                     layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_circle_outline_ex(x, y, radius, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_circle_outline_ex",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64, layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::CircleOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: layer as i32,
                 });
             },
         );
@@ -1458,6 +1516,35 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     color: [r as f32, g as f32, b as f32, a as f32],
                     thickness: thickness as f32,
                     layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_ex",
+            move |x1: f64,
+                  y1: f64,
+                  x2: f64,
+                  y2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Line {
+                    x1: x1 as f32,
+                    y1: y1 as f32,
+                    x2: x2 as f32,
+                    y2: y2 as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: layer as i32,
                 });
             },
         );
@@ -2220,6 +2307,344 @@ fn register_terrain_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             } else {
                 0.0
             }
+        });
+    }
+}
+
+// ─── Sprite API ───────────────────────────────────────────
+
+fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_sprite_source_rect(entity_id, x, y, w, h) — set source rectangle in pixels
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_source_rect",
+            move |id: i64, x: f64, y: f64, w: f64, h: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut("sprite") {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert(
+                                "source_rect".to_string(),
+                                toml::Value::Array(vec![
+                                    toml::Value::Float(x),
+                                    toml::Value::Float(y),
+                                    toml::Value::Float(w),
+                                    toml::Value::Float(h),
+                                ]),
+                            );
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_flip(entity_id, flip_x, flip_y)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_flip",
+            move |id: i64, flip_x: bool, flip_y: bool| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut("sprite") {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert("flip_x".to_string(), toml::Value::Boolean(flip_x));
+                            table.insert("flip_y".to_string(), toml::Value::Boolean(flip_y));
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_tint(entity_id, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_tint",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut("sprite") {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert(
+                                "tint".to_string(),
+                                toml::Value::Array(vec![
+                                    toml::Value::Float(r),
+                                    toml::Value::Float(g),
+                                    toml::Value::Float(b),
+                                    toml::Value::Float(a),
+                                ]),
+                            );
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_layer(entity_id, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_sprite_layer", move |id: i64, layer: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(table) = sprite.as_table_mut() {
+                        table.insert("layer".to_string(), toml::Value::Integer(layer));
+                    }
+                }
+            }
+        });
+    }
+
+    // set_sprite_visible(entity_id, visible)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_sprite_visible", move |id: i64, visible: bool| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(table) = sprite.as_table_mut() {
+                        table.insert("visible".to_string(), toml::Value::Boolean(visible));
+                    }
+                }
+            }
+        });
+    }
+
+    // get_sprite_layer(entity_id) -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_sprite_layer", move |id: i64| -> i64 {
+            if id < 0 {
+                return 0;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components(eid) {
+                if let Some(sprite) = components.get("sprite") {
+                    return sprite
+                        .get("layer")
+                        .and_then(|v| v.as_integer())
+                        .unwrap_or(0);
+                }
+            }
+            0
+        });
+    }
+}
+
+// ─── Sprite Animation API ──────────────────────────────────────────
+
+fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // sprite_play(entity_id, clip_name) — start playing a sprite animation clip
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_play", move |id: i64, clip_name: String| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field(
+                    "sprite_animator",
+                    "clip",
+                    toml::Value::String(clip_name),
+                );
+                components.set_field("sprite_animator", "playing", toml::Value::Boolean(true));
+            }
+        });
+    }
+
+    // sprite_stop(entity_id) — stop sprite animation
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_stop", move |id: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field("sprite_animator", "playing", toml::Value::Boolean(false));
+            }
+        });
+    }
+
+    // sprite_set_speed(entity_id, speed) — set animation playback speed
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_set_speed", move |id: i64, speed: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field("sprite_animator", "speed", toml::Value::Float(speed));
+            }
+        });
+    }
+
+    // sprite_is_playing(entity_id) -> bool — check if sprite animation is playing
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_is_playing", move |id: i64| -> bool {
+            if id < 0 {
+                return false;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components(eid) {
+                if let Some(sa) = components.get("sprite_animator") {
+                    return sa
+                        .get("playing")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                }
+            }
+            false
+        });
+    }
+
+}
+
+// ─── Touch API ────────────────────────────────────────────
+
+fn register_touch_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // touch_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_count", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.input.touches.len() as i64
+        });
+    }
+
+    // touch_x(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_x", move |id: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touches
+                .iter()
+                .find(|(tid, _, _)| *tid == id)
+                .map(|(_, x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // touch_y(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_y", move |id: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touches
+                .iter()
+                .find(|(tid, _, _)| *tid == id)
+                .map(|(_, _, y)| *y)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // is_touching(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_touching", move |id: i64| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input.touches.iter().any(|(tid, _, _)| *tid == id)
+        });
+    }
+
+    // touch_just_started(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_just_started", move |id: i64| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_just_started
+                .iter()
+                .any(|(tid, _, _)| *tid == id)
+        });
+    }
+
+    // touch_just_ended(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_just_ended", move |id: i64| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input.touch_just_ended.iter().any(|tid| *tid == id)
+        });
+    }
+
+    // tap_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_count", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.input.touch_taps.len() as i64
+        });
+    }
+
+    // tap_x(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_x", move |index: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_taps
+                .get(index as usize)
+                .map(|(x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // tap_y(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_y", move |index: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_taps
+                .get(index as usize)
+                .map(|(_, y)| *y)
+                .unwrap_or(-1.0)
         });
     }
 }

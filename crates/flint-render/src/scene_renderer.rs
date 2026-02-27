@@ -24,6 +24,7 @@ use crate::primitives::{
 use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
 use crate::skinned_pipeline::SkinnedPipeline;
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
+use crate::sprite2d_pipeline::{Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
 use flint_core::{Transform, Vec3};
@@ -135,6 +136,9 @@ pub struct SceneRenderer {
     // Particles
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
+    // 2D sprites
+    sprite2d_pipeline: Option<Sprite2dPipeline>,
+    sprite2d_batches: Vec<Sprite2dBatch>,
     // Post-processing
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
@@ -191,6 +195,7 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
         let particle_pipeline = ParticlePipeline::new(&context.device, scene_format);
+        let sprite2d_pipeline = Sprite2dPipeline::new(&context.device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
 
         // Create post-processing pipeline and resources
@@ -232,6 +237,8 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
+            sprite2d_pipeline: Some(sprite2d_pipeline),
+            sprite2d_batches: Vec::new(),
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
@@ -550,6 +557,7 @@ impl SceneRenderer {
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
         self.billboard_draws.clear();
+        self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
     }
@@ -608,6 +616,7 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
         let billboard_pipeline = BillboardPipeline::new(device, scene_format);
+        let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
 
         // Create post-processing pipeline and resources for headless
@@ -647,6 +656,8 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
+            sprite2d_pipeline: Some(sprite2d_pipeline),
+            sprite2d_batches: Vec::new(),
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
@@ -1087,6 +1098,7 @@ impl SceneRenderer {
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
         self.billboard_draws.clear();
+        self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
 
@@ -1097,6 +1109,9 @@ impl SceneRenderer {
             self.debug_state.wireframe_overlay || self.debug_state.mode == DebugMode::WireframeOnly;
         let need_normals = self.debug_state.show_normals;
         let arrow_length = self.debug_state.normal_arrow_length;
+
+        // Collect sprite2d instances for batching (texture_name, layer, instance data)
+        let mut sprite2d_collected: Vec<(String, i32, Sprite2dInstanceGpu)> = Vec::new();
 
         // Temporarily take texture_cache to avoid borrow conflicts
         let tex_cache = self.texture_cache.take();
@@ -1430,14 +1445,135 @@ impl SceneRenderer {
                 }
             }
 
-            // Check for sprite component — render as billboard instead of geometry
+            // Check for sprite component — render as billboard or 2D sprite
             if let Some(components) = world.get_components(entity.id) {
                 if let Some(sprite) = components.get("sprite") {
                     let visible = sprite
                         .get("visible")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
-                    if visible {
+                    let mode = sprite
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("billboard");
+
+                    if visible && mode == "sprite2d" {
+                        // ── Sprite2D path: collect for batched instanced rendering ──
+                        let tex_name =
+                            sprite.get("texture").and_then(|v| v.as_str()).unwrap_or("");
+                        let width = sprite
+                            .get("width")
+                            .and_then(|v| {
+                                v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                            })
+                            .unwrap_or(1.0) as f32;
+                        let height = sprite
+                            .get("height")
+                            .and_then(|v| {
+                                v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                            })
+                            .unwrap_or(1.0) as f32;
+                        let anchor_y = sprite
+                            .get("anchor_y")
+                            .and_then(|v| {
+                                v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                            })
+                            .unwrap_or(0.0) as f32;
+                        let layer = sprite
+                            .get("layer")
+                            .and_then(|v| v.as_integer())
+                            .unwrap_or(0) as i32;
+                        let flip_x = sprite
+                            .get("flip_x")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let flip_y = sprite
+                            .get("flip_y")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        // Read tint color
+                        let tint = if let Some(tint_val) = sprite.get("tint") {
+                            if let Some(arr) = tint_val.as_array() {
+                                let vals: Vec<f32> = arr
+                                    .iter()
+                                    .filter_map(|v| {
+                                        v.as_float()
+                                            .or_else(|| v.as_integer().map(|i| i as f64))
+                                            .map(|f| f as f32)
+                                    })
+                                    .collect();
+                                if vals.len() >= 4 {
+                                    [vals[0], vals[1], vals[2], vals[3]]
+                                } else {
+                                    [1.0, 1.0, 1.0, 1.0]
+                                }
+                            } else {
+                                [1.0, 1.0, 1.0, 1.0]
+                            }
+                        } else {
+                            [1.0, 1.0, 1.0, 1.0]
+                        };
+
+                        // Read source_rect [x, y, w, h] in pixels
+                        let source_rect = if let Some(sr_val) = sprite.get("source_rect") {
+                            if let Some(arr) = sr_val.as_array() {
+                                let vals: Vec<f32> = arr
+                                    .iter()
+                                    .filter_map(|v| {
+                                        v.as_float()
+                                            .or_else(|| v.as_integer().map(|i| i as f64))
+                                            .map(|f| f as f32)
+                                    })
+                                    .collect();
+                                if vals.len() >= 4 {
+                                    [vals[0], vals[1], vals[2], vals[3]]
+                                } else {
+                                    [0.0, 0.0, 0.0, 0.0]
+                                }
+                            } else {
+                                [0.0, 0.0, 0.0, 0.0]
+                            }
+                        } else {
+                            [0.0, 0.0, 0.0, 0.0]
+                        };
+
+                        // Convert source_rect to UV coordinates
+                        let uv_rect = if source_rect[2] > 0.0 && source_rect[3] > 0.0 {
+                            // Get texture dimensions for pixel → UV conversion
+                            let (tw, th) = tex_cache_ref
+                                .get_dimensions(tex_name)
+                                .unwrap_or((1, 1));
+                            let tw = tw as f32;
+                            let th = th as f32;
+                            [
+                                source_rect[0] / tw,
+                                source_rect[1] / th,
+                                (source_rect[0] + source_rect[2]) / tw,
+                                (source_rect[1] + source_rect[3]) / th,
+                            ]
+                        } else {
+                            // Full texture
+                            [0.0, 0.0, 1.0, 1.0]
+                        };
+
+                        let instance = Sprite2dInstanceGpu {
+                            pos_layer: [world_pos[0], world_pos[1], 0.5, layer as f32 * 0.01],
+                            size: [width, height, anchor_y, 0.0],
+                            uv_rect,
+                            tint,
+                            flags: [
+                                if flip_x { 1.0 } else { 0.0 },
+                                if flip_y { 1.0 } else { 0.0 },
+                                0.0,
+                                0.0,
+                            ],
+                        };
+
+                        sprite2d_collected.push((tex_name.to_string(), layer, instance));
+                        continue; // Don't render sprite2d as geometry
+                    } else if visible {
+                        // ── Billboard path: existing per-entity rendering ──
                         if let Some(bp) = &self.billboard_pipeline {
                             let tex_name =
                                 sprite.get("texture").and_then(|v| v.as_str()).unwrap_or("");
@@ -1817,6 +1953,87 @@ impl SceneRenderer {
                         tex_cache_ref,
                     );
                     self.normal_arrow_draws.push(arrow_draw);
+                }
+            }
+        }
+
+        // ── Sort & batch sprite2d instances ──
+        if !sprite2d_collected.is_empty() {
+            if let Some(sp) = &self.sprite2d_pipeline {
+                // Sort by (layer, texture_name) for optimal batching
+                sprite2d_collected.sort_by(|a, b| {
+                    a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0))
+                });
+
+                // Group consecutive same-texture sprites into batches
+                let mut batch_start = 0;
+                while batch_start < sprite2d_collected.len() {
+                    let batch_tex = &sprite2d_collected[batch_start].0;
+                    let mut batch_end = batch_start + 1;
+                    while batch_end < sprite2d_collected.len()
+                        && sprite2d_collected[batch_end].0 == *batch_tex
+                    {
+                        batch_end += 1;
+                    }
+
+                    let instances: Vec<Sprite2dInstanceGpu> = sprite2d_collected
+                        [batch_start..batch_end]
+                        .iter()
+                        .map(|(_, _, inst)| *inst)
+                        .collect();
+
+                    let instance_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Sprite2D Instance Buffer"),
+                            contents: bytemuck::cast_slice(&instances),
+                            usage: wgpu::BufferUsages::STORAGE,
+                        });
+
+                    let instance_bind_group =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &sp.instance_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: instance_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Sprite2D Instance Bind Group"),
+                        });
+
+                    // Resolve texture
+                    let (tex_view, tex_sampler, _) = Self::resolve_texture(
+                        tex_cache_ref,
+                        if batch_tex.is_empty() {
+                            None
+                        } else {
+                            Some(batch_tex.as_str())
+                        },
+                        &tex_cache_ref.default_white,
+                    );
+
+                    let texture_bind_group =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &sp.texture_bind_group_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(tex_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::Sampler(tex_sampler),
+                                },
+                            ],
+                            label: Some("Sprite2D Texture Bind Group"),
+                        });
+
+                    self.sprite2d_batches.push(Sprite2dBatch {
+                        instance_buffer,
+                        instance_count: instances.len() as u32,
+                        texture_bind_group,
+                        instance_bind_group,
+                    });
+
+                    batch_start = batch_end;
                 }
             }
         }
@@ -2731,6 +2948,18 @@ impl SceneRenderer {
             }
         }
 
+        // Update sprite2d uniforms with view_proj
+        if let Some(sp) = &self.sprite2d_pipeline {
+            if !self.sprite2d_batches.is_empty() {
+                let sprite2d_uniforms = Sprite2dUniforms { view_proj };
+                queue.write_buffer(
+                    &sp.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[sprite2d_uniforms]),
+                );
+            }
+        }
+
         // Update normal arrow transforms
         for draw in &self.normal_arrow_draws {
             let uniforms = TransformUniforms {
@@ -3067,6 +3296,23 @@ impl SceneRenderer {
                                 wgpu::IndexFormat::Uint32,
                             );
                             render_pass.draw_indexed(0..6, 0, 0..1);
+                        }
+                    }
+                }
+
+                // 2D sprites (after billboards, instanced batched rendering)
+                if let Some(sp) = &self.sprite2d_pipeline {
+                    if !self.sprite2d_batches.is_empty() {
+                        render_pass.set_pipeline(&sp.pipeline);
+                        render_pass.set_index_buffer(
+                            sp.quad_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.set_bind_group(0, &sp.uniform_bind_group, &[]);
+                        for batch in &self.sprite2d_batches {
+                            render_pass.set_bind_group(1, &batch.instance_bind_group, &[]);
+                            render_pass.set_bind_group(2, &batch.texture_bind_group, &[]);
+                            render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
                         }
                     }
                 }

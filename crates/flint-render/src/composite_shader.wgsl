@@ -2,7 +2,8 @@
 //
 // Fullscreen triangle that reads from the HDR scene buffer, applies
 // radial blur, chromatic aberration, bloom, fog, exposure, ACES tonemapping,
-// gamma correction, and vignette, then writes to the sRGB surface.
+// and vignette. Outputs LINEAR values — the sRGB render target handles
+// gamma encoding automatically via hardware conversion.
 
 struct PostProcessUniforms {
     exposure: f32,
@@ -173,17 +174,17 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         color = mix(color, params.fog_color, fog_factor);
     }
 
-    // ── Exposure → Tonemapping → Gamma ──
+    // ── Exposure → Tonemapping ──
+    // Output stays LINEAR — the sRGB render target applies gamma encoding.
     color = color * params.exposure;
-    let mapped = aces_filmic(color);
-    var corrected = linear_to_srgb(mapped);
+    var mapped = aces_filmic(color);
 
-    // ── Vignette ──
+    // ── Vignette (linear-space attenuation) ──
     if (params.vignette_intensity > 0.0) {
         let vdist = dist * 1.41421356;
         let vignette = 1.0 - pow(vdist, params.vignette_smoothness) * params.vignette_intensity;
-        corrected = corrected * max(vignette, 0.0);
+        mapped = mapped * max(vignette, 0.0);
     }
 
-    return vec4<f32>(corrected, 1.0);
+    return vec4<f32>(mapped, 1.0);
 }

@@ -18,6 +18,14 @@ pub struct InputSnapshot {
     pub actions_just_released: HashSet<String>,
     pub action_values: std::collections::HashMap<String, f64>,
     pub mouse_delta: (f64, f64),
+    /// Active touches: (id, norm_x, norm_y)
+    pub touches: Vec<(i64, f64, f64)>,
+    /// Touches that just started this frame: (id, norm_x, norm_y)
+    pub touch_just_started: Vec<(i64, f64, f64)>,
+    /// Touch IDs that just ended this frame
+    pub touch_just_ended: Vec<i64>,
+    /// Tap positions detected this frame (norm_x, norm_y)
+    pub touch_taps: Vec<(f64, f64)>,
 }
 
 /// Log severity levels
@@ -182,6 +190,10 @@ pub struct ScriptCallContext {
     pub camera_position_override: Option<[f32; 3]>,
     pub camera_target_override: Option<[f32; 3]>,
     pub camera_fov_override: Option<f32>,
+    /// Script-driven camera orthographic override
+    pub camera_orthographic_override: Option<bool>,
+    /// Script-driven camera ortho_height override
+    pub camera_ortho_height_override: Option<f32>,
     /// Script-driven post-processing overrides
     pub postprocess_vignette_override: Option<f32>,
     pub postprocess_bloom_override: Option<f32>,
@@ -237,6 +249,8 @@ impl ScriptCallContext {
             camera_position_override: None,
             camera_target_override: None,
             camera_fov_override: None,
+            camera_orthographic_override: None,
+            camera_ortho_height_override: None,
             postprocess_vignette_override: None,
             postprocess_bloom_override: None,
             postprocess_exposure_override: None,

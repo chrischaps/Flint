@@ -28,6 +28,7 @@ pub struct ScriptInstance {
     pub has_on_draw_ui: bool,
     pub has_on_scene_exit: bool,
     pub has_on_scene_enter: bool,
+    pub has_on_animation_end: bool,
     pub init_called: bool,
 }
 
@@ -44,6 +45,7 @@ impl ScriptInstance {
         let has_on_draw_ui = has_function(&ast, "on_draw_ui");
         let has_on_scene_exit = has_function(&ast, "on_scene_exit");
         let has_on_scene_enter = has_function(&ast, "on_scene_enter");
+        let has_on_animation_end = has_function(&ast, "on_animation_end");
 
         Self {
             ast,
@@ -59,6 +61,7 @@ impl ScriptInstance {
             has_on_draw_ui,
             has_on_scene_exit,
             has_on_scene_enter,
+            has_on_animation_end,
             init_called: false,
         }
     }
@@ -76,6 +79,7 @@ impl ScriptInstance {
         self.has_on_draw_ui = has_function(&ast, "on_draw_ui");
         self.has_on_scene_exit = has_function(&ast, "on_scene_exit");
         self.has_on_scene_enter = has_function(&ast, "on_scene_enter");
+        self.has_on_animation_end = has_function(&ast, "on_animation_end");
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -98,6 +102,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     ("on_draw_ui", 0),
     ("on_scene_exit", 0),
     ("on_scene_enter", 0),
+    ("on_animation_end", 1),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -507,6 +512,50 @@ impl ScriptEngine {
                         "[script] on_scene_enter error ({}): {}",
                         script.source_path, e
                     );
+                }
+            }
+        }
+
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = std::ptr::null_mut();
+        }
+    }
+
+    /// Call on_animation_end(clip_name) for entities whose sprite animation completed.
+    pub fn call_sprite_anim_ends(
+        &mut self,
+        world: &mut FlintWorld,
+        events: &[flint_animation::sprite_sync::SpriteAnimEndEvent],
+    ) {
+        if events.is_empty() {
+            return;
+        }
+
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = world as *mut FlintWorld;
+        }
+
+        for event in events {
+            if let Some(script) = self.scripts.get_mut(&event.entity_id) {
+                if script.has_on_animation_end {
+                    {
+                        let mut c = self.ctx.lock().unwrap();
+                        c.current_entity = event.entity_id;
+                    }
+                    let clip_name = event.clip_name.clone();
+                    if let Err(e) = self.engine.call_fn::<()>(
+                        &mut script.scope,
+                        &script.ast,
+                        "on_animation_end",
+                        (clip_name,),
+                    ) {
+                        eprintln!(
+                            "[script] on_animation_end error ({}): {}",
+                            script.source_path, e
+                        );
+                    }
                 }
             }
         }

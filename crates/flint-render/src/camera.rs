@@ -43,6 +43,11 @@ pub struct Camera {
 
     /// Use orthographic projection (true) or perspective (false)
     pub orthographic: bool,
+
+    /// Explicit orthographic half-height in world units.
+    /// When > 0, `orthographic_matrix()` uses this directly instead of
+    /// deriving from `distance * tan(fov/2)`. Set to 0.0 to use the legacy formula.
+    pub ortho_height: f32,
 }
 
 impl Default for Camera {
@@ -60,6 +65,7 @@ impl Default for Camera {
             pitch: std::f32::consts::FRAC_PI_6,
             mode: CameraMode::Orbit,
             orthographic: false,
+            ortho_height: 0.0,
         }
     }
 }
@@ -176,8 +182,13 @@ impl Camera {
     }
 
     fn orthographic_matrix(&self) -> [[f32; 4]; 4] {
-        // Size the ortho volume so objects at `distance` appear the same size as in perspective
-        let half_h = self.distance * (self.fov.to_radians() / 2.0).tan();
+        // When ortho_height is set, use it directly as half-height; otherwise
+        // size the volume so objects at `distance` appear the same size as in perspective.
+        let half_h = if self.ortho_height > 0.0 {
+            self.ortho_height
+        } else {
+            self.distance * (self.fov.to_radians() / 2.0).tan()
+        };
         let half_w = half_h * self.aspect;
         let depth = self.far - self.near;
 

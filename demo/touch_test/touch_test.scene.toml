@@ -1,0 +1,39 @@
+[scene]
+name = "Touch Input Test"
+version = "1.0"
+description = "WP3a validation: touch zones, tap detection, mouse emulation"
+input_config = "touch_test_input.toml"
+
+[camera]
+projection = "orthographic"
+ortho_height = 10.0
+position = [0.0, 0.0, 50.0]
+target = [0.0, 0.0, 0.0]
+
+# Player sprite — moves via touch zones / keyboard
+[entities.player]
+archetype = "sprite"
+[entities.player.transform]
+position = [0.0, 0.0, 0.0]
+[entities.player.sprite]
+mode = "sprite2d"
+texture = ""
+width = 1.0
+height = 1.0
+layer = 10
+tint = [0.9, 0.6, 0.2, 1.0]
+[entities.player.script]
+source = "touch_demo.rhai"
+
+# Ground
+[entities.ground]
+archetype = "sprite"
+[entities.ground.transform]
+position = [0.0, -4.0, 0.0]
+[entities.ground.sprite]
+mode = "sprite2d"
+texture = ""
+width = 16.0
+height = 1.0
+layer = 0
+tint = [0.25, 0.25, 0.3, 1.0]

@@ -63,10 +63,49 @@ pub fn run(args: RenderArgs) -> Result<()> {
     let ctx = pollster::block_on(HeadlessContext::new(args.width, args.height))
         .context("Failed to create headless render context")?;
 
-    // Configure camera
+    // Configure camera — scene-level first, then CLI overrides take precedence
     let mut camera = Camera::new();
     camera.aspect = ctx.aspect_ratio();
 
+    // Apply scene-level camera configuration
+    let mut scene_set_position = false;
+    if let Some(cam_def) = &scene_file.camera {
+        if cam_def.projection == "orthographic" {
+            camera.orthographic = true;
+            if cam_def.ortho_height > 0.0 {
+                camera.ortho_height = cam_def.ortho_height;
+            }
+        }
+        if let Some(pos) = cam_def.position {
+            camera.position = Vec3::new(pos[0], pos[1], pos[2]);
+            scene_set_position = true;
+        }
+        if let Some(target) = cam_def.target {
+            camera.target = Vec3::new(target[0], target[1], target[2]);
+        }
+        if let Some(fov) = cam_def.fov {
+            camera.fov = fov;
+        }
+        if let Some(near) = cam_def.near {
+            camera.near = near;
+        }
+        if let Some(far) = cam_def.far {
+            camera.far = far;
+        }
+    }
+
+    // Derive orbit parameters from position/target so update_orbit() is consistent
+    if scene_set_position {
+        let dir = camera.position - camera.target;
+        camera.distance = dir.length();
+        if camera.distance > 0.001 {
+            let n = dir * (1.0 / camera.distance);
+            camera.pitch = n.y.asin();
+            camera.yaw = n.x.atan2(n.z);
+        }
+    }
+
+    // CLI overrides take precedence
     if let Some(d) = args.distance {
         camera.distance = d;
     }

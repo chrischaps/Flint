@@ -61,6 +61,9 @@ pub fn run(args: PlayArgs) -> Result<()> {
         app.skybox_path = env.skybox.clone();
     }
 
+    // Pass camera settings from scene
+    app.scene_camera = scene_file.camera.clone();
+
     // Pass post-processing settings from scene
     app.scene_post_process = scene_file.post_process.clone();
 

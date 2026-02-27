@@ -107,6 +107,9 @@ pub struct PlayerApp {
     // Environment
     pub skybox_path: Option<String>,
 
+    // Scene-level camera configuration
+    pub scene_camera: Option<flint_scene::CameraDef>,
+
     // Scene-level post-processing overrides
     pub scene_post_process: Option<flint_scene::PostProcessDef>,
 
@@ -176,6 +179,7 @@ impl PlayerApp {
             fullscreen,
             cursor_captured: false,
             skybox_path: None,
+            scene_camera: None,
             scene_post_process: None,
             pp_vignette_override: None,
             pp_bloom_override: None,
@@ -207,10 +211,52 @@ impl PlayerApp {
         self.schema_paths = paths;
     }
 
+    /// Apply scene-level camera configuration from `CameraDef`
+    fn apply_camera_def(&mut self) {
+        if let Some(cam) = &self.scene_camera {
+            if cam.projection == "orthographic" {
+                self.camera.orthographic = true;
+                if cam.ortho_height > 0.0 {
+                    self.camera.ortho_height = cam.ortho_height;
+                }
+            } else {
+                self.camera.orthographic = false;
+                self.camera.ortho_height = 0.0;
+            }
+            if let Some(pos) = cam.position {
+                self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
+            }
+            if let Some(target) = cam.target {
+                self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
+            }
+            if let Some(fov) = cam.fov {
+                self.camera.fov = fov;
+            }
+            if let Some(near) = cam.near {
+                self.camera.near = near;
+            }
+            if let Some(far) = cam.far {
+                self.camera.far = far;
+            }
+
+            // Derive orbit parameters from position/target so update_orbit() stays consistent
+            if cam.position.is_some() {
+                let dir = self.camera.position - self.camera.target;
+                let dist = dir.length();
+                if dist > 0.001 {
+                    self.camera.distance = dist;
+                    let n = dir * (1.0 / dist);
+                    self.camera.pitch = n.y.asin();
+                    self.camera.yaw = n.x.atan2(n.z);
+                }
+            }
+        }
+    }
+
     fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let window_attrs = Window::default_attributes()
-            .with_title("Flint Player")
-            .with_inner_size(PhysicalSize::new(1280, 720));
+        let window_attrs = Window::default_attributes().with_title("Flint Player");
+        #[cfg(not(target_os = "android"))]
+        let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(1280, 720));
 
         let window = Arc::new(
             event_loop
@@ -329,6 +375,9 @@ impl PlayerApp {
         // Set terrain height callback for scripts
         self.update_terrain_height_fn();
 
+        // Apply scene-level camera configuration
+        self.apply_camera_def();
+
         // Apply scene-level post-processing config
         if let Some(pp_def) = &self.scene_post_process {
             use flint_render::PostProcessConfig;
@@ -370,6 +419,7 @@ impl PlayerApp {
 
         // Initialize animation
         load_animations_from_world(&self.scene_path, &mut self.animation);
+        load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
@@ -386,7 +436,14 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
 
-        // Capture cursor for first-person look (only if FPS player exists)
+        // Capture cursor for first-person look (only if FPS player exists).
+        // On Android, always set cursor_captured = true so touch input flows
+        // without requiring a click-to-capture gate.
+        #[cfg(target_os = "android")]
+        {
+            self.cursor_captured = true;
+        }
+        #[cfg(not(target_os = "android"))]
         if self.physics.character.player_entity().is_some() {
             self.capture_cursor();
         }
@@ -635,24 +692,34 @@ impl PlayerApp {
 
     fn capture_cursor(&mut self) {
         if let Some(window) = &self.window {
-            // Try confined first, then locked
-            let _ = window
-                .set_cursor_grab(CursorGrabMode::Confined)
-                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
-            window.set_cursor_visible(false);
+            #[cfg(not(target_os = "android"))]
+            {
+                // Try confined first, then locked
+                let _ = window
+                    .set_cursor_grab(CursorGrabMode::Confined)
+                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
+                window.set_cursor_visible(false);
+            }
             self.cursor_captured = true;
         }
     }
 
     fn release_cursor(&mut self) {
         if let Some(window) = &self.window {
-            let _ = window.set_cursor_grab(CursorGrabMode::None);
-            window.set_cursor_visible(true);
+            #[cfg(not(target_os = "android"))]
+            {
+                let _ = window.set_cursor_grab(CursorGrabMode::None);
+                window.set_cursor_visible(true);
+            }
             self.cursor_captured = false;
         }
     }
 
     fn render(&mut self) {
+        // On Android, window may be None between suspended() and resumed()
+        if self.window.is_none() {
+            return;
+        }
         let Some(context) = &self.render_context else {
             return;
         };
@@ -825,7 +892,7 @@ impl PlayerApp {
         }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let (cam_pos_override, cam_target_override, cam_fov_override) =
+        let (cam_pos_override, cam_target_override, cam_fov_override, cam_ortho_override, cam_ortho_height_override) =
             self.script.take_camera_overrides();
         if let Some(pos) = cam_pos_override {
             self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
@@ -835,6 +902,12 @@ impl PlayerApp {
         }
         if let Some(fov) = cam_fov_override {
             self.camera.fov = fov;
+        }
+        if let Some(ortho) = cam_ortho_override {
+            self.camera.orthographic = ortho;
+        }
+        if let Some(height) = cam_ortho_height_override {
+            self.camera.ortho_height = height;
         }
 
         // Update audio listener for script-driven cameras (chase cam, etc.)
@@ -882,6 +955,13 @@ impl PlayerApp {
             self.animation
                 .update(&mut self.world, self.clock.delta_time)
                 .ok();
+
+            // Deliver sprite animation end events to scripts
+            let sprite_events = self.animation.sprite_sync.drain_events();
+            if !sprite_events.is_empty() {
+                self.script
+                    .call_sprite_anim_ends(&mut self.world, &sprite_events);
+            }
         }
 
         // Push skeletal bone matrices to GPU
@@ -1224,6 +1304,7 @@ impl PlayerApp {
                     .environment
                     .as_ref()
                     .and_then(|env| env.skybox.clone());
+                self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
             }
@@ -1235,6 +1316,9 @@ impl PlayerApp {
                 return;
             }
         }
+
+        // Apply camera config before borrowing renderer
+        self.apply_camera_def();
 
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
@@ -1285,6 +1369,8 @@ impl PlayerApp {
                     renderer.load_skybox(&context.device, &context.queue, &skybox_path);
                 }
             }
+
+
 
             // Apply post-process config
             if let Some(pp_def) = &self.scene_post_process {
@@ -1338,6 +1424,7 @@ impl PlayerApp {
             .unwrap_or_else(|e| eprintln!("Audio init: {:?}", e));
 
         load_animations_from_world(&self.scene_path, &mut self.animation);
+        load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
@@ -1369,11 +1456,55 @@ impl PlayerApp {
 
 impl ApplicationHandler for PlayerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
+        if self.render_context.is_none() {
+            // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 eprintln!("Failed to initialize player: {e:#}");
                 event_loop.exit();
             }
+        } else {
+            // Subsequent resume (Android returning from background).
+            // Recreate window and surface — GPU context is still valid.
+            #[cfg(target_os = "android")]
+            {
+                let window_attrs = Window::default_attributes().with_title("Flint Player");
+                match event_loop.create_window(window_attrs) {
+                    Ok(window) => {
+                        let window = Arc::new(window);
+                        self.window = Some(window.clone());
+                        if let Some(ctx) = &mut self.render_context {
+                            if let Err(e) = ctx.recreate_surface(window.clone()) {
+                                eprintln!("Failed to recreate surface: {e}");
+                                return;
+                            }
+                            self.camera.aspect = ctx.aspect_ratio();
+                            let size = ctx.size;
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                renderer.resize_postprocess(
+                                    &ctx.device,
+                                    size.width,
+                                    size.height,
+                                );
+                            }
+                            self.input
+                                .set_screen_size(size.width as f64, size.height as f64);
+                        }
+                        self.cursor_captured = true;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to recreate window on resume: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        // On Android, the native surface is destroyed when the app is suspended.
+        // Drop the window reference — a new one will be created in resumed().
+        #[cfg(target_os = "android")]
+        {
+            self.window = None;
         }
     }
 
@@ -1401,6 +1532,8 @@ impl ApplicationHandler for PlayerApp {
                         );
                     }
                 }
+                self.input
+                    .set_screen_size(new_size.width as f64, new_size.height as f64);
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1412,6 +1545,7 @@ impl ApplicationHandler for PlayerApp {
                                 if self.cursor_captured {
                                     self.release_cursor();
                                 } else {
+                                    #[cfg(not(target_os = "android"))]
                                     event_loop.exit();
                                 }
                                 return;
@@ -1503,6 +1637,34 @@ impl ApplicationHandler for PlayerApp {
                 match state {
                     ElementState::Pressed => self.input.process_mouse_button_down(btn),
                     ElementState::Released => self.input.process_mouse_button_up(btn),
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input
+                    .process_mouse_move(position.x, position.y);
+            }
+
+            WindowEvent::Touch(touch) => {
+                // First real touch disables mouse emulation
+                self.input.disable_touch_emulation();
+
+                let id = touch.id;
+                let x = touch.location.x;
+                let y = touch.location.y;
+                match touch.phase {
+                    winit::event::TouchPhase::Started => {
+                        self.input.process_touch_start(id, x, y);
+                    }
+                    winit::event::TouchPhase::Moved => {
+                        self.input.process_touch_move(id, x, y);
+                    }
+                    winit::event::TouchPhase::Ended => {
+                        self.input.process_touch_end(id);
+                    }
+                    winit::event::TouchPhase::Cancelled => {
+                        self.input.process_touch_cancel(id);
+                    }
                 }
             }
 
@@ -1946,6 +2108,63 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
                 }
                 Err(e) => {
                     eprintln!("Failed to load animation '{}': {:?}", path.display(), e);
+                }
+            }
+        }
+    }
+}
+
+/// Load `.sprite.toml` files from the `animations/` directory next to the scene.
+/// Each file can define multiple sprite animation clips under `[animation.NAME]` sections.
+fn load_sprite_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    let mut anim_dir = scene_dir.join("animations");
+    if !anim_dir.is_dir() {
+        if let Some(parent) = scene_dir.parent() {
+            let parent_anim = parent.join("animations");
+            if parent_anim.is_dir() {
+                anim_dir = parent_anim;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
+    let entries = match std::fs::read_dir(&anim_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map_or(false, |n| n.ends_with(".sprite.toml"))
+        {
+            match flint_animation::sprite_clip::load_sprite_clips_from_file(&path) {
+                Ok(clips) => {
+                    for clip in clips {
+                        println!(
+                            "Loaded sprite animation: {} ({}ms, {} frames)",
+                            clip.name,
+                            clip.total_duration_ms(),
+                            clip.frames.len()
+                        );
+                        animation.sprite_sync.add_clip(clip);
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to load sprite animation '{}': {:?}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }

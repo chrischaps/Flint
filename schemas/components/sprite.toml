@@ -1,5 +1,5 @@
 [component.sprite]
-description = "Billboard sprite rendered as a camera-facing quad"
+description = "Sprite rendered as a camera-facing billboard (default) or flat 2D quad"
 
 [component.sprite.fields]
 texture = { type = "string", default = "", description = "Sprite sheet texture name" }
@@ -11,3 +11,9 @@ frames_y = { type = "i32", default = 1, min = 1, description = "Rows in sprite s
 anchor_y = { type = "f32", default = 0.0, description = "Vertical anchor (0=bottom, 0.5=center)" }
 fullbright = { type = "bool", default = true, description = "Bypass PBR lighting" }
 visible = { type = "bool", default = true }
+mode = { type = "string", default = "billboard", description = "Render mode: 'billboard' (3D camera-facing) or 'sprite2d' (flat XY-plane quad)" }
+source_rect = { type = "vec4", default = [0, 0, 0, 0], description = "Source rectangle in pixels [x, y, w, h]; [0,0,0,0] = full texture" }
+flip_x = { type = "bool", default = false, description = "Flip sprite horizontally" }
+flip_y = { type = "bool", default = false, description = "Flip sprite vertically" }
+tint = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "Color multiplier [r, g, b, a]" }
+layer = { type = "i32", default = 0, description = "Z-order layer for 2D draw sorting (higher = in front)" }

@@ -1,0 +1,9 @@
+[archetype.animated_sprite]
+description = "A 2D sprite entity with sprite sheet animation"
+components = ["transform", "sprite", "sprite_animator"]
+
+[archetype.animated_sprite.defaults.sprite]
+mode = "sprite2d"
+
+[archetype.animated_sprite.defaults.sprite_animator]
+speed = 1.0

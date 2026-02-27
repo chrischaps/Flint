@@ -1,0 +1,43 @@
+# Character sprite animation clips
+# Using a 4-column sprite sheet for testing
+
+[animation.idle]
+texture = "character_sheet.png"
+frame_size = [64, 64]
+frames = [
+    { col = 0, row = 0, duration_ms = 500 },
+    { col = 1, row = 0, duration_ms = 500 },
+]
+loop_mode = "loop"
+
+[animation.run]
+texture = "character_sheet.png"
+frame_size = [64, 64]
+frames = [
+    { col = 0, row = 1, duration_ms = 100 },
+    { col = 1, row = 1, duration_ms = 100 },
+    { col = 2, row = 1, duration_ms = 100 },
+    { col = 3, row = 1, duration_ms = 100 },
+]
+loop_mode = "loop"
+
+[animation.jump]
+texture = "character_sheet.png"
+frame_size = [64, 64]
+frames = [
+    { col = 0, row = 2, duration_ms = 150 },
+    { col = 1, row = 2, duration_ms = 200 },
+    { col = 2, row = 2, duration_ms = 300 },
+]
+loop_mode = "once"
+
+[animation.celebrate]
+texture = "character_sheet.png"
+frame_size = [64, 64]
+frames = [
+    { col = 0, row = 3, duration_ms = 120 },
+    { col = 1, row = 3, duration_ms = 120 },
+    { col = 2, row = 3, duration_ms = 120 },
+    { col = 3, row = 3, duration_ms = 120 },
+]
+loop_mode = "ping_pong"
