@@ -33,6 +33,7 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
             description: None,
             input_config: None,
         },
+        camera: None,
         environment: None,
         post_process: None,
         prefabs: std::collections::HashMap::new(),
@@ -71,7 +72,9 @@ pub fn update_scene_file(world: &FlintWorld, existing: &mut SceneFile) {
 
     // Remove entities that no longer exist
     let world_names: std::collections::HashSet<_> = world.entity_names().collect();
-    existing.entities.retain(|name, _| world_names.contains(name.as_str()));
+    existing
+        .entities
+        .retain(|name, _| world_names.contains(name.as_str()));
 }
 
 #[cfg(test)]

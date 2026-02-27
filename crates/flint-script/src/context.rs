@@ -18,6 +18,14 @@ pub struct InputSnapshot {
     pub actions_just_released: HashSet<String>,
     pub action_values: std::collections::HashMap<String, f64>,
     pub mouse_delta: (f64, f64),
+    /// Active touches: (id, norm_x, norm_y)
+    pub touches: Vec<(i64, f64, f64)>,
+    /// Touches that just started this frame: (id, norm_x, norm_y)
+    pub touch_just_started: Vec<(i64, f64, f64)>,
+    /// Touch IDs that just ended this frame
+    pub touch_just_ended: Vec<i64>,
+    /// Tap positions detected this frame (norm_x, norm_y)
+    pub touch_taps: Vec<(f64, f64)>,
 }
 
 /// Log severity levels
@@ -31,24 +39,49 @@ pub enum LogLevel {
 /// Deferred commands produced by scripts, processed by PlayerApp after script update
 #[derive(Debug, Clone)]
 pub enum ScriptCommand {
-    PlaySound { name: String, volume: f64 },
-    PlaySoundAt { name: String, position: (f64, f64, f64), volume: f64 },
-    StopSound { name: String },
-    FireEvent { name: String, data: toml::Value },
-    Log { level: LogLevel, message: String },
-    EmitBurst { entity_id: i64, count: i64 },
-    LoadScene { path: String },
+    PlaySound {
+        name: String,
+        volume: f64,
+    },
+    PlaySoundAt {
+        name: String,
+        position: (f64, f64, f64),
+        volume: f64,
+    },
+    StopSound {
+        name: String,
+    },
+    FireEvent {
+        name: String,
+        data: toml::Value,
+    },
+    Log {
+        level: LogLevel,
+        message: String,
+    },
+    EmitBurst {
+        entity_id: i64,
+        count: i64,
+    },
+    LoadScene {
+        path: String,
+    },
     ReloadScene,
-    PushState { name: String },
+    PushState {
+        name: String,
+    },
     PopState,
-    ReplaceState { name: String },
+    ReplaceState {
+        name: String,
+    },
 }
 
 /// 2D draw command issued by scripts each frame (immediate mode)
 #[derive(Debug, Clone)]
 pub enum DrawCommand {
     Text {
-        x: f32, y: f32,
+        x: f32,
+        y: f32,
         text: String,
         size: f32,
         color: [f32; 4],
@@ -59,38 +92,52 @@ pub enum DrawCommand {
         stroke: Option<([f32; 4], f32)>,
     },
     RectFilled {
-        x: f32, y: f32, w: f32, h: f32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
         color: [f32; 4],
         rounding: f32,
         layer: i32,
     },
     RectOutline {
-        x: f32, y: f32, w: f32, h: f32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
         color: [f32; 4],
         thickness: f32,
         layer: i32,
     },
     CircleFilled {
-        x: f32, y: f32,
+        x: f32,
+        y: f32,
         radius: f32,
         color: [f32; 4],
         layer: i32,
     },
     CircleOutline {
-        x: f32, y: f32,
+        x: f32,
+        y: f32,
         radius: f32,
         color: [f32; 4],
         thickness: f32,
         layer: i32,
     },
     Line {
-        x1: f32, y1: f32, x2: f32, y2: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
         color: [f32; 4],
         thickness: f32,
         layer: i32,
     },
     Sprite {
-        x: f32, y: f32, w: f32, h: f32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
         name: String,
         uv: [f32; 4],
         tint: [f32; 4],
@@ -143,6 +190,10 @@ pub struct ScriptCallContext {
     pub camera_position_override: Option<[f32; 3]>,
     pub camera_target_override: Option<[f32; 3]>,
     pub camera_fov_override: Option<f32>,
+    /// Script-driven camera orthographic override
+    pub camera_orthographic_override: Option<bool>,
+    /// Script-driven camera ortho_height override
+    pub camera_ortho_height_override: Option<f32>,
     /// Script-driven post-processing overrides
     pub postprocess_vignette_override: Option<f32>,
     pub postprocess_bloom_override: Option<f32>,
@@ -198,6 +249,8 @@ impl ScriptCallContext {
             camera_position_override: None,
             camera_target_override: None,
             camera_fov_override: None,
+            camera_orthographic_override: None,
+            camera_ortho_height_override: None,
             postprocess_vignette_override: None,
             postprocess_bloom_override: None,
             postprocess_exposure_override: None,
@@ -222,7 +275,10 @@ impl ScriptCallContext {
     /// Caller must ensure the world pointer was set and is still valid
     /// (i.e., called within the scope of `call_update` or `process_events`).
     pub unsafe fn world_ref(&self) -> &FlintWorld {
-        assert!(!self.world.is_null(), "ScriptCallContext: world pointer is null (called outside scope)");
+        assert!(
+            !self.world.is_null(),
+            "ScriptCallContext: world pointer is null (called outside scope)"
+        );
         unsafe { &*self.world }
     }
 
@@ -234,7 +290,10 @@ impl ScriptCallContext {
     /// `call_update` or `process_events`).
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn world_mut(&self) -> &mut FlintWorld {
-        assert!(!self.world.is_null(), "ScriptCallContext: world pointer is null (called outside scope)");
+        assert!(
+            !self.world.is_null(),
+            "ScriptCallContext: world pointer is null (called outside scope)"
+        );
         unsafe { &mut *self.world }
     }
 

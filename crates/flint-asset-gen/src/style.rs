@@ -143,8 +143,7 @@ mod tests {
     use std::io::Write;
 
     fn temp_style(content: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("flint_style_test_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("flint_style_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.style.toml");
         let mut f = std::fs::File::create(&path).unwrap();

@@ -44,11 +44,7 @@ mod tests {
     #[test]
     fn height_sampling_returns_correct_values() {
         // 3x3 heightmap: center pixel is 1.0, edges are 0.0
-        let heights = vec![
-            0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0,
-        ];
+        let heights = vec![0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
         let hm = Heightmap::from_raw(heights, 3, 3);
 
         // Center of heightmap (u=0.5, v=0.5) should be 1.0

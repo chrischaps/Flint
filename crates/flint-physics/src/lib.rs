@@ -77,13 +77,17 @@ impl PhysicsSystem {
         max_distance: f32,
         exclude_entity: Option<EntityId>,
     ) -> Option<EntityRaycastHit> {
-        let exclude_collider = exclude_entity
-            .and_then(|eid| self.sync.collider_map.get(&eid).copied());
+        let exclude_collider =
+            exclude_entity.and_then(|eid| self.sync.collider_map.get(&eid).copied());
 
-        let hit = self.physics_world.cast_ray(origin, direction, max_distance, exclude_collider)?;
+        let hit = self
+            .physics_world
+            .cast_ray(origin, direction, max_distance, exclude_collider)?;
 
         // Resolve collider handle → EntityId
-        let entity_id = self.sync.collider_map
+        let entity_id = self
+            .sync
+            .collider_map
             .iter()
             .find(|(_, ch)| **ch == hit.collider_handle)
             .map(|(eid, _)| *eid)?;
@@ -219,10 +223,12 @@ impl RuntimeSystem for PhysicsSystem {
         self.sync.sync_to_rapier(world, &mut self.physics_world);
 
         // Update kinematic bodies from ECS transforms (e.g., animated doors)
-        self.sync.update_kinematic_bodies(world, &mut self.physics_world);
+        self.sync
+            .update_kinematic_bodies(world, &mut self.physics_world);
 
         // Update sensor flags (e.g., dead enemies become non-solid)
-        self.sync.update_sensor_flags(world, &mut self.physics_world);
+        self.sync
+            .update_sensor_flags(world, &mut self.physics_world);
 
         // Step physics
         self.physics_world.step(dt as f32);
@@ -245,11 +251,10 @@ impl RuntimeSystem for PhysicsSystem {
                         .find(|(_, ch)| **ch == h2)
                         .map(|(eid, _)| *eid);
                     if let (Some(a), Some(b)) = (e1, e2) {
-                        self.event_bus
-                            .push(GameEvent::CollisionStarted {
-                                entity_a: a,
-                                entity_b: b,
-                            });
+                        self.event_bus.push(GameEvent::CollisionStarted {
+                            entity_a: a,
+                            entity_b: b,
+                        });
                     }
                 }
                 rapier3d::prelude::CollisionEvent::Stopped(h1, h2, _) => {
@@ -266,11 +271,10 @@ impl RuntimeSystem for PhysicsSystem {
                         .find(|(_, ch)| **ch == h2)
                         .map(|(eid, _)| *eid);
                     if let (Some(a), Some(b)) = (e1, e2) {
-                        self.event_bus
-                            .push(GameEvent::CollisionEnded {
-                                entity_a: a,
-                                entity_b: b,
-                            });
+                        self.event_bus.push(GameEvent::CollisionEnded {
+                            entity_a: a,
+                            entity_b: b,
+                        });
                     }
                 }
             }

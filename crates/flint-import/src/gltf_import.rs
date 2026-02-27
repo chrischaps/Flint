@@ -2,8 +2,8 @@
 
 use crate::types::{
     AlphaMode, ImportResult, ImportedChannel, ImportedJoint, ImportedKeyframe, ImportedMaterial,
-    ImportedMesh, ImportedNode, ImportedNodeChannel, ImportedNodeClip, ImportedSkeleton,
-    ImportedSkeletalClip, ImportedTexture, JointProperty,
+    ImportedMesh, ImportedNode, ImportedNodeChannel, ImportedNodeClip, ImportedSkeletalClip,
+    ImportedSkeleton, ImportedTexture, JointProperty,
 };
 use flint_asset::{AssetMeta, AssetType};
 use flint_core::{ContentHash, FlintError, Result};
@@ -13,9 +13,8 @@ use std::path::Path;
 /// Import a glTF or GLB file
 pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
     let path = path.as_ref();
-    let (document, buffers, images) = gltf::import(path).map_err(|e| {
-        FlintError::ImportError(format!("Failed to import glTF: {}", e))
-    })?;
+    let (document, buffers, images) = gltf::import(path)
+        .map_err(|e| FlintError::ImportError(format!("Failed to import glTF: {}", e)))?;
 
     let hash = ContentHash::from_file(path)
         .map_err(|e| FlintError::ImportError(format!("Failed to hash file: {}", e)))?;
@@ -53,10 +52,8 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
 
     // Walk the scene graph via scenes → root nodes → recursive children.
     // This extracts meshes per-node (preserving transforms) instead of per-mesh.
-    let scene_root_nodes: Vec<gltf::Node> = document
-        .scenes()
-        .flat_map(|scene| scene.nodes())
-        .collect();
+    let scene_root_nodes: Vec<gltf::Node> =
+        document.scenes().flat_map(|scene| scene.nodes()).collect();
 
     // Recursive helper: extract a node and all its children
     fn walk_node(
@@ -116,13 +113,11 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
 
                 let material_index = primitive.material().index();
 
-                let joint_indices: Option<Vec<[u16; 4]>> = reader
-                    .read_joints(0)
-                    .map(|iter| iter.into_u16().collect());
+                let joint_indices: Option<Vec<[u16; 4]>> =
+                    reader.read_joints(0).map(|iter| iter.into_u16().collect());
 
-                let joint_weights: Option<Vec<[f32; 4]>> = reader
-                    .read_weights(0)
-                    .map(|iter| iter.into_f32().collect());
+                let joint_weights: Option<Vec<[f32; 4]>> =
+                    reader.read_weights(0).map(|iter| iter.into_f32().collect());
 
                 *total_vertices += positions.len() as u64;
 
@@ -231,32 +226,26 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
         let metallic = pbr.metallic_factor();
         let roughness = pbr.roughness_factor();
 
-        let base_color_texture = pbr
-            .base_color_texture()
-            .map(|info| {
-                info.texture()
-                    .name()
-                    .map(String::from)
-                    .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
-            });
+        let base_color_texture = pbr.base_color_texture().map(|info| {
+            info.texture()
+                .name()
+                .map(String::from)
+                .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
+        });
 
-        let normal_texture = material
-            .normal_texture()
-            .map(|info| {
-                info.texture()
-                    .name()
-                    .map(String::from)
-                    .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
-            });
+        let normal_texture = material.normal_texture().map(|info| {
+            info.texture()
+                .name()
+                .map(String::from)
+                .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
+        });
 
-        let metallic_roughness_texture = pbr
-            .metallic_roughness_texture()
-            .map(|info| {
-                info.texture()
-                    .name()
-                    .map(String::from)
-                    .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
-            });
+        let metallic_roughness_texture = pbr.metallic_roughness_texture().map(|info| {
+            info.texture()
+                .name()
+                .map(String::from)
+                .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
+        });
 
         let alpha_mode = match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
@@ -286,7 +275,13 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
     let skeletal_clips = extract_skeletal_clips(&document, &buffers, &skeletons);
 
     // --- Extract node-level animation clips ---
-    let node_clips = extract_node_clips(&document, &buffers, &skeletons, &gltf_node_to_imported, &imported_nodes);
+    let node_clips = extract_node_clips(
+        &document,
+        &buffers,
+        &skeletons,
+        &gltf_node_to_imported,
+        &imported_nodes,
+    );
 
     let mut properties = HashMap::new();
     properties.insert(
@@ -482,33 +477,28 @@ fn extract_skeletal_clips(
             };
 
             let outputs: Vec<Vec<f32>> = match &property {
-                JointProperty::Translation | JointProperty::Scale => {
-                    reader
-                        .read_outputs()
-                        .map(|out| match out {
-                            gltf::animation::util::ReadOutputs::Translations(iter) => {
-                                iter.map(|v| vec![v[0], v[1], v[2]]).collect()
-                            }
-                            gltf::animation::util::ReadOutputs::Scales(iter) => {
-                                iter.map(|v| vec![v[0], v[1], v[2]]).collect()
-                            }
-                            _ => Vec::new(),
-                        })
-                        .unwrap_or_default()
-                }
-                JointProperty::Rotation => {
-                    reader
-                        .read_outputs()
-                        .map(|out| match out {
-                            gltf::animation::util::ReadOutputs::Rotations(iter) => {
-                                iter.into_f32()
-                                    .map(|v| vec![v[0], v[1], v[2], v[3]])
-                                    .collect()
-                            }
-                            _ => Vec::new(),
-                        })
-                        .unwrap_or_default()
-                }
+                JointProperty::Translation | JointProperty::Scale => reader
+                    .read_outputs()
+                    .map(|out| match out {
+                        gltf::animation::util::ReadOutputs::Translations(iter) => {
+                            iter.map(|v| vec![v[0], v[1], v[2]]).collect()
+                        }
+                        gltf::animation::util::ReadOutputs::Scales(iter) => {
+                            iter.map(|v| vec![v[0], v[1], v[2]]).collect()
+                        }
+                        _ => Vec::new(),
+                    })
+                    .unwrap_or_default(),
+                JointProperty::Rotation => reader
+                    .read_outputs()
+                    .map(|out| match out {
+                        gltf::animation::util::ReadOutputs::Rotations(iter) => iter
+                            .into_f32()
+                            .map(|v| vec![v[0], v[1], v[2], v[3]])
+                            .collect(),
+                        _ => Vec::new(),
+                    })
+                    .unwrap_or_default(),
             };
 
             let keyframes: Vec<ImportedKeyframe> = timestamps
@@ -557,7 +547,8 @@ fn extract_node_clips(
     imported_nodes: &[ImportedNode],
 ) -> Vec<ImportedNodeClip> {
     // Build a set of glTF node indices that are skeleton joints
-    let mut skeleton_joint_nodes: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut skeleton_joint_nodes: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
     for skin in document.skins() {
         for node in skin.joints() {
             skeleton_joint_nodes.insert(node.index());
@@ -610,33 +601,28 @@ fn extract_node_clips(
             };
 
             let outputs: Vec<Vec<f32>> = match &property {
-                JointProperty::Translation | JointProperty::Scale => {
-                    reader
-                        .read_outputs()
-                        .map(|out| match out {
-                            gltf::animation::util::ReadOutputs::Translations(iter) => {
-                                iter.map(|v| vec![v[0], v[1], v[2]]).collect()
-                            }
-                            gltf::animation::util::ReadOutputs::Scales(iter) => {
-                                iter.map(|v| vec![v[0], v[1], v[2]]).collect()
-                            }
-                            _ => Vec::new(),
-                        })
-                        .unwrap_or_default()
-                }
-                JointProperty::Rotation => {
-                    reader
-                        .read_outputs()
-                        .map(|out| match out {
-                            gltf::animation::util::ReadOutputs::Rotations(iter) => {
-                                iter.into_f32()
-                                    .map(|v| vec![v[0], v[1], v[2], v[3]])
-                                    .collect()
-                            }
-                            _ => Vec::new(),
-                        })
-                        .unwrap_or_default()
-                }
+                JointProperty::Translation | JointProperty::Scale => reader
+                    .read_outputs()
+                    .map(|out| match out {
+                        gltf::animation::util::ReadOutputs::Translations(iter) => {
+                            iter.map(|v| vec![v[0], v[1], v[2]]).collect()
+                        }
+                        gltf::animation::util::ReadOutputs::Scales(iter) => {
+                            iter.map(|v| vec![v[0], v[1], v[2]]).collect()
+                        }
+                        _ => Vec::new(),
+                    })
+                    .unwrap_or_default(),
+                JointProperty::Rotation => reader
+                    .read_outputs()
+                    .map(|out| match out {
+                        gltf::animation::util::ReadOutputs::Rotations(iter) => iter
+                            .into_f32()
+                            .map(|v| vec![v[0], v[1], v[2], v[3]])
+                            .collect(),
+                        _ => Vec::new(),
+                    })
+                    .unwrap_or_default(),
             };
 
             let keyframes: Vec<ImportedKeyframe> = timestamps
@@ -682,4 +668,3 @@ fn identity_4x4() -> [[f32; 4]; 4] {
         [0.0, 0.0, 0.0, 1.0],
     ]
 }
-

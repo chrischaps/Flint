@@ -55,13 +55,8 @@ pub fn generate_chunk(
             let world_z = v * config.depth;
             let height = heightmap.sample(u, v) * config.height_scale;
 
-            let normal = heightmap.compute_normal(
-                u,
-                v,
-                config.width,
-                config.depth,
-                config.height_scale,
-            );
+            let normal =
+                heightmap.compute_normal(u, v, config.width, config.depth, config.height_scale);
 
             let pos = [world_x, height, world_z];
 

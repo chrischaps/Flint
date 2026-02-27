@@ -27,7 +27,7 @@ pub fn sample_track(track: &AnimationTrack, time: f64) -> [f32; 3] {
     // Binary search for the interval containing `time`
     let idx = match keyframes.binary_search_by(|kf| kf.time.partial_cmp(&time).unwrap()) {
         Ok(i) => return keyframes[i].value, // exact match
-        Err(i) => i, // insertion point — time is between [i-1] and [i]
+        Err(i) => i,                        // insertion point — time is between [i-1] and [i]
     };
 
     let prev = &keyframes[idx - 1];
@@ -129,8 +129,18 @@ mod tests {
         let track = make_track(
             Interpolation::Linear,
             vec![
-                Keyframe { time: 0.0, value: [0.0, 0.0, 0.0], in_tangent: None, out_tangent: None },
-                Keyframe { time: 1.0, value: [10.0, 20.0, 30.0], in_tangent: None, out_tangent: None },
+                Keyframe {
+                    time: 0.0,
+                    value: [0.0, 0.0, 0.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
+                Keyframe {
+                    time: 1.0,
+                    value: [10.0, 20.0, 30.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
             ],
         );
         assert_eq!(sample_track(&track, 5.0), [10.0, 20.0, 30.0]);
@@ -141,8 +151,18 @@ mod tests {
         let track = make_track(
             Interpolation::Linear,
             vec![
-                Keyframe { time: 0.0, value: [0.0, 0.0, 0.0], in_tangent: None, out_tangent: None },
-                Keyframe { time: 2.0, value: [10.0, 20.0, 30.0], in_tangent: None, out_tangent: None },
+                Keyframe {
+                    time: 0.0,
+                    value: [0.0, 0.0, 0.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
+                Keyframe {
+                    time: 2.0,
+                    value: [10.0, 20.0, 30.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
             ],
         );
         let v = sample_track(&track, 1.0);
@@ -156,8 +176,18 @@ mod tests {
         let track = make_track(
             Interpolation::Step,
             vec![
-                Keyframe { time: 0.0, value: [1.0, 2.0, 3.0], in_tangent: None, out_tangent: None },
-                Keyframe { time: 1.0, value: [4.0, 5.0, 6.0], in_tangent: None, out_tangent: None },
+                Keyframe {
+                    time: 0.0,
+                    value: [1.0, 2.0, 3.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
+                Keyframe {
+                    time: 1.0,
+                    value: [4.0, 5.0, 6.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
             ],
         );
         // At t=0.5, Step should still hold the first keyframe value
@@ -169,9 +199,24 @@ mod tests {
         let track = make_track(
             Interpolation::Linear,
             vec![
-                Keyframe { time: 0.0, value: [0.0, 0.0, 0.0], in_tangent: None, out_tangent: None },
-                Keyframe { time: 1.0, value: [10.0, 10.0, 10.0], in_tangent: None, out_tangent: None },
-                Keyframe { time: 2.0, value: [20.0, 20.0, 20.0], in_tangent: None, out_tangent: None },
+                Keyframe {
+                    time: 0.0,
+                    value: [0.0, 0.0, 0.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
+                Keyframe {
+                    time: 1.0,
+                    value: [10.0, 10.0, 10.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
+                Keyframe {
+                    time: 2.0,
+                    value: [20.0, 20.0, 20.0],
+                    in_tangent: None,
+                    out_tangent: None,
+                },
             ],
         );
         assert_eq!(sample_track(&track, 1.0), [10.0, 10.0, 10.0]);

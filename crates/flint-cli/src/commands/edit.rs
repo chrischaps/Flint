@@ -27,8 +27,7 @@ pub fn run(args: EditArgs) -> Result<()> {
     };
 
     // Load scene
-    let (world, scene_file) =
-        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
 
@@ -54,7 +53,11 @@ pub fn run(args: EditArgs) -> Result<()> {
                     p
                 } else if let Some(parent) = scene_dir.parent() {
                     let pp = parent.join(&file_rel);
-                    if pp.exists() { pp } else { p }
+                    if pp.exists() {
+                        pp
+                    } else {
+                        p
+                    }
                 } else {
                     p
                 }
@@ -72,8 +75,8 @@ pub fn run(args: EditArgs) -> Result<()> {
         }
     }
 
-    let spline_path = spline_file_path
-        .context("No entity with a `spline` component found in the scene")?;
+    let spline_path =
+        spline_file_path.context("No entity with a `spline` component found in the scene")?;
 
     // Parse control points from the spline TOML file
     let content = std::fs::read_to_string(&spline_path)

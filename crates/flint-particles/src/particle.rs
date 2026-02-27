@@ -47,9 +47,9 @@ impl Particle {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct ParticleInstance {
     /// World position + size packed into vec4
-    pub pos_size: [f32; 4],    // xyz = position, w = size
+    pub pos_size: [f32; 4], // xyz = position, w = size
     /// Color with alpha
-    pub color: [f32; 4],       // rgba
+    pub color: [f32; 4], // rgba
     /// Rotation, sprite frame, sprite sheet dimensions
     pub rotation_frame: [f32; 4], // x = rotation, y = frame, z = frames_x, w = frames_y
 }

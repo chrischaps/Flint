@@ -21,6 +21,31 @@ members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-cli",
+    "crates/flint-android",
+]
+# flint-android depends on ndk-sys which only compiles for Android targets.
+# Exclude it from default `cargo build`; build with `cargo ndk -p flint-android`.
+default-members = [
+    "crates/flint-core",
+    "crates/flint-schema",
+    "crates/flint-ecs",
+    "crates/flint-scene",
+    "crates/flint-query",
+    "crates/flint-render",
+    "crates/flint-constraint",
+    "crates/flint-asset",
+    "crates/flint-asset-gen",
+    "crates/flint-import",
+    "crates/flint-viewer",
+    "crates/flint-runtime",
+    "crates/flint-physics",
+    "crates/flint-player",
+    "crates/flint-audio",
+    "crates/flint-animation",
+    "crates/flint-script",
+    "crates/flint-particles",
+    "crates/flint-terrain",
+    "crates/flint-cli",
 ]
 
 [workspace.package]
@@ -75,6 +100,12 @@ rhai = { version = "1", features = ["sync"] }
 instant = "0.1"
 gilrs = "0.11"
 
+# Android
+android-activity = { version = "0.6", features = ["native-activity"] }
+ndk = "0.9"
+android_logger = "0.14"
+log = "0.4"
+
 # HTTP
 ureq = { version = "3", features = ["json"] }
 
@@ -112,3 +143,4 @@ flint-asset-gen = { path = "crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 flint-player = { path = "crates/flint-player" }
+flint-android = { path = "crates/flint-android" }

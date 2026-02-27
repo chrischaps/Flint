@@ -2,7 +2,7 @@
 setlocal enableextensions
 
 set "SCRIPT_DIR=%~dp0"
-pushd "%SCRIPT_DIR%" >nul
+pushd "%SCRIPT_DIR%\.." >nul
 
 if /I "%~1"=="--help" goto :help
 if /I "%~1"=="-h" goto :help

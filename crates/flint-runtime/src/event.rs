@@ -16,22 +16,13 @@ pub enum GameEvent {
         entity_b: EntityId,
     },
     /// An entity entered a trigger volume
-    TriggerEntered {
-        entity: EntityId,
-        trigger: EntityId,
-    },
+    TriggerEntered { entity: EntityId, trigger: EntityId },
     /// An entity exited a trigger volume
-    TriggerExited {
-        entity: EntityId,
-        trigger: EntityId,
-    },
+    TriggerExited { entity: EntityId, trigger: EntityId },
     /// An input action was pressed
     ActionPressed(String),
     /// An input action was released
     ActionReleased(String),
     /// Custom event for scripting/gameplay
-    Custom {
-        name: String,
-        data: toml::Value,
-    },
+    Custom { name: String, data: toml::Value },
 }

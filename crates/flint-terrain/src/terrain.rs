@@ -57,9 +57,7 @@ impl Terrain {
 
         for row in 0..chunks_z {
             for col in 0..chunks_x {
-                let chunk = generate_chunk(
-                    heightmap, config, col, row, res, chunks_x, chunks_z,
-                );
+                let chunk = generate_chunk(heightmap, config, col, row, res, chunks_x, chunks_z);
                 chunks.push(chunk);
             }
         }

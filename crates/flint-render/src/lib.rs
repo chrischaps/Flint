@@ -5,6 +5,7 @@
 //! physically-based Cook-Torrance shading. Supports GPU vertex skinning
 //! for skeletal animation.
 
+pub mod atlas;
 pub mod billboard_pipeline;
 mod camera;
 mod context;
@@ -18,32 +19,35 @@ pub mod postprocess;
 mod primitives;
 mod scene_renderer;
 pub mod shadow;
-pub mod skybox_pipeline;
+pub mod sprite2d_pipeline;
 pub mod skinned_pipeline;
+pub mod skybox_pipeline;
 pub mod terrain_pipeline;
 mod texture_cache;
 
+pub use atlas::{AtlasRegistry, TextureAtlas};
+pub use billboard_pipeline::BillboardPipeline;
 pub use camera::{Camera, CameraMode};
 pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use headless::HeadlessContext;
+pub use particle_pipeline::{
+    ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
+};
 pub use pipeline::{
     DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
     TransformUniforms,
 };
+pub use postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 pub use primitives::{
     create_box_mesh, create_plane_mesh, generate_normal_arrows, triangles_to_wireframe_indices,
     Mesh, SkinnedMesh, SkinnedVertex, Vertex,
 };
-pub use postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
-pub use billboard_pipeline::BillboardPipeline;
-pub use particle_pipeline::{
-    ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
-};
-pub use skybox_pipeline::SkyboxPipeline;
 pub use skinned_pipeline::SkinnedPipeline;
+pub use sprite2d_pipeline::{Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms};
+pub use skybox_pipeline::SkyboxPipeline;
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::TextureCache;
 
@@ -119,5 +123,11 @@ mod tests {
     fn ssao_blur_shader_wgsl_parses() {
         let source = include_str!("ssao_blur_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("ssao_blur_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn sprite2d_shader_wgsl_parses() {
+        let source = include_str!("sprite2d_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("sprite2d_shader.wgsl failed to parse");
     }
 }

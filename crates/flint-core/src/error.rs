@@ -59,10 +59,7 @@ pub enum FlintError {
     },
 
     #[error("Invalid enum value: {value} is not one of {allowed:?}")]
-    InvalidEnumValue {
-        value: String,
-        allowed: Vec<String>,
-    },
+    InvalidEnumValue { value: String, allowed: Vec<String> },
 
     #[error("Constraint violation: {0}")]
     ConstraintViolation(String),

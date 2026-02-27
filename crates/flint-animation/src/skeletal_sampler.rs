@@ -5,7 +5,7 @@ use crate::skeletal_clip::{JointProperty, JointTrack};
 
 /// Sample a joint track at a given time.
 ///
-/// Returns the interpolated value as a Vec<f32> (3 for translation/scale, 4 for rotation).
+/// Returns the interpolated value as a `Vec<f32>` (3 for translation/scale, 4 for rotation).
 pub fn sample_joint_track(track: &JointTrack, time: f64) -> Vec<f32> {
     let keyframes = &track.keyframes;
     let is_rotation = track.property == JointProperty::Rotation;
@@ -225,7 +225,9 @@ mod tests {
         assert!((v[3] - 1.0).abs() < 1e-3); // w close to 1 at t=0
 
         let v_mid = sample_joint_track(&track, 0.5);
-        let len = (v_mid[0] * v_mid[0] + v_mid[1] * v_mid[1] + v_mid[2] * v_mid[2] + v_mid[3] * v_mid[3]).sqrt();
+        let len =
+            (v_mid[0] * v_mid[0] + v_mid[1] * v_mid[1] + v_mid[2] * v_mid[2] + v_mid[3] * v_mid[3])
+                .sqrt();
         assert!((len - 1.0).abs() < 1e-5, "midpoint should be normalized");
     }
 

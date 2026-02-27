@@ -13,9 +13,7 @@ pub fn expand_prefabs(scene: &mut SceneFile, scene_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let scene_dir = scene_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let scene_dir = scene_path.parent().unwrap_or_else(|| Path::new("."));
 
     // Cache loaded prefab templates by template name
     let mut cache: HashMap<String, PrefabFile> = HashMap::new();
@@ -168,7 +166,7 @@ fn deep_merge_component(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::{PrefabInstance, SceneMetadata};
+    use crate::format::{EntityDef, PrefabInstance, SceneMetadata};
 
     fn default_version() -> String {
         "1.0".to_string()
@@ -251,6 +249,7 @@ mod tests {
                 description: None,
                 input_config: None,
             },
+            camera: None,
             environment: None,
             post_process: None,
             prefabs: HashMap::new(),

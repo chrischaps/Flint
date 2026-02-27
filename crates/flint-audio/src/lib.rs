@@ -75,8 +75,7 @@ impl AudioSystem {
                         if let Err(e) = self.engine.play_at_position(&sound, pos, volume) {
                             eprintln!("Audio: {:?}", e);
                         }
-                    } else if let Err(e) =
-                        self.engine.play_non_spatial(&sound, volume, 1.0, false)
+                    } else if let Err(e) = self.engine.play_non_spatial(&sound, volume, 1.0, false)
                     {
                         // One-shot non-spatial: handle not needed
                         eprintln!("Audio: {:?}", e);

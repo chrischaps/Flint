@@ -136,10 +136,8 @@ mod tests {
     use std::io::Write;
 
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "flint_registration_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("flint_registration_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -190,13 +188,9 @@ mod tests {
             metadata: HashMap::from([("seed".to_string(), "42".to_string())]),
         };
 
-        let registered = register_generated_asset_with_roots(
-            &request,
-            &result,
-            &store_root,
-            &assets_root,
-        )
-        .unwrap();
+        let registered =
+            register_generated_asset_with_roots(&request, &result, &store_root, &assets_root)
+                .unwrap();
 
         assert!(registered.hash.starts_with("sha256:"));
         assert!(registered.sidecar_path.exists());

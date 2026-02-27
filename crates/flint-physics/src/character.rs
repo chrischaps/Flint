@@ -151,8 +151,7 @@ impl CharacterController {
         );
 
         // Normalize horizontal movement
-        let horizontal_len =
-            (world_move.x * world_move.x + world_move.z * world_move.z).sqrt();
+        let horizontal_len = (world_move.x * world_move.x + world_move.z * world_move.z).sqrt();
         let horizontal = if horizontal_len > 0.001 {
             let speed_mult = if input.is_action_pressed("sprint") {
                 1.6
@@ -198,16 +197,8 @@ impl CharacterController {
             &physics.rigid_body_set,
             &physics.collider_set,
             &physics.query_pipeline,
-            physics
-                .collider_set
-                .get(collider_handle)
-                .unwrap()
-                .shape(),
-            physics
-                .rigid_body_set
-                .get(body_handle)
-                .unwrap()
-                .position(),
+            physics.collider_set.get(collider_handle).unwrap().shape(),
+            physics.rigid_body_set.get(body_handle).unwrap().position(),
             desired,
             QueryFilter::default().exclude_rigid_body(body_handle),
             |_| {},
@@ -251,9 +242,7 @@ impl CharacterController {
             None => return Vec3::new(0.0, 2.0, 0.0),
         };
 
-        let transform = world
-            .get_transform(entity_id)
-            .unwrap_or_default();
+        let transform = world.get_transform(entity_id).unwrap_or_default();
 
         // Read eye height from character_controller component (default: height * 0.85)
         let eye_offset = world

@@ -26,6 +26,9 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
     register_terrain_api(engine, ctx.clone());
+    register_sprite_api(engine, ctx.clone());
+    register_sprite_animation_api(engine, ctx.clone());
+    register_touch_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -64,7 +67,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("entity_exists", move |id: i64| -> bool {
-            if id < 0 { return false; }
+            if id < 0 {
+                return false;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             world.contains(EntityId::from_raw(id as u64))
@@ -75,10 +80,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("entity_name", move |id: i64| -> String {
-            if id < 0 { return String::new(); }
+            if id < 0 {
+                return String::new();
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world.get_name(EntityId::from_raw(id as u64))
+            world
+                .get_name(EntityId::from_raw(id as u64))
                 .unwrap_or("")
                 .to_string()
         });
@@ -88,10 +96,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("has_component", move |id: i64, comp: &str| -> bool {
-            if id < 0 { return false; }
+            if id < 0 {
+                return false;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world.get_components(EntityId::from_raw(id as u64))
+            world
+                .get_components(EntityId::from_raw(id as u64))
                 .map(|comps| comps.has(comp))
                 .unwrap_or(false)
         });
@@ -101,16 +112,16 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_component", move |id: i64, comp: &str| -> Dynamic {
-            if id < 0 { return Dynamic::UNIT; }
+            if id < 0 {
+                return Dynamic::UNIT;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             match world.get_components(EntityId::from_raw(id as u64)) {
-                Some(comps) => {
-                    match comps.get(comp) {
-                        Some(val) => toml_to_dynamic(val.clone()),
-                        None => Dynamic::UNIT,
-                    }
-                }
+                Some(comps) => match comps.get(comp) {
+                    Some(val) => toml_to_dynamic(val.clone()),
+                    None => Dynamic::UNIT,
+                },
                 None => Dynamic::UNIT,
             }
         });
@@ -119,30 +130,41 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // get_field(id: i64, comp: &str, field: &str) -> Dynamic
     {
         let ctx = ctx.clone();
-        engine.register_fn("get_field", move |id: i64, comp: &str, field: &str| -> Dynamic {
-            if id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_ref() };
-            world.get_components(EntityId::from_raw(id as u64))
-                .and_then(|comps| comps.get_field(comp, field).cloned())
-                .map(toml_to_dynamic)
-                .unwrap_or(Dynamic::UNIT)
-        });
+        engine.register_fn(
+            "get_field",
+            move |id: i64, comp: &str, field: &str| -> Dynamic {
+                if id < 0 {
+                    return Dynamic::UNIT;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_ref() };
+                world
+                    .get_components(EntityId::from_raw(id as u64))
+                    .and_then(|comps| comps.get_field(comp, field).cloned())
+                    .map(toml_to_dynamic)
+                    .unwrap_or(Dynamic::UNIT)
+            },
+        );
     }
 
     // set_field(id: i64, comp: &str, field: &str, val: Dynamic)
     {
         let ctx = ctx.clone();
-        engine.register_fn("set_field", move |id: i64, comp: &str, field: &str, val: Dynamic| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_mut() };
-            if let Some(tv) = dynamic_to_toml(&val) {
-                if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                    comps.set_field(comp, field, tv);
+        engine.register_fn(
+            "set_field",
+            move |id: i64, comp: &str, field: &str, val: Dynamic| {
+                if id < 0 {
+                    return;
                 }
-            }
-        });
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                if let Some(tv) = dynamic_to_toml(&val) {
+                    if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                        comps.set_field(comp, field, tv);
+                    }
+                }
+            },
+        );
     }
 
     // get_position(id: i64) -> Map #{x, y, z}
@@ -150,7 +172,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         let ctx = ctx.clone();
         engine.register_fn("get_position", move |id: i64| -> Map {
             let mut map = Map::new();
-            if id < 0 { return map; }
+            if id < 0 {
+                return map;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
@@ -166,16 +190,22 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_position", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 { return; }
+            if id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("transform", "position", toml::Value::Array(vec![
-                    toml::Value::Float(x),
-                    toml::Value::Float(y),
-                    toml::Value::Float(z),
-                ]));
+                comps.set_field(
+                    "transform",
+                    "position",
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
             }
         });
     }
@@ -185,7 +215,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         let ctx = ctx.clone();
         engine.register_fn("get_rotation", move |id: i64| -> Map {
             let mut map = Map::new();
-            if id < 0 { return map; }
+            if id < 0 {
+                return map;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
@@ -201,16 +233,22 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_rotation", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 { return; }
+            if id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("transform", "rotation", toml::Value::Array(vec![
-                    toml::Value::Float(x),
-                    toml::Value::Float(y),
-                    toml::Value::Float(z),
-                ]));
+                comps.set_field(
+                    "transform",
+                    "rotation",
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
                 // Clear quaternion so Euler angles take effect
                 if let Some(transform) = comps.get_mut("transform") {
                     if let Some(table) = transform.as_table_mut() {
@@ -225,7 +263,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("distance", move |a: i64, b: i64| -> f64 {
-            if a < 0 || b < 0 { return f64::MAX; }
+            if a < 0 || b < 0 {
+                return f64::MAX;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             let ta = world.get_transform(EntityId::from_raw(a as u64));
@@ -256,7 +296,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("despawn_entity", move |id: i64| {
-            if id < 0 { return; }
+            if id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let _ = world.despawn(EntityId::from_raw(id as u64));
@@ -267,7 +309,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_parent", move |child_id: i64, parent_id: i64| {
-            if child_id < 0 || parent_id < 0 { return; }
+            if child_id < 0 || parent_id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let _ = world.set_parent(
@@ -281,10 +325,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_parent", move |id: i64| -> i64 {
-            if id < 0 { return -1; }
+            if id < 0 {
+                return -1;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world.get_parent(EntityId::from_raw(id as u64))
+            world
+                .get_parent(EntityId::from_raw(id as u64))
                 .map(|pid| pid.raw() as i64)
                 .unwrap_or(-1)
         });
@@ -294,10 +341,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_children", move |id: i64| -> rhai::Array {
-            if id < 0 { return vec![]; }
+            if id < 0 {
+                return vec![];
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world.get_children(EntityId::from_raw(id as u64))
+            world
+                .get_children(EntityId::from_raw(id as u64))
                 .into_iter()
                 .map(|cid| Dynamic::from(cid.raw() as i64))
                 .collect()
@@ -309,7 +359,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         let ctx = ctx.clone();
         engine.register_fn("get_world_position", move |id: i64| -> Map {
             let mut map = Map::new();
-            if id < 0 { return map; }
+            if id < 0 {
+                return map;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             if let Some(pos) = world.get_world_position(EntityId::from_raw(id as u64)) {
@@ -324,18 +376,23 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // set_material_color(entity_id: i64, r: f64, g: f64, b: f64, a: f64)
     {
         let ctx = ctx.clone();
-        engine.register_fn("set_material_color", move |id: i64, r: f64, g: f64, b: f64, a: f64| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
-            if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("material", "base_color_r", toml::Value::Float(r));
-                comps.set_field("material", "base_color_g", toml::Value::Float(g));
-                comps.set_field("material", "base_color_b", toml::Value::Float(b));
-                comps.set_field("material", "base_color_a", toml::Value::Float(a));
-            }
-        });
+        engine.register_fn(
+            "set_material_color",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(comps) = world.get_components_mut(eid) {
+                    comps.set_field("material", "base_color_r", toml::Value::Float(r));
+                    comps.set_field("material", "base_color_g", toml::Value::Float(g));
+                    comps.set_field("material", "base_color_b", toml::Value::Float(b));
+                    comps.set_field("material", "base_color_a", toml::Value::Float(a));
+                }
+            },
+        );
     }
 
     // find_entities_with(component: &str) -> Array of entity IDs
@@ -344,7 +401,8 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn("find_entities_with", move |comp: &str| -> rhai::Array {
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world.all_entities()
+            world
+                .all_entities()
                 .into_iter()
                 .filter(|info| info.components.iter().any(|c| c == comp))
                 .map(|info| Dynamic::from(info.id.raw() as i64))
@@ -358,7 +416,8 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn("entity_count_with", move |comp: &str| -> i64 {
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world.all_entities()
+            world
+                .all_entities()
                 .into_iter()
                 .filter(|info| info.components.iter().any(|c| c == comp))
                 .count() as i64
@@ -372,71 +431,88 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // spline_closest_point(spline_entity, x, y, z) -> Map #{t, x, y, z, dist_sq}
     {
         let ctx = ctx.clone();
-        engine.register_fn("spline_closest_point", move |spline_id: i64, qx: f64, qy: f64, qz: f64| -> Dynamic {
-            if spline_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_ref() };
-            let eid = EntityId::from_raw(spline_id as u64);
-            let comps = match world.get_components(eid) {
-                Some(c) => c,
-                None => return Dynamic::UNIT,
-            };
-            let sd = match comps.get("spline_data") {
-                Some(v) => v,
-                None => return Dynamic::UNIT,
-            };
-            let table = match sd.as_table() {
-                Some(t) => t,
-                None => return Dynamic::UNIT,
-            };
-
-            let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
-                Some(n) if n > 0 => n as usize,
-                _ => return Dynamic::UNIT,
-            };
-
-            let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-
-            let mut best_dist_sq = f64::MAX;
-            let mut best_idx = 0usize;
-
-            for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
-                let sx = px_arr[i].as_float().unwrap_or(0.0);
-                let sy = py_arr[i].as_float().unwrap_or(0.0);
-                let sz = pz_arr[i].as_float().unwrap_or(0.0);
-                let dx = qx - sx;
-                let dy = qy - sy;
-                let dz = qz - sz;
-                let dist_sq = dx * dx + dy * dy + dz * dz;
-                if dist_sq < best_dist_sq {
-                    best_dist_sq = dist_sq;
-                    best_idx = i;
+        engine.register_fn(
+            "spline_closest_point",
+            move |spline_id: i64, qx: f64, qy: f64, qz: f64| -> Dynamic {
+                if spline_id < 0 {
+                    return Dynamic::UNIT;
                 }
-            }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_ref() };
+                let eid = EntityId::from_raw(spline_id as u64);
+                let comps = match world.get_components(eid) {
+                    Some(c) => c,
+                    None => return Dynamic::UNIT,
+                };
+                let sd = match comps.get("spline_data") {
+                    Some(v) => v,
+                    None => return Dynamic::UNIT,
+                };
+                let table = match sd.as_table() {
+                    Some(t) => t,
+                    None => return Dynamic::UNIT,
+                };
 
-            let mut map = Map::new();
-            map.insert("t".into(), Dynamic::from(t_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("x".into(), Dynamic::from(px_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("y".into(), Dynamic::from(py_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("z".into(), Dynamic::from(pz_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("dist_sq".into(), Dynamic::from(best_dist_sq));
-            Dynamic::from(map)
-        });
+                let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
+                    Some(n) if n > 0 => n as usize,
+                    _ => return Dynamic::UNIT,
+                };
+
+                let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+
+                let mut best_dist_sq = f64::MAX;
+                let mut best_idx = 0usize;
+
+                for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
+                    let sx = px_arr[i].as_float().unwrap_or(0.0);
+                    let sy = py_arr[i].as_float().unwrap_or(0.0);
+                    let sz = pz_arr[i].as_float().unwrap_or(0.0);
+                    let dx = qx - sx;
+                    let dy = qy - sy;
+                    let dz = qz - sz;
+                    let dist_sq = dx * dx + dy * dy + dz * dz;
+                    if dist_sq < best_dist_sq {
+                        best_dist_sq = dist_sq;
+                        best_idx = i;
+                    }
+                }
+
+                let mut map = Map::new();
+                map.insert(
+                    "t".into(),
+                    Dynamic::from(t_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert(
+                    "x".into(),
+                    Dynamic::from(px_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert(
+                    "y".into(),
+                    Dynamic::from(py_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert(
+                    "z".into(),
+                    Dynamic::from(pz_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert("dist_sq".into(), Dynamic::from(best_dist_sq));
+                Dynamic::from(map)
+            },
+        );
     }
 
     // spline_is_gap(spline_entity, t) -> bool
@@ -543,113 +619,128 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // spline_sample_at(spline_entity, t) -> Map #{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}
     {
         let ctx = ctx.clone();
-        engine.register_fn("spline_sample_at", move |spline_id: i64, t: f64| -> Dynamic {
-            if spline_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_ref() };
-            let eid = EntityId::from_raw(spline_id as u64);
-            let comps = match world.get_components(eid) {
-                Some(c) => c,
-                None => return Dynamic::UNIT,
-            };
-            let sd = match comps.get("spline_data") {
-                Some(v) => v,
-                None => return Dynamic::UNIT,
-            };
-            let table = match sd.as_table() {
-                Some(t) => t,
-                None => return Dynamic::UNIT,
-            };
-
-            let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
-                Some(n) if n > 1 => n as usize,
-                _ => return Dynamic::UNIT,
-            };
-
-            let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-
-            let len = count.min(px_arr.len()).min(py_arr.len()).min(pz_arr.len()).min(t_arr.len());
-            if len < 2 { return Dynamic::UNIT; }
-
-            // Wrap t into [0, 1) for closed splines
-            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
-
-            // Binary search for the bracketing segment
-            let mut lo = 0usize;
-            let mut hi = len - 1;
-            while lo + 1 < hi {
-                let mid = (lo + hi) / 2;
-                if t_arr[mid].as_float().unwrap_or(0.0) <= t_wrapped {
-                    lo = mid;
-                } else {
-                    hi = mid;
+        engine.register_fn(
+            "spline_sample_at",
+            move |spline_id: i64, t: f64| -> Dynamic {
+                if spline_id < 0 {
+                    return Dynamic::UNIT;
                 }
-            }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_ref() };
+                let eid = EntityId::from_raw(spline_id as u64);
+                let comps = match world.get_components(eid) {
+                    Some(c) => c,
+                    None => return Dynamic::UNIT,
+                };
+                let sd = match comps.get("spline_data") {
+                    Some(v) => v,
+                    None => return Dynamic::UNIT,
+                };
+                let table = match sd.as_table() {
+                    Some(t) => t,
+                    None => return Dynamic::UNIT,
+                };
 
-            let t0 = t_arr[lo].as_float().unwrap_or(0.0);
-            let t1 = t_arr[hi].as_float().unwrap_or(0.0);
-            let seg_len = t1 - t0;
-            let frac = if seg_len.abs() > 1e-9 { (t_wrapped - t0) / seg_len } else { 0.0 };
+                let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
+                    Some(n) if n > 1 => n as usize,
+                    _ => return Dynamic::UNIT,
+                };
 
-            let x0 = px_arr[lo].as_float().unwrap_or(0.0);
-            let y0 = py_arr[lo].as_float().unwrap_or(0.0);
-            let z0 = pz_arr[lo].as_float().unwrap_or(0.0);
-            let x1 = px_arr[hi].as_float().unwrap_or(0.0);
-            let y1 = py_arr[hi].as_float().unwrap_or(0.0);
-            let z1 = pz_arr[hi].as_float().unwrap_or(0.0);
+                let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
 
-            let px = x0 + (x1 - x0) * frac;
-            let py = y0 + (y1 - y0) * frac;
-            let pz = z0 + (z1 - z0) * frac;
+                let len = count
+                    .min(px_arr.len())
+                    .min(py_arr.len())
+                    .min(pz_arr.len())
+                    .min(t_arr.len());
+                if len < 2 {
+                    return Dynamic::UNIT;
+                }
 
-            // Forward direction: tangent along the spline
-            let mut fx = x1 - x0;
-            let mut fy = y1 - y0;
-            let mut fz = z1 - z0;
-            let flen = (fx * fx + fy * fy + fz * fz).sqrt();
-            if flen > 1e-9 {
-                fx /= flen;
-                fy /= flen;
-                fz /= flen;
-            }
+                // Wrap t into [0, 1) for closed splines
+                let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
 
-            // Right vector: cross(forward, up) where up = (0,1,0)
-            let mut rx = fz;
-            let ry = 0.0_f64;
-            let mut rz = -fx;
-            let rlen = (rx * rx + rz * rz).sqrt();
-            if rlen > 1e-9 {
-                rx /= rlen;
-                rz /= rlen;
-            }
+                // Binary search for the bracketing segment
+                let mut lo = 0usize;
+                let mut hi = len - 1;
+                while lo + 1 < hi {
+                    let mid = (lo + hi) / 2;
+                    if t_arr[mid].as_float().unwrap_or(0.0) <= t_wrapped {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
 
-            let mut map = Map::new();
-            map.insert("x".into(), Dynamic::from(px));
-            map.insert("y".into(), Dynamic::from(py));
-            map.insert("z".into(), Dynamic::from(pz));
-            map.insert("fwd_x".into(), Dynamic::from(fx));
-            map.insert("fwd_y".into(), Dynamic::from(fy));
-            map.insert("fwd_z".into(), Dynamic::from(fz));
-            map.insert("right_x".into(), Dynamic::from(rx));
-            map.insert("right_y".into(), Dynamic::from(ry));
-            map.insert("right_z".into(), Dynamic::from(rz));
-            Dynamic::from(map)
-        });
+                let t0 = t_arr[lo].as_float().unwrap_or(0.0);
+                let t1 = t_arr[hi].as_float().unwrap_or(0.0);
+                let seg_len = t1 - t0;
+                let frac = if seg_len.abs() > 1e-9 {
+                    (t_wrapped - t0) / seg_len
+                } else {
+                    0.0
+                };
+
+                let x0 = px_arr[lo].as_float().unwrap_or(0.0);
+                let y0 = py_arr[lo].as_float().unwrap_or(0.0);
+                let z0 = pz_arr[lo].as_float().unwrap_or(0.0);
+                let x1 = px_arr[hi].as_float().unwrap_or(0.0);
+                let y1 = py_arr[hi].as_float().unwrap_or(0.0);
+                let z1 = pz_arr[hi].as_float().unwrap_or(0.0);
+
+                let px = x0 + (x1 - x0) * frac;
+                let py = y0 + (y1 - y0) * frac;
+                let pz = z0 + (z1 - z0) * frac;
+
+                // Forward direction: tangent along the spline
+                let mut fx = x1 - x0;
+                let mut fy = y1 - y0;
+                let mut fz = z1 - z0;
+                let flen = (fx * fx + fy * fy + fz * fz).sqrt();
+                if flen > 1e-9 {
+                    fx /= flen;
+                    fy /= flen;
+                    fz /= flen;
+                }
+
+                // Right vector: cross(forward, up) where up = (0,1,0)
+                let mut rx = fz;
+                let ry = 0.0_f64;
+                let mut rz = -fx;
+                let rlen = (rx * rx + rz * rz).sqrt();
+                if rlen > 1e-9 {
+                    rx /= rlen;
+                    rz /= rlen;
+                }
+
+                let mut map = Map::new();
+                map.insert("x".into(), Dynamic::from(px));
+                map.insert("y".into(), Dynamic::from(py));
+                map.insert("z".into(), Dynamic::from(pz));
+                map.insert("fwd_x".into(), Dynamic::from(fx));
+                map.insert("fwd_y".into(), Dynamic::from(fy));
+                map.insert("fwd_z".into(), Dynamic::from(fz));
+                map.insert("right_x".into(), Dynamic::from(rx));
+                map.insert("right_y".into(), Dynamic::from(ry));
+                map.insert("right_z".into(), Dynamic::from(rz));
+                Dynamic::from(map)
+            },
+        );
     }
 }
 
@@ -760,14 +851,17 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // play_sound_at(name: &str, x: f64, y: f64, z: f64, vol: f64)
     {
         let ctx = ctx.clone();
-        engine.register_fn("play_sound_at", move |name: &str, x: f64, y: f64, z: f64, vol: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.commands.push(ScriptCommand::PlaySoundAt {
-                name: name.to_string(),
-                position: (x, y, z),
-                volume: vol,
-            });
-        });
+        engine.register_fn(
+            "play_sound_at",
+            move |name: &str, x: f64, y: f64, z: f64, vol: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.commands.push(ScriptCommand::PlaySoundAt {
+                    name: name.to_string(),
+                    position: (x, y, z),
+                    volume: vol,
+                });
+            },
+        );
     }
 
     // stop_sound(name: &str)
@@ -789,12 +883,18 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     {
         let ctx = ctx.clone();
         engine.register_fn("play_clip", move |entity_id: i64, clip_name: &str| {
-            if entity_id < 0 { return; }
+            if entity_id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "clip", toml::Value::String(clip_name.to_string()));
+                comps.set_field(
+                    "animator",
+                    "clip",
+                    toml::Value::String(clip_name.to_string()),
+                );
                 comps.set_field("animator", "playing", toml::Value::Boolean(true));
             }
         });
@@ -804,7 +904,9 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     {
         let ctx = ctx.clone();
         engine.register_fn("stop_clip", move |entity_id: i64| {
-            if entity_id < 0 { return; }
+            if entity_id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
@@ -817,23 +919,34 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     // blend_to(entity_id: i64, clip: &str, duration: f64)
     {
         let ctx = ctx.clone();
-        engine.register_fn("blend_to", move |entity_id: i64, clip: &str, duration: f64| {
-            if entity_id < 0 { return; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(entity_id as u64);
-            if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "blend_target", toml::Value::String(clip.to_string()));
-                comps.set_field("animator", "blend_duration", toml::Value::Float(duration));
-            }
-        });
+        engine.register_fn(
+            "blend_to",
+            move |entity_id: i64, clip: &str, duration: f64| {
+                if entity_id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(entity_id as u64);
+                if let Some(comps) = world.get_components_mut(eid) {
+                    comps.set_field(
+                        "animator",
+                        "blend_target",
+                        toml::Value::String(clip.to_string()),
+                    );
+                    comps.set_field("animator", "blend_duration", toml::Value::Float(duration));
+                }
+            },
+        );
     }
 
     // set_anim_speed(entity_id: i64, speed: f64)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_anim_speed", move |entity_id: i64, speed: f64| {
-            if entity_id < 0 { return; }
+            if entity_id < 0 {
+                return;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
@@ -850,38 +963,41 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     // raycast(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
     {
         let ctx = ctx.clone();
-        engine.register_fn("raycast", move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
-            let c = ctx.lock().unwrap();
-            let physics = unsafe { c.physics_ref() };
-            let physics = match physics {
-                Some(p) => p,
-                None => return Dynamic::UNIT,
-            };
+        engine.register_fn(
+            "raycast",
+            move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
+                let c = ctx.lock().unwrap();
+                let physics = unsafe { c.physics_ref() };
+                let physics = match physics {
+                    Some(p) => p,
+                    None => return Dynamic::UNIT,
+                };
 
-            // Exclude the current entity from the raycast
-            let exclude = Some(c.current_entity);
+                // Exclude the current entity from the raycast
+                let exclude = Some(c.current_entity);
 
-            match physics.raycast(
-                [ox as f32, oy as f32, oz as f32],
-                [dx as f32, dy as f32, dz as f32],
-                max_dist as f32,
-                exclude,
-            ) {
-                Some(hit) => {
-                    let mut map = Map::new();
-                    map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
-                    map.insert("distance".into(), Dynamic::from(hit.distance as f64));
-                    map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
-                    map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
-                    map.insert("point_z".into(), Dynamic::from(hit.point[2] as f64));
-                    map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
-                    map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
-                    map.insert("normal_z".into(), Dynamic::from(hit.normal[2] as f64));
-                    Dynamic::from(map)
+                match physics.raycast(
+                    [ox as f32, oy as f32, oz as f32],
+                    [dx as f32, dy as f32, dz as f32],
+                    max_dist as f32,
+                    exclude,
+                ) {
+                    Some(hit) => {
+                        let mut map = Map::new();
+                        map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
+                        map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+                        map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
+                        map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
+                        map.insert("point_z".into(), Dynamic::from(hit.point[2] as f64));
+                        map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
+                        map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
+                        map.insert("normal_z".into(), Dynamic::from(hit.normal[2] as f64));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
                 }
-                None => Dynamic::UNIT,
-            }
-        });
+            },
+        );
     }
 
     // get_camera_direction() -> Map #{x, y, z}
@@ -934,6 +1050,24 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("set_camera_fov", move |fov: f64| {
             let mut c = ctx.lock().unwrap();
             c.camera_fov_override = Some(fov as f32);
+        });
+    }
+
+    // set_camera_orthographic(enabled) — switch between orthographic and perspective
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_orthographic", move |enabled: bool| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_orthographic_override = Some(enabled);
+        });
+    }
+
+    // set_camera_ortho_height(height) — set orthographic half-height in world units
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_ortho_height", move |height: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_ortho_height_override = Some(height as f32);
         });
     }
 
@@ -1017,9 +1151,7 @@ fn register_math_api(engine: &mut Engine) {
         val.clamp(min, max)
     });
 
-    engine.register_fn("lerp", |a: f64, b: f64, t: f64| -> f64 {
-        a + (b - a) * t
-    });
+    engine.register_fn("lerp", |a: f64, b: f64, t: f64| -> f64 { a + (b - a) * t });
 
     engine.register_fn("random", || -> f64 {
         // Simple pseudo-random based on time — no external crate needed
@@ -1126,10 +1258,8 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
         let ctx = ctx.clone();
         engine.register_fn("emit_burst", move |entity_id: i64, count: i64| {
             let mut c = ctx.lock().unwrap();
-            c.commands.push(ScriptCommand::EmitBurst {
-                entity_id,
-                count,
-            });
+            c.commands
+                .push(ScriptCommand::EmitBurst { entity_id, count });
         });
     }
 
@@ -1233,169 +1363,347 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // draw_text(x, y, text, size, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_text", move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Text {
-                x: x as f32, y: y as f32,
-                text: text.to_string(),
-                size: size as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: 0,
-                align: 0,
-                stroke: None,
-            });
-        });
+        engine.register_fn(
+            "draw_text",
+            move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: 0,
+                    align: 0,
+                    stroke: None,
+                });
+            },
+        );
     }
 
     // draw_text_ex(x, y, text, size, r, g, b, a, layer)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_text_ex", move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Text {
-                x: x as f32, y: y as f32,
-                text: text.to_string(),
-                size: size as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: layer as i32,
-                align: 0,
-                stroke: None,
-            });
-        });
+        engine.register_fn(
+            "draw_text_ex",
+            move |x: f64,
+                  y: f64,
+                  text: &str,
+                  size: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                    align: 0,
+                    stroke: None,
+                });
+            },
+        );
     }
 
     // draw_text_stroked(x, y, text, size, r, g, b, a, stroke_r, stroke_g, stroke_b, stroke_a, stroke_width)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_text_stroked", move |x: f64, y: f64, text: &str, size: f64,
-            r: f64, g: f64, b: f64, a: f64,
-            sr: f64, sg: f64, sb: f64, sa: f64, sw: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Text {
-                x: x as f32, y: y as f32,
-                text: text.to_string(),
-                size: size as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: 0,
-                align: 0,
-                stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
-            });
-        });
+        engine.register_fn(
+            "draw_text_stroked",
+            move |x: f64,
+                  y: f64,
+                  text: &str,
+                  size: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  sr: f64,
+                  sg: f64,
+                  sb: f64,
+                  sa: f64,
+                  sw: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: 0,
+                    align: 0,
+                    stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
+                });
+            },
+        );
     }
 
     // draw_rect(x, y, w, h, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_rect", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::RectFilled {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                rounding: 0.0,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_rect",
+            move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::RectFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    rounding: 0.0,
+                    layer: 0,
+                });
+            },
+        );
     }
 
     // draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_rect_ex", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64, rounding: f64, layer: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::RectFilled {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                rounding: rounding as f32,
-                layer: layer as i32,
-            });
-        });
+        engine.register_fn(
+            "draw_rect_ex",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  rounding: f64,
+                  layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::RectFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    rounding: rounding as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_rect_outline(x, y, w, h, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_rect_outline", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::RectOutline {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                thickness: thickness as f32,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_rect_outline",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::RectOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
     }
 
     // draw_circle(x, y, radius, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_circle", move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::CircleFilled {
-                x: x as f32, y: y as f32,
-                radius: radius as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_circle",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::CircleFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_circle_ex(x, y, radius, r, g, b, a, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_circle_ex",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::CircleFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_circle_outline(x, y, radius, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_circle_outline", move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::CircleOutline {
-                x: x as f32, y: y as f32,
-                radius: radius as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                thickness: thickness as f32,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_circle_outline",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::CircleOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_circle_outline_ex(x, y, radius, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_circle_outline_ex",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64, layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::CircleOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_line(x1, y1, x2, y2, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_line", move |x1: f64, y1: f64, x2: f64, y2: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Line {
-                x1: x1 as f32, y1: y1 as f32, x2: x2 as f32, y2: y2 as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                thickness: thickness as f32,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_line",
+            move |x1: f64,
+                  y1: f64,
+                  x2: f64,
+                  y2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Line {
+                    x1: x1 as f32,
+                    y1: y1 as f32,
+                    x2: x2 as f32,
+                    y2: y2 as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_ex",
+            move |x1: f64,
+                  y1: f64,
+                  x2: f64,
+                  y2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Line {
+                    x1: x1 as f32,
+                    y1: y1 as f32,
+                    x2: x2 as f32,
+                    y2: y2 as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_sprite(x, y, w, h, name)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_sprite", move |x: f64, y: f64, w: f64, h: f64, name: &str| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Sprite {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                name: name.to_string(),
-                uv: [0.0, 0.0, 1.0, 1.0],
-                tint: [1.0, 1.0, 1.0, 1.0],
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_sprite",
+            move |x: f64, y: f64, w: f64, h: f64, name: &str| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Sprite {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    name: name.to_string(),
+                    uv: [0.0, 0.0, 1.0, 1.0],
+                    tint: [1.0, 1.0, 1.0, 1.0],
+                    layer: 0,
+                });
+            },
+        );
     }
 
     // draw_sprite_ex(x, y, w, h, name, u0, v0, u1, v1, r, g, b, a, layer)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_sprite_ex", move |x: f64, y: f64, w: f64, h: f64, name: &str, u0: f64, v0: f64, u1: f64, v1: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Sprite {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                name: name.to_string(),
-                uv: [u0 as f32, v0 as f32, u1 as f32, v1 as f32],
-                tint: [r as f32, g as f32, b as f32, a as f32],
-                layer: layer as i32,
-            });
-        });
+        engine.register_fn(
+            "draw_sprite_ex",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  name: &str,
+                  u0: f64,
+                  v0: f64,
+                  u1: f64,
+                  v1: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  layer: i64| {
+                let mut c = ctx.lock().unwrap();
+                c.draw_commands.push(DrawCommand::Sprite {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    name: name.to_string(),
+                    uv: [u0 as f32, v0 as f32, u1 as f32, v1 as f32],
+                    tint: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // screen_width() -> f64
@@ -1425,9 +1733,15 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             match crate::engine::find_nearest_interactable(world) {
                 Some(nearest) => {
                     let mut map = Map::new();
-                    map.insert("entity".into(), Dynamic::from(nearest.entity_id.raw() as i64));
+                    map.insert(
+                        "entity".into(),
+                        Dynamic::from(nearest.entity_id.raw() as i64),
+                    );
                     map.insert("prompt_text".into(), Dynamic::from(nearest.prompt_text));
-                    map.insert("interaction_type".into(), Dynamic::from(nearest.interaction_type));
+                    map.insert(
+                        "interaction_type".into(),
+                        Dynamic::from(nearest.interaction_type),
+                    );
                     map.insert("distance".into(), Dynamic::from(nearest.distance));
                     Dynamic::from(map)
                 }
@@ -1454,43 +1768,55 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // move_character(entity_id, dx, dy, dz) -> Map #{x, y, z, grounded} or ()
     {
         let ctx = ctx.clone();
-        engine.register_fn("move_character", move |entity_id: i64, dx: f64, dy: f64, dz: f64| -> Dynamic {
-            if entity_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let physics = unsafe { c.physics_ref() };
-            let physics = match physics {
-                Some(p) => p,
-                None => return Dynamic::UNIT,
-            };
-            let world = unsafe { c.world_ref() };
-            let eid = EntityId::from_raw(entity_id as u64);
-
-            // Read entity's current ECS position (freshest data, sees set_position from same frame)
-            let current_pos = match world.get_transform(eid) {
-                Some(t) => [t.position.x, t.position.y, t.position.z],
-                None => return Dynamic::UNIT,
-            };
-
-            let dt = c.delta_time as f32;
-            match physics.move_character_shape(eid, current_pos, [dx as f32, dy as f32, dz as f32], dt) {
-                Some(result) => {
-                    let mut map = Map::new();
-                    map.insert("x".into(), Dynamic::from(result.position[0] as f64));
-                    map.insert("y".into(), Dynamic::from(result.position[1] as f64));
-                    map.insert("z".into(), Dynamic::from(result.position[2] as f64));
-                    map.insert("grounded".into(), Dynamic::from(result.grounded));
-                    Dynamic::from(map)
+        engine.register_fn(
+            "move_character",
+            move |entity_id: i64, dx: f64, dy: f64, dz: f64| -> Dynamic {
+                if entity_id < 0 {
+                    return Dynamic::UNIT;
                 }
-                None => Dynamic::UNIT,
-            }
-        });
+                let c = ctx.lock().unwrap();
+                let physics = unsafe { c.physics_ref() };
+                let physics = match physics {
+                    Some(p) => p,
+                    None => return Dynamic::UNIT,
+                };
+                let world = unsafe { c.world_ref() };
+                let eid = EntityId::from_raw(entity_id as u64);
+
+                // Read entity's current ECS position (freshest data, sees set_position from same frame)
+                let current_pos = match world.get_transform(eid) {
+                    Some(t) => [t.position.x, t.position.y, t.position.z],
+                    None => return Dynamic::UNIT,
+                };
+
+                let dt = c.delta_time as f32;
+                match physics.move_character_shape(
+                    eid,
+                    current_pos,
+                    [dx as f32, dy as f32, dz as f32],
+                    dt,
+                ) {
+                    Some(result) => {
+                        let mut map = Map::new();
+                        map.insert("x".into(), Dynamic::from(result.position[0] as f64));
+                        map.insert("y".into(), Dynamic::from(result.position[1] as f64));
+                        map.insert("z".into(), Dynamic::from(result.position[2] as f64));
+                        map.insert("grounded".into(), Dynamic::from(result.grounded));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
+                }
+            },
+        );
     }
 
     // get_collider_extents(entity_id) -> Map or ()
     {
         let ctx = ctx.clone();
         engine.register_fn("get_collider_extents", move |entity_id: i64| -> Dynamic {
-            if entity_id < 0 { return Dynamic::UNIT; }
+            if entity_id < 0 {
+                return Dynamic::UNIT;
+            }
             let c = ctx.lock().unwrap();
             let physics = unsafe { c.physics_ref() };
             let physics = match physics {
@@ -1514,7 +1840,10 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     map.insert("radius".into(), Dynamic::from(radius as f64));
                     Dynamic::from(map)
                 }
-                Some(flint_physics::ColliderExtents::Capsule { radius, half_height }) => {
+                Some(flint_physics::ColliderExtents::Capsule {
+                    radius,
+                    half_height,
+                }) => {
                     let mut map = Map::new();
                     map.insert("shape".into(), Dynamic::from("capsule".to_string()));
                     map.insert("radius".into(), Dynamic::from(radius as f64));
@@ -1543,7 +1872,8 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             } else {
                 let p = std::path::Path::new(&c.current_scene_path);
                 // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
-                let root = p.parent()
+                let root = p
+                    .parent()
                     .and_then(|dir| dir.parent())
                     .unwrap_or(std::path::Path::new("."));
                 if root.as_os_str().is_empty() {
@@ -1604,39 +1934,50 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     // ui_set_color(element_id, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("ui_set_color", move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.ui_system.set_color(element_id, r as f32, g as f32, b as f32, a as f32);
-        });
+        engine.register_fn(
+            "ui_set_color",
+            move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.ui_system
+                    .set_color(element_id, r as f32, g as f32, b as f32, a as f32);
+            },
+        );
     }
 
     // ui_set_bg_color(element_id, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("ui_set_bg_color", move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.ui_system.set_bg_color(element_id, r as f32, g as f32, b as f32, a as f32);
-        });
+        engine.register_fn(
+            "ui_set_bg_color",
+            move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.ui_system
+                    .set_bg_color(element_id, r as f32, g as f32, b as f32, a as f32);
+            },
+        );
     }
 
     // ui_set_style(element_id, prop, val)
     {
         let ctx = ctx.clone();
-        engine.register_fn("ui_set_style", move |element_id: &str, prop: &str, val: Dynamic| {
-            let mut c = ctx.lock().unwrap();
-            let style_val = if val.is_float() {
-                StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
-            } else if val.is_int() {
-                StyleValue::Float(val.as_int().unwrap_or(0) as f32)
-            } else if val.is_string() {
-                StyleValue::String(val.into_string().unwrap_or_default())
-            } else if val.is_bool() {
-                StyleValue::Bool(val.as_bool().unwrap_or(false))
-            } else {
-                return;
-            };
-            c.ui_system.set_style(element_id, prop, style_val);
-        });
+        engine.register_fn(
+            "ui_set_style",
+            move |element_id: &str, prop: &str, val: Dynamic| {
+                let mut c = ctx.lock().unwrap();
+                let style_val = if val.is_float() {
+                    StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
+                } else if val.is_int() {
+                    StyleValue::Float(val.as_int().unwrap_or(0) as f32)
+                } else if val.is_string() {
+                    StyleValue::String(val.into_string().unwrap_or_default())
+                } else if val.is_bool() {
+                    StyleValue::Bool(val.as_bool().unwrap_or(false))
+                } else {
+                    return;
+                };
+                c.ui_system.set_style(element_id, prop, style_val);
+            },
+        );
     }
 
     // ui_reset_style(element_id)
@@ -1762,7 +2103,11 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             let sm = unsafe { &mut *c.state_machine };
 
             let policy = |key: &str| -> flint_runtime::SystemPolicy {
-                match config.get(key).and_then(|v| v.clone().into_string().ok()).as_deref() {
+                match config
+                    .get(key)
+                    .and_then(|v| v.clone().into_string().ok())
+                    .as_deref()
+                {
                     Some("pause") | Some("Pause") => flint_runtime::SystemPolicy::Pause,
                     Some("hidden") | Some("Hidden") => flint_runtime::SystemPolicy::Hidden,
                     _ => flint_runtime::SystemPolicy::Run,
@@ -2063,6 +2408,344 @@ fn register_terrain_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             } else {
                 0.0
             }
+        });
+    }
+}
+
+// ─── Sprite API ───────────────────────────────────────────
+
+fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_sprite_source_rect(entity_id, x, y, w, h) — set source rectangle in pixels
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_source_rect",
+            move |id: i64, x: f64, y: f64, w: f64, h: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut("sprite") {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert(
+                                "source_rect".to_string(),
+                                toml::Value::Array(vec![
+                                    toml::Value::Float(x),
+                                    toml::Value::Float(y),
+                                    toml::Value::Float(w),
+                                    toml::Value::Float(h),
+                                ]),
+                            );
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_flip(entity_id, flip_x, flip_y)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_flip",
+            move |id: i64, flip_x: bool, flip_y: bool| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut("sprite") {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert("flip_x".to_string(), toml::Value::Boolean(flip_x));
+                            table.insert("flip_y".to_string(), toml::Value::Boolean(flip_y));
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_tint(entity_id, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_tint",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut("sprite") {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert(
+                                "tint".to_string(),
+                                toml::Value::Array(vec![
+                                    toml::Value::Float(r),
+                                    toml::Value::Float(g),
+                                    toml::Value::Float(b),
+                                    toml::Value::Float(a),
+                                ]),
+                            );
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_layer(entity_id, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_sprite_layer", move |id: i64, layer: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(table) = sprite.as_table_mut() {
+                        table.insert("layer".to_string(), toml::Value::Integer(layer));
+                    }
+                }
+            }
+        });
+    }
+
+    // set_sprite_visible(entity_id, visible)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_sprite_visible", move |id: i64, visible: bool| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(table) = sprite.as_table_mut() {
+                        table.insert("visible".to_string(), toml::Value::Boolean(visible));
+                    }
+                }
+            }
+        });
+    }
+
+    // get_sprite_layer(entity_id) -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_sprite_layer", move |id: i64| -> i64 {
+            if id < 0 {
+                return 0;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components(eid) {
+                if let Some(sprite) = components.get("sprite") {
+                    return sprite
+                        .get("layer")
+                        .and_then(|v| v.as_integer())
+                        .unwrap_or(0);
+                }
+            }
+            0
+        });
+    }
+}
+
+// ─── Sprite Animation API ──────────────────────────────────────────
+
+fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // sprite_play(entity_id, clip_name) — start playing a sprite animation clip
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_play", move |id: i64, clip_name: String| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field(
+                    "sprite_animator",
+                    "clip",
+                    toml::Value::String(clip_name),
+                );
+                components.set_field("sprite_animator", "playing", toml::Value::Boolean(true));
+            }
+        });
+    }
+
+    // sprite_stop(entity_id) — stop sprite animation
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_stop", move |id: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field("sprite_animator", "playing", toml::Value::Boolean(false));
+            }
+        });
+    }
+
+    // sprite_set_speed(entity_id, speed) — set animation playback speed
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_set_speed", move |id: i64, speed: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field("sprite_animator", "speed", toml::Value::Float(speed));
+            }
+        });
+    }
+
+    // sprite_is_playing(entity_id) -> bool — check if sprite animation is playing
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_is_playing", move |id: i64| -> bool {
+            if id < 0 {
+                return false;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components(eid) {
+                if let Some(sa) = components.get("sprite_animator") {
+                    return sa
+                        .get("playing")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                }
+            }
+            false
+        });
+    }
+
+}
+
+// ─── Touch API ────────────────────────────────────────────
+
+fn register_touch_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // touch_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_count", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.input.touches.len() as i64
+        });
+    }
+
+    // touch_x(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_x", move |id: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touches
+                .iter()
+                .find(|(tid, _, _)| *tid == id)
+                .map(|(_, x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // touch_y(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_y", move |id: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touches
+                .iter()
+                .find(|(tid, _, _)| *tid == id)
+                .map(|(_, _, y)| *y)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // is_touching(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_touching", move |id: i64| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input.touches.iter().any(|(tid, _, _)| *tid == id)
+        });
+    }
+
+    // touch_just_started(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_just_started", move |id: i64| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_just_started
+                .iter()
+                .any(|(tid, _, _)| *tid == id)
+        });
+    }
+
+    // touch_just_ended(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_just_ended", move |id: i64| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input.touch_just_ended.iter().any(|tid| *tid == id)
+        });
+    }
+
+    // tap_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_count", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.input.touch_taps.len() as i64
+        });
+    }
+
+    // tap_x(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_x", move |index: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_taps
+                .get(index as usize)
+                .map(|(x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // tap_y(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_y", move |index: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_taps
+                .get(index as usize)
+                .map(|(_, y)| *y)
+                .unwrap_or(-1.0)
         });
     }
 }

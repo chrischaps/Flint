@@ -42,12 +42,15 @@ impl SceneDocument {
         value: &toml::Value,
     ) -> Result<(), String> {
         // Ensure entities table exists
-        let entities = self.doc.get_mut("entities")
+        let entities = self
+            .doc
+            .get_mut("entities")
             .and_then(|v| v.as_table_like_mut())
             .ok_or_else(|| "No [entities] table in scene file".to_string())?;
 
         // Ensure entity table exists
-        let entity = entities.get_mut(entity_name)
+        let entity = entities
+            .get_mut(entity_name)
             .and_then(|v| v.as_table_like_mut())
             .ok_or_else(|| format!("Entity '{}' not found in scene file", entity_name))?;
 
@@ -56,7 +59,8 @@ impl SceneDocument {
             entity.insert(component, toml_edit::Item::Table(toml_edit::Table::new()));
         }
 
-        let comp = entity.get_mut(component)
+        let comp = entity
+            .get_mut(component)
             .and_then(|v| v.as_table_like_mut())
             .ok_or_else(|| format!("Component '{}' is not a table", component))?;
 
@@ -93,8 +97,7 @@ impl SceneDocument {
 
     /// Write the document to a file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
-        fs::write(path, self.to_string())
-            .map_err(|e| format!("Failed to write scene file: {}", e))
+        fs::write(path, self.to_string()).map_err(|e| format!("Failed to write scene file: {}", e))
     }
 }
 
@@ -111,7 +114,10 @@ fn toml_to_edit_value(value: &toml::Value) -> toml_edit::Value {
             let s = format!("x = {}", formatted);
             if let Ok(doc) = s.parse::<toml_edit::DocumentMut>() {
                 if let Some(v) = doc.get("x") {
-                    return v.as_value().cloned().unwrap_or_else(|| toml_edit::Value::from(*f));
+                    return v
+                        .as_value()
+                        .cloned()
+                        .unwrap_or_else(|| toml_edit::Value::from(*f));
                 }
             }
             toml_edit::Value::from(*f)
@@ -192,7 +198,8 @@ max = [10, 4, 8]
             toml::Value::Float(2.0),
             toml::Value::Float(3.0),
         ]);
-        doc.patch_field("player", "transform", "position", &new_pos).unwrap();
+        doc.patch_field("player", "transform", "position", &new_pos)
+            .unwrap();
 
         let result = doc.to_string();
 
@@ -229,7 +236,8 @@ roughness = 0.8
 "#;
 
         let mut doc = SceneDocument::from_str(original).unwrap();
-        doc.patch_field("box", "material", "roughness", &toml::Value::Float(0.3)).unwrap();
+        doc.patch_field("box", "material", "roughness", &toml::Value::Float(0.3))
+            .unwrap();
 
         let result = doc.to_string();
         assert!(result.contains("0.3"));

@@ -34,7 +34,10 @@ impl SceneTree {
             self.entries.push(TreeEntry {
                 id: entity.id,
                 name: entity.name.clone(),
-                archetype: entity.archetype.clone().unwrap_or_else(|| "unknown".to_string()),
+                archetype: entity
+                    .archetype
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
                 parent_id: world.get_parent(entity.id),
             });
         }
@@ -184,28 +187,27 @@ impl SceneTree {
         } else {
             // Branch node — CollapsingHeader with children
             let default_open = if filtering { true } else { true }; // Always open by default
-            let header_response = egui::CollapsingHeader::new(
-                egui::RichText::new(&label).color(if is_selected {
+            let header_response =
+                egui::CollapsingHeader::new(egui::RichText::new(&label).color(if is_selected {
                     ui.visuals().selection.stroke.color
                 } else {
                     ui.visuals().text_color()
-                }),
-            )
-            .id_salt(id.0)
-            .default_open(default_open)
-            .open(if filtering { Some(true) } else { None }) // Force open when filtering
-            .show(ui, |ui| {
-                for (child_id, child_name, child_archetype) in &children {
-                    self.render_node(
-                        ui,
-                        *child_id,
-                        child_name,
-                        child_archetype,
-                        visible_set,
-                        filtering,
-                    );
-                }
-            });
+                }))
+                .id_salt(id.0)
+                .default_open(default_open)
+                .open(if filtering { Some(true) } else { None }) // Force open when filtering
+                .show(ui, |ui| {
+                    for (child_id, child_name, child_archetype) in &children {
+                        self.render_node(
+                            ui,
+                            *child_id,
+                            child_name,
+                            child_archetype,
+                            visible_set,
+                            filtering,
+                        );
+                    }
+                });
 
             // Select on header click
             if header_response.header_response.clicked() {

@@ -89,14 +89,14 @@ pub struct AdvanceResult {
 /// Advance a playback state by `dt` seconds, returning sampled values and events.
 ///
 /// Returns `None` if the clip isn't found or playback is stopped.
-pub fn advance(
-    state: &mut PlaybackState,
-    clip: &AnimationClip,
-    dt: f64,
-) -> Option<AdvanceResult> {
+pub fn advance(state: &mut PlaybackState, clip: &AnimationClip, dt: f64) -> Option<AdvanceResult> {
     if !state.playing {
         // Still sample at current time so static poses work
-        let samples: Vec<[f32; 3]> = clip.tracks.iter().map(|t| sample_track(t, state.time)).collect();
+        let samples: Vec<[f32; 3]> = clip
+            .tracks
+            .iter()
+            .map(|t| sample_track(t, state.time))
+            .collect();
         return Some(AdvanceResult {
             samples,
             events: vec![],
@@ -159,8 +159,18 @@ mod tests {
                 target: TrackTarget::Position,
                 interpolation: Interpolation::Linear,
                 keyframes: vec![
-                    Keyframe { time: 0.0, value: [0.0, 0.0, 0.0], in_tangent: None, out_tangent: None },
-                    Keyframe { time: 2.0, value: [0.0, 4.0, 0.0], in_tangent: None, out_tangent: None },
+                    Keyframe {
+                        time: 0.0,
+                        value: [0.0, 0.0, 0.0],
+                        in_tangent: None,
+                        out_tangent: None,
+                    },
+                    Keyframe {
+                        time: 2.0,
+                        value: [0.0, 4.0, 0.0],
+                        in_tangent: None,
+                        out_tangent: None,
+                    },
                 ],
             }],
             events: vec![AnimationEvent {
@@ -198,7 +208,7 @@ mod tests {
         // Advance past the end to trigger a loop
         let _ = advance(&mut state, &clip, 1.5);
         let _ = advance(&mut state, &clip, 1.0); // wraps around
-        // After wrap, events should be clearable and re-firable
+                                                 // After wrap, events should be clearable and re-firable
         assert!(state.time < clip.duration);
     }
 

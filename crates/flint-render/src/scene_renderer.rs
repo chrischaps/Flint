@@ -1,25 +1,32 @@
 //! Scene renderer - converts FlintWorld entities to GPU meshes
 
-use crate::billboard_pipeline::{BillboardDrawCall, BillboardPipeline, BillboardUniforms, SpriteInstance};
-use crate::camera::{Camera, mat4_inverse, mat4_mul};
+use crate::billboard_pipeline::{
+    BillboardDrawCall, BillboardPipeline, BillboardUniforms, SpriteInstance,
+};
+use crate::camera::{mat4_inverse, mat4_mul, Camera};
 use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
-use crate::particle_pipeline::{ParticleDrawCall, ParticleDrawData, ParticlePipeline, ParticleUniforms};
+use crate::particle_pipeline::{
+    ParticleDrawCall, ParticleDrawData, ParticlePipeline, ParticleUniforms,
+};
 use crate::pipeline::{
     BlendMode, DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline,
     SpotLight, TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
-use crate::postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
-use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
-use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
-use crate::skinned_pipeline::SkinnedPipeline;
-use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
-use crate::texture_cache::TextureCache;
+use crate::postprocess::{
+    PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT,
+};
 use crate::primitives::{
     create_box_mesh, create_grid_mesh, create_wireframe_box_mesh, generate_normal_arrows,
     triangles_to_wireframe_indices, Mesh,
 };
+use crate::shadow::{ShadowDrawUniforms, ShadowPass, CASCADE_COUNT, DEFAULT_SHADOW_RESOLUTION};
+use crate::skinned_pipeline::SkinnedPipeline;
+use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
+use crate::sprite2d_pipeline::{Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms};
+use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
+use crate::texture_cache::TextureCache;
 use flint_core::{Transform, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportResult;
@@ -129,6 +136,9 @@ pub struct SceneRenderer {
     // Particles
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
+    // 2D sprites
+    sprite2d_pipeline: Option<Sprite2dPipeline>,
+    sprite2d_batches: Vec<Sprite2dBatch>,
     // Post-processing
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
@@ -163,10 +173,7 @@ impl SceneRenderer {
             None
         };
 
-        let shadow_pass = ShadowPass::new(
-            &context.device,
-            DEFAULT_SHADOW_RESOLUTION,
-        );
+        let shadow_pass = ShadowPass::new(&context.device, DEFAULT_SHADOW_RESOLUTION);
 
         let light_uniforms = LightUniforms::default_scene_lights();
         let (light_buffer, light_bind_group) =
@@ -188,15 +195,14 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
         let particle_pipeline = ParticlePipeline::new(&context.device, scene_format);
+        let sprite2d_pipeline = Sprite2dPipeline::new(&context.device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
 
         // Create post-processing pipeline and resources
-        let postprocess_pipeline = PostProcessPipeline::new(&context.device, &context.queue, surface_format);
-        let postprocess_resources = PostProcessResources::new(
-            &context.device,
-            context.config.width,
-            context.config.height,
-        );
+        let postprocess_pipeline =
+            PostProcessPipeline::new(&context.device, &context.queue, surface_format);
+        let postprocess_resources =
+            PostProcessResources::new(&context.device, context.config.width, context.config.height);
         let postprocess_config = PostProcessConfig::default();
 
         Self {
@@ -231,6 +237,8 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
+            sprite2d_pipeline: Some(sprite2d_pipeline),
+            sprite2d_batches: Vec::new(),
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
@@ -240,11 +248,7 @@ impl SceneRenderer {
 
     /// Upload particle instance data from the simulation and create draw calls.
     /// Called each frame after ParticleSystem::update().
-    pub fn update_particles(
-        &mut self,
-        device: &wgpu::Device,
-        draw_data: Vec<ParticleDrawData>,
-    ) {
+    pub fn update_particles(&mut self, device: &wgpu::Device, draw_data: Vec<ParticleDrawData>) {
         self.particle_draws.clear();
 
         let pp = match &self.particle_pipeline {
@@ -541,6 +545,23 @@ impl SceneRenderer {
         self.terrain_material_buffer = None;
     }
 
+    /// Clear all model/mesh data so a new model can be loaded cleanly.
+    /// Used by the preview command when drag-and-dropping a replacement model.
+    pub fn clear_model_data(&mut self) {
+        self.mesh_cache.clear();
+        if let Some(tc) = &mut self.texture_cache {
+            tc.clear_user_textures();
+        }
+        self.entity_draws.clear();
+        self.skinned_entity_draws.clear();
+        self.transparent_draws.clear();
+        self.transparent_skinned_draws.clear();
+        self.billboard_draws.clear();
+        self.sprite2d_batches.clear();
+        self.wireframe_overlay_draws.clear();
+        self.normal_arrow_draws.clear();
+    }
+
     /// Create a renderer for headless (offscreen) use with explicit device and format
     pub fn new_headless(
         device: &wgpu::Device,
@@ -574,10 +595,7 @@ impl SceneRenderer {
             None
         };
 
-        let shadow_pass = ShadowPass::new(
-            device,
-            DEFAULT_SHADOW_RESOLUTION,
-        );
+        let shadow_pass = ShadowPass::new(device, DEFAULT_SHADOW_RESOLUTION);
 
         let light_uniforms = LightUniforms::default_scene_lights();
         let (light_buffer, light_bind_group) =
@@ -598,6 +616,7 @@ impl SceneRenderer {
             &pipeline.light_bind_group_layout,
         );
         let billboard_pipeline = BillboardPipeline::new(device, scene_format);
+        let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
 
         // Create post-processing pipeline and resources for headless
@@ -637,6 +656,8 @@ impl SceneRenderer {
             terrain_material_buffer: None,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
+            sprite2d_pipeline: Some(sprite2d_pipeline),
+            sprite2d_batches: Vec::new(),
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
@@ -680,8 +701,7 @@ impl SceneRenderer {
                     mesh.material.normal_texture = Some(format!("{}::{}", name, tex));
                 }
                 if let Some(ref tex) = mesh.material.metallic_roughness_texture {
-                    mesh.material.metallic_roughness_texture =
-                        Some(format!("{}::{}", name, tex));
+                    mesh.material.metallic_roughness_texture = Some(format!("{}::{}", name, tex));
                 }
             }
         }
@@ -729,8 +749,7 @@ impl SceneRenderer {
                     mesh.material.normal_texture = Some(format!("{}::{}", name, tex));
                 }
                 if let Some(ref tex) = mesh.material.metallic_roughness_texture {
-                    mesh.material.metallic_roughness_texture =
-                        Some(format!("{}::{}", name, tex));
+                    mesh.material.metallic_roughness_texture = Some(format!("{}::{}", name, tex));
                 }
             }
         }
@@ -745,11 +764,7 @@ impl SceneRenderer {
     ) {
         if let Some(skinned_meshes) = self.mesh_cache.get_skinned_mut(asset_name) {
             for mesh in skinned_meshes.iter_mut() {
-                queue.write_buffer(
-                    &mesh.bone_buffer,
-                    0,
-                    bytemuck::cast_slice(matrices),
-                );
+                queue.write_buffer(&mesh.bone_buffer, 0, bytemuck::cast_slice(matrices));
             }
         }
     }
@@ -819,6 +834,33 @@ impl SceneRenderer {
         self.debug_state.show_normals
     }
 
+    /// Show or hide the ground-plane grid at runtime
+    pub fn set_show_grid(&mut self, device: &wgpu::Device, show: bool) {
+        if show && self.grid_draw.is_none() {
+            let grid = create_grid_mesh(40.0, 40, [0.3, 0.3, 0.3, 0.5]);
+            let tc = self
+                .texture_cache
+                .as_ref()
+                .expect("texture cache must exist");
+            self.grid_draw = Some(Self::create_draw_call(
+                device,
+                &self.pipeline,
+                &grid,
+                true,
+                TransformUniforms::new(),
+                MaterialUniforms::procedural(),
+                tc,
+            ));
+        } else if !show {
+            self.grid_draw = None;
+        }
+    }
+
+    /// Whether the ground-plane grid is currently visible
+    pub fn show_grid(&self) -> bool {
+        self.grid_draw.is_some()
+    }
+
     /// Enable or disable tone mapping
     pub fn set_tonemapping(&mut self, enabled: bool) {
         self.tonemapping_enabled = enabled;
@@ -834,10 +876,7 @@ impl SceneRenderer {
     /// Recreate the shadow pass with a different resolution
     pub fn set_shadow_resolution(&mut self, device: &wgpu::Device, resolution: u32) {
         let was_enabled = self.shadow_pass.as_ref().map_or(false, |sp| sp.enabled);
-        let mut shadow_pass = ShadowPass::new(
-            device,
-            resolution,
-        );
+        let mut shadow_pass = ShadowPass::new(device, resolution);
         shadow_pass.enabled = was_enabled;
 
         // Recreate light bind group with new shadow pass resources
@@ -1059,16 +1098,20 @@ impl SceneRenderer {
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
         self.billboard_draws.clear();
+        self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
 
         // Extract lights from scene entities
         self.extract_lights_from_world(world);
 
-        let need_overlay = self.debug_state.wireframe_overlay
-            || self.debug_state.mode == DebugMode::WireframeOnly;
+        let need_overlay =
+            self.debug_state.wireframe_overlay || self.debug_state.mode == DebugMode::WireframeOnly;
         let need_normals = self.debug_state.show_normals;
         let arrow_length = self.debug_state.normal_arrow_length;
+
+        // Collect sprite2d instances for batching (texture_name, layer, instance data)
+        let mut sprite2d_collected: Vec<(String, i32, Sprite2dInstanceGpu)> = Vec::new();
 
         // Temporarily take texture_cache to avoid borrow conflicts
         let tex_cache = self.texture_cache.take();
@@ -1076,17 +1119,18 @@ impl SceneRenderer {
 
         for entity in world.all_entities() {
             let archetype = entity.archetype.as_deref().unwrap_or("unknown");
-            let visual = self
-                .archetype_visuals
-                .get(archetype)
-                .cloned()
-                .unwrap_or(ArchetypeVisual {
-                    color: [0.5, 0.5, 0.5, 1.0],
-                    wireframe: false,
-                    default_size: [1.0, 1.0, 1.0],
-                });
+            let visual =
+                self.archetype_visuals
+                    .get(archetype)
+                    .cloned()
+                    .unwrap_or(ArchetypeVisual {
+                        color: [0.5, 0.5, 0.5, 1.0],
+                        wireframe: false,
+                        default_size: [1.0, 1.0, 1.0],
+                    });
 
-            let model_matrix = world.get_world_matrix(entity.id)
+            let model_matrix = world
+                .get_world_matrix(entity.id)
                 .unwrap_or_else(|| Transform::default().to_matrix());
             let world_pos = [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]];
 
@@ -1114,12 +1158,21 @@ impl SceneRenderer {
                             _pad: 0.0,
                         };
 
-                        let (bc_view, bc_sampler, has_bc) =
-                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.base_color_texture.as_deref(), &tex_cache_ref.default_white);
-                        let (nm_view, nm_sampler, has_nm) =
-                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.normal_texture.as_deref(), &tex_cache_ref.default_normal);
-                        let (mr_view, mr_sampler, has_mr) =
-                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.metallic_roughness_texture.as_deref(), &tex_cache_ref.default_metallic_roughness);
+                        let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+                            tex_cache_ref,
+                            gpu_mesh.material.base_color_texture.as_deref(),
+                            &tex_cache_ref.default_white,
+                        );
+                        let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+                            tex_cache_ref,
+                            gpu_mesh.material.normal_texture.as_deref(),
+                            &tex_cache_ref.default_normal,
+                        );
+                        let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+                            tex_cache_ref,
+                            gpu_mesh.material.metallic_roughness_texture.as_deref(),
+                            &tex_cache_ref.default_metallic_roughness,
+                        );
 
                         let mut material_uniforms = MaterialUniforms::from_pbr(
                             gpu_mesh.material.base_color,
@@ -1133,26 +1186,37 @@ impl SceneRenderer {
                             material_uniforms.use_vertex_color = 1;
                         }
 
-                        let (transform_buffer, transform_bind_group) =
-                            Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
+                        let (transform_buffer, transform_bind_group) = Self::create_transform_bind(
+                            device,
+                            &self.pipeline,
+                            &transform_uniforms,
+                        );
                         let (material_buffer, material_bind_group) =
                             Self::create_material_bind_with_textures(
                                 device,
                                 &self.pipeline,
                                 &material_uniforms,
-                                bc_view, bc_sampler,
-                                nm_view, nm_sampler,
-                                mr_view, mr_sampler,
+                                bc_view,
+                                bc_sampler,
+                                nm_view,
+                                nm_sampler,
+                                mr_view,
+                                mr_sampler,
                             );
 
-                        let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &self.skinned_pipeline.as_ref().unwrap().bone_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: gpu_mesh.bone_buffer.as_entire_binding(),
-                            }],
-                            label: Some("Skinned Draw Bone Bind Group"),
-                        });
+                        let bone_bind_group =
+                            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &self
+                                    .skinned_pipeline
+                                    .as_ref()
+                                    .unwrap()
+                                    .bone_bind_group_layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: gpu_mesh.bone_buffer.as_entire_binding(),
+                                }],
+                                label: Some("Skinned Draw Bone Bind Group"),
+                            });
 
                         // Check transparency from glTF material and ECS material component
                         let gltf_alpha = gpu_mesh.material.base_color[3];
@@ -1214,12 +1278,21 @@ impl SceneRenderer {
                         };
 
                         // Resolve textures for this material
-                        let (bc_view, bc_sampler, has_bc) =
-                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.base_color_texture.as_deref(), &tex_cache_ref.default_white);
-                        let (nm_view, nm_sampler, has_nm) =
-                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.normal_texture.as_deref(), &tex_cache_ref.default_normal);
-                        let (mr_view, mr_sampler, has_mr) =
-                            Self::resolve_texture(tex_cache_ref, gpu_mesh.material.metallic_roughness_texture.as_deref(), &tex_cache_ref.default_metallic_roughness);
+                        let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+                            tex_cache_ref,
+                            gpu_mesh.material.base_color_texture.as_deref(),
+                            &tex_cache_ref.default_white,
+                        );
+                        let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+                            tex_cache_ref,
+                            gpu_mesh.material.normal_texture.as_deref(),
+                            &tex_cache_ref.default_normal,
+                        );
+                        let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+                            tex_cache_ref,
+                            gpu_mesh.material.metallic_roughness_texture.as_deref(),
+                            &tex_cache_ref.default_metallic_roughness,
+                        );
 
                         // Material color override: check entity first, then inherit from parent.
                         // This lets scripts color a parent entity and have all child meshes
@@ -1228,7 +1301,10 @@ impl SceneRenderer {
                             let r = m.get("base_color_r")?.as_float()? as f32;
                             let g = m.get("base_color_g")?.as_float()? as f32;
                             let b = m.get("base_color_b")?.as_float()? as f32;
-                            let a = m.get("base_color_a").and_then(|v| v.as_float()).unwrap_or(1.0) as f32;
+                            let a = m
+                                .get("base_color_a")
+                                .and_then(|v| v.as_float())
+                                .unwrap_or(1.0) as f32;
                             Some([r, g, b, a])
                         };
                         let base_color = world
@@ -1236,7 +1312,8 @@ impl SceneRenderer {
                             .and_then(|c| c.get("material"))
                             .and_then(|m| extract_color(m))
                             .or_else(|| {
-                                world.get_parent(entity.id)
+                                world
+                                    .get_parent(entity.id)
                                     .and_then(|pid| world.get_components(pid))
                                     .and_then(|c| c.get("material"))
                                     .and_then(|m| extract_color(m))
@@ -1284,9 +1361,12 @@ impl SceneRenderer {
                             gpu_mesh,
                             transform_uniforms,
                             material_uniforms,
-                            bc_view, bc_sampler,
-                            nm_view, nm_sampler,
-                            mr_view, mr_sampler,
+                            bc_view,
+                            bc_sampler,
+                            nm_view,
+                            nm_sampler,
+                            mr_view,
+                            mr_sampler,
                         );
                         draw.entity_id = Some(entity.id);
                         draw.blend_mode = blend_mode;
@@ -1338,7 +1418,8 @@ impl SceneRenderer {
                         if need_normals {
                             let tri_indices = gpu_mesh.triangle_indices();
                             let vertices = gpu_mesh.vertices();
-                            let arrows = generate_normal_arrows(&vertices, &tri_indices, arrow_length);
+                            let arrows =
+                                generate_normal_arrows(&vertices, &tri_indices, arrow_length);
                             if !arrows.indices.is_empty() {
                                 let arrow_transform = TransformUniforms {
                                     view_proj: [[0.0; 4]; 4],
@@ -1364,36 +1445,170 @@ impl SceneRenderer {
                 }
             }
 
-            // Check for sprite component — render as billboard instead of geometry
+            // Check for sprite component — render as billboard or 2D sprite
             if let Some(components) = world.get_components(entity.id) {
                 if let Some(sprite) = components.get("sprite") {
-                    let visible = sprite.get("visible")
+                    let visible = sprite
+                        .get("visible")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
-                    if visible {
+                    let mode = sprite
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("billboard");
+
+                    if visible && mode == "sprite2d" {
+                        // ── Sprite2D path: collect for batched instanced rendering ──
+                        let tex_name =
+                            sprite.get("texture").and_then(|v| v.as_str()).unwrap_or("");
+                        let width = sprite
+                            .get("width")
+                            .and_then(|v| {
+                                v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                            })
+                            .unwrap_or(1.0) as f32;
+                        let height = sprite
+                            .get("height")
+                            .and_then(|v| {
+                                v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                            })
+                            .unwrap_or(1.0) as f32;
+                        let anchor_y = sprite
+                            .get("anchor_y")
+                            .and_then(|v| {
+                                v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                            })
+                            .unwrap_or(0.0) as f32;
+                        let layer = sprite
+                            .get("layer")
+                            .and_then(|v| v.as_integer())
+                            .unwrap_or(0) as i32;
+                        let flip_x = sprite
+                            .get("flip_x")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let flip_y = sprite
+                            .get("flip_y")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        // Read tint color
+                        let tint = if let Some(tint_val) = sprite.get("tint") {
+                            if let Some(arr) = tint_val.as_array() {
+                                let vals: Vec<f32> = arr
+                                    .iter()
+                                    .filter_map(|v| {
+                                        v.as_float()
+                                            .or_else(|| v.as_integer().map(|i| i as f64))
+                                            .map(|f| f as f32)
+                                    })
+                                    .collect();
+                                if vals.len() >= 4 {
+                                    [vals[0], vals[1], vals[2], vals[3]]
+                                } else {
+                                    [1.0, 1.0, 1.0, 1.0]
+                                }
+                            } else {
+                                [1.0, 1.0, 1.0, 1.0]
+                            }
+                        } else {
+                            [1.0, 1.0, 1.0, 1.0]
+                        };
+
+                        // Read source_rect [x, y, w, h] in pixels
+                        let source_rect = if let Some(sr_val) = sprite.get("source_rect") {
+                            if let Some(arr) = sr_val.as_array() {
+                                let vals: Vec<f32> = arr
+                                    .iter()
+                                    .filter_map(|v| {
+                                        v.as_float()
+                                            .or_else(|| v.as_integer().map(|i| i as f64))
+                                            .map(|f| f as f32)
+                                    })
+                                    .collect();
+                                if vals.len() >= 4 {
+                                    [vals[0], vals[1], vals[2], vals[3]]
+                                } else {
+                                    [0.0, 0.0, 0.0, 0.0]
+                                }
+                            } else {
+                                [0.0, 0.0, 0.0, 0.0]
+                            }
+                        } else {
+                            [0.0, 0.0, 0.0, 0.0]
+                        };
+
+                        // Convert source_rect to UV coordinates
+                        let uv_rect = if source_rect[2] > 0.0 && source_rect[3] > 0.0 {
+                            // Get texture dimensions for pixel → UV conversion
+                            let (tw, th) = tex_cache_ref
+                                .get_dimensions(tex_name)
+                                .unwrap_or((1, 1));
+                            let tw = tw as f32;
+                            let th = th as f32;
+                            [
+                                source_rect[0] / tw,
+                                source_rect[1] / th,
+                                (source_rect[0] + source_rect[2]) / tw,
+                                (source_rect[1] + source_rect[3]) / th,
+                            ]
+                        } else {
+                            // Full texture
+                            [0.0, 0.0, 1.0, 1.0]
+                        };
+
+                        let instance = Sprite2dInstanceGpu {
+                            pos_layer: [world_pos[0], world_pos[1], 0.5, layer as f32 * 0.01],
+                            size: [width, height, anchor_y, 0.0],
+                            uv_rect,
+                            tint,
+                            flags: [
+                                if flip_x { 1.0 } else { 0.0 },
+                                if flip_y { 1.0 } else { 0.0 },
+                                0.0,
+                                0.0,
+                            ],
+                        };
+
+                        sprite2d_collected.push((tex_name.to_string(), layer, instance));
+                        continue; // Don't render sprite2d as geometry
+                    } else if visible {
+                        // ── Billboard path: existing per-entity rendering ──
                         if let Some(bp) = &self.billboard_pipeline {
-                            let tex_name = sprite.get("texture")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let width = sprite.get("width")
-                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            let tex_name =
+                                sprite.get("texture").and_then(|v| v.as_str()).unwrap_or("");
+                            let width = sprite
+                                .get("width")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
                                 .unwrap_or(1.0) as f32;
-                            let height = sprite.get("height")
-                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            let height = sprite
+                                .get("height")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
                                 .unwrap_or(1.0) as f32;
-                            let frame = sprite.get("frame")
+                            let frame = sprite
+                                .get("frame")
                                 .and_then(|v| v.as_integer())
                                 .unwrap_or(0) as u32;
-                            let frames_x = sprite.get("frames_x")
+                            let frames_x = sprite
+                                .get("frames_x")
                                 .and_then(|v| v.as_integer())
                                 .unwrap_or(1) as u32;
-                            let frames_y = sprite.get("frames_y")
+                            let frames_y = sprite
+                                .get("frames_y")
                                 .and_then(|v| v.as_integer())
                                 .unwrap_or(1) as u32;
-                            let anchor_y = sprite.get("anchor_y")
-                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                            let anchor_y = sprite
+                                .get("anchor_y")
+                                .and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
                                 .unwrap_or(0.0) as f32;
-                            let fullbright = sprite.get("fullbright")
+                            let fullbright = sprite
+                                .get("fullbright")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(true);
 
@@ -1419,54 +1634,64 @@ impl SceneRenderer {
                                 _pad1: 0.0,
                             };
 
-                            let billboard_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Billboard Uniform Buffer"),
-                                contents: bytemuck::cast_slice(&[billboard_uniforms]),
-                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                            });
+                            let billboard_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some("Billboard Uniform Buffer"),
+                                    contents: bytemuck::cast_slice(&[billboard_uniforms]),
+                                    usage: wgpu::BufferUsages::UNIFORM
+                                        | wgpu::BufferUsages::COPY_DST,
+                                });
 
-                            let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Sprite Instance Buffer"),
-                                contents: bytemuck::cast_slice(&[sprite_instance]),
-                                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                            });
+                            let sprite_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some("Sprite Instance Buffer"),
+                                    contents: bytemuck::cast_slice(&[sprite_instance]),
+                                    usage: wgpu::BufferUsages::UNIFORM
+                                        | wgpu::BufferUsages::COPY_DST,
+                                });
 
-                            let billboard_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &bp.billboard_bind_group_layout,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: billboard_buffer.as_entire_binding(),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: sprite_buffer.as_entire_binding(),
-                                    },
-                                ],
-                                label: Some("Billboard Bind Group"),
-                            });
+                            let billboard_bind_group =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &bp.billboard_bind_group_layout,
+                                    entries: &[
+                                        wgpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: billboard_buffer.as_entire_binding(),
+                                        },
+                                        wgpu::BindGroupEntry {
+                                            binding: 1,
+                                            resource: sprite_buffer.as_entire_binding(),
+                                        },
+                                    ],
+                                    label: Some("Billboard Bind Group"),
+                                });
 
                             // Resolve sprite texture
                             let (tex_view, tex_sampler, _has_tex) = Self::resolve_texture(
                                 tex_cache_ref,
-                                if tex_name.is_empty() { None } else { Some(tex_name) },
+                                if tex_name.is_empty() {
+                                    None
+                                } else {
+                                    Some(tex_name)
+                                },
                                 &tex_cache_ref.default_white,
                             );
 
-                            let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &bp.texture_bind_group_layout,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: wgpu::BindingResource::TextureView(tex_view),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::Sampler(tex_sampler),
-                                    },
-                                ],
-                                label: Some("Billboard Texture Bind Group"),
-                            });
+                            let texture_bind_group =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &bp.texture_bind_group_layout,
+                                    entries: &[
+                                        wgpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: wgpu::BindingResource::TextureView(tex_view),
+                                        },
+                                        wgpu::BindGroupEntry {
+                                            binding: 1,
+                                            resource: wgpu::BindingResource::Sampler(tex_sampler),
+                                        },
+                                    ],
+                                    label: Some("Billboard Texture Bind Group"),
+                                });
 
                             self.billboard_draws.push(BillboardDrawCall {
                                 billboard_buffer,
@@ -1496,8 +1721,7 @@ impl SceneRenderer {
             // Fall back to procedural shapes
             let (size, bounds_center) = if let Some(components) = world.get_components(entity.id) {
                 if let Some(bounds) = components.get("bounds") {
-                    extract_bounds_info(bounds)
-                        .unwrap_or((visual.default_size, [0.0, 0.0, 0.0]))
+                    extract_bounds_info(bounds).unwrap_or((visual.default_size, [0.0, 0.0, 0.0]))
                 } else {
                     (visual.default_size, [0.0, 0.0, 0.0])
                 }
@@ -1513,9 +1737,15 @@ impl SceneRenderer {
 
             let mut model = model_matrix;
             // Apply bounds_center in local space so rotation pivots around entity position
-            let rx = model[0][0] * bounds_center[0] + model[1][0] * bounds_center[1] + model[2][0] * bounds_center[2];
-            let ry = model[0][1] * bounds_center[0] + model[1][1] * bounds_center[1] + model[2][1] * bounds_center[2];
-            let rz = model[0][2] * bounds_center[0] + model[1][2] * bounds_center[1] + model[2][2] * bounds_center[2];
+            let rx = model[0][0] * bounds_center[0]
+                + model[1][0] * bounds_center[1]
+                + model[2][0] * bounds_center[2];
+            let ry = model[0][1] * bounds_center[0]
+                + model[1][1] * bounds_center[1]
+                + model[2][1] * bounds_center[2];
+            let rz = model[0][2] * bounds_center[0]
+                + model[1][2] * bounds_center[1]
+                + model[2][2] * bounds_center[2];
             model[3][0] += rx;
             model[3][1] += ry;
             model[3][2] += rz;
@@ -1551,13 +1781,15 @@ impl SceneRenderer {
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
             let proc_blend_mode = parse_blend_mode(&proc_blend_mode_str);
-            let proc_is_transparent = proc_opacity < 1.0
-                || proc_blend_mode != BlendMode::Alpha;
+            let proc_is_transparent = proc_opacity < 1.0 || proc_blend_mode != BlendMode::Alpha;
 
             if !visual.wireframe {
                 if let Some(tex_name) = &material_texture {
-                    let (bc_view, bc_sampler, has_bc) =
-                        Self::resolve_texture(tex_cache_ref, Some(tex_name.as_str()), &tex_cache_ref.default_white);
+                    let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+                        tex_cache_ref,
+                        Some(tex_name.as_str()),
+                        &tex_cache_ref.default_white,
+                    );
 
                     if has_bc {
                         let metallic = material_component
@@ -1571,11 +1803,8 @@ impl SceneRenderer {
                             .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                             .unwrap_or(0.7) as f32;
 
-                        let mut material_uniforms = MaterialUniforms::from_pbr(
-                            [1.0, 1.0, 1.0, 1.0],
-                            metallic,
-                            roughness,
-                        );
+                        let mut material_uniforms =
+                            MaterialUniforms::from_pbr([1.0, 1.0, 1.0, 1.0], metallic, roughness);
                         material_uniforms.has_base_color_tex = 1;
                         material_uniforms.opacity = proc_opacity;
 
@@ -1585,9 +1814,12 @@ impl SceneRenderer {
                             &mesh,
                             transform_uniforms,
                             material_uniforms,
-                            bc_view, bc_sampler,
-                            &tex_cache_ref.default_normal.view, &tex_cache_ref.default_normal.sampler,
-                            &tex_cache_ref.default_metallic_roughness.view, &tex_cache_ref.default_metallic_roughness.sampler,
+                            bc_view,
+                            bc_sampler,
+                            &tex_cache_ref.default_normal.view,
+                            &tex_cache_ref.default_normal.sampler,
+                            &tex_cache_ref.default_metallic_roughness.view,
+                            &tex_cache_ref.default_metallic_roughness.sampler,
                         );
                         draw.entity_id = Some(entity.id);
                         draw.blend_mode = proc_blend_mode;
@@ -1725,6 +1957,87 @@ impl SceneRenderer {
             }
         }
 
+        // ── Sort & batch sprite2d instances ──
+        if !sprite2d_collected.is_empty() {
+            if let Some(sp) = &self.sprite2d_pipeline {
+                // Sort by (layer, texture_name) for optimal batching
+                sprite2d_collected.sort_by(|a, b| {
+                    a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0))
+                });
+
+                // Group consecutive same-texture sprites into batches
+                let mut batch_start = 0;
+                while batch_start < sprite2d_collected.len() {
+                    let batch_tex = &sprite2d_collected[batch_start].0;
+                    let mut batch_end = batch_start + 1;
+                    while batch_end < sprite2d_collected.len()
+                        && sprite2d_collected[batch_end].0 == *batch_tex
+                    {
+                        batch_end += 1;
+                    }
+
+                    let instances: Vec<Sprite2dInstanceGpu> = sprite2d_collected
+                        [batch_start..batch_end]
+                        .iter()
+                        .map(|(_, _, inst)| *inst)
+                        .collect();
+
+                    let instance_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Sprite2D Instance Buffer"),
+                            contents: bytemuck::cast_slice(&instances),
+                            usage: wgpu::BufferUsages::STORAGE,
+                        });
+
+                    let instance_bind_group =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &sp.instance_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: instance_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Sprite2D Instance Bind Group"),
+                        });
+
+                    // Resolve texture
+                    let (tex_view, tex_sampler, _) = Self::resolve_texture(
+                        tex_cache_ref,
+                        if batch_tex.is_empty() {
+                            None
+                        } else {
+                            Some(batch_tex.as_str())
+                        },
+                        &tex_cache_ref.default_white,
+                    );
+
+                    let texture_bind_group =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &sp.texture_bind_group_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(tex_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::Sampler(tex_sampler),
+                                },
+                            ],
+                            label: Some("Sprite2D Texture Bind Group"),
+                        });
+
+                    self.sprite2d_batches.push(Sprite2dBatch {
+                        instance_buffer,
+                        instance_count: instances.len() as u32,
+                        texture_bind_group,
+                        instance_bind_group,
+                    });
+
+                    batch_start = batch_end;
+                }
+            }
+        }
+
         // Put texture cache back
         self.texture_cache = tex_cache;
     }
@@ -1800,18 +2113,17 @@ impl SceneRenderer {
 
         let (transform_buffer, transform_bind_group) =
             Self::create_transform_bind(device, pipeline, &transform_uniforms);
-        let (material_buffer, material_bind_group) =
-            Self::create_material_bind_with_textures(
-                device,
-                pipeline,
-                &material_uniforms,
-                base_color_view,
-                base_color_sampler,
-                normal_view,
-                normal_sampler,
-                mr_view,
-                mr_sampler,
-            );
+        let (material_buffer, material_bind_group) = Self::create_material_bind_with_textures(
+            device,
+            pipeline,
+            &material_uniforms,
+            base_color_view,
+            base_color_sampler,
+            normal_view,
+            normal_sampler,
+            mr_view,
+            mr_sampler,
+        );
 
         DrawCall {
             vertex_buffer,
@@ -1846,18 +2158,17 @@ impl SceneRenderer {
     ) -> DrawCall {
         let (transform_buffer, transform_bind_group) =
             Self::create_transform_bind(device, pipeline, &transform_uniforms);
-        let (material_buffer, material_bind_group) =
-            Self::create_material_bind_with_textures(
-                device,
-                pipeline,
-                &material_uniforms,
-                base_color_view,
-                base_color_sampler,
-                normal_view,
-                normal_sampler,
-                mr_view,
-                mr_sampler,
-            );
+        let (material_buffer, material_bind_group) = Self::create_material_bind_with_textures(
+            device,
+            pipeline,
+            &material_uniforms,
+            base_color_view,
+            base_color_sampler,
+            normal_view,
+            normal_sampler,
+            mr_view,
+            mr_sampler,
+        );
 
         DrawCall {
             vertex_buffer: gpu_mesh.create_vertex_buffer_copy(device),
@@ -2067,8 +2378,8 @@ impl SceneRenderer {
                     }
                     "point" => {
                         if (point_count as usize) < MAX_POINT_LIGHTS {
-                            let light_pos = world.get_world_position(entity.id)
-                                .unwrap_or(Vec3::ZERO);
+                            let light_pos =
+                                world.get_world_position(entity.id).unwrap_or(Vec3::ZERO);
                             let radius = light
                                 .get("range")
                                 .or_else(|| light.get("radius"))
@@ -2077,11 +2388,7 @@ impl SceneRenderer {
                                 })
                                 .unwrap_or(10.0) as f32;
                             points[point_count as usize] = PointLight {
-                                position: [
-                                    light_pos.x,
-                                    light_pos.y,
-                                    light_pos.z,
-                                ],
+                                position: [light_pos.x, light_pos.y, light_pos.z],
                                 radius,
                                 color,
                                 intensity,
@@ -2091,8 +2398,8 @@ impl SceneRenderer {
                     }
                     "spot" => {
                         if (spot_count as usize) < MAX_SPOT_LIGHTS {
-                            let light_pos = world.get_world_position(entity.id)
-                                .unwrap_or(Vec3::ZERO);
+                            let light_pos =
+                                world.get_world_position(entity.id).unwrap_or(Vec3::ZERO);
                             let direction = Self::extract_light_vec3(&light, "direction")
                                 .unwrap_or([0.0, -1.0, 0.0]);
                             let radius = light
@@ -2107,19 +2414,17 @@ impl SceneRenderer {
                                 .and_then(|v| {
                                     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                 })
-                                .unwrap_or(0.3) as f32;
+                                .unwrap_or(0.3)
+                                as f32;
                             let outer_angle = light
                                 .get("outer_angle")
                                 .and_then(|v| {
                                     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                 })
-                                .unwrap_or(0.5) as f32;
+                                .unwrap_or(0.5)
+                                as f32;
                             spots[spot_count as usize] = SpotLight {
-                                position: [
-                                    light_pos.x,
-                                    light_pos.y,
-                                    light_pos.z,
-                                ],
+                                position: [light_pos.x, light_pos.y, light_pos.z],
                                 radius,
                                 direction,
                                 inner_angle,
@@ -2176,7 +2481,13 @@ impl SceneRenderer {
         camera: &Camera,
         view: &wgpu::TextureView,
     ) -> Result<(), wgpu::SurfaceError> {
-        self.render_to(&context.device, &context.queue, &context.depth_view, camera, view);
+        self.render_to(
+            &context.device,
+            &context.queue,
+            &context.depth_view,
+            camera,
+            view,
+        );
         Ok(())
     }
 
@@ -2227,13 +2538,7 @@ impl SceneRenderer {
 
                 // Update cascade matrices
                 let camera_inv = camera.inverse_view_projection_matrix();
-                shadow_pass.update_cascades(
-                    light.direction,
-                    camera_pos,
-                    camera_inv,
-                    0.1,
-                    200.0,
-                );
+                shadow_pass.update_cascades(light.direction, camera_pos, camera_inv, 0.1, 200.0);
 
                 // Write shadow uniforms
                 queue.write_buffer(
@@ -2246,22 +2551,25 @@ impl SceneRenderer {
                 for cascade in 0..CASCADE_COUNT {
                     let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
 
-                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some(&format!("Shadow Cascade {} Encoder", cascade)),
-                    });
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some(&format!("Shadow Cascade {} Encoder", cascade)),
+                        });
 
                     {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some(&format!("Shadow Cascade {} Pass", cascade)),
                             color_attachments: &[],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                view: &shadow_pass.cascade_views[cascade],
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: wgpu::StoreOp::Store,
-                                }),
-                                stencil_ops: None,
-                            }),
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &shadow_pass.cascade_views[cascade],
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
                             timestamp_writes: None,
                             occlusion_query_set: None,
                         });
@@ -2279,22 +2587,22 @@ impl SceneRenderer {
                                 model: draw.model,
                             };
 
-                            let shadow_buffer = device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
+                            let shadow_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                     label: Some("Shadow Draw Uniform"),
                                     contents: bytemuck::cast_slice(&[shadow_uniforms]),
                                     usage: wgpu::BufferUsages::UNIFORM,
-                                },
-                            );
+                                });
 
-                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &shadow_pass.shadow_bind_group_layout,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: shadow_buffer.as_entire_binding(),
-                                }],
-                                label: Some("Shadow Draw Bind Group"),
-                            });
+                            let shadow_bind =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &shadow_pass.shadow_bind_group_layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: shadow_buffer.as_entire_binding(),
+                                    }],
+                                    label: Some("Shadow Draw Bind Group"),
+                                });
 
                             pass.set_bind_group(0, &shadow_bind, &[]);
                             pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2312,22 +2620,22 @@ impl SceneRenderer {
                                 model: draw.model,
                             };
 
-                            let shadow_buffer = device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
+                            let shadow_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                     label: Some("Terrain Shadow Draw Uniform"),
                                     contents: bytemuck::cast_slice(&[shadow_uniforms]),
                                     usage: wgpu::BufferUsages::UNIFORM,
-                                },
-                            );
+                                });
 
-                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &shadow_pass.shadow_bind_group_layout,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: shadow_buffer.as_entire_binding(),
-                                }],
-                                label: Some("Terrain Shadow Draw Bind Group"),
-                            });
+                            let shadow_bind =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &shadow_pass.shadow_bind_group_layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: shadow_buffer.as_entire_binding(),
+                                    }],
+                                    label: Some("Terrain Shadow Draw Bind Group"),
+                                });
 
                             pass.set_bind_group(0, &shadow_bind, &[]);
                             pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2349,22 +2657,22 @@ impl SceneRenderer {
                                 model: draw.model,
                             };
 
-                            let shadow_buffer = device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
+                            let shadow_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                     label: Some("Transparent Shadow Draw Uniform"),
                                     contents: bytemuck::cast_slice(&[shadow_uniforms]),
                                     usage: wgpu::BufferUsages::UNIFORM,
-                                },
-                            );
+                                });
 
-                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &shadow_pass.shadow_bind_group_layout,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: shadow_buffer.as_entire_binding(),
-                                }],
-                                label: Some("Transparent Shadow Draw Bind Group"),
-                            });
+                            let shadow_bind =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &shadow_pass.shadow_bind_group_layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: shadow_buffer.as_entire_binding(),
+                                    }],
+                                    label: Some("Transparent Shadow Draw Bind Group"),
+                                });
 
                             pass.set_bind_group(0, &shadow_bind, &[]);
                             pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2384,22 +2692,22 @@ impl SceneRenderer {
                                 model: draw.model,
                             };
 
-                            let shadow_buffer = device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
+                            let shadow_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                     label: Some("Skinned Shadow Draw Uniform"),
                                     contents: bytemuck::cast_slice(&[shadow_uniforms]),
                                     usage: wgpu::BufferUsages::UNIFORM,
-                                },
-                            );
+                                });
 
-                            let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                                layout: &shadow_pass.shadow_bind_group_layout,
-                                entries: &[wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: shadow_buffer.as_entire_binding(),
-                                }],
-                                label: Some("Skinned Shadow Draw Bind Group"),
-                            });
+                            let shadow_bind =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &shadow_pass.shadow_bind_group_layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: shadow_buffer.as_entire_binding(),
+                                    }],
+                                    label: Some("Skinned Shadow Draw Bind Group"),
+                                });
 
                             pass.set_bind_group(0, &shadow_bind, &[]);
                             pass.set_bind_group(1, &draw.bone_bind_group, &[]);
@@ -2432,8 +2740,8 @@ impl SceneRenderer {
         // All scene pipelines target Rgba16Float, so we always render to the HDR
         // buffer and composite to sRGB.  The `enabled` flag only controls whether
         // bloom / vignette are applied during the composite pass.
-        let has_postprocess = self.postprocess_pipeline.is_some()
-            && self.postprocess_resources.is_some();
+        let has_postprocess =
+            self.postprocess_pipeline.is_some() && self.postprocess_resources.is_some();
 
         // Shader-side tonemapping is always OFF when compositing through the HDR
         // buffer (the composite pass handles ACES + gamma).  Only fall back to
@@ -2569,7 +2877,9 @@ impl SceneRenderer {
                 draw.sort_depth = dx * dx + dy * dy + dz * dz;
             }
             self.transparent_draws.sort_by(|a, b| {
-                b.sort_depth.partial_cmp(&a.sort_depth).unwrap_or(std::cmp::Ordering::Equal)
+                b.sort_depth
+                    .partial_cmp(&a.sort_depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
 
             for draw in &mut self.transparent_skinned_draws {
@@ -2579,7 +2889,9 @@ impl SceneRenderer {
                 draw.sort_depth = dx * dx + dy * dy + dz * dz;
             }
             self.transparent_skinned_draws.sort_by(|a, b| {
-                b.sort_depth.partial_cmp(&a.sort_depth).unwrap_or(std::cmp::Ordering::Equal)
+                b.sort_depth
+                    .partial_cmp(&a.sort_depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
 
@@ -2632,6 +2944,18 @@ impl SceneRenderer {
                     &pp.uniform_buffer,
                     0,
                     bytemuck::cast_slice(&[particle_uniforms]),
+                );
+            }
+        }
+
+        // Update sprite2d uniforms with view_proj
+        if let Some(sp) = &self.sprite2d_pipeline {
+            if !self.sprite2d_batches.is_empty() {
+                let sprite2d_uniforms = Sprite2dUniforms { view_proj };
+                queue.write_buffer(
+                    &sp.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[sprite2d_uniforms]),
                 );
             }
         }
@@ -2713,7 +3037,9 @@ impl SceneRenderer {
                 queue.write_buffer(
                     ub,
                     0,
-                    bytemuck::cast_slice(&[SkyboxUniforms { inv_view_proj: inv_vp }]),
+                    bytemuck::cast_slice(&[SkyboxUniforms {
+                        inv_view_proj: inv_vp,
+                    }]),
                 );
 
                 render_pass.set_pipeline(&sp.pipeline);
@@ -2728,10 +3054,8 @@ impl SceneRenderer {
                 render_pass.set_bind_group(0, &grid.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &grid.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    grid.index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
             }
 
@@ -2742,7 +3066,11 @@ impl SceneRenderer {
                     // Step 1: Depth prepass — write front-face depth (no color)
                     // so the outline interior is blocked by the depth buffer.
                     render_pass.set_pipeline(&self.pipeline.depth_prepass_pipeline);
-                    for draw in self.entity_draws.iter().chain(self.transparent_draws.iter()) {
+                    for draw in self
+                        .entity_draws
+                        .iter()
+                        .chain(self.transparent_draws.iter())
+                    {
                         if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2756,7 +3084,11 @@ impl SceneRenderer {
 
                     if let Some(sp) = &self.skinned_pipeline {
                         render_pass.set_pipeline(&sp.depth_prepass_pipeline);
-                        for draw in self.skinned_entity_draws.iter().chain(self.transparent_skinned_draws.iter()) {
+                        for draw in self
+                            .skinned_entity_draws
+                            .iter()
+                            .chain(self.transparent_skinned_draws.iter())
+                        {
                             if draw.entity_id == Some(sel_id) {
                                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                                 render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
@@ -2772,7 +3104,11 @@ impl SceneRenderer {
 
                     // Step 2: Outline — back faces pushed out, only visible at silhouette
                     render_pass.set_pipeline(&self.pipeline.outline_pipeline);
-                    for draw in self.entity_draws.iter().chain(self.transparent_draws.iter()) {
+                    for draw in self
+                        .entity_draws
+                        .iter()
+                        .chain(self.transparent_draws.iter())
+                    {
                         if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2786,7 +3122,11 @@ impl SceneRenderer {
 
                     if let Some(sp) = &self.skinned_pipeline {
                         render_pass.set_pipeline(&sp.outline_pipeline);
-                        for draw in self.skinned_entity_draws.iter().chain(self.transparent_skinned_draws.iter()) {
+                        for draw in self
+                            .skinned_entity_draws
+                            .iter()
+                            .chain(self.transparent_skinned_draws.iter())
+                        {
                             if draw.entity_id == Some(sel_id) {
                                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                                 render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
@@ -2808,10 +3148,8 @@ impl SceneRenderer {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
@@ -2831,7 +3169,9 @@ impl SceneRenderer {
                 }
             } else {
                 // Terrain rendering (early in pass — fills depth buffer for occlusion)
-                if let (Some(tp), Some(mat_bg)) = (&self.terrain_pipeline, &self.terrain_material_bind_group) {
+                if let (Some(tp), Some(mat_bg)) =
+                    (&self.terrain_pipeline, &self.terrain_material_bind_group)
+                {
                     if !self.terrain_draws.is_empty() {
                         render_pass.set_pipeline(&tp.pipeline);
                         render_pass.set_bind_group(1, mat_bg, &[]);
@@ -2852,7 +3192,11 @@ impl SceneRenderer {
                 // Outline pass for selected standard entities (before normal rendering)
                 if let Some(sel_id) = self.selected_entity {
                     render_pass.set_pipeline(&self.pipeline.outline_pipeline);
-                    for draw in self.entity_draws.iter().chain(self.transparent_draws.iter()) {
+                    for draw in self
+                        .entity_draws
+                        .iter()
+                        .chain(self.transparent_draws.iter())
+                    {
                         if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -2875,10 +3219,8 @@ impl SceneRenderer {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
@@ -2886,7 +3228,11 @@ impl SceneRenderer {
                 if let Some(sel_id) = self.selected_entity {
                     if let Some(sp) = &self.skinned_pipeline {
                         render_pass.set_pipeline(&sp.outline_pipeline);
-                        for draw in self.skinned_entity_draws.iter().chain(self.transparent_skinned_draws.iter()) {
+                        for draw in self
+                            .skinned_entity_draws
+                            .iter()
+                            .chain(self.transparent_skinned_draws.iter())
+                        {
                             if draw.entity_id == Some(sel_id) {
                                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                                 render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
@@ -2950,6 +3296,23 @@ impl SceneRenderer {
                                 wgpu::IndexFormat::Uint32,
                             );
                             render_pass.draw_indexed(0..6, 0, 0..1);
+                        }
+                    }
+                }
+
+                // 2D sprites (after billboards, instanced batched rendering)
+                if let Some(sp) = &self.sprite2d_pipeline {
+                    if !self.sprite2d_batches.is_empty() {
+                        render_pass.set_pipeline(&sp.pipeline);
+                        render_pass.set_index_buffer(
+                            sp.quad_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.set_bind_group(0, &sp.uniform_bind_group, &[]);
+                        for batch in &self.sprite2d_batches {
+                            render_pass.set_bind_group(1, &batch.instance_bind_group, &[]);
+                            render_pass.set_bind_group(2, &batch.texture_bind_group, &[]);
+                            render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
                         }
                     }
                 }
@@ -3061,10 +3424,8 @@ impl SceneRenderer {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -3079,7 +3440,14 @@ impl SceneRenderer {
 
             // Run SSAO if enabled
             if self.postprocess_config.enabled && self.postprocess_config.ssao_enabled {
-                pp.run_ssao(device, queue, resources, &self.postprocess_config, depth_view, camera);
+                pp.run_ssao(
+                    device,
+                    queue,
+                    resources,
+                    &self.postprocess_config,
+                    depth_view,
+                    camera,
+                );
             }
 
             // Run bloom if post-processing effects are enabled
@@ -3092,7 +3460,15 @@ impl SceneRenderer {
 
             // Composite: HDR + bloom + SSAO + fog → tonemapped sRGB surface
             // (always runs — this is what converts Rgba16Float → surface format)
-            pp.composite(device, queue, resources, &self.postprocess_config, target_view, depth_view, camera);
+            pp.composite(
+                device,
+                queue,
+                resources,
+                &self.postprocess_config,
+                target_view,
+                depth_view,
+                camera,
+            );
         }
     }
 }
@@ -3110,9 +3486,15 @@ fn identity_matrix() -> [[f32; 4]; 4] {
 /// Only the upper 3x3 matters for normals; we embed it in a 4x4 for GPU upload.
 fn mat4_inv_transpose(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     // Extract upper-left 3x3
-    let a = m[0][0]; let b = m[1][0]; let c = m[2][0];
-    let d = m[0][1]; let e = m[1][1]; let f = m[2][1];
-    let g = m[0][2]; let h = m[1][2]; let i = m[2][2];
+    let a = m[0][0];
+    let b = m[1][0];
+    let c = m[2][0];
+    let d = m[0][1];
+    let e = m[1][1];
+    let f = m[2][1];
+    let g = m[0][2];
+    let h = m[1][2];
+    let i = m[2][2];
 
     let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
 

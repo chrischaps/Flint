@@ -24,9 +24,7 @@ impl ArchetypeSchema {
 
     /// Get the default value for a component's field
     pub fn get_default(&self, component: &str, field: &str) -> Option<&toml::Value> {
-        self.defaults
-            .get(component)
-            .and_then(|v| v.get(field))
+        self.defaults.get(component).and_then(|v| v.get(field))
     }
 }
 

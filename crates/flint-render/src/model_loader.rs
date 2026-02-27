@@ -7,10 +7,10 @@
 //! Callers can perform skeletal animation registration and catalog pre-resolution
 //! on top of the returned [`ModelLoadResult`].
 
+use crate::SceneRenderer;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult};
-use crate::SceneRenderer;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -82,14 +82,24 @@ fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<Path
             return Some(path.clone());
         }
     }
-    let p = config.scene_dir.join("models").join(format!("{}.glb", asset_name));
-    if p.exists() {
-        return Some(p);
-    }
-    if let Some(parent) = config.scene_dir.parent() {
-        let p = parent.join("models").join(format!("{}.glb", asset_name));
+    // Try both .glb and .gltf in each search directory
+    for ext in &["glb", "gltf"] {
+        let p = config
+            .scene_dir
+            .join("models")
+            .join(format!("{}.{}", asset_name, ext));
         if p.exists() {
             return Some(p);
+        }
+    }
+    if let Some(parent) = config.scene_dir.parent() {
+        for ext in &["glb", "gltf"] {
+            let p = parent
+                .join("models")
+                .join(format!("{}.{}", asset_name, ext));
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     None
@@ -278,7 +288,11 @@ pub fn load_models_from_world(
             let components = world.get_components(e.id);
             let model_asset = components
                 .and_then(|c| c.get("model").cloned())
-                .and_then(|model| model.get("asset").and_then(|v| v.as_str().map(String::from)));
+                .and_then(|model| {
+                    model
+                        .get("asset")
+                        .and_then(|v| v.as_str().map(String::from))
+                });
             let has_animator = components
                 .map(|c| c.get("animator").is_some())
                 .unwrap_or(false);
@@ -352,7 +366,9 @@ pub fn load_models_from_world(
             }
 
             if renderer.mesh_cache().contains_skinned(asset_name) {
-                result.skinned_entities.insert(*entity_id, asset_name.clone());
+                result
+                    .skinned_entities
+                    .insert(*entity_id, asset_name.clone());
                 result.models.push(LoadedModel {
                     entity_id: *entity_id,
                     asset_name: asset_name.clone(),
@@ -411,7 +427,9 @@ pub fn load_models_from_world(
                 if is_skinned {
                     renderer.load_skinned_model(device, queue, asset_name, &import_result);
                     renderer.load_model(device, queue, asset_name, &import_result);
-                    result.skinned_entities.insert(*entity_id, asset_name.clone());
+                    result
+                        .skinned_entities
+                        .insert(*entity_id, asset_name.clone());
                     was_expanded = false;
                     kept_result = Some(import_result);
                     node_map = None;

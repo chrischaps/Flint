@@ -4,10 +4,7 @@ use crate::component::{ComponentSchema, FieldType};
 use flint_core::{FlintError, Result};
 
 /// Validate component data against its schema
-pub fn validate_component_data(
-    schema: &ComponentSchema,
-    data: &toml::Value,
-) -> Result<()> {
+pub fn validate_component_data(schema: &ComponentSchema, data: &toml::Value) -> Result<()> {
     let table = data
         .as_table()
         .ok_or_else(|| FlintError::ValidationError("Component data must be a table".to_string()))?;
@@ -22,7 +19,13 @@ pub fn validate_component_data(
     // Validate each provided field
     for (field_name, value) in table {
         if let Some(field_schema) = schema.fields.get(field_name) {
-            validate_field_value(field_name, &field_schema.field_type, value, field_schema.min, field_schema.max)?;
+            validate_field_value(
+                field_name,
+                &field_schema.field_type,
+                value,
+                field_schema.min,
+                field_schema.max,
+            )?;
         }
         // Unknown fields are allowed for flexibility
     }
@@ -76,7 +79,13 @@ fn validate_field_value(
             // Transform needs position, rotation, scale - all optional with defaults
             for key in ["position", "rotation", "scale"] {
                 if let Some(v) = t.get(key) {
-                    validate_field_value(&format!("{}.{}", field_name, key), &FieldType::Vec3, v, None, None)?;
+                    validate_field_value(
+                        &format!("{}.{}", field_name, key),
+                        &FieldType::Vec3,
+                        v,
+                        None,
+                        None,
+                    )?;
                 }
             }
             Ok(())
@@ -165,8 +174,8 @@ fn value_type_name(value: &toml::Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use crate::component::FieldSchema;
+    use std::collections::HashMap;
 
     fn make_test_schema() -> ComponentSchema {
         let mut fields = HashMap::new();

@@ -25,10 +25,7 @@ impl Heightmap {
         let width = gray.width();
         let depth = gray.height();
 
-        let heights: Vec<f32> = gray
-            .pixels()
-            .map(|p| p.0[0] as f32 / 65535.0)
-            .collect();
+        let heights: Vec<f32> = gray.pixels().map(|p| p.0[0] as f32 / 65535.0).collect();
 
         Ok(Self {
             heights,

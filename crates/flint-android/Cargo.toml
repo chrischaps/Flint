@@ -1,0 +1,20 @@
+[package]
+name = "flint-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Android entry point for Flint engine"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+flint-player = { workspace = true }
+flint-scene = { workspace = true }
+flint-schema = { workspace = true }
+flint-ecs = { workspace = true }
+winit = { workspace = true, features = ["android-native-activity"] }
+android-activity = { version = "0.6", features = ["native-activity"] }
+log = { workspace = true }
+android_logger = { workspace = true }
+ndk = { workspace = true }

@@ -1,8 +1,10 @@
 //! Animation system for Flint engine
 //!
-//! Provides two tiers of animation:
+//! Provides four tiers of animation:
 //! - **Tier 1**: Property tweens — animate any TOML component field via keyframes
 //! - **Tier 2**: Skeletal animation — glTF skin/joint hierarchies with GPU skinning
+//! - **Tier 3**: Node animation — per-node transform animation for scene graphs
+//! - **Tier 4**: Sprite sheet animation — frame-based sprite animation from `.sprite.toml` clips
 
 pub mod blend;
 pub mod clip;
@@ -15,6 +17,8 @@ pub mod skeletal_clip;
 pub mod skeletal_sampler;
 pub mod skeletal_sync;
 pub mod skeleton;
+pub mod sprite_clip;
+pub mod sprite_sync;
 pub mod sync;
 
 use flint_core::Result;
@@ -24,18 +28,20 @@ use flint_runtime::RuntimeSystem;
 use node_sync::NodeSync;
 use player::AnimationPlayer;
 use skeletal_sync::SkeletalSync;
+use sprite_sync::SpriteAnimSync;
 use sync::AnimationSync;
 
 /// Top-level animation system integrating clip playback with the ECS world.
 ///
-/// Supports both property tweens (Tier 1) and skeletal animation (Tier 2).
-/// Implements `RuntimeSystem`, bridges TOML components via `AnimationSync`
-/// and `SkeletalSync`.
+/// Supports property tweens (Tier 1), skeletal animation (Tier 2),
+/// node animation (Tier 3), and sprite sheet animation (Tier 4).
+/// Implements `RuntimeSystem`, bridges TOML components via the various Sync types.
 pub struct AnimationSystem {
     pub player: AnimationPlayer,
     pub sync: AnimationSync,
     pub skeletal_sync: SkeletalSync,
     pub node_sync: NodeSync,
+    pub sprite_sync: SpriteAnimSync,
 }
 
 impl AnimationSystem {
@@ -45,15 +51,17 @@ impl AnimationSystem {
             sync: AnimationSync::new(),
             skeletal_sync: SkeletalSync::new(),
             node_sync: NodeSync::new(),
+            sprite_sync: SpriteAnimSync::new(),
         }
     }
 
     /// Clear all animation state for a scene transition.
-    /// Preserves the AnimationPlayer's clip registry (clips are reloadable).
+    /// Preserves clip registries (clips are reloadable).
     pub fn clear(&mut self) {
         self.sync.clear();
         self.skeletal_sync.clear();
         self.node_sync.clear();
+        self.sprite_sync.clear();
     }
 }
 
@@ -68,14 +76,17 @@ impl RuntimeSystem for AnimationSystem {
         self.sync.sync_from_world(world, &self.player);
         self.skeletal_sync.sync_from_world(world);
         self.node_sync.sync_from_world(world);
+        self.sprite_sync.sync_from_world(world);
         println!(
-            "Animation system initialized ({} property clips, {} skeletal clips, {} node clips, {} property entities, {} skeletal entities, {} node entities)",
+            "Animation system initialized ({} property clips, {} skeletal clips, {} node clips, {} sprite clips, {} property entities, {} skeletal entities, {} node entities, {} sprite entities)",
             self.player.clip_count(),
             self.skeletal_sync.clip_count(),
             self.node_sync.clip_count(),
+            self.sprite_sync.clip_count(),
             self.sync.active_count(),
             self.skeletal_sync.active_count(),
-            self.node_sync.active_count()
+            self.node_sync.active_count(),
+            self.sprite_sync.active_count()
         );
         Ok(())
     }
@@ -97,6 +108,10 @@ impl RuntimeSystem for AnimationSystem {
         // Tier 3: Node transform animation
         self.node_sync.sync_from_world(world);
         self.node_sync.advance_and_apply(world, dt);
+
+        // Tier 4: Sprite sheet animation
+        self.sprite_sync.sync_from_world(world);
+        self.sprite_sync.advance_and_write(world, dt);
 
         Ok(())
     }

@@ -342,9 +342,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     color = color + ambient;
 
     // Tonemapping (only when post-processing is disabled)
+    // Output stays LINEAR — the sRGB render target applies gamma encoding.
     if (terrain.enable_tonemapping == 1u) {
         color = aces_filmic(color);
-        color = linear_to_srgb(color);
     }
 
     return vec4<f32>(color, 1.0);

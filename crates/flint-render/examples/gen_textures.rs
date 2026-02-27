@@ -18,7 +18,8 @@ fn main() {
 
 /// Simple pseudo-random hash for deterministic noise
 fn hash(x: u32, y: u32, seed: u32) -> f32 {
-    let n = x.wrapping_mul(374761393)
+    let n = x
+        .wrapping_mul(374761393)
         .wrapping_add(y.wrapping_mul(668265263))
         .wrapping_add(seed.wrapping_mul(1274126177));
     let n = (n ^ (n >> 13)).wrapping_mul(1103515245);
@@ -79,8 +80,8 @@ fn generate_stone_wall(out_dir: &Path) {
             // Mortar line detection
             let mortar_h = 0.04; // horizontal mortar thickness
             let mortar_v = 0.04; // vertical mortar thickness
-            let is_mortar = by < mortar_h || by > (1.0 - mortar_h)
-                || bx < mortar_v || bx > (1.0 - mortar_v);
+            let is_mortar =
+                by < mortar_h || by > (1.0 - mortar_h) || bx < mortar_v || bx > (1.0 - mortar_v);
 
             if is_mortar {
                 // Mortar: light gray with subtle variation
@@ -140,7 +141,12 @@ fn generate_wood_planks(out_dir: &Path) {
                 let plank_tone = 0.35 + plank_seed * 0.25;
 
                 // Wood grain: stretched noise along Y axis
-                let grain = fbm(x as f32 * 0.02 + plank as f32 * 30.0, y as f32 * 0.15, 4, 200);
+                let grain = fbm(
+                    x as f32 * 0.02 + plank as f32 * 30.0,
+                    y as f32 * 0.15,
+                    4,
+                    200,
+                );
                 let fine_grain = fbm(x as f32 * 0.1 + plank as f32 * 30.0, y as f32 * 0.5, 2, 300);
 
                 // Ring pattern via sine on the grain
@@ -178,8 +184,7 @@ fn generate_floor_tiles(out_dir: &Path) {
 
             // Grout lines
             let grout = 0.035;
-            let is_grout = tx < grout || tx > (1.0 - grout)
-                || ty < grout || ty > (1.0 - grout);
+            let is_grout = tx < grout || tx > (1.0 - grout) || ty < grout || ty > (1.0 - grout);
 
             if is_grout {
                 let noise = fbm(x as f32 * 0.15, y as f32 * 0.15, 2, 88);

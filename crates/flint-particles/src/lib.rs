@@ -16,7 +16,7 @@ use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_runtime::RuntimeSystem;
 
-pub use emitter::{EmitterConfig, EmissionShape, ParticleBlendMode};
+pub use emitter::{EmissionShape, EmitterConfig, ParticleBlendMode};
 pub use particle::{ParticleInstance, ParticlePool};
 pub use sync::{ParticleDrawData, ParticleSync};
 

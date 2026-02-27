@@ -219,9 +219,24 @@ impl Transform {
 
         // Apply scale and translation
         let mat = [
-            [r00 * self.scale.x, r10 * self.scale.x, r20 * self.scale.x, 0.0],
-            [r01 * self.scale.y, r11 * self.scale.y, r21 * self.scale.y, 0.0],
-            [r02 * self.scale.z, r12 * self.scale.z, r22 * self.scale.z, 0.0],
+            [
+                r00 * self.scale.x,
+                r10 * self.scale.x,
+                r20 * self.scale.x,
+                0.0,
+            ],
+            [
+                r01 * self.scale.y,
+                r11 * self.scale.y,
+                r21 * self.scale.y,
+                0.0,
+            ],
+            [
+                r02 * self.scale.z,
+                r12 * self.scale.z,
+                r22 * self.scale.z,
+                0.0,
+            ],
             [self.position.x, self.position.y, self.position.z, 1.0],
         ];
         mat

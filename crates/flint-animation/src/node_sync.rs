@@ -86,6 +86,11 @@ impl NodeSync {
         self.states.len()
     }
 
+    /// Return the names of all registered node clips
+    pub fn clip_names(&self) -> Vec<String> {
+        self.clips.keys().cloned().collect()
+    }
+
     /// Scan the world for entities with `animator` (but no `skeleton`) that are
     /// registered in `node_maps`. Creates playback states for newly discovered entities.
     /// Detects clip/speed/blend changes for existing entities.
@@ -130,7 +135,10 @@ impl NodeSync {
                     .unwrap_or(true);
 
                 // Clip changed — reset playback
-                if !ecs_clip.is_empty() && ecs_clip != state.clip_name && self.clips.contains_key(&ecs_clip) {
+                if !ecs_clip.is_empty()
+                    && ecs_clip != state.clip_name
+                    && self.clips.contains_key(&ecs_clip)
+                {
                     state.clip_name = ecs_clip;
                     state.time = 0.0;
                     state.playing = ecs_playing;
@@ -214,6 +222,23 @@ impl NodeSync {
 
             self.states.insert(entity.id, state);
         }
+    }
+
+    /// Get the playback state for a given entity
+    pub fn get_playback_state(&self, entity_id: &EntityId) -> Option<&NodePlaybackState> {
+        self.states.get(entity_id)
+    }
+
+    /// Set the playback time for a given entity (used for timeline scrubbing)
+    pub fn set_playback_time(&mut self, entity_id: &EntityId, time: f64) {
+        if let Some(state) = self.states.get_mut(entity_id) {
+            state.time = time;
+        }
+    }
+
+    /// Get the duration of a clip by name
+    pub fn get_clip_duration(&self, clip_name: &str) -> Option<f64> {
+        self.clips.get(clip_name).map(|c| c.duration)
     }
 
     /// Advance all node animation playbacks and write transforms to child entities.

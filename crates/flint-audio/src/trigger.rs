@@ -87,11 +87,7 @@ impl AudioTrigger {
     }
 
     /// Process a list of game events and generate audio commands
-    pub fn process_events(
-        &self,
-        events: &[GameEvent],
-        world: &FlintWorld,
-    ) -> Vec<AudioCommand> {
+    pub fn process_events(&self, events: &[GameEvent], world: &FlintWorld) -> Vec<AudioCommand> {
         let mut commands = Vec::new();
 
         for event in events {
@@ -108,9 +104,7 @@ impl AudioTrigger {
                 GameEvent::TriggerEntered { entity: _, trigger } => {
                     if let Some(rules) = self.entity_rules.get(trigger) {
                         if let Some(sound) = &rules.on_enter {
-                            let pos = world
-                                .get_transform(*trigger)
-                                .map(|t| t.position);
+                            let pos = world.get_transform(*trigger).map(|t| t.position);
                             commands.push(AudioCommand::Play {
                                 sound: sound.clone(),
                                 position: pos,
@@ -122,9 +116,7 @@ impl AudioTrigger {
                 GameEvent::TriggerExited { entity: _, trigger } => {
                     if let Some(rules) = self.entity_rules.get(trigger) {
                         if let Some(sound) = &rules.on_exit {
-                            let pos = world
-                                .get_transform(*trigger)
-                                .map(|t| t.position);
+                            let pos = world.get_transform(*trigger).map(|t| t.position);
                             commands.push(AudioCommand::Play {
                                 sound: sound.clone(),
                                 position: pos,
@@ -213,7 +205,9 @@ mod tests {
             );
             t
         });
-        world.set_component(door_id, "transform", transform).unwrap();
+        world
+            .set_component(door_id, "transform", transform)
+            .unwrap();
 
         // Add audio_trigger to door
         let trigger_data = toml::Value::Table({

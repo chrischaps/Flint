@@ -105,12 +105,7 @@ impl AnimationSync {
     }
 
     /// Advance all playbacks and write sampled values back to ECS components.
-    pub fn advance_and_write(
-        &mut self,
-        world: &mut FlintWorld,
-        player: &AnimationPlayer,
-        dt: f64,
-    ) {
+    pub fn advance_and_write(&mut self, world: &mut FlintWorld, player: &AnimationPlayer, dt: f64) {
         for (entity_id, state) in &mut self.states {
             let Some(clip) = player.get_clip(&state.clip_name) else {
                 continue;
@@ -164,11 +159,7 @@ impl AnimationSync {
                         components.set_field("transform", "scale", arr);
                     }
                     crate::clip::TrackTarget::CustomFloat { component, field } => {
-                        components.set_field(
-                            component,
-                            field,
-                            toml::Value::Float(value[0] as f64),
-                        );
+                        components.set_field(component, field, toml::Value::Float(value[0] as f64));
                     }
                 }
             }

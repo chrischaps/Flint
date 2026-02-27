@@ -7,9 +7,7 @@
 //!    cross-section along the referenced spline and upload the resulting
 //!    mesh + trimesh collider.
 
-use flint_core::spline::{
-    self, SplineControlPoint, SplineSample,
-};
+use flint_core::spline::{self, SplineControlPoint, SplineSample};
 use flint_core::Vec3;
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
@@ -361,7 +359,11 @@ fn generate_cross_section_mesh(
         let seg_color = if let Some(sc) = stripe_color {
             let dist = seg as f32 * spacing;
             let stripe_index = (dist / stripe_width).floor() as i32;
-            if stripe_index % 2 == 0 { color } else { sc }
+            if stripe_index % 2 == 0 {
+                color
+            } else {
+                sc
+            }
         } else {
             color
         };
@@ -371,14 +373,39 @@ fn generate_cross_section_mesh(
         let top_normal = ((samples[seg].up + samples[next].up) * 0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_tl.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [0.0, u0] },
-            Vertex { position: c_tr.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [1.0, u0] },
-            Vertex { position: n_tl.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [0.0, u1] },
-            Vertex { position: n_tr.to_array(), normal: top_normal.to_array(), color: seg_color, uv: [1.0, u1] },
+            Vertex {
+                position: c_tl.to_array(),
+                normal: top_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u0],
+            },
+            Vertex {
+                position: c_tr.to_array(),
+                normal: top_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u0],
+            },
+            Vertex {
+                position: n_tl.to_array(),
+                normal: top_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u1],
+            },
+            Vertex {
+                position: n_tr.to_array(),
+                normal: top_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u1],
+            },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
-        phys_verts.extend_from_slice(&[c_tl.to_array(), c_tr.to_array(), n_tl.to_array(), n_tr.to_array()]);
+        phys_verts.extend_from_slice(&[
+            c_tl.to_array(),
+            c_tr.to_array(),
+            n_tl.to_array(),
+            n_tr.to_array(),
+        ]);
         phys_tris.push([pb, pb + 1, pb + 2]);
         phys_tris.push([pb + 1, pb + 3, pb + 2]);
 
@@ -386,14 +413,39 @@ fn generate_cross_section_mesh(
         let bot_normal = ((samples[seg].up + samples[next].up) * -0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_br.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [0.0, u0] },
-            Vertex { position: c_bl.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [1.0, u0] },
-            Vertex { position: n_br.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [0.0, u1] },
-            Vertex { position: n_bl.to_array(), normal: bot_normal.to_array(), color: seg_color, uv: [1.0, u1] },
+            Vertex {
+                position: c_br.to_array(),
+                normal: bot_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u0],
+            },
+            Vertex {
+                position: c_bl.to_array(),
+                normal: bot_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u0],
+            },
+            Vertex {
+                position: n_br.to_array(),
+                normal: bot_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u1],
+            },
+            Vertex {
+                position: n_bl.to_array(),
+                normal: bot_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u1],
+            },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
-        phys_verts.extend_from_slice(&[c_br.to_array(), c_bl.to_array(), n_br.to_array(), n_bl.to_array()]);
+        phys_verts.extend_from_slice(&[
+            c_br.to_array(),
+            c_bl.to_array(),
+            n_br.to_array(),
+            n_bl.to_array(),
+        ]);
         phys_tris.push([pb, pb + 1, pb + 2]);
         phys_tris.push([pb + 1, pb + 3, pb + 2]);
 
@@ -401,14 +453,39 @@ fn generate_cross_section_mesh(
         let left_normal = ((samples[seg].right + samples[next].right) * -0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_bl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [0.0, u0] },
-            Vertex { position: c_tl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [1.0, u0] },
-            Vertex { position: n_bl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [0.0, u1] },
-            Vertex { position: n_tl.to_array(), normal: left_normal.to_array(), color: seg_color, uv: [1.0, u1] },
+            Vertex {
+                position: c_bl.to_array(),
+                normal: left_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u0],
+            },
+            Vertex {
+                position: c_tl.to_array(),
+                normal: left_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u0],
+            },
+            Vertex {
+                position: n_bl.to_array(),
+                normal: left_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u1],
+            },
+            Vertex {
+                position: n_tl.to_array(),
+                normal: left_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u1],
+            },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
-        phys_verts.extend_from_slice(&[c_bl.to_array(), c_tl.to_array(), n_bl.to_array(), n_tl.to_array()]);
+        phys_verts.extend_from_slice(&[
+            c_bl.to_array(),
+            c_tl.to_array(),
+            n_bl.to_array(),
+            n_tl.to_array(),
+        ]);
         phys_tris.push([pb, pb + 1, pb + 2]);
         phys_tris.push([pb + 1, pb + 3, pb + 2]);
 
@@ -416,14 +493,39 @@ fn generate_cross_section_mesh(
         let right_normal = ((samples[seg].right + samples[next].right) * 0.5).normalized();
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_tr.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [0.0, u0] },
-            Vertex { position: c_br.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [1.0, u0] },
-            Vertex { position: n_tr.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [0.0, u1] },
-            Vertex { position: n_br.to_array(), normal: right_normal.to_array(), color: seg_color, uv: [1.0, u1] },
+            Vertex {
+                position: c_tr.to_array(),
+                normal: right_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u0],
+            },
+            Vertex {
+                position: c_br.to_array(),
+                normal: right_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u0],
+            },
+            Vertex {
+                position: n_tr.to_array(),
+                normal: right_normal.to_array(),
+                color: seg_color,
+                uv: [0.0, u1],
+            },
+            Vertex {
+                position: n_br.to_array(),
+                normal: right_normal.to_array(),
+                color: seg_color,
+                uv: [1.0, u1],
+            },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         let pb = phys_verts.len() as u32;
-        phys_verts.extend_from_slice(&[c_tr.to_array(), c_br.to_array(), n_tr.to_array(), n_br.to_array()]);
+        phys_verts.extend_from_slice(&[
+            c_tr.to_array(),
+            c_br.to_array(),
+            n_tr.to_array(),
+            n_br.to_array(),
+        ]);
         phys_tris.push([pb, pb + 1, pb + 2]);
         phys_tris.push([pb + 1, pb + 3, pb + 2]);
     }
@@ -448,7 +550,11 @@ fn generate_cross_section_mesh(
 /// Helper to set model.asset on an entity so the renderer draws it.
 fn set_model_asset(world: &mut FlintWorld, entity_id: flint_core::EntityId, asset_name: &str) {
     if let Some(comps) = world.get_components_mut(entity_id) {
-        comps.set_field("model", "asset", toml::Value::String(asset_name.to_string()));
+        comps.set_field(
+            "model",
+            "asset",
+            toml::Value::String(asset_name.to_string()),
+        );
     } else {
         let mut model_table = toml::map::Map::new();
         model_table.insert("asset".into(), toml::Value::String(asset_name.to_string()));
@@ -576,10 +682,7 @@ pub fn load_splines(
                     });
                 }
                 None => {
-                    eprintln!(
-                        "Failed to parse spline_mesh on entity '{}'",
-                        entity.name
-                    );
+                    eprintln!("Failed to parse spline_mesh on entity '{}'", entity.name);
                 }
             }
         }

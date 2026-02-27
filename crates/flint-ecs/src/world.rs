@@ -120,9 +120,9 @@ impl FlintWorld {
         self.name_map.retain(|_, v| *v != id);
 
         // Remove from world
-        self.world.despawn(*hecs_entity).map_err(|_| {
-            FlintError::EntityNotFound(id.to_string())
-        })?;
+        self.world
+            .despawn(*hecs_entity)
+            .map_err(|_| FlintError::EntityNotFound(id.to_string()))?;
 
         self.id_map.remove_by_left(&id);
         self.components.remove(&id);
@@ -169,7 +169,12 @@ impl FlintWorld {
     }
 
     /// Set a component on an entity
-    pub fn set_component(&mut self, id: EntityId, component: &str, data: toml::Value) -> Result<()> {
+    pub fn set_component(
+        &mut self,
+        id: EntityId,
+        component: &str,
+        data: toml::Value,
+    ) -> Result<()> {
         let components = self
             .components
             .get_mut(&id)
@@ -184,7 +189,12 @@ impl FlintWorld {
     /// If the component already exists (e.g. from archetype defaults),
     /// individual fields from `data` are merged in rather than replacing
     /// the entire component. Entity-level fields win over defaults.
-    pub fn merge_component(&mut self, id: EntityId, component: &str, data: toml::Value) -> Result<()> {
+    pub fn merge_component(
+        &mut self,
+        id: EntityId,
+        component: &str,
+        data: toml::Value,
+    ) -> Result<()> {
         let components = self
             .components
             .get_mut(&id)
@@ -249,7 +259,10 @@ impl FlintWorld {
                     .map(|c| c.component_names().into_iter().map(String::from).collect())
                     .unwrap_or_default();
 
-                let parent = self.parents.get(id).and_then(|pid| self.get_name(*pid).map(String::from));
+                let parent = self
+                    .parents
+                    .get(id)
+                    .and_then(|pid| self.get_name(*pid).map(String::from));
 
                 EntityInfo {
                     id: *id,
@@ -292,10 +305,21 @@ impl FlintWorld {
         let transform_data = components.get("transform")?;
 
         // Parse transform from TOML value
-        let pos = transform_data.get("position").and_then(|v| parse_vec3(v)).unwrap_or(Vec3::ZERO);
-        let rot = transform_data.get("rotation").and_then(|v| parse_vec3(v)).unwrap_or(Vec3::ZERO);
-        let scale = transform_data.get("scale").and_then(|v| parse_vec3(v)).unwrap_or(Vec3::ONE);
-        let rotation_quat = transform_data.get("rotation_quat").and_then(|v| parse_quat(v));
+        let pos = transform_data
+            .get("position")
+            .and_then(|v| parse_vec3(v))
+            .unwrap_or(Vec3::ZERO);
+        let rot = transform_data
+            .get("rotation")
+            .and_then(|v| parse_vec3(v))
+            .unwrap_or(Vec3::ZERO);
+        let scale = transform_data
+            .get("scale")
+            .and_then(|v| parse_vec3(v))
+            .unwrap_or(Vec3::ONE);
+        let rotation_quat = transform_data
+            .get("rotation_quat")
+            .and_then(|v| parse_quat(v));
 
         Some(Transform {
             position: pos,
@@ -332,10 +356,22 @@ impl FlintWorld {
 fn parse_quat(value: &toml::Value) -> Option<[f32; 4]> {
     if let Some(arr) = value.as_array() {
         if arr.len() >= 4 {
-            let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
-            let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
-            let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
-            let w = arr[3].as_float().or_else(|| arr[3].as_integer().map(|i| i as f64)).unwrap_or(1.0) as f32;
+            let x = arr[0]
+                .as_float()
+                .or_else(|| arr[0].as_integer().map(|i| i as f64))
+                .unwrap_or(0.0) as f32;
+            let y = arr[1]
+                .as_float()
+                .or_else(|| arr[1].as_integer().map(|i| i as f64))
+                .unwrap_or(0.0) as f32;
+            let z = arr[2]
+                .as_float()
+                .or_else(|| arr[2].as_integer().map(|i| i as f64))
+                .unwrap_or(0.0) as f32;
+            let w = arr[3]
+                .as_float()
+                .or_else(|| arr[3].as_integer().map(|i| i as f64))
+                .unwrap_or(1.0) as f32;
             return Some([x, y, z, w]);
         }
     }
@@ -352,9 +388,18 @@ fn parse_vec3(value: &toml::Value) -> Option<Vec3> {
 
     if let Some(arr) = value.as_array() {
         if arr.len() >= 3 {
-            let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
-            let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
-            let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64)).unwrap_or(0.0) as f32;
+            let x = arr[0]
+                .as_float()
+                .or_else(|| arr[0].as_integer().map(|i| i as f64))
+                .unwrap_or(0.0) as f32;
+            let y = arr[1]
+                .as_float()
+                .or_else(|| arr[1].as_integer().map(|i| i as f64))
+                .unwrap_or(0.0) as f32;
+            let z = arr[2]
+                .as_float()
+                .or_else(|| arr[2].as_integer().map(|i| i as f64))
+                .unwrap_or(0.0) as f32;
             return Some(Vec3::new(x, y, z));
         }
     }
@@ -421,7 +466,9 @@ mod tests {
             style = "hinged"
         };
 
-        world.set_component(id, "door", toml::Value::Table(data)).unwrap();
+        world
+            .set_component(id, "door", toml::Value::Table(data))
+            .unwrap();
 
         let comp = world.get_component(id, "door").unwrap();
         assert_eq!(comp.get("locked").and_then(|v| v.as_bool()), Some(false));

@@ -51,18 +51,11 @@ enum TransitionPhase {
     /// Normal gameplay
     Idle,
     /// Playing exit transition — scripts draw fade-out visuals
-    Exiting {
-        target_scene: String,
-        elapsed: f32,
-    },
+    Exiting { target_scene: String, elapsed: f32 },
     /// Loading the new scene (synchronous, happens in one frame)
-    Loading {
-        target_scene: String,
-    },
+    Loading { target_scene: String },
     /// Playing enter transition — scripts draw fade-in visuals
-    Entering {
-        elapsed: f32,
-    },
+    Entering { elapsed: f32 },
 }
 
 impl TransitionPhase {
@@ -113,6 +106,9 @@ pub struct PlayerApp {
 
     // Environment
     pub skybox_path: Option<String>,
+
+    // Scene-level camera configuration
+    pub scene_camera: Option<flint_scene::CameraDef>,
 
     // Scene-level post-processing overrides
     pub scene_post_process: Option<flint_scene::PostProcessDef>,
@@ -183,6 +179,7 @@ impl PlayerApp {
             fullscreen,
             cursor_captured: false,
             skybox_path: None,
+            scene_camera: None,
             scene_post_process: None,
             pp_vignette_override: None,
             pp_bloom_override: None,
@@ -214,10 +211,52 @@ impl PlayerApp {
         self.schema_paths = paths;
     }
 
+    /// Apply scene-level camera configuration from `CameraDef`
+    fn apply_camera_def(&mut self) {
+        if let Some(cam) = &self.scene_camera {
+            if cam.projection == "orthographic" {
+                self.camera.orthographic = true;
+                if cam.ortho_height > 0.0 {
+                    self.camera.ortho_height = cam.ortho_height;
+                }
+            } else {
+                self.camera.orthographic = false;
+                self.camera.ortho_height = 0.0;
+            }
+            if let Some(pos) = cam.position {
+                self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
+            }
+            if let Some(target) = cam.target {
+                self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
+            }
+            if let Some(fov) = cam.fov {
+                self.camera.fov = fov;
+            }
+            if let Some(near) = cam.near {
+                self.camera.near = near;
+            }
+            if let Some(far) = cam.far {
+                self.camera.far = far;
+            }
+
+            // Derive orbit parameters from position/target so update_orbit() stays consistent
+            if cam.position.is_some() {
+                let dir = self.camera.position - self.camera.target;
+                let dist = dir.length();
+                if dist > 0.001 {
+                    self.camera.distance = dist;
+                    let n = dir * (1.0 / dist);
+                    self.camera.pitch = n.y.asin();
+                    self.camera.yaw = n.x.atan2(n.z);
+                }
+            }
+        }
+    }
+
     fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let window_attrs = Window::default_attributes()
-            .with_title("Flint Player")
-            .with_inner_size(PhysicalSize::new(1280, 720));
+        let window_attrs = Window::default_attributes().with_title("Flint Player");
+        #[cfg(not(target_os = "android"))]
+        let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(1280, 720));
 
         let window = Arc::new(
             event_loop
@@ -242,7 +281,10 @@ impl PlayerApp {
 
         // Load models from world (including skeletal data)
         let config = build_model_load_config(
-            &self.scene_path, &self.world, self.catalog.as_ref(), self.content_store.as_ref(),
+            &self.scene_path,
+            &self.world,
+            self.catalog.as_ref(),
+            self.content_store.as_ref(),
         );
         let load_result = model_loader::load_models_from_world(
             &mut self.world,
@@ -324,10 +366,17 @@ impl PlayerApp {
         }
 
         // Load terrain from world
-        self.load_terrain_from_world(&render_context.device, &render_context.queue, &mut scene_renderer);
+        self.load_terrain_from_world(
+            &render_context.device,
+            &render_context.queue,
+            &mut scene_renderer,
+        );
 
         // Set terrain height callback for scripts
         self.update_terrain_height_fn();
+
+        // Apply scene-level camera configuration
+        self.apply_camera_def();
 
         // Apply scene-level post-processing config
         if let Some(pp_def) = &self.scene_post_process {
@@ -370,6 +419,7 @@ impl PlayerApp {
 
         // Initialize animation
         load_animations_from_world(&self.scene_path, &mut self.animation);
+        load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
@@ -386,7 +436,14 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
 
-        // Capture cursor for first-person look (only if FPS player exists)
+        // Capture cursor for first-person look (only if FPS player exists).
+        // On Android, always set cursor_captured = true so touch input flows
+        // without requiring a click-to-capture gate.
+        #[cfg(target_os = "android")]
+        {
+            self.cursor_captured = true;
+        }
+        #[cfg(not(target_os = "android"))]
         if self.physics.character.player_entity().is_some() {
             self.capture_cursor();
         }
@@ -431,30 +488,29 @@ impl PlayerApp {
             let world_w = config.width;
             let world_d = config.depth;
             let height_scale = config.height_scale;
-            self.script.set_terrain_height_fn(Some(Box::new(move |x: f32, z: f32| {
-                // Convert world coords to normalized UV
-                let u = x / world_w;
-                let v = z / world_d;
-                // Bilinear sample from heights array
-                let fx = u * (hm_w as f32 - 1.0);
-                let fz = v * (hm_d as f32 - 1.0);
-                let ix = (fx as u32).min(hm_w - 2);
-                let iz = (fz as u32).min(hm_d - 2);
-                let tx = fx - ix as f32;
-                let tz = fz - iz as f32;
-                let idx = |col: u32, row: u32| -> f32 {
-                    heights[(row * hm_w + col) as usize]
-                };
-                let h00 = idx(ix, iz);
-                let h10 = idx(ix + 1, iz);
-                let h01 = idx(ix, iz + 1);
-                let h11 = idx(ix + 1, iz + 1);
-                let h = h00 * (1.0 - tx) * (1.0 - tz)
-                    + h10 * tx * (1.0 - tz)
-                    + h01 * (1.0 - tx) * tz
-                    + h11 * tx * tz;
-                h * height_scale
-            })));
+            self.script
+                .set_terrain_height_fn(Some(Box::new(move |x: f32, z: f32| {
+                    // Convert world coords to normalized UV
+                    let u = x / world_w;
+                    let v = z / world_d;
+                    // Bilinear sample from heights array
+                    let fx = u * (hm_w as f32 - 1.0);
+                    let fz = v * (hm_d as f32 - 1.0);
+                    let ix = (fx as u32).min(hm_w - 2);
+                    let iz = (fz as u32).min(hm_d - 2);
+                    let tx = fx - ix as f32;
+                    let tz = fz - iz as f32;
+                    let idx = |col: u32, row: u32| -> f32 { heights[(row * hm_w + col) as usize] };
+                    let h00 = idx(ix, iz);
+                    let h10 = idx(ix + 1, iz);
+                    let h01 = idx(ix, iz + 1);
+                    let h11 = idx(ix + 1, iz + 1);
+                    let h = h00 * (1.0 - tx) * (1.0 - tz)
+                        + h10 * tx * (1.0 - tz)
+                        + h01 * (1.0 - tx) * tz
+                        + h11 * tx * tz;
+                    h * height_scale
+                })));
         } else {
             self.script.set_terrain_height_fn(None);
         }
@@ -543,7 +599,8 @@ impl PlayerApp {
                 }
                 EventType::ButtonChanged(button, value, _) => {
                     let name = format!("{button:?}");
-                    self.input.process_gamepad_button_changed(gamepad, name, value);
+                    self.input
+                        .process_gamepad_button_changed(gamepad, name, value);
                 }
                 EventType::AxisChanged(axis, value, _) => {
                     let name = format!("{axis:?}");
@@ -610,17 +667,15 @@ impl PlayerApp {
         };
 
         let mut target = paths.user_override.clone().unwrap_or_else(|| {
-            fallback_user_override_path(
-                Path::new(&self.scene_path),
-                &self.input.config().game_id,
-            )
-            .unwrap_or_else(|| PathBuf::from(".flint/input.user.toml"))
+            fallback_user_override_path(Path::new(&self.scene_path), &self.input.config().game_id)
+                .unwrap_or_else(|| PathBuf::from(".flint/input.user.toml"))
         });
 
         if let Err(err) = write_user_override_file(&target, &self.user_override_config) {
-            let Some(fallback) =
-                fallback_user_override_path(Path::new(&self.scene_path), &self.input.config().game_id)
-            else {
+            let Some(fallback) = fallback_user_override_path(
+                Path::new(&self.scene_path),
+                &self.input.config().game_id,
+            ) else {
                 return Err(err);
             };
             if fallback != target {
@@ -637,23 +692,34 @@ impl PlayerApp {
 
     fn capture_cursor(&mut self) {
         if let Some(window) = &self.window {
-            // Try confined first, then locked
-            let _ = window.set_cursor_grab(CursorGrabMode::Confined)
-                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
-            window.set_cursor_visible(false);
+            #[cfg(not(target_os = "android"))]
+            {
+                // Try confined first, then locked
+                let _ = window
+                    .set_cursor_grab(CursorGrabMode::Confined)
+                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
+                window.set_cursor_visible(false);
+            }
             self.cursor_captured = true;
         }
     }
 
     fn release_cursor(&mut self) {
         if let Some(window) = &self.window {
-            let _ = window.set_cursor_grab(CursorGrabMode::None);
-            window.set_cursor_visible(true);
+            #[cfg(not(target_os = "android"))]
+            {
+                let _ = window.set_cursor_grab(CursorGrabMode::None);
+                window.set_cursor_visible(true);
+            }
             self.cursor_captured = false;
         }
     }
 
     fn render(&mut self) {
+        // On Android, window may be None between suspended() and resumed()
+        if self.window.is_none() {
+            return;
+        }
         let Some(context) = &self.render_context else {
             return;
         };
@@ -741,7 +807,8 @@ impl PlayerApp {
 
             if config.physics == SystemPolicy::Run {
                 if has_fps_player {
-                    self.physics.update_character(&self.input, &mut self.world, dt);
+                    self.physics
+                        .update_character(&self.input, &mut self.world, dt);
                 }
                 self.physics
                     .fixed_update(&mut self.world, dt)
@@ -798,16 +865,15 @@ impl PlayerApp {
                 self.script.set_transition_state(1.0, "loading");
             }
             TransitionPhase::Entering { elapsed } => {
-                self.script.set_transition_state(*elapsed as f64, "entering");
+                self.script
+                    .set_transition_state(*elapsed as f64, "entering");
             }
         }
 
         // Script system: provide physics + camera context, then run updates
         self.script.set_physics(&self.physics);
-        self.script.set_camera(
-            self.camera.position_array(),
-            self.camera.forward_vector(),
-        );
+        self.script
+            .set_camera(self.camera.position_array(), self.camera.forward_vector());
         self.script.provide_context(
             &self.input,
             &game_events,
@@ -815,7 +881,8 @@ impl PlayerApp {
             self.clock.delta_time,
         );
         let screen_rect = self.egui_ctx.screen_rect();
-        self.script.set_screen_size(screen_rect.width(), screen_rect.height());
+        self.script
+            .set_screen_size(screen_rect.width(), screen_rect.height());
 
         // Only run on_update when scripts are not paused
         if config.scripts == SystemPolicy::Run {
@@ -825,7 +892,8 @@ impl PlayerApp {
         }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let (cam_pos_override, cam_target_override, cam_fov_override) = self.script.take_camera_overrides();
+        let (cam_pos_override, cam_target_override, cam_fov_override, cam_ortho_override, cam_ortho_height_override) =
+            self.script.take_camera_overrides();
         if let Some(pos) = cam_pos_override {
             self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
         }
@@ -834,6 +902,12 @@ impl PlayerApp {
         }
         if let Some(fov) = cam_fov_override {
             self.camera.fov = fov;
+        }
+        if let Some(ortho) = cam_ortho_override {
+            self.camera.orthographic = ortho;
+        }
+        if let Some(height) = cam_ortho_height_override {
+            self.camera.ortho_height = height;
         }
 
         // Update audio listener for script-driven cameras (chase cam, etc.)
@@ -862,10 +936,9 @@ impl PlayerApp {
         // Collect draw commands for this frame (scripts + data-driven UI)
         let mut commands = self.script.drain_draw_commands();
         let screen_rect = self.egui_ctx.screen_rect();
-        let ui_commands = self.script.generate_ui_draw_commands(
-            screen_rect.width(),
-            screen_rect.height(),
-        );
+        let ui_commands = self
+            .script
+            .generate_ui_draw_commands(screen_rect.width(), screen_rect.height());
         commands.extend(ui_commands);
         self.draw_commands = commands;
 
@@ -882,12 +955,17 @@ impl PlayerApp {
             self.animation
                 .update(&mut self.world, self.clock.delta_time)
                 .ok();
+
+            // Deliver sprite animation end events to scripts
+            let sprite_events = self.animation.sprite_sync.drain_events();
+            if !sprite_events.is_empty() {
+                self.script
+                    .call_sprite_anim_ends(&mut self.world, &sprite_events);
+            }
         }
 
         // Push skeletal bone matrices to GPU
-        if let (Some(renderer), Some(context)) =
-            (&mut self.scene_renderer, &self.render_context)
-        {
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
                 if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
                     renderer.update_bone_matrices(&context.queue, asset_name, matrices);
@@ -903,16 +981,12 @@ impl PlayerApp {
         }
 
         // Refresh renderer with updated transforms
-        if let (Some(renderer), Some(context)) =
-            (&mut self.scene_renderer, &self.render_context)
-        {
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             renderer.update_from_world(&self.world, &context.device);
         }
 
         // Upload particle instance data to GPU
-        if let (Some(renderer), Some(context)) =
-            (&mut self.scene_renderer, &self.render_context)
-        {
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             let sync_draw_data = self.particles.sync.draw_data();
             let render_draw_data: Vec<ParticleDrawData<'_>> = sync_draw_data
                 .iter()
@@ -930,7 +1004,8 @@ impl PlayerApp {
         }
 
         // Drain script post-processing overrides for this frame
-        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao, pp_fog) = self.script.take_postprocess_overrides();
+        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao, pp_fog) =
+            self.script.take_postprocess_overrides();
         self.pp_vignette_override = pp_vig;
         self.pp_bloom_override = pp_bloom;
         self.pp_exposure_override = pp_exp;
@@ -954,8 +1029,12 @@ impl PlayerApp {
         self.load_pending_sprites();
 
         let Some(window) = &self.window else { return };
-        let Some(context) = &self.render_context else { return };
-        let Some(egui_winit) = &mut self.egui_winit else { return };
+        let Some(context) = &self.render_context else {
+            return;
+        };
+        let Some(egui_winit) = &mut self.egui_winit else {
+            return;
+        };
 
         let raw_input = egui_winit.take_egui_input(window);
 
@@ -981,12 +1060,11 @@ impl PlayerApp {
 
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        let mut encoder =
-            context
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("HUD Encoder"),
-                });
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("HUD Encoder"),
+            });
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -1034,13 +1112,22 @@ impl PlayerApp {
             match cmd {
                 ScriptCommand::PlaySound { name, volume } => {
                     if self.audio.engine.is_available() {
-                        if let Err(e) = self.audio.engine.play_non_spatial(&name, volume, 1.0, false) {
+                        if let Err(e) = self
+                            .audio
+                            .engine
+                            .play_non_spatial(&name, volume, 1.0, false)
+                        {
                             eprintln!("[script] play_sound error: {:?}", e);
                         }
                     }
                 }
-                ScriptCommand::PlaySoundAt { name, position, volume } => {
-                    let pos = FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
+                ScriptCommand::PlaySoundAt {
+                    name,
+                    position,
+                    volume,
+                } => {
+                    let pos =
+                        FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
                     if let Err(e) = self.audio.engine.play_at_position(&name, pos, volume) {
                         eprintln!("[script] play_sound_at error: {:?}", e);
                     }
@@ -1066,15 +1153,15 @@ impl PlayerApp {
                         }
                         continue;
                     }
-                    self.physics.event_bus.push(GameEvent::Custom { name, data });
+                    self.physics
+                        .event_bus
+                        .push(GameEvent::Custom { name, data });
                 }
-                ScriptCommand::Log { level, message } => {
-                    match level {
-                        LogLevel::Info => println!("[script] {}", message),
-                        LogLevel::Warn => eprintln!("[script warn] {}", message),
-                        LogLevel::Error => eprintln!("[script error] {}", message),
-                    }
-                }
+                ScriptCommand::Log { level, message } => match level {
+                    LogLevel::Info => println!("[script] {}", message),
+                    LogLevel::Warn => eprintln!("[script warn] {}", message),
+                    LogLevel::Error => eprintln!("[script error] {}", message),
+                },
                 ScriptCommand::EmitBurst { entity_id, count } => {
                     let eid = flint_core::EntityId(entity_id as u64);
                     self.particles.sync.queue_burst(eid, count as u32);
@@ -1125,7 +1212,10 @@ impl PlayerApp {
     fn advance_transition(&mut self) {
         match &self.transition_phase {
             TransitionPhase::Idle => {}
-            TransitionPhase::Exiting { target_scene, elapsed } => {
+            TransitionPhase::Exiting {
+                target_scene,
+                elapsed,
+            } => {
                 let new_elapsed = elapsed + self.clock.delta_time as f32;
                 let target = target_scene.clone();
                 self.transition_phase = TransitionPhase::Exiting {
@@ -1191,7 +1281,9 @@ impl PlayerApp {
             flint_schema::SchemaRegistry::load_from_directory("schemas")
                 .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
         } else {
-            let existing: Vec<&str> = self.schema_paths.iter()
+            let existing: Vec<&str> = self
+                .schema_paths
+                .iter()
                 .map(|s| s.as_str())
                 .filter(|p| Path::new(p).exists())
                 .collect();
@@ -1208,21 +1300,33 @@ impl PlayerApp {
             Ok((world, scene_file)) => {
                 self.world = world;
                 self.scene_path = new_scene_path.clone();
-                self.skybox_path = scene_file.environment.as_ref()
+                self.skybox_path = scene_file
+                    .environment
+                    .as_ref()
                     .and_then(|env| env.skybox.clone());
+                self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
             }
             Err(e) => {
-                eprintln!("[transition] Failed to load scene '{}': {:?}", new_scene_path, e);
+                eprintln!(
+                    "[transition] Failed to load scene '{}': {:?}",
+                    new_scene_path, e
+                );
                 return;
             }
         }
 
+        // Apply camera config before borrowing renderer
+        self.apply_camera_def();
+
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             let config = build_model_load_config(
-                &self.scene_path, &self.world, self.catalog.as_ref(), self.content_store.as_ref(),
+                &self.scene_path,
+                &self.world,
+                self.catalog.as_ref(),
+                self.content_store.as_ref(),
             );
             let load_result = model_loader::load_models_from_world(
                 &mut self.world,
@@ -1265,6 +1369,8 @@ impl PlayerApp {
                     renderer.load_skybox(&context.device, &context.queue, &skybox_path);
                 }
             }
+
+
 
             // Apply post-process config
             if let Some(pp_def) = &self.scene_post_process {
@@ -1318,6 +1424,7 @@ impl PlayerApp {
             .unwrap_or_else(|e| eprintln!("Audio init: {:?}", e));
 
         load_animations_from_world(&self.scene_path, &mut self.animation);
+        load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
@@ -1349,11 +1456,55 @@ impl PlayerApp {
 
 impl ApplicationHandler for PlayerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
+        if self.render_context.is_none() {
+            // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 eprintln!("Failed to initialize player: {e:#}");
                 event_loop.exit();
             }
+        } else {
+            // Subsequent resume (Android returning from background).
+            // Recreate window and surface — GPU context is still valid.
+            #[cfg(target_os = "android")]
+            {
+                let window_attrs = Window::default_attributes().with_title("Flint Player");
+                match event_loop.create_window(window_attrs) {
+                    Ok(window) => {
+                        let window = Arc::new(window);
+                        self.window = Some(window.clone());
+                        if let Some(ctx) = &mut self.render_context {
+                            if let Err(e) = ctx.recreate_surface(window.clone()) {
+                                eprintln!("Failed to recreate surface: {e}");
+                                return;
+                            }
+                            self.camera.aspect = ctx.aspect_ratio();
+                            let size = ctx.size;
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                renderer.resize_postprocess(
+                                    &ctx.device,
+                                    size.width,
+                                    size.height,
+                                );
+                            }
+                            self.input
+                                .set_screen_size(size.width as f64, size.height as f64);
+                        }
+                        self.cursor_captured = true;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to recreate window on resume: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        // On Android, the native surface is destroyed when the app is suspended.
+        // Drop the window reference — a new one will be created in resumed().
+        #[cfg(target_os = "android")]
+        {
+            self.window = None;
         }
     }
 
@@ -1381,6 +1532,8 @@ impl ApplicationHandler for PlayerApp {
                         );
                     }
                 }
+                self.input
+                    .set_screen_size(new_size.width as f64, new_size.height as f64);
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1392,6 +1545,7 @@ impl ApplicationHandler for PlayerApp {
                                 if self.cursor_captured {
                                     self.release_cursor();
                                 } else {
+                                    #[cfg(not(target_os = "android"))]
                                     event_loop.exit();
                                 }
                                 return;
@@ -1404,10 +1558,8 @@ impl ApplicationHandler for PlayerApp {
                                         let next = renderer.debug_state().mode.next();
                                         renderer.set_debug_mode(next);
                                         if let Some(context) = &self.render_context {
-                                            renderer.update_from_world(
-                                                &self.world,
-                                                &context.device,
-                                            );
+                                            renderer
+                                                .update_from_world(&self.world, &context.device);
                                         }
                                     }
                                 }
@@ -1418,32 +1570,28 @@ impl ApplicationHandler for PlayerApp {
                                 }
                                 KeyCode::F5 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config =
-                                            renderer.post_process_config().clone();
+                                        let mut config = renderer.post_process_config().clone();
                                         config.bloom_enabled = !config.bloom_enabled;
                                         renderer.set_post_process_config(config);
                                     }
                                 }
                                 KeyCode::F6 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config =
-                                            renderer.post_process_config().clone();
+                                        let mut config = renderer.post_process_config().clone();
                                         config.enabled = !config.enabled;
                                         renderer.set_post_process_config(config);
                                     }
                                 }
                                 KeyCode::F7 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config =
-                                            renderer.post_process_config().clone();
+                                        let mut config = renderer.post_process_config().clone();
                                         config.ssao_enabled = !config.ssao_enabled;
                                         renderer.set_post_process_config(config);
                                     }
                                 }
                                 KeyCode::F8 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config =
-                                            renderer.post_process_config().clone();
+                                        let mut config = renderer.post_process_config().clone();
                                         config.fog_enabled = !config.fog_enabled;
                                         renderer.set_post_process_config(config);
                                     }
@@ -1489,6 +1637,34 @@ impl ApplicationHandler for PlayerApp {
                 match state {
                     ElementState::Pressed => self.input.process_mouse_button_down(btn),
                     ElementState::Released => self.input.process_mouse_button_up(btn),
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input
+                    .process_mouse_move(position.x, position.y);
+            }
+
+            WindowEvent::Touch(touch) => {
+                // First real touch disables mouse emulation
+                self.input.disable_touch_emulation();
+
+                let id = touch.id;
+                let x = touch.location.x;
+                let y = touch.location.y;
+                match touch.phase {
+                    winit::event::TouchPhase::Started => {
+                        self.input.process_touch_start(id, x, y);
+                    }
+                    winit::event::TouchPhase::Moved => {
+                        self.input.process_touch_move(id, x, y);
+                    }
+                    winit::event::TouchPhase::Ended => {
+                        self.input.process_touch_end(id);
+                    }
+                    winit::event::TouchPhase::Cancelled => {
+                        self.input.process_touch_cancel(id);
+                    }
                 }
             }
 
@@ -1562,7 +1738,11 @@ fn load_terrain_from_world_inner(
                 p
             } else if let Some(parent) = scene_dir.parent() {
                 let pp = parent.join(&heightmap_rel);
-                if pp.exists() { pp } else { p }
+                if pp.exists() {
+                    pp
+                } else {
+                    p
+                }
             } else {
                 p
             }
@@ -1652,7 +1832,11 @@ fn load_terrain_from_world_inner(
 
         // Register physics collider
         let (verts, tris) = terrain.trimesh_data();
-        let offset = [transform.position.x, transform.position.y, transform.position.z];
+        let offset = [
+            transform.position.x,
+            transform.position.y,
+            transform.position.z,
+        ];
         let offset_verts: Vec<[f32; 3]> = verts
             .iter()
             .map(|v| [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]])
@@ -1685,9 +1869,15 @@ fn load_terrain_from_world_inner(
 fn toml_vec3(value: &toml::Value) -> Option<[f32; 3]> {
     let arr = value.as_array()?;
     if arr.len() >= 3 {
-        let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-        let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-        let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+        let x = arr[0]
+            .as_float()
+            .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+        let y = arr[1]
+            .as_float()
+            .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+        let z = arr[2]
+            .as_float()
+            .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
         Some([x, y, z])
     } else {
         None
@@ -1737,11 +1927,7 @@ fn build_model_load_config(
 }
 
 /// Look up an asset name in the catalog and content store.
-fn resolve_catalog(
-    catalog: &AssetCatalog,
-    store: &ContentStore,
-    name: &str,
-) -> Option<PathBuf> {
+fn resolve_catalog(catalog: &AssetCatalog, store: &ContentStore, name: &str) -> Option<PathBuf> {
     let meta = catalog.get(name)?;
     let hash = flint_core::ContentHash::from_prefixed_hex(&meta.hash)?;
     store.get(&hash)
@@ -1861,7 +2047,8 @@ fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path
                     let path = entry.path();
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
-                        let rel_name = format!("audio/{}", path.file_name().unwrap().to_string_lossy());
+                        let rel_name =
+                            format!("audio/{}", path.file_name().unwrap().to_string_lossy());
                         if audio.engine.has_sound(&rel_name) {
                             continue;
                         }
@@ -1921,6 +2108,63 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
                 }
                 Err(e) => {
                     eprintln!("Failed to load animation '{}': {:?}", path.display(), e);
+                }
+            }
+        }
+    }
+}
+
+/// Load `.sprite.toml` files from the `animations/` directory next to the scene.
+/// Each file can define multiple sprite animation clips under `[animation.NAME]` sections.
+fn load_sprite_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    let mut anim_dir = scene_dir.join("animations");
+    if !anim_dir.is_dir() {
+        if let Some(parent) = scene_dir.parent() {
+            let parent_anim = parent.join("animations");
+            if parent_anim.is_dir() {
+                anim_dir = parent_anim;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
+    let entries = match std::fs::read_dir(&anim_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map_or(false, |n| n.ends_with(".sprite.toml"))
+        {
+            match flint_animation::sprite_clip::load_sprite_clips_from_file(&path) {
+                Ok(clips) => {
+                    for clip in clips {
+                        println!(
+                            "Loaded sprite animation: {} ({}ms, {} frames)",
+                            clip.name,
+                            clip.total_duration_ms(),
+                            clip.frames.len()
+                        );
+                        animation.sprite_sync.add_clip(clip);
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to load sprite animation '{}': {:?}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -1989,15 +2233,21 @@ fn render_draw_commands(
     let mut sorted: Vec<&DrawCommand> = commands.iter().collect();
     sorted.sort_by_key(|cmd| cmd.layer());
 
-    let layer_id = egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new("script_ui_overlay"),
-    );
+    let layer_id = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("script_ui_overlay"));
     let painter = ctx.layer_painter(layer_id);
 
     for cmd in &sorted {
         match cmd {
-            DrawCommand::Text { x, y, text, size, color, align, stroke, .. } => {
+            DrawCommand::Text {
+                x,
+                y,
+                text,
+                size,
+                color,
+                align,
+                stroke,
+                ..
+            } => {
                 let anchor = match align {
                     1 => egui::Align2::CENTER_TOP,
                     2 => egui::Align2::RIGHT_TOP,
@@ -2011,8 +2261,14 @@ fn render_draw_commands(
                     let sc = to_color32(stroke_color);
                     let w = *stroke_width;
                     for &(dx, dy) in &[
-                        (-w, 0.0), (w, 0.0), (0.0, -w), (0.0, w),
-                        (-w, -w), (w, -w), (-w, w), (w, w),
+                        (-w, 0.0),
+                        (w, 0.0),
+                        (0.0, -w),
+                        (0.0, w),
+                        (-w, -w),
+                        (w, -w),
+                        (-w, w),
+                        (w, w),
                     ] {
                         painter.text(
                             egui::Pos2::new(pos.x + dx, pos.y + dy),
@@ -2027,35 +2283,52 @@ fn render_draw_commands(
                 painter.text(pos, anchor, text, font, to_color32(color));
             }
 
-            DrawCommand::RectFilled { x, y, w, h, color, rounding, .. } => {
-                let rect = egui::Rect::from_min_size(
-                    egui::Pos2::new(*x, *y),
-                    egui::Vec2::new(*w, *h),
-                );
+            DrawCommand::RectFilled {
+                x,
+                y,
+                w,
+                h,
+                color,
+                rounding,
+                ..
+            } => {
+                let rect =
+                    egui::Rect::from_min_size(egui::Pos2::new(*x, *y), egui::Vec2::new(*w, *h));
                 painter.rect_filled(rect, *rounding, to_color32(color));
             }
 
-            DrawCommand::RectOutline { x, y, w, h, color, thickness, .. } => {
-                let rect = egui::Rect::from_min_size(
-                    egui::Pos2::new(*x, *y),
-                    egui::Vec2::new(*w, *h),
-                );
-                painter.rect_stroke(
-                    rect,
-                    0.0,
-                    egui::Stroke::new(*thickness, to_color32(color)),
-                );
+            DrawCommand::RectOutline {
+                x,
+                y,
+                w,
+                h,
+                color,
+                thickness,
+                ..
+            } => {
+                let rect =
+                    egui::Rect::from_min_size(egui::Pos2::new(*x, *y), egui::Vec2::new(*w, *h));
+                painter.rect_stroke(rect, 0.0, egui::Stroke::new(*thickness, to_color32(color)));
             }
 
-            DrawCommand::CircleFilled { x, y, radius, color, .. } => {
-                painter.circle_filled(
-                    egui::Pos2::new(*x, *y),
-                    *radius,
-                    to_color32(color),
-                );
+            DrawCommand::CircleFilled {
+                x,
+                y,
+                radius,
+                color,
+                ..
+            } => {
+                painter.circle_filled(egui::Pos2::new(*x, *y), *radius, to_color32(color));
             }
 
-            DrawCommand::CircleOutline { x, y, radius, color, thickness, .. } => {
+            DrawCommand::CircleOutline {
+                x,
+                y,
+                radius,
+                color,
+                thickness,
+                ..
+            } => {
                 painter.circle_stroke(
                     egui::Pos2::new(*x, *y),
                     *radius,
@@ -2063,19 +2336,34 @@ fn render_draw_commands(
                 );
             }
 
-            DrawCommand::Line { x1, y1, x2, y2, color, thickness, .. } => {
+            DrawCommand::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                color,
+                thickness,
+                ..
+            } => {
                 painter.line_segment(
                     [egui::Pos2::new(*x1, *y1), egui::Pos2::new(*x2, *y2)],
                     egui::Stroke::new(*thickness, to_color32(color)),
                 );
             }
 
-            DrawCommand::Sprite { x, y, w, h, name, uv, tint, .. } => {
+            DrawCommand::Sprite {
+                x,
+                y,
+                w,
+                h,
+                name,
+                uv,
+                tint,
+                ..
+            } => {
                 if let Some(tex_handle) = ui_textures.get(name.as_str()) {
-                    let rect = egui::Rect::from_min_size(
-                        egui::Pos2::new(*x, *y),
-                        egui::Vec2::new(*w, *h),
-                    );
+                    let rect =
+                        egui::Rect::from_min_size(egui::Pos2::new(*x, *y), egui::Vec2::new(*w, *h));
                     let uv_rect = egui::Rect::from_min_max(
                         egui::Pos2::new(uv[0], uv[1]),
                         egui::Pos2::new(uv[2], uv[3]),
@@ -2102,7 +2390,10 @@ impl PlayerApp {
         // Search: scene_dir/sprites/{name} → game_root/sprites/{name} → scene_dir/{name}
         let candidates = [
             scene_dir.join("sprites").join(name),
-            scene_dir.parent().map(|p| p.join("sprites").join(name)).unwrap_or_default(),
+            scene_dir
+                .parent()
+                .map(|p| p.join("sprites").join(name))
+                .unwrap_or_default(),
             scene_dir.join(name),
         ];
 
@@ -2111,15 +2402,11 @@ impl PlayerApp {
                 if let Ok(img) = image::open(path) {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                        [w as usize, h as usize],
-                        &rgba,
-                    );
-                    let tex_handle = self.egui_ctx.load_texture(
-                        name,
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    );
+                    let color_image =
+                        egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                    let tex_handle =
+                        self.egui_ctx
+                            .load_texture(name, color_image, egui::TextureOptions::LINEAR);
                     self.ui_textures.insert(name.to_string(), tex_handle);
                     println!("Loaded UI sprite: {}", name);
                     return true;
@@ -2133,17 +2420,21 @@ impl PlayerApp {
 
     /// Pre-scan draw commands and load any sprite textures that haven't been loaded yet
     fn load_pending_sprites(&mut self) {
-        let sprite_names: Vec<String> = self.draw_commands.iter().filter_map(|cmd| {
-            if let DrawCommand::Sprite { name, .. } = cmd {
-                if !self.ui_textures.contains_key(name.as_str()) {
-                    Some(name.clone())
+        let sprite_names: Vec<String> = self
+            .draw_commands
+            .iter()
+            .filter_map(|cmd| {
+                if let DrawCommand::Sprite { name, .. } = cmd {
+                    if !self.ui_textures.contains_key(name.as_str()) {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
-            }
-        }).collect();
+            })
+            .collect();
 
         for name in sprite_names {
             self.load_ui_texture(&name);
@@ -2177,7 +2468,10 @@ fn resolve_input_paths(
             if candidate.exists() {
                 Some(candidate)
             } else {
-                scene_dir.parent().map(|p| p.join("config").join("input.toml")).filter(|p| p.exists())
+                scene_dir
+                    .parent()
+                    .map(|p| p.join("config").join("input.toml"))
+                    .filter(|p| p.exists())
             }
         });
 
@@ -2188,7 +2482,9 @@ fn resolve_input_paths(
         if local.exists() {
             Some(local)
         } else {
-            dirs::config_dir().map(|d| d.join("flint").join("input.user.toml")).filter(|p| p.exists())
+            dirs::config_dir()
+                .map(|d| d.join("flint").join("input.user.toml"))
+                .filter(|p| p.exists())
         }
     };
 
@@ -2225,9 +2521,8 @@ fn write_user_override_file(path: &Path, config: &InputConfig) -> Result<()> {
             ))
         })?;
     }
-    let toml_str = toml::to_string_pretty(config).map_err(|e| {
-        FlintError::RuntimeError(format!("failed to serialize input config: {e}"))
-    })?;
+    let toml_str = toml::to_string_pretty(config)
+        .map_err(|e| FlintError::RuntimeError(format!("failed to serialize input config: {e}")))?;
     std::fs::write(path, toml_str).map_err(|e| {
         FlintError::RuntimeError(format!(
             "failed to write input config '{}': {e}",

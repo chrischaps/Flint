@@ -54,13 +54,17 @@ impl ScriptSync {
                 continue;
             }
 
-            let script_comp = world.get_components(entity.id)
+            let script_comp = world
+                .get_components(entity.id)
                 .and_then(|comps| comps.get("script").cloned());
 
-            let Some(script_data) = script_comp else { continue };
+            let Some(script_data) = script_comp else {
+                continue;
+            };
 
             // Check enabled
-            let enabled = script_data.get("enabled")
+            let enabled = script_data
+                .get("enabled")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             if !enabled {
@@ -69,7 +73,8 @@ impl ScriptSync {
             }
 
             // Get source file path
-            let source = script_data.get("source")
+            let source = script_data
+                .get("source")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if source.is_empty() {
@@ -122,7 +127,9 @@ impl ScriptSync {
                 Err(_) => continue,
             };
 
-            let Some(current) = current_modified else { continue };
+            let Some(current) = current_modified else {
+                continue;
+            };
             let last = self.file_timestamps.get(&script_path);
 
             if last.is_none_or(|last| current > *last) {

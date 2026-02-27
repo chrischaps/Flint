@@ -37,7 +37,14 @@ pub fn spline_editor_panel(ui: &mut egui::Ui, editor: &mut SplineEditor) -> Vec<
     let mut spacing = editor.spacing;
     ui.horizontal(|ui| {
         ui.label("Spacing:");
-        if ui.add(egui::DragValue::new(&mut spacing).speed(0.1).range(0.5..=10.0)).changed() {
+        if ui
+            .add(
+                egui::DragValue::new(&mut spacing)
+                    .speed(0.1)
+                    .range(0.5..=10.0),
+            )
+            .changed()
+        {
             editor.spacing = spacing;
             actions.push(SplinePanelAction::Resample);
         }

@@ -47,11 +47,7 @@ impl AssetCatalog {
             {
                 let content = fs::read_to_string(&path)?;
                 let file: AssetFile = toml::from_str(&content).map_err(|e| {
-                    FlintError::AssetError(format!(
-                        "Failed to parse {}: {}",
-                        path.display(),
-                        e
-                    ))
+                    FlintError::AssetError(format!("Failed to parse {}: {}", path.display(), e))
                 })?;
                 catalog.register(file.asset);
             }
@@ -62,8 +58,7 @@ impl AssetCatalog {
 
     /// Register an asset in the catalog
     pub fn register(&mut self, meta: AssetMeta) {
-        self.hash_index
-            .insert(meta.hash.clone(), meta.name.clone());
+        self.hash_index.insert(meta.hash.clone(), meta.name.clone());
         self.assets.insert(meta.name.clone(), meta);
     }
 
