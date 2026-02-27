@@ -439,6 +439,107 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         });
     }
 
+    // spline_is_gap(spline_entity, t) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("spline_is_gap", move |spline_id: i64, t: f64| -> bool {
+            if spline_id < 0 { return false; }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(spline_id as u64);
+            let comps = match world.get_components(eid) {
+                Some(c) => c,
+                None => return false,
+            };
+            let sd = match comps.get("spline_data") {
+                Some(v) => v,
+                None => return false,
+            };
+            let table = match sd.as_table() {
+                Some(t) => t,
+                None => return false,
+            };
+
+            let gap_count = table.get("gap_count").and_then(|v| v.as_integer()).unwrap_or(0);
+            if gap_count == 0 { return false; }
+
+            let gap_starts = match table.get("gap_starts").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return false,
+            };
+            let gap_ends = match table.get("gap_ends").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return false,
+            };
+
+            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
+            for i in 0..(gap_count as usize).min(gap_starts.len()).min(gap_ends.len()) {
+                let start = gap_starts[i].as_float().unwrap_or(0.0);
+                let end = gap_ends[i].as_float().unwrap_or(0.0);
+                if start <= end {
+                    if t_wrapped >= start && t_wrapped < end { return true; }
+                } else {
+                    // Wrap-around range
+                    if t_wrapped >= start || t_wrapped < end { return true; }
+                }
+            }
+            false
+        });
+    }
+
+    // spline_gap_at(spline_entity, t) -> Map #{start_t, end_t} or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("spline_gap_at", move |spline_id: i64, t: f64| -> Dynamic {
+            if spline_id < 0 { return Dynamic::UNIT; }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(spline_id as u64);
+            let comps = match world.get_components(eid) {
+                Some(c) => c,
+                None => return Dynamic::UNIT,
+            };
+            let sd = match comps.get("spline_data") {
+                Some(v) => v,
+                None => return Dynamic::UNIT,
+            };
+            let table = match sd.as_table() {
+                Some(t) => t,
+                None => return Dynamic::UNIT,
+            };
+
+            let gap_count = table.get("gap_count").and_then(|v| v.as_integer()).unwrap_or(0);
+            if gap_count == 0 { return Dynamic::UNIT; }
+
+            let gap_starts = match table.get("gap_starts").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let gap_ends = match table.get("gap_ends").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+
+            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
+            for i in 0..(gap_count as usize).min(gap_starts.len()).min(gap_ends.len()) {
+                let start = gap_starts[i].as_float().unwrap_or(0.0);
+                let end = gap_ends[i].as_float().unwrap_or(0.0);
+                let in_gap = if start <= end {
+                    t_wrapped >= start && t_wrapped < end
+                } else {
+                    t_wrapped >= start || t_wrapped < end
+                };
+                if in_gap {
+                    let mut map = Map::new();
+                    map.insert("start_t".into(), Dynamic::from(start));
+                    map.insert("end_t".into(), Dynamic::from(end));
+                    return Dynamic::from(map);
+                }
+            }
+            Dynamic::UNIT
+        });
+    }
+
     // spline_sample_at(spline_entity, t) -> Map #{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}
     {
         let ctx = ctx.clone();

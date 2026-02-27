@@ -12,6 +12,9 @@ pub struct SplineControlPoint {
     pub position: Vec3,
     /// Twist (banking) in degrees around the forward axis.
     pub twist: f32,
+    /// When true, road geometry and physics are omitted from this CP to the next,
+    /// creating a gap/jump. Consecutive `gap_after` CPs merge into longer gaps.
+    pub gap_after: bool,
 }
 
 /// A sampled point along a spline with computed basis vectors.
@@ -170,10 +173,12 @@ pub fn sample_open_spline(points: &[SplineControlPoint], spacing: f32) -> Vec<Sp
     let phantom_start = SplineControlPoint {
         position: points[0].position * 2.0 - points[1].position,
         twist: points[0].twist,
+        gap_after: false,
     };
     let phantom_end = SplineControlPoint {
         position: points[n - 1].position * 2.0 - points[n - 2].position,
         twist: points[n - 1].twist,
+        gap_after: false,
     };
 
     let mut extended = Vec::with_capacity(n + 2);
@@ -265,16 +270,95 @@ pub fn sample_open_spline(points: &[SplineControlPoint], spacing: f32) -> Vec<Sp
     samples
 }
 
+// ─── Gap helpers ─────────────────────────────────────────
+
+/// Compute parametric t-ranges where `gap_after` is true.
+///
+/// For a closed spline with N control points, CP k spans t = k/N to (k+1)/N.
+/// For an open spline with N control points, CP k spans t = k/(N-1) to (k+1)/(N-1).
+/// Consecutive `gap_after` CPs merge into a single range.
+/// Closed splines handle wrap-around (last CP → first CP).
+pub fn compute_gap_ranges(points: &[SplineControlPoint], closed: bool) -> Vec<(f32, f32)> {
+    let n = points.len();
+    if n < 2 {
+        return Vec::new();
+    }
+
+    let num_segs = if closed { n } else { n - 1 };
+    let mut ranges: Vec<(f32, f32)> = Vec::new();
+
+    let mut i = 0;
+    while i < n {
+        if points[i].gap_after {
+            let start_t = i as f32 / num_segs as f32;
+            // Merge consecutive gap_after CPs
+            let mut end_idx = i + 1;
+            while end_idx < n && points[end_idx].gap_after {
+                end_idx += 1;
+            }
+            // For closed splines, the gap extends to (end_idx)/num_segs
+            // For open splines, same but clamped to 1.0
+            let end_t = (end_idx as f32 / num_segs as f32).min(1.0);
+            ranges.push((start_t, end_t));
+            i = end_idx;
+        } else {
+            i += 1;
+        }
+    }
+
+    // Handle wrap-around for closed splines: if the last range ends at 1.0
+    // and the first range starts at 0.0, merge them
+    if closed && ranges.len() >= 2 {
+        let last = ranges.len() - 1;
+        if (ranges[last].1 - 1.0).abs() < 1e-6 && ranges[0].0.abs() < 1e-6 {
+            let merged_start = ranges[last].0;
+            let merged_end = ranges[0].1;
+            ranges[0] = (merged_start, merged_end); // wrap-around range: start > end
+            ranges.pop();
+        }
+    }
+
+    ranges
+}
+
+/// Check if parametric t falls within any gap range.
+///
+/// Start is inclusive, end is exclusive.
+pub fn is_in_gap(t: f32, gaps: &[(f32, f32)]) -> bool {
+    gap_at(t, gaps).is_some()
+}
+
+/// Return the gap range containing t, or None.
+///
+/// Handles wrap-around ranges where start > end (for closed splines).
+pub fn gap_at(t: f32, gaps: &[(f32, f32)]) -> Option<(f32, f32)> {
+    let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
+    for &(start, end) in gaps {
+        if start <= end {
+            // Normal range
+            if t_wrapped >= start && t_wrapped < end {
+                return Some((start, end));
+            }
+        } else {
+            // Wrap-around range (e.g. 0.9..0.1)
+            if t_wrapped >= start || t_wrapped < end {
+                return Some((start, end));
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn make_square_loop() -> Vec<SplineControlPoint> {
         vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0 },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: false },
         ]
     }
 
@@ -291,9 +375,9 @@ mod tests {
     #[test]
     fn open_spline_produces_samples() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(5.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0 },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(5.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
         ];
         let samples = sample_open_spline(&pts, 1.0);
         assert!(samples.len() >= 10);
@@ -307,9 +391,86 @@ mod tests {
     #[test]
     fn too_few_points_returns_empty() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0 },
-            SplineControlPoint { position: Vec3::new(1.0, 0.0, 0.0), twist: 0.0 },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(1.0, 0.0, 0.0), twist: 0.0, gap_after: false },
         ];
         assert!(sample_closed_spline(&pts, 1.0).is_empty());
+    }
+
+    #[test]
+    fn gap_ranges_single_gap_closed() {
+        let pts = vec![
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: true },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+        ];
+        let ranges = compute_gap_ranges(&pts, true);
+        assert_eq!(ranges.len(), 1);
+        assert!((ranges[0].0 - 0.25).abs() < 0.01); // CP1 → t=1/4
+        assert!((ranges[0].1 - 0.50).abs() < 0.01); // CP2 → t=2/4
+    }
+
+    #[test]
+    fn gap_ranges_consecutive_merge() {
+        let pts = vec![
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: true },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: true },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+        ];
+        let ranges = compute_gap_ranges(&pts, true);
+        assert_eq!(ranges.len(), 1);
+        assert!((ranges[0].0 - 0.25).abs() < 0.01); // CP1
+        assert!((ranges[0].1 - 0.75).abs() < 0.01); // CP3
+    }
+
+    #[test]
+    fn gap_ranges_open_spline() {
+        let pts = vec![
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: true },
+            SplineControlPoint { position: Vec3::new(5.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+        ];
+        let ranges = compute_gap_ranges(&pts, false);
+        assert_eq!(ranges.len(), 1);
+        assert!(ranges[0].0.abs() < 0.01);           // CP0 → t=0
+        assert!((ranges[0].1 - 0.50).abs() < 0.01);  // CP1 → t=1/2
+    }
+
+    #[test]
+    fn is_in_gap_basic() {
+        let gaps = vec![(0.25, 0.50)];
+        assert!(!is_in_gap(0.1, &gaps));
+        assert!(is_in_gap(0.3, &gaps));
+        assert!(!is_in_gap(0.5, &gaps)); // end exclusive
+        assert!(!is_in_gap(0.7, &gaps));
+    }
+
+    #[test]
+    fn gap_at_returns_range() {
+        let gaps = vec![(0.25, 0.50)];
+        assert!(gap_at(0.1, &gaps).is_none());
+        let g = gap_at(0.3, &gaps).unwrap();
+        assert!((g.0 - 0.25).abs() < 0.01);
+        assert!((g.1 - 0.50).abs() < 0.01);
+    }
+
+    #[test]
+    fn gap_wraparound_closed() {
+        // Gaps at CP3 (last) that wraps to CP0
+        let pts = vec![
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: true },
+        ];
+        let ranges = compute_gap_ranges(&pts, true);
+        assert_eq!(ranges.len(), 1);
+        // Last CP gap: t=0.75 to 1.0 — no merge since CP0 doesn't have gap_after
+        assert!((ranges[0].0 - 0.75).abs() < 0.01);
+        assert!((ranges[0].1 - 1.0).abs() < 0.01);
+        assert!(is_in_gap(0.8, &ranges));
+        assert!(!is_in_gap(0.1, &ranges));
     }
 }

@@ -84,6 +84,7 @@ impl SplineEditor {
             .map(|cp| SplineControlPoint {
                 position: Vec3::new(cp.position[0], cp.position[1], cp.position[2]),
                 twist: cp.twist,
+                gap_after: false,
             })
             .collect();
 
