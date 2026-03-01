@@ -110,17 +110,11 @@ impl PhysicsSync {
                 .map(|s| {
                     let anchor_y = s
                         .get("anchor_y")
-                        .and_then(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                        })
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                         .unwrap_or(0.0) as f32;
                     let height = s
                         .get("height")
-                        .and_then(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                        })
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                         .unwrap_or(1.0) as f32;
                     (0.5 - anchor_y) * height
                 })
@@ -170,19 +164,15 @@ impl PhysicsSync {
                                 let w = s
                                     .get("width")
                                     .and_then(|v| {
-                                        v.as_float()
-                                            .or_else(|| v.as_integer().map(|i| i as f64))
+                                        v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                     })
-                                    .unwrap_or(1.0)
-                                    as f32;
+                                    .unwrap_or(1.0) as f32;
                                 let h = s
                                     .get("height")
                                     .and_then(|v| {
-                                        v.as_float()
-                                            .or_else(|| v.as_integer().map(|i| i as f64))
+                                        v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                     })
-                                    .unwrap_or(1.0)
-                                    as f32;
+                                    .unwrap_or(1.0) as f32;
                                 (w, h)
                             })
                             .unwrap_or((1.0, 1.0));
@@ -278,17 +268,11 @@ impl PhysicsSync {
                 .map(|s| {
                     let anchor_y = s
                         .get("anchor_y")
-                        .and_then(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                        })
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                         .unwrap_or(0.0) as f32;
                     let height = s
                         .get("height")
-                        .and_then(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                        })
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                         .unwrap_or(1.0) as f32;
                     (0.5 - anchor_y) * height
                 })
@@ -348,17 +332,11 @@ impl PhysicsSync {
                 .map(|s| {
                     let anchor_y = s
                         .get("anchor_y")
-                        .and_then(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                        })
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                         .unwrap_or(0.0) as f32;
                     let height = s
                         .get("height")
-                        .and_then(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                        })
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                         .unwrap_or(1.0) as f32;
                     (0.5 - anchor_y) * height
                 })

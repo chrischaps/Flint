@@ -7,6 +7,7 @@ use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
+use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
@@ -40,25 +41,6 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
     config.fog_height_falloff = pp_def.fog_height_falloff;
     config.fog_height_origin = pp_def.fog_height_origin;
     config
-}
-
-/// Extract a [f32; 3] from a TOML array value (handling int/float coercion)
-pub(super) fn toml_vec3(value: &toml::Value) -> Option<[f32; 3]> {
-    let arr = value.as_array()?;
-    if arr.len() >= 3 {
-        let x = arr[0]
-            .as_float()
-            .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-        let y = arr[1]
-            .as_float()
-            .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-        let z = arr[2]
-            .as_float()
-            .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
-        Some([x, y, z])
-    } else {
-        None
-    }
 }
 
 /// Load terrain from world entities. Free function to avoid borrow conflicts.
@@ -118,11 +100,7 @@ pub(super) fn load_terrain_from_world_inner(
         };
 
         let get_f32 = |key: &str, default: f32| -> f32 {
-            terrain_comp
-                .get(key)
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .map(|f| f as f32)
-                .unwrap_or(default)
+            terrain_comp.get(key).and_then(toml_f32).unwrap_or(default)
         };
 
         let get_i32 = |key: &str, default: i32| -> i32 {
@@ -336,11 +314,7 @@ pub(super) fn register_node_animation_data(
 }
 
 /// Load audio files referenced by audio_source components and preload all .ogg files from audio/
-pub(super) fn load_audio_from_world(
-    world: &FlintWorld,
-    audio: &mut AudioSystem,
-    scene_path: &str,
-) {
+pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path: &str) {
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
@@ -467,10 +441,7 @@ pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut Anima
 
 /// Load `.sprite.toml` files from the `animations/` directory next to the scene.
 /// Each file can define multiple sprite animation clips under `[animation.NAME]` sections.
-pub(super) fn load_sprite_animations_from_world(
-    scene_path: &str,
-    animation: &mut AnimationSystem,
-) {
+pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));

@@ -5,6 +5,7 @@
 //! 2. `advance_and_write()` steps playback, writes `sprite.source_rect` back to ECS
 
 use crate::sprite_clip::{LoopMode, SpriteAnimClip};
+use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -122,8 +123,8 @@ impl SpriteAnimSync {
 
             let speed = sprite_animator
                 .get("speed")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0) as f32;
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
 
             let ecs_playing = sprite_animator
                 .get("playing")

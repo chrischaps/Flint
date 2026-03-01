@@ -29,9 +29,7 @@ impl TextureAtlas {
         let value: toml::Value =
             toml::from_str(toml_str).map_err(|e| format!("Atlas TOML parse error: {e}"))?;
 
-        let atlas = value
-            .get("atlas")
-            .ok_or("Missing [atlas] table")?;
+        let atlas = value.get("atlas").ok_or("Missing [atlas] table")?;
 
         let texture = atlas
             .get("texture")
@@ -162,7 +160,10 @@ hero = [0, 0, 32, 32]
         let mut registry = AtlasRegistry::new();
         registry.insert(atlas);
 
-        assert_eq!(registry.resolve("sprites.png", "hero"), Some([0, 0, 32, 32]));
+        assert_eq!(
+            registry.resolve("sprites.png", "hero"),
+            Some([0, 0, 32, 32])
+        );
         assert_eq!(registry.resolve("sprites.png", "missing"), None);
         assert_eq!(registry.resolve("other.png", "hero"), None);
     }

@@ -20,9 +20,9 @@ pub mod postprocess;
 mod primitives;
 mod scene_renderer;
 pub mod shadow;
-pub mod sprite2d_pipeline;
 pub mod skinned_pipeline;
 pub mod skybox_pipeline;
+pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
 mod texture_cache;
 
@@ -48,8 +48,10 @@ pub use primitives::{
 };
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use skinned_pipeline::SkinnedPipeline;
-pub use sprite2d_pipeline::{Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms};
 pub use skybox_pipeline::SkyboxPipeline;
+pub use sprite2d_pipeline::{
+    Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
+};
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::TextureCache;
 

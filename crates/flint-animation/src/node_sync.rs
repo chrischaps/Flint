@@ -7,6 +7,7 @@
 use crate::node_clip::NodeClip;
 use crate::skeletal_clip::{JointProperty, JointTrack};
 use crate::skeletal_sampler::sample_joint_track;
+use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -125,10 +126,7 @@ impl NodeSync {
                     .get("playing")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let ecs_speed = animator
-                    .get("speed")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(1.0);
+                let ecs_speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
                 let ecs_looping = animator
                     .get("loop")
                     .and_then(|v| v.as_bool())
@@ -162,8 +160,8 @@ impl NodeSync {
                     .to_string();
                 let ecs_blend_duration = animator
                     .get("blend_duration")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(0.3) as f32;
+                    .and_then(toml_f32)
+                    .unwrap_or(0.3);
 
                 if !ecs_blend_target.is_empty()
                     && ecs_blend_target != state.blend_target
@@ -187,10 +185,7 @@ impl NodeSync {
                 continue;
             }
 
-            let speed = animator
-                .get("speed")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
 
             let looping = animator
                 .get("loop")
@@ -217,8 +212,8 @@ impl NodeSync {
                 .to_string();
             state.blend_duration = animator
                 .get("blend_duration")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(0.3) as f32;
+                .and_then(toml_f32)
+                .unwrap_or(0.3);
 
             self.states.insert(entity_id, state);
         }

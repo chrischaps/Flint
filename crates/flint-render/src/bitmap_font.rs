@@ -6,6 +6,7 @@
 //! pipeline with zero new shaders.
 
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
+use flint_core::toml_util::toml_f32;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -49,10 +50,7 @@ impl BitmapFont {
             .get("char_count")
             .and_then(|v| v.as_integer())
             .unwrap_or(95) as u32;
-        let spacing = font
-            .get("spacing")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
+        let spacing = font.get("spacing").and_then(toml_f32).unwrap_or(1.0);
 
         Some(Self {
             texture,
@@ -297,28 +295,52 @@ pub fn apply_fill(
             let u_range = uv_rect[2] - uv_rect[0];
             let new_u_max = uv_rect[0] + u_range * value;
             let x_off = -(width - new_w) * 0.5;
-            ([uv_rect[0], uv_rect[1], new_u_max, uv_rect[3]], new_w, height, x_off, 0.0)
+            (
+                [uv_rect[0], uv_rect[1], new_u_max, uv_rect[3]],
+                new_w,
+                height,
+                x_off,
+                0.0,
+            )
         }
         "right_to_left" => {
             let new_w = width * value;
             let u_range = uv_rect[2] - uv_rect[0];
             let new_u_min = uv_rect[2] - u_range * value;
             let x_off = (width - new_w) * 0.5;
-            ([new_u_min, uv_rect[1], uv_rect[2], uv_rect[3]], new_w, height, x_off, 0.0)
+            (
+                [new_u_min, uv_rect[1], uv_rect[2], uv_rect[3]],
+                new_w,
+                height,
+                x_off,
+                0.0,
+            )
         }
         "bottom_to_top" => {
             let new_h = height * value;
             let v_range = uv_rect[3] - uv_rect[1];
             let new_v_min = uv_rect[3] - v_range * value;
             let y_off = -(height - new_h) * 0.5;
-            ([uv_rect[0], new_v_min, uv_rect[2], uv_rect[3]], width, new_h, 0.0, y_off)
+            (
+                [uv_rect[0], new_v_min, uv_rect[2], uv_rect[3]],
+                width,
+                new_h,
+                0.0,
+                y_off,
+            )
         }
         "top_to_bottom" => {
             let new_h = height * value;
             let v_range = uv_rect[3] - uv_rect[1];
             let new_v_max = uv_rect[1] + v_range * value;
             let y_off = (height - new_h) * 0.5;
-            ([uv_rect[0], uv_rect[1], uv_rect[2], new_v_max], width, new_h, 0.0, y_off)
+            (
+                [uv_rect[0], uv_rect[1], uv_rect[2], new_v_max],
+                width,
+                new_h,
+                0.0,
+                y_off,
+            )
         }
         _ => (uv_rect, width, height, 0.0, 0.0),
     }
@@ -340,7 +362,8 @@ mod fill_tests {
 
     #[test]
     fn fill_right_to_left_half() {
-        let (uv, w, _h, xo, _yo) = apply_fill([0.0, 0.0, 1.0, 1.0], 10.0, 5.0, 0.5, "right_to_left");
+        let (uv, w, _h, xo, _yo) =
+            apply_fill([0.0, 0.0, 1.0, 1.0], 10.0, 5.0, 0.5, "right_to_left");
         assert!((w - 5.0).abs() < 1e-6);
         assert!((uv[0] - 0.5).abs() < 1e-6);
         assert!((xo - 2.5).abs() < 1e-6);
@@ -358,7 +381,8 @@ mod fill_tests {
 
     #[test]
     fn fill_top_to_bottom_quarter() {
-        let (uv, _w, h, _xo, yo) = apply_fill([0.0, 0.0, 1.0, 1.0], 10.0, 8.0, 0.25, "top_to_bottom");
+        let (uv, _w, h, _xo, yo) =
+            apply_fill([0.0, 0.0, 1.0, 1.0], 10.0, 8.0, 0.25, "top_to_bottom");
         assert!((h - 2.0).abs() < 1e-6);
         assert!((uv[3] - 0.25).abs() < 1e-6);
         assert!((yo - 3.0).abs() < 1e-6);

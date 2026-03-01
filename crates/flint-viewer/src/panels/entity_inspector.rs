@@ -1,6 +1,7 @@
 //! Editable entity inspector panel — schema-driven widgets for component properties
 
 use crate::undo::EditAction;
+use flint_core::toml_util::{toml_color, toml_to_vec3};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_schema::{FieldType, SchemaRegistry};
@@ -230,7 +231,9 @@ fn edit_field(
         }
 
         FieldType::Vec3 => {
-            let arr = extract_vec3_f32(value).unwrap_or([0.0, 0.0, 0.0]);
+            let arr = toml_to_vec3(value)
+                .map(|v| v.to_array())
+                .unwrap_or([0.0, 0.0, 0.0]);
             if let Some(new_arr) = vec3_edit(ui, name, arr, 0.1) {
                 Some(vec3_to_toml(new_arr))
             } else {
@@ -239,7 +242,7 @@ fn edit_field(
         }
 
         FieldType::Color => {
-            let arr = extract_color_f32(value).unwrap_or([1.0, 1.0, 1.0, 1.0]);
+            let arr = toml_color(value).unwrap_or([1.0, 1.0, 1.0, 1.0]);
             let mut rgba = arr;
             let original = arr;
             ui.horizontal(|ui| {
@@ -372,64 +375,6 @@ fn color_to_toml(c: [f32; 4]) -> toml::Value {
         toml::Value::Float(c[2] as f64),
         toml::Value::Float(c[3] as f64),
     ])
-}
-
-fn extract_vec3_f32(value: &toml::Value) -> Option<[f32; 3]> {
-    if let Some(arr) = value.as_array() {
-        if arr.len() >= 3 {
-            let x = arr[0]
-                .as_float()
-                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-            let y = arr[1]
-                .as_float()
-                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-            let z = arr[2]
-                .as_float()
-                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
-            return Some([x, y, z]);
-        }
-    }
-    if let Some(table) = value.as_table() {
-        let x = table
-            .get("x")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))?
-            as f32;
-        let y = table
-            .get("y")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))?
-            as f32;
-        let z = table
-            .get("z")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))?
-            as f32;
-        return Some([x, y, z]);
-    }
-    None
-}
-
-fn extract_color_f32(value: &toml::Value) -> Option<[f32; 4]> {
-    let arr = value.as_array()?;
-    if arr.len() < 3 {
-        return None;
-    }
-    let r = arr[0]
-        .as_float()
-        .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-    let g = arr[1]
-        .as_float()
-        .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-    let b = arr[2]
-        .as_float()
-        .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
-    let a = if arr.len() >= 4 {
-        arr[3]
-            .as_float()
-            .or_else(|| arr[3].as_integer().map(|i| i as f64))
-            .unwrap_or(1.0) as f32
-    } else {
-        1.0
-    };
-    Some([r, g, b, a])
 }
 
 /// Recursively display a TOML value as a read-only tree

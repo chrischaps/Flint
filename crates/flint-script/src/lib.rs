@@ -65,11 +65,7 @@ impl ScriptSystem {
         let touch_just_started: Vec<(i64, f64, f64)> = input
             .touches_just_started_set()
             .iter()
-            .filter_map(|id| {
-                input
-                    .touch_position(*id)
-                    .map(|(x, y)| (*id as i64, x, y))
-            })
+            .filter_map(|id| input.touch_position(*id).map(|(x, y)| (*id as i64, x, y)))
             .collect();
         let touch_just_ended: Vec<i64> = input
             .touches_just_ended_set()

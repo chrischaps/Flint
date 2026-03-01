@@ -30,9 +30,9 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{KeyCode, PhysicalKey};
 #[cfg(target_os = "android")]
 use winit::keyboard::NativeKeyCode;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 /// Tracks Android device IDs that produce gamepad button keycodes,
@@ -254,19 +254,19 @@ impl PlayerApp {
     #[cfg(target_os = "android")]
     fn android_keycode_to_gamepad_button(keycode: u32) -> Option<&'static str> {
         match keycode {
-            96 => Some("South"),         // AKEYCODE_BUTTON_A
-            97 => Some("East"),          // AKEYCODE_BUTTON_B
-            99 => Some("West"),          // AKEYCODE_BUTTON_X
-            100 => Some("North"),        // AKEYCODE_BUTTON_Y
-            102 => Some("LeftTrigger"),  // AKEYCODE_BUTTON_L1
-            103 => Some("RightTrigger"), // AKEYCODE_BUTTON_R1
-            104 => Some("LeftTrigger2"), // AKEYCODE_BUTTON_L2
-            105 => Some("RightTrigger2"),// AKEYCODE_BUTTON_R2
-            106 => Some("LeftThumb"),    // AKEYCODE_BUTTON_THUMBL
-            107 => Some("RightThumb"),   // AKEYCODE_BUTTON_THUMBR
-            108 => Some("Start"),        // AKEYCODE_BUTTON_START
-            109 => Some("Select"),       // AKEYCODE_BUTTON_SELECT
-            110 => Some("Mode"),         // AKEYCODE_BUTTON_MODE
+            96 => Some("South"),          // AKEYCODE_BUTTON_A
+            97 => Some("East"),           // AKEYCODE_BUTTON_B
+            99 => Some("West"),           // AKEYCODE_BUTTON_X
+            100 => Some("North"),         // AKEYCODE_BUTTON_Y
+            102 => Some("LeftTrigger"),   // AKEYCODE_BUTTON_L1
+            103 => Some("RightTrigger"),  // AKEYCODE_BUTTON_R1
+            104 => Some("LeftTrigger2"),  // AKEYCODE_BUTTON_L2
+            105 => Some("RightTrigger2"), // AKEYCODE_BUTTON_R2
+            106 => Some("LeftThumb"),     // AKEYCODE_BUTTON_THUMBL
+            107 => Some("RightThumb"),    // AKEYCODE_BUTTON_THUMBR
+            108 => Some("Start"),         // AKEYCODE_BUTTON_START
+            109 => Some("Select"),        // AKEYCODE_BUTTON_SELECT
+            110 => Some("Mode"),          // AKEYCODE_BUTTON_MODE
             _ => None,
         }
     }
@@ -461,9 +461,8 @@ impl PlayerApp {
 
         // Apply scene-level post-processing config
         if let Some(pp_def) = &self.scene_post_process {
-            scene_renderer.set_post_process_config(
-                scene_loading::post_process_config_from_def(pp_def),
-            );
+            scene_renderer
+                .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
         }
 
         self.render_context = Some(render_context);
@@ -977,8 +976,13 @@ impl PlayerApp {
         }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let (cam_pos_override, cam_target_override, cam_fov_override, cam_ortho_override, cam_ortho_height_override) =
-            self.script.take_camera_overrides();
+        let (
+            cam_pos_override,
+            cam_target_override,
+            cam_fov_override,
+            cam_ortho_override,
+            cam_ortho_height_override,
+        ) = self.script.take_camera_overrides();
         if let Some(pos) = cam_pos_override {
             self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
         }
@@ -1293,11 +1297,7 @@ impl PlayerApp {
                         eprintln!("[state] Unknown state template: '{}'", name);
                     }
                 }
-                ScriptCommand::SetVelocity2D {
-                    entity_id,
-                    vx,
-                    vy,
-                } => {
+                ScriptCommand::SetVelocity2D { entity_id, vx, vy } => {
                     let eid = flint_core::EntityId::from_raw(entity_id as u64);
                     self.physics.set_velocity_2d(eid, vx as f32, vy as f32);
                 }
@@ -1472,10 +1472,7 @@ impl PlayerApp {
         for &id in &spawned_ids {
             if let Some(comps) = self.world.get_components(id) {
                 if let Some(script_comp) = comps.get("script") {
-                    if let Some(source) = script_comp
-                        .get("source")
-                        .and_then(|v| v.as_str())
-                    {
+                    if let Some(source) = script_comp.get("source").and_then(|v| v.as_str()) {
                         // Try chunk's own scripts dir first, then scene's scripts dir
                         let scene_scripts_dir = Path::new(&self.scene_path)
                             .parent()
@@ -1495,7 +1492,8 @@ impl PlayerApp {
         }
 
         // Initialize scripts for new entities
-        self.script.initialize_entities(&mut self.world, &spawned_ids);
+        self.script
+            .initialize_entities(&mut self.world, &spawned_ids);
 
         println!(
             "[chunk] Loaded '{}' ({} entities) at offset ({}, {})",
@@ -1665,13 +1663,10 @@ impl PlayerApp {
                 }
             }
 
-
-
             // Apply post-process config
             if let Some(pp_def) = &self.scene_post_process {
-                renderer.set_post_process_config(
-                    scene_loading::post_process_config_from_def(pp_def),
-                );
+                renderer
+                    .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
             }
         }
 
@@ -1762,11 +1757,7 @@ impl ApplicationHandler for PlayerApp {
                             self.camera.aspect = ctx.aspect_ratio();
                             let size = ctx.size;
                             if let Some(renderer) = &mut self.scene_renderer {
-                                renderer.resize_postprocess(
-                                    &ctx.device,
-                                    size.width,
-                                    size.height,
-                                );
+                                renderer.resize_postprocess(&ctx.device, size.width, size.height);
                             }
                             self.input
                                 .set_screen_size(size.width as f64, size.height as f64);
@@ -1911,8 +1902,7 @@ impl ApplicationHandler for PlayerApp {
                                     _ => None,
                                 };
                                 if let Some(btn) = dpad_button {
-                                    let slot =
-                                        self.android_gamepad.register_device(device_id);
+                                    let slot = self.android_gamepad.register_device(device_id);
                                     self.input.process_gamepad_button_down(slot, btn);
                                 }
                             }
@@ -1930,9 +1920,7 @@ impl ApplicationHandler for PlayerApp {
                                     _ => None,
                                 };
                                 if let Some(btn) = dpad_button {
-                                    if let Some(slot) =
-                                        self.android_gamepad.slot_for(device_id)
-                                    {
+                                    if let Some(slot) = self.android_gamepad.slot_for(device_id) {
                                         self.input.process_gamepad_button_up(slot, btn);
                                     }
                                 }
@@ -1946,18 +1934,14 @@ impl ApplicationHandler for PlayerApp {
                 if let PhysicalKey::Unidentified(NativeKeyCode::Android(keycode)) =
                     event.physical_key
                 {
-                    if let Some(button_name) =
-                        Self::android_keycode_to_gamepad_button(keycode)
-                    {
+                    if let Some(button_name) = Self::android_keycode_to_gamepad_button(keycode) {
                         let slot = self.android_gamepad.register_device(device_id);
                         match event.state {
                             ElementState::Pressed => {
-                                self.input
-                                    .process_gamepad_button_down(slot, button_name);
+                                self.input.process_gamepad_button_down(slot, button_name);
                             }
                             ElementState::Released => {
-                                self.input
-                                    .process_gamepad_button_up(slot, button_name);
+                                self.input.process_gamepad_button_up(slot, button_name);
                             }
                         }
                     }
@@ -1986,8 +1970,7 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                self.input
-                    .process_mouse_move(position.x, position.y);
+                self.input.process_mouse_move(position.x, position.y);
             }
 
             WindowEvent::Touch(touch) => {
@@ -2001,19 +1984,11 @@ impl ApplicationHandler for PlayerApp {
                     // If this device was already identified as a gamepad via button
                     // presses, treat its touch events as stick axis data.
                     if self.android_gamepad.is_gamepad(touch.device_id) {
-                        if let Some(slot) =
-                            self.android_gamepad.slot_for(touch.device_id)
-                        {
-                            self.input.process_gamepad_axis(
-                                slot,
-                                "LeftStickX",
-                                x as f32,
-                            );
-                            self.input.process_gamepad_axis(
-                                slot,
-                                "LeftStickY",
-                                y as f32,
-                            );
+                        if let Some(slot) = self.android_gamepad.slot_for(touch.device_id) {
+                            self.input
+                                .process_gamepad_axis(slot, "LeftStickX", x as f32);
+                            self.input
+                                .process_gamepad_axis(slot, "LeftStickY", y as f32);
                             return;
                         }
                     }
@@ -2022,22 +1997,12 @@ impl ApplicationHandler for PlayerApp {
                     // and this touch id has no prior Started event (process_touch_move
                     // would silently drop it anyway), treat it as a joystick from an
                     // unregistered gamepad device.
-                    if x.abs() <= 1.5
-                        && y.abs() <= 1.5
-                        && !self.input.has_active_touch(touch.id)
-                    {
-                        let slot =
-                            self.android_gamepad.register_device(touch.device_id);
-                        self.input.process_gamepad_axis(
-                            slot,
-                            "LeftStickX",
-                            x as f32,
-                        );
-                        self.input.process_gamepad_axis(
-                            slot,
-                            "LeftStickY",
-                            y as f32,
-                        );
+                    if x.abs() <= 1.5 && y.abs() <= 1.5 && !self.input.has_active_touch(touch.id) {
+                        let slot = self.android_gamepad.register_device(touch.device_id);
+                        self.input
+                            .process_gamepad_axis(slot, "LeftStickX", x as f32);
+                        self.input
+                            .process_gamepad_axis(slot, "LeftStickY", y as f32);
                         return;
                     }
                 }

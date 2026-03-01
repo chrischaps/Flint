@@ -79,16 +79,8 @@ struct ModelStats {
 impl ModelStats {
     fn from_import(import: &ImportResult) -> Self {
         let total_vertices: usize = import.meshes.iter().map(|m| m.positions.len()).sum();
-        let total_triangles: usize = import
-            .meshes
-            .iter()
-            .map(|m| m.indices.len() / 3)
-            .sum();
-        let skeleton_joint_count: usize = import
-            .skeletons
-            .iter()
-            .map(|s| s.joints.len())
-            .sum();
+        let total_triangles: usize = import.meshes.iter().map(|m| m.indices.len() / 3).sum();
+        let skeleton_joint_count: usize = import.skeletons.iter().map(|s| s.joints.len()).sum();
         Self {
             total_vertices,
             total_triangles,
@@ -146,10 +138,7 @@ fn create_model_world(model_path: &Path, anim_speed: f32) -> (FlintWorld, String
         a.insert("clip".to_string(), toml::Value::String(String::new()));
         a.insert("playing".to_string(), toml::Value::Boolean(true));
         a.insert("loop".to_string(), toml::Value::Boolean(true));
-        a.insert(
-            "speed".to_string(),
-            toml::Value::Float(anim_speed as f64),
-        );
+        a.insert("speed".to_string(), toml::Value::Float(anim_speed as f64));
         a
     });
     let _ = world.set_component(entity_id, "animator", animator);
@@ -202,7 +191,9 @@ fn register_animation_data(
                     let clip = SkeletalClip::from_imported(imported_clip);
                     println!(
                         "  Skeletal clip: {} ({:.1}s, {} tracks)",
-                        clip.name, clip.duration, clip.joint_tracks.len()
+                        clip.name,
+                        clip.duration,
+                        clip.joint_tracks.len()
                     );
 
                     all_clip_names.push(clip.name.clone());
@@ -217,8 +208,7 @@ fn register_animation_data(
                 });
                 let _ = world.set_component(loaded.entity_id, "skeleton", skeleton_comp);
 
-                skeletal_entity_assets
-                    .insert(loaded.entity_id, loaded.asset_name.clone());
+                skeletal_entity_assets.insert(loaded.entity_id, loaded.asset_name.clone());
             }
         }
 
@@ -228,7 +218,9 @@ fn register_animation_data(
                 let clip = NodeClip::from_imported(imported_clip);
                 println!(
                     "  Node clip: {} ({:.1}s, {} tracks)",
-                    clip.name, clip.duration, clip.node_tracks.len()
+                    clip.name,
+                    clip.duration,
+                    clip.node_tracks.len()
                 );
 
                 all_clip_names.push(clip.name.clone());
@@ -271,17 +263,9 @@ fn register_animation_data(
 
     // Set the clip on the animator component so sync_from_world picks it up
     if let Some(components) = world.get_components_mut(entity_id) {
-        components.set_field(
-            "animator",
-            "clip",
-            toml::Value::String(clip_name.clone()),
-        );
+        components.set_field("animator", "clip", toml::Value::String(clip_name.clone()));
         components.set_field("animator", "playing", toml::Value::Boolean(true));
-        components.set_field(
-            "animator",
-            "speed",
-            toml::Value::Float(anim_speed as f64),
-        );
+        components.set_field("animator", "speed", toml::Value::Float(anim_speed as f64));
     }
 
     let info = AnimationInfo {
@@ -709,13 +693,8 @@ impl PreviewApp {
             None,
             None,
         );
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &context.device,
-            context.config.format,
-            None,
-            1,
-            false,
-        );
+        let egui_renderer =
+            egui_wgpu::Renderer::new(&context.device, context.config.format, None, 1, false);
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
 
@@ -967,7 +946,11 @@ impl PreviewApp {
 
         if let Some(info) = &self.anim_info {
             let clip_name = &info.clip_names[info.current_clip_index];
-            let status = if self.anim_paused { "\u{23f8}" } else { "\u{25b6}" };
+            let status = if self.anim_paused {
+                "\u{23f8}"
+            } else {
+                "\u{25b6}"
+            };
             let speed = self
                 .state
                 .lock()
@@ -976,11 +959,9 @@ impl PreviewApp {
                     s.entity_id.and_then(|eid| {
                         s.world.get_components(eid).and_then(|c| {
                             c.get("animator").and_then(|a| {
-                                a.get("speed")
-                                    .and_then(|v| {
-                                        v.as_float()
-                                            .or_else(|| v.as_integer().map(|i| i as f64))
-                                    })
+                                a.get("speed").and_then(|v| {
+                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                })
                             })
                         })
                     })
@@ -1072,9 +1053,7 @@ impl PreviewApp {
         // Get playback time and clip duration from animation system
         let (anim_time, anim_duration, anim_speed) = if has_anim {
             let state_guard = self.state.lock().ok();
-            let entity_id = state_guard
-                .as_ref()
-                .and_then(|s| s.entity_id);
+            let entity_id = state_guard.as_ref().and_then(|s| s.entity_id);
 
             let mut time = 0.0f64;
             let mut duration = 0.0f64;
@@ -1109,8 +1088,10 @@ impl PreviewApp {
 
         // Read model stats and node/material info from state
         let state_guard = self.state.lock().ok();
-        let model_stats_snapshot = state_guard.as_ref().and_then(|s| s.model_stats.as_ref()).map(
-            |ms| {
+        let model_stats_snapshot = state_guard
+            .as_ref()
+            .and_then(|s| s.model_stats.as_ref())
+            .map(|ms| {
                 (
                     ms.total_vertices,
                     ms.total_triangles,
@@ -1120,8 +1101,7 @@ impl PreviewApp {
                     ms.skeleton_joint_count,
                     ms.bounds,
                 )
-            },
-        );
+            });
         // Snapshot node tree data
         let node_data: Vec<(String, Vec<usize>, bool)> = state_guard
             .as_ref()
@@ -1519,9 +1499,7 @@ impl PreviewApp {
             }
         }
         if let Some(gr) = new_grid {
-            if let (Some(renderer), Some(ctx)) =
-                (&mut self.scene_renderer, &self.render_context)
-            {
+            if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
                 renderer.set_show_grid(&ctx.device, gr);
             }
         }
@@ -1530,11 +1508,7 @@ impl PreviewApp {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     if let Some(components) = state.world.get_components_mut(eid) {
-                        components.set_field(
-                            "animator",
-                            "playing",
-                            toml::Value::Boolean(!paused),
-                        );
+                        components.set_field("animator", "playing", toml::Value::Boolean(!paused));
                     }
                 }
             }
@@ -1546,11 +1520,7 @@ impl PreviewApp {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     if let Some(components) = state.world.get_components_mut(eid) {
-                        components.set_field(
-                            "animator",
-                            "speed",
-                            toml::Value::Float(spd),
-                        );
+                        components.set_field("animator", "speed", toml::Value::Float(spd));
                     }
                 }
             }
@@ -1565,13 +1535,9 @@ impl PreviewApp {
                 }
             }
             // Upload bone matrices after scrub
-            if let (Some(renderer), Some(ctx)) =
-                (&mut self.scene_renderer, &self.render_context)
-            {
+            if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
                 for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                    if let Some(matrices) =
-                        self.animation.skeletal_sync.bone_matrices(entity_id)
-                    {
+                    if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
                         renderer.update_bone_matrices(&ctx.queue, asset_name, matrices);
                     }
                 }
@@ -1908,9 +1874,11 @@ impl ApplicationHandler for PreviewApp {
                         self.animation.node_sync.sync_from_world(&state.world);
 
                         // Advance all animation tiers
-                        self.animation
-                            .sync
-                            .advance_and_write(&mut state.world, &self.animation.player, dt);
+                        self.animation.sync.advance_and_write(
+                            &mut state.world,
+                            &self.animation.player,
+                            dt,
+                        );
                         self.animation.skeletal_sync.advance_and_compute(dt);
                         self.animation
                             .node_sync
@@ -1924,8 +1892,7 @@ impl ApplicationHandler for PreviewApp {
                         if let Some(matrices) =
                             self.animation.skeletal_sync.bone_matrices(entity_id)
                         {
-                            renderer
-                                .update_bone_matrices(&context.queue, asset_name, matrices);
+                            renderer.update_bone_matrices(&context.queue, asset_name, matrices);
                         }
                     }
                 }

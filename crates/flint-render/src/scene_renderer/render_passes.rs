@@ -49,25 +49,22 @@ impl SceneRenderer {
         for cascade in 0..CASCADE_COUNT {
             let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
 
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some(&format!("Shadow Cascade {} Encoder", cascade)),
-                });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(&format!("Shadow Cascade {} Encoder", cascade)),
+            });
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some(&format!("Shadow Cascade {} Pass", cascade)),
                     color_attachments: &[],
-                    depth_stencil_attachment: Some(
-                        wgpu::RenderPassDepthStencilAttachment {
-                            view: &shadow_pass.cascade_views[cascade],
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        },
-                    ),
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &shadow_pass.cascade_views[cascade],
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
@@ -92,22 +89,18 @@ impl SceneRenderer {
                             usage: wgpu::BufferUsages::UNIFORM,
                         });
 
-                    let shadow_bind =
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &shadow_pass.shadow_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: shadow_buffer.as_entire_binding(),
-                            }],
-                            label: Some("Shadow Draw Bind Group"),
-                        });
+                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &shadow_pass.shadow_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow_buffer.as_entire_binding(),
+                        }],
+                        label: Some("Shadow Draw Bind Group"),
+                    });
 
                     pass.set_bind_group(0, &shadow_bind, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
@@ -125,22 +118,18 @@ impl SceneRenderer {
                             usage: wgpu::BufferUsages::UNIFORM,
                         });
 
-                    let shadow_bind =
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &shadow_pass.shadow_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: shadow_buffer.as_entire_binding(),
-                            }],
-                            label: Some("Terrain Shadow Draw Bind Group"),
-                        });
+                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &shadow_pass.shadow_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow_buffer.as_entire_binding(),
+                        }],
+                        label: Some("Terrain Shadow Draw Bind Group"),
+                    });
 
                     pass.set_bind_group(0, &shadow_bind, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
@@ -162,22 +151,18 @@ impl SceneRenderer {
                             usage: wgpu::BufferUsages::UNIFORM,
                         });
 
-                    let shadow_bind =
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &shadow_pass.shadow_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: shadow_buffer.as_entire_binding(),
-                            }],
-                            label: Some("Transparent Shadow Draw Bind Group"),
-                        });
+                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &shadow_pass.shadow_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow_buffer.as_entire_binding(),
+                        }],
+                        label: Some("Transparent Shadow Draw Bind Group"),
+                    });
 
                     pass.set_bind_group(0, &shadow_bind, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
@@ -197,23 +182,19 @@ impl SceneRenderer {
                             usage: wgpu::BufferUsages::UNIFORM,
                         });
 
-                    let shadow_bind =
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &shadow_pass.shadow_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: shadow_buffer.as_entire_binding(),
-                            }],
-                            label: Some("Skinned Shadow Draw Bind Group"),
-                        });
+                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        layout: &shadow_pass.shadow_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: shadow_buffer.as_entire_binding(),
+                        }],
+                        label: Some("Skinned Shadow Draw Bind Group"),
+                    });
 
                     pass.set_bind_group(0, &shadow_bind, &[]);
                     pass.set_bind_group(1, &draw.bone_bind_group, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -514,8 +495,7 @@ impl SceneRenderer {
             render_pass.set_bind_group(0, &grid.transform_bind_group, &[]);
             render_pass.set_bind_group(1, &grid.material_bind_group, &[]);
             render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-            render_pass
-                .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
         }
 
@@ -555,10 +535,8 @@ impl SceneRenderer {
                 if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -593,10 +571,8 @@ impl SceneRenderer {
                 if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -629,8 +605,7 @@ impl SceneRenderer {
             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
             render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-            render_pass
-                .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
         }
 
@@ -641,10 +616,8 @@ impl SceneRenderer {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    draw.index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
@@ -664,10 +637,8 @@ impl SceneRenderer {
                 for draw in &self.terrain_draws {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -684,10 +655,8 @@ impl SceneRenderer {
                 if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -703,8 +672,7 @@ impl SceneRenderer {
             render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
             render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-            render_pass
-                .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
         }
 
@@ -741,10 +709,8 @@ impl SceneRenderer {
                     // Light bind group 2 is already set
                     render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -788,10 +754,8 @@ impl SceneRenderer {
         if let Some(sp) = &self.sprite2d_pipeline {
             if !self.sprite2d_batches.is_empty() {
                 render_pass.set_pipeline(&sp.pipeline);
-                render_pass.set_index_buffer(
-                    sp.quad_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(sp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_bind_group(0, &sp.uniform_bind_group, &[]);
                 for batch in &self.sprite2d_batches {
                     render_pass.set_bind_group(1, &batch.instance_bind_group, &[]);
@@ -823,10 +787,8 @@ impl SceneRenderer {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    draw.index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
@@ -846,10 +808,8 @@ impl SceneRenderer {
                     render_pass.set_bind_group(2, &self.light_bind_group, &[]);
                     render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        draw.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }
@@ -859,10 +819,8 @@ impl SceneRenderer {
         // Alpha-blended particles first, then additive
         if let Some(pp) = &self.particle_pipeline {
             if !self.particle_draws.is_empty() {
-                render_pass.set_index_buffer(
-                    pp.quad_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
 
                 // Alpha pass
@@ -896,10 +854,8 @@ impl SceneRenderer {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    draw.index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }

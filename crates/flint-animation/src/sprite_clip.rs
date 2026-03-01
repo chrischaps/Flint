@@ -190,8 +190,7 @@ texture = "sheet.png"
 frame_size = [32, 32]
 frames = []
 "#;
-        let result =
-            load_sprite_clips_from_str(toml_str, &PathBuf::from("bad.sprite.toml"));
+        let result = load_sprite_clips_from_str(toml_str, &PathBuf::from("bad.sprite.toml"));
         assert!(result.is_err());
     }
 
@@ -205,8 +204,7 @@ frames = [
     { col = 0, row = 0, duration_ms = 100 },
 ]
 "#;
-        let result =
-            load_sprite_clips_from_str(toml_str, &PathBuf::from("bad.sprite.toml"));
+        let result = load_sprite_clips_from_str(toml_str, &PathBuf::from("bad.sprite.toml"));
         assert!(result.is_err());
     }
 

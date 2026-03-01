@@ -181,8 +181,7 @@ impl PhysicsSystem {
     /// Query all entities whose colliders overlap an axis-aligned rectangle in the XY plane.
     pub fn overlap_rect(&self, x: f32, y: f32, w: f32, h: f32) -> Vec<EntityId> {
         let shape = rapier3d::prelude::Cuboid::new(vector![w * 0.5, h * 0.5, 1000.0]);
-        let shape_pos =
-            Isometry::translation(x + w * 0.5, y + h * 0.5, 0.0);
+        let shape_pos = Isometry::translation(x + w * 0.5, y + h * 0.5, 0.0);
 
         let mut result = Vec::new();
         self.physics_world.query_pipeline.intersections_with_shape(
@@ -442,7 +441,9 @@ mod tests {
             );
             t
         });
-        world.set_component(id, "transform", transform_data).unwrap();
+        world
+            .set_component(id, "transform", transform_data)
+            .unwrap();
 
         let rb_data = toml::Value::Table({
             let mut t = toml::map::Map::new();
@@ -508,11 +509,18 @@ mod tests {
         }
 
         let events = sys.event_bus.drain();
-        let has_trigger = events.iter().any(|e| matches!(e, GameEvent::TriggerEntered { .. }));
-        let has_collision = events.iter().any(|e| matches!(e, GameEvent::CollisionStarted { .. }));
+        let has_trigger = events
+            .iter()
+            .any(|e| matches!(e, GameEvent::TriggerEntered { .. }));
+        let has_collision = events
+            .iter()
+            .any(|e| matches!(e, GameEvent::CollisionStarted { .. }));
 
         assert!(has_trigger, "Sensor collision should emit TriggerEntered");
-        assert!(!has_collision, "Sensor collision should NOT emit CollisionStarted");
+        assert!(
+            !has_collision,
+            "Sensor collision should NOT emit CollisionStarted"
+        );
     }
 
     #[test]
@@ -551,11 +559,21 @@ mod tests {
         }
 
         let events = sys.event_bus.drain();
-        let has_collision = events.iter().any(|e| matches!(e, GameEvent::CollisionStarted { .. }));
-        let has_trigger = events.iter().any(|e| matches!(e, GameEvent::TriggerEntered { .. }));
+        let has_collision = events
+            .iter()
+            .any(|e| matches!(e, GameEvent::CollisionStarted { .. }));
+        let has_trigger = events
+            .iter()
+            .any(|e| matches!(e, GameEvent::TriggerEntered { .. }));
 
-        assert!(has_collision, "Solid collision should emit CollisionStarted");
-        assert!(!has_trigger, "Solid collision should NOT emit TriggerEntered");
+        assert!(
+            has_collision,
+            "Solid collision should emit CollisionStarted"
+        );
+        assert!(
+            !has_trigger,
+            "Solid collision should NOT emit TriggerEntered"
+        );
     }
 
     #[test]
@@ -608,7 +626,9 @@ mod tests {
             );
             t
         });
-        world.set_component(id, "transform", transform_data).unwrap();
+        world
+            .set_component(id, "transform", transform_data)
+            .unwrap();
 
         // Sprite with specific dimensions
         let sprite_data = toml::Value::Table({
@@ -643,9 +663,21 @@ mod tests {
         let cuboid = collider.shape().as_cuboid().expect("Should be a cuboid");
         let he = cuboid.half_extents;
 
-        assert!((he.x - 1.0).abs() < 0.01, "Half-width should be 1.0, got {}", he.x);
-        assert!((he.y - 1.5).abs() < 0.01, "Half-height should be 1.5, got {}", he.y);
-        assert!((he.z - 0.1).abs() < 0.01, "Half-depth should be 0.1, got {}", he.z);
+        assert!(
+            (he.x - 1.0).abs() < 0.01,
+            "Half-width should be 1.0, got {}",
+            he.x
+        );
+        assert!(
+            (he.y - 1.5).abs() < 0.01,
+            "Half-height should be 1.5, got {}",
+            he.y
+        );
+        assert!(
+            (he.z - 0.1).abs() < 0.01,
+            "Half-depth should be 0.1, got {}",
+            he.z
+        );
     }
 
     #[test]
@@ -745,7 +777,15 @@ mod tests {
         let vel = sys.get_velocity_2d(id);
         assert!(vel.is_some(), "Should be able to read velocity back");
         let vel = vel.unwrap();
-        assert!((vel[0] - 3.0).abs() < 0.01, "vx should be 3.0, got {}", vel[0]);
-        assert!((vel[1] - 7.0).abs() < 0.01, "vy should be 7.0, got {}", vel[1]);
+        assert!(
+            (vel[0] - 3.0).abs() < 0.01,
+            "vx should be 3.0, got {}",
+            vel[0]
+        );
+        assert!(
+            (vel[1] - 7.0).abs() < 0.01,
+            "vy should be 7.0, got {}",
+            vel[1]
+        );
     }
 }

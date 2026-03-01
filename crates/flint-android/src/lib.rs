@@ -55,7 +55,12 @@ pub extern "C" fn Java_com_flint_game_FlintActivity_nativeOnGamepadAxes(
 /// Returns [left_trigger, right_trigger, right_stick_x, right_stick_y].
 pub fn read_gamepad_axes() -> [f32; 4] {
     if let Ok(state) = GAMEPAD_AXES.lock() {
-        [state.left_trigger, state.right_trigger, state.right_stick_x, state.right_stick_y]
+        [
+            state.left_trigger,
+            state.right_trigger,
+            state.right_stick_x,
+            state.right_stick_y,
+        ]
     } else {
         [0.0; 4]
     }
@@ -115,13 +120,9 @@ fn android_main(app: AndroidApp) {
     log::info!("Loading scene: {}", scene_path.display());
 
     // Parse scene
-    let (world, scene_file) =
-        flint_scene::load_scene(&scene_path, &registry).unwrap_or_else(|e| {
-            panic!(
-                "Failed to load scene {}: {e}",
-                scene_path.display()
-            );
-        });
+    let (world, scene_file) = flint_scene::load_scene(&scene_path, &registry).unwrap_or_else(|e| {
+        panic!("Failed to load scene {}: {e}", scene_path.display());
+    });
 
     // Build PlayerApp
     let scene_path_str = scene_path.to_string_lossy().to_string();
@@ -182,7 +183,10 @@ fn find_configured_scene(data_dir: &std::path::Path) -> Option<std::path::PathBu
         let trimmed = line.trim();
         if trimmed.starts_with("scene") {
             // Parse: scene = "path/to/scene.toml"
-            if let Some(val) = trimmed.strip_prefix("scene").and_then(|s| s.trim().strip_prefix('=')) {
+            if let Some(val) = trimmed
+                .strip_prefix("scene")
+                .and_then(|s| s.trim().strip_prefix('='))
+            {
                 let val = val.trim().trim_matches('"');
                 if !val.is_empty() {
                     let scene = data_dir.join(val);

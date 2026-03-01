@@ -6,6 +6,7 @@ use crate::blend::blend_poses;
 use crate::skeletal_clip::{JointProperty, SkeletalClip};
 use crate::skeletal_sampler::sample_joint_track;
 use crate::skeleton::{JointPose, Skeleton};
+use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -125,8 +126,8 @@ impl SkeletalSync {
                     .to_string();
                 let ecs_blend_duration = animator
                     .get("blend_duration")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(0.3) as f32;
+                    .and_then(toml_f32)
+                    .unwrap_or(0.3);
 
                 // Start a new crossfade if ECS sets a new blend_target
                 if !ecs_blend_target.is_empty()
@@ -150,10 +151,7 @@ impl SkeletalSync {
                 continue;
             }
 
-            let speed = animator
-                .get("speed")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
 
             let looping = animator
                 .get("loop")
@@ -181,8 +179,8 @@ impl SkeletalSync {
                 .to_string();
             state.blend_duration = animator
                 .get("blend_duration")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(0.3) as f32;
+                .and_then(toml_f32)
+                .unwrap_or(0.3);
 
             self.states.insert(entity_id, state);
         }

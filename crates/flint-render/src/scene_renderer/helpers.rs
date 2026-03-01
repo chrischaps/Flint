@@ -1,6 +1,7 @@
 //! Free helper functions used by the scene renderer.
 
 use crate::pipeline::BlendMode;
+use flint_core::toml_util::toml_vec3;
 
 pub(super) fn identity_matrix() -> [[f32; 4]; 4] {
     [
@@ -63,8 +64,8 @@ pub(super) fn extract_bounds_info(bounds: &toml::Value) -> Option<([f32; 3], [f3
     let min = bounds.get("min")?;
     let max = bounds.get("max")?;
 
-    let min_arr = extract_vec3(min)?;
-    let max_arr = extract_vec3(max)?;
+    let min_arr = toml_vec3(min)?;
+    let max_arr = toml_vec3(max)?;
 
     let size = [
         max_arr[0] - min_arr[0],
@@ -79,50 +80,6 @@ pub(super) fn extract_bounds_info(bounds: &toml::Value) -> Option<([f32; 3], [f3
     ];
 
     Some((size, center))
-}
-
-pub(super) fn extract_vec3(value: &toml::Value) -> Option<[f32; 3]> {
-    if let Some(arr) = value.as_array() {
-        if arr.len() >= 3 {
-            let x = arr[0]
-                .as_float()
-                .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-            let y = arr[1]
-                .as_float()
-                .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-            let z = arr[2]
-                .as_float()
-                .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
-            return Some([x, y, z]);
-        }
-    }
-    None
-}
-
-/// Extract an RGBA color array from a TOML value like `[0.7, 0.35, 0.2, 1.0]`
-pub(super) fn extract_color(value: &toml::Value) -> Option<[f32; 4]> {
-    let arr = value.as_array()?;
-    if arr.len() < 3 {
-        return None;
-    }
-    let r = arr[0]
-        .as_float()
-        .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-    let g = arr[1]
-        .as_float()
-        .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-    let b = arr[2]
-        .as_float()
-        .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
-    let a = if arr.len() >= 4 {
-        arr[3]
-            .as_float()
-            .or_else(|| arr[3].as_integer().map(|i| i as f64))
-            .unwrap_or(1.0) as f32
-    } else {
-        1.0
-    };
-    Some([r, g, b, a])
 }
 
 /// Parse a blend mode string from TOML into the BlendMode enum

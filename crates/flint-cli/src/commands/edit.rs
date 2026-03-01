@@ -1,6 +1,7 @@
 //! Track editor — loads a scene with spline data and launches the interactive editor.
 
 use anyhow::{Context, Result};
+use flint_core::toml_util::toml_f32;
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
 use flint_viewer::spline_editor::{ControlPoint, SplineEditorConfig};
@@ -148,10 +149,4 @@ pub fn run(args: EditArgs) -> Result<()> {
     // Launch viewer in editor mode with file watching enabled
     let schemas_refs: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).collect();
     flint_viewer::app::run_editor(&args.scene, true, &schemas_refs, editor_config)
-}
-
-fn toml_f32(v: &toml::Value) -> Option<f32> {
-    v.as_float()
-        .map(|f| f as f32)
-        .or_else(|| v.as_integer().map(|i| i as f32))
 }

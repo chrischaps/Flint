@@ -10,6 +10,7 @@ mod error;
 mod hash;
 mod id;
 pub mod spline;
+pub mod toml_util;
 mod types;
 
 pub use error::{FlintError, Result};

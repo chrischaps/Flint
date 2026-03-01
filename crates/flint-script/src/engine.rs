@@ -6,6 +6,7 @@
 
 use crate::api;
 use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
+use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -579,10 +580,7 @@ fn get_interactable_config(entity: EntityId, world: &FlintWorld) -> (f64, bool) 
     let Some(interactable) = comps.get("interactable") else {
         return (3.0, true);
     };
-    let range = interactable
-        .get("range")
-        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .unwrap_or(3.0);
+    let range = interactable.get("range").and_then(toml_f64).unwrap_or(3.0);
     let enabled = interactable
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -632,10 +630,7 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
             continue;
         }
 
-        let range = interactable
-            .get("range")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(3.0);
+        let range = interactable.get("range").and_then(toml_f64).unwrap_or(3.0);
 
         let Some(et) = world.get_transform(entity.id) else {
             continue;

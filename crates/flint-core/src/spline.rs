@@ -355,10 +355,26 @@ mod tests {
 
     fn make_square_loop() -> Vec<SplineControlPoint> {
         vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: false,
+            },
         ]
     }
 
@@ -375,9 +391,21 @@ mod tests {
     #[test]
     fn open_spline_produces_samples() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(5.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(5.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
         ];
         let samples = sample_open_spline(&pts, 1.0);
         assert!(samples.len() >= 10);
@@ -391,8 +419,16 @@ mod tests {
     #[test]
     fn too_few_points_returns_empty() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(1.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(1.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
         ];
         assert!(sample_closed_spline(&pts, 1.0).is_empty());
     }
@@ -400,10 +436,26 @@ mod tests {
     #[test]
     fn gap_ranges_single_gap_closed() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: true },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: true,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: false,
+            },
         ];
         let ranges = compute_gap_ranges(&pts, true);
         assert_eq!(ranges.len(), 1);
@@ -414,10 +466,26 @@ mod tests {
     #[test]
     fn gap_ranges_consecutive_merge() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: true },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: true },
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: false },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: true,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: true,
+            },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: false,
+            },
         ];
         let ranges = compute_gap_ranges(&pts, true);
         assert_eq!(ranges.len(), 1);
@@ -428,14 +496,26 @@ mod tests {
     #[test]
     fn gap_ranges_open_spline() {
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: true },
-            SplineControlPoint { position: Vec3::new(5.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: true,
+            },
+            SplineControlPoint {
+                position: Vec3::new(5.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
         ];
         let ranges = compute_gap_ranges(&pts, false);
         assert_eq!(ranges.len(), 1);
-        assert!(ranges[0].0.abs() < 0.01);           // CP0 → t=0
-        assert!((ranges[0].1 - 0.50).abs() < 0.01);  // CP1 → t=1/2
+        assert!(ranges[0].0.abs() < 0.01); // CP0 → t=0
+        assert!((ranges[0].1 - 0.50).abs() < 0.01); // CP1 → t=1/2
     }
 
     #[test]
@@ -460,10 +540,26 @@ mod tests {
     fn gap_wraparound_closed() {
         // Gaps at CP3 (last) that wraps to CP0
         let pts = vec![
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 0.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(10.0, 0.0, 10.0), twist: 0.0, gap_after: false },
-            SplineControlPoint { position: Vec3::new(0.0, 0.0, 10.0), twist: 0.0, gap_after: true },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(10.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: false,
+            },
+            SplineControlPoint {
+                position: Vec3::new(0.0, 0.0, 10.0),
+                twist: 0.0,
+                gap_after: true,
+            },
         ];
         let ranges = compute_gap_ranges(&pts, true);
         assert_eq!(ranges.len(), 1);

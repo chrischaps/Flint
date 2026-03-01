@@ -12,9 +12,7 @@ use crate::camera::Camera;
 use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
-use crate::particle_pipeline::{
-    ParticleDrawCall, ParticleDrawData, ParticlePipeline,
-};
+use crate::particle_pipeline::{ParticleDrawCall, ParticleDrawData, ParticlePipeline};
 use crate::pipeline::{
     BlendMode, DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline,
     SpotLight, TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
@@ -29,6 +27,7 @@ use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
+use flint_core::toml_util::toml_f32;
 use flint_core::{Transform, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportResult;
@@ -1568,10 +1567,7 @@ impl SceneRenderer {
                     .unwrap_or("directional");
 
                 let color = Self::extract_light_vec3(&light, "color").unwrap_or([1.0, 1.0, 1.0]);
-                let intensity = light
-                    .get("intensity")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(1.0) as f32;
+                let intensity = light.get("intensity").and_then(toml_f32).unwrap_or(1.0);
 
                 match light_type {
                     "directional" => {
@@ -1594,10 +1590,8 @@ impl SceneRenderer {
                             let radius = light
                                 .get("range")
                                 .or_else(|| light.get("radius"))
-                                .and_then(|v| {
-                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
-                                })
-                                .unwrap_or(10.0) as f32;
+                                .and_then(toml_f32)
+                                .unwrap_or(10.0);
                             points[point_count as usize] = PointLight {
                                 position: [light_pos.x, light_pos.y, light_pos.z],
                                 radius,
@@ -1616,24 +1610,12 @@ impl SceneRenderer {
                             let radius = light
                                 .get("range")
                                 .or_else(|| light.get("radius"))
-                                .and_then(|v| {
-                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
-                                })
-                                .unwrap_or(10.0) as f32;
-                            let inner_angle = light
-                                .get("inner_angle")
-                                .and_then(|v| {
-                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
-                                })
-                                .unwrap_or(0.3)
-                                as f32;
-                            let outer_angle = light
-                                .get("outer_angle")
-                                .and_then(|v| {
-                                    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
-                                })
-                                .unwrap_or(0.5)
-                                as f32;
+                                .and_then(toml_f32)
+                                .unwrap_or(10.0);
+                            let inner_angle =
+                                light.get("inner_angle").and_then(toml_f32).unwrap_or(0.3);
+                            let outer_angle =
+                                light.get("outer_angle").and_then(toml_f32).unwrap_or(0.5);
                             spots[spot_count as usize] = SpotLight {
                                 position: [light_pos.x, light_pos.y, light_pos.z],
                                 radius,

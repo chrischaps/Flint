@@ -601,8 +601,11 @@ impl InputState {
                     SwipeDirection::Up
                 };
                 eprintln!("[input]   -> SWIPE {direction:?}");
-                self.touch_swipe_just_fired
-                    .push((direction, touch.start_position.0, touch.start_position.1));
+                self.touch_swipe_just_fired.push((
+                    direction,
+                    touch.start_position.0,
+                    touch.start_position.1,
+                ));
             } else {
                 eprintln!("[input]   -> DEAD ZONE (no gesture)");
             }
@@ -1771,7 +1774,10 @@ zone = "invalid_zone"
         input.process_touch_move(1, 530.0, 500.0);
         input.process_touch_end(1);
 
-        assert!(input.touch_taps().is_empty(), "dead zone should not fire tap");
+        assert!(
+            input.touch_taps().is_empty(),
+            "dead zone should not fire tap"
+        );
         assert!(
             input.touch_swipes().is_empty(),
             "dead zone should not fire swipe"

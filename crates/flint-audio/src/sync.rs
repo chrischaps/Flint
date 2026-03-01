@@ -5,6 +5,7 @@
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
 use crate::engine::{amplitude_to_db, AudioEngine};
+use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use kira::sound::static_sound::StaticSoundHandle;
@@ -120,15 +121,9 @@ impl AudioSync {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            let volume = audio_data
-                .get("volume")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let volume = audio_data.get("volume").and_then(toml_f64).unwrap_or(1.0);
 
-            let pitch = audio_data
-                .get("pitch")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let pitch = audio_data.get("pitch").and_then(toml_f64).unwrap_or(1.0);
 
             let file = audio_data
                 .get("file")
@@ -145,13 +140,13 @@ impl AudioSync {
 
                 let min_distance = audio_data
                     .get("min_distance")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(1.0) as f32;
+                    .and_then(toml_f32)
+                    .unwrap_or(1.0);
 
                 let max_distance = audio_data
                     .get("max_distance")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(25.0) as f32;
+                    .and_then(toml_f32)
+                    .unwrap_or(25.0);
 
                 match engine.create_spatial_track(transform.position, min_distance, max_distance) {
                     Ok(mut track) => {
@@ -290,15 +285,9 @@ fn read_audio_params(world: &FlintWorld, entity_id: EntityId) -> (f64, f64) {
         None => return (1.0, 1.0),
     };
 
-    let volume = audio_data
-        .get("volume")
-        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .unwrap_or(1.0);
+    let volume = audio_data.get("volume").and_then(toml_f64).unwrap_or(1.0);
 
-    let pitch = audio_data
-        .get("pitch")
-        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .unwrap_or(1.0);
+    let pitch = audio_data.get("pitch").and_then(toml_f64).unwrap_or(1.0);
 
     (volume, pitch)
 }

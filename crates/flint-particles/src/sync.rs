@@ -4,6 +4,7 @@ use crate::curves::{lerp_color, lerp_f32};
 use crate::emitter::{EmissionShape, EmitterConfig, EmitterState, ParticleBlendMode};
 use crate::particle::ParticleInstance;
 use crate::rand::ParticleRng;
+use flint_core::toml_util::toml_vec3;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -321,25 +322,10 @@ fn spawn_particle(state: &mut EmitterState, rng: &mut ParticleRng) {
 }
 
 fn read_position(transform: &toml::value::Table) -> [f32; 3] {
-    if let Some(pos) = transform.get("position") {
-        if let Some(arr) = pos.as_array() {
-            if arr.len() >= 3 {
-                return [
-                    toml_f32(&arr[0], 0.0),
-                    toml_f32(&arr[1], 0.0),
-                    toml_f32(&arr[2], 0.0),
-                ];
-            }
-        }
-    }
-    [0.0; 3]
-}
-
-fn toml_f32(v: &toml::Value, default: f32) -> f32 {
-    v.as_float()
-        .map(|f| f as f32)
-        .or_else(|| v.as_integer().map(|i| i as f32))
-        .unwrap_or(default)
+    transform
+        .get("position")
+        .and_then(|v| toml_vec3(v))
+        .unwrap_or([0.0; 3])
 }
 
 #[cfg(test)]

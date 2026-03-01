@@ -1,6 +1,7 @@
 //! Headless scene-to-PNG render command
 
 use anyhow::{Context, Result};
+use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3;
 use flint_player::spline_gen;
 use flint_render::model_loader::{self, ModelLoadConfig};
@@ -227,9 +228,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
     load_terrain_for_render(&world, &args.scene, &ctx.device, &ctx.queue, &mut renderer);
 
     // Set scene_dir for font/texture resolution and viewport params for screen anchoring
-    renderer.scene_dir = Path::new(&args.scene)
-        .parent()
-        .map(|p| p.to_path_buf());
+    renderer.scene_dir = Path::new(&args.scene).parent().map(|p| p.to_path_buf());
     renderer.ortho_height = camera.ortho_height;
     renderer.aspect_ratio = camera.aspect;
 
@@ -312,11 +311,7 @@ fn load_terrain_for_render(
         };
 
         let get_f32 = |key: &str, default: f32| -> f32 {
-            terrain_comp
-                .get(key)
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .map(|f| f as f32)
-                .unwrap_or(default)
+            terrain_comp.get(key).and_then(toml_f32).unwrap_or(default)
         };
 
         let get_i32 = |key: &str, default: i32| -> i32 {
@@ -358,27 +353,11 @@ fn load_terrain_for_render(
         let transform = world
             .get_component(entity.id, "transform")
             .and_then(|t| {
-                let arr = t.get("position")?.as_array()?;
-                if arr.len() >= 3 {
-                    let x = arr[0]
-                        .as_float()
-                        .or_else(|| arr[0].as_integer().map(|i| i as f64))?
-                        as f32;
-                    let y = arr[1]
-                        .as_float()
-                        .or_else(|| arr[1].as_integer().map(|i| i as f64))?
-                        as f32;
-                    let z = arr[2]
-                        .as_float()
-                        .or_else(|| arr[2].as_integer().map(|i| i as f64))?
-                        as f32;
-                    Some(Transform {
-                        position: Vec3::new(x, y, z),
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                }
+                let pos = t.get("position").and_then(toml_vec3)?;
+                Some(Transform {
+                    position: Vec3::new(pos[0], pos[1], pos[2]),
+                    ..Default::default()
+                })
             })
             .unwrap_or_default();
 

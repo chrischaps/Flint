@@ -1,6 +1,7 @@
 //! Emitter configuration (parsed from TOML) and runtime state
 
 use crate::particle::ParticlePool;
+use flint_core::toml_util::{toml_f32, toml_vec3, toml_vec4};
 
 /// Blend mode for particle rendering
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -88,7 +89,7 @@ impl EmitterConfig {
         let mut config = Self::default();
 
         if let Some(v) = table.get("emission_rate") {
-            config.emission_rate = toml_f32(v, config.emission_rate);
+            config.emission_rate = toml_f32(v).unwrap_or(config.emission_rate);
         }
         if let Some(v) = table.get("burst_count") {
             config.burst_count = v.as_integer().unwrap_or(0) as u32;
@@ -98,40 +99,40 @@ impl EmitterConfig {
             config.max_particles = n.min(10000);
         }
         if let Some(v) = table.get("lifetime_min") {
-            config.lifetime_min = toml_f32(v, config.lifetime_min);
+            config.lifetime_min = toml_f32(v).unwrap_or(config.lifetime_min);
         }
         if let Some(v) = table.get("lifetime_max") {
-            config.lifetime_max = toml_f32(v, config.lifetime_max);
+            config.lifetime_max = toml_f32(v).unwrap_or(config.lifetime_max);
         }
         if let Some(v) = table.get("speed_min") {
-            config.speed_min = toml_f32(v, config.speed_min);
+            config.speed_min = toml_f32(v).unwrap_or(config.speed_min);
         }
         if let Some(v) = table.get("speed_max") {
-            config.speed_max = toml_f32(v, config.speed_max);
+            config.speed_max = toml_f32(v).unwrap_or(config.speed_max);
         }
         if let Some(v) = table.get("direction") {
-            config.direction = toml_vec3(v, config.direction);
+            config.direction = toml_vec3(v).unwrap_or(config.direction);
         }
         if let Some(v) = table.get("spread") {
-            config.spread = toml_f32(v, config.spread);
+            config.spread = toml_f32(v).unwrap_or(config.spread);
         }
         if let Some(v) = table.get("gravity") {
-            config.gravity = toml_vec3(v, config.gravity);
+            config.gravity = toml_vec3(v).unwrap_or(config.gravity);
         }
         if let Some(v) = table.get("damping") {
-            config.damping = toml_f32(v, config.damping);
+            config.damping = toml_f32(v).unwrap_or(config.damping);
         }
         if let Some(v) = table.get("size_start") {
-            config.size_start = toml_f32(v, config.size_start);
+            config.size_start = toml_f32(v).unwrap_or(config.size_start);
         }
         if let Some(v) = table.get("size_end") {
-            config.size_end = toml_f32(v, config.size_end);
+            config.size_end = toml_f32(v).unwrap_or(config.size_end);
         }
         if let Some(v) = table.get("color_start") {
-            config.color_start = toml_vec4(v, config.color_start);
+            config.color_start = toml_vec4(v).unwrap_or(config.color_start);
         }
         if let Some(v) = table.get("color_end") {
-            config.color_end = toml_vec4(v, config.color_end);
+            config.color_end = toml_vec4(v).unwrap_or(config.color_end);
         }
         if let Some(v) = table.get("texture") {
             if let Some(s) = v.as_str() {
@@ -161,15 +162,15 @@ impl EmitterConfig {
             .unwrap_or("point");
         let shape_radius = table
             .get("shape_radius")
-            .map(|v| toml_f32(v, 0.5))
+            .and_then(|v| toml_f32(v))
             .unwrap_or(0.5);
         let shape_angle = table
             .get("shape_angle")
-            .map(|v| toml_f32(v, 30.0))
+            .and_then(|v| toml_f32(v))
             .unwrap_or(30.0);
         let shape_extents = table
             .get("shape_extents")
-            .map(|v| toml_vec3(v, [0.5, 0.5, 0.5]))
+            .and_then(|v| toml_vec3(v))
             .unwrap_or([0.5, 0.5, 0.5]);
 
         config.shape = match shape_str {
@@ -190,7 +191,7 @@ impl EmitterConfig {
             config.world_space = v.as_bool().unwrap_or(true);
         }
         if let Some(v) = table.get("duration") {
-            config.duration = toml_f32(v, 0.0);
+            config.duration = toml_f32(v).unwrap_or(0.0);
         }
         if let Some(v) = table.get("looping") {
             config.looping = v.as_bool().unwrap_or(true);
@@ -236,42 +237,6 @@ impl EmitterState {
             emitter_position: [0.0; 3],
         }
     }
-}
-
-// ── TOML helpers (handle integer/float coercion) ──
-
-fn toml_f32(v: &toml::Value, default: f32) -> f32 {
-    v.as_float()
-        .map(|f| f as f32)
-        .or_else(|| v.as_integer().map(|i| i as f32))
-        .unwrap_or(default)
-}
-
-fn toml_vec3(v: &toml::Value, default: [f32; 3]) -> [f32; 3] {
-    if let Some(arr) = v.as_array() {
-        if arr.len() >= 3 {
-            return [
-                toml_f32(&arr[0], default[0]),
-                toml_f32(&arr[1], default[1]),
-                toml_f32(&arr[2], default[2]),
-            ];
-        }
-    }
-    default
-}
-
-fn toml_vec4(v: &toml::Value, default: [f32; 4]) -> [f32; 4] {
-    if let Some(arr) = v.as_array() {
-        if arr.len() >= 4 {
-            return [
-                toml_f32(&arr[0], default[0]),
-                toml_f32(&arr[1], default[1]),
-                toml_f32(&arr[2], default[2]),
-                toml_f32(&arr[3], default[3]),
-            ];
-        }
-    }
-    default
 }
 
 #[cfg(test)]

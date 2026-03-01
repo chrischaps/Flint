@@ -1,6 +1,7 @@
 //! Bridges ECS `animator` components to the animation player
 
 use crate::player::{advance, AnimationPlayer, PlaybackState};
+use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
@@ -49,10 +50,7 @@ impl AnimationSync {
                 continue;
             }
 
-            let speed = animator
-                .get("speed")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let speed = animator.get("speed").and_then(toml_f64).unwrap_or(1.0);
 
             let looping = animator
                 .get("loop")

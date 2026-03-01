@@ -3,9 +3,8 @@
 //! Each method examines one entity type and pushes draw calls into the
 //! appropriate draw-list on `SceneRenderer`.
 
-use super::helpers::{extract_bounds_info, extract_color, mat4_inv_transpose, parse_blend_mode};
+use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
 use super::{SceneRenderer, SkinnedDrawCall};
-use flint_ecs::DynamicComponents;
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
@@ -15,6 +14,8 @@ use crate::primitives::{
 };
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use crate::texture_cache::TextureCache;
+use flint_core::toml_util::{toml_color as extract_color, toml_f32, toml_vec4};
+use flint_ecs::DynamicComponents;
 use flint_ecs::FlintWorld;
 use wgpu::util::DeviceExt;
 
@@ -76,18 +77,17 @@ impl SceneRenderer {
 
             let (transform_buffer, transform_bind_group) =
                 Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
-            let (material_buffer, material_bind_group) =
-                Self::create_material_bind_with_textures(
-                    device,
-                    &self.pipeline,
-                    &material_uniforms,
-                    bc_view,
-                    bc_sampler,
-                    nm_view,
-                    nm_sampler,
-                    mr_view,
-                    mr_sampler,
-                );
+            let (material_buffer, material_bind_group) = Self::create_material_bind_with_textures(
+                device,
+                &self.pipeline,
+                &material_uniforms,
+                bc_view,
+                bc_sampler,
+                nm_view,
+                nm_sampler,
+                mr_view,
+                mr_sampler,
+            );
 
             let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &self
@@ -108,8 +108,8 @@ impl SceneRenderer {
                 .get_components(entity_id)
                 .and_then(|c| c.get("material"))
                 .and_then(|m| m.get("opacity"))
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0) as f32;
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
             let ecs_blend_mode_str = world
                 .get_components(entity_id)
                 .and_then(|c| c.get("material"))
@@ -240,8 +240,8 @@ impl SceneRenderer {
                 .get_components(entity_id)
                 .and_then(|c| c.get("material"))
                 .and_then(|m| m.get("opacity"))
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0) as f32;
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
             let ecs_blend_mode_str = world
                 .get_components(entity_id)
                 .and_then(|c| c.get("material"))
@@ -371,7 +371,13 @@ impl SceneRenderer {
         if visible && mode == "sprite2d" {
             // ── Sprite2D path: collect for batched instanced rendering ──
             self.extract_sprite2d(
-                tex_cache, world, entity_id, components, sprite, world_pos, sprite2d_collected,
+                tex_cache,
+                world,
+                entity_id,
+                components,
+                sprite,
+                world_pos,
+                sprite2d_collected,
             );
         } else if visible {
             // ── Billboard path: existing per-entity rendering ──
@@ -391,18 +397,9 @@ impl SceneRenderer {
         sprite2d_collected: &mut Vec<(String, i32, Sprite2dInstanceGpu)>,
     ) {
         let tex_name = sprite.get("texture").and_then(|v| v.as_str()).unwrap_or("");
-        let width = sprite
-            .get("width")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
-        let height = sprite
-            .get("height")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
-        let anchor_y = sprite
-            .get("anchor_y")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(0.0) as f32;
+        let width = sprite.get("width").and_then(toml_f32).unwrap_or(1.0);
+        let height = sprite.get("height").and_then(toml_f32).unwrap_or(1.0);
+        let anchor_y = sprite.get("anchor_y").and_then(toml_f32).unwrap_or(0.0);
         let layer = sprite
             .get("layer")
             .and_then(|v| v.as_integer())
@@ -417,50 +414,16 @@ impl SceneRenderer {
             .unwrap_or(false);
 
         // Read tint color
-        let tint = if let Some(tint_val) = sprite.get("tint") {
-            if let Some(arr) = tint_val.as_array() {
-                let vals: Vec<f32> = arr
-                    .iter()
-                    .filter_map(|v| {
-                        v.as_float()
-                            .or_else(|| v.as_integer().map(|i| i as f64))
-                            .map(|f| f as f32)
-                    })
-                    .collect();
-                if vals.len() >= 4 {
-                    [vals[0], vals[1], vals[2], vals[3]]
-                } else {
-                    [1.0, 1.0, 1.0, 1.0]
-                }
-            } else {
-                [1.0, 1.0, 1.0, 1.0]
-            }
-        } else {
-            [1.0, 1.0, 1.0, 1.0]
-        };
+        let tint = sprite
+            .get("tint")
+            .and_then(toml_vec4)
+            .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
         // Read source_rect [x, y, w, h] in pixels
-        let source_rect = if let Some(sr_val) = sprite.get("source_rect") {
-            if let Some(arr) = sr_val.as_array() {
-                let vals: Vec<f32> = arr
-                    .iter()
-                    .filter_map(|v| {
-                        v.as_float()
-                            .or_else(|| v.as_integer().map(|i| i as f64))
-                            .map(|f| f as f32)
-                    })
-                    .collect();
-                if vals.len() >= 4 {
-                    [vals[0], vals[1], vals[2], vals[3]]
-                } else {
-                    [0.0, 0.0, 0.0, 0.0]
-                }
-            } else {
-                [0.0, 0.0, 0.0, 0.0]
-            }
-        } else {
-            [0.0, 0.0, 0.0, 0.0]
-        };
+        let source_rect = sprite
+            .get("source_rect")
+            .and_then(toml_vec4)
+            .unwrap_or([0.0, 0.0, 0.0, 0.0]);
 
         // Convert source_rect to UV coordinates
         let uv_rect = if source_rect[2] > 0.0 && source_rect[3] > 0.0 {
@@ -486,14 +449,8 @@ impl SceneRenderer {
                 .get("anchor")
                 .and_then(|v| v.as_str())
                 .unwrap_or("center");
-            let off_x = sa
-                .get("offset_x")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(0.0) as f32;
-            let off_y = sa
-                .get("offset_y")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(0.0) as f32;
+            let off_x = sa.get("offset_x").and_then(toml_f32).unwrap_or(0.0);
+            let off_y = sa.get("offset_y").and_then(toml_f32).unwrap_or(0.0);
             let half_w = self.ortho_height * self.aspect_ratio * 0.5;
             let half_h = self.ortho_height * 0.5;
             let (ax, ay) = anchor_origin(anchor_name, half_w, half_h);
@@ -506,8 +463,8 @@ impl SceneRenderer {
             let parallax = components.get("parallax");
             let scroll_rate = parallax
                 .and_then(|p| p.get("scroll_rate"))
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0) as f32;
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
             (
                 world_pos[0] + self.camera_offset[0] * (1.0 - scroll_rate),
                 world_pos[1] + self.camera_offset[1] * (1.0 - scroll_rate),
@@ -518,10 +475,7 @@ impl SceneRenderer {
         // ── ui_fill clipping ──
         let (uv_rect, width, height, fill_x_off, fill_y_off) =
             if let Some(fill) = components.get("ui_fill") {
-                let value = fill
-                    .get("value")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(1.0) as f32;
+                let value = fill.get("value").and_then(toml_f32).unwrap_or(1.0);
                 let direction = fill
                     .get("direction")
                     .and_then(|v| v.as_str())
@@ -611,39 +565,13 @@ impl SceneRenderer {
 
         // ── ui_text: expand text to glyph sprite instances ──
         if let Some(ui_text) = components.get("ui_text") {
-            let font_path_str = ui_text
-                .get("font")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let text = ui_text
-                .get("text")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let text_size = ui_text
-                .get("size")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0) as f32;
-            let text_color = if let Some(c) = ui_text.get("color") {
-                if let Some(arr) = c.as_array() {
-                    let vals: Vec<f32> = arr
-                        .iter()
-                        .filter_map(|v| {
-                            v.as_float()
-                                .or_else(|| v.as_integer().map(|i| i as f64))
-                                .map(|f| f as f32)
-                        })
-                        .collect();
-                    if vals.len() >= 4 {
-                        [vals[0], vals[1], vals[2], vals[3]]
-                    } else {
-                        [1.0, 1.0, 1.0, 1.0]
-                    }
-                } else {
-                    [1.0, 1.0, 1.0, 1.0]
-                }
-            } else {
-                [1.0, 1.0, 1.0, 1.0]
-            };
+            let font_path_str = ui_text.get("font").and_then(|v| v.as_str()).unwrap_or("");
+            let text = ui_text.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let text_size = ui_text.get("size").and_then(toml_f32).unwrap_or(1.0);
+            let text_color = ui_text
+                .get("color")
+                .and_then(toml_vec4)
+                .unwrap_or([1.0, 1.0, 1.0, 1.0]);
             let align = ui_text
                 .get("align")
                 .and_then(|v| v.as_str())
@@ -662,12 +590,9 @@ impl SceneRenderer {
                 }
 
                 if let Some(font) = self.bitmap_font_cache.get(font_path_str) {
-                    let (tex_w, tex_h) = tex_cache
-                        .get_dimensions(&font.texture)
-                        .unwrap_or((1, 1));
+                    let (tex_w, tex_h) = tex_cache.get_dimensions(&font.texture).unwrap_or((1, 1));
                     let glyphs = font.layout_text(
-                        text, final_x, final_y, text_size, text_color, layer, align, tex_w,
-                        tex_h,
+                        text, final_x, final_y, text_size, text_color, layer, align, tex_w, tex_h,
                     );
                     sprite2d_collected.extend(glyphs);
                 }
@@ -690,14 +615,8 @@ impl SceneRenderer {
         };
 
         let tex_name = sprite.get("texture").and_then(|v| v.as_str()).unwrap_or("");
-        let width = sprite
-            .get("width")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
-        let height = sprite
-            .get("height")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
+        let width = sprite.get("width").and_then(toml_f32).unwrap_or(1.0);
+        let height = sprite.get("height").and_then(toml_f32).unwrap_or(1.0);
         let frame = sprite
             .get("frame")
             .and_then(|v| v.as_integer())
@@ -710,10 +629,7 @@ impl SceneRenderer {
             .get("frames_y")
             .and_then(|v| v.as_integer())
             .unwrap_or(1) as u32;
-        let anchor_y = sprite
-            .get("anchor_y")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(0.0) as f32;
+        let anchor_y = sprite.get("anchor_y").and_then(toml_f32).unwrap_or(0.0);
         let fullbright = sprite
             .get("fullbright")
             .and_then(|v| v.as_bool())
@@ -741,35 +657,32 @@ impl SceneRenderer {
             _pad1: 0.0,
         };
 
-        let billboard_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Billboard Uniform Buffer"),
-                contents: bytemuck::cast_slice(&[billboard_uniforms]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        let billboard_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Billboard Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[billboard_uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
-        let sprite_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Sprite Instance Buffer"),
-                contents: bytemuck::cast_slice(&[sprite_instance]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        let sprite_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Sprite Instance Buffer"),
+            contents: bytemuck::cast_slice(&[sprite_instance]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
-        let billboard_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &bp.billboard_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: billboard_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: sprite_buffer.as_entire_binding(),
-                    },
-                ],
-                label: Some("Billboard Bind Group"),
-            });
+        let billboard_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bp.billboard_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: billboard_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: sprite_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("Billboard Bind Group"),
+        });
 
         // Resolve sprite texture
         let (tex_view, tex_sampler, _has_tex) = Self::resolve_texture(
@@ -782,21 +695,20 @@ impl SceneRenderer {
             &tex_cache.default_white,
         );
 
-        let texture_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &bp.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(tex_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(tex_sampler),
-                    },
-                ],
-                label: Some("Billboard Texture Bind Group"),
-            });
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bp.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(tex_sampler),
+                },
+            ],
+            label: Some("Billboard Texture Bind Group"),
+        });
 
         self.billboard_draws.push(BillboardDrawCall {
             billboard_buffer,
@@ -827,44 +739,18 @@ impl SceneRenderer {
             None => return false,
         };
 
-        let font_path_str = ui_text
-            .get("font")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let text = ui_text
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let font_path_str = ui_text.get("font").and_then(|v| v.as_str()).unwrap_or("");
+        let text = ui_text.get("text").and_then(|v| v.as_str()).unwrap_or("");
 
         if font_path_str.is_empty() || text.is_empty() {
             return false;
         }
 
-        let text_size = ui_text
-            .get("size")
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
-        let text_color = if let Some(c) = ui_text.get("color") {
-            if let Some(arr) = c.as_array() {
-                let vals: Vec<f32> = arr
-                    .iter()
-                    .filter_map(|v| {
-                        v.as_float()
-                            .or_else(|| v.as_integer().map(|i| i as f64))
-                            .map(|f| f as f32)
-                    })
-                    .collect();
-                if vals.len() >= 4 {
-                    [vals[0], vals[1], vals[2], vals[3]]
-                } else {
-                    [1.0, 1.0, 1.0, 1.0]
-                }
-            } else {
-                [1.0, 1.0, 1.0, 1.0]
-            }
-        } else {
-            [1.0, 1.0, 1.0, 1.0]
-        };
+        let text_size = ui_text.get("size").and_then(toml_f32).unwrap_or(1.0);
+        let text_color = ui_text
+            .get("color")
+            .and_then(toml_vec4)
+            .unwrap_or([1.0, 1.0, 1.0, 1.0]);
         let align = ui_text
             .get("align")
             .and_then(|v| v.as_str())
@@ -880,14 +766,8 @@ impl SceneRenderer {
                 .get("anchor")
                 .and_then(|v| v.as_str())
                 .unwrap_or("center");
-            let off_x = sa
-                .get("offset_x")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(0.0) as f32;
-            let off_y = sa
-                .get("offset_y")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(0.0) as f32;
+            let off_x = sa.get("offset_x").and_then(toml_f32).unwrap_or(0.0);
+            let off_y = sa.get("offset_y").and_then(toml_f32).unwrap_or(0.0);
             let half_w = self.ortho_height * self.aspect_ratio * 0.5;
             let half_h = self.ortho_height * 0.5;
             let (ax, ay) = anchor_origin(anchor_name, half_w, half_h);
@@ -911,9 +791,7 @@ impl SceneRenderer {
         }
 
         if let Some(font) = self.bitmap_font_cache.get(font_path_str) {
-            let (tex_w, tex_h) = tex_cache
-                .get_dimensions(&font.texture)
-                .unwrap_or((1, 1));
+            let (tex_w, tex_h) = tex_cache.get_dimensions(&font.texture).unwrap_or((1, 1));
             let glyphs = font.layout_text(
                 text, text_x, text_y, text_size, text_color, layer, align, tex_w, tex_h,
             );
@@ -992,8 +870,8 @@ impl SceneRenderer {
         let proc_opacity = material_component
             .as_ref()
             .and_then(|m| m.get("opacity"))
-            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-            .unwrap_or(1.0) as f32;
+            .and_then(toml_f32)
+            .unwrap_or(1.0);
         let proc_blend_mode_str = material_component
             .as_ref()
             .and_then(|m| m.get("blend_mode"))
@@ -1014,13 +892,13 @@ impl SceneRenderer {
                     let metallic = material_component
                         .as_ref()
                         .and_then(|m| m.get("metallic"))
-                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                        .unwrap_or(0.0) as f32;
+                        .and_then(toml_f32)
+                        .unwrap_or(0.0);
                     let roughness = material_component
                         .as_ref()
                         .and_then(|m| m.get("roughness"))
-                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                        .unwrap_or(0.7) as f32;
+                        .and_then(toml_f32)
+                        .unwrap_or(0.7);
 
                     let mut material_uniforms =
                         MaterialUniforms::from_pbr([1.0, 1.0, 1.0, 1.0], metallic, roughness);
@@ -1071,13 +949,13 @@ impl SceneRenderer {
                     let metallic = material_component
                         .as_ref()
                         .and_then(|m| m.get("metallic"))
-                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                        .unwrap_or(0.0) as f32;
+                        .and_then(toml_f32)
+                        .unwrap_or(0.0);
                     let roughness = material_component
                         .as_ref()
                         .and_then(|m| m.get("roughness"))
-                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                        .unwrap_or(0.7) as f32;
+                        .and_then(toml_f32)
+                        .unwrap_or(0.7);
                     MaterialUniforms::from_pbr(color, metallic, roughness)
                 } else {
                     MaterialUniforms::procedural()
@@ -1209,22 +1087,20 @@ impl SceneRenderer {
                 .map(|(_, _, inst)| *inst)
                 .collect();
 
-            let instance_buffer =
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Sprite2D Instance Buffer"),
-                    contents: bytemuck::cast_slice(&instances),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
+            let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Sprite2D Instance Buffer"),
+                contents: bytemuck::cast_slice(&instances),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
-            let instance_bind_group =
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &sp.instance_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: instance_buffer.as_entire_binding(),
-                    }],
-                    label: Some("Sprite2D Instance Bind Group"),
-                });
+            let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &sp.instance_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instance_buffer.as_entire_binding(),
+                }],
+                label: Some("Sprite2D Instance Bind Group"),
+            });
 
             // Resolve texture
             let (tex_view, tex_sampler, _) = Self::resolve_texture(
@@ -1237,28 +1113,28 @@ impl SceneRenderer {
                 &tex_cache.default_white,
             );
 
-            let texture_bind_group =
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    layout: &sp.texture_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(tex_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(tex_sampler),
-                        },
-                    ],
-                    label: Some("Sprite2D Texture Bind Group"),
-                });
-
-            self.sprite2d_batches.push(crate::sprite2d_pipeline::Sprite2dBatch {
-                instance_buffer,
-                instance_count: instances.len() as u32,
-                texture_bind_group,
-                instance_bind_group,
+            let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &sp.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(tex_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(tex_sampler),
+                    },
+                ],
+                label: Some("Sprite2D Texture Bind Group"),
             });
+
+            self.sprite2d_batches
+                .push(crate::sprite2d_pipeline::Sprite2dBatch {
+                    instance_buffer,
+                    instance_count: instances.len() as u32,
+                    texture_bind_group,
+                    instance_bind_group,
+                });
 
             batch_start = batch_end;
         }

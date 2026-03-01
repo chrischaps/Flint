@@ -8,6 +8,7 @@
 //!    mesh + trimesh collider.
 
 use flint_core::spline::{self, SplineControlPoint, SplineSample};
+use flint_core::toml_util::{toml_f32, toml_f32_slice};
 use flint_core::Vec3;
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
@@ -15,18 +16,6 @@ use flint_physics::PhysicsSystem;
 use flint_render::{SceneRenderer, Vertex};
 use std::collections::HashMap;
 use std::path::Path;
-
-// ─── TOML parsing helpers ────────────────────────────────
-
-fn toml_f32(v: &toml::Value) -> Option<f32> {
-    v.as_float()
-        .map(|f| f as f32)
-        .or_else(|| v.as_integer().map(|i| i as f32))
-}
-
-fn toml_f32_array(arr: &[toml::Value]) -> Option<Vec<f32>> {
-    arr.iter().map(toml_f32).collect()
-}
 
 // ─── Pass 1: load spline data ────────────────────────────
 
@@ -61,10 +50,13 @@ fn parse_spline_file(path: &Path) -> Option<SplineDef> {
         if pos.len() < 3 {
             continue;
         }
-        let vals = toml_f32_array(pos)?;
+        let vals = toml_f32_slice(pos)?;
         let twist = pt.get("twist").and_then(toml_f32).unwrap_or(0.0);
 
-        let gap_after = pt.get("gap_after").and_then(|v| v.as_bool()).unwrap_or(false);
+        let gap_after = pt
+            .get("gap_after")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         control_points.push(SplineControlPoint {
             position: Vec3::new(vals[0], vals[1], vals[2]),
@@ -173,7 +165,7 @@ fn parse_spline_mesh_component(comp: &toml::Value) -> Option<SplineMeshDef> {
     let height = comp.get("height").and_then(toml_f32)?;
 
     let offset = if let Some(arr) = comp.get("offset").and_then(|v| v.as_array()) {
-        let vals = toml_f32_array(arr)?;
+        let vals = toml_f32_slice(arr)?;
         if vals.len() >= 2 {
             [vals[0], vals[1]]
         } else {
@@ -184,7 +176,7 @@ fn parse_spline_mesh_component(comp: &toml::Value) -> Option<SplineMeshDef> {
     };
 
     let color = if let Some(arr) = comp.get("color").and_then(|v| v.as_array()) {
-        let vals = toml_f32_array(arr)?;
+        let vals = toml_f32_slice(arr)?;
         if vals.len() >= 4 {
             [vals[0], vals[1], vals[2], vals[3]]
         } else if vals.len() >= 3 {
@@ -197,7 +189,7 @@ fn parse_spline_mesh_component(comp: &toml::Value) -> Option<SplineMeshDef> {
     };
 
     let stripe_color = if let Some(arr) = comp.get("stripe_color").and_then(|v| v.as_array()) {
-        let vals = toml_f32_array(arr)?;
+        let vals = toml_f32_slice(arr)?;
         if vals.len() >= 4 {
             Some([vals[0], vals[1], vals[2], vals[3]])
         } else if vals.len() >= 3 {
@@ -215,7 +207,10 @@ fn parse_spline_mesh_component(comp: &toml::Value) -> Option<SplineMeshDef> {
     let restitution = comp.get("restitution").and_then(toml_f32).unwrap_or(0.1);
     let metallic = comp.get("metallic").and_then(toml_f32).unwrap_or(0.0);
     let roughness = comp.get("roughness").and_then(toml_f32).unwrap_or(0.5);
-    let chunk_size = comp.get("chunk_size").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
+    let chunk_size = comp
+        .get("chunk_size")
+        .and_then(|v| v.as_integer())
+        .unwrap_or(0) as u32;
 
     Some(SplineMeshDef {
         spline_entity,
@@ -291,11 +286,11 @@ fn generate_cross_section_mesh(
     // `facing_forward = true` → cap faces +forward (back cap / departure cap)
     // `facing_forward = false` → cap faces -forward (front cap / arrival cap)
     let generate_end_cap = |idx: usize,
-                                 facing_forward: bool,
-                                 vertices: &mut Vec<Vertex>,
-                                 indices: &mut Vec<u32>,
-                                 phys_verts: &mut Vec<[f32; 3]>,
-                                 phys_tris: &mut Vec<[u32; 3]>| {
+                            facing_forward: bool,
+                            vertices: &mut Vec<Vertex>,
+                            indices: &mut Vec<u32>,
+                            phys_verts: &mut Vec<[f32; 3]>,
+                            phys_tris: &mut Vec<[u32; 3]>| {
         let cap_fwd = if facing_forward {
             samples[idx].forward
         } else {
@@ -305,10 +300,30 @@ fn generate_cross_section_mesh(
         let [c_bl, c_br, c_tr, c_tl] = corners[idx];
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: c_bl.to_array(), normal: cap_normal, color, uv: [0.0, 0.0] },
-            Vertex { position: c_br.to_array(), normal: cap_normal, color, uv: [1.0, 0.0] },
-            Vertex { position: c_tr.to_array(), normal: cap_normal, color, uv: [1.0, 1.0] },
-            Vertex { position: c_tl.to_array(), normal: cap_normal, color, uv: [0.0, 1.0] },
+            Vertex {
+                position: c_bl.to_array(),
+                normal: cap_normal,
+                color,
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                position: c_br.to_array(),
+                normal: cap_normal,
+                color,
+                uv: [1.0, 0.0],
+            },
+            Vertex {
+                position: c_tr.to_array(),
+                normal: cap_normal,
+                color,
+                uv: [1.0, 1.0],
+            },
+            Vertex {
+                position: c_tl.to_array(),
+                normal: cap_normal,
+                color,
+                uv: [0.0, 1.0],
+            },
         ]);
         if facing_forward {
             // Back cap winding
@@ -318,7 +333,12 @@ fn generate_cross_section_mesh(
             indices.extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
         }
         let pb = phys_verts.len() as u32;
-        phys_verts.extend_from_slice(&[c_bl.to_array(), c_br.to_array(), c_tr.to_array(), c_tl.to_array()]);
+        phys_verts.extend_from_slice(&[
+            c_bl.to_array(),
+            c_br.to_array(),
+            c_tr.to_array(),
+            c_tl.to_array(),
+        ]);
         if facing_forward {
             phys_tris.push([pb, pb + 1, pb + 2]);
             phys_tris.push([pb, pb + 2, pb + 3]);
@@ -336,12 +356,26 @@ fn generate_cross_section_mesh(
 
         // Generate departure cap when entering a gap
         if !seg_in_gap && next_in_gap {
-            generate_end_cap(seg, true, &mut vertices, &mut indices, &mut phys_verts, &mut phys_tris);
+            generate_end_cap(
+                seg,
+                true,
+                &mut vertices,
+                &mut indices,
+                &mut phys_verts,
+                &mut phys_tris,
+            );
         }
 
         // Generate arrival cap when exiting a gap
         if seg_in_gap && !next_in_gap {
-            generate_end_cap(next, false, &mut vertices, &mut indices, &mut phys_verts, &mut phys_tris);
+            generate_end_cap(
+                next,
+                false,
+                &mut vertices,
+                &mut indices,
+                &mut phys_verts,
+                &mut phys_tris,
+            );
         }
 
         // Skip geometry for segments inside gaps
@@ -534,13 +568,27 @@ fn generate_cross_section_mesh(
     if !closed && n >= 2 {
         // Front cap at sample 0 (if not in a gap)
         if !spline::is_in_gap(samples[0].t, gap_ranges) {
-            generate_end_cap(0, false, &mut vertices, &mut indices, &mut phys_verts, &mut phys_tris);
+            generate_end_cap(
+                0,
+                false,
+                &mut vertices,
+                &mut indices,
+                &mut phys_verts,
+                &mut phys_tris,
+            );
         }
 
         // Back cap at last sample (if not in a gap)
         let last = n - 1;
         if !spline::is_in_gap(samples[last].t, gap_ranges) {
-            generate_end_cap(last, true, &mut vertices, &mut indices, &mut phys_verts, &mut phys_tris);
+            generate_end_cap(
+                last,
+                true,
+                &mut vertices,
+                &mut indices,
+                &mut phys_verts,
+                &mut phys_tris,
+            );
         }
     }
 
@@ -647,7 +695,13 @@ pub fn load_splines(
 
     // Store spline data on entities
     for info in &spline_infos {
-        store_spline_data(world, info.entity_id, &info.samples, info.closed, &info.gap_ranges);
+        store_spline_data(
+            world,
+            info.entity_id,
+            &info.samples,
+            info.closed,
+            &info.gap_ranges,
+        );
     }
 
     // Build lookup: entity name → index into spline_infos
@@ -792,12 +846,16 @@ pub fn load_splines(
 
                 // Set transform (identity — geometry is already in world space)
                 let mut transform_table = toml::map::Map::new();
-                transform_table.insert("position".into(), toml::Value::Array(vec![
-                    toml::Value::Float(0.0),
-                    toml::Value::Float(0.0),
-                    toml::Value::Float(0.0),
-                ]));
-                let _ = world.set_component(chunk_id, "transform", toml::Value::Table(transform_table));
+                transform_table.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(0.0),
+                        toml::Value::Float(0.0),
+                        toml::Value::Float(0.0),
+                    ]),
+                );
+                let _ =
+                    world.set_component(chunk_id, "transform", toml::Value::Table(transform_table));
 
                 // Set material component with opacity = 1.0
                 let mut mat_table = toml::map::Map::new();
@@ -809,7 +867,8 @@ pub fn load_splines(
                 chunk_table.insert("chunk_index".into(), toml::Value::Integer(chunk_i as i64));
                 chunk_table.insert("t_start".into(), toml::Value::Float(t_start as f64));
                 chunk_table.insert("t_end".into(), toml::Value::Float(t_end as f64));
-                let _ = world.set_component(chunk_id, "spline_chunk", toml::Value::Table(chunk_table));
+                let _ =
+                    world.set_component(chunk_id, "spline_chunk", toml::Value::Table(chunk_table));
 
                 // Upload render mesh
                 let material = ImportedMaterial {

@@ -518,7 +518,9 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("spline_is_gap", move |spline_id: i64, t: f64| -> bool {
-            if spline_id < 0 { return false; }
+            if spline_id < 0 {
+                return false;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             let eid = EntityId::from_raw(spline_id as u64);
@@ -535,8 +537,13 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 None => return false,
             };
 
-            let gap_count = table.get("gap_count").and_then(|v| v.as_integer()).unwrap_or(0);
-            if gap_count == 0 { return false; }
+            let gap_count = table
+                .get("gap_count")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0);
+            if gap_count == 0 {
+                return false;
+            }
 
             let gap_starts = match table.get("gap_starts").and_then(|v| v.as_array()) {
                 Some(a) => a,
@@ -548,14 +555,21 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             };
 
             let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
-            for i in 0..(gap_count as usize).min(gap_starts.len()).min(gap_ends.len()) {
+            for i in 0..(gap_count as usize)
+                .min(gap_starts.len())
+                .min(gap_ends.len())
+            {
                 let start = gap_starts[i].as_float().unwrap_or(0.0);
                 let end = gap_ends[i].as_float().unwrap_or(0.0);
                 if start <= end {
-                    if t_wrapped >= start && t_wrapped < end { return true; }
+                    if t_wrapped >= start && t_wrapped < end {
+                        return true;
+                    }
                 } else {
                     // Wrap-around range
-                    if t_wrapped >= start || t_wrapped < end { return true; }
+                    if t_wrapped >= start || t_wrapped < end {
+                        return true;
+                    }
                 }
             }
             false
@@ -566,7 +580,9 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("spline_gap_at", move |spline_id: i64, t: f64| -> Dynamic {
-            if spline_id < 0 { return Dynamic::UNIT; }
+            if spline_id < 0 {
+                return Dynamic::UNIT;
+            }
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             let eid = EntityId::from_raw(spline_id as u64);
@@ -583,8 +599,13 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 None => return Dynamic::UNIT,
             };
 
-            let gap_count = table.get("gap_count").and_then(|v| v.as_integer()).unwrap_or(0);
-            if gap_count == 0 { return Dynamic::UNIT; }
+            let gap_count = table
+                .get("gap_count")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0);
+            if gap_count == 0 {
+                return Dynamic::UNIT;
+            }
 
             let gap_starts = match table.get("gap_starts").and_then(|v| v.as_array()) {
                 Some(a) => a,
@@ -596,7 +617,10 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             };
 
             let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
-            for i in 0..(gap_count as usize).min(gap_starts.len()).min(gap_ends.len()) {
+            for i in 0..(gap_count as usize)
+                .min(gap_starts.len())
+                .min(gap_ends.len())
+            {
                 let start = gap_starts[i].as_float().unwrap_or(0.0);
                 let end = gap_ends[i].as_float().unwrap_or(0.0);
                 let in_gap = if start <= end {
@@ -1210,11 +1234,8 @@ fn register_physics_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext
             "set_velocity_2d",
             move |entity_id: i64, vx: f64, vy: f64| {
                 let mut c = ctx.lock().unwrap();
-                c.commands.push(ScriptCommand::SetVelocity2D {
-                    entity_id,
-                    vx,
-                    vy,
-                });
+                c.commands
+                    .push(ScriptCommand::SetVelocity2D { entity_id, vx, vy });
             },
         );
     }
@@ -1229,17 +1250,15 @@ fn register_physics_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext
             let c = ctx.lock().unwrap();
             let physics = unsafe { c.physics_ref() };
             match physics {
-                Some(p) => {
-                    match p.get_velocity_2d(EntityId::from_raw(entity_id as u64)) {
-                        Some(vel) => {
-                            let mut map = Map::new();
-                            map.insert("vx".into(), Dynamic::from(vel[0] as f64));
-                            map.insert("vy".into(), Dynamic::from(vel[1] as f64));
-                            Dynamic::from(map)
-                        }
-                        None => Dynamic::UNIT,
+                Some(p) => match p.get_velocity_2d(EntityId::from_raw(entity_id as u64)) {
+                    Some(vel) => {
+                        let mut map = Map::new();
+                        map.insert("vx".into(), Dynamic::from(vel[0] as f64));
+                        map.insert("vy".into(), Dynamic::from(vel[1] as f64));
+                        Dynamic::from(map)
                     }
-                }
+                    None => Dynamic::UNIT,
+                },
                 None => Dynamic::UNIT,
             }
         });
@@ -1682,7 +1701,15 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         let ctx = ctx.clone();
         engine.register_fn(
             "draw_circle_outline_ex",
-            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64, layer: i64| {
+            move |x: f64,
+                  y: f64,
+                  radius: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
                 let mut c = ctx.lock().unwrap();
                 c.draw_commands.push(DrawCommand::CircleOutline {
                     x: x as f32,
@@ -2680,11 +2707,7 @@ fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallC
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components_mut(eid) {
-                components.set_field(
-                    "sprite_animator",
-                    "clip",
-                    toml::Value::String(clip_name),
-                );
+                components.set_field("sprite_animator", "clip", toml::Value::String(clip_name));
                 components.set_field("sprite_animator", "playing", toml::Value::Boolean(true));
             }
         });
@@ -2734,16 +2757,12 @@ fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallC
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components(eid) {
                 if let Some(sa) = components.get("sprite_animator") {
-                    return sa
-                        .get("playing")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
+                    return sa.get("playing").and_then(|v| v.as_bool()).unwrap_or(false);
                 }
             }
             false
         });
     }
-
 }
 
 // ─── Touch API ────────────────────────────────────────────
@@ -2920,7 +2939,12 @@ fn register_camera_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
         let ctx = ctx.clone();
         engine.register_fn(
             "camera_follow",
-            move |entity_id: i64, offset_x: f64, offset_y: f64, speed: f64, deadzone_w: f64, deadzone_h: f64| {
+            move |entity_id: i64,
+                  offset_x: f64,
+                  offset_y: f64,
+                  speed: f64,
+                  deadzone_w: f64,
+                  deadzone_h: f64| {
                 let mut c = ctx.lock().unwrap();
                 let dt = c.delta_time as f32;
                 if dt <= 0.0 {
@@ -2931,7 +2955,10 @@ fn register_camera_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
                 let (target_x, target_y) = {
                     let world = unsafe { c.world_ref() };
                     match world.get_transform(flint_core::EntityId::from_raw(entity_id as u64)) {
-                        Some(t) => (t.position.x + offset_x as f32, t.position.y + offset_y as f32),
+                        Some(t) => (
+                            t.position.x + offset_x as f32,
+                            t.position.y + offset_y as f32,
+                        ),
                         None => return,
                     }
                 };
