@@ -102,8 +102,8 @@ impl SpriteAnimSync {
     /// Scan the world for entities with `sprite_animator`, creating or updating
     /// playback states as needed.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
-        for entity in world.all_entities() {
-            let Some(components) = world.get_components(entity.id) else {
+        for &entity_id in world.entities_with_component("sprite_animator") {
+            let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
             let Some(sprite_animator) = components.get("sprite_animator") else {
@@ -130,7 +130,7 @@ impl SpriteAnimSync {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            if let Some(state) = self.states.get_mut(&entity.id) {
+            if let Some(state) = self.states.get_mut(&entity_id) {
                 // Clip changed → reset playback
                 if state.clip_name != clip_name {
                     state.clip_name = clip_name;
@@ -149,7 +149,7 @@ impl SpriteAnimSync {
             }
 
             self.states.insert(
-                entity.id,
+                entity_id,
                 SpritePlaybackState::new(clip_name, ecs_playing, speed),
             );
         }

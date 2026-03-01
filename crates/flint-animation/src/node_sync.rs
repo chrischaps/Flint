@@ -95,13 +95,13 @@ impl NodeSync {
     /// registered in `node_maps`. Creates playback states for newly discovered entities.
     /// Detects clip/speed/blend changes for existing entities.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
-        for entity in world.all_entities() {
+        for &entity_id in world.entities_with_component("animator") {
             // Must be registered in our node_maps
-            if !self.node_maps.contains_key(&entity.id) {
+            if !self.node_maps.contains_key(&entity_id) {
                 continue;
             }
 
-            let Some(components) = world.get_components(entity.id) else {
+            let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
 
@@ -114,7 +114,7 @@ impl NodeSync {
             }
 
             // If already tracked, check for clip changes and blend_target changes
-            if let Some(state) = self.states.get_mut(&entity.id) {
+            if let Some(state) = self.states.get_mut(&entity_id) {
                 // Check if clip name changed (e.g. script called play_clip)
                 let ecs_clip = animator
                     .get("clip")
@@ -220,7 +220,7 @@ impl NodeSync {
                 .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                 .unwrap_or(0.3) as f32;
 
-            self.states.insert(entity.id, state);
+            self.states.insert(entity_id, state);
         }
     }
 
@@ -298,39 +298,23 @@ impl NodeSync {
     }
 }
 
-/// Write a sampled animation value to an entity's transform component
+/// Write a sampled animation value to an entity's transform component.
+///
+/// Uses `world.set_field()` which creates the component if needed and
+/// maintains the component index.
 fn apply_sampled_value(
     world: &mut FlintWorld,
     entity_id: EntityId,
     property: &JointProperty,
     value: &[f32],
 ) {
-    let Some(components) = world.get_components_mut(entity_id) else {
-        return;
-    };
-
-    // Ensure transform component exists
-    if components.get("transform").is_none() {
-        components.data.insert(
-            "transform".to_string(),
-            toml::Value::Table(toml::map::Map::new()),
-        );
-    }
-
-    let Some(transform) = components.get_mut("transform") else {
-        return;
-    };
-
-    let table = match transform {
-        toml::Value::Table(t) => t,
-        _ => return,
-    };
-
     match property {
         JointProperty::Translation => {
             if value.len() >= 3 {
-                table.insert(
-                    "position".to_string(),
+                let _ = world.set_field(
+                    entity_id,
+                    "transform",
+                    "position",
                     toml::Value::Array(vec![
                         toml::Value::Float(value[0] as f64),
                         toml::Value::Float(value[1] as f64),
@@ -341,9 +325,10 @@ fn apply_sampled_value(
         }
         JointProperty::Rotation => {
             if value.len() >= 4 {
-                // Write as quaternion to avoid gimbal lock
-                table.insert(
-                    "rotation_quat".to_string(),
+                let _ = world.set_field(
+                    entity_id,
+                    "transform",
+                    "rotation_quat",
                     toml::Value::Array(vec![
                         toml::Value::Float(value[0] as f64),
                         toml::Value::Float(value[1] as f64),
@@ -355,8 +340,10 @@ fn apply_sampled_value(
         }
         JointProperty::Scale => {
             if value.len() >= 3 {
-                table.insert(
-                    "scale".to_string(),
+                let _ = world.set_field(
+                    entity_id,
+                    "transform",
+                    "scale",
                     toml::Value::Array(vec![
                         toml::Value::Float(value[0] as f64),
                         toml::Value::Float(value[1] as f64),

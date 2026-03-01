@@ -352,6 +352,9 @@ impl PlayerApp {
 
         let mut scene_renderer = SceneRenderer::new(&render_context, Default::default());
 
+        // Rebuild component index as a safety net after scene loading
+        self.world.rebuild_component_index();
+
         // Set scene_dir for font/texture resolution
         scene_renderer.scene_dir = Path::new(&self.scene_path)
             .parent()
@@ -1601,6 +1604,9 @@ impl PlayerApp {
                 return;
             }
         }
+
+        // Rebuild component index after loading new scene
+        self.world.rebuild_component_index();
 
         // Apply camera config before borrowing renderer
         self.apply_camera_def();

@@ -106,16 +106,17 @@ fn populate_world(
 
         // Set archetype
         if let Some(archetype) = &entity_def.archetype {
-            let components = world.get_components_mut(id).unwrap();
-            components.archetype = Some(archetype.clone());
-
-            // Apply archetype defaults
+            // Apply archetype defaults through set_component to maintain index
             if let Some(arch_schema) = registry.get_archetype(archetype) {
                 for (comp_name, defaults) in &arch_schema.defaults {
-                    if !components.has(comp_name) {
-                        components.set(comp_name.clone(), defaults.clone());
+                    if !world.get_components(id).map_or(false, |c| c.has(comp_name)) {
+                        let _ = world.set_component(id, comp_name, defaults.clone());
                     }
                 }
+            }
+            // Set archetype name after defaults so get_components check works
+            if let Some(components) = world.get_components_mut(id) {
+                components.archetype = Some(archetype.clone());
             }
         }
 

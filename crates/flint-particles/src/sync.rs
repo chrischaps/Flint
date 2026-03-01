@@ -50,8 +50,8 @@ impl ParticleSync {
         // Track which entities still exist
         let mut seen = std::collections::HashSet::new();
 
-        for entity in world.all_entities() {
-            let Some(components) = world.get_components(entity.id) else {
+        for &entity_id in world.entities_with_component("particle_emitter") {
+            let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
             let Some(emitter_val) = components.get("particle_emitter") else {
@@ -61,11 +61,11 @@ impl ParticleSync {
                 continue;
             };
 
-            seen.insert(entity.id);
+            seen.insert(entity_id);
 
             let config = EmitterConfig::from_toml(emitter_table);
 
-            if let Some(state) = self.states.get_mut(&entity.id) {
+            if let Some(state) = self.states.get_mut(&entity_id) {
                 // Update mutable fields that scripts may have changed
                 let ecs_playing = config.playing || config.autoplay;
                 if ecs_playing && !state.playing {
@@ -97,7 +97,7 @@ impl ParticleSync {
                 if let Some(transform) = components.get("transform").and_then(|v| v.as_table()) {
                     state.emitter_position = read_position(transform);
                 }
-                self.states.insert(entity.id, state);
+                self.states.insert(entity_id, state);
             }
         }
 

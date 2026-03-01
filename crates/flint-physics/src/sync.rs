@@ -41,13 +41,13 @@ impl PhysicsSync {
 
     /// Push Flint entities with rigidbody/collider components into Rapier
     pub fn sync_to_rapier(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
-        // Find entities with rigidbody and/or collider components
-        for entity in world.all_entities() {
-            if self.synced_entities.contains(&entity.id) {
+        // Find entities with rigidbody components
+        for &entity_id in world.entities_with_component("rigidbody") {
+            if self.synced_entities.contains(&entity_id) {
                 continue;
             }
 
-            let components = match world.get_components(entity.id) {
+            let components = match world.get_components(entity_id) {
                 Some(c) => c,
                 None => continue,
             };
@@ -59,7 +59,7 @@ impl PhysicsSync {
             };
 
             // Read transform
-            let transform = world.get_transform(entity.id).unwrap_or_default();
+            let transform = world.get_transform(entity_id).unwrap_or_default();
 
             // Build rigid body
             let body_type = rb_data
@@ -144,7 +144,7 @@ impl PhysicsSync {
             let body = builder.build();
 
             let body_handle = physics.insert_rigid_body(body);
-            self.body_map.insert(entity.id, body_handle);
+            self.body_map.insert(entity_id, body_handle);
 
             // Build collider if present
             if let Some(col_data) = components.get("collider") {
@@ -236,10 +236,10 @@ impl PhysicsSync {
                 let collider = builder.build();
 
                 let col_handle = physics.insert_collider_with_parent(collider, body_handle);
-                self.collider_map.insert(entity.id, col_handle);
+                self.collider_map.insert(entity_id, col_handle);
             }
 
-            self.synced_entities.insert(entity.id);
+            self.synced_entities.insert(entity_id);
         }
     }
 

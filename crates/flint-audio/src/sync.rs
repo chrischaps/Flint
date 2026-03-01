@@ -89,12 +89,12 @@ impl AudioSync {
             return;
         }
 
-        for entity in world.all_entities() {
-            if self.synced_entities.contains(&entity.id) {
+        for &entity_id in world.entities_with_component("audio_source") {
+            if self.synced_entities.contains(&entity_id) {
                 continue;
             }
 
-            let components = match world.get_components(entity.id) {
+            let components = match world.get_components(entity_id) {
                 Some(c) => c,
                 None => continue,
             };
@@ -136,12 +136,12 @@ impl AudioSync {
                 .unwrap_or("");
 
             if file.is_empty() {
-                self.synced_entities.insert(entity.id);
+                self.synced_entities.insert(entity_id);
                 continue;
             }
 
             if spatial {
-                let transform = world.get_transform(entity.id).unwrap_or_default();
+                let transform = world.get_transform(entity_id).unwrap_or_default();
 
                 let min_distance = audio_data
                     .get("min_distance")
@@ -165,7 +165,7 @@ impl AudioSync {
                             }
                         }
                         self.spatial_map.insert(
-                            entity.id,
+                            entity_id,
                             SpatialEntry {
                                 track,
                                 handles,
@@ -190,7 +190,7 @@ impl AudioSync {
                     }
                 }
                 self.non_spatial_map.insert(
-                    entity.id,
+                    entity_id,
                     NonSpatialEntry {
                         handles,
                         last_volume: volume,
@@ -199,7 +199,7 @@ impl AudioSync {
                 );
             }
 
-            self.synced_entities.insert(entity.id);
+            self.synced_entities.insert(entity_id);
         }
     }
 

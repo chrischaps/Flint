@@ -1556,9 +1556,9 @@ impl SceneRenderer {
         let mut points = [PointLight::default(); MAX_POINT_LIGHTS];
         let mut spots = [SpotLight::default(); MAX_SPOT_LIGHTS];
 
-        for entity in world.all_entities() {
+        for &entity_id in world.entities_with_component("light") {
             let light_component = world
-                .get_components(entity.id)
+                .get_components(entity_id)
                 .and_then(|components| components.get("light").cloned());
 
             if let Some(light) = light_component {
@@ -1590,7 +1590,7 @@ impl SceneRenderer {
                     "point" => {
                         if (point_count as usize) < MAX_POINT_LIGHTS {
                             let light_pos =
-                                world.get_world_position(entity.id).unwrap_or(Vec3::ZERO);
+                                world.get_world_position(entity_id).unwrap_or(Vec3::ZERO);
                             let radius = light
                                 .get("range")
                                 .or_else(|| light.get("radius"))
@@ -1610,7 +1610,7 @@ impl SceneRenderer {
                     "spot" => {
                         if (spot_count as usize) < MAX_SPOT_LIGHTS {
                             let light_pos =
-                                world.get_world_position(entity.id).unwrap_or(Vec3::ZERO);
+                                world.get_world_position(entity_id).unwrap_or(Vec3::ZERO);
                             let direction = Self::extract_light_vec3(&light, "direction")
                                 .unwrap_or([0.0, -1.0, 0.0]);
                             let radius = light

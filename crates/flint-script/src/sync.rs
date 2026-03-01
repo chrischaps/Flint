@@ -49,13 +49,13 @@ impl ScriptSync {
             None => return,
         };
 
-        for entity in world.all_entities() {
-            if self.discovered.contains(&entity.id) {
+        for &entity_id in world.entities_with_component("script") {
+            if self.discovered.contains(&entity_id) {
                 continue;
             }
 
             let script_comp = world
-                .get_components(entity.id)
+                .get_components(entity_id)
                 .and_then(|comps| comps.get("script").cloned());
 
             let Some(script_data) = script_comp else {
@@ -68,7 +68,7 @@ impl ScriptSync {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             if !enabled {
-                self.discovered.insert(entity.id);
+                self.discovered.insert(entity_id);
                 continue;
             }
 
@@ -78,34 +78,35 @@ impl ScriptSync {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if source.is_empty() {
-                self.discovered.insert(entity.id);
+                self.discovered.insert(entity_id);
                 continue;
             }
 
             let script_path = scripts_dir.join(source);
             if !script_path.exists() {
                 eprintln!("[script] File not found: {}", script_path.display());
-                self.discovered.insert(entity.id);
+                self.discovered.insert(entity_id);
                 continue;
             }
 
+            let entity_name = world.get_name(entity_id).unwrap_or("?");
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
-                    println!("[script] Loaded: {} → {}", entity.name, source);
+                    println!("[script] Loaded: {} → {}", entity_name, source);
                     // Record file timestamp
                     if let Ok(meta) = std::fs::metadata(&script_path) {
                         if let Ok(modified) = meta.modified() {
                             self.file_timestamps.insert(script_path.clone(), modified);
                         }
                     }
-                    engine.add_script(entity.id, ast, source.to_string());
+                    engine.add_script(entity_id, ast, source.to_string());
                 }
                 Err(e) => {
                     eprintln!("[script] Compile error in {}: {}", source, e);
                 }
             }
 
-            self.discovered.insert(entity.id);
+            self.discovered.insert(entity_id);
         }
     }
 

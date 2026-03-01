@@ -103,25 +103,21 @@ impl SkeletalSync {
     /// Creates playback states for newly discovered entities.
     /// Updates blend_target/blend_duration for existing entities if changed in ECS.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
-        for entity in world.all_entities() {
-            let Some(components) = world.get_components(entity.id) else {
+        for entity_id in world.entities_with_components(&["animator", "skeleton"]) {
+            let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
 
-            // Must have both animator and skeleton components
             let Some(animator) = components.get("animator") else {
                 continue;
             };
-            if components.get("skeleton").is_none() {
-                continue;
-            }
             // Must also have a skeleton registered for this entity
-            if !self.skeletons.contains_key(&entity.id) {
+            if !self.skeletons.contains_key(&entity_id) {
                 continue;
             }
 
             // If already tracked, check for blend_target changes from ECS
-            if let Some(state) = self.states.get_mut(&entity.id) {
+            if let Some(state) = self.states.get_mut(&entity_id) {
                 let ecs_blend_target = animator
                     .get("blend_target")
                     .and_then(|v| v.as_str())
@@ -188,7 +184,7 @@ impl SkeletalSync {
                 .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
                 .unwrap_or(0.3) as f32;
 
-            self.states.insert(entity.id, state);
+            self.states.insert(entity_id, state);
         }
     }
 

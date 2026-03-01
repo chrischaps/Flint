@@ -406,10 +406,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
             world
-                .all_entities()
-                .into_iter()
-                .filter(|info| info.components.iter().any(|c| c == comp))
-                .map(|info| Dynamic::from(info.id.raw() as i64))
+                .entities_with_component(comp)
+                .iter()
+                .map(|id| Dynamic::from(id.raw() as i64))
                 .collect()
         });
     }
@@ -420,11 +419,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         engine.register_fn("entity_count_with", move |comp: &str| -> i64 {
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_ref() };
-            world
-                .all_entities()
-                .into_iter()
-                .filter(|info| info.components.iter().any(|c| c == comp))
-                .count() as i64
+            world.entities_with_component(comp).len() as i64
         });
     }
 }

@@ -31,8 +31,8 @@ impl AnimationSync {
     /// `PlaybackState` entries for any new ones. For already-tracked entities,
     /// detect clip/playing/speed changes written by scripts.
     pub fn sync_from_world(&mut self, world: &FlintWorld, player: &AnimationPlayer) {
-        for entity in world.all_entities() {
-            let Some(components) = world.get_components(entity.id) else {
+        for &entity_id in world.entities_with_component("animator") {
+            let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
             let Some(animator) = components.get("animator") else {
@@ -71,7 +71,7 @@ impl AnimationSync {
                 || autoplay;
 
             // For already-tracked entities, detect changes from scripts
-            if let Some(state) = self.states.get_mut(&entity.id) {
+            if let Some(state) = self.states.get_mut(&entity_id) {
                 // Clip changed → switch clip, reset playback
                 if state.clip_name != clip_name {
                     state.clip_name = clip_name;
@@ -98,7 +98,7 @@ impl AnimationSync {
             }
 
             self.states.insert(
-                entity.id,
+                entity_id,
                 PlaybackState::new(clip_name, speed, looping, ecs_playing),
             );
         }

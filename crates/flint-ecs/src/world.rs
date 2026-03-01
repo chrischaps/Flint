@@ -5,7 +5,11 @@ use crate::entity::EntityInfo;
 use bimap::BiMap;
 use flint_core::{mat4_mul, EntityId, FlintError, Result, Transform, Vec3};
 use flint_schema::SchemaRegistry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Static empty set returned by `entities_with_component` for missing components.
+static EMPTY_ENTITY_SET: LazyLock<HashSet<EntityId>> = LazyLock::new(HashSet::new);
 
 /// The main ECS world for Flint
 ///
@@ -24,6 +28,8 @@ pub struct FlintWorld {
     components: HashMap<EntityId, DynamicComponents>,
     /// Parent relationships: child -> parent
     parents: HashMap<EntityId, EntityId>,
+    /// Reverse index: component name -> set of entities that have it
+    component_index: HashMap<String, HashSet<EntityId>>,
 }
 
 impl Default for FlintWorld {
@@ -41,6 +47,7 @@ impl FlintWorld {
             name_map: HashMap::new(),
             components: HashMap::new(),
             parents: HashMap::new(),
+            component_index: HashMap::new(),
         }
     }
 
@@ -104,6 +111,10 @@ impl FlintWorld {
         // Apply archetype defaults
         for (comp_name, defaults) in &arch_schema.defaults {
             components.set(comp_name.clone(), defaults.clone());
+            self.component_index
+                .entry(comp_name.clone())
+                .or_default()
+                .insert(id);
         }
 
         Ok(id)
@@ -125,6 +136,14 @@ impl FlintWorld {
             .map_err(|_| FlintError::EntityNotFound(id.to_string()))?;
 
         self.id_map.remove_by_left(&id);
+        // Remove entity from component index before dropping components
+        if let Some(comps) = self.components.get(&id) {
+            for comp_name in comps.component_names() {
+                if let Some(set) = self.component_index.get_mut(comp_name) {
+                    set.remove(&id);
+                }
+            }
+        }
         self.components.remove(&id);
         self.parents.remove(&id);
 
@@ -163,7 +182,11 @@ impl FlintWorld {
         self.components.get(&id)
     }
 
-    /// Get mutable components for an entity
+    /// Get mutable components for an entity.
+    ///
+    /// **Note:** Callers must not add or remove component *keys* through this
+    /// handle — doing so bypasses the component index. Use `set_component()`,
+    /// `set_field()`, or `remove_component()` instead.
     pub fn get_components_mut(&mut self, id: EntityId) -> Option<&mut DynamicComponents> {
         self.components.get_mut(&id)
     }
@@ -181,6 +204,10 @@ impl FlintWorld {
             .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
 
         components.set(component, data);
+        self.component_index
+            .entry(component.to_string())
+            .or_default()
+            .insert(id);
         Ok(())
     }
 
@@ -201,6 +228,10 @@ impl FlintWorld {
             .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
 
         components.merge_component(component, data);
+        self.component_index
+            .entry(component.to_string())
+            .or_default()
+            .insert(id);
         Ok(())
     }
 
@@ -297,6 +328,7 @@ impl FlintWorld {
         self.name_map.clear();
         self.components.clear();
         self.parents.clear();
+        self.component_index.clear();
     }
 
     /// Get transform from an entity's components
@@ -345,6 +377,91 @@ impl FlintWorld {
     pub fn get_world_position(&self, id: EntityId) -> Option<Vec3> {
         let mat = self.get_world_matrix(id)?;
         Some(Vec3::new(mat[3][0], mat[3][1], mat[3][2]))
+    }
+
+    /// Get all entity IDs that have a given component. O(1) lookup.
+    ///
+    /// Returns a reference to the internal `HashSet`; returns an empty set
+    /// for components that no entity currently has.
+    pub fn entities_with_component(&self, component: &str) -> &HashSet<EntityId> {
+        self.component_index
+            .get(component)
+            .unwrap_or(&EMPTY_ENTITY_SET)
+    }
+
+    /// Get entity IDs that have *all* of the given components (intersection).
+    pub fn entities_with_components(&self, names: &[&str]) -> Vec<EntityId> {
+        if names.is_empty() {
+            return Vec::new();
+        }
+        // Start from the smallest set for efficiency
+        let sets: Vec<&HashSet<EntityId>> = names
+            .iter()
+            .map(|n| self.entities_with_component(n))
+            .collect();
+        let smallest = sets.iter().min_by_key(|s| s.len()).unwrap();
+        smallest
+            .iter()
+            .copied()
+            .filter(|id| sets.iter().all(|set| set.contains(id)))
+            .collect()
+    }
+
+    /// Rebuild the component index from scratch. Safety net after bulk
+    /// operations that may have bypassed the index (e.g. scene loading).
+    pub fn rebuild_component_index(&mut self) {
+        self.component_index.clear();
+        for (&id, comps) in &self.components {
+            for comp_name in comps.component_names() {
+                self.component_index
+                    .entry(comp_name.to_string())
+                    .or_default()
+                    .insert(id);
+            }
+        }
+    }
+
+    /// Set a single field within a component, creating the component if needed.
+    /// Maintains the component index.
+    pub fn set_field(
+        &mut self,
+        id: EntityId,
+        component: &str,
+        field: &str,
+        value: toml::Value,
+    ) -> Result<()> {
+        let components = self
+            .components
+            .get_mut(&id)
+            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
+
+        components.set_field(component, field, value);
+        self.component_index
+            .entry(component.to_string())
+            .or_default()
+            .insert(id);
+        Ok(())
+    }
+
+    /// Remove a component from an entity. Maintains the component index.
+    /// Returns the removed component data, or `None` if it didn't exist.
+    pub fn remove_component(
+        &mut self,
+        id: EntityId,
+        component: &str,
+    ) -> Result<Option<toml::Value>> {
+        let components = self
+            .components
+            .get_mut(&id)
+            .ok_or_else(|| FlintError::EntityNotFound(id.to_string()))?;
+
+        let removed = components.remove(component);
+        if removed.is_some() {
+            if let Some(set) = self.component_index.get_mut(component) {
+                set.remove(&id);
+            }
+        }
+        Ok(removed)
     }
 
     /// Iterate over entity names
@@ -472,5 +589,123 @@ mod tests {
 
         let comp = world.get_component(id, "door").unwrap();
         assert_eq!(comp.get("locked").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    // ── Component index tests ───────────────────────────────
+
+    #[test]
+    fn test_index_on_set_component() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        assert!(world.entities_with_component("door").is_empty());
+
+        world
+            .set_component(id, "door", toml::Value::Table(Default::default()))
+            .unwrap();
+
+        assert!(world.entities_with_component("door").contains(&id));
+    }
+
+    #[test]
+    fn test_index_on_merge_component() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        world
+            .merge_component(id, "material", toml::Value::Table(Default::default()))
+            .unwrap();
+
+        assert!(world.entities_with_component("material").contains(&id));
+    }
+
+    #[test]
+    fn test_index_on_despawn() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+        world
+            .set_component(id, "light", toml::Value::Table(Default::default()))
+            .unwrap();
+        assert_eq!(world.entities_with_component("light").len(), 1);
+
+        world.despawn(id).unwrap();
+        assert!(world.entities_with_component("light").is_empty());
+    }
+
+    #[test]
+    fn test_index_on_clear() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+        world
+            .set_component(id, "script", toml::Value::Table(Default::default()))
+            .unwrap();
+        assert!(!world.entities_with_component("script").is_empty());
+
+        world.clear();
+        assert!(world.entities_with_component("script").is_empty());
+    }
+
+    #[test]
+    fn test_entities_with_components_intersection() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+
+        world
+            .set_component(a, "animator", toml::Value::Table(Default::default()))
+            .unwrap();
+        world
+            .set_component(a, "skeleton", toml::Value::Table(Default::default()))
+            .unwrap();
+        world
+            .set_component(b, "animator", toml::Value::Table(Default::default()))
+            .unwrap();
+
+        let both = world.entities_with_components(&["animator", "skeleton"]);
+        assert_eq!(both.len(), 1);
+        assert!(both.contains(&a));
+        assert!(!both.contains(&b));
+    }
+
+    #[test]
+    fn test_rebuild_component_index() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+        world
+            .set_component(id, "rigidbody", toml::Value::Table(Default::default()))
+            .unwrap();
+
+        // Corrupt the index
+        world.component_index.clear();
+        assert!(world.entities_with_component("rigidbody").is_empty());
+
+        world.rebuild_component_index();
+        assert!(world.entities_with_component("rigidbody").contains(&id));
+    }
+
+    #[test]
+    fn test_set_field_creates_component_in_index() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        world
+            .set_field(id, "health", "current", toml::Value::Integer(100))
+            .unwrap();
+
+        assert!(world.entities_with_component("health").contains(&id));
+    }
+
+    #[test]
+    fn test_remove_component_updates_index() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+        world
+            .set_component(id, "collider", toml::Value::Table(Default::default()))
+            .unwrap();
+        assert!(world.entities_with_component("collider").contains(&id));
+
+        let removed = world.remove_component(id, "collider").unwrap();
+        assert!(removed.is_some());
+        assert!(!world.entities_with_component("collider").contains(&id));
     }
 }
