@@ -30,12 +30,52 @@ use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
+#[cfg(target_os = "android")]
+use winit::keyboard::NativeKeyCode;
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 #[derive(Debug, Clone)]
 struct PendingRebind {
     action: String,
     mode: RebindMode,
+}
+
+/// Tracks Android device IDs that produce gamepad button keycodes,
+/// assigning each a stable u32 slot for InputState's gamepad API.
+#[cfg(target_os = "android")]
+struct AndroidGamepadTracker {
+    known_device_ids: std::collections::HashSet<winit::event::DeviceId>,
+    device_slots: HashMap<winit::event::DeviceId, u32>,
+    next_slot: u32,
+}
+
+#[cfg(target_os = "android")]
+impl AndroidGamepadTracker {
+    fn new() -> Self {
+        Self {
+            known_device_ids: std::collections::HashSet::new(),
+            device_slots: HashMap::new(),
+            next_slot: 0,
+        }
+    }
+
+    /// Register a device as a gamepad and return its slot index.
+    fn register_device(&mut self, device_id: winit::event::DeviceId) -> u32 {
+        self.known_device_ids.insert(device_id);
+        *self.device_slots.entry(device_id).or_insert_with(|| {
+            let slot = self.next_slot;
+            self.next_slot += 1;
+            slot
+        })
+    }
+
+    fn is_gamepad(&self, device_id: winit::event::DeviceId) -> bool {
+        self.known_device_ids.contains(&device_id)
+    }
+
+    fn slot_for(&self, device_id: winit::event::DeviceId) -> Option<u32> {
+        self.device_slots.get(&device_id).copied()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +187,14 @@ pub struct PlayerApp {
 
     // Chunk streaming: chunk_id → spawned entity IDs
     loaded_chunks: HashMap<String, Vec<flint_core::EntityId>>,
+
+    // Android gamepad tracking (maps winit DeviceId to InputState gamepad slots)
+    #[cfg(target_os = "android")]
+    android_gamepad: AndroidGamepadTracker,
+
+    // Android JNI axis reader for trigger/right-stick values from GameActivity
+    #[cfg(target_os = "android")]
+    android_axis_reader: Option<fn() -> [f32; 4]>,
 }
 
 impl PlayerApp {
@@ -207,12 +255,45 @@ impl PlayerApp {
             schema_paths: Vec::new(),
             terrain: None,
             loaded_chunks: HashMap::new(),
+            #[cfg(target_os = "android")]
+            android_gamepad: AndroidGamepadTracker::new(),
+            #[cfg(target_os = "android")]
+            android_axis_reader: None,
+        }
+    }
+
+    /// Map Android AKEYCODE_BUTTON_* values to gilrs-format button names.
+    #[cfg(target_os = "android")]
+    fn android_keycode_to_gamepad_button(keycode: u32) -> Option<&'static str> {
+        match keycode {
+            96 => Some("South"),         // AKEYCODE_BUTTON_A
+            97 => Some("East"),          // AKEYCODE_BUTTON_B
+            99 => Some("West"),          // AKEYCODE_BUTTON_X
+            100 => Some("North"),        // AKEYCODE_BUTTON_Y
+            102 => Some("LeftTrigger"),  // AKEYCODE_BUTTON_L1
+            103 => Some("RightTrigger"), // AKEYCODE_BUTTON_R1
+            104 => Some("LeftTrigger2"), // AKEYCODE_BUTTON_L2
+            105 => Some("RightTrigger2"),// AKEYCODE_BUTTON_R2
+            106 => Some("LeftThumb"),    // AKEYCODE_BUTTON_THUMBL
+            107 => Some("RightThumb"),   // AKEYCODE_BUTTON_THUMBR
+            108 => Some("Start"),        // AKEYCODE_BUTTON_START
+            109 => Some("Select"),       // AKEYCODE_BUTTON_SELECT
+            110 => Some("Mode"),         // AKEYCODE_BUTTON_MODE
+            _ => None,
         }
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).
     pub fn set_schema_paths(&mut self, paths: Vec<String>) {
         self.schema_paths = paths;
+    }
+
+    /// Register a function that reads gamepad trigger/right-stick axes from the
+    /// Android JNI bridge. Called each frame in `poll_gamepad_events()`.
+    /// Returns [left_trigger, right_trigger, right_stick_x, right_stick_y].
+    #[cfg(target_os = "android")]
+    pub fn set_android_axis_reader(&mut self, reader: fn() -> [f32; 4]) {
+        self.android_axis_reader = Some(reader);
     }
 
     /// Apply scene-level camera configuration from `CameraDef`
@@ -638,6 +719,22 @@ impl PlayerApp {
                 }
                 _ => {}
             }
+        }
+
+        // Android: poll trigger/right-stick axes from JNI bridge
+        #[cfg(target_os = "android")]
+        if let Some(reader) = self.android_axis_reader {
+            let axes = reader();
+            let [lt, rt, rs_x, rs_y] = axes;
+            // Use slot 0 — the JNI bridge doesn't distinguish multiple gamepads
+            let slot = 0u32;
+            // Feed triggers as LeftZ/RightZ to match existing input.toml bindings
+            // (accelerate = gamepad_axis "RightZ", brake = gamepad_axis "LeftZ")
+            self.input.process_gamepad_axis(slot, "LeftZ", lt);
+            self.input.process_gamepad_axis(slot, "RightZ", rt);
+            // Right stick axes for future use
+            self.input.process_gamepad_axis(slot, "RightStickX", rs_x);
+            self.input.process_gamepad_axis(slot, "RightStickY", rs_y);
         }
     }
 
@@ -1755,7 +1852,12 @@ impl ApplicationHandler for PlayerApp {
                     .set_screen_size(new_size.width as f64, new_size.height as f64);
             }
 
-            WindowEvent::KeyboardInput { event, .. } => {
+            WindowEvent::KeyboardInput {
+                device_id, event, ..
+            } => {
+                // Suppress unused variable warning on non-Android platforms
+                let _ = &device_id;
+
                 if let PhysicalKey::Code(key_code) = event.physical_key {
                     match event.state {
                         ElementState::Pressed => {
@@ -1830,9 +1932,67 @@ impl ApplicationHandler for PlayerApp {
                             }
 
                             self.input.process_key_down(key_code);
+
+                            // On Android, DPad maps to ArrowKeys — also fire gamepad
+                            // button events so configs with gamepad DPad bindings work.
+                            #[cfg(target_os = "android")]
+                            {
+                                let dpad_button = match key_code {
+                                    KeyCode::ArrowUp => Some("DPadUp"),
+                                    KeyCode::ArrowDown => Some("DPadDown"),
+                                    KeyCode::ArrowLeft => Some("DPadLeft"),
+                                    KeyCode::ArrowRight => Some("DPadRight"),
+                                    _ => None,
+                                };
+                                if let Some(btn) = dpad_button {
+                                    let slot =
+                                        self.android_gamepad.register_device(device_id);
+                                    self.input.process_gamepad_button_down(slot, btn);
+                                }
+                            }
                         }
                         ElementState::Released => {
                             self.input.process_key_up(key_code);
+
+                            #[cfg(target_os = "android")]
+                            {
+                                let dpad_button = match key_code {
+                                    KeyCode::ArrowUp => Some("DPadUp"),
+                                    KeyCode::ArrowDown => Some("DPadDown"),
+                                    KeyCode::ArrowLeft => Some("DPadLeft"),
+                                    KeyCode::ArrowRight => Some("DPadRight"),
+                                    _ => None,
+                                };
+                                if let Some(btn) = dpad_button {
+                                    if let Some(slot) =
+                                        self.android_gamepad.slot_for(device_id)
+                                    {
+                                        self.input.process_gamepad_button_up(slot, btn);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Android: intercept gamepad buttons delivered as unidentified native keycodes
+                #[cfg(target_os = "android")]
+                if let PhysicalKey::Unidentified(NativeKeyCode::Android(keycode)) =
+                    event.physical_key
+                {
+                    if let Some(button_name) =
+                        Self::android_keycode_to_gamepad_button(keycode)
+                    {
+                        let slot = self.android_gamepad.register_device(device_id);
+                        match event.state {
+                            ElementState::Pressed => {
+                                self.input
+                                    .process_gamepad_button_down(slot, button_name);
+                            }
+                            ElementState::Released => {
+                                self.input
+                                    .process_gamepad_button_up(slot, button_name);
+                            }
                         }
                     }
                 }
@@ -1865,7 +2025,58 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::Touch(touch) => {
-                // First real touch disables mouse emulation
+                // Android: joystick MotionEvents arrive as Touch with axis values
+                // in [-1, 1]. Route these to gamepad axis input instead of touch.
+                #[cfg(target_os = "android")]
+                {
+                    let x = touch.location.x;
+                    let y = touch.location.y;
+
+                    // If this device was already identified as a gamepad via button
+                    // presses, treat its touch events as stick axis data.
+                    if self.android_gamepad.is_gamepad(touch.device_id) {
+                        if let Some(slot) =
+                            self.android_gamepad.slot_for(touch.device_id)
+                        {
+                            self.input.process_gamepad_axis(
+                                slot,
+                                "LeftStickX",
+                                x as f32,
+                            );
+                            self.input.process_gamepad_axis(
+                                slot,
+                                "LeftStickY",
+                                y as f32,
+                            );
+                            return;
+                        }
+                    }
+
+                    // Heuristic: if coordinates are in joystick range [-1.5, 1.5]
+                    // and this touch id has no prior Started event (process_touch_move
+                    // would silently drop it anyway), treat it as a joystick from an
+                    // unregistered gamepad device.
+                    if x.abs() <= 1.5
+                        && y.abs() <= 1.5
+                        && !self.input.has_active_touch(touch.id)
+                    {
+                        let slot =
+                            self.android_gamepad.register_device(touch.device_id);
+                        self.input.process_gamepad_axis(
+                            slot,
+                            "LeftStickX",
+                            x as f32,
+                        );
+                        self.input.process_gamepad_axis(
+                            slot,
+                            "LeftStickY",
+                            y as f32,
+                        );
+                        return;
+                    }
+                }
+
+                // Normal touch processing
                 self.input.disable_touch_emulation();
 
                 let id = touch.id;

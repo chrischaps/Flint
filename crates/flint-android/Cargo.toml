@@ -13,8 +13,8 @@ flint-player = { workspace = true }
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
 flint-ecs = { workspace = true }
-winit = { workspace = true, features = ["android-native-activity"] }
-android-activity = { version = "0.6", features = ["native-activity"] }
+winit = { workspace = true, features = ["android-game-activity"] }
+android-activity = { version = "0.6", features = ["game-activity"] }
 log = { workspace = true }
 android_logger = { workspace = true }
 ndk = { workspace = true }

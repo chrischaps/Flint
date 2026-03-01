@@ -13,40 +13,63 @@ val ndkDir: String = localProps.getProperty("ndk.dir")
     ?: System.getenv("ANDROID_NDK_HOME")
     ?: error("Set ndk.dir in local.properties or ANDROID_NDK_HOME env var")
 
-// ---- Load game.properties from the game project ----
+// ---- Game Directory ----
+
 val engineDir = rootProject.projectDir.parentFile  // engine/
 
-val gameDirProp = if (project.hasProperty("gameDir")) project.property("gameDir") as String else ""
-val gameDir = if (gameDirProp.isNotEmpty()) {
-    file(gameDirProp)
+val gameDir = if (project.hasProperty("gameDir")) {
+    file(project.property("gameDir") as String)
 } else {
     engineDir.parentFile  // Assume game project is parent of engine/
 }
 
-val gameProps = Properties().apply {
-    val f = File(gameDir, "game.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
+// ---- Game Config (android.toml) ----
+// Read flat key = "value" pairs from the game's android.toml.
+// This lets each game project customize its APK without engine changes.
+
+val gameConfig = mutableMapOf<String, String>()
+val configFile = gameDir.resolve("android.toml")
+if (configFile.exists()) {
+    configFile.readLines().forEach { line ->
+        val trimmed = line.trim()
+        if (trimmed.startsWith("#") || trimmed.isEmpty()) return@forEach
+        // Match: key = "string value"
+        val strMatch = Regex("""^(\w+)\s*=\s*"([^"]*)"$""").find(trimmed)
+        if (strMatch != null) {
+            gameConfig[strMatch.groupValues[1]] = strMatch.groupValues[2]
+            return@forEach
+        }
+        // Match: key = integer
+        val intMatch = Regex("""^(\w+)\s*=\s*(\d+)$""").find(trimmed)
+        if (intMatch != null) {
+            gameConfig[intMatch.groupValues[1]] = intMatch.groupValues[2]
+        }
+    }
 }
 
-val gamePackage = gameProps.getProperty("game.package", "com.flint.game")
-val gameName = gameProps.getProperty("game.name", "Flint Game")
-val gameVersionName = gameProps.getProperty("game.version_name", "0.1.0")
-val gameVersionCode = gameProps.getProperty("game.version_code", "1").toInt()
-val gameIconDir = gameProps.getProperty("game.icon_dir", "")
+val cfgAppName = gameConfig["app_name"] ?: "Flint Game"
+val cfgAppId = gameConfig["application_id"] ?: "com.flint.game"
+val cfgOrientation = gameConfig["orientation"] ?: "landscape"
+val cfgVersionName = gameConfig["version_name"] ?: "0.1.0"
+val cfgVersionCode = gameConfig["version_code"]?.toIntOrNull() ?: 1
+val cfgIconDir = gameConfig["icon_dir"] ?: ""
 
 android {
-    namespace = gamePackage
+    namespace = cfgAppId
     compileSdk = 35
 
     defaultConfig {
-        applicationId = gamePackage
+        applicationId = cfgAppId
         minSdk = 26          // AAudio (Kira audio) + Vulkan
         targetSdk = 34
-        versionCode = gameVersionCode
-        versionName = gameVersionName
+        versionCode = cfgVersionCode
+        versionName = cfgVersionName
 
-        // Inject app name as a string resource (replaces strings.xml)
-        resValue("string", "app_name", gameName)
+        // Generate app_name as a string resource from config
+        resValue("string", "app_name", cfgAppName)
+
+        // Manifest placeholder for orientation
+        manifestPlaceholders["screenOrientation"] = cfgOrientation
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -67,9 +90,14 @@ android {
     }
 }
 
-// No Java dependencies needed — NativeActivity is built into Android.
+dependencies {
+    implementation("androidx.games:games-activity:2.0.2")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+}
 
 // ---- Cargo NDK Build Task ----
+// Builds the Rust cdylib for Android via cargo-ndk.
+// The output .so files go into jniLibs/ for APK packaging.
 
 tasks.register<Exec>("cargoNdkBuild") {
     description = "Build flint-android native library via cargo-ndk"
@@ -96,6 +124,9 @@ tasks.register<Exec>("cargoNdkBuild") {
 }
 
 // ---- Copy Game Assets Task ----
+// Copies the game project's scene files, schemas, textures, scripts, and audio
+// into the APK's assets/ directory. Pass -PgameDir=/path/to/game to specify
+// the game project root (defaults to the engine's parent directory).
 
 tasks.register<Copy>("copyGameAssets") {
     description = "Copy game assets into APK assets directory"
@@ -110,13 +141,14 @@ tasks.register<Copy>("copyGameAssets") {
     // Copy game-level files
     from(gameDir) {
         include("**/*.toml")
-        include("**/*.png")
-        include("**/*.jpg")
-        include("**/*.ogg")
-        include("**/*.wav")
-        include("**/*.rhai")
-        include("**/*.glb")
-        include("**/*.gltf")
+        include("schemas/**")
+        include("scripts/**")
+        include("sprites/**")
+        include("textures/**")
+        include("models/**")
+        include("audio/**")
+        include("animations/**")
+        include("terrain/**")
         // Exclude engine internals and build artifacts
         exclude("engine/**")
         exclude("target/**")
@@ -148,7 +180,7 @@ tasks.register<Copy>("copyGameAssets") {
 tasks.register<Copy>("copyGameIcons") {
     description = "Copy game launcher icons into Android res/"
 
-    val iconSrcDir = if (gameIconDir.isNotEmpty()) File(gameDir, gameIconDir) else null
+    val iconSrcDir = if (cfgIconDir.isNotEmpty()) File(gameDir, cfgIconDir) else null
 
     // Only run if game specifies an icon directory and it exists
     enabled = iconSrcDir != null && iconSrcDir.exists()
@@ -168,7 +200,7 @@ tasks.register<Copy>("copyApkToGame") {
 
     val apkFile = file("build/outputs/apk/debug/app-debug.apk")
     // Derive APK name from game name: lowercase, hyphens for spaces
-    val apkName = gameName.lowercase().replace(" ", "-") + ".apk"
+    val apkName = cfgAppName.lowercase().replace(" ", "-") + ".apk"
     val outputDir = File(gameDir, "build")
 
     from(apkFile)

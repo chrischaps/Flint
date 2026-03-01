@@ -2,12 +2,64 @@
 //!
 //! Provides `android_main()` which extracts APK assets to internal storage,
 //! loads the scene, and runs the player event loop.
+//!
+//! Games can provide an `android.toml` at their project root to configure
+//! the starting scene (and other settings). The file is bundled into the APK
+//! and read at runtime.
 
 mod asset_extractor;
 
+use android_activity::input::Axis;
 use android_activity::AndroidApp;
+use std::sync::Mutex;
 use winit::event_loop::EventLoop;
 use winit::platform::android::EventLoopBuilderExtAndroid;
+
+// ---- JNI bridge for gamepad trigger/right-stick axes ----
+
+/// Axis values received from Java's dispatchGenericMotionEvent via JNI.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GamepadAxesState {
+    pub left_trigger: f32,
+    pub right_trigger: f32,
+    pub right_stick_x: f32,
+    pub right_stick_y: f32,
+}
+
+static GAMEPAD_AXES: Mutex<GamepadAxesState> = Mutex::new(GamepadAxesState {
+    left_trigger: 0.0,
+    right_trigger: 0.0,
+    right_stick_x: 0.0,
+    right_stick_y: 0.0,
+});
+
+/// Called from Java: FlintActivity.nativeOnGamepadAxes(lt, rt, rsX, rsY)
+#[no_mangle]
+pub extern "C" fn Java_com_flint_game_FlintActivity_nativeOnGamepadAxes(
+    _env: *mut std::ffi::c_void,
+    _class: *mut std::ffi::c_void,
+    lt: f32,
+    rt: f32,
+    rs_x: f32,
+    rs_y: f32,
+) {
+    if let Ok(mut state) = GAMEPAD_AXES.lock() {
+        state.left_trigger = lt;
+        state.right_trigger = rt;
+        state.right_stick_x = rs_x;
+        state.right_stick_y = rs_y;
+    }
+}
+
+/// Read the latest gamepad axes from the JNI bridge.
+/// Returns [left_trigger, right_trigger, right_stick_x, right_stick_y].
+pub fn read_gamepad_axes() -> [f32; 4] {
+    if let Ok(state) = GAMEPAD_AXES.lock() {
+        [state.left_trigger, state.right_trigger, state.right_stick_x, state.right_stick_y]
+    } else {
+        [0.0; 4]
+    }
+}
 
 /// Android entry point. Called by the GameActivity glue code.
 #[no_mangle]
@@ -52,11 +104,13 @@ fn android_main(app: AndroidApp) {
             flint_schema::SchemaRegistry::new()
         });
 
-    // Find the scene file
-    let scene_path = find_scene(&data_dir).unwrap_or_else(|| {
-        log::error!("No .scene.toml file found in {}", data_dir.display());
-        panic!("No scene file found in extracted assets");
-    });
+    // Find the scene file — check android.toml config first, then discover
+    let scene_path = find_configured_scene(&data_dir)
+        .or_else(|| find_scene(&data_dir))
+        .unwrap_or_else(|| {
+            log::error!("No .scene.toml file found in {}", data_dir.display());
+            panic!("No scene file found in extracted assets");
+        });
 
     log::info!("Loading scene: {}", scene_path.display());
 
@@ -83,6 +137,9 @@ fn android_main(app: AndroidApp) {
     // Set schema paths for scene transitions
     player.set_schema_paths(schema_paths);
 
+    // Register the JNI gamepad axis reader so PlayerApp can poll trigger/right-stick values
+    player.set_android_axis_reader(read_gamepad_axes);
+
     // Apply scene-level camera/post-process if present
     if let Some(camera_def) = scene_file.camera {
         player.scene_camera = Some(camera_def);
@@ -96,6 +153,16 @@ fn android_main(app: AndroidApp) {
         }
     }
 
+    // Enable gamepad trigger and right-stick axes for GameActivity's native event processing.
+    // By default only X and Y (left stick) are enabled. Our JNI bridge handles these too,
+    // but enabling here provides a native fallback path.
+    app.enable_motion_axis(Axis::Ltrigger);
+    app.enable_motion_axis(Axis::Rtrigger);
+    app.enable_motion_axis(Axis::Z);
+    app.enable_motion_axis(Axis::Rz);
+    app.enable_motion_axis(Axis::Brake);
+    app.enable_motion_axis(Axis::Gas);
+
     // Create event loop with Android app handle
     let event_loop = EventLoop::builder()
         .with_android_app(app)
@@ -106,6 +173,33 @@ fn android_main(app: AndroidApp) {
     event_loop.run_app(&mut player).expect("Event loop error");
 }
 
+/// Read the `scene` field from `android.toml` if present in extracted assets.
+fn find_configured_scene(data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let config_path = data_dir.join("android.toml");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("scene") {
+            // Parse: scene = "path/to/scene.toml"
+            if let Some(val) = trimmed.strip_prefix("scene").and_then(|s| s.trim().strip_prefix('=')) {
+                let val = val.trim().trim_matches('"');
+                if !val.is_empty() {
+                    let scene = data_dir.join(val);
+                    if scene.is_file() {
+                        log::info!("Using configured scene from android.toml: {val}");
+                        return Some(scene);
+                    } else {
+                        log::warn!("Configured scene not found: {}", scene.display());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Search recursively for a `.scene.toml` file in the given directory.
 fn find_scene(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     // First check for a well-known name
@@ -114,11 +208,18 @@ fn find_scene(dir: &std::path::Path) -> Option<std::path::PathBuf> {
         return Some(default);
     }
 
-    find_scene_recursive(dir)
+    // Collect all scene files recursively, then pick deterministically
+    let mut scenes = Vec::new();
+    find_scene_recursive(dir, &mut scenes);
+    scenes.sort();
+    scenes.into_iter().next()
 }
 
-fn find_scene_recursive(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?;
+fn find_scene_recursive(dir: &std::path::Path, scenes: &mut Vec<std::path::PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
     let mut subdirs = Vec::new();
 
     // Check files at this level first
@@ -127,7 +228,7 @@ fn find_scene_recursive(dir: &std::path::Path) -> Option<std::path::PathBuf> {
         if path.is_file() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.ends_with(".scene.toml") {
-                    return Some(path);
+                    scenes.push(path);
                 }
             }
         } else if path.is_dir() {
@@ -137,10 +238,6 @@ fn find_scene_recursive(dir: &std::path::Path) -> Option<std::path::PathBuf> {
 
     // Then recurse into subdirectories
     for subdir in subdirs {
-        if let Some(found) = find_scene_recursive(&subdir) {
-            return Some(found);
-        }
+        find_scene_recursive(&subdir, scenes);
     }
-
-    None
 }

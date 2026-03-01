@@ -647,6 +647,11 @@ impl InputState {
         &self.touches
     }
 
+    /// Check if a touch ID is currently being tracked (has had a Started event).
+    pub fn has_active_touch(&self, id: u64) -> bool {
+        self.touches.contains_key(&id)
+    }
+
     pub fn touches_just_started_set(&self) -> &HashSet<u64> {
         &self.touches_just_started
     }
