@@ -6,4 +6,5 @@
 mod player_app;
 pub mod spline_gen;
 
+pub use player_app::scene_loading::post_process_config_from_def;
 pub use player_app::PlayerApp;

@@ -179,29 +179,11 @@ pub fn run(args: RenderArgs) -> Result<()> {
 
     // Post-processing configuration
     {
-        use flint_render::PostProcessConfig;
-        let mut pp_config = PostProcessConfig::default();
-
-        // Apply scene-level settings first
-        if let Some(pp_def) = &scene_file.post_process {
-            pp_config.bloom_enabled = pp_def.bloom_enabled;
-            pp_config.bloom_intensity = pp_def.bloom_intensity;
-            pp_config.bloom_threshold = pp_def.bloom_threshold;
-            pp_config.vignette_enabled = pp_def.vignette_enabled;
-            pp_config.vignette_intensity = pp_def.vignette_intensity;
-            pp_config.exposure = pp_def.exposure;
-            pp_config.ssao_enabled = pp_def.ssao_enabled;
-            pp_config.ssao_radius = pp_def.ssao_radius;
-            pp_config.ssao_intensity = pp_def.ssao_intensity;
-            pp_config.fog_enabled = pp_def.fog_enabled;
-            pp_config.fog_color = pp_def.fog_color;
-            pp_config.fog_density = pp_def.fog_density;
-            pp_config.fog_start = pp_def.fog_start;
-            pp_config.fog_end = pp_def.fog_end;
-            pp_config.fog_height_enabled = pp_def.fog_height_enabled;
-            pp_config.fog_height_falloff = pp_def.fog_height_falloff;
-            pp_config.fog_height_origin = pp_def.fog_height_origin;
-        }
+        let mut pp_config = if let Some(pp_def) = &scene_file.post_process {
+            flint_player::post_process_config_from_def(pp_def)
+        } else {
+            flint_render::PostProcessConfig::default()
+        };
 
         // CLI overrides
         if args.no_postprocess {
