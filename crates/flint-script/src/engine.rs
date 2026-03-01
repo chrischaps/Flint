@@ -1217,4 +1217,617 @@ mod tests {
             "has_on_update should be true even with wrong arity"
         );
     }
+
+    // ── Phase 4a: Mutable world access ─────────────────────────────
+
+    #[test]
+    fn test_spawn_entity_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("spawner").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                spawn_entity("spawned_child");
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        assert!(
+            world.contains_name("spawned_child"),
+            "entity spawned from script should exist"
+        );
+    }
+
+    #[test]
+    fn test_despawn_entity_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("controller").unwrap();
+        let target = world.spawn("target_to_kill").unwrap();
+
+        let ast = engine
+            .compile(&format!(
+                r#"
+            fn on_init() {{
+                despawn_entity({});
+            }}
+        "#,
+                target.raw() as i64
+            ))
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        assert!(
+            !world.contains_name("target_to_kill"),
+            "despawned entity should be gone"
+        );
+    }
+
+    #[test]
+    fn test_set_rotation_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("rotator").unwrap();
+
+        world
+            .set_component(
+                id,
+                "transform",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert(
+                        "position".into(),
+                        toml::Value::Array(vec![
+                            toml::Value::Float(0.0),
+                            toml::Value::Float(0.0),
+                            toml::Value::Float(0.0),
+                        ]),
+                    );
+                    m.insert(
+                        "rotation".into(),
+                        toml::Value::Array(vec![
+                            toml::Value::Float(0.0),
+                            toml::Value::Float(0.0),
+                            toml::Value::Float(0.0),
+                        ]),
+                    );
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_rotation(me, 0.0, 90.0, 0.0);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        assert!(
+            (t.rotation.y - 90.0).abs() < 0.01,
+            "rotation Y should be 90, got {}",
+            t.rotation.y
+        );
+    }
+
+    #[test]
+    fn test_set_material_color_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("colored").unwrap();
+
+        world
+            .set_component(
+                id,
+                "material",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert(
+                        "color".into(),
+                        toml::Value::Array(vec![
+                            toml::Value::Float(1.0),
+                            toml::Value::Float(1.0),
+                            toml::Value::Float(1.0),
+                        ]),
+                    );
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_material_color(me, 1.0, 0.0, 0.0, 1.0);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let mat = world.get_component(id, "material").unwrap();
+        // set_material_color stores individual base_color_r/g/b/a fields
+        assert!((mat.get("base_color_r").unwrap().as_float().unwrap() - 1.0).abs() < 0.01);
+        assert!((mat.get("base_color_g").unwrap().as_float().unwrap() - 0.0).abs() < 0.01);
+        assert!((mat.get("base_color_b").unwrap().as_float().unwrap() - 0.0).abs() < 0.01);
+        assert!((mat.get("base_color_a").unwrap().as_float().unwrap() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_find_entities_with_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let controller = world.spawn("controller").unwrap();
+
+        // Create 3 entities with "health" component
+        for name in &["enemy_a", "enemy_b", "enemy_c"] {
+            let eid = world.spawn(*name).unwrap();
+            world
+                .set_component(
+                    eid,
+                    "health",
+                    toml::Value::Table({
+                        let mut m = toml::map::Map::new();
+                        m.insert("current".into(), toml::Value::Integer(100));
+                        m
+                    }),
+                )
+                .unwrap();
+        }
+
+        world
+            .set_component(
+                controller,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("count".into(), toml::Value::Integer(0));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                let enemies = find_entities_with("health");
+                set_field(me, "result", "count", enemies.len());
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(controller, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let count = world
+            .get_components(controller)
+            .unwrap()
+            .get_field("result", "count")
+            .unwrap()
+            .as_integer()
+            .unwrap();
+        assert_eq!(count, 3, "should find 3 entities with 'health' component");
+    }
+
+    // ── Phase 4b: Null pointer guards ──────────────────────────────
+
+    #[test]
+    fn test_persist_api_without_store() {
+        // persist_set with null store should not crash, just silently fail
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("persist_test").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                // persistent_store pointer is null — these should not crash
+                persist_set("key", 42);
+                let val = persist_get("key");
+                let has = persist_has("key");
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        // Should not panic
+        engine.call_inits(&mut world);
+    }
+
+    #[test]
+    fn test_state_api_without_state_machine() {
+        // current_state with null state_machine should return "playing" fallback
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("state_test").unwrap();
+
+        world
+            .set_component(
+                id,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("state".into(), toml::Value::String(String::new()));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                let state = current_state();
+                set_field(me, "result", "state", state);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let state = world
+            .get_components(id)
+            .unwrap()
+            .get_field("result", "state")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(state, "playing", "fallback state should be 'playing'");
+    }
+
+    #[test]
+    fn test_physics_api_without_physics() {
+        // raycast with null physics should return unit, not crash
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("physics_test").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                // physics pointer is null — should return () without crashing
+                let hit = raycast(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 100.0, -1);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        // Should not panic
+        engine.call_inits(&mut world);
+    }
+
+    #[test]
+    fn test_negative_entity_id_guards() {
+        // Negative entity IDs should not crash
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("guard_test").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let exists = entity_exists(-1);
+                let pos = get_position(-1);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        // Should not panic
+        engine.call_inits(&mut world);
+    }
+
+    // ── Phase 4c: Entity lifecycle and hierarchy ───────────────────
+
+    #[test]
+    fn test_set_parent_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let controller = world.spawn("controller").unwrap();
+        let parent = world.spawn("parent_e").unwrap();
+        let child = world.spawn("child_e").unwrap();
+
+        let ast = engine
+            .compile(&format!(
+                r#"
+            fn on_init() {{
+                set_parent({child_id}, {parent_id});
+            }}
+        "#,
+                child_id = child.raw() as i64,
+                parent_id = parent.raw() as i64,
+            ))
+            .unwrap();
+
+        engine.add_script(controller, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        assert_eq!(
+            world.get_parent(child),
+            Some(parent),
+            "parent should be set from script"
+        );
+    }
+
+    #[test]
+    fn test_get_children_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let parent = world.spawn("parent").unwrap();
+        let child1 = world.spawn("child1").unwrap();
+        let child2 = world.spawn("child2").unwrap();
+
+        world.set_parent(child1, parent).unwrap();
+        world.set_parent(child2, parent).unwrap();
+
+        world
+            .set_component(
+                parent,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("child_count".into(), toml::Value::Integer(0));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                let kids = get_children(me);
+                set_field(me, "result", "child_count", kids.len());
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(parent, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let count = world
+            .get_components(parent)
+            .unwrap()
+            .get_field("result", "child_count")
+            .unwrap()
+            .as_integer()
+            .unwrap();
+        assert_eq!(count, 2, "should have 2 children");
+    }
+
+    #[test]
+    fn test_get_world_position_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+
+        let parent = world.spawn("parent").unwrap();
+        let child = world.spawn("child").unwrap();
+
+        let make_pos = |x: f64, y: f64, z: f64| {
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
+                m
+            })
+        };
+
+        world
+            .set_component(parent, "transform", make_pos(10.0, 0.0, 0.0))
+            .unwrap();
+        world
+            .set_component(child, "transform", make_pos(5.0, 0.0, 0.0))
+            .unwrap();
+        world.set_parent(child, parent).unwrap();
+
+        world
+            .set_component(
+                child,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("wx".into(), toml::Value::Float(0.0));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                let wp = get_world_position(me);
+                set_field(me, "result", "wx", wp.x);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(child, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let wx = world
+            .get_components(child)
+            .unwrap()
+            .get_field("result", "wx")
+            .unwrap()
+            .as_float()
+            .unwrap();
+        assert!(
+            (wx - 15.0).abs() < 0.01,
+            "world x should be 15.0, got {}",
+            wx
+        );
+    }
+
+    // ── Phase 4d: Queries ──────────────────────────────────────────
+
+    #[test]
+    fn test_distance_between_entities() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+
+        let make_pos = |x: f64, y: f64, z: f64| {
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
+                m
+            })
+        };
+
+        world
+            .set_component(a, "transform", make_pos(0.0, 0.0, 0.0))
+            .unwrap();
+        world
+            .set_component(b, "transform", make_pos(3.0, 4.0, 0.0))
+            .unwrap();
+
+        world
+            .set_component(
+                a,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("dist".into(), toml::Value::Float(0.0));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(&format!(
+                r#"
+            fn on_init() {{
+                let me = self_entity();
+                let d = distance(me, {b_id});
+                set_field(me, "result", "dist", d);
+            }}
+        "#,
+                b_id = b.raw() as i64,
+            ))
+            .unwrap();
+
+        engine.add_script(a, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let dist = world
+            .get_components(a)
+            .unwrap()
+            .get_field("result", "dist")
+            .unwrap()
+            .as_float()
+            .unwrap();
+        assert!(
+            (dist - 5.0).abs() < 0.01,
+            "distance should be 5.0 (3-4-5 triangle), got {}",
+            dist
+        );
+    }
+
+    #[test]
+    fn test_entity_count_with_component() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let controller = world.spawn("counter").unwrap();
+
+        // Create entities, some with "light" component
+        for i in 0..4 {
+            let name = format!("light_{}", i);
+            let eid = world.spawn(&name).unwrap();
+            world
+                .set_component(eid, "light", toml::Value::Table(Default::default()))
+                .unwrap();
+        }
+        // Also create one without light
+        world.spawn("no_light").unwrap();
+
+        world
+            .set_component(
+                controller,
+                "result",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("count".into(), toml::Value::Integer(0));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                let lights = find_entities_with("light");
+                set_field(me, "result", "count", lights.len());
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(controller, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let count = world
+            .get_components(controller)
+            .unwrap()
+            .get_field("result", "count")
+            .unwrap()
+            .as_integer()
+            .unwrap();
+        assert_eq!(count, 4, "should find exactly 4 entities with 'light'");
+    }
 }

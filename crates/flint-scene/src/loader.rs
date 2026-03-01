@@ -173,6 +173,196 @@ position = [5, 0, 0]
     }
 
     #[test]
+    fn test_reload_scene_string_clears_and_repopulates() {
+        let registry = SchemaRegistry::new();
+
+        let scene_a = r#"
+[scene]
+name = "V1"
+
+[entities.alpha]
+[entities.alpha.transform]
+position = [1, 0, 0]
+
+[entities.beta]
+[entities.beta.transform]
+position = [2, 0, 0]
+"#;
+
+        let (mut world, _) = load_scene_string(scene_a, &registry).unwrap();
+        assert!(world.contains_name("alpha"));
+        assert!(world.contains_name("beta"));
+
+        let scene_b = r#"
+[scene]
+name = "V2"
+
+[entities.beta]
+[entities.beta.transform]
+position = [20, 0, 0]
+
+[entities.gamma]
+[entities.gamma.transform]
+position = [30, 0, 0]
+"#;
+
+        reload_scene_string(scene_b, &mut world, &registry).unwrap();
+
+        assert!(!world.contains_name("alpha"), "alpha should be gone after reload");
+        assert!(world.contains_name("beta"), "beta should still exist");
+        assert!(world.contains_name("gamma"), "gamma should be added");
+        assert_eq!(world.entity_count(), 2);
+    }
+
+    #[test]
+    fn test_load_with_archetype_defaults_and_overrides() {
+        let mut registry = SchemaRegistry::new();
+        registry
+            .load_archetype_string(
+                r#"
+[archetype.door]
+description = "A door"
+components = ["transform", "door"]
+
+[archetype.door.defaults.door]
+locked = false
+style = "hinged"
+"#,
+            )
+            .unwrap();
+
+        let scene = r#"
+[scene]
+name = "Arch Test"
+
+[entities.my_door]
+archetype = "door"
+
+[entities.my_door.door]
+locked = true
+"#;
+
+        let (world, _) = load_scene_string(scene, &registry).unwrap();
+        let id = world.get_id("my_door").unwrap();
+        let door = world.get_component(id, "door").unwrap();
+
+        assert_eq!(
+            door.get("locked").and_then(|v| v.as_bool()),
+            Some(true),
+            "entity override should win"
+        );
+        assert_eq!(
+            door.get("style").and_then(|v| v.as_str()),
+            Some("hinged"),
+            "archetype default should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_load_deep_hierarchy() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "Hierarchy"
+
+[entities.grandparent]
+[entities.grandparent.transform]
+position = [0, 0, 0]
+
+[entities.parent_node]
+parent = "grandparent"
+[entities.parent_node.transform]
+position = [0, 0, 0]
+
+[entities.child_node]
+parent = "parent_node"
+[entities.child_node.transform]
+position = [0, 0, 0]
+"#;
+
+        let (world, _) = load_scene_string(scene, &registry).unwrap();
+
+        let gp = world.get_id("grandparent").unwrap();
+        let p = world.get_id("parent_node").unwrap();
+        let c = world.get_id("child_node").unwrap();
+
+        assert_eq!(world.get_parent(p), Some(gp));
+        assert_eq!(world.get_parent(c), Some(p));
+        assert!(world.get_parent(gp).is_none());
+    }
+
+    #[test]
+    fn test_load_camera_metadata() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "Camera Test"
+
+[camera]
+position = [0.0, 10.0, 5.0]
+target = [0.0, 0.0, 0.0]
+fov = 60.0
+"#;
+
+        let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
+        let cam = scene_file.camera.expect("camera should be present");
+        assert_eq!(cam.position, Some([0.0, 10.0, 5.0]));
+        assert_eq!(cam.target, Some([0.0, 0.0, 0.0]));
+        assert_eq!(cam.fov, Some(60.0));
+    }
+
+    #[test]
+    fn test_load_environment_metadata() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "Env Test"
+
+[environment]
+skybox = "sky_sunset.hdr"
+"#;
+
+        let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
+        let env = scene_file.environment.expect("environment should be present");
+        assert_eq!(env.skybox, Some("sky_sunset.hdr".into()));
+    }
+
+    #[test]
+    fn test_load_post_process_metadata() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "PP Test"
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.08
+fog_enabled = true
+fog_density = 0.05
+"#;
+
+        let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
+        let pp = scene_file.post_process.expect("post_process should be present");
+        assert!(pp.bloom_enabled);
+        assert!((pp.bloom_intensity - 0.08).abs() < 0.001);
+        assert!(pp.fog_enabled);
+        assert!((pp.fog_density - 0.05).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_load_empty_scene() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "Empty"
+"#;
+
+        let (world, scene_file) = load_scene_string(scene, &registry).unwrap();
+        assert_eq!(world.entity_count(), 0);
+        assert!(scene_file.entities.is_empty());
+    }
+
+    #[test]
     fn test_transform_parsing_pipeline() {
         let toml_str = r#"
 [scene]

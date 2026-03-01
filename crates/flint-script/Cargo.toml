@@ -13,3 +13,9 @@ flint-physics = { workspace = true }
 flint-animation = { workspace = true }
 rhai = { workspace = true }
 toml = { workspace = true }
+
+[dev-dependencies]
+flint-core = { workspace = true }
+flint-ecs = { workspace = true }
+flint-scene = { workspace = true }
+flint-schema = { workspace = true }

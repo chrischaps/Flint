@@ -1543,6 +1543,8 @@ dependencies = [
  "flint-ecs",
  "flint-physics",
  "flint-runtime",
+ "flint-scene",
+ "flint-schema",
  "rhai",
  "toml",
 ]

@@ -118,3 +118,163 @@ impl DynamicComponents {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_component_table_into_table() {
+        let mut comps = DynamicComponents::new();
+        comps.set(
+            "material",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("color".into(), toml::Value::String("red".into()));
+                m.insert("size".into(), toml::Value::Integer(5));
+                m
+            }),
+        );
+
+        // Merge overrides size and adds visible
+        comps.merge_component(
+            "material",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("size".into(), toml::Value::Integer(10));
+                m.insert("visible".into(), toml::Value::Boolean(true));
+                m
+            }),
+        );
+
+        let mat = comps.get("material").unwrap();
+        assert_eq!(mat.get("color").and_then(|v| v.as_str()), Some("red"));
+        assert_eq!(mat.get("size").and_then(|v| v.as_integer()), Some(10));
+        assert_eq!(mat.get("visible").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn test_merge_component_into_empty() {
+        let mut comps = DynamicComponents::new();
+        assert!(comps.get("health").is_none());
+
+        comps.merge_component(
+            "health",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("current".into(), toml::Value::Integer(100));
+                m
+            }),
+        );
+
+        assert!(comps.has("health"));
+        assert_eq!(
+            comps
+                .get("health")
+                .unwrap()
+                .get("current")
+                .and_then(|v| v.as_integer()),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn test_merge_non_table_replaces() {
+        let mut comps = DynamicComponents::new();
+        comps.set("tag", toml::Value::String("old".into()));
+
+        // Merge a table onto a string — should replace
+        comps.merge_component(
+            "tag",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("name".into(), toml::Value::String("new".into()));
+                m
+            }),
+        );
+
+        let tag = comps.get("tag").unwrap();
+        assert!(tag.is_table(), "non-table should be replaced by table");
+        assert_eq!(tag.get("name").and_then(|v| v.as_str()), Some("new"));
+    }
+
+    #[test]
+    fn test_merge_bulk() {
+        let mut base = DynamicComponents::new();
+        base.set(
+            "transform",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(1.0),
+                        toml::Value::Float(2.0),
+                        toml::Value::Float(3.0),
+                    ]),
+                );
+                m.insert(
+                    "scale".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(1.0),
+                        toml::Value::Float(1.0),
+                        toml::Value::Float(1.0),
+                    ]),
+                );
+                m
+            }),
+        );
+
+        let mut overrides = DynamicComponents::new();
+        overrides.set(
+            "transform",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(10.0),
+                        toml::Value::Float(20.0),
+                        toml::Value::Float(30.0),
+                    ]),
+                );
+                m
+            }),
+        );
+        overrides.set(
+            "health",
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert("current".into(), toml::Value::Integer(50));
+                m
+            }),
+        );
+
+        base.merge(&overrides);
+
+        // position overridden
+        let t = base.get("transform").unwrap();
+        let pos = t.get("position").unwrap().as_array().unwrap();
+        assert!((pos[0].as_float().unwrap() - 10.0).abs() < 0.001);
+
+        // scale preserved
+        assert!(t.get("scale").is_some());
+
+        // new component added
+        assert!(base.has("health"));
+    }
+
+    #[test]
+    fn test_set_field_creates_component() {
+        let mut comps = DynamicComponents::new();
+        assert!(!comps.has("stats"));
+
+        comps.set_field("stats", "strength", toml::Value::Integer(18));
+
+        assert!(comps.has("stats"));
+        assert_eq!(
+            comps.get_field("stats", "strength").and_then(|v| v.as_integer()),
+            Some(18)
+        );
+    }
+}

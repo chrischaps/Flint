@@ -648,4 +648,351 @@ mod tests {
         assert!(removed.is_some());
         assert!(!world.entities_with_component("collider").contains(&id));
     }
+
+    // ── merge_component tests (previously buggy code path) ─────────
+
+    #[test]
+    fn test_merge_component_preserves_existing_fields() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        // Set initial component with two fields
+        world
+            .set_component(
+                id,
+                "material",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("color".into(), toml::Value::String("red".into()));
+                    m.insert("size".into(), toml::Value::Integer(5));
+                    m
+                }),
+            )
+            .unwrap();
+
+        // Merge only overrides size — color must survive
+        world
+            .merge_component(
+                id,
+                "material",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("size".into(), toml::Value::Integer(10));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let comp = world.get_component(id, "material").unwrap();
+        assert_eq!(
+            comp.get("color").and_then(|v| v.as_str()),
+            Some("red"),
+            "existing field 'color' should be preserved"
+        );
+        assert_eq!(
+            comp.get("size").and_then(|v| v.as_integer()),
+            Some(10),
+            "overridden field 'size' should be updated"
+        );
+    }
+
+    #[test]
+    fn test_merge_component_creates_new_component() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        // Entity has no "health" component yet
+        assert!(world.get_component(id, "health").is_none());
+
+        world
+            .merge_component(
+                id,
+                "health",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("current".into(), toml::Value::Integer(100));
+                    m
+                }),
+            )
+            .unwrap();
+
+        let comp = world.get_component(id, "health").unwrap();
+        assert_eq!(comp.get("current").and_then(|v| v.as_integer()), Some(100));
+    }
+
+    #[test]
+    fn test_merge_component_replaces_non_table() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        // Set component as a plain string
+        world
+            .set_component(id, "tag", toml::Value::String("old".into()))
+            .unwrap();
+
+        // Merge with another string — should replace
+        world
+            .merge_component(id, "tag", toml::Value::String("new".into()))
+            .unwrap();
+
+        let comp = world.get_component(id, "tag").unwrap();
+        assert_eq!(comp.as_str(), Some("new"));
+    }
+
+    // ── spawn_with_id tests ────────────────────────────────────────
+
+    #[test]
+    fn test_spawn_with_id_basic() {
+        let mut world = FlintWorld::new();
+        let id = EntityId::from_raw(42);
+        world.spawn_with_id(id, "explicit").unwrap();
+
+        assert!(world.contains(id));
+        assert_eq!(world.get_name(id), Some("explicit"));
+        assert_eq!(world.get_id("explicit"), Some(id));
+    }
+
+    #[test]
+    fn test_spawn_with_id_counter_sync() {
+        let mut world = FlintWorld::new();
+        let high_id = EntityId::from_raw(10_000);
+        world.spawn_with_id(high_id, "high").unwrap();
+
+        // Next regular spawn must get ID > 10_000
+        let next = world.spawn("after_high").unwrap();
+        assert!(
+            next.raw() > 10_000,
+            "new id {} should be > 10000",
+            next.raw()
+        );
+    }
+
+    #[test]
+    fn test_spawn_with_id_duplicate_name_error() {
+        let mut world = FlintWorld::new();
+        let id1 = EntityId::from_raw(100);
+        let id2 = EntityId::from_raw(101);
+
+        world.spawn_with_id(id1, "same_name").unwrap();
+        let result = world.spawn_with_id(id2, "same_name");
+
+        assert!(matches!(result, Err(FlintError::DuplicateEntityName(_))));
+    }
+
+    // ── spawn_archetype tests ──────────────────────────────────────
+
+    #[test]
+    fn test_spawn_archetype_applies_defaults() {
+        let mut registry = SchemaRegistry::new();
+        registry
+            .load_archetype_string(
+                r#"
+[archetype.door]
+description = "A door"
+components = ["transform", "door"]
+
+[archetype.door.defaults.door]
+locked = false
+style = "hinged"
+"#,
+            )
+            .unwrap();
+
+        let mut world = FlintWorld::new();
+        let id = world.spawn_archetype("my_door", "door", &registry).unwrap();
+
+        let comp = world.get_component(id, "door").unwrap();
+        assert_eq!(comp.get("locked").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            comp.get("style").and_then(|v| v.as_str()),
+            Some("hinged")
+        );
+    }
+
+    #[test]
+    fn test_spawn_archetype_not_found() {
+        let registry = SchemaRegistry::new();
+        let mut world = FlintWorld::new();
+
+        let result = world.spawn_archetype("e", "nonexistent", &registry);
+        assert!(matches!(result, Err(FlintError::ArchetypeNotFound(_))));
+    }
+
+    #[test]
+    fn test_spawn_archetype_updates_component_index() {
+        let mut registry = SchemaRegistry::new();
+        registry
+            .load_archetype_string(
+                r#"
+[archetype.lamp]
+description = "A lamp"
+components = ["transform", "light"]
+
+[archetype.lamp.defaults.light]
+intensity = 1.0
+"#,
+            )
+            .unwrap();
+
+        let mut world = FlintWorld::new();
+        let id = world.spawn_archetype("lamp1", "lamp", &registry).unwrap();
+
+        assert!(
+            world.entities_with_component("light").contains(&id),
+            "component index should include archetype-default components"
+        );
+    }
+
+    // ── Transform hierarchy tests ──────────────────────────────────
+
+    #[test]
+    fn test_get_world_matrix_no_parent() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("e").unwrap();
+
+        world
+            .set_component(
+                id,
+                "transform",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert(
+                        "position".into(),
+                        toml::Value::Array(vec![
+                            toml::Value::Float(3.0),
+                            toml::Value::Float(4.0),
+                            toml::Value::Float(5.0),
+                        ]),
+                    );
+                    m
+                }),
+            )
+            .unwrap();
+
+        let mat = world.get_world_matrix(id).unwrap();
+        // Translation is in column 3
+        assert!((mat[3][0] - 3.0).abs() < 0.001);
+        assert!((mat[3][1] - 4.0).abs() < 0.001);
+        assert!((mat[3][2] - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_get_world_position_with_parent() {
+        let mut world = FlintWorld::new();
+        let parent = world.spawn("parent").unwrap();
+        let child = world.spawn("child").unwrap();
+
+        // Helper to set position
+        let make_pos = |x: f32, y: f32, z: f32| {
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x as f64),
+                        toml::Value::Float(y as f64),
+                        toml::Value::Float(z as f64),
+                    ]),
+                );
+                m
+            })
+        };
+
+        world
+            .set_component(parent, "transform", make_pos(10.0, 0.0, 0.0))
+            .unwrap();
+        world
+            .set_component(child, "transform", make_pos(5.0, 0.0, 0.0))
+            .unwrap();
+        world.set_parent(child, parent).unwrap();
+
+        let world_pos = world.get_world_position(child).unwrap();
+        assert!(
+            (world_pos.x - 15.0).abs() < 0.001,
+            "child world x should be 15, got {}",
+            world_pos.x
+        );
+    }
+
+    #[test]
+    fn test_get_world_position_deep_hierarchy() {
+        let mut world = FlintWorld::new();
+        let a = world.spawn("a").unwrap();
+        let b = world.spawn("b").unwrap();
+        let c = world.spawn("c").unwrap();
+
+        let make_pos = |x: f32, y: f32, z: f32| {
+            toml::Value::Table({
+                let mut m = toml::map::Map::new();
+                m.insert(
+                    "position".into(),
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x as f64),
+                        toml::Value::Float(y as f64),
+                        toml::Value::Float(z as f64),
+                    ]),
+                );
+                m
+            })
+        };
+
+        world
+            .set_component(a, "transform", make_pos(1.0, 0.0, 0.0))
+            .unwrap();
+        world
+            .set_component(b, "transform", make_pos(2.0, 0.0, 0.0))
+            .unwrap();
+        world
+            .set_component(c, "transform", make_pos(3.0, 0.0, 0.0))
+            .unwrap();
+
+        world.set_parent(b, a).unwrap();
+        world.set_parent(c, b).unwrap();
+
+        let pos = world.get_world_position(c).unwrap();
+        assert!(
+            (pos.x - 6.0).abs() < 0.001,
+            "deep hierarchy world x should be 6, got {}",
+            pos.x
+        );
+    }
+
+    #[test]
+    fn test_get_world_matrix_no_transform() {
+        let mut world = FlintWorld::new();
+        let id = world.spawn("bare").unwrap();
+        // No transform component set
+        assert!(world.get_world_matrix(id).is_none());
+    }
+
+    // ── Name-based operations tests ────────────────────────────────
+
+    #[test]
+    fn test_despawn_by_name() {
+        let mut world = FlintWorld::new();
+        world.spawn("target").unwrap();
+        assert!(world.contains_name("target"));
+
+        world.despawn_by_name("target").unwrap();
+        assert!(!world.contains_name("target"));
+    }
+
+    #[test]
+    fn test_despawn_by_name_not_found() {
+        let mut world = FlintWorld::new();
+        let result = world.despawn_by_name("ghost");
+        assert!(matches!(result, Err(FlintError::EntityNotFound(_))));
+    }
+
+    #[test]
+    fn test_set_parent_by_name() {
+        let mut world = FlintWorld::new();
+        let parent_id = world.spawn("parent").unwrap();
+        let child_id = world.spawn("child").unwrap();
+
+        world.set_parent_by_name("child", "parent").unwrap();
+
+        assert_eq!(world.get_parent(child_id), Some(parent_id));
+        assert!(world.get_children(parent_id).contains(&child_id));
+    }
 }
