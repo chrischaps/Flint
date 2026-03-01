@@ -7,6 +7,7 @@ use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
@@ -61,7 +62,7 @@ pub(super) fn load_terrain_from_world_inner(
         .unwrap_or_else(|| Path::new("."));
 
     for entity in world.all_entities() {
-        let terrain_comp = match world.get_component(entity.id, "terrain") {
+        let terrain_comp = match world.get_component(entity.id, comp::TERRAIN) {
             Some(c) => c,
             None => continue,
         };
@@ -141,7 +142,7 @@ pub(super) fn load_terrain_from_world_inner(
 
         // Get entity transform
         let transform = world
-            .get_component(entity.id, "transform")
+            .get_component(entity.id, comp::TRANSFORM)
             .and_then(|t| {
                 let pos = t.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
                 Some(Transform {
@@ -220,7 +221,7 @@ pub(super) fn build_model_load_config(
     for entity in world.all_entities() {
         if let Some(comps) = world.get_components(entity.id) {
             // Resolve model assets
-            if let Some(model) = comps.get("model") {
+            if let Some(model) = comps.get(comp::MODEL) {
                 if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
                     if !config.overrides.contains_key(name) {
                         if let Some(path) = resolve_catalog(cat, st, name) {
@@ -230,7 +231,7 @@ pub(super) fn build_model_load_config(
                 }
             }
             // Resolve textures
-            for comp_name in &["material", "sprite"] {
+            for comp_name in &[comp::MATERIAL, comp::SPRITE] {
                 if let Some(comp) = comps.get(*comp_name) {
                     if let Some(tex) = comp.get("texture").and_then(|v| v.as_str()) {
                         if !config.overrides.contains_key(tex) {
@@ -329,7 +330,7 @@ pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem,
     for entity in world.all_entities() {
         let audio_file = world
             .get_components(entity.id)
-            .and_then(|components| components.get("audio_source").cloned())
+            .and_then(|components| components.get(comp::AUDIO_SOURCE).cloned())
             .and_then(|audio_src| {
                 audio_src
                     .get("file")

@@ -3,6 +3,7 @@
 //! Unprojects screen coordinates through the camera's inverse view-projection
 //! matrix and tests against entity bounding boxes for viewport click selection.
 
+use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_render::Camera;
 
@@ -211,11 +212,11 @@ pub fn build_pick_targets(world: &flint_ecs::FlintWorld) -> Vec<PickTarget> {
 
         // Try to get bounds component for size, else use a 1x1x1 default
         let (local_min, local_max) = if let Some(components) = world.get_components(entity.id) {
-            if let Some(bounds) = components.get("bounds") {
+            if let Some(bounds) = components.get(comp::BOUNDS) {
                 extract_bounds_min_max(bounds).unwrap_or(([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]))
             } else {
                 // Check for model component — use a default size
-                if components.has("model") {
+                if components.has(comp::MODEL) {
                     ([-0.5, 0.0, -0.5], [0.5, 1.0, 0.5])
                 } else {
                     ([-0.25, -0.25, -0.25], [0.25, 0.25, 0.25])

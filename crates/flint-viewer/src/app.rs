@@ -11,6 +11,7 @@ use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
 use crate::undo::{EditAction, UndoCommand, UndoStack};
 use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
+use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
@@ -986,7 +987,7 @@ impl ViewerApp {
             if (0..3).any(|i| (cur_pos[i] - start_pos[i]).abs() > 1e-4) {
                 actions.push(EditAction {
                     entity_id: eid,
-                    component: "transform".to_string(),
+                    component: comp::TRANSFORM.to_string(),
                     field: "position".to_string(),
                     old_value: vec3_to_toml(start_pos),
                     new_value: vec3_to_toml(cur_pos),
@@ -995,7 +996,7 @@ impl ViewerApp {
             if (0..3).any(|i| (cur_rot[i] - start_rot[i]).abs() > 1e-4) {
                 actions.push(EditAction {
                     entity_id: eid,
-                    component: "transform".to_string(),
+                    component: comp::TRANSFORM.to_string(),
                     field: "rotation".to_string(),
                     old_value: vec3_to_toml(start_rot),
                     new_value: vec3_to_toml(cur_rot),
@@ -1004,7 +1005,7 @@ impl ViewerApp {
             if (0..3).any(|i| (cur_scl[i] - start_scl[i]).abs() > 1e-4) {
                 actions.push(EditAction {
                     entity_id: eid,
-                    component: "transform".to_string(),
+                    component: comp::TRANSFORM.to_string(),
                     field: "scale".to_string(),
                     old_value: vec3_to_toml(start_scl),
                     new_value: vec3_to_toml(cur_scl),

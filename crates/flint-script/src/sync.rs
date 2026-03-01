@@ -5,6 +5,7 @@
 //! support live hot-reload during play.
 
 use crate::engine::ScriptEngine;
+use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{HashMap, HashSet};
@@ -50,14 +51,14 @@ impl ScriptSync {
             None => return,
         };
 
-        for &entity_id in world.entities_with_component("script") {
+        for &entity_id in world.entities_with_component(comp::SCRIPT) {
             if self.discovered.contains(&entity_id) {
                 continue;
             }
 
             let script_comp = world
                 .get_components(entity_id)
-                .and_then(|comps| comps.get("script").cloned());
+                .and_then(|comps| comps.get(comp::SCRIPT).cloned());
 
             let Some(script_data) = script_comp else {
                 continue;

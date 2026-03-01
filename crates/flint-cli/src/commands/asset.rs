@@ -11,6 +11,7 @@ use flint_asset_gen::provider::{
 use flint_asset_gen::{
     register_generated_asset, write_asset_sidecar, FlintConfig, JobStore, StyleGuide,
 };
+use flint_core::components as comp;
 use flint_import::import_gltf;
 use std::collections::HashMap;
 use std::path::Path;
@@ -795,11 +796,11 @@ fn collect_scene_asset_references(scene: &toml::Value) -> Vec<SceneAssetReferenc
         }
 
         // Current component references
-        if let Some(model) = table.get("model").and_then(|v| v.as_table()) {
+        if let Some(model) = table.get(comp::MODEL).and_then(|v| v.as_table()) {
             push_ref_if_string(model, entity_name, "asset", "model.asset", &mut refs);
         }
 
-        if let Some(material) = table.get("material").and_then(|v| v.as_table()) {
+        if let Some(material) = table.get(comp::MATERIAL).and_then(|v| v.as_table()) {
             push_ref_if_string(
                 material,
                 entity_name,
@@ -809,11 +810,11 @@ fn collect_scene_asset_references(scene: &toml::Value) -> Vec<SceneAssetReferenc
             );
         }
 
-        if let Some(sprite) = table.get("sprite").and_then(|v| v.as_table()) {
+        if let Some(sprite) = table.get(comp::SPRITE).and_then(|v| v.as_table()) {
             push_ref_if_string(sprite, entity_name, "texture", "sprite.texture", &mut refs);
         }
 
-        if let Some(audio) = table.get("audio_source").and_then(|v| v.as_table()) {
+        if let Some(audio) = table.get(comp::AUDIO_SOURCE).and_then(|v| v.as_table()) {
             push_ref_if_string(audio, entity_name, "file", "audio_source.file", &mut refs);
         }
     }

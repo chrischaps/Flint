@@ -7,6 +7,7 @@
 //!    cross-section along the referenced spline and upload the resulting
 //!    mesh + trimesh collider.
 
+use flint_core::components as comp;
 use flint_core::spline::{self, SplineControlPoint, SplineSample};
 use flint_core::toml_util::{toml_f32, toml_f32_slice};
 use flint_core::Vec3;
@@ -139,7 +140,7 @@ fn store_spline_data(
         toml::Value::Integer(gap_ranges.len() as i64),
     );
 
-    let _ = world.set_component(entity_id, "spline_data", toml::Value::Table(table));
+    let _ = world.set_component(entity_id, comp::SPLINE_DATA, toml::Value::Table(table));
 }
 
 // ─── Pass 2: generate cross-section meshes ───────────────
@@ -599,14 +600,14 @@ fn generate_cross_section_mesh(
 fn set_model_asset(world: &mut FlintWorld, entity_id: flint_core::EntityId, asset_name: &str) {
     if let Some(comps) = world.get_components_mut(entity_id) {
         comps.set_field(
-            "model",
+            comp::MODEL,
             "asset",
             toml::Value::String(asset_name.to_string()),
         );
     } else {
         let mut model_table = toml::map::Map::new();
         model_table.insert("asset".into(), toml::Value::String(asset_name.to_string()));
-        let _ = world.set_component(entity_id, "model", toml::Value::Table(model_table));
+        let _ = world.set_component(entity_id, comp::MODEL, toml::Value::Table(model_table));
     }
 }
 
@@ -645,7 +646,7 @@ pub fn load_splines(
     for entity in world.all_entities() {
         let spline_file = world
             .get_components(entity.id)
-            .and_then(|c| c.get("spline").cloned())
+            .and_then(|c| c.get(comp::SPLINE).cloned())
             .and_then(|s| s.get("file").and_then(|v| v.as_str().map(String::from)));
 
         if let Some(file_rel) = spline_file {
@@ -724,7 +725,7 @@ pub fn load_splines(
     for entity in world.all_entities() {
         let mesh_comp = world
             .get_components(entity.id)
-            .and_then(|c| c.get("spline_mesh").cloned());
+            .and_then(|c| c.get(comp::SPLINE_MESH).cloned());
 
         if let Some(comp) = mesh_comp {
             match parse_spline_mesh_component(&comp) {
@@ -854,21 +855,28 @@ pub fn load_splines(
                         toml::Value::Float(0.0),
                     ]),
                 );
-                let _ =
-                    world.set_component(chunk_id, "transform", toml::Value::Table(transform_table));
+                let _ = world.set_component(
+                    chunk_id,
+                    comp::TRANSFORM,
+                    toml::Value::Table(transform_table),
+                );
 
                 // Set material component with opacity = 1.0
                 let mut mat_table = toml::map::Map::new();
                 mat_table.insert("opacity".into(), toml::Value::Float(1.0));
-                let _ = world.set_component(chunk_id, "material", toml::Value::Table(mat_table));
+                let _ =
+                    world.set_component(chunk_id, comp::MATERIAL, toml::Value::Table(mat_table));
 
                 // Set spline_chunk component
                 let mut chunk_table = toml::map::Map::new();
                 chunk_table.insert("chunk_index".into(), toml::Value::Integer(chunk_i as i64));
                 chunk_table.insert("t_start".into(), toml::Value::Float(t_start as f64));
                 chunk_table.insert("t_end".into(), toml::Value::Float(t_end as f64));
-                let _ =
-                    world.set_component(chunk_id, "spline_chunk", toml::Value::Table(chunk_table));
+                let _ = world.set_component(
+                    chunk_id,
+                    comp::SPLINE_CHUNK,
+                    toml::Value::Table(chunk_table),
+                );
 
                 // Upload render mesh
                 let material = ImportedMaterial {

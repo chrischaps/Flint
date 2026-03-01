@@ -1,6 +1,7 @@
 //! Character controller using Rapier's kinematic character controller
 
 use crate::world::PhysicsWorld;
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::InputState;
@@ -104,7 +105,7 @@ impl CharacterController {
                 None => return,
             };
 
-            let cc_data = components.get("character_controller");
+            let cc_data = components.get(comp::CHARACTER_CONTROLLER);
             let speed = cc_data
                 .and_then(|v| v.get("move_speed"))
                 .and_then(|v| v.as_float())
@@ -230,7 +231,7 @@ impl CharacterController {
                     toml::Value::Float(pos.y as f64),
                     toml::Value::Float(pos.z as f64),
                 ]);
-                components.set_field("transform", "position", position_value);
+                components.set_field(comp::TRANSFORM, "position", position_value);
             }
         }
     }
@@ -247,7 +248,7 @@ impl CharacterController {
         // Read eye height from character_controller component (default: height * 0.85)
         let eye_offset = world
             .get_components(entity_id)
-            .and_then(|c| c.get("character_controller"))
+            .and_then(|c| c.get(comp::CHARACTER_CONTROLLER))
             .and_then(|v| v.get("height"))
             .and_then(|v| v.as_float())
             .map(|h| h as f32 * 0.85)

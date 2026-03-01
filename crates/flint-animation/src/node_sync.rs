@@ -8,6 +8,7 @@ use crate::node_clip::NodeClip;
 use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, JointTrack};
 use crate::skeletal_sampler::sample_joint_track;
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -70,7 +71,7 @@ impl NodeSync {
     /// registered in `node_maps`. Creates playback states for newly discovered entities.
     /// Detects clip/speed/blend changes for existing entities.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
-        for &entity_id in world.entities_with_component("animator") {
+        for &entity_id in world.entities_with_component(comp::ANIMATOR) {
             // Must be registered in our node_maps
             if !self.node_maps.contains_key(&entity_id) {
                 continue;
@@ -81,10 +82,10 @@ impl NodeSync {
             };
 
             // Must have animator but NOT skeleton (skeletal handled by SkeletalSync)
-            let Some(animator) = components.get("animator") else {
+            let Some(animator) = components.get(comp::ANIMATOR) else {
                 continue;
             };
-            if components.get("skeleton").is_some() {
+            if components.get(comp::SKELETON).is_some() {
                 continue;
             }
 
@@ -282,7 +283,7 @@ fn apply_sampled_value(
             if value.len() >= 3 {
                 let _ = world.set_field(
                     entity_id,
-                    "transform",
+                    comp::TRANSFORM,
                     "position",
                     toml::Value::Array(vec![
                         toml::Value::Float(value[0] as f64),
@@ -296,7 +297,7 @@ fn apply_sampled_value(
             if value.len() >= 4 {
                 let _ = world.set_field(
                     entity_id,
-                    "transform",
+                    comp::TRANSFORM,
                     "rotation_quat",
                     toml::Value::Array(vec![
                         toml::Value::Float(value[0] as f64),
@@ -311,7 +312,7 @@ fn apply_sampled_value(
             if value.len() >= 3 {
                 let _ = world.set_field(
                     entity_id,
-                    "transform",
+                    comp::TRANSFORM,
                     "scale",
                     toml::Value::Array(vec![
                         toml::Value::Float(value[0] as f64),

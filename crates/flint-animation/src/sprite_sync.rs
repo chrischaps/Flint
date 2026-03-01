@@ -5,6 +5,7 @@
 //! 2. `advance_and_write()` steps playback, writes `sprite.source_rect` back to ECS
 
 use crate::sprite_clip::{LoopMode, SpriteAnimClip};
+use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -104,11 +105,11 @@ impl SpriteAnimSync {
     /// Scan the world for entities with `sprite_animator`, creating or updating
     /// playback states as needed.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
-        for &entity_id in world.entities_with_component("sprite_animator") {
+        for &entity_id in world.entities_with_component(comp::SPRITE_ANIMATOR) {
             let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
-            let Some(sprite_animator) = components.get("sprite_animator") else {
+            let Some(sprite_animator) = components.get(comp::SPRITE_ANIMATOR) else {
                 continue;
             };
 
@@ -205,7 +206,7 @@ impl SpriteAnimSync {
 
                 if let Some(components) = world.get_components_mut(*entity_id) {
                     components.set_field(
-                        "sprite",
+                        comp::SPRITE,
                         "source_rect",
                         toml::Value::Array(vec![
                             toml::Value::Float(x),
@@ -218,7 +219,7 @@ impl SpriteAnimSync {
                     // If clip just finished, write playing=false back
                     if !state.playing {
                         components.set_field(
-                            "sprite_animator",
+                            comp::SPRITE_ANIMATOR,
                             "playing",
                             toml::Value::Boolean(false),
                         );

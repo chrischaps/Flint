@@ -5,6 +5,7 @@
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
 use crate::engine::{amplitude_to_db, AudioEngine};
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
@@ -85,7 +86,7 @@ impl AudioSync {
             return;
         }
 
-        for &entity_id in world.entities_with_component("audio_source") {
+        for &entity_id in world.entities_with_component(comp::AUDIO_SOURCE) {
             if self.synced_entities.contains(&entity_id) {
                 continue;
             }
@@ -95,7 +96,7 @@ impl AudioSync {
                 None => continue,
             };
 
-            let audio_data = match components.get("audio_source") {
+            let audio_data = match components.get(comp::AUDIO_SOURCE) {
                 Some(v) => v,
                 None => continue,
             };
@@ -275,7 +276,7 @@ fn read_audio_params(world: &FlintWorld, entity_id: EntityId) -> (f64, f64) {
         None => return (1.0, 1.0),
     };
 
-    let audio_data = match components.get("audio_source") {
+    let audio_data = match components.get(comp::AUDIO_SOURCE) {
         Some(v) => v,
         None => return (1.0, 1.0),
     };

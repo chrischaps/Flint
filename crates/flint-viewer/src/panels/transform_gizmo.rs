@@ -5,6 +5,7 @@
 //! the same pattern as ViewGizmo (egui painter overlay, not wgpu geometry).
 
 use crate::undo::EditAction;
+use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_render::Camera;
 
@@ -609,7 +610,7 @@ pub fn apply_gizmo_delta(
         ];
         actions.push(EditAction {
             entity_id: delta.entity_id,
-            component: "transform".to_string(),
+            component: comp::TRANSFORM.to_string(),
             field: "position".to_string(),
             old_value: vec3_to_toml(current_pos),
             new_value: vec3_to_toml(new_pos),
@@ -625,7 +626,7 @@ pub fn apply_gizmo_delta(
         ];
         actions.push(EditAction {
             entity_id: delta.entity_id,
-            component: "transform".to_string(),
+            component: comp::TRANSFORM.to_string(),
             field: "rotation".to_string(),
             old_value: vec3_to_toml(current_rot),
             new_value: vec3_to_toml(new_rot),
@@ -641,7 +642,7 @@ pub fn apply_gizmo_delta(
         ];
         actions.push(EditAction {
             entity_id: delta.entity_id,
-            component: "transform".to_string(),
+            component: comp::TRANSFORM.to_string(),
             field: "scale".to_string(),
             old_value: vec3_to_toml(current_scale),
             new_value: vec3_to_toml(new_scale),

@@ -6,6 +6,8 @@
 
 use crate::api;
 use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
+use flint_core::callbacks as cb;
+use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -37,18 +39,18 @@ pub struct ScriptInstance {
 impl ScriptInstance {
     pub fn new(ast: AST, source_path: String) -> Self {
         validate_callbacks(&ast, &source_path);
-        let has_on_init = has_function(&ast, "on_init");
-        let has_on_update = has_function(&ast, "on_update");
-        let has_on_collision = has_function(&ast, "on_collision");
-        let has_on_collision_exit = has_function(&ast, "on_collision_exit");
-        let has_on_trigger_enter = has_function(&ast, "on_trigger_enter");
-        let has_on_trigger_exit = has_function(&ast, "on_trigger_exit");
-        let has_on_action = has_function(&ast, "on_action");
-        let has_on_interact = has_function(&ast, "on_interact");
-        let has_on_draw_ui = has_function(&ast, "on_draw_ui");
-        let has_on_scene_exit = has_function(&ast, "on_scene_exit");
-        let has_on_scene_enter = has_function(&ast, "on_scene_enter");
-        let has_on_animation_end = has_function(&ast, "on_animation_end");
+        let has_on_init = has_function(&ast, cb::ON_INIT);
+        let has_on_update = has_function(&ast, cb::ON_UPDATE);
+        let has_on_collision = has_function(&ast, cb::ON_COLLISION);
+        let has_on_collision_exit = has_function(&ast, cb::ON_COLLISION_EXIT);
+        let has_on_trigger_enter = has_function(&ast, cb::ON_TRIGGER_ENTER);
+        let has_on_trigger_exit = has_function(&ast, cb::ON_TRIGGER_EXIT);
+        let has_on_action = has_function(&ast, cb::ON_ACTION);
+        let has_on_interact = has_function(&ast, cb::ON_INTERACT);
+        let has_on_draw_ui = has_function(&ast, cb::ON_DRAW_UI);
+        let has_on_scene_exit = has_function(&ast, cb::ON_SCENE_EXIT);
+        let has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
+        let has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
 
         Self {
             ast,
@@ -73,18 +75,18 @@ impl ScriptInstance {
     /// Recompile with a new AST but preserve the scope (persistent state)
     pub fn hot_reload(&mut self, ast: AST) {
         validate_callbacks(&ast, &self.source_path);
-        self.has_on_init = has_function(&ast, "on_init");
-        self.has_on_update = has_function(&ast, "on_update");
-        self.has_on_collision = has_function(&ast, "on_collision");
-        self.has_on_collision_exit = has_function(&ast, "on_collision_exit");
-        self.has_on_trigger_enter = has_function(&ast, "on_trigger_enter");
-        self.has_on_trigger_exit = has_function(&ast, "on_trigger_exit");
-        self.has_on_action = has_function(&ast, "on_action");
-        self.has_on_interact = has_function(&ast, "on_interact");
-        self.has_on_draw_ui = has_function(&ast, "on_draw_ui");
-        self.has_on_scene_exit = has_function(&ast, "on_scene_exit");
-        self.has_on_scene_enter = has_function(&ast, "on_scene_enter");
-        self.has_on_animation_end = has_function(&ast, "on_animation_end");
+        self.has_on_init = has_function(&ast, cb::ON_INIT);
+        self.has_on_update = has_function(&ast, cb::ON_UPDATE);
+        self.has_on_collision = has_function(&ast, cb::ON_COLLISION);
+        self.has_on_collision_exit = has_function(&ast, cb::ON_COLLISION_EXIT);
+        self.has_on_trigger_enter = has_function(&ast, cb::ON_TRIGGER_ENTER);
+        self.has_on_trigger_exit = has_function(&ast, cb::ON_TRIGGER_EXIT);
+        self.has_on_action = has_function(&ast, cb::ON_ACTION);
+        self.has_on_interact = has_function(&ast, cb::ON_INTERACT);
+        self.has_on_draw_ui = has_function(&ast, cb::ON_DRAW_UI);
+        self.has_on_scene_exit = has_function(&ast, cb::ON_SCENE_EXIT);
+        self.has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
+        self.has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -97,18 +99,18 @@ fn has_function(ast: &AST, name: &str) -> bool {
 
 /// Expected parameter counts for engine callbacks.
 const CALLBACK_ARITIES: &[(&str, usize)] = &[
-    ("on_init", 0),
-    ("on_update", 0),
-    ("on_collision", 1),
-    ("on_collision_exit", 1),
-    ("on_trigger_enter", 1),
-    ("on_trigger_exit", 1),
-    ("on_action", 1),
-    ("on_interact", 0),
-    ("on_draw_ui", 0),
-    ("on_scene_exit", 0),
-    ("on_scene_enter", 0),
-    ("on_animation_end", 1),
+    (cb::ON_INIT, 0),
+    (cb::ON_UPDATE, 0),
+    (cb::ON_COLLISION, 1),
+    (cb::ON_COLLISION_EXIT, 1),
+    (cb::ON_TRIGGER_ENTER, 1),
+    (cb::ON_TRIGGER_EXIT, 1),
+    (cb::ON_ACTION, 1),
+    (cb::ON_INTERACT, 0),
+    (cb::ON_DRAW_UI, 0),
+    (cb::ON_SCENE_EXIT, 0),
+    (cb::ON_SCENE_ENTER, 0),
+    (cb::ON_ANIMATION_END, 1),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -116,7 +118,7 @@ fn validate_callbacks(ast: &AST, source_path: &str) {
     for func in ast.iter_functions() {
         for &(name, expected) in CALLBACK_ARITIES {
             if func.name == name && func.params.len() != expected {
-                let hint = if name == "on_update" && func.params.len() == 1 {
+                let hint = if name == cb::ON_UPDATE && func.params.len() == 1 {
                     " Did you mean `fn on_update()`? Use `delta_time()` to access frame delta."
                 } else {
                     ""
@@ -212,7 +214,7 @@ impl ScriptEngine {
                 script.init_called = true;
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, "on_init", ())
+                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_INIT, ())
                 {
                     eprintln!("[script] on_init error ({}): {}", script.source_path, e);
                 }
@@ -234,7 +236,7 @@ impl ScriptEngine {
                     script.init_called = true;
                     if let Err(e) =
                         self.engine
-                            .call_fn::<()>(&mut script.scope, &script.ast, "on_init", ())
+                            .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_INIT, ())
                     {
                         eprintln!("[script] on_init error ({}): {}", script.source_path, e);
                     }
@@ -257,7 +259,7 @@ impl ScriptEngine {
                 }
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, "on_update", ())
+                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_UPDATE, ())
                 {
                     eprintln!("[script] on_update error ({}): {}", script.source_path, e);
                 }
@@ -279,7 +281,7 @@ impl ScriptEngine {
                 }
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, "on_draw_ui", ())
+                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_DRAW_UI, ())
                 {
                     eprintln!("[script] on_draw_ui error ({}): {}", script.source_path, e);
                 }
@@ -336,7 +338,7 @@ impl ScriptEngine {
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
                     &script.ast,
-                    "on_collision",
+                    cb::ON_COLLISION,
                     (other_id,),
                 ) {
                     eprintln!(
@@ -359,7 +361,7 @@ impl ScriptEngine {
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
                     &script.ast,
-                    "on_collision_exit",
+                    cb::ON_COLLISION_EXIT,
                     (other_id,),
                 ) {
                     eprintln!(
@@ -382,7 +384,7 @@ impl ScriptEngine {
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
                     &script.ast,
-                    "on_trigger_enter",
+                    cb::ON_TRIGGER_ENTER,
                     (entity_id,),
                 ) {
                     eprintln!(
@@ -405,7 +407,7 @@ impl ScriptEngine {
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
                     &script.ast,
-                    "on_trigger_exit",
+                    cb::ON_TRIGGER_EXIT,
                     (entity_id,),
                 ) {
                     eprintln!(
@@ -432,7 +434,7 @@ impl ScriptEngine {
                 if let Err(e) = self.engine.call_fn::<()>(
                     &mut script.scope,
                     &script.ast,
-                    "on_action",
+                    cb::ON_ACTION,
                     (action_str,),
                 ) {
                     eprintln!("[script] on_action error ({}): {}", script.source_path, e);
@@ -452,10 +454,12 @@ impl ScriptEngine {
                         let mut c = self.ctx.lock().unwrap();
                         c.current_entity = entity_id;
                     }
-                    if let Err(e) =
-                        self.engine
-                            .call_fn::<()>(&mut script.scope, &script.ast, "on_interact", ())
-                    {
+                    if let Err(e) = self.engine.call_fn::<()>(
+                        &mut script.scope,
+                        &script.ast,
+                        cb::ON_INTERACT,
+                        (),
+                    ) {
                         eprintln!("[script] on_interact error ({}): {}", script.source_path, e);
                     }
                 }
@@ -492,7 +496,7 @@ impl ScriptEngine {
                 }
                 if let Err(e) =
                     self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, "on_scene_exit", ())
+                        .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_SCENE_EXIT, ())
                 {
                     eprintln!(
                         "[script] on_scene_exit error ({}): {}",
@@ -515,10 +519,12 @@ impl ScriptEngine {
                     let mut c = self.ctx.lock().unwrap();
                     c.current_entity = entity_id;
                 }
-                if let Err(e) =
-                    self.engine
-                        .call_fn::<()>(&mut script.scope, &script.ast, "on_scene_enter", ())
-                {
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    cb::ON_SCENE_ENTER,
+                    (),
+                ) {
                     eprintln!(
                         "[script] on_scene_enter error ({}): {}",
                         script.source_path, e
@@ -551,7 +557,7 @@ impl ScriptEngine {
                     if let Err(e) = self.engine.call_fn::<()>(
                         &mut script.scope,
                         &script.ast,
-                        "on_animation_end",
+                        cb::ON_ANIMATION_END,
                         (clip_name,),
                     ) {
                         eprintln!(
@@ -577,7 +583,7 @@ fn get_interactable_config(entity: EntityId, world: &FlintWorld) -> (f64, bool) 
     let Some(comps) = world.get_components(entity) else {
         return (3.0, true);
     };
-    let Some(interactable) = comps.get("interactable") else {
+    let Some(interactable) = comps.get(comp::INTERACTABLE) else {
         return (3.0, true);
     };
     let range = interactable.get("range").and_then(toml_f64).unwrap_or(3.0);
@@ -606,7 +612,7 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
         .find(|e| {
             world
                 .get_components(e.id)
-                .map(|c| c.has("character_controller"))
+                .map(|c| c.has(comp::CHARACTER_CONTROLLER))
                 .unwrap_or(false)
         })
         .map(|e| e.id)?;
@@ -618,7 +624,7 @@ pub fn find_nearest_interactable(world: &FlintWorld) -> Option<NearestInteractab
         let Some(comps) = world.get_components(entity.id) else {
             continue;
         };
-        let Some(interactable) = comps.get("interactable") else {
+        let Some(interactable) = comps.get(comp::INTERACTABLE) else {
             continue;
         };
 
@@ -675,7 +681,7 @@ fn is_near_player(entity: EntityId, world: &FlintWorld, range: f64) -> bool {
         .find(|e| {
             world
                 .get_components(e.id)
-                .map(|c| c.has("character_controller"))
+                .map(|c| c.has(comp::CHARACTER_CONTROLLER))
                 .unwrap_or(false)
         })
         .map(|e| e.id);

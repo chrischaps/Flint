@@ -3,6 +3,7 @@
 //! Reads `audio_trigger` components from entities and fires sounds
 //! when matching events occur (collisions, interactions, trigger volumes).
 
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -57,7 +58,7 @@ impl AudioTrigger {
                 None => continue,
             };
 
-            let trigger_data = match components.get("audio_trigger") {
+            let trigger_data = match components.get(comp::AUDIO_TRIGGER) {
                 Some(v) => v,
                 None => continue,
             };

@@ -1,6 +1,7 @@
 //! Synchronization between FlintWorld (TOML components) and Rapier physics
 
 use crate::world::PhysicsWorld;
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use rapier3d::na;
@@ -37,7 +38,7 @@ impl PhysicsSync {
     /// Push Flint entities with rigidbody/collider components into Rapier
     pub fn sync_to_rapier(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
         // Find entities with rigidbody components
-        for &entity_id in world.entities_with_component("rigidbody") {
+        for &entity_id in world.entities_with_component(comp::RIGIDBODY) {
             if self.synced_entities.contains(&entity_id) {
                 continue;
             }
@@ -48,7 +49,7 @@ impl PhysicsSync {
             };
 
             // Need at least a rigidbody component to create a physics body
-            let rb_data = match components.get("rigidbody") {
+            let rb_data = match components.get(comp::RIGIDBODY) {
                 Some(v) => v,
                 None => continue,
             };
@@ -101,7 +102,7 @@ impl PhysicsSync {
             // the visual center is height/2 above the entity position, so the body
             // must be placed there. sync_from_rapier reverses this when writing back.
             let sprite_anchor_offset_y = components
-                .get("sprite")
+                .get(comp::SPRITE)
                 .map(|s| {
                     let anchor_y = s
                         .get("anchor_y")
@@ -136,7 +137,7 @@ impl PhysicsSync {
             self.body_map.insert(entity_id, body_handle);
 
             // Build collider if present
-            if let Some(col_data) = components.get("collider") {
+            if let Some(col_data) = components.get(comp::COLLIDER) {
                 let shape_str = col_data
                     .get("shape")
                     .and_then(|v| v.as_str())
@@ -154,7 +155,7 @@ impl PhysicsSync {
                     "sprite" => {
                         // Auto-size from sprite component dimensions
                         let (sw, sh) = components
-                            .get("sprite")
+                            .get(comp::SPRITE)
                             .map(|s| {
                                 let w = s
                                     .get("width")
@@ -197,7 +198,7 @@ impl PhysicsSync {
 
                 // Offset collider to match bounds center (for asymmetric bounds like doors)
                 let bounds_offset = components
-                    .get("bounds")
+                    .get(comp::BOUNDS)
                     .and_then(|b| compute_bounds_center(b))
                     .unwrap_or([0.0, 0.0, 0.0]);
 
@@ -249,7 +250,7 @@ impl PhysicsSync {
 
             // Check mode_2d to zero out Z drift
             let mode_2d = components
-                .get("rigidbody")
+                .get(comp::RIGIDBODY)
                 .and_then(|rb| rb.get("mode_2d"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
@@ -259,7 +260,7 @@ impl PhysicsSync {
             // The body position is at the sprite's visual center; subtract the
             // offset to get back to the transform position the renderer expects.
             let anchor_offset_y = components
-                .get("sprite")
+                .get(comp::SPRITE)
                 .map(|s| {
                     let anchor_y = s
                         .get("anchor_y")
@@ -280,7 +281,7 @@ impl PhysicsSync {
                 toml::Value::Float(z),
             ]);
 
-            components.set_field("transform", "position", position_value);
+            components.set_field(comp::TRANSFORM, "position", position_value);
         }
     }
 
@@ -300,7 +301,7 @@ impl PhysicsSync {
 
             // Skip entities driven by the character controller (player)
             if let Some(components) = world.get_components(*entity_id) {
-                if components.has("character_controller") {
+                if components.has(comp::CHARACTER_CONTROLLER) {
                     continue;
                 }
             }
@@ -317,13 +318,13 @@ impl PhysicsSync {
             // Compute bounds center offset (for asymmetric bounds like doors)
             let components = world.get_components(*entity_id);
             let bounds_center = components
-                .and_then(|c| c.get("bounds"))
+                .and_then(|c| c.get(comp::BOUNDS))
                 .and_then(|b| compute_bounds_center(b))
                 .unwrap_or([0.0, 0.0, 0.0]);
 
             // Sprite anchor offset (same as sync_to_rapier)
             let sprite_anchor_offset_y = components
-                .and_then(|c| c.get("sprite"))
+                .and_then(|c| c.get(comp::SPRITE))
                 .map(|s| {
                     let anchor_y = s
                         .get("anchor_y")
@@ -365,7 +366,7 @@ impl PhysicsSync {
                 None => continue,
             };
 
-            let col_data = match components.get("collider") {
+            let col_data = match components.get(comp::COLLIDER) {
                 Some(v) => v,
                 None => continue,
             };

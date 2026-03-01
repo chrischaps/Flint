@@ -1,6 +1,7 @@
 //! Headless scene-to-PNG render command
 
 use anyhow::{Context, Result};
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::Vec3;
 use flint_player::spline_gen;
@@ -276,7 +277,7 @@ fn load_terrain_for_render(
         .unwrap_or_else(|| Path::new("."));
 
     for entity in world.all_entities() {
-        let terrain_comp = match world.get_component(entity.id, "terrain") {
+        let terrain_comp = match world.get_component(entity.id, comp::TERRAIN) {
             Some(c) => c,
             None => continue,
         };
@@ -351,7 +352,7 @@ fn load_terrain_for_render(
         let terrain = Terrain::generate(&heightmap, &config);
 
         let transform = world
-            .get_component(entity.id, "transform")
+            .get_component(entity.id, comp::TRANSFORM)
             .and_then(|t| {
                 let pos = t.get("position").and_then(toml_vec3)?;
                 Some(Transform {

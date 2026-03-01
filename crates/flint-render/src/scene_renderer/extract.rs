@@ -14,6 +14,7 @@ use crate::primitives::{
 };
 use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use crate::texture_cache::TextureCache;
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_color as extract_color, toml_f32, toml_vec4};
 use flint_ecs::DynamicComponents;
 use flint_ecs::FlintWorld;
@@ -106,13 +107,13 @@ impl SceneRenderer {
             let gltf_alpha = gpu_mesh.material.base_color[3];
             let ecs_opacity = world
                 .get_components(entity_id)
-                .and_then(|c| c.get("material"))
+                .and_then(|c| c.get(comp::MATERIAL))
                 .and_then(|m| m.get("opacity"))
                 .and_then(toml_f32)
                 .unwrap_or(1.0);
             let ecs_blend_mode_str = world
                 .get_components(entity_id)
-                .and_then(|c| c.get("material"))
+                .and_then(|c| c.get(comp::MATERIAL))
                 .and_then(|m| m.get("blend_mode"))
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
@@ -212,13 +213,13 @@ impl SceneRenderer {
             };
             let base_color = world
                 .get_components(entity_id)
-                .and_then(|c| c.get("material"))
+                .and_then(|c| c.get(comp::MATERIAL))
                 .and_then(|m| extract_color_fn(m))
                 .or_else(|| {
                     world
                         .get_parent(entity_id)
                         .and_then(|pid| world.get_components(pid))
-                        .and_then(|c| c.get("material"))
+                        .and_then(|c| c.get(comp::MATERIAL))
                         .and_then(|m| extract_color_fn(m))
                 })
                 .unwrap_or(gpu_mesh.material.base_color);
@@ -238,13 +239,13 @@ impl SceneRenderer {
             // Read opacity and blend_mode from ECS material component
             let ecs_opacity = world
                 .get_components(entity_id)
-                .and_then(|c| c.get("material"))
+                .and_then(|c| c.get(comp::MATERIAL))
                 .and_then(|m| m.get("opacity"))
                 .and_then(toml_f32)
                 .unwrap_or(1.0);
             let ecs_blend_mode_str = world
                 .get_components(entity_id)
-                .and_then(|c| c.get("material"))
+                .and_then(|c| c.get(comp::MATERIAL))
                 .and_then(|m| m.get("blend_mode"))
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
@@ -443,7 +444,7 @@ impl SceneRenderer {
         };
 
         // ── Screen anchor vs parallax position ──
-        let screen_anchor = components.get("screen_anchor");
+        let screen_anchor = components.get(comp::SCREEN_ANCHOR);
         let (adjusted_x, adjusted_y, skip_tiling) = if let Some(sa) = screen_anchor {
             let anchor_name = sa
                 .get("anchor")
@@ -474,7 +475,7 @@ impl SceneRenderer {
 
         // ── ui_fill clipping ──
         let (uv_rect, width, height, fill_x_off, fill_y_off) =
-            if let Some(fill) = components.get("ui_fill") {
+            if let Some(fill) = components.get(comp::UI_FILL) {
                 let value = fill.get("value").and_then(toml_f32).unwrap_or(1.0);
                 let direction = fill
                     .get("direction")
@@ -564,7 +565,7 @@ impl SceneRenderer {
         sprite2d_collected.push((tex_name.to_string(), layer, instance));
 
         // ── ui_text: expand text to glyph sprite instances ──
-        if let Some(ui_text) = components.get("ui_text") {
+        if let Some(ui_text) = components.get(comp::UI_TEXT) {
             let font_path_str = ui_text.get("font").and_then(|v| v.as_str()).unwrap_or("");
             let text = ui_text.get("text").and_then(|v| v.as_str()).unwrap_or("");
             let text_size = ui_text.get("size").and_then(toml_f32).unwrap_or(1.0);
@@ -729,12 +730,12 @@ impl SceneRenderer {
         world_pos: [f32; 3],
         sprite2d_collected: &mut Vec<(String, i32, Sprite2dInstanceGpu)>,
     ) -> bool {
-        let has_sprite = components.get("sprite").is_some();
+        let has_sprite = components.get(comp::SPRITE).is_some();
         if has_sprite {
             return false;
         }
 
-        let ui_text = match components.get("ui_text") {
+        let ui_text = match components.get(comp::UI_TEXT) {
             Some(ut) => ut,
             None => return false,
         };
@@ -761,7 +762,7 @@ impl SceneRenderer {
             .unwrap_or(0) as i32;
 
         // Compute position from screen_anchor or world pos
-        let (text_x, text_y) = if let Some(sa) = components.get("screen_anchor") {
+        let (text_x, text_y) = if let Some(sa) = components.get(comp::SCREEN_ANCHOR) {
             let anchor_name = sa
                 .get("anchor")
                 .and_then(|v| v.as_str())
@@ -817,7 +818,7 @@ impl SceneRenderer {
     ) {
         // Fall back to procedural shapes
         let (size, bounds_center) = if let Some(components) = world.get_components(entity_id) {
-            if let Some(bounds) = components.get("bounds") {
+            if let Some(bounds) = components.get(comp::BOUNDS) {
                 extract_bounds_info(bounds).unwrap_or((visual.default_size, [0.0, 0.0, 0.0]))
             } else {
                 (visual.default_size, [0.0, 0.0, 0.0])
@@ -860,7 +861,7 @@ impl SceneRenderer {
         // Check for material.texture to use file-based textures on procedural geometry
         let material_component = world
             .get_components(entity_id)
-            .and_then(|components| components.get("material").cloned());
+            .and_then(|components| components.get(comp::MATERIAL).cloned());
 
         let material_texture = material_component
             .as_ref()

@@ -4,6 +4,7 @@ use crate::curves::{lerp_color, lerp_f32};
 use crate::emitter::{EmissionShape, EmitterConfig, EmitterState, ParticleBlendMode};
 use crate::particle::ParticleInstance;
 use crate::rand::ParticleRng;
+use flint_core::components as comp;
 use flint_core::toml_util::toml_vec3;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -52,11 +53,11 @@ impl ParticleSync {
         // Track which entities still exist
         let mut seen = std::collections::HashSet::new();
 
-        for &entity_id in world.entities_with_component("particle_emitter") {
+        for &entity_id in world.entities_with_component(comp::PARTICLE_EMITTER) {
             let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
-            let Some(emitter_val) = components.get("particle_emitter") else {
+            let Some(emitter_val) = components.get(comp::PARTICLE_EMITTER) else {
                 continue;
             };
             let Some(emitter_table) = emitter_val.as_table() else {
@@ -90,13 +91,15 @@ impl ParticleSync {
                 state.config.texture = config.texture;
 
                 // Update emitter position from transform
-                if let Some(transform) = components.get("transform").and_then(|v| v.as_table()) {
+                if let Some(transform) = components.get(comp::TRANSFORM).and_then(|v| v.as_table())
+                {
                     state.emitter_position = read_position(transform);
                 }
             } else {
                 // New emitter
                 let mut state = EmitterState::new(config);
-                if let Some(transform) = components.get("transform").and_then(|v| v.as_table()) {
+                if let Some(transform) = components.get(comp::TRANSFORM).and_then(|v| v.as_table())
+                {
                     state.emitter_position = read_position(transform);
                 }
                 self.states.insert(entity_id, state);

@@ -8,6 +8,7 @@
 //! on top of the returned [`ModelLoadResult`].
 
 use crate::SceneRenderer;
+use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult};
@@ -218,7 +219,7 @@ fn expand_nodes_animated(
             );
             t
         });
-        let _ = world.set_component(child_id, "transform", transform);
+        let _ = world.set_component(child_id, comp::TRANSFORM, transform);
 
         // Upload mesh without baking (bake_transform: None)
         if !node.mesh_primitive_indices.is_empty() {
@@ -237,7 +238,7 @@ fn expand_nodes_animated(
                 m.insert("asset".to_string(), toml::Value::String(cache_key));
                 m
             });
-            let _ = world.set_component(child_id, "model", model);
+            let _ = world.set_component(child_id, comp::MODEL, model);
         }
 
         // Set parent to preserve hierarchy
@@ -287,14 +288,14 @@ pub fn load_models_from_world(
         .filter_map(|e| {
             let components = world.get_components(e.id);
             let model_asset = components
-                .and_then(|c| c.get("model").cloned())
+                .and_then(|c| c.get(comp::MODEL).cloned())
                 .and_then(|model| {
                     model
                         .get("asset")
                         .and_then(|v| v.as_str().map(String::from))
                 });
             let has_animator = components
-                .map(|c| c.get("animator").is_some())
+                .map(|c| c.get(comp::ANIMATOR).is_some())
                 .unwrap_or(false);
             model_asset.map(|asset| (e.id, e.name.clone(), asset, has_animator))
         })
@@ -320,7 +321,7 @@ pub fn load_models_from_world(
                     device,
                 );
                 if let Some(components) = world.get_components_mut(*entity_id) {
-                    components.remove("model");
+                    components.remove(comp::MODEL);
                 }
                 result.models.push(LoadedModel {
                     entity_id: *entity_id,
@@ -349,7 +350,7 @@ pub fn load_models_from_world(
                             device,
                         );
                         if let Some(components) = world.get_components_mut(*entity_id) {
-                            components.remove("model");
+                            components.remove(comp::MODEL);
                         }
                         result.models.push(LoadedModel {
                             entity_id: *entity_id,
@@ -454,7 +455,7 @@ pub fn load_models_from_world(
                     );
 
                     if let Some(components) = world.get_components_mut(*entity_id) {
-                        components.remove("model");
+                        components.remove(comp::MODEL);
                     }
 
                     was_expanded = true;
@@ -511,12 +512,12 @@ pub fn load_textures_from_world(
         let mut tex_names = Vec::new();
 
         if let Some(comps) = &components {
-            if let Some(material) = comps.get("material") {
+            if let Some(material) = comps.get(comp::MATERIAL) {
                 if let Some(tex) = material.get("texture").and_then(|v| v.as_str()) {
                     tex_names.push(tex.to_string());
                 }
             }
-            if let Some(sprite) = comps.get("sprite") {
+            if let Some(sprite) = comps.get(comp::SPRITE) {
                 if let Some(tex) = sprite.get("texture").and_then(|v| v.as_str()) {
                     if !tex.is_empty() {
                         tex_names.push(tex.to_string());
@@ -524,7 +525,7 @@ pub fn load_textures_from_world(
                 }
             }
             // Load font textures referenced by ui_text components
-            if let Some(ui_text) = comps.get("ui_text") {
+            if let Some(ui_text) = comps.get(comp::UI_TEXT) {
                 if let Some(font_path_str) = ui_text.get("font").and_then(|v| v.as_str()) {
                     if !font_path_str.is_empty() {
                         let font_file = config.scene_dir.join(font_path_str);

@@ -27,6 +27,7 @@ use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
+use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_core::{Transform, Vec3};
 use flint_ecs::FlintWorld;
@@ -1153,7 +1154,7 @@ impl SceneRenderer {
             // Check if entity has a model component
             let model_asset = world
                 .get_components(entity.id)
-                .and_then(|components| components.get("model").cloned())
+                .and_then(|components| components.get(comp::MODEL).cloned())
                 .and_then(|model| {
                     model
                         .get("asset")
@@ -1191,7 +1192,7 @@ impl SceneRenderer {
 
             // Check for sprite component — render as billboard or 2D sprite
             if let Some(components) = world.get_components(entity.id) {
-                if let Some(sprite) = components.get("sprite") {
+                if let Some(sprite) = components.get(comp::SPRITE) {
                     self.extract_sprite_entity(
                         device,
                         tex_cache_ref,
@@ -1221,7 +1222,7 @@ impl SceneRenderer {
 
             // Only draw fallback geometry for entities that explicitly have bounds
             if let Some(components) = world.get_components(entity.id) {
-                let has_bounds = components.get("bounds").is_some();
+                let has_bounds = components.get(comp::BOUNDS).is_some();
                 if !has_bounds {
                     continue;
                 }
@@ -1555,10 +1556,10 @@ impl SceneRenderer {
         let mut points = [PointLight::default(); MAX_POINT_LIGHTS];
         let mut spots = [SpotLight::default(); MAX_SPOT_LIGHTS];
 
-        for &entity_id in world.entities_with_component("light") {
+        for &entity_id in world.entities_with_component(comp::LIGHT) {
             let light_component = world
                 .get_components(entity_id)
-                .and_then(|components| components.get("light").cloned());
+                .and_then(|components| components.get(comp::LIGHT).cloned());
 
             if let Some(light) = light_component {
                 let light_type = light

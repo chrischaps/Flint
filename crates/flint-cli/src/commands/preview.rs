@@ -10,6 +10,7 @@ use flint_animation::node_clip::NodeClip;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult, MeshBounds};
@@ -122,7 +123,7 @@ fn create_model_world(model_path: &Path, anim_speed: f32) -> (FlintWorld, String
         );
         t
     });
-    let _ = world.set_component(entity_id, "transform", transform);
+    let _ = world.set_component(entity_id, comp::TRANSFORM, transform);
 
     // Model component pointing to asset name
     let model = toml::Value::Table({
@@ -130,7 +131,7 @@ fn create_model_world(model_path: &Path, anim_speed: f32) -> (FlintWorld, String
         m.insert("asset".to_string(), toml::Value::String(asset_name.clone()));
         m
     });
-    let _ = world.set_component(entity_id, "model", model);
+    let _ = world.set_component(entity_id, comp::MODEL, model);
 
     // Animator component — enables animated model expansion and skeletal sync discovery
     let animator = toml::Value::Table({
@@ -141,7 +142,7 @@ fn create_model_world(model_path: &Path, anim_speed: f32) -> (FlintWorld, String
         a.insert("speed".to_string(), toml::Value::Float(anim_speed as f64));
         a
     });
-    let _ = world.set_component(entity_id, "animator", animator);
+    let _ = world.set_component(entity_id, comp::ANIMATOR, animator);
 
     (world, asset_name, entity_id)
 }
@@ -206,7 +207,7 @@ fn register_animation_data(
                     s.insert("skin".to_string(), toml::Value::String(String::new()));
                     s
                 });
-                let _ = world.set_component(loaded.entity_id, "skeleton", skeleton_comp);
+                let _ = world.set_component(loaded.entity_id, comp::SKELETON, skeleton_comp);
 
                 skeletal_entity_assets.insert(loaded.entity_id, loaded.asset_name.clone());
             }
@@ -263,9 +264,17 @@ fn register_animation_data(
 
     // Set the clip on the animator component so sync_from_world picks it up
     if let Some(components) = world.get_components_mut(entity_id) {
-        components.set_field("animator", "clip", toml::Value::String(clip_name.clone()));
-        components.set_field("animator", "playing", toml::Value::Boolean(true));
-        components.set_field("animator", "speed", toml::Value::Float(anim_speed as f64));
+        components.set_field(
+            comp::ANIMATOR,
+            "clip",
+            toml::Value::String(clip_name.clone()),
+        );
+        components.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+        components.set_field(
+            comp::ANIMATOR,
+            "speed",
+            toml::Value::Float(anim_speed as f64),
+        );
     }
 
     let info = AnimationInfo {
@@ -911,11 +920,11 @@ impl PreviewApp {
             if let Some(eid) = state.entity_id {
                 if let Some(components) = state.world.get_components_mut(eid) {
                     components.set_field(
-                        "animator",
+                        comp::ANIMATOR,
                         "clip",
                         toml::Value::String(clip_name.clone()),
                     );
-                    components.set_field("animator", "playing", toml::Value::Boolean(true));
+                    components.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
                 }
 
                 // Reset skeletal playback state so it re-syncs with the new clip
@@ -958,7 +967,7 @@ impl PreviewApp {
                 .and_then(|s| {
                     s.entity_id.and_then(|eid| {
                         s.world.get_components(eid).and_then(|c| {
-                            c.get("animator").and_then(|a| {
+                            c.get(comp::ANIMATOR).and_then(|a| {
                                 a.get("speed").and_then(|v| {
                                     v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
                                 })
@@ -1508,7 +1517,11 @@ impl PreviewApp {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     if let Some(components) = state.world.get_components_mut(eid) {
-                        components.set_field("animator", "playing", toml::Value::Boolean(!paused));
+                        components.set_field(
+                            comp::ANIMATOR,
+                            "playing",
+                            toml::Value::Boolean(!paused),
+                        );
                     }
                 }
             }
@@ -1520,7 +1533,7 @@ impl PreviewApp {
             if let Ok(mut state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     if let Some(components) = state.world.get_components_mut(eid) {
-                        components.set_field("animator", "speed", toml::Value::Float(spd));
+                        components.set_field(comp::ANIMATOR, "speed", toml::Value::Float(spd));
                     }
                 }
             }
@@ -1641,7 +1654,7 @@ impl ApplicationHandler for PreviewApp {
                                             state.world.get_components_mut(eid)
                                         {
                                             components.set_field(
-                                                "animator",
+                                                comp::ANIMATOR,
                                                 "playing",
                                                 toml::Value::Boolean(!self.anim_paused),
                                             );
@@ -1677,7 +1690,7 @@ impl ApplicationHandler for PreviewApp {
                                             state.world.get_components_mut(eid)
                                         {
                                             let current = components
-                                                .get("animator")
+                                                .get(comp::ANIMATOR)
                                                 .and_then(|a| {
                                                     a.get("speed").and_then(|v| {
                                                         v.as_float().or_else(|| {
@@ -1688,7 +1701,7 @@ impl ApplicationHandler for PreviewApp {
                                                 .unwrap_or(1.0);
                                             let new_speed = (current * 1.5).min(10.0);
                                             components.set_field(
-                                                "animator",
+                                                comp::ANIMATOR,
                                                 "speed",
                                                 toml::Value::Float(new_speed),
                                             );
@@ -1706,7 +1719,7 @@ impl ApplicationHandler for PreviewApp {
                                             state.world.get_components_mut(eid)
                                         {
                                             let current = components
-                                                .get("animator")
+                                                .get(comp::ANIMATOR)
                                                 .and_then(|a| {
                                                     a.get("speed").and_then(|v| {
                                                         v.as_float().or_else(|| {
@@ -1717,7 +1730,7 @@ impl ApplicationHandler for PreviewApp {
                                                 .unwrap_or(1.0);
                                             let new_speed = (current / 1.5).max(0.1);
                                             components.set_field(
-                                                "animator",
+                                                comp::ANIMATOR,
                                                 "speed",
                                                 toml::Value::Float(new_speed),
                                             );
@@ -1735,7 +1748,7 @@ impl ApplicationHandler for PreviewApp {
                                             state.world.get_components_mut(eid)
                                         {
                                             components.set_field(
-                                                "animator",
+                                                comp::ANIMATOR,
                                                 "speed",
                                                 toml::Value::Float(1.0),
                                             );

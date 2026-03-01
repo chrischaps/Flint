@@ -1,6 +1,7 @@
 //! Editable entity inspector panel — schema-driven widgets for component properties
 
 use crate::undo::EditAction;
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_color, toml_to_vec3};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -62,7 +63,7 @@ impl EntityInspector {
                     let new_val = vec3_to_toml(new_pos);
                     actions.push(EditAction {
                         entity_id,
-                        component: "transform".to_string(),
+                        component: comp::TRANSFORM.to_string(),
                         field: "position".to_string(),
                         old_value: old_val,
                         new_value: new_val,
@@ -80,7 +81,7 @@ impl EntityInspector {
                     let new_val = vec3_to_toml(new_rot);
                     actions.push(EditAction {
                         entity_id,
-                        component: "transform".to_string(),
+                        component: comp::TRANSFORM.to_string(),
                         field: "rotation".to_string(),
                         old_value: old_val,
                         new_value: new_val,
@@ -94,7 +95,7 @@ impl EntityInspector {
                     let new_val = vec3_to_toml(new_scl);
                     actions.push(EditAction {
                         entity_id,
-                        component: "transform".to_string(),
+                        component: comp::TRANSFORM.to_string(),
                         field: "scale".to_string(),
                         old_value: old_val,
                         new_value: new_val,
@@ -105,7 +106,7 @@ impl EntityInspector {
         // Dynamic components
         if let Some(components) = world.get_components(entity_id) {
             for (comp_name, comp_value) in components.data.iter() {
-                if comp_name == "transform" {
+                if comp_name == comp::TRANSFORM {
                     continue; // Already handled above
                 }
 

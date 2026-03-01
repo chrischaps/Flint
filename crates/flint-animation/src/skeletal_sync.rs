@@ -7,6 +7,7 @@ use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, SkeletalClip};
 use crate::skeletal_sampler::sample_joint_track;
 use crate::skeleton::{JointPose, Skeleton};
+use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -78,12 +79,12 @@ impl SkeletalSync {
     /// Creates playback states for newly discovered entities.
     /// Updates blend_target/blend_duration for existing entities if changed in ECS.
     pub fn sync_from_world(&mut self, world: &FlintWorld) {
-        for entity_id in world.entities_with_components(&["animator", "skeleton"]) {
+        for entity_id in world.entities_with_components(&[comp::ANIMATOR, comp::SKELETON]) {
             let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
 
-            let Some(animator) = components.get("animator") else {
+            let Some(animator) = components.get(comp::ANIMATOR) else {
                 continue;
             };
             // Must also have a skeleton registered for this entity

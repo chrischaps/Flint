@@ -1,6 +1,7 @@
 //! Bridges ECS `animator` components to the animation player
 
 use crate::player::{advance, AnimationPlayer, PlaybackState};
+use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
@@ -33,11 +34,11 @@ impl AnimationSync {
     /// `PlaybackState` entries for any new ones. For already-tracked entities,
     /// detect clip/playing/speed changes written by scripts.
     pub fn sync_from_world(&mut self, world: &FlintWorld, player: &AnimationPlayer) {
-        for &entity_id in world.entities_with_component("animator") {
+        for &entity_id in world.entities_with_component(comp::ANIMATOR) {
             let Some(components) = world.get_components(entity_id) else {
                 continue;
             };
-            let Some(animator) = components.get("animator") else {
+            let Some(animator) = components.get(comp::ANIMATOR) else {
                 continue;
             };
 
@@ -123,7 +124,7 @@ impl AnimationSync {
             // If the clip just finished (non-looping), write playing=false back to ECS
             // so sync_from_world won't see a stale playing=true and restart it
             if was_playing && !state.playing {
-                components.set_field("animator", "playing", toml::Value::Boolean(false));
+                components.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(false));
             }
 
             for (i, track) in clip.tracks.iter().enumerate() {
@@ -139,7 +140,7 @@ impl AnimationSync {
                             toml::Value::Float(value[1] as f64),
                             toml::Value::Float(value[2] as f64),
                         ]);
-                        components.set_field("transform", "position", arr);
+                        components.set_field(comp::TRANSFORM, "position", arr);
                     }
                     crate::clip::TrackTarget::Rotation => {
                         let arr = toml::Value::Array(vec![
@@ -147,7 +148,7 @@ impl AnimationSync {
                             toml::Value::Float(value[1] as f64),
                             toml::Value::Float(value[2] as f64),
                         ]);
-                        components.set_field("transform", "rotation", arr);
+                        components.set_field(comp::TRANSFORM, "rotation", arr);
                     }
                     crate::clip::TrackTarget::Scale => {
                         let arr = toml::Value::Array(vec![
@@ -155,7 +156,7 @@ impl AnimationSync {
                             toml::Value::Float(value[1] as f64),
                             toml::Value::Float(value[2] as f64),
                         ]);
-                        components.set_field("transform", "scale", arr);
+                        components.set_field(comp::TRANSFORM, "scale", arr);
                     }
                     crate::clip::TrackTarget::CustomFloat { component, field } => {
                         components.set_field(component, field, toml::Value::Float(value[0] as f64));

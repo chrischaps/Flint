@@ -10,6 +10,8 @@ use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
+use flint_core::components as comp;
+use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
@@ -1230,7 +1232,7 @@ impl PlayerApp {
                 }
                 ScriptCommand::FireEvent { name, data } => {
                     // Intercept transition completion signal
-                    if name == "__transition_complete" {
+                    if name == TRANSITION_COMPLETE {
                         match &self.transition_phase {
                             TransitionPhase::Exiting { target_scene, .. } => {
                                 let target = target_scene.clone();
@@ -1435,7 +1437,7 @@ impl PlayerApp {
                 let new_z = transform.position.z;
                 if let Some(comps) = self.world.get_components_mut(id) {
                     comps.set_field(
-                        "transform",
+                        comp::TRANSFORM,
                         "position",
                         toml::Value::Array(vec![
                             toml::Value::Float(new_x as f64),
@@ -1448,7 +1450,7 @@ impl PlayerApp {
                 // Entity has no transform yet — create one with the offset
                 if let Some(comps) = self.world.get_components_mut(id) {
                     comps.set_field(
-                        "transform",
+                        comp::TRANSFORM,
                         "position",
                         toml::Value::Array(vec![
                             toml::Value::Float(offset_x as f64),
@@ -1471,7 +1473,7 @@ impl PlayerApp {
             .join("scripts");
         for &id in &spawned_ids {
             if let Some(comps) = self.world.get_components(id) {
-                if let Some(script_comp) = comps.get("script") {
+                if let Some(script_comp) = comps.get(comp::SCRIPT) {
                     if let Some(source) = script_comp.get("source").and_then(|v| v.as_str()) {
                         // Try chunk's own scripts dir first, then scene's scripts dir
                         let scene_scripts_dir = Path::new(&self.scene_path)

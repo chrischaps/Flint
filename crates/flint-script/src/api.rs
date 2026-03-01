@@ -4,6 +4,8 @@
 //! They access the world through the shared ScriptCallContext.
 
 use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
+use flint_core::components as comp;
+use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::EntityId;
 use rhai::{Dynamic, Engine, Map};
 use std::sync::{Arc, Mutex};
@@ -202,7 +204,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
-                    "transform",
+                    comp::TRANSFORM,
                     "position",
                     toml::Value::Array(vec![
                         toml::Value::Float(x),
@@ -245,7 +247,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
-                    "transform",
+                    comp::TRANSFORM,
                     "rotation",
                     toml::Value::Array(vec![
                         toml::Value::Float(x),
@@ -254,7 +256,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     ]),
                 );
                 // Clear quaternion so Euler angles take effect
-                if let Some(transform) = comps.get_mut("transform") {
+                if let Some(transform) = comps.get_mut(comp::TRANSFORM) {
                     if let Some(table) = transform.as_table_mut() {
                         table.remove("rotation_quat");
                     }
@@ -390,10 +392,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let world = unsafe { c.world_mut() };
                 let eid = EntityId::from_raw(id as u64);
                 if let Some(comps) = world.get_components_mut(eid) {
-                    comps.set_field("material", "base_color_r", toml::Value::Float(r));
-                    comps.set_field("material", "base_color_g", toml::Value::Float(g));
-                    comps.set_field("material", "base_color_b", toml::Value::Float(b));
-                    comps.set_field("material", "base_color_a", toml::Value::Float(a));
+                    comps.set_field(comp::MATERIAL, "base_color_r", toml::Value::Float(r));
+                    comps.set_field(comp::MATERIAL, "base_color_g", toml::Value::Float(g));
+                    comps.set_field(comp::MATERIAL, "base_color_b", toml::Value::Float(b));
+                    comps.set_field(comp::MATERIAL, "base_color_a", toml::Value::Float(a));
                 }
             },
         );
@@ -443,7 +445,7 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     Some(c) => c,
                     None => return Dynamic::UNIT,
                 };
-                let sd = match comps.get("spline_data") {
+                let sd = match comps.get(comp::SPLINE_DATA) {
                     Some(v) => v,
                     None => return Dynamic::UNIT,
                 };
@@ -528,7 +530,7 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 Some(c) => c,
                 None => return false,
             };
-            let sd = match comps.get("spline_data") {
+            let sd = match comps.get(comp::SPLINE_DATA) {
                 Some(v) => v,
                 None => return false,
             };
@@ -590,7 +592,7 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 Some(c) => c,
                 None => return Dynamic::UNIT,
             };
-            let sd = match comps.get("spline_data") {
+            let sd = match comps.get(comp::SPLINE_DATA) {
                 Some(v) => v,
                 None => return Dynamic::UNIT,
             };
@@ -655,7 +657,7 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     Some(c) => c,
                     None => return Dynamic::UNIT,
                 };
-                let sd = match comps.get("spline_data") {
+                let sd = match comps.get(comp::SPLINE_DATA) {
                     Some(v) => v,
                     None => return Dynamic::UNIT,
                 };
@@ -914,11 +916,11 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
-                    "animator",
+                    comp::ANIMATOR,
                     "clip",
                     toml::Value::String(clip_name.to_string()),
                 );
-                comps.set_field("animator", "playing", toml::Value::Boolean(true));
+                comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
             }
         });
     }
@@ -934,7 +936,7 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "playing", toml::Value::Boolean(false));
+                comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(false));
             }
         });
     }
@@ -953,11 +955,15 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
                 let eid = EntityId::from_raw(entity_id as u64);
                 if let Some(comps) = world.get_components_mut(eid) {
                     comps.set_field(
-                        "animator",
+                        comp::ANIMATOR,
                         "blend_target",
                         toml::Value::String(clip.to_string()),
                     );
-                    comps.set_field("animator", "blend_duration", toml::Value::Float(duration));
+                    comps.set_field(
+                        comp::ANIMATOR,
+                        "blend_duration",
+                        toml::Value::Float(duration),
+                    );
                 }
             },
         );
@@ -974,7 +980,7 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "speed", toml::Value::Float(speed));
+                comps.set_field(comp::ANIMATOR, "speed", toml::Value::Float(speed));
             }
         });
     }
@@ -1392,7 +1398,11 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
             let world = unsafe { &mut *c.world };
             let eid = EntityId(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("particle_emitter", "playing", toml::Value::Boolean(true));
+                comps.set_field(
+                    comp::PARTICLE_EMITTER,
+                    "playing",
+                    toml::Value::Boolean(true),
+                );
             }
         });
     }
@@ -1405,7 +1415,11 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
             let world = unsafe { &mut *c.world };
             let eid = EntityId(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("particle_emitter", "playing", toml::Value::Boolean(false));
+                comps.set_field(
+                    comp::PARTICLE_EMITTER,
+                    "playing",
+                    toml::Value::Boolean(false),
+                );
             }
         });
     }
@@ -1419,7 +1433,7 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
             let eid = EntityId(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
-                    "particle_emitter",
+                    comp::PARTICLE_EMITTER,
                     "emission_rate",
                     toml::Value::Float(rate),
                 );
@@ -2302,7 +2316,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn("complete_transition", move || {
             let mut c = ctx.lock().unwrap();
             c.commands.push(ScriptCommand::FireEvent {
-                name: "__transition_complete".to_string(),
+                name: TRANSITION_COMPLETE.to_string(),
                 data: toml::Value::Table(toml::map::Map::new()),
             });
         });
@@ -2557,7 +2571,7 @@ fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let world = unsafe { c.world_mut() };
                 let eid = EntityId::from_raw(id as u64);
                 if let Some(components) = world.get_components_mut(eid) {
-                    if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(sprite) = components.get_mut(comp::SPRITE) {
                         if let Some(table) = sprite.as_table_mut() {
                             table.insert(
                                 "source_rect".to_string(),
@@ -2588,7 +2602,7 @@ fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let world = unsafe { c.world_mut() };
                 let eid = EntityId::from_raw(id as u64);
                 if let Some(components) = world.get_components_mut(eid) {
-                    if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(sprite) = components.get_mut(comp::SPRITE) {
                         if let Some(table) = sprite.as_table_mut() {
                             table.insert("flip_x".to_string(), toml::Value::Boolean(flip_x));
                             table.insert("flip_y".to_string(), toml::Value::Boolean(flip_y));
@@ -2612,7 +2626,7 @@ fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let world = unsafe { c.world_mut() };
                 let eid = EntityId::from_raw(id as u64);
                 if let Some(components) = world.get_components_mut(eid) {
-                    if let Some(sprite) = components.get_mut("sprite") {
+                    if let Some(sprite) = components.get_mut(comp::SPRITE) {
                         if let Some(table) = sprite.as_table_mut() {
                             table.insert(
                                 "tint".to_string(),
@@ -2641,7 +2655,7 @@ fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components_mut(eid) {
-                if let Some(sprite) = components.get_mut("sprite") {
+                if let Some(sprite) = components.get_mut(comp::SPRITE) {
                     if let Some(table) = sprite.as_table_mut() {
                         table.insert("layer".to_string(), toml::Value::Integer(layer));
                     }
@@ -2661,7 +2675,7 @@ fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components_mut(eid) {
-                if let Some(sprite) = components.get_mut("sprite") {
+                if let Some(sprite) = components.get_mut(comp::SPRITE) {
                     if let Some(table) = sprite.as_table_mut() {
                         table.insert("visible".to_string(), toml::Value::Boolean(visible));
                     }
@@ -2681,7 +2695,7 @@ fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
             let world = unsafe { c.world_ref() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components(eid) {
-                if let Some(sprite) = components.get("sprite") {
+                if let Some(sprite) = components.get(comp::SPRITE) {
                     return sprite
                         .get("layer")
                         .and_then(|v| v.as_integer())
@@ -2707,8 +2721,12 @@ fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallC
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components_mut(eid) {
-                components.set_field("sprite_animator", "clip", toml::Value::String(clip_name));
-                components.set_field("sprite_animator", "playing", toml::Value::Boolean(true));
+                components.set_field(
+                    comp::SPRITE_ANIMATOR,
+                    "clip",
+                    toml::Value::String(clip_name),
+                );
+                components.set_field(comp::SPRITE_ANIMATOR, "playing", toml::Value::Boolean(true));
             }
         });
     }
@@ -2724,7 +2742,11 @@ fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallC
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components_mut(eid) {
-                components.set_field("sprite_animator", "playing", toml::Value::Boolean(false));
+                components.set_field(
+                    comp::SPRITE_ANIMATOR,
+                    "playing",
+                    toml::Value::Boolean(false),
+                );
             }
         });
     }
@@ -2740,7 +2762,7 @@ fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallC
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components_mut(eid) {
-                components.set_field("sprite_animator", "speed", toml::Value::Float(speed));
+                components.set_field(comp::SPRITE_ANIMATOR, "speed", toml::Value::Float(speed));
             }
         });
     }
@@ -2756,7 +2778,7 @@ fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallC
             let world = unsafe { c.world_ref() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(components) = world.get_components(eid) {
-                if let Some(sa) = components.get("sprite_animator") {
+                if let Some(sa) = components.get(comp::SPRITE_ANIMATOR) {
                     return sa.get("playing").and_then(|v| v.as_bool()).unwrap_or(false);
                 }
             }
@@ -3159,7 +3181,7 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                comps.set_field("ui_fill", "value", toml::Value::Float(value));
+                comps.set_field(comp::UI_FILL, "value", toml::Value::Float(value));
             }
         });
     }
@@ -3174,7 +3196,7 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                comps.set_field("ui_text", "text", toml::Value::String(text.to_string()));
+                comps.set_field(comp::UI_TEXT, "text", toml::Value::String(text.to_string()));
             }
         });
     }
@@ -3197,7 +3219,7 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
                         toml::Value::Float(b),
                         toml::Value::Float(a),
                     ]);
-                    comps.set_field("ui_text", "color", color);
+                    comps.set_field(comp::UI_TEXT, "color", color);
                 }
             },
         );
@@ -3214,7 +3236,7 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let world = unsafe { c.world_mut() };
             if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
                 comps.set_field(
-                    "screen_anchor",
+                    comp::SCREEN_ANCHOR,
                     "anchor",
                     toml::Value::String(anchor.to_string()),
                 );
@@ -3232,8 +3254,8 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             let c = ctx.lock().unwrap();
             let world = unsafe { c.world_mut() };
             if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                comps.set_field("screen_anchor", "offset_x", toml::Value::Float(x));
-                comps.set_field("screen_anchor", "offset_y", toml::Value::Float(y));
+                comps.set_field(comp::SCREEN_ANCHOR, "offset_x", toml::Value::Float(x));
+                comps.set_field(comp::SCREEN_ANCHOR, "offset_y", toml::Value::Float(y));
             }
         });
     }

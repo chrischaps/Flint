@@ -11,6 +11,7 @@ pub mod sync;
 pub mod world;
 
 use character::CharacterController;
+use flint_core::components as comp;
 use flint_core::{EntityId, Result};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, GameEvent, InputState, RuntimeSystem};
@@ -295,7 +296,7 @@ impl RuntimeSystem for PhysicsSystem {
         // Find the player entity (entity with character_controller component)
         for entity in world.all_entities() {
             if let Some(components) = world.get_components(entity.id) {
-                if components.has("character_controller") {
+                if components.has(comp::CHARACTER_CONTROLLER) {
                     self.character.set_player_entity(entity.id);
                     break;
                 }
