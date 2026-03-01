@@ -71,7 +71,7 @@ pub fn run(args: EditArgs) -> Result<()> {
                 println!("Found spline: {} -> {}", entity.name, full_path.display());
                 break;
             } else {
-                eprintln!("Spline file not found: {}", full_path.display());
+                tracing::warn!("Spline file not found: {}", full_path.display());
             }
         }
     }

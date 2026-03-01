@@ -17,6 +17,7 @@ pollster = { workspace = true }
 bytemuck = { workspace = true }
 image = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 naga = { version = "23", features = ["wgsl-in"] }

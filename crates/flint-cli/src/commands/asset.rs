@@ -280,7 +280,7 @@ fn run_generate(
         Some(s) => match StyleGuide::find(s) {
             Ok(guide) => Some(guide),
             Err(e) => {
-                eprintln!("Warning: Could not load style '{}': {}", s, e);
+                tracing::warn!("Could not load style '{}': {}", s, e);
                 None
             }
         },
@@ -369,7 +369,7 @@ fn run_generate(
                 }
             }
             Err(e) => {
-                eprintln!("  Validation skipped: {}", e);
+                tracing::warn!("Validation skipped: {}", e);
             }
         }
     }

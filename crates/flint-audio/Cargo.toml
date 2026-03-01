@@ -12,3 +12,4 @@ flint-runtime = { workspace = true }
 kira = { workspace = true }
 glam = { workspace = true }
 toml = { workspace = true }
+tracing = { workspace = true }

@@ -40,3 +40,5 @@ image = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

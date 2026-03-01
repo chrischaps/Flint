@@ -152,7 +152,7 @@ impl AudioSync {
                                 .play_on_spatial_track(file, &mut track, volume, pitch, looping)
                             {
                                 Ok(handle) => handles.push(handle),
-                                Err(e) => eprintln!("Audio: failed to play '{}': {:?}", file, e),
+                                Err(e) => tracing::warn!("Failed to play '{}': {:?}", file, e),
                             }
                         }
                         self.spatial_map.insert(
@@ -166,7 +166,7 @@ impl AudioSync {
                         );
                     }
                     Err(e) => {
-                        eprintln!("Audio: failed to create spatial track: {:?}", e);
+                        tracing::warn!("Failed to create spatial track: {:?}", e);
                     }
                 }
             } else {
@@ -176,7 +176,7 @@ impl AudioSync {
                     match engine.play_non_spatial(file, volume, pitch, looping) {
                         Ok(handle) => handles.push(handle),
                         Err(e) => {
-                            eprintln!("Audio: failed to play non-spatial '{}': {:?}", file, e)
+                            tracing::warn!("Failed to play non-spatial '{}': {:?}", file, e)
                         }
                     }
                 }

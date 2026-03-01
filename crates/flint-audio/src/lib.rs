@@ -73,12 +73,12 @@ impl AudioSystem {
                 } => {
                     if let Some(pos) = position {
                         if let Err(e) = self.engine.play_at_position(&sound, pos, volume) {
-                            eprintln!("Audio: {:?}", e);
+                            tracing::warn!("{:?}", e);
                         }
                     } else if let Err(e) = self.engine.play_non_spatial(&sound, volume, 1.0, false)
                     {
                         // One-shot non-spatial: handle not needed
-                        eprintln!("Audio: {:?}", e);
+                        tracing::warn!("{:?}", e);
                     }
                 }
                 AudioCommand::Stop { entity: _ } => {
@@ -93,7 +93,7 @@ impl AudioSystem {
 impl RuntimeSystem for AudioSystem {
     fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
         if !self.engine.is_available() {
-            eprintln!("Audio: no device, running silent");
+            tracing::warn!("No device, running silent");
             return Ok(());
         }
 

@@ -340,6 +340,13 @@ fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
 }
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {

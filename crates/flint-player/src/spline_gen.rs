@@ -67,7 +67,7 @@ fn parse_spline_file(path: &Path) -> Option<SplineDef> {
     }
 
     if control_points.len() < 2 {
-        eprintln!(
+        tracing::warn!(
             "Spline needs at least 2 control points, got {}",
             control_points.len()
         );
@@ -688,7 +688,7 @@ pub fn load_splines(
                     });
                 }
                 None => {
-                    eprintln!("Failed to parse spline file: {}", spline_path.display());
+                    tracing::warn!("Failed to parse spline file: {}", spline_path.display());
                 }
             }
         }
@@ -737,7 +737,7 @@ pub fn load_splines(
                     });
                 }
                 None => {
-                    eprintln!("Failed to parse spline_mesh on entity '{}'", entity.name);
+                    tracing::warn!("Failed to parse spline_mesh on entity '{}'", entity.name);
                 }
             }
         }
@@ -747,7 +747,7 @@ pub fn load_splines(
         let spline_idx = match spline_lookup.get(job.def.spline_entity.as_str()) {
             Some(&idx) => idx,
             None => {
-                eprintln!(
+                tracing::warn!(
                     "spline_mesh '{}' references unknown spline entity '{}'",
                     job.entity_name, job.def.spline_entity
                 );
@@ -837,7 +837,7 @@ pub fn load_splines(
                 let chunk_id = match world.spawn(&chunk_name) {
                     Ok(id) => id,
                     Err(e) => {
-                        eprintln!("Failed to spawn chunk entity '{}': {}", chunk_name, e);
+                        tracing::error!("Failed to spawn chunk entity '{}': {}", chunk_name, e);
                         continue;
                     }
                 };

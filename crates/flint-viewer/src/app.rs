@@ -98,7 +98,7 @@ pub fn run(scene_path: &str, watch: bool, schemas_path: &str, inspector: bool) -
                         }
                     }
                     Err(e) => {
-                        eprintln!("Watch error: {:?}", e);
+                        tracing::warn!("Watch error: {:?}", e);
                     }
                 }
             }
@@ -220,7 +220,7 @@ pub fn run_editor(
                         }
                     }
                     Err(e) => {
-                        eprintln!("Watch error: {:?}", e);
+                        tracing::warn!("Watch error: {:?}", e);
                     }
                 }
             }
@@ -513,7 +513,7 @@ impl ViewerApp {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return,
             Err(e) => {
-                eprintln!("Surface error: {:?}", e);
+                tracing::warn!("Surface error: {:?}", e);
                 return;
             }
         };
@@ -819,7 +819,7 @@ impl ViewerApp {
                 match action {
                     SplinePanelAction::Save => {
                         if let Err(e) = ed.save() {
-                            eprintln!("Save failed: {}", e);
+                            tracing::error!("Save failed: {}", e);
                         }
                     }
                     SplinePanelAction::Undo => {
@@ -1106,7 +1106,7 @@ impl ViewerApp {
             let doc = st.scene_doc.as_mut().unwrap();
             for (entity_name, component, field, value) in &patches {
                 if let Err(e) = doc.patch_field(entity_name, component, field, value) {
-                    eprintln!("Patch error: {}", e);
+                    tracing::warn!("Patch error: {}", e);
                 }
             }
 
@@ -1123,7 +1123,7 @@ impl ViewerApp {
                     return;
                 }
                 Err(e) => {
-                    eprintln!("Patcher save failed, falling back to full save: {}", e);
+                    tracing::warn!("Patcher save failed, falling back to full save: {}", e);
                 }
             }
         }
@@ -1149,7 +1149,7 @@ impl ViewerApp {
                 println!("Saved scene to {}", scene_path);
             }
             Err(e) => {
-                eprintln!("Failed to save scene: {:?}", e);
+                tracing::error!("Failed to save scene: {:?}", e);
                 drop(st);
                 self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
             }
@@ -1287,7 +1287,7 @@ impl ViewerApp {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reload scene: {:?}", e);
+                    tracing::error!("Failed to reload scene: {:?}", e);
                 }
             }
         }
@@ -1408,7 +1408,7 @@ impl ViewerApp {
             KeyCode::KeyS if ctrl => {
                 if let Some(editor) = &mut self.editor {
                     if let Err(e) = editor.save() {
-                        eprintln!("Save failed: {}", e);
+                        tracing::error!("Save failed: {}", e);
                     }
                 }
                 true
@@ -1475,7 +1475,7 @@ impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             if let Err(e) = self.initialize(event_loop) {
-                eprintln!("Failed to initialize viewer: {e:#}");
+                tracing::error!("Failed to initialize viewer: {e:#}");
                 event_loop.exit();
             }
         }

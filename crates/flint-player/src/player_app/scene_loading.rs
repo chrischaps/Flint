@@ -70,7 +70,7 @@ pub(super) fn load_terrain_from_world_inner(
         let heightmap_rel = match terrain_comp.get("heightmap").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s.to_string(),
             _ => {
-                eprintln!("[terrain] Entity '{}': missing heightmap path", entity.name);
+                tracing::warn!("Terrain entity '{}': missing heightmap path", entity.name);
                 continue;
             }
         };
@@ -95,7 +95,7 @@ pub(super) fn load_terrain_from_world_inner(
         let heightmap = match Heightmap::from_png(&hm_path) {
             Ok(hm) => hm,
             Err(e) => {
-                eprintln!("[terrain] Failed to load heightmap: {}", e);
+                tracing::warn!("Failed to load heightmap: {}", e);
                 continue;
             }
         };
@@ -190,8 +190,8 @@ pub(super) fn load_terrain_from_world_inner(
             0.1,
         );
 
-        eprintln!(
-            "[terrain] Loaded terrain '{}': {}x{} heightmap, {} chunks, {}x{} world units",
+        tracing::info!(
+            "Loaded terrain '{}': {}x{} heightmap, {} chunks, {}x{} world units",
             entity.name,
             heightmap.width,
             heightmap.depth,
@@ -352,14 +352,14 @@ pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem,
                             loaded = true;
                         }
                         Err(e) => {
-                            eprintln!("Failed to load audio '{}': {:?}", file_name, e);
+                            tracing::warn!("Failed to load audio '{}': {:?}", file_name, e);
                         }
                     }
                     break;
                 }
             }
             if !loaded {
-                eprintln!("Audio file not found: {}", file_name);
+                tracing::warn!("Audio file not found: {}", file_name);
             }
         }
     }
@@ -383,7 +383,7 @@ pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem,
                                 println!("Preloaded audio: {}", rel_name);
                             }
                             Err(e) => {
-                                eprintln!("Failed to preload audio '{}': {:?}", rel_name, e);
+                                tracing::warn!("Failed to preload audio '{}': {:?}", rel_name, e);
                             }
                         }
                     }
@@ -433,7 +433,7 @@ pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut Anima
                     animation.player.add_clip(clip);
                 }
                 Err(e) => {
-                    eprintln!("Failed to load animation '{}': {:?}", path.display(), e);
+                    tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);
                 }
             }
         }
@@ -486,7 +486,7 @@ pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mu
                     }
                 }
                 Err(e) => {
-                    eprintln!(
+                    tracing::warn!(
                         "Failed to load sprite animation '{}': {:?}",
                         path.display(),
                         e

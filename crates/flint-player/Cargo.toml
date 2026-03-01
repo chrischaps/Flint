@@ -41,3 +41,5 @@ egui-winit = { workspace = true }
 image = { workspace = true }
 dirs = { workspace = true }
 gilrs = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

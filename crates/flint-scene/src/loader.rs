@@ -32,9 +32,7 @@ pub fn load_scene_string(
     let scene_file: SceneFile = toml::from_str(content)?;
 
     if !scene_file.prefabs.is_empty() {
-        eprintln!(
-            "[scene] Warning: prefabs in scene string will be ignored (no filesystem access)"
-        );
+        tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
     }
 
     let world = build_world(&scene_file, registry)?;
@@ -70,9 +68,7 @@ pub fn reload_scene_string(
     let scene_file: SceneFile = toml::from_str(content)?;
 
     if !scene_file.prefabs.is_empty() {
-        eprintln!(
-            "[scene] Warning: prefabs in scene string will be ignored (no filesystem access)"
-        );
+        tracing::warn!("prefabs in scene string will be ignored (no filesystem access)");
     }
 
     // Clear existing world
@@ -393,7 +389,6 @@ position = [2.5, 1.0, -3.5]
         // Verify bar_counter transform
         let bar_id = world.get_id("bar_counter").unwrap();
         let bar_transform = world.get_transform(bar_id);
-        eprintln!("bar_counter transform: {:?}", bar_transform);
         let bar_t = bar_transform.expect("bar_counter should have a transform");
         assert!(
             (bar_t.position.x - (-4.0)).abs() < 0.001,
@@ -414,7 +409,6 @@ position = [2.5, 1.0, -3.5]
         // Verify kitchen transform
         let kitchen_id = world.get_id("kitchen").unwrap();
         let kitchen_transform = world.get_transform(kitchen_id);
-        eprintln!("kitchen transform: {:?}", kitchen_transform);
         let kitchen_t = kitchen_transform.expect("kitchen should have a transform");
         assert!(
             (kitchen_t.position.z - (-9.0)).abs() < 0.001,
@@ -425,7 +419,6 @@ position = [2.5, 1.0, -3.5]
         // Verify table transform with float values
         let table_id = world.get_id("table").unwrap();
         let table_transform = world.get_transform(table_id);
-        eprintln!("table transform: {:?}", table_transform);
         let table_t = table_transform.expect("table should have a transform");
         assert!(
             (table_t.position.x - 2.5).abs() < 0.001,

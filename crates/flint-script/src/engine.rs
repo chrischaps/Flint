@@ -123,8 +123,8 @@ fn validate_callbacks(ast: &AST, source_path: &str) {
                 } else {
                     ""
                 };
-                eprintln!(
-                    "[script] warning ({}): `fn {}` expects {} parameter(s) but has {}.{}",
+                tracing::warn!(
+                    "warning ({}): `fn {}` expects {} parameter(s) but has {}.{}",
                     source_path,
                     name,
                     expected,
@@ -183,8 +183,8 @@ impl ScriptEngine {
             .engine
             .run_ast_with_scope(&mut instance.scope, &instance.ast)
         {
-            eprintln!(
-                "[script] module init error ({}): {}",
+            tracing::warn!(
+                "module init error ({}): {}",
                 instance.source_path, e
             );
         }
@@ -216,7 +216,7 @@ impl ScriptEngine {
                     self.engine
                         .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_INIT, ())
                 {
-                    eprintln!("[script] on_init error ({}): {}", script.source_path, e);
+                    tracing::warn!("on_init error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -238,7 +238,7 @@ impl ScriptEngine {
                         self.engine
                             .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_INIT, ())
                     {
-                        eprintln!("[script] on_init error ({}): {}", script.source_path, e);
+                        tracing::warn!("on_init error ({}): {}", script.source_path, e);
                     }
                 }
             }
@@ -261,7 +261,7 @@ impl ScriptEngine {
                     self.engine
                         .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_UPDATE, ())
                 {
-                    eprintln!("[script] on_update error ({}): {}", script.source_path, e);
+                    tracing::warn!("on_update error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -283,7 +283,7 @@ impl ScriptEngine {
                     self.engine
                         .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_DRAW_UI, ())
                 {
-                    eprintln!("[script] on_draw_ui error ({}): {}", script.source_path, e);
+                    tracing::warn!("on_draw_ui error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -341,8 +341,8 @@ impl ScriptEngine {
                     cb::ON_COLLISION,
                     (other_id,),
                 ) {
-                    eprintln!(
-                        "[script] on_collision error ({}): {}",
+                    tracing::warn!(
+                        "on_collision error ({}): {}",
                         script.source_path, e
                     );
                 }
@@ -364,8 +364,8 @@ impl ScriptEngine {
                     cb::ON_COLLISION_EXIT,
                     (other_id,),
                 ) {
-                    eprintln!(
-                        "[script] on_collision_exit error ({}): {}",
+                    tracing::warn!(
+                        "on_collision_exit error ({}): {}",
                         script.source_path, e
                     );
                 }
@@ -387,8 +387,8 @@ impl ScriptEngine {
                     cb::ON_TRIGGER_ENTER,
                     (entity_id,),
                 ) {
-                    eprintln!(
-                        "[script] on_trigger_enter error ({}): {}",
+                    tracing::warn!(
+                        "on_trigger_enter error ({}): {}",
                         script.source_path, e
                     );
                 }
@@ -410,8 +410,8 @@ impl ScriptEngine {
                     cb::ON_TRIGGER_EXIT,
                     (entity_id,),
                 ) {
-                    eprintln!(
-                        "[script] on_trigger_exit error ({}): {}",
+                    tracing::warn!(
+                        "on_trigger_exit error ({}): {}",
                         script.source_path, e
                     );
                 }
@@ -437,7 +437,7 @@ impl ScriptEngine {
                     cb::ON_ACTION,
                     (action_str,),
                 ) {
-                    eprintln!("[script] on_action error ({}): {}", script.source_path, e);
+                    tracing::warn!("on_action error ({}): {}", script.source_path, e);
                 }
             }
 
@@ -460,7 +460,7 @@ impl ScriptEngine {
                         cb::ON_INTERACT,
                         (),
                     ) {
-                        eprintln!("[script] on_interact error ({}): {}", script.source_path, e);
+                        tracing::warn!("on_interact error ({}): {}", script.source_path, e);
                     }
                 }
             }
@@ -498,8 +498,8 @@ impl ScriptEngine {
                     self.engine
                         .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_SCENE_EXIT, ())
                 {
-                    eprintln!(
-                        "[script] on_scene_exit error ({}): {}",
+                    tracing::warn!(
+                        "on_scene_exit error ({}): {}",
                         script.source_path, e
                     );
                 }
@@ -525,8 +525,8 @@ impl ScriptEngine {
                     cb::ON_SCENE_ENTER,
                     (),
                 ) {
-                    eprintln!(
-                        "[script] on_scene_enter error ({}): {}",
+                    tracing::warn!(
+                        "on_scene_enter error ({}): {}",
                         script.source_path, e
                     );
                 }
@@ -560,8 +560,8 @@ impl ScriptEngine {
                         cb::ON_ANIMATION_END,
                         (clip_name,),
                     ) {
-                        eprintln!(
-                            "[script] on_animation_end error ({}): {}",
+                        tracing::warn!(
+                            "on_animation_end error ({}): {}",
                             script.source_path, e
                         );
                     }

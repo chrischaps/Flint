@@ -224,7 +224,7 @@ impl UiSystem {
         let (elements, style_rel_path) = match loader::load_layout(&layout_file) {
             Ok(result) => result,
             Err(e) => {
-                eprintln!("[ui] {}", e);
+                tracing::warn!("{}", e);
                 return -1;
             }
         };
@@ -234,7 +234,7 @@ impl UiSystem {
             match loader::load_styles(&style_file) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[ui] {}", e);
+                    tracing::warn!("{}", e);
                     HashMap::new()
                 }
             }

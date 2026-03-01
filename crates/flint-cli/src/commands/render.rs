@@ -306,7 +306,7 @@ fn load_terrain_for_render(
         let heightmap = match Heightmap::from_png(&hm_path) {
             Ok(hm) => hm,
             Err(e) => {
-                eprintln!("[terrain] Failed to load heightmap: {}", e);
+                tracing::warn!("[terrain] Failed to load heightmap: {}", e);
                 continue;
             }
         };

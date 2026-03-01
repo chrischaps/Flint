@@ -86,7 +86,7 @@ impl ScriptSync {
 
             let script_path = scripts_dir.join(source);
             if !script_path.exists() {
-                eprintln!("[script] File not found: {}", script_path.display());
+                tracing::warn!("File not found: {}", script_path.display());
                 self.discovered.insert(entity_id);
                 continue;
             }
@@ -104,7 +104,7 @@ impl ScriptSync {
                     engine.add_script(entity_id, ast, source.to_string());
                 }
                 Err(e) => {
-                    eprintln!("[script] Compile error in {}: {}", source, e);
+                    tracing::warn!("Compile error in {}: {}", source, e);
                 }
             }
 
@@ -156,7 +156,7 @@ impl ScriptSync {
                 }
                 Err(e) => {
                     // Keep old AST on compile error
-                    eprintln!("[script] Hot-reload compile error: {}", e);
+                    tracing::warn!("Hot-reload compile error: {}", e);
                 }
             }
         }

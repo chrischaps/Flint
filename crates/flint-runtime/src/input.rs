@@ -577,15 +577,8 @@ impl InputState {
             let dy = (touch.position.1 - touch.start_position.1) * self.screen_size.1;
             let dist_sq = dx * dx + dy * dy;
 
-            // DEBUG: remove once swipe is confirmed working
-            eprintln!(
-                "[input] touch_end id={id} elapsed={elapsed}ms dx={dx:.1} dy={dy:.1} dist={:.1}",
-                dist_sq.sqrt()
-            );
-
             if elapsed < 300 && dist_sq < 20.0 * 20.0 {
                 // Tap: short duration + small movement
-                eprintln!("[input]   -> TAP");
                 self.touch_tap_just_fired.push(touch.position);
             } else if elapsed < 500 && dist_sq >= 40.0 * 40.0 {
                 // Swipe: fast enough + large enough movement
@@ -600,14 +593,11 @@ impl InputState {
                 } else {
                     SwipeDirection::Up
                 };
-                eprintln!("[input]   -> SWIPE {direction:?}");
                 self.touch_swipe_just_fired.push((
                     direction,
                     touch.start_position.0,
                     touch.start_position.1,
                 ));
-            } else {
-                eprintln!("[input]   -> DEAD ZONE (no gesture)");
             }
         }
         self.touches_just_ended.insert(id);

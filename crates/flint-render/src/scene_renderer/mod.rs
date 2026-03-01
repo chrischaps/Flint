@@ -541,8 +541,8 @@ impl SceneRenderer {
             });
         }
 
-        eprintln!(
-            "[terrain] Loaded {} chunks ({} draw calls)",
+        tracing::info!(
+            "Loaded {} terrain chunks ({} draw calls)",
             chunks.len(),
             self.terrain_draws.len()
         );
@@ -913,7 +913,7 @@ impl SceneRenderer {
         let skybox_pipeline = match &self.skybox_pipeline {
             Some(p) => p,
             None => {
-                eprintln!("Skybox pipeline not available");
+                tracing::warn!("Skybox pipeline not available");
                 return;
             }
         };
@@ -922,7 +922,7 @@ impl SceneRenderer {
         let img = match image::open(path) {
             Ok(img) => img.to_rgba8(),
             Err(e) => {
-                eprintln!("Failed to load skybox '{}': {:?}", path.display(), e);
+                tracing::warn!("Failed to load skybox '{}': {:?}", path.display(), e);
                 return;
             }
         };

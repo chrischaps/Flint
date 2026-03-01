@@ -112,7 +112,7 @@ impl AtlasRegistry {
                         self.insert(atlas);
                         count += 1;
                     }
-                    Err(e) => eprintln!("Warning: failed to load atlas {:?}: {e}", path),
+                    Err(e) => tracing::warn!("Failed to load atlas {:?}: {e}", path),
                 }
             }
         }

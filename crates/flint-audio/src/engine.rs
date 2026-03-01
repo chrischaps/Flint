@@ -41,7 +41,7 @@ impl AudioEngine {
 
         // Try to create the audio manager; gracefully fail if no device
         let manager = AudioManager::<DefaultBackend>::new(settings)
-            .map_err(|e| eprintln!("Audio: no device available ({e}), running silent"))
+            .map_err(|e| tracing::warn!("No audio device available ({e}), running silent"))
             .ok();
 
         let has_audio = manager.is_some();

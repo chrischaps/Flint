@@ -68,7 +68,7 @@ pub fn run(scene_path: &str, watch: bool, schemas_path: &str) -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Watch error: {:?}", e);
+                        tracing::warn!("Watch error: {:?}", e);
                     }
                 }
             }
@@ -169,7 +169,7 @@ impl ViewerApp {
             // Initialize animation system (syncs entity states from world)
             self.animation
                 .initialize(&mut state.world)
-                .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+                .unwrap_or_else(|e| tracing::warn!("Animation init: {:?}", e));
         }
 
         self.render_context = Some(render_context);
@@ -187,7 +187,7 @@ impl ViewerApp {
                 return;
             }
             Err(e) => {
-                eprintln!("Surface error: {:?}", e);
+                tracing::warn!("Surface error: {:?}", e);
                 return;
             }
         };
@@ -195,7 +195,7 @@ impl ViewerApp {
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         if let Err(e) = renderer.render(context, &self.camera, &view) {
-            eprintln!("Render error: {:?}", e);
+            tracing::warn!("Render error: {:?}", e);
         }
 
         output.present();
@@ -292,11 +292,11 @@ impl ViewerApp {
                         load_animations_from_world(&state.scene_path, &mut self.animation);
                         self.animation
                             .initialize(&mut state.world)
-                            .unwrap_or_else(|e| eprintln!("Animation re-init: {:?}", e));
+                            .unwrap_or_else(|e| tracing::warn!("Animation re-init: {:?}", e));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reload scene: {:?}", e);
+                    tracing::warn!("Failed to reload scene: {:?}", e);
                 }
             }
         }
@@ -361,7 +361,7 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
                     animation.player.add_clip(clip);
                 }
                 Err(e) => {
-                    eprintln!("Failed to load animation '{}': {:?}", path.display(), e);
+                    tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);
                 }
             }
         }

@@ -249,7 +249,7 @@ fn register_animation_data(
             .iter()
             .position(|n| n == requested)
             .unwrap_or_else(|| {
-                eprintln!(
+                tracing::warn!(
                     "Clip '{}' not found; available: {}",
                     requested,
                     all_clip_names.join(", ")
@@ -516,7 +516,7 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            eprintln!("Watch error: {:?}", e);
+                            tracing::warn!("Watch error: {:?}", e);
                         }
                     }
                 }
@@ -754,7 +754,7 @@ impl PreviewApp {
             .unwrap_or("")
             .to_lowercase();
         if ext != "glb" && ext != "gltf" {
-            eprintln!("Unsupported file type: .{} (expected .glb or .gltf)", ext);
+            tracing::error!("Unsupported file type: .{} (expected .glb or .gltf)", ext);
             return;
         }
 
@@ -762,7 +762,7 @@ impl PreviewApp {
         let import = match import_gltf(&path) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("Failed to import model: {:?}", e);
+                tracing::error!("Failed to import model: {:?}", e);
                 return;
             }
         };
@@ -851,7 +851,7 @@ impl PreviewApp {
             let import = match import_gltf(&model_path) {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("Reload failed: {:?}", e);
+                    tracing::warn!("Reload failed: {:?}", e);
                     return;
                 }
             };
@@ -1924,12 +1924,12 @@ impl ApplicationHandler for PreviewApp {
                         return;
                     }
                     Err(wgpu::SurfaceError::OutOfMemory) => {
-                        eprintln!("Out of GPU memory");
+                        tracing::error!("Out of GPU memory");
                         event_loop.exit();
                         return;
                     }
                     Err(e) => {
-                        eprintln!("Surface error: {:?}", e);
+                        tracing::warn!("Surface error: {:?}", e);
                         return;
                     }
                 };

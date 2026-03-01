@@ -383,7 +383,7 @@ impl PlayerApp {
 
         // Load input configs with deterministic layering.
         self.configure_input_bindings()
-            .unwrap_or_else(|e| eprintln!("Input config load error: {e:#}"));
+            .unwrap_or_else(|e| tracing::warn!("Input config load error: {e:#}"));
 
         // Initialize gamepad backend (best-effort).
         self.gilrs = Gilrs::new().ok();
@@ -444,7 +444,7 @@ impl PlayerApp {
                     &skybox_path,
                 );
             } else {
-                eprintln!("Skybox file not found: {}", skybox_path.display());
+                tracing::warn!("Skybox file not found: {}", skybox_path.display());
             }
         }
 
@@ -479,26 +479,26 @@ impl PlayerApp {
         load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
         self.audio
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Audio init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
 
         // Initialize animation
         load_animations_from_world(&self.scene_path, &mut self.animation);
         load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
 
         // Initialize particles
         self.particles
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Particles init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
 
         // Initialize scripting
         load_scripts_from_world(&self.scene_path, &mut self.script);
         self.script.set_current_scene(&self.scene_path);
         self.script
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
 
         // Capture cursor for first-person look (only if FPS player exists).
         // On Android, always set cursor_captured = true so touch input flows
@@ -721,7 +721,7 @@ impl PlayerApp {
             .input
             .rebind_action(&pending.action, binding, pending.mode)
         {
-            eprintln!("Failed to rebind action '{}': {:?}", pending.action, e);
+            tracing::warn!("Failed to rebind action '{}': {:?}", pending.action, e);
             return true;
         }
 
@@ -735,7 +735,7 @@ impl PlayerApp {
         }
 
         if let Err(e) = self.persist_user_overrides() {
-            eprintln!("Failed to save input overrides: {e:#}");
+            tracing::warn!("Failed to save input overrides: {e:#}");
         }
 
         true
@@ -813,7 +813,7 @@ impl PlayerApp {
                 return;
             }
             Err(e) => {
-                eprintln!("Surface error: {:?}", e);
+                tracing::warn!("Surface error: {:?}", e);
                 return;
             }
         };
@@ -858,7 +858,7 @@ impl PlayerApp {
         }
 
         if let Err(e) = renderer.render(context, &self.camera, &view) {
-            eprintln!("Render error: {:?}", e);
+            tracing::warn!("Render error: {:?}", e);
         }
 
         // Render egui HUD overlay on top of the 3D scene
@@ -892,7 +892,7 @@ impl PlayerApp {
                 }
                 self.physics
                     .fixed_update(&mut self.world, dt)
-                    .unwrap_or_else(|e| eprintln!("Physics error: {:?}", e));
+                    .unwrap_or_else(|e| tracing::warn!("Physics error: {:?}", e));
             }
 
             self.clock.consume_fixed_step();
@@ -974,7 +974,7 @@ impl PlayerApp {
         if config.scripts == SystemPolicy::Run {
             self.script
                 .update(&mut self.world, self.clock.delta_time)
-                .unwrap_or_else(|e| eprintln!("Script error: {:?}", e));
+                .unwrap_or_else(|e| tracing::warn!("Script error: {:?}", e));
         }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
@@ -1212,7 +1212,7 @@ impl PlayerApp {
                             .engine
                             .play_non_spatial(&name, volume, 1.0, false)
                         {
-                            eprintln!("[script] play_sound error: {:?}", e);
+                            tracing::warn!(target: "script", "play_sound error: {:?}", e);
                         }
                     }
                 }
@@ -1224,7 +1224,7 @@ impl PlayerApp {
                     let pos =
                         FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
                     if let Err(e) = self.audio.engine.play_at_position(&name, pos, volume) {
-                        eprintln!("[script] play_sound_at error: {:?}", e);
+                        tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
                     }
                 }
                 ScriptCommand::StopSound { name: _ } => {
@@ -1253,9 +1253,9 @@ impl PlayerApp {
                         .push(GameEvent::Custom { name, data });
                 }
                 ScriptCommand::Log { level, message } => match level {
-                    LogLevel::Info => println!("[script] {}", message),
-                    LogLevel::Warn => eprintln!("[script warn] {}", message),
-                    LogLevel::Error => eprintln!("[script error] {}", message),
+                    LogLevel::Info => tracing::info!(target: "script", "{}", message),
+                    LogLevel::Warn => tracing::warn!(target: "script", "{}", message),
+                    LogLevel::Error => tracing::error!(target: "script", "{}", message),
                 },
                 ScriptCommand::EmitBurst { entity_id, count } => {
                     let eid = flint_core::EntityId(entity_id as u64);
@@ -1284,7 +1284,7 @@ impl PlayerApp {
                     if self.state_machine.push_state(&name) {
                         println!("[state] Pushed '{}'", name);
                     } else {
-                        eprintln!("[state] Unknown state template: '{}'", name);
+                        tracing::warn!("Unknown state template: '{}'", name);
                     }
                 }
                 ScriptCommand::PopState => {
@@ -1296,7 +1296,7 @@ impl PlayerApp {
                     if self.state_machine.replace_state(&name) {
                         println!("[state] Replaced top with '{}'", name);
                     } else {
-                        eprintln!("[state] Unknown state template: '{}'", name);
+                        tracing::warn!("Unknown state template: '{}'", name);
                     }
                 }
                 ScriptCommand::SetVelocity2D { entity_id, vx, vy } => {
@@ -1352,7 +1352,7 @@ impl PlayerApp {
     /// Load a chunk TOML file as additional entities with offset.
     fn load_chunk(&mut self, path: &str, offset_x: f32, offset_y: f32, chunk_id: &str) {
         if self.loaded_chunks.contains_key(chunk_id) {
-            eprintln!("[chunk] Chunk '{}' already loaded, skipping", chunk_id);
+            tracing::warn!("Chunk '{}' already loaded, skipping", chunk_id);
             return;
         }
 
@@ -1366,14 +1366,14 @@ impl PlayerApp {
         let content = match std::fs::read_to_string(&chunk_path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[chunk] Failed to read '{}': {}", chunk_path.display(), e);
+                tracing::error!("Failed to read chunk '{}': {}", chunk_path.display(), e);
                 return;
             }
         };
         let scene_file: flint_scene::SceneFile = match toml::from_str(&content) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[chunk] Failed to parse '{}': {}", chunk_path.display(), e);
+                tracing::error!("Failed to parse chunk '{}': {}", chunk_path.display(), e);
                 return;
             }
         };
@@ -1405,7 +1405,7 @@ impl PlayerApp {
             let id = match self.world.spawn(prefixed_name.clone()) {
                 Ok(id) => id,
                 Err(e) => {
-                    eprintln!("[chunk] Failed to spawn '{}': {:?}", prefixed_name, e);
+                    tracing::error!("Failed to spawn chunk entity '{}': {:?}", prefixed_name, e);
                     continue;
                 }
             };
@@ -1518,7 +1518,7 @@ impl PlayerApp {
             }
             println!("[chunk] Unloaded '{}' ({} entities)", chunk_id, count);
         } else {
-            eprintln!("[chunk] Chunk '{}' not loaded, cannot unload", chunk_id);
+            tracing::warn!("Chunk '{}' not loaded, cannot unload", chunk_id);
         }
     }
 
@@ -1597,8 +1597,8 @@ impl PlayerApp {
                 self.scene_input_config = scene_file.scene.input_config.clone();
             }
             Err(e) => {
-                eprintln!(
-                    "[transition] Failed to load scene '{}': {:?}",
+                tracing::error!(
+                    "Failed to load scene '{}': {:?}",
                     new_scene_path, e
                 );
                 return;
@@ -1691,27 +1691,27 @@ impl PlayerApp {
         // Re-initialize systems
         self.physics
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Physics init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Physics init failed: {:?}", e));
 
         load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
         self.audio
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Audio init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
 
         load_animations_from_world(&self.scene_path, &mut self.animation);
         load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
 
         self.particles
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Particles init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
 
         load_scripts_from_world(&self.scene_path, &mut self.script);
         self.script
             .initialize(&mut self.world)
-            .unwrap_or_else(|e| eprintln!("Script init: {:?}", e));
+            .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
 
         // Call on_scene_enter on new scripts
         self.script.set_current_scene(&self.scene_path);
@@ -1738,7 +1738,7 @@ impl ApplicationHandler for PlayerApp {
         if self.render_context.is_none() {
             // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
-                eprintln!("Failed to initialize player: {e:#}");
+                tracing::error!("Failed to initialize player: {e:#}");
                 event_loop.exit();
             }
         } else {
@@ -1753,7 +1753,7 @@ impl ApplicationHandler for PlayerApp {
                         self.window = Some(window.clone());
                         if let Some(ctx) = &mut self.render_context {
                             if let Err(e) = ctx.recreate_surface(window.clone()) {
-                                eprintln!("Failed to recreate surface: {e}");
+                                tracing::error!("Failed to recreate surface: {e}");
                                 return;
                             }
                             self.camera.aspect = ctx.aspect_ratio();
@@ -1767,7 +1767,7 @@ impl ApplicationHandler for PlayerApp {
                         self.cursor_captured = true;
                     }
                     Err(e) => {
-                        eprintln!("Failed to recreate window on resume: {e}");
+                        tracing::error!("Failed to recreate window on resume: {e}");
                     }
                 }
             }
@@ -2111,7 +2111,7 @@ impl PlayerApp {
             }
         }
 
-        eprintln!("UI sprite not found: {}", name);
+        tracing::warn!("UI sprite not found: {}", name);
         false
     }
 

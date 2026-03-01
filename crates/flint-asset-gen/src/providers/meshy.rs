@@ -259,7 +259,7 @@ impl GenerationProvider for MeshyProvider {
 
         // Submit task
         let task_id = self.submit_task(&prompt, negative.as_deref())?;
-        eprintln!("  Submitted job: {}", task_id);
+        tracing::info!("Submitted job: {}", task_id);
 
         // Poll until complete
         let mut poll_attempts = 0u32;
@@ -276,7 +276,7 @@ impl GenerationProvider for MeshyProvider {
 
             match self.poll_task(&task_id)? {
                 MeshyTaskStatus::Processing(progress) => {
-                    eprintln!("  Processing... {}%", progress);
+                    tracing::info!("Processing... {}%", progress);
                 }
                 MeshyTaskStatus::Complete { model_url } => {
                     let url = model_url.ok_or_else(|| {

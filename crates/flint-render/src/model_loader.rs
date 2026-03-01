@@ -176,7 +176,7 @@ fn expand_nodes_animated(
         let child_id = match world.spawn(&child_name) {
             Ok(id) => id,
             Err(e) => {
-                eprintln!("Failed to spawn child entity '{}': {:?}", child_name, e);
+                tracing::warn!("Failed to spawn child entity '{}': {:?}", child_name, e);
                 for &c in node.children.iter().rev() {
                     stack.push(StackEntry {
                         node_idx: c,
@@ -385,7 +385,7 @@ pub fn load_models_from_world(
         let model_path = match resolve_model_path(config, asset_name) {
             Some(p) => p,
             None => {
-                eprintln!("Model file not found: {}", asset_name);
+                tracing::warn!("Model file not found: {}", asset_name);
                 continue;
             }
         };
@@ -486,7 +486,7 @@ pub fn load_models_from_world(
                 });
             }
             Err(e) => {
-                eprintln!("Failed to load model '{}': {:?}", asset_name, e);
+                tracing::warn!("Failed to load model '{}': {:?}", asset_name, e);
             }
         }
     }
@@ -548,7 +548,7 @@ pub fn load_textures_from_world(
             let tex_path = match resolve_texture_path(config, &tex_name) {
                 Some(p) => p,
                 None => {
-                    eprintln!("Texture file not found: {}", tex_name);
+                    tracing::warn!("Texture file not found: {}", tex_name);
                     continue;
                 }
             };
@@ -559,7 +559,7 @@ pub fn load_textures_from_world(
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    eprintln!("Failed to load texture '{}': {}", tex_name, e);
+                    tracing::warn!("Failed to load texture '{}': {}", tex_name, e);
                 }
             }
         }

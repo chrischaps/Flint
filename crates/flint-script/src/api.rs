@@ -2450,7 +2450,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
             }
             let store = unsafe { &*c.persistent_store };
             if let Err(e) = store.save_to_file(std::path::Path::new(path)) {
-                eprintln!("[persist] save error: {}", e);
+                tracing::warn!("save error: {}", e);
             }
         });
     }
@@ -2465,7 +2465,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
             }
             let store = unsafe { &mut *c.persistent_store };
             if let Err(e) = store.load_from_file(std::path::Path::new(path)) {
-                eprintln!("[persist] load error: {}", e);
+                tracing::warn!("load error: {}", e);
             }
         });
     }

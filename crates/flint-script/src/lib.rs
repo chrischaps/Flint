@@ -165,8 +165,8 @@ impl ScriptSystem {
                 self.sync.discovered.insert(entity_id);
             }
             Err(e) => {
-                eprintln!(
-                    "[script] Compile error for chunk entity {:?}: {}",
+                tracing::warn!(
+                    "Compile error for chunk entity {:?}: {}",
                     entity_id, e
                 );
             }
