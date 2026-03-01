@@ -68,7 +68,7 @@ if (-not $SkipRustdoc) {
     try {
         # Temporarily allow stderr (cargo writes progress to stderr)
         $ErrorActionPreference = "Continue"
-        cargo doc --workspace --no-deps 2>&1 | ForEach-Object { Write-Host "  $($_.ToString())" }
+        cargo doc --workspace --no-deps --exclude flint-android 2>&1 | ForEach-Object { Write-Host "  $($_.ToString())" }
         $ErrorActionPreference = "Stop"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  cargo doc failed!" -ForegroundColor Red
