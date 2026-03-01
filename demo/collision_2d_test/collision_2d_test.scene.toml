@@ -1,0 +1,98 @@
+[scene]
+name = "2D Collision Test"
+description = "Tests 2D collision helpers: solid collision, trigger volumes, sprite colliders"
+
+[camera]
+position = [0, 5, 20]
+target = [0, 5, 0]
+orthographic = true
+ortho_height = 12.0
+
+# --- Player (dynamic, 2D mode, sprite-sized collider) ---
+[entities.player]
+archetype = "custom"
+
+[entities.player.transform]
+position = [0, 8, 0]
+
+[entities.player.sprite]
+texture = "textures/placeholder.png"
+width = 1.0
+height = 1.0
+
+[entities.player.rigidbody]
+body_type = "dynamic"
+gravity_scale = 1.0
+mode_2d = true
+
+[entities.player.collider]
+shape = "sprite"
+friction = 0.3
+restitution = 0.0
+
+[entities.player.script]
+source = "collision_test.rhai"
+
+# --- Ground platform (static, 2D mode) ---
+[entities.ground]
+archetype = "custom"
+
+[entities.ground.transform]
+position = [0, 0, 0]
+
+[entities.ground.sprite]
+texture = "textures/placeholder.png"
+width = 20.0
+height = 1.0
+
+[entities.ground.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.ground.collider]
+shape = "box"
+size = [20, 1, 1]
+friction = 0.5
+
+# --- Obstacle (static, 2D mode) ---
+[entities.obstacle]
+archetype = "custom"
+
+[entities.obstacle.transform]
+position = [3, 2, 0]
+
+[entities.obstacle.sprite]
+texture = "textures/placeholder.png"
+width = 1.5
+height = 1.5
+
+[entities.obstacle.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.obstacle.collider]
+shape = "sprite"
+friction = 0.5
+
+# --- Trigger zone (sensor, 2D mode) ---
+[entities.trigger_zone]
+archetype = "custom"
+
+[entities.trigger_zone.transform]
+position = [-3, 3, 0]
+
+[entities.trigger_zone.sprite]
+texture = "textures/placeholder.png"
+width = 3.0
+height = 3.0
+
+[entities.trigger_zone.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.trigger_zone.collider]
+shape = "sprite"
+is_sensor = true
+
+[entities.trigger_zone.script]
+source = "trigger_test.rhai"

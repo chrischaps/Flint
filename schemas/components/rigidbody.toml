@@ -4,3 +4,4 @@ mass = { type = "f32", default = 1.0, min = 0.0, description = "Mass in kilogram
 linear_damping = { type = "f32", default = 0.0, min = 0.0, description = "Linear velocity damping" }
 angular_damping = { type = "f32", default = 0.05, min = 0.0, description = "Angular velocity damping" }
 gravity_scale = { type = "f32", default = 1.0, description = "Gravity multiplier (0 = no gravity)" }
+mode_2d = { type = "bool", default = false, description = "Constrain to XY plane (Z=0, Z-rotation only)" }

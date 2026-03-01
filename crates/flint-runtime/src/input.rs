@@ -25,6 +25,15 @@ pub enum TouchPhase {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SwipeDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputConfig {
     #[serde(default = "default_config_version")]
@@ -144,6 +153,9 @@ pub enum Binding {
         zone: String,
         #[serde(default = "default_scale")]
         scale: f32,
+    },
+    Swipe {
+        direction: SwipeDirection,
     },
 }
 
@@ -288,6 +300,7 @@ pub struct InputState {
     touches_just_started: HashSet<u64>,
     touches_just_ended: HashSet<u64>,
     touch_tap_just_fired: Vec<(f64, f64)>,
+    touch_swipe_just_fired: Vec<(SwipeDirection, f64, f64)>,
     screen_size: (f64, f64),
     emulate_touch_from_mouse: bool,
     mouse_touch_active: bool,
@@ -325,6 +338,7 @@ impl InputState {
             touches_just_started: HashSet::new(),
             touches_just_ended: HashSet::new(),
             touch_tap_just_fired: Vec::new(),
+            touch_swipe_just_fired: Vec::new(),
             screen_size: (1280.0, 720.0),
             emulate_touch_from_mouse: true,
             mouse_touch_active: false,
@@ -558,13 +572,39 @@ impl InputState {
 
     pub fn process_touch_end(&mut self, id: u64) {
         if let Some(touch) = self.touches.remove(&id) {
-            // Tap detection: short duration + small movement
             let elapsed = touch.start_time.elapsed().as_millis();
             let dx = (touch.position.0 - touch.start_position.0) * self.screen_size.0;
             let dy = (touch.position.1 - touch.start_position.1) * self.screen_size.1;
             let dist_sq = dx * dx + dy * dy;
+
+            // DEBUG: remove once swipe is confirmed working
+            eprintln!(
+                "[input] touch_end id={id} elapsed={elapsed}ms dx={dx:.1} dy={dy:.1} dist={:.1}",
+                dist_sq.sqrt()
+            );
+
             if elapsed < 300 && dist_sq < 20.0 * 20.0 {
+                // Tap: short duration + small movement
+                eprintln!("[input]   -> TAP");
                 self.touch_tap_just_fired.push(touch.position);
+            } else if elapsed < 500 && dist_sq >= 40.0 * 40.0 {
+                // Swipe: fast enough + large enough movement
+                let direction = if dx.abs() > dy.abs() {
+                    if dx > 0.0 {
+                        SwipeDirection::Right
+                    } else {
+                        SwipeDirection::Left
+                    }
+                } else if dy > 0.0 {
+                    SwipeDirection::Down
+                } else {
+                    SwipeDirection::Up
+                };
+                eprintln!("[input]   -> SWIPE {direction:?}");
+                self.touch_swipe_just_fired
+                    .push((direction, touch.start_position.0, touch.start_position.1));
+            } else {
+                eprintln!("[input]   -> DEAD ZONE (no gesture)");
             }
         }
         self.touches_just_ended.insert(id);
@@ -597,6 +637,10 @@ impl InputState {
 
     pub fn touch_taps(&self) -> &[(f64, f64)] {
         &self.touch_tap_just_fired
+    }
+
+    pub fn touch_swipes(&self) -> &[(SwipeDirection, f64, f64)] {
+        &self.touch_swipe_just_fired
     }
 
     pub fn active_touches(&self) -> &HashMap<u64, TouchPoint> {
@@ -672,6 +716,7 @@ impl InputState {
         self.touches_just_started.clear();
         self.touches_just_ended.clear();
         self.touch_tap_just_fired.clear();
+        self.touch_swipe_just_fired.clear();
     }
 
     pub fn is_key_down(&self, key: KeyCode) -> bool {
@@ -875,6 +920,17 @@ impl InputState {
                     0.0
                 }
             }
+            Binding::Swipe { direction } => {
+                if self
+                    .touch_swipe_just_fired
+                    .iter()
+                    .any(|(d, _, _)| d == direction)
+                {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 
@@ -928,6 +984,10 @@ impl InputState {
                     .map(|t| point_in_zone(t.position.0, t.position.1, zone))
                     .unwrap_or(false)
             }),
+            Binding::Swipe { direction } => self
+                .touch_swipe_just_fired
+                .iter()
+                .any(|(d, _, _)| d == direction),
             _ => false,
         }
     }
@@ -981,6 +1041,7 @@ impl InputState {
                 // fallback: was pressed last frame, not pressed this frame.
                 false
             }
+            Binding::Swipe { .. } => false,
             _ => false,
         }
     }
@@ -1145,6 +1206,9 @@ fn validate_binding(binding: &Binding, action_name: &str) -> Result<()> {
                 )));
             }
         }
+        Binding::Swipe { .. } => {
+            // SwipeDirection is validated by serde deserialization
+        }
     }
     Ok(())
 }
@@ -1179,6 +1243,7 @@ fn binding_label(binding: &Binding) -> String {
             }
         }
         Binding::TouchZone { zone, .. } => format!("Touch:{zone}"),
+        Binding::Swipe { direction } => format!("Swipe:{direction:?}"),
     }
 }
 
@@ -1620,5 +1685,128 @@ zone = "invalid_zone"
 "#,
         );
         assert!(config.is_err());
+    }
+
+    #[test]
+    fn test_swipe_up() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        // Swipe upward: start low, move up (lower Y in screen coords = upward)
+        input.process_touch_start(1, 500.0, 600.0);
+        input.process_touch_move(1, 500.0, 500.0); // 100px up
+        input.process_touch_end(1);
+
+        assert_eq!(input.touch_swipes().len(), 1);
+        assert_eq!(input.touch_swipes()[0].0, SwipeDirection::Up);
+        assert!(input.touch_taps().is_empty(), "swipe should not fire tap");
+
+        input.end_frame();
+        assert!(input.touch_swipes().is_empty());
+    }
+
+    #[test]
+    fn test_swipe_down() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        input.process_touch_start(1, 500.0, 400.0);
+        input.process_touch_move(1, 500.0, 500.0); // 100px down
+        input.process_touch_end(1);
+
+        assert_eq!(input.touch_swipes().len(), 1);
+        assert_eq!(input.touch_swipes()[0].0, SwipeDirection::Down);
+    }
+
+    #[test]
+    fn test_swipe_horizontal() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        // Swipe right
+        input.process_touch_start(1, 400.0, 500.0);
+        input.process_touch_move(1, 500.0, 500.0); // 100px right
+        input.process_touch_end(1);
+
+        assert_eq!(input.touch_swipes().len(), 1);
+        assert_eq!(input.touch_swipes()[0].0, SwipeDirection::Right);
+
+        input.end_frame();
+
+        // Swipe left
+        input.process_touch_start(2, 600.0, 500.0);
+        input.process_touch_move(2, 500.0, 500.0); // 100px left
+        input.process_touch_end(2);
+
+        assert_eq!(input.touch_swipes().len(), 1);
+        assert_eq!(input.touch_swipes()[0].0, SwipeDirection::Left);
+    }
+
+    #[test]
+    fn test_short_movement_is_tap_not_swipe() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        // 10px movement = tap (< 20px threshold)
+        input.process_touch_start(1, 500.0, 500.0);
+        input.process_touch_move(1, 510.0, 500.0);
+        input.process_touch_end(1);
+
+        assert_eq!(input.touch_taps().len(), 1);
+        assert!(input.touch_swipes().is_empty());
+    }
+
+    #[test]
+    fn test_medium_movement_fires_neither() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+
+        // 30px movement = dead zone (>= 20px for tap, < 40px for swipe)
+        input.process_touch_start(1, 500.0, 500.0);
+        input.process_touch_move(1, 530.0, 500.0);
+        input.process_touch_end(1);
+
+        assert!(input.touch_taps().is_empty(), "dead zone should not fire tap");
+        assert!(
+            input.touch_swipes().is_empty(),
+            "dead zone should not fire swipe"
+        );
+    }
+
+    #[test]
+    fn test_swipe_binding_triggers_action() {
+        let mut input = InputState::new();
+        input.set_screen_size(1000.0, 1000.0);
+        input
+            .load_bindings(
+                InputConfig::from_toml_str(
+                    r#"
+version = 1
+[actions.jump]
+kind = "button"
+[[actions.jump.bindings]]
+type = "swipe"
+direction = "up"
+"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        // No swipe yet
+        assert!(!input.is_action_pressed("jump"));
+        assert!(!input.is_action_just_pressed("jump"));
+
+        // Perform a swipe up
+        input.process_touch_start(1, 500.0, 600.0);
+        input.process_touch_move(1, 500.0, 500.0);
+        input.process_touch_end(1);
+
+        assert!(input.is_action_pressed("jump"));
+        assert!(input.is_action_just_pressed("jump"));
+
+        input.end_frame();
+        assert!(!input.is_action_pressed("jump"));
+        assert!(!input.is_action_just_pressed("jump"));
     }
 }

@@ -21,6 +21,7 @@ pub struct ScriptInstance {
     pub has_on_init: bool,
     pub has_on_update: bool,
     pub has_on_collision: bool,
+    pub has_on_collision_exit: bool,
     pub has_on_trigger_enter: bool,
     pub has_on_trigger_exit: bool,
     pub has_on_action: bool,
@@ -38,6 +39,7 @@ impl ScriptInstance {
         let has_on_init = has_function(&ast, "on_init");
         let has_on_update = has_function(&ast, "on_update");
         let has_on_collision = has_function(&ast, "on_collision");
+        let has_on_collision_exit = has_function(&ast, "on_collision_exit");
         let has_on_trigger_enter = has_function(&ast, "on_trigger_enter");
         let has_on_trigger_exit = has_function(&ast, "on_trigger_exit");
         let has_on_action = has_function(&ast, "on_action");
@@ -54,6 +56,7 @@ impl ScriptInstance {
             has_on_init,
             has_on_update,
             has_on_collision,
+            has_on_collision_exit,
             has_on_trigger_enter,
             has_on_trigger_exit,
             has_on_action,
@@ -72,6 +75,7 @@ impl ScriptInstance {
         self.has_on_init = has_function(&ast, "on_init");
         self.has_on_update = has_function(&ast, "on_update");
         self.has_on_collision = has_function(&ast, "on_collision");
+        self.has_on_collision_exit = has_function(&ast, "on_collision_exit");
         self.has_on_trigger_enter = has_function(&ast, "on_trigger_enter");
         self.has_on_trigger_exit = has_function(&ast, "on_trigger_exit");
         self.has_on_action = has_function(&ast, "on_action");
@@ -95,6 +99,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     ("on_init", 0),
     ("on_update", 0),
     ("on_collision", 1),
+    ("on_collision_exit", 1),
     ("on_trigger_enter", 1),
     ("on_trigger_exit", 1),
     ("on_action", 1),
@@ -224,6 +229,37 @@ impl ScriptEngine {
         }
     }
 
+    /// Call on_init() for specific entities (chunk loading)
+    pub fn call_inits_for(&mut self, world: &mut FlintWorld, entity_ids: &[EntityId]) {
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = world as *mut FlintWorld;
+        }
+
+        for &entity_id in entity_ids {
+            if let Some(script) = self.scripts.get_mut(&entity_id) {
+                if script.has_on_init && !script.init_called {
+                    {
+                        let mut c = self.ctx.lock().unwrap();
+                        c.current_entity = entity_id;
+                    }
+                    script.init_called = true;
+                    if let Err(e) =
+                        self.engine
+                            .call_fn::<()>(&mut script.scope, &script.ast, "on_init", ())
+                    {
+                        eprintln!("[script] on_init error ({}): {}", script.source_path, e);
+                    }
+                }
+            }
+        }
+
+        {
+            let mut c = self.ctx.lock().unwrap();
+            c.world = std::ptr::null_mut();
+        }
+    }
+
     /// Call on_update() for all scripts
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
         {
@@ -307,6 +343,10 @@ impl ScriptEngine {
                     self.call_collision(*entity_a, *entity_b);
                     self.call_collision(*entity_b, *entity_a);
                 }
+                GameEvent::CollisionEnded { entity_a, entity_b } => {
+                    self.call_collision_exit(*entity_a, *entity_b);
+                    self.call_collision_exit(*entity_b, *entity_a);
+                }
                 GameEvent::TriggerEntered { entity, trigger } => {
                     self.call_trigger_enter(*trigger, *entity);
                 }
@@ -342,6 +382,29 @@ impl ScriptEngine {
                 ) {
                     eprintln!(
                         "[script] on_collision error ({}): {}",
+                        script.source_path, e
+                    );
+                }
+            }
+        }
+    }
+
+    fn call_collision_exit(&mut self, entity: EntityId, other: EntityId) {
+        if let Some(script) = self.scripts.get_mut(&entity) {
+            if script.has_on_collision_exit {
+                {
+                    let mut c = self.ctx.lock().unwrap();
+                    c.current_entity = entity;
+                }
+                let other_id = other.raw() as i64;
+                if let Err(e) = self.engine.call_fn::<()>(
+                    &mut script.scope,
+                    &script.ast,
+                    "on_collision_exit",
+                    (other_id,),
+                ) {
+                    eprintln!(
+                        "[script] on_collision_exit error ({}): {}",
                         script.source_path, e
                     );
                 }

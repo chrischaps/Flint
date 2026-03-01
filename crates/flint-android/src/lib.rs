@@ -27,7 +27,8 @@ fn android_main(app: AndroidApp) {
         .expect("No internal data path available");
 
     // Extract APK assets to internal storage so std::fs works unchanged.
-    // Use a build-time version string; default to "dev" if not set.
+    // FLINT_APK_VERSION is set by Gradle to a build timestamp, ensuring assets
+    // are always re-extracted during dev (defeats Android Auto Backup restoring stale files).
     let version = option_env!("FLINT_APK_VERSION").unwrap_or("dev");
     let asset_manager = app.asset_manager();
     asset_extractor::extract_assets(&asset_manager, &data_dir, version);
@@ -105,7 +106,7 @@ fn android_main(app: AndroidApp) {
     event_loop.run_app(&mut player).expect("Event loop error");
 }
 
-/// Search for a `.scene.toml` file in the given directory.
+/// Search recursively for a `.scene.toml` file in the given directory.
 fn find_scene(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     // First check for a well-known name
     let default = dir.join("scene.toml");
@@ -113,34 +114,31 @@ fn find_scene(dir: &std::path::Path) -> Option<std::path::PathBuf> {
         return Some(default);
     }
 
-    // Otherwise, find the first *.scene.toml file
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
+    find_scene_recursive(dir)
+}
+
+fn find_scene_recursive(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut subdirs = Vec::new();
+
+    // Check files at this level first
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.ends_with(".scene.toml") {
                     return Some(path);
                 }
             }
+        } else if path.is_dir() {
+            subdirs.push(path);
         }
     }
 
-    // Check subdirectories one level deep
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                    for sub_entry in sub_entries.flatten() {
-                        let sub_path = sub_entry.path();
-                        if let Some(name) = sub_path.file_name().and_then(|n| n.to_str()) {
-                            if name.ends_with(".scene.toml") {
-                                return Some(sub_path);
-                            }
-                        }
-                    }
-                }
-            }
+    // Then recurse into subdirectories
+    for subdir in subdirs {
+        if let Some(found) = find_scene_recursive(&subdir) {
+            return Some(found);
         }
     }
 

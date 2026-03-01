@@ -7,6 +7,7 @@
 
 pub mod atlas;
 pub mod billboard_pipeline;
+pub mod bitmap_font;
 mod camera;
 mod context;
 mod debug;
@@ -27,6 +28,7 @@ mod texture_cache;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;
+pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};

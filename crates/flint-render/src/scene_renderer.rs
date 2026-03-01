@@ -3,6 +3,7 @@
 use crate::billboard_pipeline::{
     BillboardDrawCall, BillboardPipeline, BillboardUniforms, SpriteInstance,
 };
+use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 use crate::camera::{mat4_inverse, mat4_mul, Camera};
 use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
@@ -145,6 +146,14 @@ pub struct SceneRenderer {
     postprocess_config: PostProcessConfig,
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
+    // Parallax: camera offset in world units + orthographic viewport height
+    pub camera_offset: [f32; 2],
+    pub ortho_height: f32,
+    pub aspect_ratio: f32,
+    // Bitmap font cache for ui_text rendering
+    bitmap_font_cache: HashMap<String, BitmapFont>,
+    /// Scene directory for resolving relative font/texture paths
+    pub scene_dir: Option<std::path::PathBuf>,
 }
 
 impl SceneRenderer {
@@ -243,6 +252,11 @@ impl SceneRenderer {
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
             surface_format,
+            camera_offset: [0.0, 0.0],
+            ortho_height: 10.0,
+            aspect_ratio: 16.0 / 9.0,
+            bitmap_font_cache: HashMap::new(),
+            scene_dir: None,
         }
     }
 
@@ -560,6 +574,7 @@ impl SceneRenderer {
         self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
+        self.bitmap_font_cache.clear();
     }
 
     /// Create a renderer for headless (offscreen) use with explicit device and format
@@ -662,6 +677,11 @@ impl SceneRenderer {
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
             surface_format,
+            camera_offset: [0.0, 0.0],
+            ortho_height: 10.0,
+            aspect_ratio: 16.0 / 9.0,
+            bitmap_font_cache: HashMap::new(),
+            scene_dir: None,
         }
     }
 
@@ -1557,8 +1577,124 @@ impl SceneRenderer {
                             [0.0, 0.0, 1.0, 1.0]
                         };
 
+                        // ── Screen anchor vs parallax position ──
+                        let screen_anchor = components.get("screen_anchor");
+                        let (adjusted_x, adjusted_y, skip_tiling) = if let Some(sa) = screen_anchor {
+                            let anchor_name = sa
+                                .get("anchor")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("center");
+                            let off_x = sa
+                                .get("offset_x")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(0.0) as f32;
+                            let off_y = sa
+                                .get("offset_y")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(0.0) as f32;
+                            let half_w = self.ortho_height * self.aspect_ratio * 0.5;
+                            let half_h = self.ortho_height * 0.5;
+                            let (ax, ay) = anchor_origin(anchor_name, half_w, half_h);
+                            (
+                                self.camera_offset[0] + ax + off_x,
+                                self.camera_offset[1] + ay + off_y,
+                                true,
+                            )
+                        } else {
+                            let parallax = components.get("parallax");
+                            let scroll_rate = parallax
+                                .and_then(|p| p.get("scroll_rate"))
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(1.0) as f32;
+                            (
+                                world_pos[0] + self.camera_offset[0] * (1.0 - scroll_rate),
+                                world_pos[1] + self.camera_offset[1] * (1.0 - scroll_rate),
+                                false,
+                            )
+                        };
+
+                        // ── ui_fill clipping ──
+                        let (uv_rect, width, height, fill_x_off, fill_y_off) =
+                            if let Some(fill) = components.get("ui_fill") {
+                                let value = fill
+                                    .get("value")
+                                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                    .unwrap_or(1.0) as f32;
+                                let direction = fill
+                                    .get("direction")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("left_to_right");
+                                apply_fill(uv_rect, width, height, value, direction)
+                            } else {
+                                (uv_rect, width, height, 0.0, 0.0)
+                            };
+
+                        let final_x = adjusted_x + fill_x_off;
+                        let final_y = adjusted_y + fill_y_off;
+
+                        // ── Parallax tiling (skipped for screen-anchored sprites) ──
+                        if !skip_tiling {
+                            let parallax = components.get("parallax");
+                            let repeat_x = parallax
+                                .and_then(|p| p.get("repeat_x"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let repeat_y = parallax
+                                .and_then(|p| p.get("repeat_y"))
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            if repeat_x || repeat_y {
+                                let viewport_h = self.ortho_height;
+                                let viewport_w = viewport_h * self.aspect_ratio;
+                                let cam_x = self.camera_offset[0];
+                                let cam_y = self.camera_offset[1];
+
+                                let (start_tx, end_tx) = if repeat_x && width > 0.0 {
+                                    let left = cam_x - viewport_w * 0.5;
+                                    let right = cam_x + viewport_w * 0.5;
+                                    let start = ((left - final_x) / width).floor() as i32 - 1;
+                                    let end = ((right - final_x) / width).ceil() as i32 + 1;
+                                    (start, end)
+                                } else {
+                                    (0, 1)
+                                };
+                                let (start_ty, end_ty) = if repeat_y && height > 0.0 {
+                                    let bottom = cam_y - viewport_h * 0.5;
+                                    let top = cam_y + viewport_h * 0.5;
+                                    let start = ((bottom - final_y) / height).floor() as i32 - 1;
+                                    let end = ((top - final_y) / height).ceil() as i32 + 1;
+                                    (start, end)
+                                } else {
+                                    (0, 1)
+                                };
+
+                                for ty in start_ty..end_ty {
+                                    for tx in start_tx..end_tx {
+                                        let tile_x = final_x + tx as f32 * width;
+                                        let tile_y = final_y + ty as f32 * height;
+                                        let instance = Sprite2dInstanceGpu {
+                                            pos_layer: [tile_x, tile_y, 0.5, layer as f32 * 0.01],
+                                            size: [width, height, anchor_y, 0.0],
+                                            uv_rect,
+                                            tint,
+                                            flags: [
+                                                if flip_x { 1.0 } else { 0.0 },
+                                                if flip_y { 1.0 } else { 0.0 },
+                                                0.0,
+                                                0.0,
+                                            ],
+                                        };
+                                        sprite2d_collected.push((tex_name.to_string(), layer, instance));
+                                    }
+                                }
+                                continue; // tiled sprites already emitted
+                            }
+                        }
+
+                        // Single sprite instance
                         let instance = Sprite2dInstanceGpu {
-                            pos_layer: [world_pos[0], world_pos[1], 0.5, layer as f32 * 0.01],
+                            pos_layer: [final_x, final_y, 0.5, layer as f32 * 0.01],
                             size: [width, height, anchor_y, 0.0],
                             uv_rect,
                             tint,
@@ -1569,8 +1705,79 @@ impl SceneRenderer {
                                 0.0,
                             ],
                         };
-
                         sprite2d_collected.push((tex_name.to_string(), layer, instance));
+
+                        // ── ui_text: expand text to glyph sprite instances ──
+                        if let Some(ui_text) = components.get("ui_text") {
+                            let font_path_str = ui_text
+                                .get("font")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let text = ui_text
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let text_size = ui_text
+                                .get("size")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(1.0) as f32;
+                            let text_color = if let Some(c) = ui_text.get("color") {
+                                if let Some(arr) = c.as_array() {
+                                    let vals: Vec<f32> = arr
+                                        .iter()
+                                        .filter_map(|v| {
+                                            v.as_float()
+                                                .or_else(|| v.as_integer().map(|i| i as f64))
+                                                .map(|f| f as f32)
+                                        })
+                                        .collect();
+                                    if vals.len() >= 4 {
+                                        [vals[0], vals[1], vals[2], vals[3]]
+                                    } else {
+                                        [1.0, 1.0, 1.0, 1.0]
+                                    }
+                                } else {
+                                    [1.0, 1.0, 1.0, 1.0]
+                                }
+                            } else {
+                                [1.0, 1.0, 1.0, 1.0]
+                            };
+                            let align = ui_text
+                                .get("align")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("left");
+
+                            if !font_path_str.is_empty() && !text.is_empty() {
+                                // Load/cache the bitmap font
+                                if !self.bitmap_font_cache.contains_key(font_path_str) {
+                                    if let Some(scene_dir) = &self.scene_dir {
+                                        let font_file = scene_dir.join(font_path_str);
+                                        if let Some(font) = BitmapFont::load(&font_file) {
+                                            self.bitmap_font_cache
+                                                .insert(font_path_str.to_string(), font);
+                                        }
+                                    }
+                                }
+
+                                if let Some(font) = self.bitmap_font_cache.get(font_path_str) {
+                                    let (tex_w, tex_h) = tex_cache_ref
+                                        .get_dimensions(&font.texture)
+                                        .unwrap_or((1, 1));
+                                    let glyphs = font.layout_text(
+                                        text,
+                                        final_x,
+                                        final_y,
+                                        text_size,
+                                        text_color,
+                                        layer,
+                                        align,
+                                        tex_w,
+                                        tex_h,
+                                    );
+                                    sprite2d_collected.extend(glyphs);
+                                }
+                            }
+                        }
                         continue; // Don't render sprite2d as geometry
                     } else if visible {
                         // ── Billboard path: existing per-entity rendering ──
@@ -1703,6 +1910,108 @@ impl SceneRenderer {
                         }
                     }
                     continue; // Don't render sprites as geometry
+                }
+            }
+
+            // ── Standalone ui_text: entities with ui_text but no sprite ──
+            if let Some(components) = world.get_components(entity.id) {
+                let has_sprite = components.get("sprite").is_some();
+                if !has_sprite {
+                    if let Some(ui_text) = components.get("ui_text") {
+                        let font_path_str = ui_text
+                            .get("font")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let text = ui_text
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        if !font_path_str.is_empty() && !text.is_empty() {
+                            let text_size = ui_text
+                                .get("size")
+                                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                .unwrap_or(1.0) as f32;
+                            let text_color = if let Some(c) = ui_text.get("color") {
+                                if let Some(arr) = c.as_array() {
+                                    let vals: Vec<f32> = arr
+                                        .iter()
+                                        .filter_map(|v| {
+                                            v.as_float()
+                                                .or_else(|| v.as_integer().map(|i| i as f64))
+                                                .map(|f| f as f32)
+                                        })
+                                        .collect();
+                                    if vals.len() >= 4 {
+                                        [vals[0], vals[1], vals[2], vals[3]]
+                                    } else {
+                                        [1.0, 1.0, 1.0, 1.0]
+                                    }
+                                } else {
+                                    [1.0, 1.0, 1.0, 1.0]
+                                }
+                            } else {
+                                [1.0, 1.0, 1.0, 1.0]
+                            };
+                            let align = ui_text
+                                .get("align")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("left");
+                            let layer = ui_text
+                                .get("layer")
+                                .and_then(|v| v.as_integer())
+                                .unwrap_or(0) as i32;
+
+                            // Compute position from screen_anchor or world pos
+                            let (text_x, text_y) = if let Some(sa) = components.get("screen_anchor") {
+                                let anchor_name = sa
+                                    .get("anchor")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("center");
+                                let off_x = sa
+                                    .get("offset_x")
+                                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                    .unwrap_or(0.0) as f32;
+                                let off_y = sa
+                                    .get("offset_y")
+                                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                                    .unwrap_or(0.0) as f32;
+                                let half_w = self.ortho_height * self.aspect_ratio * 0.5;
+                                let half_h = self.ortho_height * 0.5;
+                                let (ax, ay) = anchor_origin(anchor_name, half_w, half_h);
+                                (
+                                    self.camera_offset[0] + ax + off_x,
+                                    self.camera_offset[1] + ay + off_y,
+                                )
+                            } else {
+                                (world_pos[0], world_pos[1])
+                            };
+
+                            // Load/cache the bitmap font
+                            if !self.bitmap_font_cache.contains_key(font_path_str) {
+                                if let Some(scene_dir) = &self.scene_dir {
+                                    let font_file = scene_dir.join(font_path_str);
+                                    if let Some(font) = BitmapFont::load(&font_file) {
+                                        self.bitmap_font_cache
+                                            .insert(font_path_str.to_string(), font);
+                                    }
+                                }
+                            }
+
+                            if let Some(font) = self.bitmap_font_cache.get(font_path_str) {
+                                let (tex_w, tex_h) = tex_cache_ref
+                                    .get_dimensions(&font.texture)
+                                    .unwrap_or((1, 1));
+                                let glyphs = font.layout_text(
+                                    text, text_x, text_y, text_size, text_color, layer, align,
+                                    tex_w, tex_h,
+                                );
+                                sprite2d_collected.extend(glyphs);
+                            }
+
+                            continue;
+                        }
+                    }
                 }
             }
 

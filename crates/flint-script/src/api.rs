@@ -17,6 +17,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_audio_api(engine, ctx.clone());
     register_animation_api(engine, ctx.clone());
     register_physics_api(engine, ctx.clone());
+    register_physics_2d_api(engine, ctx.clone());
     register_math_api(engine);
     register_event_api(engine, ctx.clone());
     register_ui_api(engine, ctx.clone());
@@ -29,6 +30,9 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_sprite_api(engine, ctx.clone());
     register_sprite_animation_api(engine, ctx.clone());
     register_touch_api(engine, ctx.clone());
+    register_camera_2d_api(engine, ctx.clone());
+    register_chunk_api(engine, ctx.clone());
+    register_screen_ui_api(engine, ctx.clone());
     register_log_api(engine, ctx);
 }
 
@@ -1140,6 +1144,109 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("set_audio_lowpass", move |cutoff_hz: f64| {
             let mut c = ctx.lock().unwrap();
             c.audio_lowpass_cutoff_override = Some(cutoff_hz as f32);
+        });
+    }
+}
+
+// ─── 2D Physics API ──────────────────────────────────────
+
+fn register_physics_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // overlap_rect(x, y, w, h) -> Array of entity IDs
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "overlap_rect",
+            move |x: f64, y: f64, w: f64, h: f64| -> rhai::Array {
+                let c = ctx.lock().unwrap();
+                let physics = unsafe { c.physics_ref() };
+                match physics {
+                    Some(p) => p
+                        .overlap_rect(x as f32, y as f32, w as f32, h as f32)
+                        .into_iter()
+                        .map(|eid| Dynamic::from(eid.raw() as i64))
+                        .collect(),
+                    None => rhai::Array::new(),
+                }
+            },
+        );
+    }
+
+    // raycast_2d(ox, oy, dx, dy, max_dist) -> Map or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "raycast_2d",
+            move |ox: f64, oy: f64, dx: f64, dy: f64, max_dist: f64| -> Dynamic {
+                let c = ctx.lock().unwrap();
+                let physics = unsafe { c.physics_ref() };
+                let physics = match physics {
+                    Some(p) => p,
+                    None => return Dynamic::UNIT,
+                };
+                let exclude = Some(c.current_entity);
+                match physics.raycast_2d(
+                    ox as f32,
+                    oy as f32,
+                    dx as f32,
+                    dy as f32,
+                    max_dist as f32,
+                    exclude,
+                ) {
+                    Some(hit) => {
+                        let mut map = Map::new();
+                        map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
+                        map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+                        map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
+                        map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
+                        map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
+                        map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
+                }
+            },
+        );
+    }
+
+    // set_velocity_2d(entity_id, vx, vy) -> deferred command
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_velocity_2d",
+            move |entity_id: i64, vx: f64, vy: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.commands.push(ScriptCommand::SetVelocity2D {
+                    entity_id,
+                    vx,
+                    vy,
+                });
+            },
+        );
+    }
+
+    // get_velocity_2d(entity_id) -> Map #{vx, vy} or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_velocity_2d", move |entity_id: i64| -> Dynamic {
+            if entity_id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = ctx.lock().unwrap();
+            let physics = unsafe { c.physics_ref() };
+            match physics {
+                Some(p) => {
+                    match p.get_velocity_2d(EntityId::from_raw(entity_id as u64)) {
+                        Some(vel) => {
+                            let mut map = Map::new();
+                            map.insert("vx".into(), Dynamic::from(vel[0] as f64));
+                            map.insert("vy".into(), Dynamic::from(vel[1] as f64));
+                            Dynamic::from(map)
+                        }
+                        None => Dynamic::UNIT,
+                    }
+                }
+                None => Dynamic::UNIT,
+            }
         });
     }
 }
@@ -2746,6 +2853,366 @@ fn register_touch_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 .get(index as usize)
                 .map(|(_, y)| *y)
                 .unwrap_or(-1.0)
+        });
+    }
+
+    // swipe_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_count", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.input.touch_swipes.len() as i64
+        });
+    }
+
+    // swipe_direction(index: i64) -> String
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_direction", move |index: i64| -> String {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_swipes
+                .get(index as usize)
+                .map(|(dir, _, _)| dir.clone())
+                .unwrap_or_default()
+        });
+    }
+
+    // swipe_x(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_x", move |index: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_swipes
+                .get(index as usize)
+                .map(|(_, x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // swipe_y(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_y", move |index: i64| -> f64 {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_swipes
+                .get(index as usize)
+                .map(|(_, _, y)| *y)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // is_swipe(direction: &str) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_swipe", move |direction: &str| -> bool {
+            let c = ctx.lock().unwrap();
+            c.input
+                .touch_swipes
+                .iter()
+                .any(|(dir, _, _)| dir == direction)
+        });
+    }
+}
+
+// ─── Camera 2D API (follow, shake) ──────────────────────
+
+fn register_camera_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // camera_follow(entity_id, offset_x, offset_y, speed, deadzone_w, deadzone_h)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "camera_follow",
+            move |entity_id: i64, offset_x: f64, offset_y: f64, speed: f64, deadzone_w: f64, deadzone_h: f64| {
+                let mut c = ctx.lock().unwrap();
+                let dt = c.delta_time as f32;
+                if dt <= 0.0 {
+                    return;
+                }
+
+                // Read target entity position
+                let (target_x, target_y) = {
+                    let world = unsafe { c.world_ref() };
+                    match world.get_transform(flint_core::EntityId::from_raw(entity_id as u64)) {
+                        Some(t) => (t.position.x + offset_x as f32, t.position.y + offset_y as f32),
+                        None => return,
+                    }
+                };
+
+                // Initialize follow position on first call
+                if !c.camera_follow.initialized {
+                    c.camera_follow.current_x = target_x;
+                    c.camera_follow.current_y = target_y;
+                    c.camera_follow.initialized = true;
+                }
+
+                // Deadzone: only track when target is outside deadzone rectangle
+                let dx = target_x - c.camera_follow.current_x;
+                let dy = target_y - c.camera_follow.current_y;
+                let half_w = deadzone_w as f32 * 0.5;
+                let half_h = deadzone_h as f32 * 0.5;
+
+                // Compute tracking target — nearest edge of deadzone
+                let track_x = if dx.abs() > half_w {
+                    target_x - dx.signum() * half_w
+                } else {
+                    c.camera_follow.current_x
+                };
+                let track_y = if dy.abs() > half_h {
+                    target_y - dy.signum() * half_h
+                } else {
+                    c.camera_follow.current_y
+                };
+
+                // Frame-rate-independent exponential smoothing
+                let t = 1.0 - (-(speed as f32) * dt).exp();
+                c.camera_follow.current_x += (track_x - c.camera_follow.current_x) * t;
+                c.camera_follow.current_y += (track_y - c.camera_follow.current_y) * t;
+
+                // Advance shake
+                let mut shake_offset_x = 0.0f32;
+                let mut shake_offset_y = 0.0f32;
+                if c.shake.amplitude > 0.001 {
+                    c.shake.phase += dt;
+                    c.shake.amplitude *= (-(c.shake.decay) * dt).exp();
+                    let freq = c.shake.frequency;
+                    shake_offset_x = c.shake.amplitude * (freq * c.shake.phase).sin();
+                    shake_offset_y = c.shake.amplitude * (freq * 1.37 * c.shake.phase).cos();
+                    if c.shake.amplitude < 0.001 {
+                        c.shake.amplitude = 0.0;
+                        c.shake.phase = 0.0;
+                    }
+                }
+
+                let final_x = c.camera_follow.current_x + shake_offset_x;
+                let final_y = c.camera_follow.current_y + shake_offset_y;
+
+                // Z=10 ensures all sprite layers (z_offset = layer*0.01) are in front of the camera
+                c.camera_position_override = Some([final_x, final_y, 10.0]);
+                c.camera_target_override = Some([final_x, final_y, -1.0]);
+            },
+        );
+    }
+
+    // camera_follow_position() -> #{x, y}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_follow_position", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.camera_follow.current_x as f64));
+            map.insert("y".into(), Dynamic::from(c.camera_follow.current_y as f64));
+            map
+        });
+    }
+
+    // camera_follow_set(x, y) — teleport follow position
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_follow_set", move |x: f64, y: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_follow.current_x = x as f32;
+            c.camera_follow.current_y = y as f32;
+            c.camera_follow.initialized = true;
+        });
+    }
+
+    // camera_shake(amplitude, frequency, decay)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "camera_shake",
+            move |amplitude: f64, frequency: f64, decay: f64| {
+                let mut c = ctx.lock().unwrap();
+                // Stack: take max of current + new amplitude
+                let new_amp = (c.shake.amplitude + amplitude as f32).max(amplitude as f32);
+                c.shake.amplitude = new_amp;
+                c.shake.frequency = frequency as f32;
+                c.shake.decay = decay as f32;
+                // Don't reset phase — let it continue naturally
+            },
+        );
+    }
+
+    // camera_shake_stop()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_shake_stop", move || {
+            let mut c = ctx.lock().unwrap();
+            c.shake.amplitude = 0.0;
+            c.shake.phase = 0.0;
+        });
+    }
+
+    // camera_apply_shake() — for manual camera control without camera_follow
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_apply_shake", move || {
+            let mut c = ctx.lock().unwrap();
+            let dt = c.delta_time as f32;
+            if dt <= 0.0 || c.shake.amplitude < 0.001 {
+                return;
+            }
+
+            c.shake.phase += dt;
+            c.shake.amplitude *= (-(c.shake.decay) * dt).exp();
+            let freq = c.shake.frequency;
+            let shake_x = c.shake.amplitude * (freq * c.shake.phase).sin();
+            let shake_y = c.shake.amplitude * (freq * 1.37 * c.shake.phase).cos();
+
+            if c.shake.amplitude < 0.001 {
+                c.shake.amplitude = 0.0;
+                c.shake.phase = 0.0;
+            }
+
+            // Apply shake offset to existing camera override (or current camera position)
+            if let Some(pos) = c.camera_position_override.as_mut() {
+                pos[0] += shake_x;
+                pos[1] += shake_y;
+            } else {
+                let base = c.camera_position;
+                c.camera_position_override = Some([base[0] + shake_x, base[1] + shake_y, base[2]]);
+            }
+            if let Some(target) = c.camera_target_override.as_mut() {
+                target[0] += shake_x;
+                target[1] += shake_y;
+            }
+        });
+    }
+}
+
+// ─── Chunk Streaming API ────────────────────────────────
+
+fn register_chunk_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // load_chunk(path, offset_x, offset_y, chunk_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "load_chunk",
+            move |path: &str, offset_x: f64, offset_y: f64, chunk_id: &str| {
+                let mut c = ctx.lock().unwrap();
+                c.commands.push(ScriptCommand::LoadChunk {
+                    path: path.to_string(),
+                    offset_x,
+                    offset_y,
+                    chunk_id: chunk_id.to_string(),
+                });
+            },
+        );
+    }
+
+    // unload_chunk(chunk_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("unload_chunk", move |chunk_id: &str| {
+            let mut c = ctx.lock().unwrap();
+            c.commands.push(ScriptCommand::UnloadChunk {
+                chunk_id: chunk_id.to_string(),
+            });
+        });
+    }
+
+    // is_chunk_loaded(chunk_id) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_chunk_loaded", move |chunk_id: &str| -> bool {
+            let c = ctx.lock().unwrap();
+            c.loaded_chunk_ids.contains(chunk_id)
+        });
+    }
+}
+
+// ─── Screen UI API ──────────────────────────────────────
+
+fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // ui_set_value(entity_id, value) — set ui_fill.value
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_value", move |id: i64, value: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field("ui_fill", "value", toml::Value::Float(value));
+            }
+        });
+    }
+
+    // set_text(entity_id, text) — set ui_text.text
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_text", move |id: i64, text: &str| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field("ui_text", "text", toml::Value::String(text.to_string()));
+            }
+        });
+    }
+
+    // set_text_color(entity_id, r, g, b, a) — set ui_text.color
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_text_color",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = ctx.lock().unwrap();
+                let world = unsafe { c.world_mut() };
+                if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                    let color = toml::Value::Array(vec![
+                        toml::Value::Float(r),
+                        toml::Value::Float(g),
+                        toml::Value::Float(b),
+                        toml::Value::Float(a),
+                    ]);
+                    comps.set_field("ui_text", "color", color);
+                }
+            },
+        );
+    }
+
+    // set_anchor(entity_id, anchor_name) — set screen_anchor.anchor
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_anchor", move |id: i64, anchor: &str| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field(
+                    "screen_anchor",
+                    "anchor",
+                    toml::Value::String(anchor.to_string()),
+                );
+            }
+        });
+    }
+
+    // set_anchor_offset(entity_id, x, y) — set screen_anchor.offset_x/y
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_anchor_offset", move |id: i64, x: f64, y: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = ctx.lock().unwrap();
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field("screen_anchor", "offset_x", toml::Value::Float(x));
+                comps.set_field("screen_anchor", "offset_y", toml::Value::Float(y));
+            }
         });
     }
 }

@@ -244,6 +244,13 @@ pub fn run(args: RenderArgs) -> Result<()> {
     // Load terrain (if any)
     load_terrain_for_render(&world, &args.scene, &ctx.device, &ctx.queue, &mut renderer);
 
+    // Set scene_dir for font/texture resolution and viewport params for screen anchoring
+    renderer.scene_dir = Path::new(&args.scene)
+        .parent()
+        .map(|p| p.to_path_buf());
+    renderer.ortho_height = camera.ortho_height;
+    renderer.aspect_ratio = camera.aspect;
+
     renderer.update_from_world(&world, &ctx.device);
 
     // Render
