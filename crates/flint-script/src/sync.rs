@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Tracks which entities have scripts and manages file-based hot-reload
+#[derive(Default)]
 pub struct ScriptSync {
     /// Set of entity IDs that have been discovered and loaded
     pub discovered: HashSet<EntityId>,
@@ -158,12 +159,6 @@ impl ScriptSync {
                 }
             }
         }
-    }
-}
-
-impl Default for ScriptSync {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

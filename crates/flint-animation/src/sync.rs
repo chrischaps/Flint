@@ -7,6 +7,7 @@ use flint_ecs::FlintWorld;
 use std::collections::HashMap;
 
 /// Manages per-entity playback states, syncing between TOML components and the player.
+#[derive(Default)]
 pub struct AnimationSync {
     states: HashMap<EntityId, PlaybackState>,
 }
@@ -162,11 +163,5 @@ impl AnimationSync {
                 }
             }
         }
-    }
-}
-
-impl Default for AnimationSync {
-    fn default() -> Self {
-        Self::new()
     }
 }

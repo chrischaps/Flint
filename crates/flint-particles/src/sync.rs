@@ -20,6 +20,7 @@ pub struct ParticleDrawData<'a> {
 }
 
 /// Manages per-emitter state, syncing between ECS components and simulation
+#[derive(Default)]
 pub struct ParticleSync {
     states: HashMap<EntityId, EmitterState>,
     /// Pre-allocated instance buffer for packing alive particles
@@ -259,12 +260,6 @@ impl ParticleSync {
     /// Total alive particles across all emitters
     pub fn total_alive(&self) -> usize {
         self.states.values().map(|s| s.pool.alive_count()).sum()
-    }
-}
-
-impl Default for ParticleSync {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

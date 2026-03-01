@@ -33,14 +33,9 @@ struct TriggerRules {
 }
 
 /// Reads audio_trigger components and generates AudioCommands from GameEvents
+#[derive(Default)]
 pub struct AudioTrigger {
     entity_rules: HashMap<EntityId, TriggerRules>,
-}
-
-impl Default for AudioTrigger {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl AudioTrigger {

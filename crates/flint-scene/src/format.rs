@@ -192,7 +192,7 @@ fn default_version() -> String {
 }
 
 /// Definition of an entity in a scene file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntityDef {
     /// Optional archetype name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -227,12 +227,6 @@ impl EntityDef {
     pub fn with_component(mut self, name: impl Into<String>, data: toml::Value) -> Self {
         self.components.insert(name.into(), data);
         self
-    }
-}
-
-impl Default for EntityDef {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -5,6 +5,7 @@ use crate::sampler::sample_track;
 use std::collections::{HashMap, HashSet};
 
 /// Clip registry — holds all loaded animation clips by name.
+#[derive(Default)]
 pub struct AnimationPlayer {
     clips: HashMap<String, AnimationClip>,
 }
@@ -34,12 +35,6 @@ impl AnimationPlayer {
     /// Number of registered clips.
     pub fn clip_count(&self) -> usize {
         self.clips.len()
-    }
-}
-
-impl Default for AnimationPlayer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

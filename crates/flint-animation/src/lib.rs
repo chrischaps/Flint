@@ -11,6 +11,7 @@ pub mod clip;
 pub mod loader;
 pub mod node_clip;
 pub mod node_sync;
+pub mod playback_state;
 pub mod player;
 pub mod sampler;
 pub mod skeletal_clip;
@@ -20,6 +21,8 @@ pub mod skeleton;
 pub mod sprite_clip;
 pub mod sprite_sync;
 pub mod sync;
+
+pub use playback_state::ClipPlaybackState;
 
 use flint_core::Result;
 use flint_ecs::FlintWorld;
@@ -36,6 +39,7 @@ use sync::AnimationSync;
 /// Supports property tweens (Tier 1), skeletal animation (Tier 2),
 /// node animation (Tier 3), and sprite sheet animation (Tier 4).
 /// Implements `RuntimeSystem`, bridges TOML components via the various Sync types.
+#[derive(Default)]
 pub struct AnimationSystem {
     pub player: AnimationPlayer,
     pub sync: AnimationSync,
@@ -62,12 +66,6 @@ impl AnimationSystem {
         self.skeletal_sync.clear();
         self.node_sync.clear();
         self.sprite_sync.clear();
-    }
-}
-
-impl Default for AnimationSystem {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

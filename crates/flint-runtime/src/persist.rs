@@ -10,6 +10,7 @@ use std::path::Path;
 ///
 /// Values are stored as [`toml::Value`] to match the engine's dynamic component
 /// system. The store can be serialized to / deserialized from TOML files.
+#[derive(Default)]
 pub struct PersistentStore {
     data: HashMap<String, toml::Value>,
 }
@@ -73,12 +74,6 @@ impl PersistentStore {
             self.data.insert(k, v);
         }
         Ok(())
-    }
-}
-
-impl Default for PersistentStore {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

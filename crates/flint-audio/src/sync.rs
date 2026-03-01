@@ -30,6 +30,7 @@ struct NonSpatialEntry {
 }
 
 /// Tracks which entities have been synced to Kira and holds their spatial track handles
+#[derive(Default)]
 pub struct AudioSync {
     /// EntityId → spatial audio entry for 3D-positioned sounds
     spatial_map: HashMap<EntityId, SpatialEntry>,
@@ -37,12 +38,6 @@ pub struct AudioSync {
     non_spatial_map: HashMap<EntityId, NonSpatialEntry>,
     /// Entities that have already been discovered and synced
     synced_entities: HashSet<EntityId>,
-}
-
-impl Default for AudioSync {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Smooth tween duration for parameter changes (avoids clicks)

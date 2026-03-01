@@ -53,6 +53,7 @@ pub struct SpriteAnimEndEvent {
 }
 
 /// Manages sprite sheet animation playback for all entities with `sprite_animator`.
+#[derive(Default)]
 pub struct SpriteAnimSync {
     clips: HashMap<String, SpriteAnimClip>,
     states: HashMap<EntityId, SpritePlaybackState>,
@@ -225,12 +226,6 @@ impl SpriteAnimSync {
                 }
             }
         }
-    }
-}
-
-impl Default for SpriteAnimSync {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

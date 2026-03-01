@@ -8,6 +8,7 @@ use rapier3d::prelude::*;
 use std::collections::HashMap;
 
 /// Bridges Flint's dynamic components with Rapier's rigid body and collider sets
+#[derive(Default)]
 pub struct PhysicsSync {
     /// EntityId -> RigidBodyHandle mapping
     pub body_map: HashMap<EntityId, RigidBodyHandle>,
@@ -15,12 +16,6 @@ pub struct PhysicsSync {
     pub collider_map: HashMap<EntityId, ColliderHandle>,
     /// Track which entities we've already synced
     pub synced_entities: std::collections::HashSet<EntityId>,
-}
-
-impl Default for PhysicsSync {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl PhysicsSync {

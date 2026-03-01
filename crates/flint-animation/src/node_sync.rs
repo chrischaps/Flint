@@ -5,6 +5,7 @@
 //! computing bone matrices for GPU skinning.
 
 use crate::node_clip::NodeClip;
+use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, JointTrack};
 use crate::skeletal_sampler::sample_joint_track;
 use flint_core::toml_util::{toml_f32, toml_f64};
@@ -12,38 +13,11 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
 
-/// Per-entity node animation playback state
-#[derive(Debug, Clone)]
-pub struct NodePlaybackState {
-    pub clip_name: String,
-    pub time: f64,
-    pub speed: f64,
-    pub looping: bool,
-    pub playing: bool,
-    /// Clip name to crossfade into (empty = no blend)
-    pub blend_target: String,
-    /// Duration of the crossfade in seconds
-    pub blend_duration: f32,
-    /// Time elapsed in the current blend
-    pub blend_elapsed: f32,
-}
-
-impl NodePlaybackState {
-    pub fn new(clip_name: String, speed: f64, looping: bool, playing: bool) -> Self {
-        Self {
-            clip_name,
-            time: 0.0,
-            speed,
-            looping,
-            playing,
-            blend_target: String::new(),
-            blend_duration: 0.3,
-            blend_elapsed: 0.0,
-        }
-    }
-}
+/// Per-entity node animation playback state (alias for the shared [`ClipPlaybackState`])
+pub type NodePlaybackState = ClipPlaybackState;
 
 /// Registry of node clips and per-entity playback state
+#[derive(Default)]
 pub struct NodeSync {
     clips: HashMap<String, NodeClip>,
     states: HashMap<EntityId, NodePlaybackState>,
@@ -347,11 +321,5 @@ fn apply_sampled_value(
                 );
             }
         }
-    }
-}
-
-impl Default for NodeSync {
-    fn default() -> Self {
-        Self::new()
     }
 }

@@ -3,6 +3,7 @@
 //! Manages per-entity skeleton state, skeletal clip playback, and bone matrix computation.
 
 use crate::blend::blend_poses;
+use crate::playback_state::ClipPlaybackState;
 use crate::skeletal_clip::{JointProperty, SkeletalClip};
 use crate::skeletal_sampler::sample_joint_track;
 use crate::skeleton::{JointPose, Skeleton};
@@ -11,38 +12,11 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::HashMap;
 
-/// Per-entity skeletal playback state
-#[derive(Debug, Clone)]
-pub struct SkeletalPlaybackState {
-    pub clip_name: String,
-    pub time: f64,
-    pub speed: f64,
-    pub looping: bool,
-    pub playing: bool,
-    /// Clip name to crossfade into (empty = no blend)
-    pub blend_target: String,
-    /// Duration of the crossfade in seconds
-    pub blend_duration: f32,
-    /// Time elapsed in the current blend
-    pub blend_elapsed: f32,
-}
-
-impl SkeletalPlaybackState {
-    pub fn new(clip_name: String, speed: f64, looping: bool, playing: bool) -> Self {
-        Self {
-            clip_name,
-            time: 0.0,
-            speed,
-            looping,
-            playing,
-            blend_target: String::new(),
-            blend_duration: 0.3,
-            blend_elapsed: 0.0,
-        }
-    }
-}
+/// Per-entity skeletal playback state (alias for the shared [`ClipPlaybackState`])
+pub type SkeletalPlaybackState = ClipPlaybackState;
 
 /// Registry of skeletal clips and per-entity skeleton state
+#[derive(Default)]
 pub struct SkeletalSync {
     clips: HashMap<String, SkeletalClip>,
     skeletons: HashMap<EntityId, Skeleton>,
@@ -338,11 +312,5 @@ impl SkeletalSync {
     pub fn skin_index(&self, _entity_id: &EntityId) -> usize {
         // Currently we only support one skin per entity; always 0
         0
-    }
-}
-
-impl Default for SkeletalSync {
-    fn default() -> Self {
-        Self::new()
     }
 }

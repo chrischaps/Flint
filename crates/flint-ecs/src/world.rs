@@ -18,6 +18,7 @@ static EMPTY_ENTITY_SET: LazyLock<HashSet<EntityId>> = LazyLock::new(HashSet::ne
 /// - Stable EntityId mapping
 /// - Dynamic component storage
 /// - Named entity lookup
+#[derive(Default)]
 pub struct FlintWorld {
     /// The underlying hecs world
     world: hecs::World,
@@ -31,12 +32,6 @@ pub struct FlintWorld {
     parents: HashMap<EntityId, EntityId>,
     /// Reverse index: component name -> set of entities that have it
     component_index: HashMap<String, HashSet<EntityId>>,
-}
-
-impl Default for FlintWorld {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl FlintWorld {

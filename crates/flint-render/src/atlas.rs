@@ -66,6 +66,7 @@ impl TextureAtlas {
 }
 
 /// Registry of loaded texture atlases, keyed by texture name.
+#[derive(Default)]
 pub struct AtlasRegistry {
     atlases: HashMap<String, TextureAtlas>,
 }
@@ -116,12 +117,6 @@ impl AtlasRegistry {
             }
         }
         Ok(count)
-    }
-}
-
-impl Default for AtlasRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
