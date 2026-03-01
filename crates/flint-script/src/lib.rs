@@ -76,6 +76,11 @@ impl ScriptSystem {
             .map(|id| *id as i64)
             .collect();
         let touch_taps: Vec<(f64, f64)> = input.touch_taps().to_vec();
+        let touch_swipes: Vec<(String, f64, f64)> = input
+            .touch_swipes()
+            .iter()
+            .map(|(dir, x, y)| (format!("{dir:?}").to_lowercase(), *x, *y))
+            .collect();
 
         let snapshot = InputSnapshot {
             actions_pressed: snapshot_actions(input, true),
@@ -87,6 +92,7 @@ impl ScriptSystem {
             touch_just_started,
             touch_just_ended,
             touch_taps,
+            touch_swipes,
         };
 
         self.engine
@@ -149,6 +155,54 @@ impl ScriptSystem {
         let mut c = self.engine.ctx.lock().unwrap();
         c.screen_width = w;
         c.screen_height = h;
+    }
+
+    /// Sync loaded chunk IDs so scripts can query `is_chunk_loaded`
+    pub fn set_loaded_chunk_ids(&mut self, ids: std::collections::HashSet<String>) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.loaded_chunk_ids = ids;
+    }
+
+    /// Load a script file for a specific entity (for chunk loading).
+    /// The entity must already have a `script` component in the ECS.
+    pub fn load_script_for_entity(
+        &mut self,
+        entity_id: flint_core::EntityId,
+        script_path: &std::path::Path,
+    ) {
+        match self.engine.compile_file(script_path) {
+            Ok(ast) => {
+                let source = script_path
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("unknown.rhai")
+                    .to_string();
+                println!("[script] Loaded (chunk): {:?} → {}", entity_id, source);
+                self.engine.add_script(entity_id, ast, source);
+                self.sync.discovered.insert(entity_id);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[script] Compile error for chunk entity {:?}: {}",
+                    entity_id, e
+                );
+            }
+        }
+    }
+
+    /// Initialize scripts for specific entities (call on_init).
+    pub fn initialize_entities(
+        &mut self,
+        world: &mut FlintWorld,
+        entity_ids: &[flint_core::EntityId],
+    ) {
+        self.engine.call_inits_for(world, entity_ids);
+    }
+
+    /// Remove script state for an entity (for chunk unloading).
+    pub fn remove_entity(&mut self, entity_id: flint_core::EntityId) {
+        self.engine.scripts.remove(&entity_id);
+        self.sync.discovered.remove(&entity_id);
     }
 
     /// Call on_draw_ui() for all scripts

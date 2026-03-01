@@ -1,17 +1,52 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
 }
 
+// ---- Load local.properties (sdk.dir, ndk.dir) ----
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val ndkDir: String = localProps.getProperty("ndk.dir")
+    ?: System.getenv("ANDROID_NDK_HOME")
+    ?: error("Set ndk.dir in local.properties or ANDROID_NDK_HOME env var")
+
+// ---- Load game.properties from the game project ----
+val engineDir = rootProject.projectDir.parentFile  // engine/
+
+val gameDirProp = if (project.hasProperty("gameDir")) project.property("gameDir") as String else ""
+val gameDir = if (gameDirProp.isNotEmpty()) {
+    file(gameDirProp)
+} else {
+    engineDir.parentFile  // Assume game project is parent of engine/
+}
+
+val gameProps = Properties().apply {
+    val f = File(gameDir, "game.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+val gamePackage = gameProps.getProperty("game.package", "com.flint.game")
+val gameName = gameProps.getProperty("game.name", "Flint Game")
+val gameVersionName = gameProps.getProperty("game.version_name", "0.1.0")
+val gameVersionCode = gameProps.getProperty("game.version_code", "1").toInt()
+val gameIconDir = gameProps.getProperty("game.icon_dir", "")
+
 android {
-    namespace = "com.flint.game"
+    namespace = gamePackage
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.flint.game"
+        applicationId = gamePackage
         minSdk = 26          // AAudio (Kira audio) + Vulkan
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = gameVersionCode
+        versionName = gameVersionName
+
+        // Inject app name as a string resource (replaces strings.xml)
+        resValue("string", "app_name", gameName)
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -35,17 +70,20 @@ android {
 // No Java dependencies needed — NativeActivity is built into Android.
 
 // ---- Cargo NDK Build Task ----
-// Builds the Rust cdylib for Android via cargo-ndk.
-// The output .so files go into jniLibs/ for APK packaging.
-
-val engineDir = rootProject.projectDir.parentFile  // engine/
 
 tasks.register<Exec>("cargoNdkBuild") {
     description = "Build flint-android native library via cargo-ndk"
     workingDir = engineDir
 
+    // Pass NDK path from local.properties so shell env vars aren't needed
+    environment("ANDROID_NDK_HOME", ndkDir)
+
     val target = "arm64-v8a"
     val jniLibsDir = file("src/main/jniLibs")
+
+    // Pass a unique build timestamp so the asset extractor always re-extracts.
+    // This defeats Android Auto Backup restoring stale assets after reinstall.
+    environment("FLINT_APK_VERSION", System.currentTimeMillis().toString())
 
     commandLine(
         "cargo", "ndk",
@@ -58,15 +96,6 @@ tasks.register<Exec>("cargoNdkBuild") {
 }
 
 // ---- Copy Game Assets Task ----
-// Copies the game project's scene files, schemas, textures, scripts, and audio
-// into the APK's assets/ directory. Pass -PgameDir=/path/to/game to specify
-// the game project root (defaults to the engine's parent directory).
-
-val gameDir = if (project.hasProperty("gameDir")) {
-    file(project.property("gameDir") as String)
-} else {
-    engineDir.parentFile  // Assume game project is parent of engine/
-}
 
 tasks.register<Copy>("copyGameAssets") {
     description = "Copy game assets into APK assets directory"
@@ -81,17 +110,18 @@ tasks.register<Copy>("copyGameAssets") {
     // Copy game-level files
     from(gameDir) {
         include("**/*.toml")
-        include("schemas/**")
-        include("scripts/**")
-        include("sprites/**")
-        include("textures/**")
-        include("models/**")
-        include("audio/**")
-        include("animations/**")
+        include("**/*.png")
+        include("**/*.jpg")
+        include("**/*.ogg")
+        include("**/*.wav")
+        include("**/*.rhai")
+        include("**/*.glb")
+        include("**/*.gltf")
         // Exclude engine internals and build artifacts
         exclude("engine/**")
         exclude("target/**")
         exclude("android/**")
+        exclude("build/**")
         exclude(".git/**")
     }
 
@@ -103,8 +133,6 @@ tasks.register<Copy>("copyGameAssets") {
     into(assetsDir)
 
     // Generate a manifest of all asset files for the Rust extractor.
-    // Android's NDK AssetDir only enumerates files (not subdirectories),
-    // so we write a flat list of relative paths the extractor can read.
     doLast {
         val manifest = File(assetsDir, "asset_manifest.txt")
         val lines = mutableListOf<String>()
@@ -115,7 +143,47 @@ tasks.register<Copy>("copyGameAssets") {
     }
 }
 
-// Wire both tasks as preBuild dependencies
+// ---- Copy Game Icons Task ----
+
+tasks.register<Copy>("copyGameIcons") {
+    description = "Copy game launcher icons into Android res/"
+
+    val iconSrcDir = if (gameIconDir.isNotEmpty()) File(gameDir, gameIconDir) else null
+
+    // Only run if game specifies an icon directory and it exists
+    enabled = iconSrcDir != null && iconSrcDir.exists()
+
+    if (iconSrcDir != null && iconSrcDir.exists()) {
+        from(iconSrcDir) {
+            include("mipmap-*/ic_launcher.png")
+        }
+        into(file("src/main/res"))
+    }
+}
+
+// ---- Copy APK to Game Directory Task ----
+
+tasks.register<Copy>("copyApkToGame") {
+    description = "Copy built APK to game project build/ directory"
+
+    val apkFile = file("build/outputs/apk/debug/app-debug.apk")
+    // Derive APK name from game name: lowercase, hyphens for spaces
+    val apkName = gameName.lowercase().replace(" ", "-") + ".apk"
+    val outputDir = File(gameDir, "build")
+
+    from(apkFile)
+    into(outputDir)
+    rename { apkName }
+}
+
+// Wire tasks as preBuild dependencies
 tasks.named("preBuild") {
-    dependsOn("cargoNdkBuild", "copyGameAssets")
+    dependsOn("cargoNdkBuild", "copyGameAssets", "copyGameIcons")
+}
+
+// Copy APK after assembly completes
+tasks.whenTaskAdded {
+    if (name == "assembleDebug" || name == "assembleRelease") {
+        finalizedBy("copyApkToGame")
+    }
 }

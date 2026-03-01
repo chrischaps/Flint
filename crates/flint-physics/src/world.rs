@@ -115,6 +115,12 @@ impl PhysicsWorld {
         );
     }
 
+    /// Remove a standalone collider
+    pub fn remove_collider(&mut self, handle: ColliderHandle) {
+        self.collider_set
+            .remove(handle, &mut self.island_manager, &mut self.rigid_body_set, true);
+    }
+
     /// Get a rigid body by handle
     pub fn get_rigid_body(&self, handle: RigidBodyHandle) -> Option<&RigidBody> {
         self.rigid_body_set.get(handle)

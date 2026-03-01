@@ -523,6 +523,19 @@ pub fn load_textures_from_world(
                     }
                 }
             }
+            // Load font textures referenced by ui_text components
+            if let Some(ui_text) = comps.get("ui_text") {
+                if let Some(font_path_str) = ui_text.get("font").and_then(|v| v.as_str()) {
+                    if !font_path_str.is_empty() {
+                        let font_file = config.scene_dir.join(font_path_str);
+                        if let Some(font) = crate::bitmap_font::BitmapFont::load(&font_file) {
+                            if !font.texture.is_empty() {
+                                tex_names.push(font.texture);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         for tex_name in tex_names {

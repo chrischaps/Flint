@@ -22,7 +22,7 @@ use flint_runtime::{
 use flint_script::context::{DrawCommand, LogLevel, ScriptCommand};
 use flint_script::ScriptSystem;
 use gilrs::{EventType, Gilrs};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -144,6 +144,9 @@ pub struct PlayerApp {
 
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
+
+    // Chunk streaming: chunk_id → spawned entity IDs
+    loaded_chunks: HashMap<String, Vec<flint_core::EntityId>>,
 }
 
 impl PlayerApp {
@@ -203,6 +206,7 @@ impl PlayerApp {
             transition_phase: TransitionPhase::Idle,
             schema_paths: Vec::new(),
             terrain: None,
+            loaded_chunks: HashMap::new(),
         }
     }
 
@@ -278,6 +282,11 @@ impl PlayerApp {
         self.camera.fov = 70.0; // Slightly wider FOV for first-person
 
         let mut scene_renderer = SceneRenderer::new(&render_context, Default::default());
+
+        // Set scene_dir for font/texture resolution
+        scene_renderer.scene_dir = Path::new(&self.scene_path)
+            .parent()
+            .map(|p| p.to_path_buf());
 
         // Load models from world (including skeletal data)
         let config = build_model_load_config(
@@ -884,6 +893,10 @@ impl PlayerApp {
         self.script
             .set_screen_size(screen_rect.width(), screen_rect.height());
 
+        // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
+        let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
+        self.script.set_loaded_chunk_ids(chunk_ids);
+
         // Only run on_update when scripts are not paused
         if config.scripts == SystemPolicy::Run {
             self.script
@@ -982,6 +995,13 @@ impl PlayerApp {
 
         // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            renderer.camera_offset = [self.camera.position.x, self.camera.position.y];
+            renderer.ortho_height = if self.camera.ortho_height > 0.0 {
+                self.camera.ortho_height
+            } else {
+                10.0
+            };
+            renderer.aspect_ratio = self.camera.aspect;
             renderer.update_from_world(&self.world, &context.device);
         }
 
@@ -1204,6 +1224,25 @@ impl PlayerApp {
                         eprintln!("[state] Unknown state template: '{}'", name);
                     }
                 }
+                ScriptCommand::SetVelocity2D {
+                    entity_id,
+                    vx,
+                    vy,
+                } => {
+                    let eid = flint_core::EntityId::from_raw(entity_id as u64);
+                    self.physics.set_velocity_2d(eid, vx as f32, vy as f32);
+                }
+                ScriptCommand::LoadChunk {
+                    path,
+                    offset_x,
+                    offset_y,
+                    chunk_id,
+                } => {
+                    self.load_chunk(&path, offset_x as f32, offset_y as f32, &chunk_id);
+                }
+                ScriptCommand::UnloadChunk { chunk_id } => {
+                    self.unload_chunk(&chunk_id);
+                }
             }
         }
     }
@@ -1239,6 +1278,181 @@ impl PlayerApp {
         }
     }
 
+    /// Load a chunk TOML file as additional entities with offset.
+    fn load_chunk(&mut self, path: &str, offset_x: f32, offset_y: f32, chunk_id: &str) {
+        if self.loaded_chunks.contains_key(chunk_id) {
+            eprintln!("[chunk] Chunk '{}' already loaded, skipping", chunk_id);
+            return;
+        }
+
+        // Resolve path relative to scene directory
+        let scene_dir = Path::new(&self.scene_path)
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let chunk_path = scene_dir.join(path);
+
+        // Parse chunk as a scene file
+        let content = match std::fs::read_to_string(&chunk_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[chunk] Failed to read '{}': {}", chunk_path.display(), e);
+                return;
+            }
+        };
+        let scene_file: flint_scene::SceneFile = match toml::from_str(&content) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[chunk] Failed to parse '{}': {}", chunk_path.display(), e);
+                return;
+            }
+        };
+
+        // Load schema registry for archetype defaults
+        let registry = if self.schema_paths.is_empty() {
+            flint_schema::SchemaRegistry::load_from_directory("schemas")
+                .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
+        } else {
+            let existing: Vec<&str> = self
+                .schema_paths
+                .iter()
+                .map(|s| s.as_str())
+                .filter(|p| Path::new(p).exists())
+                .collect();
+            if existing.is_empty() {
+                flint_schema::SchemaRegistry::new()
+            } else {
+                flint_schema::SchemaRegistry::load_from_directories(&existing)
+                    .unwrap_or_else(|_| flint_schema::SchemaRegistry::new())
+            }
+        };
+
+        let mut spawned_ids = Vec::new();
+
+        // Spawn entities with prefixed names
+        for (name, entity_def) in &scene_file.entities {
+            let prefixed_name = format!("{}_{}", chunk_id, name);
+            let id = match self.world.spawn(prefixed_name.clone()) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("[chunk] Failed to spawn '{}': {:?}", prefixed_name, e);
+                    continue;
+                }
+            };
+            spawned_ids.push(id);
+
+            // Set archetype + defaults
+            if let Some(archetype) = &entity_def.archetype {
+                if let Some(comps) = self.world.get_components_mut(id) {
+                    comps.archetype = Some(archetype.clone());
+                    if let Some(arch_schema) = registry.get_archetype(archetype) {
+                        for (comp_name, defaults) in &arch_schema.defaults {
+                            if !comps.has(comp_name) {
+                                comps.set(comp_name.clone(), defaults.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Set component data
+            for (comp_name, comp_data) in &entity_def.components {
+                let _ = self.world.merge_component(id, comp_name, comp_data.clone());
+            }
+
+            // Apply position offset
+            if let Some(transform) = self.world.get_transform(id) {
+                let new_x = transform.position.x + offset_x;
+                let new_y = transform.position.y + offset_y;
+                let new_z = transform.position.z;
+                if let Some(comps) = self.world.get_components_mut(id) {
+                    comps.set_field(
+                        "transform",
+                        "position",
+                        toml::Value::Array(vec![
+                            toml::Value::Float(new_x as f64),
+                            toml::Value::Float(new_y as f64),
+                            toml::Value::Float(new_z as f64),
+                        ]),
+                    );
+                }
+            } else {
+                // Entity has no transform yet — create one with the offset
+                if let Some(comps) = self.world.get_components_mut(id) {
+                    comps.set_field(
+                        "transform",
+                        "position",
+                        toml::Value::Array(vec![
+                            toml::Value::Float(offset_x as f64),
+                            toml::Value::Float(offset_y as f64),
+                            toml::Value::Float(0.0),
+                        ]),
+                    );
+                }
+            }
+        }
+
+        // Re-sync physics for new entities
+        self.physics
+            .sync_new_entities(&mut self.world, &spawned_ids);
+
+        // Re-sync scripts for new entities
+        let chunk_scripts_dir = chunk_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("scripts");
+        for &id in &spawned_ids {
+            if let Some(comps) = self.world.get_components(id) {
+                if let Some(script_comp) = comps.get("script") {
+                    if let Some(source) = script_comp
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                    {
+                        // Try chunk's own scripts dir first, then scene's scripts dir
+                        let scene_scripts_dir = Path::new(&self.scene_path)
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join("scripts");
+                        let script_path = if chunk_scripts_dir.join(source).exists() {
+                            chunk_scripts_dir.join(source)
+                        } else {
+                            scene_scripts_dir.join(source)
+                        };
+                        if script_path.exists() {
+                            self.script.load_script_for_entity(id, &script_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Initialize scripts for new entities
+        self.script.initialize_entities(&mut self.world, &spawned_ids);
+
+        println!(
+            "[chunk] Loaded '{}' ({} entities) at offset ({}, {})",
+            chunk_id,
+            spawned_ids.len(),
+            offset_x,
+            offset_y
+        );
+        self.loaded_chunks.insert(chunk_id.to_string(), spawned_ids);
+    }
+
+    /// Unload a previously loaded chunk by despawning all its entities.
+    fn unload_chunk(&mut self, chunk_id: &str) {
+        if let Some(entity_ids) = self.loaded_chunks.remove(chunk_id) {
+            let count = entity_ids.len();
+            for id in &entity_ids {
+                self.physics.remove_entity(*id);
+                self.script.remove_entity(*id);
+                let _ = self.world.despawn(*id);
+            }
+            println!("[chunk] Unloaded '{}' ({} entities)", chunk_id, count);
+        } else {
+            eprintln!("[chunk] Chunk '{}' not loaded, cannot unload", chunk_id);
+        }
+    }
+
     /// Unload the current scene and load a new one.
     fn execute_scene_transition(&mut self, target_scene: &str) {
         println!("[transition] Unloading current scene...");
@@ -1269,6 +1483,7 @@ impl PlayerApp {
         self.skeletal_entity_assets.clear();
         self.ui_textures.clear();
         self.draw_commands.clear();
+        self.loaded_chunks.clear();
 
         println!("[transition] Loading scene: {}", target_scene);
 
@@ -1322,6 +1537,10 @@ impl PlayerApp {
 
         // Reload models
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            renderer.scene_dir = Path::new(&self.scene_path)
+                .parent()
+                .map(|p| p.to_path_buf());
+
             let config = build_model_load_config(
                 &self.scene_path,
                 &self.world,
@@ -1660,6 +1879,9 @@ impl ApplicationHandler for PlayerApp {
                         self.input.process_touch_move(id, x, y);
                     }
                     winit::event::TouchPhase::Ended => {
+                        // Update position from the End event before gesture detection —
+                        // fast swipes may have few/no Move events between Start and End
+                        self.input.process_touch_move(id, x, y);
                         self.input.process_touch_end(id);
                     }
                     winit::event::TouchPhase::Cancelled => {

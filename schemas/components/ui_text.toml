@@ -1,0 +1,6 @@
+[component.ui_text]
+font = { type = "string", default = "", description = "Path to .font.toml bitmap font definition" }
+text = { type = "string", default = "", description = "Text content to display" }
+size = { type = "f32", default = 1.0, description = "Text height in world units" }
+color = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "Text tint color (RGBA)" }
+align = { type = "string", default = "left", description = "Horizontal alignment: left, center, right" }

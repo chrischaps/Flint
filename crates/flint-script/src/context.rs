@@ -10,6 +10,42 @@ use flint_physics::PhysicsSystem;
 use flint_runtime::{GameStateMachine, PersistentStore};
 use std::collections::HashSet;
 
+/// Persistent state for camera follow (survives across frames, reset on scene transition)
+pub struct CameraFollowState {
+    pub current_x: f32,
+    pub current_y: f32,
+    pub initialized: bool,
+}
+
+impl Default for CameraFollowState {
+    fn default() -> Self {
+        Self {
+            current_x: 0.0,
+            current_y: 0.0,
+            initialized: false,
+        }
+    }
+}
+
+/// Persistent state for screen shake effect
+pub struct ShakeState {
+    pub amplitude: f32,
+    pub frequency: f32,
+    pub decay: f32,
+    pub phase: f32,
+}
+
+impl Default for ShakeState {
+    fn default() -> Self {
+        Self {
+            amplitude: 0.0,
+            frequency: 20.0,
+            decay: 6.0,
+            phase: 0.0,
+        }
+    }
+}
+
 /// Snapshot of input state for script access (no winit dependency needed)
 #[derive(Clone, Default)]
 pub struct InputSnapshot {
@@ -26,6 +62,8 @@ pub struct InputSnapshot {
     pub touch_just_ended: Vec<i64>,
     /// Tap positions detected this frame (norm_x, norm_y)
     pub touch_taps: Vec<(f64, f64)>,
+    /// Swipe gestures detected this frame (direction_str, start_norm_x, start_norm_y)
+    pub touch_swipes: Vec<(String, f64, f64)>,
 }
 
 /// Log severity levels
@@ -73,6 +111,20 @@ pub enum ScriptCommand {
     PopState,
     ReplaceState {
         name: String,
+    },
+    SetVelocity2D {
+        entity_id: i64,
+        vx: f64,
+        vy: f64,
+    },
+    LoadChunk {
+        path: String,
+        offset_x: f64,
+        offset_y: f64,
+        chunk_id: String,
+    },
+    UnloadChunk {
+        chunk_id: String,
     },
 }
 
@@ -218,6 +270,12 @@ pub struct ScriptCallContext {
     pub ui_system: UiSystem,
     /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
     pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
+    /// Persistent camera follow state (survives across frames)
+    pub camera_follow: CameraFollowState,
+    /// Persistent screen shake state
+    pub shake: ShakeState,
+    /// Set of currently loaded chunk IDs (synced from PlayerApp before scripts run)
+    pub loaded_chunk_ids: HashSet<String>,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -266,6 +324,9 @@ impl ScriptCallContext {
             current_scene_path: String::new(),
             ui_system: UiSystem::new(),
             terrain_height_fn: None,
+            camera_follow: CameraFollowState::default(),
+            shake: ShakeState::default(),
+            loaded_chunk_ids: HashSet::new(),
         }
     }
 
