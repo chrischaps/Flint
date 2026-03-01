@@ -924,9 +924,12 @@ impl PlayerApp {
             game_events.push(flint_runtime::GameEvent::ActionReleased(action));
         }
 
-        // Set state machine + persistent store pointers for script access
-        self.script.set_state_machine(&mut self.state_machine);
-        self.script.set_persistent_store(&mut self.persistent_store);
+        // Set state machine + persistent store + physics pointers for script access (RAII guard)
+        let _state_scope = self.script.state_scope(
+            &mut self.state_machine,
+            &mut self.persistent_store,
+            &self.physics,
+        );
         self.script.set_current_scene(&self.scene_path);
 
         // Set transition state for script access
@@ -946,8 +949,7 @@ impl PlayerApp {
             }
         }
 
-        // Script system: provide physics + camera context, then run updates
-        self.script.set_physics(&self.physics);
+        // Script system: provide camera context, then run updates
         self.script
             .set_camera(self.camera.position_array(), self.camera.forward_vector());
         self.script.provide_context(
@@ -1009,9 +1011,6 @@ impl PlayerApp {
 
         let script_commands = self.script.drain_commands();
         self.process_script_commands(script_commands);
-
-        // Clear state pointers after script calls
-        self.script.clear_state_pointers();
 
         // Collect draw commands for this frame (scripts + data-driven UI)
         let mut commands = self.script.drain_draw_commands();
@@ -1525,10 +1524,14 @@ impl PlayerApp {
         println!("[transition] Unloading current scene...");
 
         // Call on_scene_exit on all scripts
-        self.script.set_state_machine(&mut self.state_machine);
-        self.script.set_persistent_store(&mut self.persistent_store);
-        self.script.call_scene_exits(&mut self.world);
-        self.script.clear_state_pointers();
+        {
+            let _state_scope = self.script.state_scope(
+                &mut self.state_machine,
+                &mut self.persistent_store,
+                &self.physics,
+            );
+            self.script.call_scene_exits(&mut self.world);
+        }
 
         // Clear all systems
         self.script.clear();
@@ -1709,10 +1712,14 @@ impl PlayerApp {
 
         // Call on_scene_enter on new scripts
         self.script.set_current_scene(&self.scene_path);
-        self.script.set_state_machine(&mut self.state_machine);
-        self.script.set_persistent_store(&mut self.persistent_store);
-        self.script.call_scene_enters(&mut self.world);
-        self.script.clear_state_pointers();
+        {
+            let _state_scope = self.script.state_scope(
+                &mut self.state_machine,
+                &mut self.persistent_store,
+                &self.physics,
+            );
+            self.script.call_scene_enters(&mut self.world);
+        }
 
         // Recapture cursor if player exists
         if self.physics.character.player_entity().is_some() && !self.cursor_captured {

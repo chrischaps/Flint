@@ -15,6 +15,7 @@ pub mod sync;
 pub mod ui;
 
 pub use context::DrawCommand;
+pub use context::StateScope;
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
@@ -100,23 +101,15 @@ impl ScriptSystem {
         self.pending_events = events.to_vec();
     }
 
-    /// Set the state machine pointer for script access
-    pub fn set_state_machine(&mut self, sm: &mut flint_runtime::GameStateMachine) {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.state_machine = sm as *mut flint_runtime::GameStateMachine;
-    }
-
-    /// Set the persistent store pointer for script access
-    pub fn set_persistent_store(&mut self, store: &mut flint_runtime::PersistentStore) {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.persistent_store = store as *mut flint_runtime::PersistentStore;
-    }
-
-    /// Clear the state machine and persistent store pointers
-    pub fn clear_state_pointers(&mut self) {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.state_machine = std::ptr::null_mut();
-        c.persistent_store = std::ptr::null_mut();
+    /// Create an RAII guard that sets state_machine, persistent_store, and physics
+    /// pointers for the duration of a scope. All three are cleared on Drop.
+    pub fn state_scope(
+        &mut self,
+        sm: &mut flint_runtime::GameStateMachine,
+        store: &mut flint_runtime::PersistentStore,
+        physics: &flint_physics::PhysicsSystem,
+    ) -> StateScope {
+        StateScope::new(&self.engine.ctx, sm, store, physics)
     }
 
     /// Set transition state for script access
@@ -130,12 +123,6 @@ impl ScriptSystem {
     pub fn set_current_scene(&mut self, path: &str) {
         let mut c = self.engine.ctx.lock().unwrap();
         c.current_scene_path = path.to_string();
-    }
-
-    /// Set the physics system pointer for raycast access from scripts
-    pub fn set_physics(&mut self, physics: &flint_physics::PhysicsSystem) {
-        let mut c = self.engine.ctx.lock().unwrap();
-        c.physics = physics as *const flint_physics::PhysicsSystem;
     }
 
     /// Set camera position and direction for weapon aiming

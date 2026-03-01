@@ -5,7 +5,7 @@
 //! that temporarily lends the FlintWorld to scripts.
 
 use crate::api;
-use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand};
+use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -198,11 +198,7 @@ impl ScriptEngine {
 
     /// Call on_init() for all scripts that haven't been initialized yet
     pub fn call_inits(&mut self, world: &mut FlintWorld) {
-        // Set world pointer for the duration of this call
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
         for entity_id in entity_ids {
@@ -221,20 +217,11 @@ impl ScriptEngine {
                 }
             }
         }
-
-        // Clear world pointer
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
-        }
     }
 
     /// Call on_init() for specific entities (chunk loading)
     pub fn call_inits_for(&mut self, world: &mut FlintWorld, entity_ids: &[EntityId]) {
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         for &entity_id in entity_ids {
             if let Some(script) = self.scripts.get_mut(&entity_id) {
@@ -253,19 +240,11 @@ impl ScriptEngine {
                 }
             }
         }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
-        }
     }
 
     /// Call on_update() for all scripts
     pub fn call_updates(&mut self, world: &mut FlintWorld) {
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
         for entity_id in entity_ids {
@@ -283,19 +262,11 @@ impl ScriptEngine {
                 }
             }
         }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
-        }
     }
 
     /// Call on_draw_ui() for all scripts that define it
     pub fn call_draw_uis(&mut self, world: &mut FlintWorld) {
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
         for entity_id in entity_ids {
@@ -313,11 +284,6 @@ impl ScriptEngine {
                 }
             }
         }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
-        }
     }
 
     /// Drain all accumulated draw commands
@@ -332,10 +298,7 @@ impl ScriptEngine {
             return;
         }
 
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         for event in events {
             match event {
@@ -358,11 +321,6 @@ impl ScriptEngine {
                 }
                 _ => {}
             }
-        }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
         }
     }
 
@@ -521,10 +479,7 @@ impl ScriptEngine {
 
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
         for entity_id in entity_ids {
@@ -545,19 +500,11 @@ impl ScriptEngine {
                 }
             }
         }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
-        }
     }
 
     /// Call on_scene_enter() for all scripts that define it
     pub fn call_scene_enters(&mut self, world: &mut FlintWorld) {
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
         for entity_id in entity_ids {
@@ -578,11 +525,6 @@ impl ScriptEngine {
                 }
             }
         }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
-        }
     }
 
     /// Call on_animation_end(clip_name) for entities whose sprite animation completed.
@@ -595,10 +537,7 @@ impl ScriptEngine {
             return;
         }
 
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = world as *mut FlintWorld;
-        }
+        let _world_scope = WorldScope::new(&self.ctx, world);
 
         for event in events {
             if let Some(script) = self.scripts.get_mut(&event.entity_id) {
@@ -621,11 +560,6 @@ impl ScriptEngine {
                     }
                 }
             }
-        }
-
-        {
-            let mut c = self.ctx.lock().unwrap();
-            c.world = std::ptr::null_mut();
         }
     }
 }

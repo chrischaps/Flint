@@ -9,6 +9,7 @@ use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
 use flint_runtime::{GameStateMachine, PersistentStore};
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 /// Persistent state for camera follow (survives across frames, reset on scene transition)
 pub struct CameraFollowState {
@@ -368,5 +369,101 @@ impl ScriptCallContext {
         } else {
             Some(unsafe { &*self.physics })
         }
+    }
+}
+
+/// RAII guard: sets world pointer on construction, clears on Drop.
+///
+/// Clones the `Arc<Mutex<ScriptCallContext>>` so the mutex is NOT held between
+/// construction and drop — callers can re-lock freely (e.g. to set `current_entity`).
+pub struct WorldScope {
+    ctx: Arc<Mutex<ScriptCallContext>>,
+}
+
+impl WorldScope {
+    pub fn new(ctx: &Arc<Mutex<ScriptCallContext>>, world: &mut FlintWorld) -> Self {
+        {
+            let mut c = ctx.lock().unwrap();
+            c.world = world as *mut FlintWorld;
+        }
+        Self { ctx: ctx.clone() }
+    }
+}
+
+impl Drop for WorldScope {
+    fn drop(&mut self) {
+        let mut c = self.ctx.lock().unwrap();
+        c.world = std::ptr::null_mut();
+    }
+}
+
+/// RAII guard: sets state_machine, persistent_store, and physics pointers.
+/// Clears all three on Drop.
+pub struct StateScope {
+    ctx: Arc<Mutex<ScriptCallContext>>,
+}
+
+impl StateScope {
+    pub fn new(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        state_machine: &mut GameStateMachine,
+        persistent_store: &mut PersistentStore,
+        physics: &PhysicsSystem,
+    ) -> Self {
+        {
+            let mut c = ctx.lock().unwrap();
+            c.state_machine = state_machine as *mut GameStateMachine;
+            c.persistent_store = persistent_store as *mut PersistentStore;
+            c.physics = physics as *const PhysicsSystem;
+        }
+        Self { ctx: ctx.clone() }
+    }
+}
+
+impl Drop for StateScope {
+    fn drop(&mut self) {
+        let mut c = self.ctx.lock().unwrap();
+        c.state_machine = std::ptr::null_mut();
+        c.persistent_store = std::ptr::null_mut();
+        c.physics = std::ptr::null();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn world_scope_sets_and_clears_pointer() {
+        let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
+        let mut world = FlintWorld::new();
+
+        // Pointer starts null
+        assert!(ctx.lock().unwrap().world.is_null());
+
+        {
+            let _scope = WorldScope::new(&ctx, &mut world);
+            // Pointer is set inside scope
+            assert!(!ctx.lock().unwrap().world.is_null());
+        }
+
+        // Pointer cleared after scope drops
+        assert!(ctx.lock().unwrap().world.is_null());
+    }
+
+    #[test]
+    fn world_scope_clears_on_panic() {
+        let ctx = Arc::new(Mutex::new(ScriptCallContext::new()));
+        let mut world = FlintWorld::new();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scope = WorldScope::new(&ctx, &mut world);
+            assert!(!ctx.lock().unwrap().world.is_null());
+            panic!("intentional panic to test Drop");
+        }));
+
+        assert!(result.is_err());
+        // Pointer still cleared despite panic
+        assert!(ctx.lock().unwrap().world.is_null());
     }
 }
