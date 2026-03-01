@@ -139,8 +139,8 @@ fn validate_callbacks(ast: &AST, source_path: &str) {
 /// The scripting engine — owns the Rhai Engine and per-entity script instances
 pub struct ScriptEngine {
     engine: Engine,
-    pub ctx: Arc<Mutex<ScriptCallContext>>,
-    pub scripts: HashMap<EntityId, ScriptInstance>,
+    pub(crate) ctx: Arc<Mutex<ScriptCallContext>>,
+    pub(crate) scripts: HashMap<EntityId, ScriptInstance>,
 }
 
 impl ScriptEngine {

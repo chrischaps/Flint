@@ -184,9 +184,7 @@ fn register_animation_data(
             if let Some(ref import_result) = loaded.import_result {
                 for imported_skel in &import_result.skeletons {
                     let skeleton = Skeleton::from_imported(imported_skel);
-                    animation
-                        .skeletal_sync
-                        .add_skeleton(loaded.entity_id, skeleton);
+                    animation.add_skeleton(loaded.entity_id, skeleton);
                 }
                 for imported_clip in &import_result.skeletal_clips {
                     let clip = SkeletalClip::from_imported(imported_clip);
@@ -198,7 +196,7 @@ fn register_animation_data(
                     );
 
                     all_clip_names.push(clip.name.clone());
-                    animation.skeletal_sync.add_clip(clip);
+                    animation.add_skeletal_clip(clip);
                 }
 
                 // Add skeleton component so SkeletalSync::sync_from_world discovers this entity
@@ -225,13 +223,11 @@ fn register_animation_data(
                 );
 
                 all_clip_names.push(clip.name.clone());
-                animation.node_sync.add_clip(clip);
+                animation.add_node_clip(clip);
             }
         }
         if let Some(ref node_map) = loaded.node_map {
-            animation
-                .node_sync
-                .register_entity(loaded.entity_id, node_map.clone());
+            animation.register_node_entity(loaded.entity_id, node_map.clone());
         }
     }
 
@@ -393,9 +389,9 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
 
             if anim_info.is_some() {
                 // Sync and advance to the requested time
-                animation.sync.sync_from_world(&world, &animation.player);
-                animation.skeletal_sync.sync_from_world(&world);
-                animation.node_sync.sync_from_world(&world);
+                animation.sync_property_from_world(&world);
+                animation.sync_skeletal_from_world(&world);
+                animation.sync_node_from_world(&world);
 
                 // Use update() which handles all three tiers
                 let _ = flint_runtime::RuntimeSystem::update(
@@ -406,7 +402,7 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
 
                 // Upload bone matrices
                 for (eid, asset) in &skeletal_entity_assets {
-                    if let Some(matrices) = animation.skeletal_sync.bone_matrices(eid) {
+                    if let Some(matrices) = animation.bone_matrices(eid) {
                         renderer.update_bone_matrices(&ctx.queue, asset, matrices);
                     }
                 }
@@ -928,7 +924,7 @@ impl PreviewApp {
                 }
 
                 // Reset skeletal playback state so it re-syncs with the new clip
-                self.animation.skeletal_sync.reset_state(&eid);
+                self.animation.reset_skeletal_state(&eid);
             }
         }
 
@@ -1070,22 +1066,22 @@ impl PreviewApp {
 
             if let Some(eid) = entity_id {
                 // Try skeletal sync first
-                if let Some(ps) = self.animation.skeletal_sync.get_playback_state(&eid) {
+                if let Some(ps) = self.animation.skeletal_playback_state(&eid) {
                     time = ps.time;
                     speed = ps.speed;
                 }
                 // Try node sync
-                if let Some(ps) = self.animation.node_sync.get_playback_state(&eid) {
+                if let Some(ps) = self.animation.node_playback_state(&eid) {
                     time = ps.time;
                     speed = ps.speed;
                 }
                 // Get duration from current clip name
                 if !anim_clip_names.is_empty() {
                     let clip_name = &anim_clip_names[anim_clip_index];
-                    if let Some(d) = self.animation.skeletal_sync.get_clip_duration(clip_name) {
+                    if let Some(d) = self.animation.skeletal_clip_duration(clip_name) {
                         duration = d;
                     }
-                    if let Some(d) = self.animation.node_sync.get_clip_duration(clip_name) {
+                    if let Some(d) = self.animation.node_clip_duration(clip_name) {
                         duration = d;
                     }
                 }
@@ -1541,16 +1537,16 @@ impl PreviewApp {
         if let Some(t) = scrub_time {
             if let Ok(state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
-                    self.animation.skeletal_sync.set_playback_time(&eid, t);
-                    self.animation.node_sync.set_playback_time(&eid, t);
+                    self.animation.set_skeletal_playback_time(&eid, t);
+                    self.animation.set_node_playback_time(&eid, t);
                     // Advance with dt=0 to recompute bone matrices at the new time
-                    self.animation.skeletal_sync.advance_and_compute(0.0);
+                    self.animation.advance_skeletal(0.0);
                 }
             }
             // Upload bone matrices after scrub
             if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
                 for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                    if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
+                    if let Some(matrices) = self.animation.bone_matrices(entity_id) {
                         renderer.update_bone_matrices(&ctx.queue, asset_name, matrices);
                     }
                 }
@@ -1880,22 +1876,16 @@ impl ApplicationHandler for PreviewApp {
                 if self.anim_info.is_some() && !self.anim_paused {
                     if let Ok(mut state) = self.state.lock() {
                         // Sync from world picks up component changes (clip switches, speed, etc.)
-                        self.animation
-                            .sync
-                            .sync_from_world(&state.world, &self.animation.player);
-                        self.animation.skeletal_sync.sync_from_world(&state.world);
-                        self.animation.node_sync.sync_from_world(&state.world);
+                        self.animation.sync_property_from_world(&state.world);
+                        self.animation.sync_skeletal_from_world(&state.world);
+                        self.animation.sync_node_from_world(&state.world);
 
                         // Advance all animation tiers
-                        self.animation.sync.advance_and_write(
-                            &mut state.world,
-                            &self.animation.player,
-                            dt,
-                        );
-                        self.animation.skeletal_sync.advance_and_compute(dt);
                         self.animation
-                            .node_sync
-                            .advance_and_apply(&mut state.world, dt);
+                            .advance_property_and_write(&mut state.world, dt);
+                        self.animation.advance_skeletal(dt);
+                        self.animation
+                            .advance_node_and_apply(&mut state.world, dt);
 
                         self.anim_time_accumulator += dt;
                     }
@@ -1903,7 +1893,7 @@ impl ApplicationHandler for PreviewApp {
                     // Upload bone matrices for skinned meshes
                     for (entity_id, asset_name) in &self.skeletal_entity_assets {
                         if let Some(matrices) =
-                            self.animation.skeletal_sync.bone_matrices(entity_id)
+                            self.animation.bone_matrices(entity_id)
                         {
                             renderer.update_bone_matrices(&context.queue, asset_name, matrices);
                         }

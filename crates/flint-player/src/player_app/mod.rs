@@ -508,7 +508,7 @@ impl PlayerApp {
             self.cursor_captured = true;
         }
         #[cfg(not(target_os = "android"))]
-        if self.physics.character.player_entity().is_some() {
+        if self.physics.has_player_entity() {
             self.capture_cursor();
         }
 
@@ -879,7 +879,7 @@ impl PlayerApp {
         // Read active state config to decide which systems run
         let config = self.state_machine.active_config().clone();
 
-        let has_fps_player = self.physics.character.player_entity().is_some();
+        let has_fps_player = self.physics.has_player_entity();
 
         // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
         while self.clock.should_fixed_update() {
@@ -900,27 +900,27 @@ impl PlayerApp {
 
         // Update camera from player character position (FPS mode)
         if has_fps_player {
-            let cam_pos = self.physics.character.camera_position(&self.world);
-            let cam_target = self.physics.character.camera_target(cam_pos);
+            let cam_pos = self.physics.camera_position(&self.world);
+            let cam_target = self.physics.camera_target(cam_pos);
             self.camera.update_first_person(
                 cam_pos,
-                self.physics.character.yaw,
-                self.physics.character.pitch,
+                self.physics.camera_yaw(),
+                self.physics.camera_pitch(),
             );
             self.camera.target = cam_target;
 
             if config.audio == SystemPolicy::Run {
                 self.audio.update_listener(
                     cam_pos,
-                    self.physics.character.yaw,
-                    self.physics.character.pitch,
+                    self.physics.camera_yaw(),
+                    self.physics.camera_pitch(),
                 );
             }
         }
 
         // Process physics events — scripts + audio both consume them
         // Always collect events (input always processed so pause/unpause keybinds work)
-        let mut game_events = self.physics.event_bus.drain();
+        let mut game_events = self.physics.drain_events();
         for action in self.input.actions_just_pressed() {
             game_events.push(flint_runtime::GameEvent::ActionPressed(action));
         }
@@ -1045,7 +1045,7 @@ impl PlayerApp {
                 .ok();
 
             // Deliver sprite animation end events to scripts
-            let sprite_events = self.animation.sprite_sync.drain_events();
+            let sprite_events = self.animation.drain_sprite_events();
             if !sprite_events.is_empty() {
                 self.script
                     .call_sprite_anim_ends(&mut self.world, &sprite_events);
@@ -1055,7 +1055,7 @@ impl PlayerApp {
         // Push skeletal bone matrices to GPU
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
+                if let Some(matrices) = self.animation.bone_matrices(entity_id) {
                     renderer.update_bone_matrices(&context.queue, asset_name, matrices);
                 }
             }
@@ -1249,8 +1249,7 @@ impl PlayerApp {
                         continue;
                     }
                     self.physics
-                        .event_bus
-                        .push(GameEvent::Custom { name, data });
+                        .push_event(GameEvent::Custom { name, data });
                 }
                 ScriptCommand::Log { level, message } => match level {
                     LogLevel::Info => tracing::info!(target: "script", "{}", message),
@@ -1725,7 +1724,7 @@ impl PlayerApp {
         }
 
         // Recapture cursor if player exists
-        if self.physics.character.player_entity().is_some() && !self.cursor_captured {
+        if self.physics.has_player_entity() && !self.cursor_captured {
             self.capture_cursor();
         }
 

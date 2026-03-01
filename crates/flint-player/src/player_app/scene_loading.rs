@@ -181,9 +181,8 @@ pub(super) fn load_terrain_from_world_inner(
             .iter()
             .map(|v| [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]])
             .collect();
-        physics.sync.register_static_trimesh(
+        physics.register_static_trimesh(
             entity.id,
-            &mut physics.physics_world,
             offset_verts,
             tris,
             0.8,
@@ -269,9 +268,7 @@ pub(super) fn register_skeletal_data(
             if let Some(ref import_result) = loaded.import_result {
                 for imported_skel in &import_result.skeletons {
                     let skeleton = Skeleton::from_imported(imported_skel);
-                    animation
-                        .skeletal_sync
-                        .add_skeleton(loaded.entity_id, skeleton);
+                    animation.add_skeleton(loaded.entity_id, skeleton);
                 }
                 for imported_clip in &import_result.skeletal_clips {
                     let clip = SkeletalClip::from_imported(imported_clip);
@@ -281,7 +278,7 @@ pub(super) fn register_skeletal_data(
                         clip.duration,
                         clip.joint_tracks.len()
                     );
-                    animation.skeletal_sync.add_clip(clip);
+                    animation.add_skeletal_clip(clip);
                 }
             }
         }
@@ -303,13 +300,11 @@ pub(super) fn register_node_animation_data(
                     clip.duration,
                     clip.node_tracks.len()
                 );
-                animation.node_sync.add_clip(clip);
+                animation.add_node_clip(clip);
             }
         }
         if let Some(ref node_map) = loaded.node_map {
-            animation
-                .node_sync
-                .register_entity(loaded.entity_id, node_map.clone());
+            animation.register_node_entity(loaded.entity_id, node_map.clone());
         }
     }
 }
@@ -430,7 +425,7 @@ pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut Anima
             match flint_animation::loader::load_clip_from_file(&path) {
                 Ok(clip) => {
                     println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
-                    animation.player.add_clip(clip);
+                    animation.add_property_clip(clip);
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);
@@ -482,7 +477,7 @@ pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mu
                             clip.total_duration_ms(),
                             clip.frames.len()
                         );
-                        animation.sprite_sync.add_clip(clip);
+                        animation.add_sprite_clip(clip);
                     }
                 }
                 Err(e) => {
@@ -529,5 +524,5 @@ pub(super) fn resolve_scene_path(current_scene: &str, target: &str) -> String {
 
 /// Set up the script system's scripts directory from the scene path
 pub(super) fn load_scripts_from_world(scene_path: &str, script: &mut ScriptSystem) {
-    flint_script::sync::load_scripts_from_scene(scene_path, &mut script.sync);
+    script.load_scripts_from_scene(scene_path);
 }

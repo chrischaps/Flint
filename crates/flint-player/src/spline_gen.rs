@@ -895,9 +895,8 @@ pub fn load_splines(
 
                 // Register trimesh collider
                 if let Some(ref mut phys) = physics {
-                    phys.sync.register_static_trimesh(
+                    phys.register_static_trimesh(
                         chunk_id,
-                        &mut phys.physics_world,
                         phys_verts,
                         phys_tris,
                         job.def.friction,
@@ -956,9 +955,8 @@ pub fn load_splines(
 
             // Register trimesh collider (when physics is available)
             if let Some(ref mut phys) = physics {
-                phys.sync.register_static_trimesh(
+                phys.register_static_trimesh(
                     job.entity_id,
-                    &mut phys.physics_world,
                     phys_verts,
                     phys_tris,
                     job.def.friction,

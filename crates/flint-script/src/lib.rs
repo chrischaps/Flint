@@ -25,8 +25,8 @@ use sync::ScriptSync;
 
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
-    pub engine: ScriptEngine,
-    pub sync: ScriptSync,
+    pub(crate) engine: ScriptEngine,
+    pub(crate) sync: ScriptSync,
     pending_events: Vec<GameEvent>,
 }
 
@@ -277,6 +277,11 @@ impl ScriptSystem {
     pub fn take_audio_overrides(&mut self) -> Option<f32> {
         let mut c = self.engine.ctx.lock().unwrap();
         c.audio_lowpass_cutoff_override.take()
+    }
+
+    /// Set up the script system's scripts directory from the scene path
+    pub fn load_scripts_from_scene(&mut self, scene_path: &str) {
+        sync::load_scripts_from_scene(scene_path, &mut self.sync);
     }
 
     /// Set the terrain height sampling callback for scripts

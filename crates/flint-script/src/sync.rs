@@ -16,7 +16,7 @@ use std::time::SystemTime;
 #[derive(Default)]
 pub struct ScriptSync {
     /// Set of entity IDs that have been discovered and loaded
-    pub discovered: HashSet<EntityId>,
+    pub(crate) discovered: HashSet<EntityId>,
     /// Source path → last modified time for hot-reload detection
     file_timestamps: HashMap<PathBuf, SystemTime>,
     /// Base scripts directory

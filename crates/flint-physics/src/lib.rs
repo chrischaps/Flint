@@ -12,7 +12,7 @@ pub mod world;
 
 use character::CharacterController;
 use flint_core::components as comp;
-use flint_core::{EntityId, Result};
+use flint_core::{EntityId, Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{EventBus, GameEvent, InputState, RuntimeSystem};
 use rapier3d::control::{CharacterLength, KinematicCharacterController};
@@ -48,10 +48,10 @@ pub enum ColliderExtents {
 
 /// Physics system implementing RuntimeSystem for the game loop
 pub struct PhysicsSystem {
-    pub physics_world: PhysicsWorld,
-    pub sync: PhysicsSync,
-    pub character: CharacterController,
-    pub event_bus: EventBus,
+    pub(crate) physics_world: PhysicsWorld,
+    pub(crate) sync: PhysicsSync,
+    pub(crate) character: CharacterController,
+    pub(crate) event_bus: EventBus,
 }
 
 impl Default for PhysicsSystem {
@@ -273,6 +273,60 @@ impl PhysicsSystem {
         self.sync.clear();
         self.character = CharacterController::new();
         self.event_bus = EventBus::new();
+    }
+
+    /// Whether a player entity has been assigned to the character controller
+    pub fn has_player_entity(&self) -> bool {
+        self.character.player_entity().is_some()
+    }
+
+    /// Camera yaw angle in radians (horizontal look)
+    pub fn camera_yaw(&self) -> f32 {
+        self.character.yaw
+    }
+
+    /// Camera pitch angle in radians (vertical look)
+    pub fn camera_pitch(&self) -> f32 {
+        self.character.pitch
+    }
+
+    /// Camera position derived from the player entity's transform + eye height
+    pub fn camera_position(&self, world: &FlintWorld) -> Vec3 {
+        self.character.camera_position(world)
+    }
+
+    /// Camera look-at target from yaw/pitch
+    pub fn camera_target(&self, camera_pos: Vec3) -> Vec3 {
+        self.character.camera_target(camera_pos)
+    }
+
+    /// Drain all pending game events (collisions, triggers)
+    pub fn drain_events(&mut self) -> Vec<GameEvent> {
+        self.event_bus.drain()
+    }
+
+    /// Push a game event onto the event bus
+    pub fn push_event(&mut self, event: GameEvent) {
+        self.event_bus.push(event);
+    }
+
+    /// Register a static trimesh collider from raw geometry
+    pub fn register_static_trimesh(
+        &mut self,
+        entity_id: EntityId,
+        vertices: Vec<[f32; 3]>,
+        indices: Vec<[u32; 3]>,
+        friction: f32,
+        restitution: f32,
+    ) {
+        self.sync.register_static_trimesh(
+            entity_id,
+            &mut self.physics_world,
+            vertices,
+            indices,
+            friction,
+            restitution,
+        );
     }
 
     /// Run the character controller update (called from player app with input access)

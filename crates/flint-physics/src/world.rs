@@ -4,18 +4,18 @@ use rapier3d::prelude::*;
 
 /// Wraps Rapier's physics pipeline and body/collider sets
 pub struct PhysicsWorld {
-    pub rigid_body_set: RigidBodySet,
-    pub collider_set: ColliderSet,
-    pub gravity: Vector<Real>,
-    pub integration_parameters: IntegrationParameters,
-    pub physics_pipeline: PhysicsPipeline,
-    pub island_manager: IslandManager,
-    pub broad_phase: DefaultBroadPhase,
-    pub narrow_phase: NarrowPhase,
-    pub impulse_joint_set: ImpulseJointSet,
-    pub multibody_joint_set: MultibodyJointSet,
-    pub ccd_solver: CCDSolver,
-    pub query_pipeline: QueryPipeline,
+    pub(crate) rigid_body_set: RigidBodySet,
+    pub(crate) collider_set: ColliderSet,
+    pub(crate) gravity: Vector<Real>,
+    pub(crate) integration_parameters: IntegrationParameters,
+    pub(crate) physics_pipeline: PhysicsPipeline,
+    pub(crate) island_manager: IslandManager,
+    pub(crate) broad_phase: DefaultBroadPhase,
+    pub(crate) narrow_phase: NarrowPhase,
+    pub(crate) impulse_joint_set: ImpulseJointSet,
+    pub(crate) multibody_joint_set: MultibodyJointSet,
+    pub(crate) ccd_solver: CCDSolver,
+    pub(crate) query_pipeline: QueryPipeline,
 
     /// Collision events from the last step
     collision_recv: crossbeam::channel::Receiver<CollisionEvent>,

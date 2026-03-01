@@ -12,11 +12,11 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct PhysicsSync {
     /// EntityId -> RigidBodyHandle mapping
-    pub body_map: HashMap<EntityId, RigidBodyHandle>,
+    pub(crate) body_map: HashMap<EntityId, RigidBodyHandle>,
     /// EntityId -> ColliderHandle mapping
-    pub collider_map: HashMap<EntityId, ColliderHandle>,
+    pub(crate) collider_map: HashMap<EntityId, ColliderHandle>,
     /// Track which entities we've already synced
-    pub synced_entities: std::collections::HashSet<EntityId>,
+    pub(crate) synced_entities: std::collections::HashSet<EntityId>,
 }
 
 impl PhysicsSync {

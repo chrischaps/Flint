@@ -224,7 +224,7 @@ impl ViewerApp {
             (&mut self.scene_renderer, &self.render_context)
         {
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
+                if let Some(matrices) = self.animation.bone_matrices(entity_id) {
                     renderer.update_bone_matrices(&context.queue, asset_name, matrices);
                 }
             }
@@ -313,9 +313,7 @@ fn register_skeletal_data(
             if let Some(ref import_result) = loaded.import_result {
                 for imported_skel in &import_result.skeletons {
                     let skeleton = Skeleton::from_imported(imported_skel);
-                    animation
-                        .skeletal_sync
-                        .add_skeleton(loaded.entity_id, skeleton);
+                    animation.add_skeleton(loaded.entity_id, skeleton);
                 }
                 for imported_clip in &import_result.skeletal_clips {
                     let clip = SkeletalClip::from_imported(imported_clip);
@@ -325,7 +323,7 @@ fn register_skeletal_data(
                         clip.duration,
                         clip.joint_tracks.len()
                     );
-                    animation.skeletal_sync.add_clip(clip);
+                    animation.add_skeletal_clip(clip);
                 }
             }
         }
@@ -358,7 +356,7 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
             match flint_animation::loader::load_clip_from_file(&path) {
                 Ok(clip) => {
                     println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
-                    animation.player.add_clip(clip);
+                    animation.add_property_clip(clip);
                 }
                 Err(e) => {
                     tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);

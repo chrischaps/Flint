@@ -21,16 +21,16 @@ pub struct CharacterController {
     /// Current vertical velocity for gravity/jumping
     vertical_velocity: f32,
     /// Whether the character is on the ground
-    pub grounded: bool,
+    pub(crate) grounded: bool,
     /// Remaining time in the jump input buffer (seconds). When the player
     /// presses jump, this is set to `JUMP_BUFFER_WINDOW` and ticks down each
     /// physics step. A jump executes whenever the character is grounded and
     /// this timer is still positive.
     jump_buffer: f32,
     /// Camera yaw (horizontal look angle in radians)
-    pub yaw: f32,
+    pub(crate) yaw: f32,
     /// Camera pitch (vertical look angle in radians)
-    pub pitch: f32,
+    pub(crate) pitch: f32,
 }
 
 impl Default for CharacterController {
