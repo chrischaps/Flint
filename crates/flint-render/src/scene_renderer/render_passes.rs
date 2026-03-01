@@ -1,0 +1,958 @@
+//! Render pass helpers for `render_to()`.
+//!
+//! Each method handles one stage of the multi-pass rendering pipeline.
+
+use super::helpers::identity_matrix;
+use super::SceneRenderer;
+use crate::billboard_pipeline::BillboardUniforms;
+use crate::camera::{mat4_inverse, mat4_mul, Camera};
+use crate::particle_pipeline::ParticleUniforms;
+use crate::pipeline::TransformUniforms;
+use crate::shadow::{ShadowDrawUniforms, CASCADE_COUNT};
+use crate::skybox_pipeline::SkyboxUniforms;
+use crate::sprite2d_pipeline::Sprite2dUniforms;
+use wgpu::util::DeviceExt;
+
+impl SceneRenderer {
+    /// Render depth from light perspective for cascaded shadow mapping.
+    pub(super) fn render_shadow_pass(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        camera_pos: [f32; 3],
+    ) {
+        let shadow_pass = match &mut self.shadow_pass {
+            Some(sp) => sp,
+            None => return,
+        };
+
+        if !shadow_pass.enabled || self.light_uniforms.directional_count == 0 {
+            return;
+        }
+
+        // Use the first directional light for shadows
+        let light = &self.light_uniforms.directional_lights[0];
+
+        // Update cascade matrices
+        let camera_inv = camera.inverse_view_projection_matrix();
+        shadow_pass.update_cascades(light.direction, camera_pos, camera_inv, 0.1, 200.0);
+
+        // Write shadow uniforms
+        queue.write_buffer(
+            &shadow_pass.shadow_uniforms_buffer,
+            0,
+            bytemuck::cast_slice(&[*shadow_pass.shadow_uniforms()]),
+        );
+
+        // Render each cascade
+        for cascade in 0..CASCADE_COUNT {
+            let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some(&format!("Shadow Cascade {} Encoder", cascade)),
+                });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(&format!("Shadow Cascade {} Pass", cascade)),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(
+                        wgpu::RenderPassDepthStencilAttachment {
+                            view: &shadow_pass.cascade_views[cascade],
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        },
+                    ),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&shadow_pass.shadow_pipeline);
+
+                // Render each solid entity
+                for draw in &self.entity_draws {
+                    if draw.is_wireframe {
+                        continue;
+                    }
+
+                    let shadow_uniforms = ShadowDrawUniforms {
+                        light_view_proj: cascade_vp,
+                        model: draw.model,
+                    };
+
+                    let shadow_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Shadow Draw Uniform"),
+                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                    let shadow_bind =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &shadow_pass.shadow_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: shadow_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Shadow Draw Bind Group"),
+                        });
+
+                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Render terrain chunks into shadow map
+                for draw in &self.terrain_draws {
+                    let shadow_uniforms = ShadowDrawUniforms {
+                        light_view_proj: cascade_vp,
+                        model: draw.model,
+                    };
+
+                    let shadow_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Terrain Shadow Draw Uniform"),
+                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                    let shadow_bind =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &shadow_pass.shadow_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: shadow_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Terrain Shadow Draw Bind Group"),
+                        });
+
+                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Render transparent entities into shadow map (skip very transparent)
+                for draw in &self.transparent_draws {
+                    if draw.is_wireframe {
+                        continue;
+                    }
+
+                    let shadow_uniforms = ShadowDrawUniforms {
+                        light_view_proj: cascade_vp,
+                        model: draw.model,
+                    };
+
+                    let shadow_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Transparent Shadow Draw Uniform"),
+                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                    let shadow_bind =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &shadow_pass.shadow_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: shadow_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Transparent Shadow Draw Bind Group"),
+                        });
+
+                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Render skinned entities into shadow map
+                pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
+
+                for draw in &self.skinned_entity_draws {
+                    let shadow_uniforms = ShadowDrawUniforms {
+                        light_view_proj: cascade_vp,
+                        model: draw.model,
+                    };
+
+                    let shadow_buffer =
+                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("Skinned Shadow Draw Uniform"),
+                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+
+                    let shadow_bind =
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            layout: &shadow_pass.shadow_bind_group_layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: shadow_buffer.as_entire_binding(),
+                            }],
+                            label: Some("Skinned Shadow Draw Bind Group"),
+                        });
+
+                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    pass.set_bind_group(1, &draw.bone_bind_group, &[]);
+                    pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+    }
+
+    /// Write per-frame uniforms to all GPU buffers and sort transparent draw calls.
+    pub(super) fn update_per_frame_uniforms(
+        &mut self,
+        queue: &wgpu::Queue,
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        debug_mode_u32: u32,
+        tonemapping_u32: u32,
+        camera: &Camera,
+    ) {
+        // Update grid transform
+        if let Some(grid) = &self.grid_draw {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: identity_matrix(),
+                model_inv_transpose: identity_matrix(),
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&grid.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update entity transforms and write debug_mode + tonemapping into each material buffer
+        for draw in &self.entity_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            // Write debug_mode at byte offset 28 in the material buffer
+            // Layout: base_color(16) + metallic(4) + roughness(4) + use_vertex_color(4) = 28
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+
+            // Write enable_tonemapping at byte offset 32
+            // Layout: ... + debug_mode(4) = 32
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update skinned entity transforms
+        for draw in &self.skinned_entity_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update transparent entity transforms
+        for draw in &self.transparent_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update transparent skinned entity transforms
+        for draw in &self.transparent_skinned_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+            queue.write_buffer(
+                &draw.material_buffer,
+                28,
+                bytemuck::cast_slice(&[debug_mode_u32]),
+            );
+            queue.write_buffer(
+                &draw.material_buffer,
+                32,
+                bytemuck::cast_slice(&[tonemapping_u32]),
+            );
+        }
+
+        // Update terrain chunk transforms
+        for draw in &self.terrain_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update terrain material buffer (tonemapping flag)
+        if let Some(buf) = &self.terrain_material_buffer {
+            // enable_tonemapping is at byte offset 12 (texture_tile(4) + metallic(4) + roughness(4))
+            queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
+        }
+
+        // Sort transparent draws back-to-front (descending distance from camera)
+        {
+            let cam = camera_pos;
+            for draw in &mut self.transparent_draws {
+                let dx = draw.model[3][0] - cam[0];
+                let dy = draw.model[3][1] - cam[1];
+                let dz = draw.model[3][2] - cam[2];
+                draw.sort_depth = dx * dx + dy * dy + dz * dz;
+            }
+            self.transparent_draws.sort_by(|a, b| {
+                b.sort_depth
+                    .partial_cmp(&a.sort_depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            for draw in &mut self.transparent_skinned_draws {
+                let dx = draw.model[3][0] - cam[0];
+                let dy = draw.model[3][1] - cam[1];
+                let dz = draw.model[3][2] - cam[2];
+                draw.sort_depth = dx * dx + dy * dy + dz * dz;
+            }
+            self.transparent_skinned_draws.sort_by(|a, b| {
+                b.sort_depth
+                    .partial_cmp(&a.sort_depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        // Update wireframe overlay transforms
+        for draw in &self.wireframe_overlay_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update billboard uniforms with camera vectors
+        {
+            let cam_right = camera.right_vector();
+            let cam_up = camera.up_vector();
+            let billboard_uniforms = BillboardUniforms {
+                view_proj,
+                camera_right: cam_right,
+                _pad0: 0.0,
+                camera_up: cam_up,
+                _pad1: 0.0,
+            };
+            for draw in &self.billboard_draws {
+                queue.write_buffer(
+                    &draw.billboard_buffer,
+                    0,
+                    bytemuck::cast_slice(&[billboard_uniforms]),
+                );
+            }
+        }
+
+        // Update particle uniforms with camera vectors
+        if let Some(pp) = &self.particle_pipeline {
+            if !self.particle_draws.is_empty() {
+                let cam_right = camera.right_vector();
+                let cam_up = camera.up_vector();
+                let particle_uniforms = ParticleUniforms {
+                    view_proj,
+                    camera_right: cam_right,
+                    _pad0: 0.0,
+                    camera_up: cam_up,
+                    _pad1: 0.0,
+                };
+                queue.write_buffer(
+                    &pp.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[particle_uniforms]),
+                );
+            }
+        }
+
+        // Update sprite2d uniforms with view_proj
+        if let Some(sp) = &self.sprite2d_pipeline {
+            if !self.sprite2d_batches.is_empty() {
+                let sprite2d_uniforms = Sprite2dUniforms { view_proj };
+                queue.write_buffer(
+                    &sp.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[sprite2d_uniforms]),
+                );
+            }
+        }
+
+        // Update normal arrow transforms
+        for draw in &self.normal_arrow_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+    }
+
+    /// Execute the main render pass: skybox → grid → terrain → entities → sprites → particles → debug.
+    pub(super) fn render_main_pass<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        wireframe_only: bool,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+    ) {
+        // Bind lights once for the entire pass (group 2 is shared)
+        render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+        // Render skybox (before everything else, at the far plane)
+        if let (Some(sp), Some(ub), Some(ubg), Some(tbg)) = (
+            &self.skybox_pipeline,
+            &self.skybox_uniform_buffer,
+            &self.skybox_uniform_bind_group,
+            &self.skybox_texture_bind_group,
+        ) {
+            // Build view matrix with translation stripped (rotation only)
+            let view = camera.view_matrix();
+            let view_rot_only = [
+                view[0],
+                view[1],
+                view[2],
+                [0.0, 0.0, 0.0, 1.0], // zero out translation column
+            ];
+            let proj = camera.projection_matrix();
+            let vp = mat4_mul(&proj, &view_rot_only);
+            let inv_vp = mat4_inverse(&vp);
+
+            queue.write_buffer(
+                ub,
+                0,
+                bytemuck::cast_slice(&[SkyboxUniforms {
+                    inv_view_proj: inv_vp,
+                }]),
+            );
+
+            render_pass.set_pipeline(&sp.pipeline);
+            render_pass.set_bind_group(0, ubg, &[]);
+            render_pass.set_bind_group(1, tbg, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
+
+        // Render grid
+        if let Some(grid) = &self.grid_draw {
+            render_pass.set_pipeline(&self.pipeline.line_pipeline);
+            render_pass.set_bind_group(0, &grid.transform_bind_group, &[]);
+            render_pass.set_bind_group(1, &grid.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
+            render_pass
+                .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
+        }
+
+        // In WireframeOnly mode: depth prepass masks outline interior,
+        // then outline, then wireframe lines on top.
+        if wireframe_only {
+            self.render_wireframe_only_pass(render_pass);
+        } else {
+            self.render_normal_pass(render_pass);
+        }
+
+        // Normal arrows pass (always uses line pipeline)
+        if self.debug_state.show_normals {
+            render_pass.set_pipeline(&self.pipeline.line_pipeline);
+            for draw in &self.normal_arrow_draws {
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Wireframe-only mode rendering: depth prepass + outline + wireframe lines.
+    fn render_wireframe_only_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        if let Some(sel_id) = self.selected_entity {
+            // Step 1: Depth prepass — write front-face depth (no color)
+            // so the outline interior is blocked by the depth buffer.
+            render_pass.set_pipeline(&self.pipeline.depth_prepass_pipeline);
+            for draw in self
+                .entity_draws
+                .iter()
+                .chain(self.transparent_draws.iter())
+            {
+                if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+
+            if let Some(sp) = &self.skinned_pipeline {
+                render_pass.set_pipeline(&sp.depth_prepass_pipeline);
+                for draw in self
+                    .skinned_entity_draws
+                    .iter()
+                    .chain(self.transparent_skinned_draws.iter())
+                {
+                    if draw.entity_id == Some(sel_id) {
+                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            draw.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                }
+            }
+
+            // Step 2: Outline — back faces pushed out, only visible at silhouette
+            render_pass.set_pipeline(&self.pipeline.outline_pipeline);
+            for draw in self
+                .entity_draws
+                .iter()
+                .chain(self.transparent_draws.iter())
+            {
+                if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+
+            if let Some(sp) = &self.skinned_pipeline {
+                render_pass.set_pipeline(&sp.outline_pipeline);
+                for draw in self
+                    .skinned_entity_draws
+                    .iter()
+                    .chain(self.transparent_skinned_draws.iter())
+                {
+                    if draw.entity_id == Some(sel_id) {
+                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            draw.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                }
+            }
+        }
+
+        // Step 3: Wireframe lines — use overlay pipeline (LessEqual + bias)
+        // so lines draw on top of the depth prepass.
+        render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+        for draw in &self.wireframe_overlay_draws {
+            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+            render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            render_pass
+                .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+        }
+
+        // Also render entities that are already wireframe (rooms etc.)
+        for draw in &self.entity_draws {
+            if draw.is_wireframe {
+                render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    draw.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Normal mode rendering: terrain → outlines → entities → skinned → billboards → sprites → transparent → particles → wireframe.
+    fn render_normal_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        // Terrain rendering (early in pass — fills depth buffer for occlusion)
+        if let (Some(tp), Some(mat_bg)) =
+            (&self.terrain_pipeline, &self.terrain_material_bind_group)
+        {
+            if !self.terrain_draws.is_empty() {
+                render_pass.set_pipeline(&tp.pipeline);
+                render_pass.set_bind_group(1, mat_bg, &[]);
+                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+                for draw in &self.terrain_draws {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Outline pass for selected standard entities (before normal rendering)
+        if let Some(sel_id) = self.selected_entity {
+            render_pass.set_pipeline(&self.pipeline.outline_pipeline);
+            for draw in self
+                .entity_draws
+                .iter()
+                .chain(self.transparent_draws.iter())
+            {
+                if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Normal entity rendering
+        for draw in &self.entity_draws {
+            if draw.is_wireframe {
+                render_pass.set_pipeline(&self.pipeline.line_pipeline);
+            } else {
+                render_pass.set_pipeline(&self.pipeline.pipeline);
+            }
+            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+            render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            render_pass
+                .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+        }
+
+        // Outline pass for selected skinned entities
+        if let Some(sel_id) = self.selected_entity {
+            if let Some(sp) = &self.skinned_pipeline {
+                render_pass.set_pipeline(&sp.outline_pipeline);
+                for draw in self
+                    .skinned_entity_draws
+                    .iter()
+                    .chain(self.transparent_skinned_draws.iter())
+                {
+                    if draw.entity_id == Some(sel_id) {
+                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            draw.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                }
+            }
+        }
+
+        // Render skinned entities
+        if let Some(sp) = &self.skinned_pipeline {
+            if !self.skinned_entity_draws.is_empty() {
+                render_pass.set_pipeline(&sp.pipeline);
+                for draw in &self.skinned_entity_draws {
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                    // Light bind group 2 is already set
+                    render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Outline pass for selected billboards
+        if let Some(sel_id) = self.selected_entity {
+            if let Some(bp) = &self.billboard_pipeline {
+                render_pass.set_pipeline(&bp.outline_pipeline);
+                for draw in &self.billboard_draws {
+                    if draw.entity_id == Some(sel_id) {
+                        render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
+                        render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
+                        render_pass.set_index_buffer(
+                            bp.quad_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        render_pass.draw_indexed(0..6, 0, 0..1);
+                    }
+                }
+            }
+        }
+
+        // Billboard sprites (after geometry, uses depth test)
+        if let Some(bp) = &self.billboard_pipeline {
+            if !self.billboard_draws.is_empty() {
+                render_pass.set_pipeline(&bp.pipeline);
+                for draw in &self.billboard_draws {
+                    render_pass.set_bind_group(0, &draw.billboard_bind_group, &[]);
+                    render_pass.set_bind_group(1, &draw.texture_bind_group, &[]);
+                    render_pass.set_index_buffer(
+                        bp.quad_index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..6, 0, 0..1);
+                }
+            }
+        }
+
+        // 2D sprites (after billboards, instanced batched rendering)
+        if let Some(sp) = &self.sprite2d_pipeline {
+            if !self.sprite2d_batches.is_empty() {
+                render_pass.set_pipeline(&sp.pipeline);
+                render_pass.set_index_buffer(
+                    sp.quad_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.set_bind_group(0, &sp.uniform_bind_group, &[]);
+                for batch in &self.sprite2d_batches {
+                    render_pass.set_bind_group(1, &batch.instance_bind_group, &[]);
+                    render_pass.set_bind_group(2, &batch.texture_bind_group, &[]);
+                    render_pass.draw_indexed(0..6, 0, 0..batch.instance_count);
+                }
+            }
+        }
+
+        // Transparent PBR entities (sorted back-to-front, depth write OFF)
+        if !self.transparent_draws.is_empty() {
+            // Re-bind lights for group 2 (may have been displaced by billboard binds)
+            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+            for draw in &self.transparent_draws {
+                if draw.is_wireframe {
+                    continue;
+                }
+                let pipeline = match draw.blend_mode {
+                    crate::pipeline::BlendMode::Alpha => &self.pipeline.transparent_alpha_pipeline,
+                    crate::pipeline::BlendMode::Additive => {
+                        &self.pipeline.transparent_additive_pipeline
+                    }
+                    crate::pipeline::BlendMode::Multiply => {
+                        &self.pipeline.transparent_multiply_pipeline
+                    }
+                };
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    draw.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+
+        // Transparent skinned entities (sorted back-to-front, depth write OFF)
+        if let Some(sp) = &self.skinned_pipeline {
+            if !self.transparent_skinned_draws.is_empty() {
+                for draw in &self.transparent_skinned_draws {
+                    let pipeline = match draw.blend_mode {
+                        crate::pipeline::BlendMode::Alpha => &sp.transparent_alpha_pipeline,
+                        crate::pipeline::BlendMode::Additive => &sp.transparent_additive_pipeline,
+                        crate::pipeline::BlendMode::Multiply => &sp.transparent_multiply_pipeline,
+                    };
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                    render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                    render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        draw.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Particle systems (after billboards + transparent, before wireframe overlay)
+        // Alpha-blended particles first, then additive
+        if let Some(pp) = &self.particle_pipeline {
+            if !self.particle_draws.is_empty() {
+                render_pass.set_index_buffer(
+                    pp.quad_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
+
+                // Alpha pass
+                render_pass.set_pipeline(&pp.alpha_pipeline);
+                for draw in &self.particle_draws {
+                    if draw.additive {
+                        continue;
+                    }
+                    render_pass.set_bind_group(1, &draw.instance_bind_group, &[]);
+                    render_pass.set_bind_group(2, &draw.texture_bind_group, &[]);
+                    render_pass.draw_indexed(0..6, 0, 0..draw.instance_count);
+                }
+
+                // Additive pass
+                render_pass.set_pipeline(&pp.additive_pipeline);
+                for draw in &self.particle_draws {
+                    if !draw.additive {
+                        continue;
+                    }
+                    render_pass.set_bind_group(1, &draw.instance_bind_group, &[]);
+                    render_pass.set_bind_group(2, &draw.texture_bind_group, &[]);
+                    render_pass.draw_indexed(0..6, 0, 0..draw.instance_count);
+                }
+            }
+        }
+
+        // Wireframe overlay pass (on top of solid geometry)
+        if self.debug_state.wireframe_overlay {
+            render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
+            for draw in &self.wireframe_overlay_draws {
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    draw.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Run post-processing: SSAO, bloom, composite HDR → sRGB.
+    pub(super) fn render_postprocess(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        depth_view: &wgpu::TextureView,
+        target_view: &wgpu::TextureView,
+        camera: &Camera,
+    ) {
+        let pp = match &self.postprocess_pipeline {
+            Some(pp) => pp,
+            None => return,
+        };
+        let resources = match &self.postprocess_resources {
+            Some(r) => r,
+            None => return,
+        };
+
+        // Run SSAO if enabled
+        if self.postprocess_config.enabled && self.postprocess_config.ssao_enabled {
+            pp.run_ssao(
+                device,
+                queue,
+                resources,
+                &self.postprocess_config,
+                depth_view,
+                camera,
+            );
+        }
+
+        // Run bloom if post-processing effects are enabled
+        if self.postprocess_config.enabled
+            && self.postprocess_config.bloom_enabled
+            && resources.bloom_mip_count > 0
+        {
+            pp.run_bloom(device, queue, resources, &self.postprocess_config);
+        }
+
+        // Composite: HDR + bloom + SSAO + fog → tonemapped sRGB surface
+        // (always runs — this is what converts Rgba16Float → surface format)
+        pp.composite(
+            device,
+            queue,
+            resources,
+            &self.postprocess_config,
+            target_view,
+            depth_view,
+            camera,
+        );
+    }
+}
