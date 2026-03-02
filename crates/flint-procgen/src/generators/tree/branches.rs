@@ -186,11 +186,8 @@ pub fn segments_to_mesh(segments: &[BranchSegment], base_radial_segments: u32) -
         // Decrease radial resolution for deeper branches
         let radial = (base_radial_segments as i32 - seg.depth as i32).max(3) as u32;
 
-        let spine = build_spine_from_positions(
-            &[seg.start, seg.end],
-            seg.radius_start,
-            seg.radius_end,
-        );
+        let spine =
+            build_spine_from_positions(&[seg.start, seg.end], seg.radius_start, seg.radius_end);
 
         let tube = extrude_along_curve(&ExtrudeParams {
             spine,

@@ -28,6 +28,8 @@ pub enum GeneratorOutput {
     MeshWithLods(Vec<MeshData>),
     /// Generated image / texture.
     Image(ImageData),
+    /// Multiple related images (e.g. albedo + normal + roughness maps).
+    ImageSet(Vec<ImageData>),
     /// Generated audio (raw bytes, format TBD).
     Sound(Vec<u8>),
 }
@@ -37,7 +39,7 @@ impl GeneratorOutput {
     pub fn kind(&self) -> OutputKind {
         match self {
             Self::Mesh(_) | Self::MeshWithLods(_) => OutputKind::Mesh,
-            Self::Image(_) => OutputKind::Image,
+            Self::Image(_) | Self::ImageSet(_) => OutputKind::Image,
             Self::Sound(_) => OutputKind::Sound,
         }
     }
@@ -86,6 +88,22 @@ impl GeneratorOutput {
     pub fn into_image(self) -> Option<ImageData> {
         match self {
             Self::Image(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// Borrow the image set, if this is an `ImageSet` variant.
+    pub fn as_image_set(&self) -> Option<&[ImageData]> {
+        match self {
+            Self::ImageSet(images) => Some(images),
+            _ => None,
+        }
+    }
+
+    /// Consume and return the image set, if this is an `ImageSet` variant.
+    pub fn into_image_set(self) -> Option<Vec<ImageData>> {
+        match self {
+            Self::ImageSet(images) => Some(images),
             _ => None,
         }
     }

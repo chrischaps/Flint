@@ -12,11 +12,13 @@
 //! - **Grid** ([`TilingGridPattern`]) — manufactured tiles, bricks, panels
 
 pub mod grid;
+pub mod maps;
 pub mod organic;
 pub mod pattern;
 pub mod voronoi;
 
 pub use grid::{TilingGridParams, TilingGridPattern};
+pub use maps::{derive_maps, TextureMapParams};
 pub use organic::{PerlinOrganicParams, PerlinOrganicPattern};
 pub use pattern::{Pattern, PatternCell, PatternField};
 pub use voronoi::{VoronoiBrickParams, VoronoiBrickPattern};

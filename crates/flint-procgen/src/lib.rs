@@ -32,6 +32,7 @@ pub use types::{
 
 // Texture pattern types
 pub use generators::texture::{
-    Pattern, PatternCell, PatternField, PerlinOrganicParams, PerlinOrganicPattern,
-    TilingGridParams, TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
+    derive_maps, Pattern, PatternCell, PatternField, PerlinOrganicParams, PerlinOrganicPattern,
+    TextureMapParams, TilingGridParams, TilingGridPattern, VoronoiBrickParams,
+    VoronoiBrickPattern,
 };

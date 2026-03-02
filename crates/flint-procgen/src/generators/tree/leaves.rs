@@ -179,8 +179,7 @@ fn generate_mesh_leaves(
             // Apply random pitch/yaw to the leaf direction
             let leaf_dir = safe_normalize(dir + perp * pitch_offset + bitangent * yaw_offset, dir);
             let leaf_perp = perpendicular_to(leaf_dir);
-            let leaf_bi =
-                safe_normalize(leaf_dir.cross(&leaf_perp), Vec3::new(0.0, 0.0, 1.0));
+            let leaf_bi = safe_normalize(leaf_dir.cross(&leaf_perp), Vec3::new(0.0, 0.0, 1.0));
 
             // Small random offset from the tip
             let offset = dir * rng.next_range(-0.05, 0.05)

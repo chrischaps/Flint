@@ -5,6 +5,7 @@
 
 pub mod texture;
 pub mod tree;
+pub mod util;
 
 use crate::registry::GeneratorRegistry;
 
