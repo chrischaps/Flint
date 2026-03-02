@@ -5,13 +5,20 @@
 
 mod bark;
 pub mod branches;
+pub mod leaves;
+pub mod lod;
 mod trunk;
 
 pub use bark::generate_bark_normal_map;
 pub use branches::generate_branches;
+pub use leaves::generate_leaves;
+pub use lod::generate_lods;
 pub use trunk::{generate_trunk, TrunkOutput};
 
 use crate::algorithms::mesh_builder::MeshBuilder;
+use crate::generator::{GenerationCost, Generator};
+use crate::output::{GeneratorOutput, OutputKind};
+use crate::spec::ProcGenSpec;
 use crate::types::{ImageData, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
 use flint_core::Vec3;
@@ -400,6 +407,147 @@ impl BranchParams {
     }
 }
 
+// ─── Leaf Style & Params ────────────────────────────────────────────────────
+
+/// How leaf geometry is constructed at branch tips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeafStyle {
+    /// Camera-facing quads clustered at branch tips.
+    BillboardCluster,
+    /// Small diamond/rhombus meshes oriented along branch direction.
+    MeshCluster,
+    /// No leaves.
+    None,
+}
+
+/// Typed leaf configuration extracted from a `ProcGenSpec`'s params table.
+#[derive(Debug, Clone)]
+pub struct LeafParams {
+    /// How leaf geometry is constructed.
+    pub style: LeafStyle,
+    /// Fraction of branch tips that receive leaves (0.0–1.0).
+    pub density: f32,
+    /// Base leaf color as linear RGBA.
+    pub color_base: [f32; 4],
+    /// Per-leaf color perturbation magnitude.
+    pub color_variation: f32,
+    /// Base size of a single leaf quad/mesh in meters.
+    pub leaf_size: f32,
+    /// Random scale variation range (e.g. 0.3 means ±30%).
+    pub leaf_size_variation: f32,
+    /// How many leaf quads/meshes per branch tip.
+    pub leaves_per_tip: u32,
+}
+
+impl Default for LeafParams {
+    fn default() -> Self {
+        Self {
+            style: LeafStyle::BillboardCluster,
+            density: 0.8,
+            color_base: [0.15, 0.35, 0.05, 1.0], // forest green (linear)
+            color_variation: 0.08,
+            leaf_size: 0.15,
+            leaf_size_variation: 0.3,
+            leaves_per_tip: 5,
+        }
+    }
+}
+
+impl LeafParams {
+    /// Parse leaf parameters from a TOML `params` value.
+    ///
+    /// Missing fields fall back to sensible defaults.
+    pub fn from_toml(params: &toml::Value) -> Result<Self> {
+        let table = params
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "params".into(),
+                reason: "expected a TOML table".into(),
+            })?;
+
+        let mut p = Self::default();
+
+        if let Some(v) = table.get("leaf_style") {
+            let s = toml_string(v, "leaf_style")?;
+            p.style = match s.as_str() {
+                "billboard" | "billboard_cluster" | "BillboardCluster" => {
+                    LeafStyle::BillboardCluster
+                }
+                "mesh" | "mesh_cluster" | "MeshCluster" => LeafStyle::MeshCluster,
+                "none" | "None" => LeafStyle::None,
+                other => {
+                    return Err(ProcGenError::InvalidParameter {
+                        name: "leaf_style".into(),
+                        reason: format!(
+                            "unknown style \"{other}\"; expected \"billboard\", \"mesh\", or \"none\""
+                        ),
+                    });
+                }
+            };
+        }
+
+        if let Some(v) = table.get("leaf_density") {
+            p.density = toml_f32(v, "leaf_density")?;
+            if !(0.0..=1.0).contains(&p.density) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_density".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_color_base") {
+            let hex = v.as_str().ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "leaf_color_base".into(),
+                reason: "expected a hex color string (e.g. \"#228B22\")".into(),
+            })?;
+            p.color_base = parse_hex_color(hex)?;
+        }
+
+        if let Some(v) = table.get("leaf_color_variation") {
+            p.color_variation = toml_f32(v, "leaf_color_variation")?;
+            if p.color_variation < 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_color_variation".into(),
+                    reason: "must be non-negative".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_size") {
+            p.leaf_size = toml_f32(v, "leaf_size")?;
+            if p.leaf_size <= 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_size".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_size_variation") {
+            p.leaf_size_variation = toml_f32(v, "leaf_size_variation")?;
+            if p.leaf_size_variation < 0.0 || p.leaf_size_variation > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_size_variation".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaves_per_tip") {
+            p.leaves_per_tip = toml_u32(v, "leaves_per_tip")?;
+            if p.leaves_per_tip < 1 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaves_per_tip".into(),
+                    reason: "must be at least 1".into(),
+                });
+            }
+        }
+
+        Ok(p)
+    }
+}
+
 // ─── Branch & Tree Output ───────────────────────────────────────────────────
 
 /// Output of branch generation.
@@ -469,6 +617,122 @@ pub fn generate_tree(
         branch_tips: branch_output.tip_positions,
         branch_tip_directions: branch_output.tip_directions,
     })
+}
+
+// ─── TreeGenerator ──────────────────────────────────────────────────────────
+
+/// Procedural tree generator — produces trunk, branches, and leaves with
+/// optional LOD levels.
+///
+/// Registered as `"tree_v1"` in the generator registry. All parameters are
+/// parsed from the spec's `params` table via [`TrunkParams`], [`BranchParams`],
+/// and [`LeafParams`].
+pub struct TreeGenerator;
+
+impl Generator for TreeGenerator {
+    fn type_name(&self) -> &str {
+        "tree_v1"
+    }
+
+    fn output_kind(&self) -> OutputKind {
+        OutputKind::Mesh
+    }
+
+    fn generate(&self, spec: &ProcGenSpec, rng: &mut SeededRng) -> Result<GeneratorOutput> {
+        // 1. Parse params
+        let trunk_params = TrunkParams::from_toml(&spec.params)?;
+        let branch_params = BranchParams::from_toml(&spec.params)?;
+        let leaf_params = LeafParams::from_toml(&spec.params)?;
+
+        // 2. Generate tree (trunk + branches)
+        let tree = generate_tree(&trunk_params, &branch_params, rng)?;
+
+        // 3. Generate leaves
+        let leaf_mesh = generate_leaves(
+            &tree.branch_tips,
+            &tree.branch_tip_directions,
+            &leaf_params,
+            &mut rng.fork("leaves"),
+        )?;
+
+        // 4. Merge tree + leaves
+        let mut builder = MeshBuilder::new();
+        builder.merge(&tree.mesh);
+        if leaf_mesh.vertex_count() > 0 {
+            builder.merge(&leaf_mesh);
+        }
+        builder.compute_normals();
+        builder.compute_tangents();
+        let mut full_mesh = builder.build();
+
+        // Merge materials from bark + leaf
+        let mut materials = tree.mesh.materials.clone();
+        if leaf_mesh.vertex_count() > 0 {
+            materials.extend(leaf_mesh.materials.iter().cloned());
+        }
+        full_mesh.materials = materials;
+
+        // 5. Generate LODs if specified
+        if let Some(ref lod_levels) = spec.lod {
+            if !lod_levels.is_empty() {
+                let targets: Vec<u32> = lod_levels.iter().map(|l| l.target_triangles).collect();
+                let lods = generate_lods(&full_mesh, &targets);
+                return Ok(GeneratorOutput::MeshWithLods(lods));
+            }
+        }
+
+        Ok(GeneratorOutput::Mesh(full_mesh))
+    }
+
+    fn param_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "trunk_height": { "type": "number", "minimum": 0.01, "default": 5.0 },
+                "trunk_radius_base": { "type": "number", "minimum": 0.01, "default": 0.3 },
+                "trunk_radius_top": { "type": "number", "minimum": 0.0, "default": 0.1 },
+                "trunk_segments": { "type": "integer", "minimum": 2, "default": 10 },
+                "radial_segments": { "type": "integer", "minimum": 3, "default": 8 },
+                "trunk_curve_noise": { "type": "number", "minimum": 0.0, "default": 0.1 },
+                "bark_color_base": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#573214" },
+                "bark_roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.9 },
+                "bark_normal_strength": { "type": "number", "default": 1.0 },
+                "bark_normal_resolution": { "type": "integer", "default": 256 },
+                "branch_method": { "type": "string", "enum": ["lsystem", "space_colonization"], "default": "lsystem" },
+                "branch_levels": { "type": "integer", "minimum": 1, "default": 3 },
+                "branch_angle_min": { "type": "number", "default": 20.0 },
+                "branch_angle_max": { "type": "number", "default": 40.0 },
+                "branch_length_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7 },
+                "branch_radius_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6 },
+                "leaf_style": { "type": "string", "enum": ["billboard", "mesh", "none"], "default": "billboard" },
+                "leaf_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8 },
+                "leaf_color_base": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#2D8C0D" },
+                "leaf_color_variation": { "type": "number", "minimum": 0.0, "default": 0.08 },
+                "leaf_size": { "type": "number", "minimum": 0.01, "default": 0.15 },
+                "leaf_size_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 },
+                "leaves_per_tip": { "type": "integer", "minimum": 1, "default": 5 }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    fn estimate_cost(&self, spec: &ProcGenSpec) -> GenerationCost {
+        let trunk = TrunkParams::from_toml(&spec.params).unwrap_or_default();
+        let branch = BranchParams::from_toml(&spec.params).unwrap_or_default();
+
+        let trunk_verts = trunk.segments * trunk.radial_segments;
+        let branch_verts = branch.max_segments * branch.radial_segments;
+        let total_verts = trunk_verts + branch_verts;
+
+        GenerationCost {
+            estimated_vertices: total_verts,
+            estimated_triangles: total_verts, // rough estimate
+            estimated_texture_bytes: (trunk.bark_normal_resolution as u64)
+                .pow(2)
+                .saturating_mul(4),
+            estimated_generation_ms: 50.0 + branch.max_segments as f64 * 0.01,
+        }
+    }
 }
 
 /// Parse a hex color string (e.g. `"#8B4513"` or `"8B4513"`) into linear RGBA.
@@ -675,5 +939,201 @@ mod tests {
     fn trunk_params_not_a_table() {
         let toml_val = toml::Value::String("not a table".into());
         assert!(TrunkParams::from_toml(&toml_val).is_err());
+    }
+
+    // ─── LeafParams tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn leaf_params_defaults() {
+        let toml_val: toml::Value = toml::toml! {
+            trunk_height = 5.0
+        }
+        .into();
+        let p = LeafParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.style, LeafStyle::BillboardCluster);
+        assert!((p.density - 0.8).abs() < 1e-5);
+        assert_eq!(p.leaves_per_tip, 5);
+    }
+
+    #[test]
+    fn leaf_params_full() {
+        let toml_val: toml::Value = toml::toml! {
+            leaf_style = "mesh"
+            leaf_density = 0.6
+            leaf_color_base = "#228B22"
+            leaf_color_variation = 0.1
+            leaf_size = 0.2
+            leaf_size_variation = 0.4
+            leaves_per_tip = 8
+        }
+        .into();
+        let p = LeafParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.style, LeafStyle::MeshCluster);
+        assert!((p.density - 0.6).abs() < 1e-5);
+        assert!((p.leaf_size - 0.2).abs() < 1e-5);
+        assert_eq!(p.leaves_per_tip, 8);
+    }
+
+    #[test]
+    fn leaf_params_none_style() {
+        let toml_val: toml::Value = toml::toml! {
+            leaf_style = "none"
+        }
+        .into();
+        let p = LeafParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.style, LeafStyle::None);
+    }
+
+    #[test]
+    fn leaf_params_invalid_density() {
+        let toml_val: toml::Value = toml::toml! {
+            leaf_density = 1.5
+        }
+        .into();
+        assert!(LeafParams::from_toml(&toml_val).is_err());
+    }
+
+    #[test]
+    fn leaf_params_invalid_style() {
+        let toml_val: toml::Value = toml::toml! {
+            leaf_style = "feathers"
+        }
+        .into();
+        assert!(LeafParams::from_toml(&toml_val).is_err());
+    }
+
+    // ─── TreeGenerator integration tests ────────────────────────────────────
+
+    fn tree_spec_toml() -> &'static str {
+        r#"
+generator = "tree_v1"
+[meta]
+name = "test_tree"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+[params]
+trunk_height = 5.0
+trunk_radius_base = 0.3
+trunk_radius_top = 0.1
+branch_method = "lsystem"
+branch_levels = 2
+leaf_style = "billboard"
+leaf_density = 0.8
+leaves_per_tip = 3
+"#
+    }
+
+    #[test]
+    fn tree_generator_object_safety() {
+        // Proves the Generator trait is object-safe with TreeGenerator.
+        let _: Box<dyn Generator> = Box::new(TreeGenerator);
+    }
+
+    #[test]
+    fn tree_generator_type_name() {
+        assert_eq!(TreeGenerator.type_name(), "tree_v1");
+    }
+
+    #[test]
+    fn tree_generator_output_kind() {
+        assert_eq!(TreeGenerator.output_kind(), OutputKind::Mesh);
+    }
+
+    #[test]
+    fn tree_generator_end_to_end() {
+        let spec = ProcGenSpec::parse(tree_spec_toml()).unwrap();
+        let mut rng = SeededRng::new(42);
+        let output = TreeGenerator.generate(&spec, &mut rng).unwrap();
+
+        // Without LOD, should produce a single Mesh
+        let mesh = output.as_mesh().unwrap();
+        assert!(mesh.vertex_count() > 0);
+        assert!(mesh.triangle_count() > 0);
+        assert!(mesh.validate().is_ok());
+    }
+
+    #[test]
+    fn tree_generator_with_lods() {
+        let spec = ProcGenSpec::parse(
+            r#"
+generator = "tree_v1"
+[meta]
+name = "test_tree_lod"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+[params]
+trunk_height = 5.0
+branch_method = "lsystem"
+branch_levels = 2
+leaf_style = "billboard"
+[[lod]]
+level = 1
+target_triangles = 500
+[[lod]]
+level = 2
+target_triangles = 200
+"#,
+        )
+        .unwrap();
+
+        let mut rng = SeededRng::new(42);
+        let output = TreeGenerator.generate(&spec, &mut rng).unwrap();
+
+        let lods = output.as_mesh_lods().unwrap();
+        assert!(lods.len() >= 3); // LOD 0 + 2 simplified
+        assert!(lods[0].triangle_count() >= lods[1].triangle_count());
+        for lod in lods {
+            assert!(lod.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn tree_generator_determinism() {
+        let spec = ProcGenSpec::parse(tree_spec_toml()).unwrap();
+
+        let mut rng_a = SeededRng::new(42);
+        let output_a = TreeGenerator.generate(&spec, &mut rng_a).unwrap();
+
+        let mut rng_b = SeededRng::new(42);
+        let output_b = TreeGenerator.generate(&spec, &mut rng_b).unwrap();
+
+        assert_eq!(output_a, output_b);
+    }
+
+    #[test]
+    fn tree_generator_missing_leaf_params_uses_defaults() {
+        let spec = ProcGenSpec::parse(
+            r#"
+generator = "tree_v1"
+[meta]
+name = "bare_tree"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+[params]
+trunk_height = 5.0
+branch_method = "lsystem"
+branch_levels = 2
+"#,
+        )
+        .unwrap();
+
+        let mut rng = SeededRng::new(42);
+        let output = TreeGenerator.generate(&spec, &mut rng).unwrap();
+        assert!(output.as_mesh().is_some());
+        assert!(output.as_mesh().unwrap().validate().is_ok());
+    }
+
+    #[test]
+    fn tree_generator_param_schema_valid_json() {
+        let schema = TreeGenerator.param_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["trunk_height"].is_object());
+        assert!(schema["properties"]["leaf_style"].is_object());
     }
 }

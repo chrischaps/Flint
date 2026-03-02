@@ -24,6 +24,8 @@ pub enum OutputKind {
 pub enum GeneratorOutput {
     /// Generated 3D mesh.
     Mesh(MeshData),
+    /// Generated 3D mesh with multiple LOD levels (index 0 = highest detail).
+    MeshWithLods(Vec<MeshData>),
     /// Generated image / texture.
     Image(ImageData),
     /// Generated audio (raw bytes, format TBD).
@@ -34,7 +36,7 @@ impl GeneratorOutput {
     /// Which kind of output this is.
     pub fn kind(&self) -> OutputKind {
         match self {
-            Self::Mesh(_) => OutputKind::Mesh,
+            Self::Mesh(_) | Self::MeshWithLods(_) => OutputKind::Mesh,
             Self::Image(_) => OutputKind::Image,
             Self::Sound(_) => OutputKind::Sound,
         }
@@ -44,6 +46,14 @@ impl GeneratorOutput {
     pub fn as_mesh(&self) -> Option<&MeshData> {
         match self {
             Self::Mesh(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Borrow the LOD mesh slices, if this is a `MeshWithLods` variant.
+    pub fn as_mesh_lods(&self) -> Option<&[MeshData]> {
+        match self {
+            Self::MeshWithLods(lods) => Some(lods),
             _ => None,
         }
     }
@@ -60,6 +70,14 @@ impl GeneratorOutput {
     pub fn into_mesh(self) -> Option<MeshData> {
         match self {
             Self::Mesh(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Consume and return the LOD meshes, if this is a `MeshWithLods` variant.
+    pub fn into_mesh_lods(self) -> Option<Vec<MeshData>> {
+        match self {
+            Self::MeshWithLods(lods) => Some(lods),
             _ => None,
         }
     }
@@ -127,5 +145,26 @@ mod tests {
         let img = ImageData::new(4, 4, ChannelSemantics::Normal);
         let out = GeneratorOutput::Image(img);
         assert!(out.into_image().is_some());
+    }
+
+    #[test]
+    fn output_kind_mesh_with_lods() {
+        let out = GeneratorOutput::MeshWithLods(vec![sample_mesh(), sample_mesh()]);
+        assert_eq!(out.kind(), OutputKind::Mesh);
+    }
+
+    #[test]
+    fn as_mesh_lods_returns_some() {
+        let out = GeneratorOutput::MeshWithLods(vec![sample_mesh()]);
+        assert!(out.as_mesh_lods().is_some());
+        assert_eq!(out.as_mesh_lods().unwrap().len(), 1);
+        assert!(out.as_mesh().is_none());
+    }
+
+    #[test]
+    fn into_mesh_lods_returns_some() {
+        let out = GeneratorOutput::MeshWithLods(vec![sample_mesh(), sample_mesh()]);
+        let lods = out.into_mesh_lods().unwrap();
+        assert_eq!(lods.len(), 2);
     }
 }
