@@ -3,6 +3,7 @@
 //! Each generator module builds on the algorithms in [`crate::algorithms`] to
 //! produce meshes, textures, and materials for specific asset types.
 
+pub mod texture;
 pub mod tree;
 
 use crate::registry::GeneratorRegistry;

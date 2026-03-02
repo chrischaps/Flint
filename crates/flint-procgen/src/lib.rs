@@ -29,3 +29,9 @@ pub use spec::{discover_specs, LodLevel, ProcGenSpec, SeedConfig, SeedMode, Spec
 pub use types::{
     BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, Vertex,
 };
+
+// Texture pattern types
+pub use generators::texture::{
+    Pattern, PatternCell, PatternField, PerlinOrganicParams, PerlinOrganicPattern,
+    TilingGridParams, TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
+};
