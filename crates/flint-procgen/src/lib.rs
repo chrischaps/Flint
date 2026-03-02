@@ -5,6 +5,7 @@
 //! material descriptions, and error handling. Higher-level constructs
 //! (generator traits, registry, specs) build on these primitives.
 
+pub mod algorithms;
 mod error;
 mod generator;
 pub mod mock;
