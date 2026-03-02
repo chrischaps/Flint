@@ -1,0 +1,14 @@
+[package]
+name = "flint-procgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Procedural generation subsystem for the Flint engine"
+
+[dependencies]
+flint-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

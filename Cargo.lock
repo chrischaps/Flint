@@ -1475,6 +1475,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-procgen"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "flint-query"
 version = "0.1.0"
 dependencies = [
