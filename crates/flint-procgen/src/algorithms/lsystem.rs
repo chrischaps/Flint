@@ -186,9 +186,9 @@ impl Default for TurtleState {
     fn default() -> Self {
         Self {
             position: Vec3::ZERO,
-            heading: Vec3::new(0.0, 1.0, 0.0),  // +Y up
-            up: Vec3::new(0.0, 0.0, -1.0),       // -Z forward in screen space
-            right: Vec3::new(1.0, 0.0, 0.0),     // +X right
+            heading: Vec3::new(0.0, 1.0, 0.0), // +Y up
+            up: Vec3::new(0.0, 0.0, -1.0),     // -Z forward in screen space
+            right: Vec3::new(1.0, 0.0, 0.0),   // +X right
             depth: 0,
         }
     }
@@ -373,9 +373,7 @@ pub fn stochastic_tree_lsystem(
                 },
                 Symbol::Pop,
                 Symbol::Push,
-                Symbol::YawRight {
-                    angle: right_angle,
-                },
+                Symbol::YawRight { angle: right_angle },
                 Symbol::Forward {
                     length: child_len,
                     radius: child_rad,
@@ -570,7 +568,10 @@ mod tests {
         let segments = sys.generate_segments(&mut rng).unwrap();
 
         assert_eq!(segments[0].radius_start, 2.0);
-        assert!((segments[0].radius_end - 1.0).abs() < 1e-6, "radius_end should be 2.0 * 0.5 = 1.0");
+        assert!(
+            (segments[0].radius_end - 1.0).abs() < 1e-6,
+            "radius_end should be 2.0 * 0.5 = 1.0"
+        );
     }
 
     // ── 9. Determinism ──────────────────────────────────────────────────
@@ -645,7 +646,10 @@ mod tests {
         assert!(vec3_approx_eq(start, Vec3::ZERO));
         // End should be 5 units away from origin (not along +Y)
         let len = segments[0].length();
-        assert!((len - 5.0).abs() < 1e-4, "segment length should be 5.0, got {len}");
+        assert!(
+            (len - 5.0).abs() < 1e-4,
+            "segment length should be 5.0, got {len}"
+        );
         // Should NOT be along +Y anymore
         assert!(
             (end.y - 0.0).abs() < 0.1 || (end.x.abs() > 0.1 || end.z.abs() > 0.1),

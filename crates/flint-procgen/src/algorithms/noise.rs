@@ -479,10 +479,7 @@ mod tests {
     }
 
     fn approx_eq(a: f64, b: f64) {
-        assert!(
-            (a - b).abs() < 1e-12,
-            "values differ: {a} vs {b}"
-        );
+        assert!((a - b).abs() < 1e-12, "values differ: {a} vs {b}");
     }
 
     // -- noise_to_image -------------------------------------------------------

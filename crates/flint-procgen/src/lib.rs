@@ -8,6 +8,7 @@
 pub mod algorithms;
 mod error;
 mod generator;
+pub mod generators;
 pub mod mock;
 mod output;
 mod registry;

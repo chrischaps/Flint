@@ -186,19 +186,11 @@ impl SpaceColonization {
             depth: 0,
         });
 
-        let trunk_step_len = if p.trunk_steps > 0 {
-            p.step_size
-        } else {
-            0.0
-        };
+        let trunk_step_len = if p.trunk_steps > 0 { p.step_size } else { 0.0 };
 
         for i in 0..p.trunk_steps {
             let parent_pos = nodes.last().unwrap().position;
-            let new_pos = [
-                parent_pos[0],
-                parent_pos[1] + trunk_step_len,
-                parent_pos[2],
-            ];
+            let new_pos = [parent_pos[0], parent_pos[1] + trunk_step_len, parent_pos[2]];
             let parent_idx = nodes.len() - 1;
             let child_idx = nodes.len();
             nodes[parent_idx].children.push(child_idx);
@@ -396,7 +388,11 @@ fn compute_pipe_radii(nodes: &[BranchNode], base_radius: f32, tip_radius: f32) -
     // Bottom-up: process in reverse index order
     for i in (0..n).rev() {
         if !nodes[i].children.is_empty() {
-            let sum_sq: f32 = nodes[i].children.iter().map(|&ci| radii[ci] * radii[ci]).sum();
+            let sum_sq: f32 = nodes[i]
+                .children
+                .iter()
+                .map(|&ci| radii[ci] * radii[ci])
+                .sum();
             radii[i] = sum_sq.sqrt();
         }
     }
@@ -558,7 +554,10 @@ mod tests {
         let mut rng = SeededRng::new(42);
         let segments = gen.generate_segments(&mut rng).unwrap();
 
-        assert!(!segments.is_empty(), "should produce at least some segments");
+        assert!(
+            !segments.is_empty(),
+            "should produce at least some segments"
+        );
         for seg in &segments {
             assert!(seg.start.x.is_finite());
             assert!(seg.start.y.is_finite());
@@ -581,9 +580,7 @@ mod tests {
 
         // The default crown is a sphere at (0, 8, 0) radius 4,
         // so some segments should have y > 5 (into the crown region).
-        let has_crown_segments = segments
-            .iter()
-            .any(|seg| seg.end.y > 5.0);
+        let has_crown_segments = segments.iter().any(|seg| seg.end.y > 5.0);
         assert!(
             has_crown_segments,
             "branches should grow into the crown volume"

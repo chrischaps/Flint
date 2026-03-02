@@ -180,9 +180,8 @@ pub fn tapered_cylinder(params: &TaperedCylinderParams) -> MeshData {
         }
     }
 
-    let bbox = BoundingBox::from_positions(
-        &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-    );
+    let bbox =
+        BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
 
     MeshData {
         vertices,
@@ -259,9 +258,8 @@ pub fn sphere(params: &SphereParams) -> MeshData {
         }
     }
 
-    let bbox = BoundingBox::from_positions(
-        &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-    );
+    let bbox =
+        BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
 
     MeshData {
         vertices,
@@ -369,7 +367,10 @@ mod tests {
         assert!(bb.min.y >= -0.01, "min y should be ~0");
         assert!((bb.max.y - 5.0).abs() < 0.01, "max y should be ~5");
         // X/Z extent should be close to radius_bottom
-        assert!((bb.max.x - 2.0).abs() < 0.1, "max x should be ~radius_bottom");
+        assert!(
+            (bb.max.x - 2.0).abs() < 0.1,
+            "max x should be ~radius_bottom"
+        );
     }
 
     #[test]
@@ -433,11 +434,7 @@ mod tests {
         let body_verts = (8 + 1) * (4 + 1);
         for v in &mesh.vertices[..body_verts as usize] {
             let r = (v.position[0] * v.position[0] + v.position[2] * v.position[2]).sqrt();
-            assert!(
-                (r - 1.5).abs() < 0.01,
-                "radius should be 1.5, got {}",
-                r
-            );
+            assert!((r - 1.5).abs() < 0.01, "radius should be 1.5, got {}", r);
         }
     }
 

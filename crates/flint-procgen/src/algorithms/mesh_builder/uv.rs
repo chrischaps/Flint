@@ -80,10 +80,10 @@ mod tests {
     #[test]
     fn cylindrical_uv_wraps_zero_to_one() {
         let mut vertices = vec![
-            default_vertex([1.0, 0.0, 0.0]),   // atan2(0, 1) = 0 → u = 0.5
-            default_vertex([0.0, 0.0, 1.0]),   // atan2(1, 0) = PI/2 → u = 0.75
-            default_vertex([-1.0, 0.0, 0.0]),  // atan2(0, -1) = PI → u = 1.0 (or 0.0)
-            default_vertex([0.0, 5.0, 0.0]),   // top center → v = 1.0
+            default_vertex([1.0, 0.0, 0.0]),  // atan2(0, 1) = 0 → u = 0.5
+            default_vertex([0.0, 0.0, 1.0]),  // atan2(1, 0) = PI/2 → u = 0.75
+            default_vertex([-1.0, 0.0, 0.0]), // atan2(0, -1) = PI → u = 1.0 (or 0.0)
+            default_vertex([0.0, 5.0, 0.0]),  // top center → v = 1.0
         ];
 
         apply_cylindrical_uv(&mut vertices, Vec3::ZERO, 5.0, [1.0, 1.0]);
@@ -99,7 +99,10 @@ mod tests {
 
         // Check specific values
         assert!((vertices[0].uv[0] - 0.5).abs() < 1e-4, "atan2(0,1) → u=0.5");
-        assert!((vertices[1].uv[0] - 0.75).abs() < 1e-4, "atan2(1,0) → u=0.75");
+        assert!(
+            (vertices[1].uv[0] - 0.75).abs() < 1e-4,
+            "atan2(1,0) → u=0.75"
+        );
         assert!((vertices[3].uv[1] - 1.0).abs() < 1e-4, "top → v=1.0");
     }
 
@@ -110,8 +113,14 @@ mod tests {
         apply_cylindrical_uv(&mut vertices, Vec3::ZERO, 5.0, [2.0, 3.0]);
 
         // Without scale: u=0.5, v=0.5
-        assert!((vertices[0].uv[0] - 1.0).abs() < 1e-4, "u should be 0.5*2.0=1.0");
-        assert!((vertices[0].uv[1] - 1.5).abs() < 1e-4, "v should be 0.5*3.0=1.5");
+        assert!(
+            (vertices[0].uv[0] - 1.0).abs() < 1e-4,
+            "u should be 0.5*2.0=1.0"
+        );
+        assert!(
+            (vertices[0].uv[1] - 1.5).abs() < 1e-4,
+            "v should be 0.5*3.0=1.5"
+        );
     }
 
     #[test]

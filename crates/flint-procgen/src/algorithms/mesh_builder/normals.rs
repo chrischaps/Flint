@@ -128,7 +128,11 @@ mod tests {
         compute_normals(&mut vertices, &indices);
 
         for v in &vertices {
-            assert_eq!(v.normal, [0.0, 1.0, 0.0], "degenerate should fall back to UP");
+            assert_eq!(
+                v.normal,
+                [0.0, 1.0, 0.0],
+                "degenerate should fall back to UP"
+            );
         }
     }
 
@@ -138,12 +142,12 @@ mod tests {
         // The large triangle's normal should dominate.
         let mut vertices = vec![
             // Small triangle in XY plane (area = 0.005)
-            default_vertex([0.0, 0.0, 0.0]),   // 0 (shared)
-            default_vertex([0.1, 0.0, 0.0]),    // 1
-            default_vertex([0.0, 0.1, 0.0]),    // 2
+            default_vertex([0.0, 0.0, 0.0]), // 0 (shared)
+            default_vertex([0.1, 0.0, 0.0]), // 1
+            default_vertex([0.0, 0.1, 0.0]), // 2
             // Large triangle in XZ plane (area = 50)
-            default_vertex([10.0, 0.0, 0.0]),   // 3
-            default_vertex([0.0, 0.0, 10.0]),   // 4
+            default_vertex([10.0, 0.0, 0.0]), // 3
+            default_vertex([0.0, 0.0, 10.0]), // 4
         ];
         // Small tri: 0,1,2 → normal +Z
         // Large tri: 0,3,4 → normal +Y

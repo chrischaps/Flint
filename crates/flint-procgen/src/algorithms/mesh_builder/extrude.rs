@@ -147,9 +147,8 @@ pub fn extrude_along_curve(params: &ExtrudeParams) -> Result<MeshData> {
         }
     }
 
-    let bbox = BoundingBox::from_positions(
-        &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-    );
+    let bbox =
+        BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
 
     Ok(MeshData {
         vertices,
@@ -193,7 +192,11 @@ pub fn build_spine_from_positions(
     let mut up = initial_up(&forwards[0]);
 
     for i in 0..n {
-        let t = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+        let t = if n > 1 {
+            i as f32 / (n - 1) as f32
+        } else {
+            0.0
+        };
         let radius = radius_start + (radius_end - radius_start) * t;
 
         if i > 0 {
@@ -233,7 +236,11 @@ pub fn spine_from_spline_samples(
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let t = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+            let t = if n > 1 {
+                i as f32 / (n - 1) as f32
+            } else {
+                0.0
+            };
             let radius = radius_start + (radius_end - radius_start) * t;
             ExtrudePoint {
                 position: s.position,

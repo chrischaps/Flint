@@ -117,7 +117,11 @@ mod tests {
             let n = Vec3::from_array(v.normal);
             let t = Vec3::new(v.tangent[0], v.tangent[1], v.tangent[2]);
             let d = n.dot(&t).abs();
-            assert!(d < 1e-4, "tangent should be perpendicular to normal, dot={}", d);
+            assert!(
+                d < 1e-4,
+                "tangent should be perpendicular to normal, dot={}",
+                d
+            );
         }
     }
 

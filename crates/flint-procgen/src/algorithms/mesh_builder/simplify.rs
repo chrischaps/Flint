@@ -200,8 +200,8 @@ struct SimplifyState {
     normals: Vec<[f64; 3]>,
     uvs: Vec<[f64; 2]>,
     tangents: Vec<[f64; 4]>,
-    triangles: Vec<[u32; 3]>,        // active triangles
-    tri_active: Vec<bool>,           // per-triangle active flag
+    triangles: Vec<[u32; 3]>, // active triangles
+    tri_active: Vec<bool>,    // per-triangle active flag
     vertex_active: Vec<bool>,
     quadrics: Vec<Quadric>,
     generation: Vec<u32>,            // per-vertex generation counter
@@ -217,7 +217,13 @@ impl SimplifyState {
         let positions: Vec<[f64; 3]> = mesh
             .vertices
             .iter()
-            .map(|v| [v.position[0] as f64, v.position[1] as f64, v.position[2] as f64])
+            .map(|v| {
+                [
+                    v.position[0] as f64,
+                    v.position[1] as f64,
+                    v.position[2] as f64,
+                ]
+            })
             .collect();
         let normals: Vec<[f64; 3]> = mesh
             .vertices
@@ -465,17 +471,11 @@ impl SimplifyState {
 
         // Move v1 to optimal position, interpolate attributes
         self.positions[v1 as usize] = opt;
-        self.normals[v1 as usize] = lerp3(
-            &self.normals[v1 as usize],
-            &self.normals[v2 as usize],
-            t,
-        );
+        self.normals[v1 as usize] =
+            lerp3(&self.normals[v1 as usize], &self.normals[v2 as usize], t);
         self.uvs[v1 as usize] = lerp2(&self.uvs[v1 as usize], &self.uvs[v2 as usize], t);
-        self.tangents[v1 as usize] = lerp4(
-            &self.tangents[v1 as usize],
-            &self.tangents[v2 as usize],
-            t,
-        );
+        self.tangents[v1 as usize] =
+            lerp4(&self.tangents[v1 as usize], &self.tangents[v2 as usize], t);
 
         // Renormalize the interpolated normal
         let n = &mut self.normals[v1 as usize];
@@ -605,9 +605,8 @@ impl SimplifyState {
             indices.push(i2);
         }
 
-        let bbox = BoundingBox::from_positions(
-            &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-        );
+        let bbox =
+            BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
 
         MeshData {
             vertices,
@@ -679,9 +678,8 @@ mod tests {
             }
         }
 
-        let bbox = BoundingBox::from_positions(
-            &vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-        );
+        let bbox =
+            BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
         MeshData {
             vertices,
             indices,
@@ -701,7 +699,10 @@ mod tests {
             "should reduce to <=4 tris, got {}",
             simplified.triangle_count()
         );
-        assert!(simplified.triangle_count() > 0, "should have at least 1 triangle");
+        assert!(
+            simplified.triangle_count() > 0,
+            "should have at least 1 triangle"
+        );
     }
 
     #[test]
