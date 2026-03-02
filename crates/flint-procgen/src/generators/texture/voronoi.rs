@@ -8,7 +8,8 @@
 //! IDs and precise edge distances, not just distance values.
 
 use crate::algorithms::noise::{Fbm, NoiseSource, PerlinNoise};
-use crate::SeededRng;
+use crate::generators::util::{toml_f32, toml_u32};
+use crate::{ProcGenError, Result, SeededRng};
 
 use super::pattern::{Pattern, PatternField};
 
@@ -38,6 +39,61 @@ impl Default for VoronoiBrickParams {
             height_variation: 0.3,
             regularity: 0.0,
         }
+    }
+}
+
+impl VoronoiBrickParams {
+    /// Parse voronoi brick parameters from a TOML `params` value.
+    ///
+    /// Missing fields fall back to defaults. Invalid values produce errors.
+    pub fn from_toml(params: &toml::Value) -> Result<Self> {
+        let table = params
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "params".into(),
+                reason: "expected a TOML table".into(),
+            })?;
+
+        let mut p = Self::default();
+
+        if let Some(v) = table.get("cell_count") {
+            p.cell_count = toml_u32(v, "cell_count")?;
+            if p.cell_count == 0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "cell_count".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("mortar_width") {
+            p.mortar_width = toml_f32(v, "mortar_width")?;
+            if p.mortar_width < 0.0 || p.mortar_width > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "mortar_width".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("height_variation") {
+            p.height_variation = toml_f32(v, "height_variation")?;
+            if p.height_variation < 0.0 || p.height_variation > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "height_variation".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("regularity") {
+            p.regularity = toml_f32(v, "regularity")?;
+            if p.regularity < 0.0 || p.regularity > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "regularity".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+
+        Ok(p)
     }
 }
 
@@ -346,6 +402,53 @@ mod tests {
 
     fn default_pattern() -> VoronoiBrickPattern {
         VoronoiBrickPattern::new(VoronoiBrickParams::default())
+    }
+
+    #[test]
+    fn voronoi_params_from_toml_defaults() {
+        let toml_val: toml::Value = toml::toml! {
+            cell_count = 12
+        }
+        .into();
+        let p = VoronoiBrickParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.cell_count, 12);
+        assert!((p.mortar_width - 0.02).abs() < 1e-5);
+        assert!((p.height_variation - 0.3).abs() < 1e-5);
+        assert!((p.regularity - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn voronoi_params_from_toml_custom() {
+        let toml_val: toml::Value = toml::toml! {
+            cell_count = 24
+            mortar_width = 0.05
+            height_variation = 0.6
+            regularity = 0.8
+        }
+        .into();
+        let p = VoronoiBrickParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.cell_count, 24);
+        assert!((p.mortar_width - 0.05).abs() < 1e-5);
+        assert!((p.height_variation - 0.6).abs() < 1e-5);
+        assert!((p.regularity - 0.8).abs() < 1e-5);
+    }
+
+    #[test]
+    fn voronoi_params_from_toml_invalid_cell_count() {
+        let toml_val: toml::Value = toml::toml! {
+            cell_count = 0
+        }
+        .into();
+        assert!(VoronoiBrickParams::from_toml(&toml_val).is_err());
+    }
+
+    #[test]
+    fn voronoi_params_from_toml_invalid_regularity() {
+        let toml_val: toml::Value = toml::toml! {
+            regularity = 1.5
+        }
+        .into();
+        assert!(VoronoiBrickParams::from_toml(&toml_val).is_err());
     }
 
     #[test]

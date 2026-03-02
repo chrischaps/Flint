@@ -20,6 +20,7 @@ mod types;
 pub use error::{ProcGenError, Result};
 pub use generator::{GenerationCost, Generator};
 pub use generators::register_built_in_generators;
+pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use output::{GeneratorOutput, OutputKind};
 pub use registry::GeneratorRegistry;

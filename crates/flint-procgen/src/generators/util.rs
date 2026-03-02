@@ -64,6 +64,18 @@ pub fn u8_from_hex(s: &str, channel: &str) -> Result<u8> {
     })
 }
 
+/// Extract an f64 from a TOML value (handles both integer and float).
+pub fn toml_f64(v: &toml::Value, name: &str) -> Result<f64> {
+    match v {
+        toml::Value::Float(f) => Ok(*f),
+        toml::Value::Integer(i) => Ok(*i as f64),
+        _ => Err(ProcGenError::InvalidParameter {
+            name: name.into(),
+            reason: "expected a number".into(),
+        }),
+    }
+}
+
 /// Extract an f32 from a TOML value (handles both integer and float).
 pub fn toml_f32(v: &toml::Value, name: &str) -> Result<f32> {
     match v {

@@ -12,4 +12,5 @@ use crate::registry::GeneratorRegistry;
 /// Register all built-in generators with the given registry.
 pub fn register_built_in_generators(registry: &mut GeneratorRegistry) {
     registry.register(Box::new(tree::TreeGenerator));
+    registry.register(Box::new(texture::TextureGenerator));
 }

@@ -8,7 +8,8 @@
 use std::f64::consts::PI;
 
 use crate::algorithms::noise::{Fbm, NoiseSource, PerlinNoise, SimplexNoise};
-use crate::SeededRng;
+use crate::generators::util::{toml_f64, toml_string, toml_u32};
+use crate::{ProcGenError, Result, SeededRng};
 
 use super::pattern::{Pattern, PatternField};
 
@@ -43,6 +44,84 @@ impl Default for PerlinOrganicParams {
             persistence: 0.5,
             height_bands: 8,
         }
+    }
+}
+
+impl PerlinOrganicParams {
+    /// Parse organic pattern parameters from a TOML `params` value.
+    ///
+    /// Missing fields fall back to defaults. Invalid values produce errors.
+    pub fn from_toml(params: &toml::Value) -> Result<Self> {
+        let table = params
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "params".into(),
+                reason: "expected a TOML table".into(),
+            })?;
+
+        let mut p = Self::default();
+
+        if let Some(v) = table.get("noise_type") {
+            let s = toml_string(v, "noise_type")?;
+            match s.as_str() {
+                "perlin" | "simplex" => p.noise_type = s,
+                other => {
+                    return Err(ProcGenError::InvalidParameter {
+                        name: "noise_type".into(),
+                        reason: format!(
+                            "unknown noise type \"{other}\"; expected \"perlin\" or \"simplex\""
+                        ),
+                    });
+                }
+            }
+        }
+        if let Some(v) = table.get("octaves") {
+            p.octaves = toml_u32(v, "octaves")?;
+            if p.octaves == 0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "octaves".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("frequency") {
+            p.frequency = toml_f64(v, "frequency")?;
+            if p.frequency <= 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "frequency".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("lacunarity") {
+            p.lacunarity = toml_f64(v, "lacunarity")?;
+            if p.lacunarity <= 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "lacunarity".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("persistence") {
+            p.persistence = toml_f64(v, "persistence")?;
+            if p.persistence <= 0.0 || p.persistence > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "persistence".into(),
+                    reason: "must be in (0.0, 1.0]".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("height_bands") {
+            p.height_bands = toml_u32(v, "height_bands")?;
+            if p.height_bands == 0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "height_bands".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+
+        Ok(p)
     }
 }
 
@@ -154,6 +233,59 @@ mod tests {
 
     fn default_pattern() -> PerlinOrganicPattern {
         PerlinOrganicPattern::new(PerlinOrganicParams::default())
+    }
+
+    #[test]
+    fn organic_params_from_toml_defaults() {
+        let toml_val: toml::Value = toml::toml! {
+            noise_type = "perlin"
+        }
+        .into();
+        let p = PerlinOrganicParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.noise_type, "perlin");
+        assert_eq!(p.octaves, 6);
+        assert!((p.frequency - 4.0).abs() < 1e-5);
+        assert!((p.lacunarity - 2.0).abs() < 1e-5);
+        assert!((p.persistence - 0.5).abs() < 1e-5);
+        assert_eq!(p.height_bands, 8);
+    }
+
+    #[test]
+    fn organic_params_from_toml_custom() {
+        let toml_val: toml::Value = toml::toml! {
+            noise_type = "simplex"
+            octaves = 4
+            frequency = 8.0
+            lacunarity = 2.5
+            persistence = 0.4
+            height_bands = 12
+        }
+        .into();
+        let p = PerlinOrganicParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.noise_type, "simplex");
+        assert_eq!(p.octaves, 4);
+        assert!((p.frequency - 8.0).abs() < 1e-5);
+        assert!((p.lacunarity - 2.5).abs() < 1e-5);
+        assert!((p.persistence - 0.4).abs() < 1e-5);
+        assert_eq!(p.height_bands, 12);
+    }
+
+    #[test]
+    fn organic_params_from_toml_invalid_noise_type() {
+        let toml_val: toml::Value = toml::toml! {
+            noise_type = "worley"
+        }
+        .into();
+        assert!(PerlinOrganicParams::from_toml(&toml_val).is_err());
+    }
+
+    #[test]
+    fn organic_params_from_toml_invalid_persistence() {
+        let toml_val: toml::Value = toml::toml! {
+            persistence = 0.0
+        }
+        .into();
+        assert!(PerlinOrganicParams::from_toml(&toml_val).is_err());
     }
 
     #[test]

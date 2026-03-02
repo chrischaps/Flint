@@ -4,6 +4,8 @@
 //! renderer-agnostic format. Conversion to GPU-specific vertex layouts
 //! happens at the integration boundary.
 
+use std::path::Path;
+
 use flint_core::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -276,6 +278,31 @@ impl ImageData {
                 expected
             )));
         }
+        Ok(())
+    }
+
+    /// Encode the image as PNG bytes in memory.
+    pub fn to_png_bytes(&self) -> crate::Result<Vec<u8>> {
+        use image::codecs::png::PngEncoder;
+        use image::ImageEncoder;
+
+        let mut buf = Vec::new();
+        let encoder = PngEncoder::new(&mut buf);
+        encoder
+            .write_image(
+                &self.pixels,
+                self.width,
+                self.height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| crate::ProcGenError::ImageError(format!("PNG encoding failed: {e}")))?;
+        Ok(buf)
+    }
+
+    /// Save the image as a PNG file.
+    pub fn save_png(&self, path: &Path) -> crate::Result<()> {
+        let bytes = self.to_png_bytes()?;
+        std::fs::write(path, bytes)?;
         Ok(())
     }
 }

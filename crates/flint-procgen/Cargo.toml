@@ -14,6 +14,4 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
-
-[dev-dependencies]
 image = { workspace = true }

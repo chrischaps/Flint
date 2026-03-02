@@ -5,7 +5,8 @@
 //! regions, and per-tile height variation.
 
 use crate::algorithms::noise::{Fbm, NoiseSource, PerlinNoise};
-use crate::SeededRng;
+use crate::generators::util::{toml_f32, toml_u32};
+use crate::{ProcGenError, Result, SeededRng};
 
 use super::pattern::{Pattern, PatternField};
 
@@ -37,6 +38,70 @@ impl Default for TilingGridParams {
             height_variation: 0.2,
             jitter: 0.0,
         }
+    }
+}
+
+impl TilingGridParams {
+    /// Parse tiling grid parameters from a TOML `params` value.
+    ///
+    /// Missing fields fall back to defaults. Invalid values produce errors.
+    pub fn from_toml(params: &toml::Value) -> Result<Self> {
+        let table = params
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "params".into(),
+                reason: "expected a TOML table".into(),
+            })?;
+
+        let mut p = Self::default();
+
+        if let Some(v) = table.get("columns") {
+            p.columns = toml_u32(v, "columns")?;
+            if p.columns == 0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "columns".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("rows") {
+            p.rows = toml_u32(v, "rows")?;
+            if p.rows == 0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "rows".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("gap_width") {
+            p.gap_width = toml_f32(v, "gap_width")?;
+            if p.gap_width < 0.0 || p.gap_width > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "gap_width".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("height_variation") {
+            p.height_variation = toml_f32(v, "height_variation")?;
+            if p.height_variation < 0.0 || p.height_variation > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "height_variation".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("jitter") {
+            p.jitter = toml_f32(v, "jitter")?;
+            if p.jitter < 0.0 || p.jitter > 0.5 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "jitter".into(),
+                    reason: "must be in [0.0, 0.5]".into(),
+                });
+            }
+        }
+
+        Ok(p)
     }
 }
 
@@ -299,6 +364,56 @@ mod tests {
 
     fn default_pattern() -> TilingGridPattern {
         TilingGridPattern::new(TilingGridParams::default())
+    }
+
+    #[test]
+    fn grid_params_from_toml_defaults() {
+        let toml_val: toml::Value = toml::toml! {
+            columns = 4
+        }
+        .into();
+        let p = TilingGridParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.columns, 4);
+        assert_eq!(p.rows, 4);
+        assert!((p.gap_width - 0.05).abs() < 1e-5);
+        assert!((p.height_variation - 0.2).abs() < 1e-5);
+        assert!((p.jitter - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn grid_params_from_toml_custom() {
+        let toml_val: toml::Value = toml::toml! {
+            columns = 6
+            rows = 3
+            gap_width = 0.08
+            height_variation = 0.5
+            jitter = 0.3
+        }
+        .into();
+        let p = TilingGridParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.columns, 6);
+        assert_eq!(p.rows, 3);
+        assert!((p.gap_width - 0.08).abs() < 1e-5);
+        assert!((p.height_variation - 0.5).abs() < 1e-5);
+        assert!((p.jitter - 0.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn grid_params_from_toml_invalid_columns() {
+        let toml_val: toml::Value = toml::toml! {
+            columns = 0
+        }
+        .into();
+        assert!(TilingGridParams::from_toml(&toml_val).is_err());
+    }
+
+    #[test]
+    fn grid_params_from_toml_invalid_jitter() {
+        let toml_val: toml::Value = toml::toml! {
+            jitter = 0.8
+        }
+        .into();
+        assert!(TilingGridParams::from_toml(&toml_val).is_err());
     }
 
     #[test]
