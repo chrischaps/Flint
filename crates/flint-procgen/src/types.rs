@@ -174,6 +174,47 @@ impl MeshData {
     }
 }
 
+/// A single branch segment produced by branching algorithms (L-system,
+/// space colonization). These are the shared output type that the tree
+/// generator converts to meshes via `extrude_along_curve`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BranchSegment {
+    /// World-space start position.
+    pub start: Vec3,
+    /// World-space end position.
+    pub end: Vec3,
+    /// Radius at the start of the segment.
+    pub radius_start: f32,
+    /// Radius at the end of the segment.
+    pub radius_end: f32,
+    /// Branching depth (0 = trunk, incremented at each Push).
+    pub depth: u32,
+}
+
+impl BranchSegment {
+    /// Euclidean length of the segment.
+    pub fn length(&self) -> f32 {
+        let d = self.end - self.start;
+        (d.x * d.x + d.y * d.y + d.z * d.z).sqrt()
+    }
+
+    /// Unit direction from start to end, or `Vec3::ZERO` for degenerate segments.
+    pub fn direction(&self) -> Vec3 {
+        let d = self.end - self.start;
+        let len = (d.x * d.x + d.y * d.y + d.z * d.z).sqrt();
+        if len < 1e-10 {
+            Vec3::ZERO
+        } else {
+            Vec3::new(d.x / len, d.y / len, d.z / len)
+        }
+    }
+
+    /// Average of start and end radii.
+    pub fn mean_radius(&self) -> f32 {
+        (self.radius_start + self.radius_end) * 0.5
+    }
+}
+
 /// Semantic meaning of an image channel, used for correct interpretation
 /// during material assembly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

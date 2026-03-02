@@ -23,4 +23,6 @@ pub use registry::GeneratorRegistry;
 pub use rng::SeededRng;
 pub use seed::Seed;
 pub use spec::{discover_specs, LodLevel, ProcGenSpec, SeedConfig, SeedMode, SpecMeta};
-pub use types::{BoundingBox, ChannelSemantics, ImageData, MaterialData, MeshData, Vertex};
+pub use types::{
+    BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, Vertex,
+};
