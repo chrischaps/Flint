@@ -1,15 +1,20 @@
 //! Tree generator — produces procedural tree meshes with bark materials.
 //!
-//! Task 3.1 provides trunk generation. Tasks 3.2 (branches) and 3.3
+//! Tasks 3.1 (trunk) and 3.2 (branches) are complete. Task 3.3
 //! (leaves/LOD) will extend this module into a full `TreeGenerator`.
 
 mod bark;
+pub mod branches;
 mod trunk;
 
 pub use bark::generate_bark_normal_map;
+pub use branches::generate_branches;
 pub use trunk::{generate_trunk, TrunkOutput};
 
-use crate::{ProcGenError, Result};
+use crate::algorithms::mesh_builder::MeshBuilder;
+use crate::types::{ImageData, MeshData};
+use crate::{ProcGenError, Result, SeededRng};
+use flint_core::Vec3;
 
 /// Typed trunk configuration extracted from a `ProcGenSpec`'s params table.
 #[derive(Debug, Clone)]
@@ -158,6 +163,314 @@ impl TrunkParams {
     }
 }
 
+// ─── Branch Method & Crown Shape ────────────────────────────────────────────
+
+/// Which branching algorithm to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchMethod {
+    /// L-system rewriting with stochastic angle variation.
+    LSystem,
+    /// Space colonization with attraction point cloud.
+    SpaceColonization,
+}
+
+/// Shape of the crown volume for space colonization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrownShape {
+    Sphere,
+    Ellipsoid,
+    Hemisphere,
+}
+
+// ─── BranchParams ───────────────────────────────────────────────────────────
+
+/// Typed branch configuration extracted from a `ProcGenSpec`'s params table.
+#[derive(Debug, Clone)]
+pub struct BranchParams {
+    /// Which branching algorithm to use.
+    pub method: BranchMethod,
+    /// Number of branching depth levels.
+    pub branch_levels: u32,
+    /// Minimum branching angle in degrees.
+    pub branch_angle_min: f32,
+    /// Maximum branching angle in degrees.
+    pub branch_angle_max: f32,
+    /// Length decay factor per depth level.
+    pub branch_length_falloff: f32,
+    /// Radius decay factor per depth level.
+    pub branch_radius_falloff: f32,
+    /// Maximum number of branch segments (budget guard).
+    pub max_segments: u32,
+    /// Base radial segments for branch cross-sections.
+    pub radial_segments: u32,
+
+    // ── Space colonization specific ──
+    /// Crown volume shape.
+    pub crown_shape: CrownShape,
+    /// Crown radius.
+    pub crown_radius: f32,
+    /// Crown height as a ratio of crown radius (for ellipsoid).
+    pub crown_height_ratio: f32,
+    /// Number of attraction points.
+    pub num_attraction_points: u32,
+    /// Kill distance for attraction point removal.
+    pub kill_distance: f32,
+    /// Maximum influence distance for attraction points.
+    pub influence_distance: f32,
+    /// Growth step size per iteration.
+    pub step_size: f32,
+
+    // ── L-system specific ──
+    /// Number of L-system rewriting iterations.
+    pub lsystem_iterations: u32,
+    /// Angle variation range for stochastic L-system (degrees).
+    pub lsystem_angle_variation: f32,
+}
+
+impl Default for BranchParams {
+    fn default() -> Self {
+        Self {
+            method: BranchMethod::LSystem,
+            branch_levels: 3,
+            branch_angle_min: 20.0,
+            branch_angle_max: 40.0,
+            branch_length_falloff: 0.7,
+            branch_radius_falloff: 0.6,
+            max_segments: 5000,
+            radial_segments: 6,
+
+            crown_shape: CrownShape::Sphere,
+            crown_radius: 3.0,
+            crown_height_ratio: 1.5,
+            num_attraction_points: 500,
+            kill_distance: 0.5,
+            influence_distance: 4.0,
+            step_size: 0.3,
+
+            lsystem_iterations: 3,
+            lsystem_angle_variation: 10.0,
+        }
+    }
+}
+
+impl BranchParams {
+    /// Parse branch parameters from a TOML `params` value.
+    ///
+    /// Missing fields fall back to sensible defaults. Invalid values produce
+    /// descriptive errors.
+    pub fn from_toml(params: &toml::Value) -> Result<Self> {
+        let table = params
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "params".into(),
+                reason: "expected a TOML table".into(),
+            })?;
+
+        let mut p = Self::default();
+
+        if let Some(v) = table.get("branch_method") {
+            let s = toml_string(v, "branch_method")?;
+            p.method = match s.as_str() {
+                "lsystem" | "l_system" | "LSystem" => BranchMethod::LSystem,
+                "space_colonization" | "SpaceColonization" => BranchMethod::SpaceColonization,
+                other => {
+                    return Err(ProcGenError::InvalidParameter {
+                        name: "branch_method".into(),
+                        reason: format!(
+                            "unknown method \"{other}\"; expected \"lsystem\" or \"space_colonization\""
+                        ),
+                    });
+                }
+            };
+        }
+
+        if let Some(v) = table.get("branch_levels") {
+            p.branch_levels = toml_u32(v, "branch_levels")?;
+            if p.branch_levels < 1 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_levels".into(),
+                    reason: "must be at least 1".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("branch_angle_min") {
+            p.branch_angle_min = toml_f32(v, "branch_angle_min")?;
+        }
+        if let Some(v) = table.get("branch_angle_max") {
+            p.branch_angle_max = toml_f32(v, "branch_angle_max")?;
+        }
+
+        if let Some(v) = table.get("branch_length_falloff") {
+            p.branch_length_falloff = toml_f32(v, "branch_length_falloff")?;
+            if p.branch_length_falloff <= 0.0 || p.branch_length_falloff > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_length_falloff".into(),
+                    reason: "must be in (0.0, 1.0]".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("branch_radius_falloff") {
+            p.branch_radius_falloff = toml_f32(v, "branch_radius_falloff")?;
+            if p.branch_radius_falloff <= 0.0 || p.branch_radius_falloff > 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_radius_falloff".into(),
+                    reason: "must be in (0.0, 1.0]".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("branch_max_segments") {
+            p.max_segments = toml_u32(v, "branch_max_segments")?;
+        }
+        if let Some(v) = table.get("branch_radial_segments") {
+            p.radial_segments = toml_u32(v, "branch_radial_segments")?;
+            if p.radial_segments < 3 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_radial_segments".into(),
+                    reason: "must be at least 3".into(),
+                });
+            }
+        }
+
+        // Space colonization params
+        if let Some(v) = table.get("crown_shape") {
+            let s = toml_string(v, "crown_shape")?;
+            p.crown_shape = match s.as_str() {
+                "sphere" | "Sphere" => CrownShape::Sphere,
+                "ellipsoid" | "Ellipsoid" => CrownShape::Ellipsoid,
+                "hemisphere" | "Hemisphere" => CrownShape::Hemisphere,
+                other => {
+                    return Err(ProcGenError::InvalidParameter {
+                        name: "crown_shape".into(),
+                        reason: format!(
+                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", or \"hemisphere\""
+                        ),
+                    });
+                }
+            };
+        }
+
+        if let Some(v) = table.get("crown_radius") {
+            p.crown_radius = toml_f32(v, "crown_radius")?;
+            if p.crown_radius <= 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "crown_radius".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("crown_height_ratio") {
+            p.crown_height_ratio = toml_f32(v, "crown_height_ratio")?;
+            if p.crown_height_ratio <= 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "crown_height_ratio".into(),
+                    reason: "must be positive".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("num_attraction_points") {
+            p.num_attraction_points = toml_u32(v, "num_attraction_points")?;
+        }
+        if let Some(v) = table.get("kill_distance") {
+            p.kill_distance = toml_f32(v, "kill_distance")?;
+        }
+        if let Some(v) = table.get("influence_distance") {
+            p.influence_distance = toml_f32(v, "influence_distance")?;
+        }
+        if let Some(v) = table.get("step_size") {
+            p.step_size = toml_f32(v, "step_size")?;
+        }
+
+        // L-system params
+        if let Some(v) = table.get("lsystem_iterations") {
+            p.lsystem_iterations = toml_u32(v, "lsystem_iterations")?;
+            if p.lsystem_iterations < 1 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "lsystem_iterations".into(),
+                    reason: "must be at least 1".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("lsystem_angle_variation") {
+            p.lsystem_angle_variation = toml_f32(v, "lsystem_angle_variation")?;
+        }
+
+        Ok(p)
+    }
+}
+
+// ─── Branch & Tree Output ───────────────────────────────────────────────────
+
+/// Output of branch generation.
+#[derive(Debug, Clone)]
+pub struct BranchOutput {
+    /// Combined branch mesh.
+    pub mesh: MeshData,
+    /// World-space positions of terminal branch tips (for leaf placement).
+    pub tip_positions: Vec<Vec3>,
+    /// Directions at terminal branch tips.
+    pub tip_directions: Vec<Vec3>,
+    /// Total number of branch segments generated.
+    pub segment_count: usize,
+}
+
+/// Output of full tree generation (trunk + branches).
+#[derive(Debug, Clone)]
+pub struct TreeOutput {
+    /// Combined trunk + branch mesh.
+    pub mesh: MeshData,
+    /// Procedural bark normal map.
+    pub normal_map: ImageData,
+    /// World-space positions of terminal branch tips (for leaf placement).
+    pub branch_tips: Vec<Vec3>,
+    /// Directions at terminal branch tips.
+    pub branch_tip_directions: Vec<Vec3>,
+}
+
+// ─── Combined Tree Generation ───────────────────────────────────────────────
+
+/// Generate a complete tree (trunk + branches) from parameters and RNG.
+///
+/// 1. Generates the trunk via [`generate_trunk`]
+/// 2. Generates branches via [`generate_branches`] attached to the trunk tip
+/// 3. Merges both meshes and returns the combined result
+pub fn generate_tree(
+    trunk_params: &TrunkParams,
+    branch_params: &BranchParams,
+    rng: &mut SeededRng,
+) -> Result<TreeOutput> {
+    let mut trunk_rng = rng.fork("trunk");
+    let trunk = generate_trunk(trunk_params, &mut trunk_rng)?;
+
+    let mut branch_rng = rng.fork("branches");
+    let branch_output = generate_branches(
+        branch_params,
+        trunk.tip_position,
+        trunk.tip_direction,
+        trunk_params.radius_top,
+        &mut branch_rng,
+    )?;
+
+    // Merge trunk + branch meshes
+    let mut builder = MeshBuilder::new();
+    builder.merge(&trunk.mesh);
+    builder.merge(&branch_output.mesh);
+    builder.compute_normals();
+    builder.compute_tangents();
+
+    // Preserve bark material
+    let mut mesh = builder.build();
+    mesh.materials = trunk.mesh.materials.clone();
+
+    Ok(TreeOutput {
+        mesh,
+        normal_map: trunk.normal_map,
+        branch_tips: branch_output.tip_positions,
+        branch_tip_directions: branch_output.tip_directions,
+    })
+}
+
 /// Parse a hex color string (e.g. `"#8B4513"` or `"8B4513"`) into linear RGBA.
 ///
 /// Supports 6-digit (`RRGGBB`) and 8-digit (`RRGGBBAA`) hex, with or without
@@ -247,6 +560,16 @@ fn toml_u32(v: &toml::Value, name: &str) -> Result<u32> {
             reason: "expected an integer".into(),
         }),
     }
+}
+
+/// Extract a string from a TOML value.
+fn toml_string(v: &toml::Value, name: &str) -> Result<String> {
+    v.as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| ProcGenError::InvalidParameter {
+            name: name.into(),
+            reason: "expected a string".into(),
+        })
 }
 
 #[cfg(test)]
