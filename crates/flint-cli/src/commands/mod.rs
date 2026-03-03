@@ -3,6 +3,8 @@
 pub mod asset;
 pub mod edit;
 pub mod entity;
+pub mod gen;
+pub mod gen_preview;
 pub mod init;
 pub mod play;
 pub mod prefab;

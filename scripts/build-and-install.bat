@@ -16,7 +16,7 @@ if errorlevel 1 (
 )
 
 echo [1/3] Building workspace in release mode...
-cargo build --workspace --release --locked
+cargo build --release --locked
 if errorlevel 1 goto :fail
 
 echo [2/3] Installing flint CLI...

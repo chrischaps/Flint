@@ -187,6 +187,7 @@ pub fn tapered_cylinder(params: &TaperedCylinderParams) -> MeshData {
         vertices,
         indices,
         materials: vec![MaterialData::default()],
+        submeshes: vec![],
         bounding_box: bbox,
     }
 }
@@ -265,6 +266,7 @@ pub fn sphere(params: &SphereParams) -> MeshData {
         vertices,
         indices,
         materials: vec![MaterialData::default()],
+        submeshes: vec![],
         bounding_box: bbox,
     }
 }

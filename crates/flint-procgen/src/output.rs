@@ -125,6 +125,7 @@ mod tests {
             }],
             indices: vec![],
             materials: vec![],
+            submeshes: vec![],
             bounding_box: BoundingBox {
                 min: Vec3::ZERO,
                 max: Vec3::ZERO,

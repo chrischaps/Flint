@@ -24,7 +24,7 @@ pub use simplify::simplify;
 pub use tangents::compute_tangents;
 pub use uv::{apply_cylindrical_uv, apply_planar_uv, ProjectionAxis};
 
-use crate::types::{BoundingBox, MaterialData, MeshData, Vertex};
+use crate::types::{BoundingBox, MaterialData, MeshData, SubMesh, Vertex};
 use flint_core::Vec3;
 
 /// Incremental mesh builder for composing geometry from primitives and raw data.
@@ -32,6 +32,7 @@ pub struct MeshBuilder {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     materials: Vec<MaterialData>,
+    submeshes: Vec<SubMesh>,
 }
 
 impl MeshBuilder {
@@ -41,6 +42,7 @@ impl MeshBuilder {
             vertices: Vec::new(),
             indices: Vec::new(),
             materials: Vec::new(),
+            submeshes: Vec::new(),
         }
     }
 
@@ -50,6 +52,7 @@ impl MeshBuilder {
             vertices: Vec::with_capacity(verts),
             indices: Vec::with_capacity(indices),
             materials: Vec::new(),
+            submeshes: Vec::new(),
         }
     }
 
@@ -85,6 +88,18 @@ impl MeshBuilder {
         let base = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&mesh.vertices);
         self.indices.extend(mesh.indices.iter().map(|i| i + base));
+    }
+
+    /// Merge another MeshData and record a [`SubMesh`] for the added indices.
+    pub fn merge_as_submesh(&mut self, mesh: &MeshData, material_index: usize) {
+        let index_start = self.indices.len() as u32;
+        self.merge(mesh);
+        let index_count = mesh.indices.len() as u32;
+        self.submeshes.push(SubMesh {
+            index_start,
+            index_count,
+            material_index,
+        });
     }
 
     /// Translate all vertex positions by an offset.
@@ -126,6 +141,7 @@ impl MeshBuilder {
             } else {
                 self.materials
             },
+            submeshes: self.submeshes,
             bounding_box: bbox,
         }
     }

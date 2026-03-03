@@ -612,6 +612,7 @@ impl SimplifyState {
             vertices,
             indices,
             materials: original.materials.clone(),
+            submeshes: vec![],
             bounding_box: bbox,
         }
     }
@@ -684,6 +685,7 @@ mod tests {
             vertices,
             indices,
             materials: vec![MaterialData::default()],
+            submeshes: vec![],
             bounding_box: bbox,
         }
     }

@@ -123,6 +123,17 @@ impl BoundingBox {
     }
 }
 
+/// A contiguous range of indices that share a single material slot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubMesh {
+    /// First index in the mesh's index buffer.
+    pub index_start: u32,
+    /// Number of indices in this sub-mesh.
+    pub index_count: u32,
+    /// Index into `MeshData::materials`.
+    pub material_index: usize,
+}
+
 /// A complete generated mesh with geometry, materials, and bounds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MeshData {
@@ -132,6 +143,9 @@ pub struct MeshData {
     pub indices: Vec<u32>,
     /// Material slots referenced by the mesh.
     pub materials: Vec<MaterialData>,
+    /// Sub-mesh ranges mapping index spans to material slots.
+    #[serde(default)]
+    pub submeshes: Vec<SubMesh>,
     /// Axis-aligned bounding box.
     pub bounding_box: BoundingBox,
 }
@@ -406,6 +420,7 @@ mod tests {
             ],
             indices: vec![0, 1, 2],
             materials: vec![MaterialData::default()],
+            submeshes: vec![],
             bounding_box: BoundingBox::from_positions(&[
                 [0.0, 0.0, 0.0],
                 [1.0, 0.0, 0.0],

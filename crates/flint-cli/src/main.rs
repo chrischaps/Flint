@@ -5,7 +5,8 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, edit, entity, init, play, prefab, preview, query, render, scene, schema, validate,
+    asset, edit, entity, gen, gen_preview, init, play, prefab, preview, query, render, scene,
+    schema, validate,
 };
 
 #[derive(Parser)]
@@ -198,6 +199,12 @@ enum Commands {
         #[arg(long)]
         anim_time: Option<f32>,
     },
+
+    /// Run a procedural generation spec
+    Gen(gen::GenArgs),
+
+    /// Interactive previewer for procedural generation specs
+    GenPreview(gen_preview::GenPreviewArgs),
 
     /// Render a scene to a PNG image (headless)
     Render {
@@ -434,6 +441,8 @@ fn main() -> Result<()> {
             let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");
             flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector)
         }
+        Commands::Gen(args) => gen::run(args),
+        Commands::GenPreview(args) => gen_preview::run(args),
         Commands::Render {
             scene,
             output,

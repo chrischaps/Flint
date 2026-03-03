@@ -154,6 +154,7 @@ pub fn extrude_along_curve(params: &ExtrudeParams) -> Result<MeshData> {
         vertices,
         indices,
         materials: vec![MaterialData::default()],
+        submeshes: vec![],
         bounding_box: bbox,
     })
 }

@@ -1,0 +1,46 @@
+# Stone Wall — procedural PBR texture set (albedo, normal, roughness).
+#
+# Usage:
+#   flint gen specs/stone_wall.procgen.toml -o stone_wall.png
+#   flint gen specs/stone_wall.procgen.toml --dry-run
+
+generator = "texture_v1"
+
+[meta]
+name = "stone_wall_01"
+description = "Rough-hewn stone wall with irregular mortar lines"
+version = "1.0.0"
+tags = ["texture", "stone", "wall", "medieval"]
+
+[seed]
+mode = "fixed"
+value = 7890
+
+[params]
+width = 512
+height = 512
+pattern = "voronoi_brick"
+output_maps = ["albedo", "normal", "roughness"]
+seamless = true
+
+# Colors
+base_color = "#8A7D6B"
+color_variation = 0.08
+mortar_color = "#50483C"
+mortar_threshold = 0.06
+
+# Roughness
+roughness_base = 0.82
+roughness_variation = 0.06
+roughness_mortar = 0.55
+
+# Normal detail
+normal_strength = 1.2
+detail_scale = 10.0
+detail_strength = 0.12
+
+# Voronoi-specific
+cell_count = 10
+mortar_width = 0.03
+height_variation = 0.35
+regularity = 0.15

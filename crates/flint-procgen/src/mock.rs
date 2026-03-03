@@ -113,6 +113,7 @@ fn build_unit_cube() -> MeshData {
         vertices,
         indices,
         materials: vec![MaterialData::default()],
+        submeshes: vec![],
         bounding_box: BoundingBox::from_positions(&positions),
     }
 }

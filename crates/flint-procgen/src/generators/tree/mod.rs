@@ -656,11 +656,11 @@ impl Generator for TreeGenerator {
             &mut rng.fork("leaves"),
         )?;
 
-        // 4. Merge tree + leaves
+        // 4. Merge tree + leaves (with submesh tracking for multi-material)
         let mut builder = MeshBuilder::new();
-        builder.merge(&tree.mesh);
+        builder.merge_as_submesh(&tree.mesh, 0);
         if leaf_mesh.vertex_count() > 0 {
-            builder.merge(&leaf_mesh);
+            builder.merge_as_submesh(&leaf_mesh, 1);
         }
         builder.compute_normals();
         builder.compute_tangents();

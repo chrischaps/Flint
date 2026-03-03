@@ -1,0 +1,61 @@
+# Oak Tree — procedural tree mesh with L-system branching and billboard leaves.
+#
+# Usage:
+#   flint gen specs/oak_tree.procgen.toml -o oak_tree.glb
+#   flint gen specs/oak_tree.procgen.toml --dry-run
+
+generator = "tree_v1"
+
+[meta]
+name = "oak_tree_01"
+description = "A sturdy oak tree with spreading branches and dense foliage"
+version = "1.0.0"
+tags = ["tree", "vegetation", "deciduous", "oak"]
+
+[seed]
+mode = "random"
+value = 12345
+
+[params]
+# Trunk
+trunk_height = 4.5
+trunk_radius_base = 0.35
+trunk_radius_top = 0.12
+trunk_segments = 12
+radial_segments = 8
+trunk_curve_noise = 0.08
+bark_color_base = "#573214"
+bark_roughness = 0.92
+
+# Branching — L-system
+branch_method = "lsystem"
+branch_levels = 3
+branch_angle_min = 25.0
+branch_angle_max = 45.0
+branch_length_falloff = 0.65
+branch_radius_falloff = 0.55
+lsystem_iterations = 3
+lsystem_angle_variation = 12.0
+crown_shape = "sphere"
+crown_radius = 3.5
+
+# Leaves
+leaf_style = "billboard"
+leaf_density = 0.75
+leaf_color_base = "#2D8C0D"
+leaf_color_variation = 0.10
+leaf_size = 0.18
+leaf_size_variation = 0.25
+leaves_per_tip = 5
+
+[[lod]]
+level = 0
+target_triangles = 8000
+
+[[lod]]
+level = 1
+target_triangles = 2000
+
+[[lod]]
+level = 2
+target_triangles = 500

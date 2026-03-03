@@ -38,9 +38,25 @@ Flint uses an **edit -> validate -> play** loop:
    flint preview models/character.glb --watch
    ```
 
-3. **`flint serve --watch`** -- Interactive 3D viewer with hot-reload for orbit-camera inspection.
+3. **`flint gen`** -- Run a procedural generation spec to produce meshes (GLB) or textures (PNG).
+   ```bash
+   flint gen specs/oak_tree.procgen.toml -o tree.glb
+   flint gen specs/stone_wall.procgen.toml -o wall.png
+   flint gen specs/oak_tree.procgen.toml --dry-run
+   flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
+   ```
 
-4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
+4. **`flint gen-preview`** -- Interactive previewer for procedural generation specs with live parameter tuning.
+   ```bash
+   flint gen-preview specs/oak_tree.procgen.toml
+   flint gen-preview specs/stone_wall.procgen.toml --seed 42
+   flint gen-preview specs/oak_tree.procgen.toml --no-grid
+   ```
+   Features: auto-generated parameter sliders from JSON Schema, debounced regeneration, orbit camera (mesh) or texture tabs (images), file watching, Save Spec / Reset, seed randomization. Keyboard: Tab=toggle UI, R=randomize seed, Space=reset camera.
+
+5. **`flint serve --watch`** -- Interactive 3D viewer with hot-reload for orbit-camera inspection.
+
+6. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 
 **For AI agents:** After visual changes, always run `flint render` to verify before moving on. The render command loads models (searches `scene_dir/models/` then `../models/`), generates geometry, and computes the full transform hierarchy.
 
@@ -49,8 +65,9 @@ Flint uses an **edit -> validate -> play** loop:
 21-crate Cargo workspace:
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, serve, play, validate, asset, preview, render
-  └── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, serve, play, validate, asset, preview, render, gen, gen-preview
+  ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
+  └── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
 flint-android       Android entry point (NativeActivity, APK asset extraction)
 flint-player        Standalone player (game loop, physics, audio, animation, scripting, egui HUD)
   ├── flint-script   Rhai scripting with hot-reload
