@@ -14,6 +14,7 @@ pub mod generators;
 pub mod mock;
 mod output;
 pub mod param_ui;
+mod queue;
 mod registry;
 pub mod resolver;
 mod rng;
@@ -24,6 +25,7 @@ mod types;
 pub mod validate;
 
 pub use cache::{CacheStats, ProcGenCache, ProcGenCacheConfig};
+pub use queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
 pub use error::{ProcGenError, Result};
 pub use export_glb::{mesh_lods_to_glb, mesh_to_glb, skinned_mesh_to_glb};
 pub use generator::{GenerationCost, Generator};

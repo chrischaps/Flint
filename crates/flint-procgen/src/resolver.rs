@@ -8,6 +8,7 @@ use std::path::Path;
 
 use crate::cache::{ProcGenCache, ProcGenCacheConfig};
 use crate::output::GeneratorOutput;
+use crate::queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
 use crate::registry::GeneratorRegistry;
 use crate::spec::ProcGenSpec;
 use crate::{register_built_in_generators, CacheStats, ProcGenError, Result};
@@ -21,11 +22,15 @@ pub struct ProcGenResolver {
     registry: GeneratorRegistry,
     /// In-memory LRU cache for generated outputs
     cache: ProcGenCache,
+    /// Frame-budgeted generation queue
+    queue: ProcGenQueue,
 }
 
 impl ProcGenResolver {
     /// Create a new resolver with default cache config and built-in generators.
     pub fn new() -> Self {
+        let config = ProcGenCacheConfig::default();
+        let budget_ms = config.runtime_max_generation_ms_per_frame;
         let mut registry = GeneratorRegistry::new();
         register_built_in_generators(&mut registry);
         // Also register mock generator for testing/validation
@@ -33,7 +38,8 @@ impl ProcGenResolver {
         Self {
             specs: HashMap::new(),
             registry,
-            cache: ProcGenCache::new(ProcGenCacheConfig::default()),
+            cache: ProcGenCache::new(config),
+            queue: ProcGenQueue::new(budget_ms),
         }
     }
 
@@ -69,9 +75,7 @@ impl ProcGenResolver {
             .clone();
 
         let seed = spec.seed.to_seed()?;
-        let content_hash = ContentHash::from_str(
-            &toml::to_string(&spec).unwrap_or_default(),
-        );
+        let content_hash = ContentHash::from_str(&toml::to_string(&spec).unwrap_or_default());
 
         // Check cache first
         if let Some(cached) = self.cache.get(content_hash, &seed) {
@@ -90,6 +94,90 @@ impl ProcGenResolver {
     /// Current cache statistics.
     pub fn cache_stats(&self) -> CacheStats {
         self.cache.stats()
+    }
+
+    /// Enqueue a named spec for frame-budgeted generation.
+    ///
+    /// Returns `true` if the spec was enqueued (not already cached or pending).
+    /// Returns `false` if the spec doesn't exist, is already cached, or is
+    /// already pending.
+    pub fn enqueue(
+        &mut self,
+        name: &str,
+        entity_position: [f32; 3],
+        asset_kind: AssetKind,
+    ) -> bool {
+        let spec = match self.specs.get(name) {
+            Some(s) => s.clone(),
+            None => return false,
+        };
+
+        let seed = match spec.seed.to_seed() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let content_hash = ContentHash::from_str(&toml::to_string(&spec).unwrap_or_default());
+
+        // Already cached — no need to queue
+        if self.cache.get(content_hash, &seed).is_some() {
+            return false;
+        }
+
+        // Already pending
+        if self.queue.is_pending(name) {
+            return false;
+        }
+
+        let dx = entity_position[0];
+        let dy = entity_position[1];
+        let dz = entity_position[2];
+        let priority = dx * dx + dy * dy + dz * dz;
+
+        self.queue.enqueue(GenerationRequest {
+            spec_name: name.to_string(),
+            spec,
+            content_hash,
+            seed,
+            priority,
+            entity_position,
+            asset_kind,
+        });
+        true
+    }
+
+    /// Process the generation queue for one frame within the time budget.
+    pub fn process_frame(&mut self, camera_pos: [f32; 3]) -> Vec<CompletedAsset> {
+        self.queue
+            .process_frame(camera_pos, &self.registry, &mut self.cache)
+    }
+
+    /// Check if a spec name is pending in the queue.
+    pub fn is_pending(&self, name: &str) -> bool {
+        self.queue.is_pending(name)
+    }
+
+    /// Check if a spec name has a cached output.
+    pub fn is_cached(&mut self, name: &str) -> bool {
+        let spec = match self.specs.get(name) {
+            Some(s) => s,
+            None => return false,
+        };
+        let seed = match spec.seed.to_seed() {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let content_hash = ContentHash::from_str(&toml::to_string(spec).unwrap_or_default());
+        self.cache.get(content_hash, &seed).is_some()
+    }
+
+    /// Current queue statistics.
+    pub fn queue_stats(&self) -> QueueStats {
+        self.queue.stats()
+    }
+
+    /// Clear all pending items from the queue.
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
     }
 }
 

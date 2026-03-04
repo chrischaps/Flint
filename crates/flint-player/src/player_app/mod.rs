@@ -1094,6 +1094,24 @@ impl PlayerApp {
                 .ok();
         }
 
+        // Process procgen generation queue (frame-budgeted)
+        {
+            let camera_pos = self.camera.position_array();
+            let completed = self.procgen_resolver.process_frame(camera_pos);
+            if !completed.is_empty() {
+                if let (Some(renderer), Some(ctx)) =
+                    (&mut self.scene_renderer, &self.render_context)
+                {
+                    scene_loading::upload_completed_procgen_assets(
+                        &completed,
+                        renderer,
+                        &ctx.device,
+                        &ctx.queue,
+                    );
+                }
+            }
+        }
+
         // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             renderer.camera_offset = [self.camera.position.x, self.camera.position.y];
@@ -1567,6 +1585,7 @@ impl PlayerApp {
         self.physics.clear();
         self.animation.clear();
         self.particles.clear();
+        self.procgen_resolver.clear_queue();
 
         // Clear world
         self.world = FlintWorld::new();

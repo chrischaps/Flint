@@ -19,6 +19,8 @@ pub struct ProcGenCacheConfig {
     pub max_memory_bytes: usize,
     /// Whether caching is enabled.
     pub enabled: bool,
+    /// Maximum milliseconds per frame to spend on queued procgen generation (default: 4.0).
+    pub runtime_max_generation_ms_per_frame: f64,
 }
 
 impl Default for ProcGenCacheConfig {
@@ -26,6 +28,7 @@ impl Default for ProcGenCacheConfig {
         Self {
             max_memory_bytes: 256 * 1024 * 1024,
             enabled: true,
+            runtime_max_generation_ms_per_frame: 4.0,
         }
     }
 }
@@ -212,7 +215,7 @@ mod tests {
         // Budget fits 2 small images (2x2 = 16 bytes each, budget = 32)
         let config = ProcGenCacheConfig {
             max_memory_bytes: 32,
-            enabled: true,
+            ..Default::default()
         };
         let mut cache = ProcGenCache::new(config);
         let s = seed(1);
@@ -236,7 +239,7 @@ mod tests {
         // Budget fits exactly 1 image of 4x4 = 64 bytes
         let config = ProcGenCacheConfig {
             max_memory_bytes: 64,
-            enabled: true,
+            ..Default::default()
         };
         let mut cache = ProcGenCache::new(config);
         let s = seed(1);
@@ -257,7 +260,7 @@ mod tests {
     fn oversized_entry_not_cached() {
         let config = ProcGenCacheConfig {
             max_memory_bytes: 100,
-            enabled: true,
+            ..Default::default()
         };
         let mut cache = ProcGenCache::new(config);
         let s = seed(1);
@@ -311,8 +314,8 @@ mod tests {
     #[test]
     fn disabled_cache() {
         let config = ProcGenCacheConfig {
-            max_memory_bytes: 256 * 1024 * 1024,
             enabled: false,
+            ..Default::default()
         };
         let mut cache = ProcGenCache::new(config);
         let s = seed(1);

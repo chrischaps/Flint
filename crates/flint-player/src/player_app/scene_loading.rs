@@ -796,6 +796,129 @@ fn upload_procgen_image(
     }
 }
 
+// ── Queued procgen asset resolution ───────────────────────────────────
+
+/// Enqueue unresolved procgen assets for frame-budgeted generation.
+///
+/// Walks entities the same way as `resolve_procgen_assets()` but submits
+/// requests to the resolver's queue instead of generating synchronously.
+/// Used for dynamically spawned entities and runtime asset loading.
+#[allow(dead_code)]
+pub(super) fn enqueue_procgen_assets(
+    world: &FlintWorld,
+    resolver: &mut flint_procgen::ProcGenResolver,
+    renderer: &SceneRenderer,
+    config: &flint_render::model_loader::ModelLoadConfig,
+) {
+    for entity in world.all_entities() {
+        let comps = match world.get_components(entity.id) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Read entity position for priority calculation
+        let position = comps
+            .get(comp::TRANSFORM)
+            .and_then(|t| t.get("position").and_then(toml_vec3))
+            .unwrap_or([0.0; 3]);
+
+        // Check model assets
+        if let Some(model) = comps.get(comp::MODEL) {
+            if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
+                if !config.overrides.contains_key(name)
+                    && !renderer.mesh_cache().contains(name)
+                    && resolver.has_spec(name)
+                {
+                    resolver.enqueue(name, position, flint_procgen::AssetKind::Model);
+                }
+            }
+        }
+
+        // Check texture assets (material + sprite)
+        for comp_name in &[comp::MATERIAL, comp::SPRITE] {
+            if let Some(comp_data) = comps.get(*comp_name) {
+                if let Some(tex) = comp_data.get("texture").and_then(|v| v.as_str()) {
+                    if !config.overrides.contains_key(tex) && resolver.has_spec(tex) {
+                        resolver.enqueue(tex, position, flint_procgen::AssetKind::Texture);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Upload completed queued assets to the GPU.
+pub(super) fn upload_completed_procgen_assets(
+    completed: &[flint_procgen::CompletedAsset],
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    for asset in completed {
+        match (&asset.output, asset.asset_kind) {
+            (flint_procgen::GeneratorOutput::Mesh(mesh), _) => {
+                upload_procgen_mesh(&asset.spec_name, mesh, renderer, device);
+                tracing::info!(
+                    "Queued procgen resolved mesh '{}' ({} tris)",
+                    asset.spec_name,
+                    mesh.triangle_count()
+                );
+            }
+            (flint_procgen::GeneratorOutput::MeshWithLods(lods), _) => {
+                if let Some(mesh) = lods.first() {
+                    upload_procgen_mesh(&asset.spec_name, mesh, renderer, device);
+                    tracing::info!(
+                        "Queued procgen resolved mesh '{}' (LOD0, {} tris)",
+                        asset.spec_name,
+                        mesh.triangle_count()
+                    );
+                }
+            }
+            (flint_procgen::GeneratorOutput::Image(img), _) => {
+                upload_procgen_image(&asset.spec_name, img, renderer, device, queue);
+                tracing::info!(
+                    "Queued procgen resolved image '{}' ({}x{})",
+                    asset.spec_name,
+                    img.width,
+                    img.height
+                );
+            }
+            (flint_procgen::GeneratorOutput::ImageSet(images), _) => {
+                for (i, img) in images.iter().enumerate() {
+                    let tex_name = if i == 0 {
+                        asset.spec_name.clone()
+                    } else {
+                        format!(
+                            "{}_{}",
+                            asset.spec_name,
+                            match img.channel_semantics {
+                                flint_procgen::ChannelSemantics::Color => "color",
+                                flint_procgen::ChannelSemantics::Normal => "normal",
+                                flint_procgen::ChannelSemantics::Roughness => "roughness",
+                                flint_procgen::ChannelSemantics::Metallic => "metallic",
+                                flint_procgen::ChannelSemantics::Height => "height",
+                                flint_procgen::ChannelSemantics::Mask => "mask",
+                            }
+                        )
+                    };
+                    upload_procgen_image(&tex_name, img, renderer, device, queue);
+                }
+                tracing::info!(
+                    "Queued procgen resolved image set '{}' ({} maps)",
+                    asset.spec_name,
+                    images.len()
+                );
+            }
+            _ => {
+                tracing::warn!(
+                    "Queued procgen spec '{}' produced unsupported output type",
+                    asset.spec_name
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
