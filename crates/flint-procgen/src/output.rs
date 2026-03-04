@@ -38,6 +38,18 @@ pub enum GeneratorOutput {
 }
 
 impl GeneratorOutput {
+    /// Estimated heap memory usage in bytes.
+    pub fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::Mesh(m) => m.estimated_bytes(),
+            Self::MeshWithLods(lods) => lods.iter().map(|m| m.estimated_bytes()).sum(),
+            Self::Image(i) => i.estimated_bytes(),
+            Self::ImageSet(images) => images.iter().map(|i| i.estimated_bytes()).sum(),
+            Self::SkinnedMesh(m) => m.estimated_bytes(),
+            Self::Sound(bytes) => bytes.len(),
+        }
+    }
+
     /// Which kind of output this is.
     pub fn kind(&self) -> OutputKind {
         match self {
@@ -197,6 +209,43 @@ mod tests {
         assert!(out.as_mesh_lods().is_some());
         assert_eq!(out.as_mesh_lods().unwrap().len(), 1);
         assert!(out.as_mesh().is_none());
+    }
+
+    #[test]
+    fn estimated_bytes_mesh() {
+        let out = GeneratorOutput::Mesh(sample_mesh());
+        assert!(out.estimated_bytes() > 0);
+    }
+
+    #[test]
+    fn estimated_bytes_image() {
+        let img = ImageData::new(4, 4, ChannelSemantics::Color);
+        let out = GeneratorOutput::Image(img);
+        assert_eq!(out.estimated_bytes(), 4 * 4 * 4);
+    }
+
+    #[test]
+    fn estimated_bytes_sound() {
+        let out = GeneratorOutput::Sound(vec![0u8; 100]);
+        assert_eq!(out.estimated_bytes(), 100);
+    }
+
+    #[test]
+    fn estimated_bytes_mesh_with_lods() {
+        let out = GeneratorOutput::MeshWithLods(vec![sample_mesh(), sample_mesh()]);
+        let single = GeneratorOutput::Mesh(sample_mesh()).estimated_bytes();
+        assert_eq!(out.estimated_bytes(), single * 2);
+    }
+
+    #[test]
+    fn estimated_bytes_image_set() {
+        let img = ImageData::new(2, 2, ChannelSemantics::Color);
+        let single = img.estimated_bytes();
+        let out = GeneratorOutput::ImageSet(vec![
+            ImageData::new(2, 2, ChannelSemantics::Color),
+            ImageData::new(2, 2, ChannelSemantics::Normal),
+        ]);
+        assert_eq!(out.estimated_bytes(), single * 2);
     }
 
     #[test]

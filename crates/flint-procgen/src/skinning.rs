@@ -119,6 +119,23 @@ impl SkinnedMeshData {
         self.skeleton.bones.len()
     }
 
+    /// Estimated heap memory usage in bytes.
+    pub fn estimated_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.vertices.len() * size_of::<SkinnedVertex>()
+            + self.indices.len() * size_of::<u32>()
+            + self.materials
+                .iter()
+                .map(|m| m.name.len() + size_of::<MaterialData>())
+                .sum::<usize>()
+            + self.submeshes.len() * size_of::<SubMesh>()
+            + self.skeleton
+                .bones
+                .iter()
+                .map(|b| b.name.len() + size_of::<BoneDef>())
+                .sum::<usize>()
+    }
+
     pub fn validate(&self) -> crate::Result<()> {
         if !self.indices.len().is_multiple_of(3) {
             return Err(crate::ProcGenError::InvalidMesh(format!(
@@ -456,6 +473,46 @@ mod tests {
         assert_eq!(mesh.vertex_count(), 3);
         assert_eq!(mesh.triangle_count(), 1);
         assert_eq!(mesh.bone_count(), 1);
+    }
+
+    #[test]
+    fn skinned_mesh_estimated_bytes() {
+        let mesh = SkinnedMeshData {
+            vertices: vec![SkinnedVertex {
+                position: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.0; 2],
+                joint_indices: [0; 4],
+                joint_weights: [1.0, 0.0, 0.0, 0.0],
+            }],
+            indices: vec![0, 1, 2],
+            materials: vec![MaterialData::default()],
+            submeshes: vec![],
+            bounding_box: BoundingBox {
+                min: Vec3::ZERO,
+                max: Vec3::ZERO,
+            },
+            skeleton: SkeletonDef {
+                bones: vec![BoneDef {
+                    name: "root".into(),
+                    parent: None,
+                    ..Default::default()
+                }],
+            },
+        };
+        let bytes = mesh.estimated_bytes();
+        assert!(bytes > 0);
+        // 1 SkinnedVertex + 3 u32 indices + 1 material + 1 bone
+        assert_eq!(
+            bytes,
+            std::mem::size_of::<SkinnedVertex>()
+                + 3 * std::mem::size_of::<u32>()
+                + "default".len()
+                + std::mem::size_of::<MaterialData>()
+                + "root".len()
+                + std::mem::size_of::<BoneDef>()
+        );
     }
 
     #[test]

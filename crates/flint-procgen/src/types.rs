@@ -167,6 +167,18 @@ impl MeshData {
         self.bounding_box = BoundingBox::from_positions(&positions);
     }
 
+    /// Estimated heap memory usage in bytes.
+    pub fn estimated_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.vertices.len() * size_of::<Vertex>()
+            + self.indices.len() * size_of::<u32>()
+            + self.materials
+                .iter()
+                .map(|m| m.name.len() + size_of::<MaterialData>())
+                .sum::<usize>()
+            + self.submeshes.len() * size_of::<SubMesh>()
+    }
+
     /// Validate mesh integrity.
     ///
     /// Checks that indices are in range and the index count is a multiple of 3.
@@ -278,6 +290,11 @@ impl ImageData {
     /// Total number of pixels.
     pub fn pixel_count(&self) -> u32 {
         self.width * self.height
+    }
+
+    /// Estimated heap memory usage in bytes.
+    pub fn estimated_bytes(&self) -> usize {
+        self.pixels.len()
     }
 
     /// Validate that the pixel buffer size matches dimensions.
@@ -469,6 +486,27 @@ mod tests {
         let img = ImageData::new(16, 16, ChannelSemantics::Color);
         assert_eq!(img.pixel_count(), 256);
         assert!(img.validate().is_ok());
+    }
+
+    #[test]
+    fn mesh_estimated_bytes() {
+        let mesh = make_triangle();
+        let bytes = mesh.estimated_bytes();
+        // 3 vertices * size_of::<Vertex>() + 3 indices * 4 + 1 material
+        assert!(bytes > 0);
+        assert_eq!(
+            bytes,
+            3 * std::mem::size_of::<Vertex>()
+                + 3 * std::mem::size_of::<u32>()
+                + "default".len()
+                + std::mem::size_of::<MaterialData>()
+        );
+    }
+
+    #[test]
+    fn image_estimated_bytes() {
+        let img = ImageData::new(16, 16, ChannelSemantics::Color);
+        assert_eq!(img.estimated_bytes(), 16 * 16 * 4);
     }
 
     #[test]

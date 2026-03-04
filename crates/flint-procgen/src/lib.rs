@@ -6,6 +6,7 @@
 //! (generator traits, registry, specs) build on these primitives.
 
 pub mod algorithms;
+mod cache;
 mod error;
 pub mod export_glb;
 mod generator;
@@ -21,6 +22,7 @@ mod spec;
 mod types;
 pub mod validate;
 
+pub use cache::{CacheStats, ProcGenCache, ProcGenCacheConfig};
 pub use error::{ProcGenError, Result};
 pub use export_glb::{mesh_lods_to_glb, mesh_to_glb, skinned_mesh_to_glb};
 pub use generator::{GenerationCost, Generator};

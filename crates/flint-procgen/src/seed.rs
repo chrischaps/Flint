@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// - `Fixed(u64)` — always resolves to the given value.
 /// - `Random` — resolves to a different value each time (system-time entropy).
 /// - `Derived(String)` — hashes the key string to produce a stable `u64`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Seed {
     /// A specific seed value, guaranteed to reproduce the same output.
     Fixed(u64),
