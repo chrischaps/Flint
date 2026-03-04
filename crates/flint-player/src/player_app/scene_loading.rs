@@ -526,3 +526,300 @@ pub(super) fn resolve_scene_path(current_scene: &str, target: &str) -> String {
 pub(super) fn load_scripts_from_world(scene_path: &str, script: &mut ScriptSystem) {
     script.load_scripts_from_scene(scene_path);
 }
+
+// ── Procgen asset resolution ──────────────────────────────────────────────
+
+/// Resolve unresolved model/texture asset names against procgen specs.
+///
+/// For each entity with a `model.asset` or texture name that is not already
+/// resolved (not in `config.overrides` and not in the mesh cache), check if
+/// a matching procgen spec exists. If so, generate and upload directly to GPU.
+pub(super) fn resolve_procgen_assets(
+    world: &FlintWorld,
+    resolver: &mut flint_procgen::ProcGenResolver,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    config: &flint_render::model_loader::ModelLoadConfig,
+) {
+    // Collect unresolved asset names to avoid borrow conflicts
+    let mut unresolved_models: Vec<String> = Vec::new();
+    let mut unresolved_textures: Vec<String> = Vec::new();
+
+    for entity in world.all_entities() {
+        if let Some(comps) = world.get_components(entity.id) {
+            // Check model assets
+            if let Some(model) = comps.get(comp::MODEL) {
+                if let Some(name) = model.get("asset").and_then(|v| v.as_str()) {
+                    if !config.overrides.contains_key(name)
+                        && !renderer.mesh_cache().contains(name)
+                        && resolver.has_spec(name)
+                    {
+                        if !unresolved_models.contains(&name.to_string()) {
+                            unresolved_models.push(name.to_string());
+                        }
+                    }
+                }
+            }
+
+            // Check texture assets (material + sprite)
+            for comp_name in &[comp::MATERIAL, comp::SPRITE] {
+                if let Some(comp_data) = comps.get(*comp_name) {
+                    if let Some(tex) = comp_data.get("texture").and_then(|v| v.as_str()) {
+                        if !config.overrides.contains_key(tex)
+                            && resolver.has_spec(tex)
+                        {
+                            if !unresolved_textures.contains(&tex.to_string()) {
+                                unresolved_textures.push(tex.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate and upload each unresolved asset
+    for name in &unresolved_models {
+        match resolver.generate(name) {
+            Ok(output) => match output {
+                flint_procgen::GeneratorOutput::Mesh(mesh) => {
+                    upload_procgen_mesh(name, &mesh, renderer, device);
+                    tracing::info!("Procgen resolved mesh '{}' ({} tris)", name, mesh.triangle_count());
+                }
+                flint_procgen::GeneratorOutput::MeshWithLods(lods) => {
+                    if let Some(mesh) = lods.first() {
+                        upload_procgen_mesh(name, mesh, renderer, device);
+                        tracing::info!("Procgen resolved mesh '{}' (LOD0, {} tris)", name, mesh.triangle_count());
+                    }
+                }
+                flint_procgen::GeneratorOutput::Image(img) => {
+                    upload_procgen_image(name, &img, renderer, device, queue);
+                    tracing::info!("Procgen resolved image '{}' ({}x{})", name, img.width, img.height);
+                }
+                flint_procgen::GeneratorOutput::ImageSet(images) => {
+                    for (i, img) in images.iter().enumerate() {
+                        let tex_name = if i == 0 {
+                            name.clone()
+                        } else {
+                            format!("{}_{}", name, match img.channel_semantics {
+                            flint_procgen::ChannelSemantics::Color => "color",
+                            flint_procgen::ChannelSemantics::Normal => "normal",
+                            flint_procgen::ChannelSemantics::Roughness => "roughness",
+                            flint_procgen::ChannelSemantics::Metallic => "metallic",
+                            flint_procgen::ChannelSemantics::Height => "height",
+                            flint_procgen::ChannelSemantics::Mask => "mask",
+                        })
+                        };
+                        upload_procgen_image(&tex_name, img, renderer, device, queue);
+                    }
+                    tracing::info!("Procgen resolved image set '{}' ({} maps)", name, images.len());
+                }
+                _ => {
+                    tracing::warn!("Procgen spec '{}' produced unsupported output type for model", name);
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Procgen generation failed for '{}': {}", name, e);
+            }
+        }
+    }
+
+    for name in &unresolved_textures {
+        if unresolved_models.contains(name) {
+            continue; // Already handled above
+        }
+        match resolver.generate(name) {
+            Ok(output) => match output {
+                flint_procgen::GeneratorOutput::Image(img) => {
+                    upload_procgen_image(name, &img, renderer, device, queue);
+                    tracing::info!("Procgen resolved texture '{}' ({}x{})", name, img.width, img.height);
+                }
+                flint_procgen::GeneratorOutput::ImageSet(images) => {
+                    for (i, img) in images.iter().enumerate() {
+                        let tex_name = if i == 0 {
+                            name.clone()
+                        } else {
+                            format!("{}_{}", name, match img.channel_semantics {
+                            flint_procgen::ChannelSemantics::Color => "color",
+                            flint_procgen::ChannelSemantics::Normal => "normal",
+                            flint_procgen::ChannelSemantics::Roughness => "roughness",
+                            flint_procgen::ChannelSemantics::Metallic => "metallic",
+                            flint_procgen::ChannelSemantics::Height => "height",
+                            flint_procgen::ChannelSemantics::Mask => "mask",
+                        })
+                        };
+                        upload_procgen_image(&tex_name, img, renderer, device, queue);
+                    }
+                    tracing::info!("Procgen resolved texture set '{}' ({} maps)", name, images.len());
+                }
+                _ => {
+                    tracing::warn!("Procgen spec '{}' produced non-image output for texture ref", name);
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Procgen generation failed for texture '{}': {}", name, e);
+            }
+        }
+    }
+
+    if !unresolved_models.is_empty() || !unresolved_textures.is_empty() {
+        let stats = resolver.cache_stats();
+        tracing::debug!(
+            "Procgen cache: {} entries, {} bytes, {} hits / {} misses",
+            stats.entry_count,
+            stats.total_bytes,
+            stats.hits,
+            stats.misses,
+        );
+    }
+}
+
+/// Upload a procgen mesh to the GPU mesh cache.
+///
+/// Converts `flint_procgen::Vertex` → `flint_render::Vertex` (drops tangent,
+/// adds vertex color from `MaterialData`). Handles multi-submesh by uploading
+/// each submesh as a separate mesh entry.
+fn upload_procgen_mesh(
+    name: &str,
+    mesh: &flint_procgen::MeshData,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+) {
+    let default_material = flint_procgen::MaterialData::default();
+
+    if mesh.submeshes.is_empty() || mesh.submeshes.len() == 1 {
+        // Single mesh — convert all vertices with the first material's color
+        let mat = mesh.materials.first().unwrap_or(&default_material);
+        let vertices: Vec<flint_render::Vertex> = mesh
+            .vertices
+            .iter()
+            .map(|v| flint_render::Vertex {
+                position: v.position,
+                normal: v.normal,
+                color: mat.base_color,
+                uv: v.uv,
+            })
+            .collect();
+
+        let imported_mat = flint_import::ImportedMaterial {
+            name: mat.name.clone(),
+            base_color: mat.base_color,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            use_vertex_color: true,
+            alpha_mode: flint_import::AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+        };
+
+        renderer.load_procedural_mesh(device, name, &vertices, &mesh.indices, imported_mat);
+    } else {
+        // Multi-submesh: upload each as "{name}_sub{i}"
+        for (i, sub) in mesh.submeshes.iter().enumerate() {
+            let mat = mesh
+                .materials
+                .get(sub.material_index)
+                .unwrap_or(&default_material);
+
+            let start = sub.index_start as usize;
+            let count = sub.index_count as usize;
+            let sub_indices = &mesh.indices[start..start + count];
+
+            // Find min/max index to compact vertices
+            let min_idx = *sub_indices.iter().min().unwrap_or(&0) as usize;
+            let max_idx = *sub_indices.iter().max().unwrap_or(&0) as usize;
+
+            let vertices: Vec<flint_render::Vertex> = mesh.vertices
+                [min_idx..=max_idx]
+                .iter()
+                .map(|v| flint_render::Vertex {
+                    position: v.position,
+                    normal: v.normal,
+                    color: mat.base_color,
+                    uv: v.uv,
+                })
+                .collect();
+
+            let compacted_indices: Vec<u32> = sub_indices
+                .iter()
+                .map(|&idx| idx - min_idx as u32)
+                .collect();
+
+            let sub_name = format!("{name}_sub{i}");
+            let imported_mat = flint_import::ImportedMaterial {
+                name: mat.name.clone(),
+                base_color: mat.base_color,
+                metallic: mat.metallic,
+                roughness: mat.roughness,
+                base_color_texture: None,
+                normal_texture: None,
+                metallic_roughness_texture: None,
+                use_vertex_color: true,
+                alpha_mode: flint_import::AlphaMode::Opaque,
+                alpha_cutoff: 0.5,
+            };
+
+            renderer.load_procedural_mesh(
+                device,
+                &sub_name,
+                &vertices,
+                &compacted_indices,
+                imported_mat,
+            );
+        }
+    }
+}
+
+/// Upload a procgen image to the GPU texture cache.
+fn upload_procgen_image(
+    name: &str,
+    img: &flint_procgen::ImageData,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let is_normal = matches!(
+        img.channel_semantics,
+        flint_procgen::ChannelSemantics::Normal
+    );
+    match renderer.load_texture_rgba(device, queue, name, img.width, img.height, &img.pixels, is_normal) {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::debug!("Procgen texture '{}' already cached", name);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to upload procgen texture '{}': {}", name, e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertex_conversion_correctness() {
+        let procgen_vertex = flint_procgen::Vertex {
+            position: [1.0, 2.0, 3.0],
+            normal: [0.0, 1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            uv: [0.5, 0.75],
+        };
+        let color = [0.8, 0.2, 0.1, 1.0];
+
+        let render_vertex = flint_render::Vertex {
+            position: procgen_vertex.position,
+            normal: procgen_vertex.normal,
+            color,
+            uv: procgen_vertex.uv,
+        };
+
+        assert_eq!(render_vertex.position, [1.0, 2.0, 3.0]);
+        assert_eq!(render_vertex.normal, [0.0, 1.0, 0.0]);
+        assert_eq!(render_vertex.color, [0.8, 0.2, 0.1, 1.0]);
+        assert_eq!(render_vertex.uv, [0.5, 0.75]);
+    }
+}

@@ -228,6 +228,90 @@ impl TextureCache {
         Ok(true)
     }
 
+    /// Upload raw RGBA8 pixel data to the GPU as a named texture.
+    ///
+    /// Returns `Ok(true)` if newly uploaded, `Ok(false)` if already cached.
+    pub fn upload_rgba(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        is_normal_map: bool,
+    ) -> Result<bool, String> {
+        if self.textures.contains_key(name) {
+            return Ok(false);
+        }
+
+        let expected = (width * height * 4) as usize;
+        if data.len() != expected {
+            return Err(format!(
+                "RGBA data length {} doesn't match {}x{}x4 = {}",
+                data.len(),
+                width,
+                height,
+                expected
+            ));
+        }
+
+        let format = if is_normal_map {
+            wgpu::TextureFormat::Rgba8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        };
+
+        let texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some(name),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(&format!("{} Sampler", name)),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
+
+        self.textures.insert(
+            name.to_string(),
+            GpuTexture {
+                texture,
+                view,
+                sampler,
+                width,
+                height,
+            },
+        );
+
+        Ok(true)
+    }
+
+    /// Check if a texture is already cached by name.
+    pub fn contains(&self, name: &str) -> bool {
+        self.textures.contains_key(name)
+    }
+
     /// Get a texture by name, returning None if not found
     pub fn get(&self, name: &str) -> Option<&GpuTexture> {
         self.textures.get(name)

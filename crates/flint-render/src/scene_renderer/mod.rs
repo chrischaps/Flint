@@ -803,6 +803,26 @@ impl SceneRenderer {
         }
     }
 
+    /// Load raw RGBA8 pixel data into the texture cache.
+    ///
+    /// Returns `Ok(true)` if newly uploaded, `Ok(false)` if already cached.
+    pub fn load_texture_rgba(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        is_normal_map: bool,
+    ) -> Result<bool, String> {
+        if let Some(cache) = &mut self.texture_cache {
+            cache.upload_rgba(device, queue, name, width, height, data, is_normal_map)
+        } else {
+            Err("Texture cache not initialized".to_string())
+        }
+    }
+
     /// Load a procedural mesh from raw vertex/index data into the GPU mesh cache
     pub fn load_procedural_mesh(
         &mut self,

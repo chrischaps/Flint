@@ -28,6 +28,7 @@ flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
+flint-procgen = { workspace = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }

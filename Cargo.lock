@@ -1707,6 +1707,7 @@ dependencies = [
  "flint-import",
  "flint-particles",
  "flint-physics",
+ "flint-procgen",
  "flint-render",
  "flint-runtime",
  "flint-scene",

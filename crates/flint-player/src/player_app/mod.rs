@@ -175,6 +175,9 @@ pub struct PlayerApp {
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 
+    // Procedural generation resolver for runtime asset resolution
+    procgen_resolver: flint_procgen::ProcGenResolver,
+
     // Chunk streaming: chunk_id → spawned entity IDs
     loaded_chunks: HashMap<String, Vec<flint_core::EntityId>>,
 
@@ -244,6 +247,7 @@ impl PlayerApp {
             transition_phase: TransitionPhase::Idle,
             schema_paths: Vec::new(),
             terrain: None,
+            procgen_resolver: flint_procgen::ProcGenResolver::new(),
             loaded_chunks: HashMap::new(),
             #[cfg(target_os = "android")]
             android_gamepad: AndroidGamepadTracker::new(),
@@ -369,6 +373,28 @@ impl PlayerApp {
             self.catalog.as_ref(),
             self.content_store.as_ref(),
         );
+
+        // Discover procgen specs and resolve unresolved assets before model loading
+        {
+            let scene_dir = Path::new(&self.scene_path).parent().unwrap_or(Path::new("."));
+            let mut spec_dirs = vec![scene_dir.join("specs")];
+            if let Some(parent) = scene_dir.parent() {
+                spec_dirs.push(parent.join("specs"));
+            }
+            spec_dirs.push(scene_dir.join("models"));
+            let dir_refs: Vec<&Path> = spec_dirs.iter().filter(|d| d.is_dir()).map(|d| d.as_path()).collect();
+            self.procgen_resolver.discover_and_index(&dir_refs);
+
+            resolve_procgen_assets(
+                &self.world,
+                &mut self.procgen_resolver,
+                &mut scene_renderer,
+                &render_context.device,
+                &render_context.queue,
+                &config,
+            );
+        }
+
         let load_result = model_loader::load_models_from_world(
             &mut self.world,
             &mut scene_renderer,
@@ -1622,6 +1648,28 @@ impl PlayerApp {
                 self.catalog.as_ref(),
                 self.content_store.as_ref(),
             );
+
+            // Discover procgen specs and resolve unresolved assets before model loading
+            {
+                let scene_dir = Path::new(&self.scene_path).parent().unwrap_or(Path::new("."));
+                let mut spec_dirs = vec![scene_dir.join("specs")];
+                if let Some(parent) = scene_dir.parent() {
+                    spec_dirs.push(parent.join("specs"));
+                }
+                spec_dirs.push(scene_dir.join("models"));
+                let dir_refs: Vec<&Path> = spec_dirs.iter().filter(|d| d.is_dir()).map(|d| d.as_path()).collect();
+                self.procgen_resolver.discover_and_index(&dir_refs);
+
+                resolve_procgen_assets(
+                    &self.world,
+                    &mut self.procgen_resolver,
+                    renderer,
+                    &context.device,
+                    &context.queue,
+                    &config,
+                );
+            }
+
             let load_result = model_loader::load_models_from_world(
                 &mut self.world,
                 renderer,
@@ -2068,7 +2116,8 @@ use hud_render::render_draw_commands;
 use scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
     load_scripts_from_world, load_sprite_animations_from_world, load_terrain_from_world_inner,
-    register_node_animation_data, register_skeletal_data, resolve_scene_path,
+    register_node_animation_data, register_skeletal_data, resolve_procgen_assets,
+    resolve_scene_path,
 };
 
 impl PlayerApp {
