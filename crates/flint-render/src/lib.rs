@@ -10,6 +10,7 @@ pub mod billboard_pipeline;
 pub mod bitmap_font;
 mod camera;
 mod context;
+pub mod orbit_controller;
 mod debug;
 mod gpu_mesh;
 mod headless;
@@ -30,6 +31,7 @@ pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
+pub use orbit_controller::OrbitCameraController;
 pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
@@ -43,8 +45,8 @@ pub use pipeline::{
 };
 pub use postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
 pub use primitives::{
-    create_box_mesh, create_plane_mesh, generate_normal_arrows, triangles_to_wireframe_indices,
-    Mesh, SkinnedMesh, SkinnedVertex, Vertex,
+    create_box_mesh, create_plane_mesh, generate_normal_arrows, generate_skeleton_lines,
+    triangles_to_wireframe_indices, Mesh, SkinnedMesh, SkinnedVertex, Vertex,
 };
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use skinned_pipeline::SkinnedPipeline;

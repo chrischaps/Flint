@@ -118,6 +118,7 @@ pub struct SceneRenderer {
     debug_state: DebugState,
     wireframe_overlay_draws: Vec<DrawCall>,
     normal_arrow_draws: Vec<DrawCall>,
+    skeleton_overlay_draws: Vec<DrawCall>,
     tonemapping_enabled: bool,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
@@ -230,6 +231,7 @@ impl SceneRenderer {
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
+            skeleton_overlay_draws: Vec::new(),
             tonemapping_enabled: true,
             light_buffer,
             light_bind_group,
@@ -570,6 +572,7 @@ impl SceneRenderer {
         self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
+        self.skeleton_overlay_draws.clear();
         self.bitmap_font_cache.clear();
     }
 
@@ -650,6 +653,7 @@ impl SceneRenderer {
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
             normal_arrow_draws: Vec::new(),
+            skeleton_overlay_draws: Vec::new(),
             tonemapping_enabled: true,
             light_buffer,
             light_bind_group,
@@ -847,6 +851,36 @@ impl SceneRenderer {
     pub fn toggle_normal_arrows(&mut self) -> bool {
         self.debug_state.show_normals = !self.debug_state.show_normals;
         self.debug_state.show_normals
+    }
+
+    /// Toggle skeleton overlay on/off, returns the new state
+    pub fn toggle_skeleton_overlay(&mut self) -> bool {
+        self.debug_state.show_skeleton = !self.debug_state.show_skeleton;
+        self.debug_state.show_skeleton
+    }
+
+    /// Set the skeleton overlay mesh (line-list geometry for bone visualization)
+    pub fn set_skeleton_overlay(&mut self, device: &wgpu::Device, mesh: &crate::primitives::Mesh) {
+        self.skeleton_overlay_draws.clear();
+        if mesh.indices.is_empty() {
+            return;
+        }
+        let tex_cache = self.texture_cache.as_ref().expect("texture cache");
+        let draw = Self::create_draw_call(
+            device,
+            &self.pipeline,
+            mesh,
+            true,
+            TransformUniforms::new(),
+            MaterialUniforms::procedural(),
+            tex_cache,
+        );
+        self.skeleton_overlay_draws.push(draw);
+    }
+
+    /// Clear skeleton overlay draw calls
+    pub fn clear_skeleton_overlay(&mut self) {
+        self.skeleton_overlay_draws.clear();
     }
 
     /// Show or hide the ground-plane grid at runtime

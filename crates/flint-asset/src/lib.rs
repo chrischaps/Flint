@@ -11,4 +11,4 @@ mod types;
 pub use catalog::AssetCatalog;
 pub use resolver::{AssetResolver, ResolutionStrategy, ResolveResult};
 pub use store::ContentStore;
-pub use types::{AssetMeta, AssetRef, AssetType};
+pub use types::{AssetFile, AssetMeta, AssetRef, AssetType};

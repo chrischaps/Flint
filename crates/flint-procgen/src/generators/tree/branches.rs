@@ -47,17 +47,20 @@ pub fn generate_branches(
             tip_positions: Vec::new(),
             tip_directions: Vec::new(),
             segment_count: 0,
+            segments: Vec::new(),
         });
     }
 
     let (tip_positions, tip_directions) = extract_tips(&segments);
     let mesh = segments_to_mesh(&segments, params.radial_segments)?;
+    let segment_count = segments.len();
 
     Ok(BranchOutput {
         mesh,
         tip_positions,
         tip_directions,
-        segment_count: segments.len(),
+        segment_count,
+        segments,
     })
 }
 
@@ -80,9 +83,11 @@ fn generate_lsystem_branches(
     let variation = (params.branch_angle_max - params.branch_angle_min) / 2.0;
     let angle_variation = variation + params.lsystem_angle_variation;
 
-    // Initial branch length derived from trunk parameters
-    let initial_length = trunk_radius_top * 8.0; // reasonable starting branch length
-    let initial_radius = trunk_radius_top * 0.8;
+    // The depth-0 "internal trunk" segment is removed after generation, so the
+    // first visible branches are depth-1 with radius = initial_radius * radius_decay.
+    // Set initial_radius so that depth-1 branches match the real trunk's top radius.
+    let initial_length = trunk_radius_top * 8.0;
+    let initial_radius = trunk_radius_top / params.branch_radius_falloff.max(0.01);
 
     let lsystem_params = LSystemParams {
         default_angle_deg: base_angle,
@@ -103,13 +108,32 @@ fn generate_lsystem_branches(
     let mut lsystem_rng = rng.fork("lsystem");
     let mut segments = lsystem.generate_segments(&mut lsystem_rng)?;
 
-    // Transform segments from L-system space (+Y heading at origin)
-    // to world space (trunk_dir heading at trunk_tip)
-    transform_segments(&mut segments, trunk_tip, trunk_dir);
+    // The L-system axiom starts with a depth-0 Forward segment (the "internal
+    // trunk") going from the origin to (0, initial_length, 0). All depth-1+
+    // branches fork from that endpoint. Since we already have the real trunk,
+    // we remove the depth-0 segment — but we must first re-root the remaining
+    // segments so their base aligns with the origin. Otherwise branches end up
+    // floating `initial_length` above trunk_tip.
+    let branch_origin = segments
+        .iter()
+        .find(|seg| seg.depth == 0)
+        .map(|seg| seg.end)
+        .unwrap_or(Vec3::ZERO);
+
+    if branch_origin.length() > 1e-6 {
+        for seg in segments.iter_mut() {
+            seg.start = seg.start - branch_origin;
+            seg.end = seg.end - branch_origin;
+        }
+    }
 
     // Filter out depth-0 segments (the L-system's internal "trunk" —
     // we already have the real trunk from Task 3.1)
     segments.retain(|seg| seg.depth > 0);
+
+    // Transform segments from L-system space (+Y heading at origin)
+    // to world space (trunk_dir heading at trunk_tip)
+    transform_segments(&mut segments, trunk_tip, trunk_dir);
 
     Ok(segments)
 }

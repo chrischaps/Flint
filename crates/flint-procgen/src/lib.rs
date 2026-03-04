@@ -16,13 +16,15 @@ pub mod param_ui;
 mod registry;
 mod rng;
 mod seed;
+pub mod skinning;
 mod spec;
 mod types;
 
 pub use error::{ProcGenError, Result};
-pub use export_glb::{mesh_lods_to_glb, mesh_to_glb};
+pub use export_glb::{mesh_lods_to_glb, mesh_to_glb, skinned_mesh_to_glb};
 pub use generator::{GenerationCost, Generator};
 pub use generators::register_built_in_generators;
+pub use generators::creature::CreatureGenerator;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use output::{GeneratorOutput, OutputKind};
@@ -30,6 +32,7 @@ pub use registry::GeneratorRegistry;
 pub use rng::SeededRng;
 pub use seed::Seed;
 pub use spec::{discover_specs, LodLevel, ProcGenSpec, SeedConfig, SeedMode, SpecMeta};
+pub use skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex};
 pub use types::{
     BoundingBox, BranchSegment, ChannelSemantics, ImageData, MaterialData, MeshData, SubMesh,
     Vertex,

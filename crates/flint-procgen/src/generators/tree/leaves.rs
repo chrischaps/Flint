@@ -4,7 +4,7 @@
 //! with configurable density, size variation, and color variation.
 
 use crate::algorithms::mesh_builder::MeshBuilder;
-use crate::types::{MaterialData, MeshData, Vertex};
+use crate::types::{BranchSegment, MaterialData, MeshData, Vertex};
 use crate::Result;
 use crate::SeededRng;
 use flint_core::spline::rotate_around_axis;
@@ -13,19 +13,24 @@ use flint_core::Vec3;
 use super::LeafParams;
 use super::LeafStyle;
 
-/// Generate leaf geometry at branch tips.
+/// Generate leaf geometry at branch tips and optionally along branch segments.
 ///
 /// Dispatches to billboard or mesh cluster generation based on `params.style`.
 /// Returns an empty mesh for [`LeafStyle::None`].
 pub fn generate_leaves(
     tips: &[Vec3],
     tip_directions: &[Vec3],
+    segments: &[BranchSegment],
     params: &LeafParams,
     rng: &mut SeededRng,
 ) -> Result<MeshData> {
     match params.style {
-        LeafStyle::BillboardCluster => generate_billboard_leaves(tips, tip_directions, params, rng),
-        LeafStyle::MeshCluster => generate_mesh_leaves(tips, tip_directions, params, rng),
+        LeafStyle::BillboardCluster => {
+            generate_billboard_leaves(tips, tip_directions, segments, params, rng)
+        }
+        LeafStyle::MeshCluster => {
+            generate_mesh_leaves(tips, tip_directions, segments, params, rng)
+        }
         LeafStyle::None => {
             let builder = MeshBuilder::new();
             Ok(builder.build())
@@ -43,6 +48,58 @@ fn safe_normalize(v: Vec3, fallback: Vec3) -> Vec3 {
     }
 }
 
+/// Sample leaf placement positions along branch segments.
+///
+/// Filters segments by `min_depth`, then probabilistically samples each one
+/// using `density`. Places leaves at the segment midpoint (or at multiple
+/// evenly-spaced positions for long segments relative to `spread_radius`).
+fn sample_along_branch_positions(
+    segments: &[BranchSegment],
+    params: &LeafParams,
+    rng: &mut SeededRng,
+) -> (Vec<Vec3>, Vec<Vec3>) {
+    let mut positions = Vec::new();
+    let mut directions = Vec::new();
+
+    if params.leaf_along_branch_density <= 0.0 {
+        return (positions, directions);
+    }
+
+    for seg in segments {
+        if seg.depth < params.leaf_along_branch_min_depth {
+            continue;
+        }
+
+        if !rng.next_bool(params.leaf_along_branch_density as f64) {
+            continue;
+        }
+
+        let seg_len = seg.length();
+        if seg_len < 1e-6 {
+            continue;
+        }
+
+        let dir = seg.direction();
+
+        // For longer segments, place multiple leaf clusters along the length
+        let spacing = (params.leaf_spread_radius * 2.0).max(0.2);
+        let num_points = ((seg_len / spacing).ceil() as usize).max(1);
+
+        for j in 0..num_points {
+            let t = if num_points == 1 {
+                0.5
+            } else {
+                (j as f32 + 0.5) / num_points as f32
+            };
+            let pos = seg.start + (seg.end - seg.start) * t;
+            positions.push(pos);
+            directions.push(dir);
+        }
+    }
+
+    (positions, directions)
+}
+
 /// Generate billboard quad clusters at branch tips.
 ///
 /// Each selected tip (sampled by `density`) gets `leaves_per_tip` quads
@@ -50,12 +107,18 @@ fn safe_normalize(v: Vec3, fallback: Vec3) -> Vec3 {
 fn generate_billboard_leaves(
     tips: &[Vec3],
     tip_directions: &[Vec3],
+    segments: &[BranchSegment],
     params: &LeafParams,
     rng: &mut SeededRng,
 ) -> Result<MeshData> {
+    // Collect along-branch positions
+    let (along_positions, along_directions) =
+        sample_along_branch_positions(segments, params, rng);
+
     let tip_count = tips.len().min(tip_directions.len());
+    let total_points = tip_count + along_positions.len();
     let estimated_leaves =
-        (tip_count as f32 * params.density) as usize * params.leaves_per_tip as usize;
+        (total_points as f32 * params.density) as usize * params.leaves_per_tip as usize;
     let mut builder = MeshBuilder::with_capacity(estimated_leaves * 4, estimated_leaves * 6);
 
     builder.add_material(MaterialData {
@@ -65,13 +128,23 @@ fn generate_billboard_leaves(
         roughness: 0.8,
     });
 
-    for i in 0..tip_count {
+    // Combine tip positions with along-branch positions
+    let all_positions: Vec<Vec3> = tips.iter().copied()
+        .chain(along_positions.into_iter())
+        .collect();
+    let all_directions: Vec<Vec3> = tip_directions.iter().copied()
+        .chain(along_directions.into_iter())
+        .collect();
+
+    let spread = params.leaf_spread_radius;
+
+    for i in 0..all_positions.len() {
         if !rng.next_bool(params.density as f64) {
             continue;
         }
 
-        let tip = tips[i];
-        let dir = safe_normalize(tip_directions[i], Vec3::UP);
+        let tip = all_positions[i];
+        let dir = safe_normalize(all_directions[i], Vec3::UP);
 
         // Find a perpendicular basis
         let perp = perpendicular_to(dir);
@@ -87,10 +160,10 @@ fn generate_billboard_leaves(
             let u = rotate_around_axis(perp, dir, angle);
             let v = rotate_around_axis(bitangent, dir, angle);
 
-            // Small random offset from the tip
-            let offset = dir * rng.next_range(-0.05, 0.05)
-                + u * rng.next_range(-0.1, 0.1)
-                + v * rng.next_range(-0.1, 0.1);
+            // Random offset within the spread radius sphere
+            let offset = dir * rng.next_range(-spread, spread)
+                + u * rng.next_range(-spread, spread)
+                + v * rng.next_range(-spread, spread);
             let center = tip + offset;
 
             let color = rng.next_color_variation(params.color_base, params.color_variation);
@@ -122,8 +195,6 @@ fn generate_billboard_leaves(
             });
 
             // Color stored in material; per-vertex color not used in Vertex struct.
-            // The color variation is aesthetic intent — we apply it via material on
-            // the leaf group. For per-leaf color, we'd need vertex colors (future).
             let _ = color;
 
             builder.add_quad(i0, i1, i2, i3);
@@ -140,12 +211,18 @@ fn generate_billboard_leaves(
 fn generate_mesh_leaves(
     tips: &[Vec3],
     tip_directions: &[Vec3],
+    segments: &[BranchSegment],
     params: &LeafParams,
     rng: &mut SeededRng,
 ) -> Result<MeshData> {
+    // Collect along-branch positions
+    let (along_positions, along_directions) =
+        sample_along_branch_positions(segments, params, rng);
+
     let tip_count = tips.len().min(tip_directions.len());
+    let total_points = tip_count + along_positions.len();
     let estimated_leaves =
-        (tip_count as f32 * params.density) as usize * params.leaves_per_tip as usize;
+        (total_points as f32 * params.density) as usize * params.leaves_per_tip as usize;
     // Each diamond: 5 vertices (center + 4 points), 4 triangles
     let mut builder = MeshBuilder::with_capacity(estimated_leaves * 5, estimated_leaves * 12);
 
@@ -156,13 +233,23 @@ fn generate_mesh_leaves(
         roughness: 0.8,
     });
 
-    for i in 0..tip_count {
+    // Combine tip positions with along-branch positions
+    let all_positions: Vec<Vec3> = tips.iter().copied()
+        .chain(along_positions.into_iter())
+        .collect();
+    let all_directions: Vec<Vec3> = tip_directions.iter().copied()
+        .chain(along_directions.into_iter())
+        .collect();
+
+    let spread = params.leaf_spread_radius;
+
+    for i in 0..all_positions.len() {
         if !rng.next_bool(params.density as f64) {
             continue;
         }
 
-        let tip = tips[i];
-        let dir = safe_normalize(tip_directions[i], Vec3::UP);
+        let tip = all_positions[i];
+        let dir = safe_normalize(all_directions[i], Vec3::UP);
 
         for _ in 0..params.leaves_per_tip {
             let scale = params.leaf_size
@@ -181,10 +268,10 @@ fn generate_mesh_leaves(
             let leaf_perp = perpendicular_to(leaf_dir);
             let leaf_bi = safe_normalize(leaf_dir.cross(&leaf_perp), Vec3::new(0.0, 0.0, 1.0));
 
-            // Small random offset from the tip
-            let offset = dir * rng.next_range(-0.05, 0.05)
-                + perp * rng.next_range(-0.1, 0.1)
-                + bitangent * rng.next_range(-0.1, 0.1);
+            // Random offset within the spread radius sphere
+            let offset = dir * rng.next_range(-spread, spread)
+                + perp * rng.next_range(-spread, spread)
+                + bitangent * rng.next_range(-spread, spread);
             let center = tip + offset;
 
             let _color = rng.next_color_variation(params.color_base, params.color_variation);
@@ -282,7 +369,7 @@ mod tests {
             ..LeafParams::default()
         };
         let mut rng = SeededRng::new(42);
-        let mesh = generate_leaves(&tips, &dirs, &params, &mut rng).unwrap();
+        let mesh = generate_leaves(&tips, &dirs, &[], &params, &mut rng).unwrap();
 
         assert!(mesh.validate().is_ok());
         assert!(mesh.vertex_count() > 0);
@@ -301,7 +388,7 @@ mod tests {
             ..LeafParams::default()
         };
         let mut rng = SeededRng::new(42);
-        let mesh = generate_leaves(&tips, &dirs, &params, &mut rng).unwrap();
+        let mesh = generate_leaves(&tips, &dirs, &[], &params, &mut rng).unwrap();
 
         assert!(mesh.validate().is_ok());
         assert!(mesh.vertex_count() > 0);
@@ -318,7 +405,7 @@ mod tests {
             ..LeafParams::default()
         };
         let mut rng = SeededRng::new(42);
-        let mesh = generate_leaves(&tips, &dirs, &params, &mut rng).unwrap();
+        let mesh = generate_leaves(&tips, &dirs, &[], &params, &mut rng).unwrap();
         assert_eq!(mesh.vertex_count(), 0);
         assert_eq!(mesh.triangle_count(), 0);
     }
@@ -341,10 +428,10 @@ mod tests {
         };
 
         let mut rng_full = SeededRng::new(42);
-        let mesh_full = generate_leaves(&tips, &dirs, &params_full, &mut rng_full).unwrap();
+        let mesh_full = generate_leaves(&tips, &dirs, &[], &params_full, &mut rng_full).unwrap();
 
         let mut rng_half = SeededRng::new(42);
-        let mesh_half = generate_leaves(&tips, &dirs, &params_half, &mut rng_half).unwrap();
+        let mesh_half = generate_leaves(&tips, &dirs, &[], &params_half, &mut rng_half).unwrap();
 
         // density=1.0 should produce roughly 2x the leaves of density=0.5
         assert!(
@@ -361,10 +448,10 @@ mod tests {
         let params = LeafParams::default();
 
         let mut rng_a = SeededRng::new(123);
-        let mesh_a = generate_leaves(&tips, &dirs, &params, &mut rng_a).unwrap();
+        let mesh_a = generate_leaves(&tips, &dirs, &[], &params, &mut rng_a).unwrap();
 
         let mut rng_b = SeededRng::new(123);
-        let mesh_b = generate_leaves(&tips, &dirs, &params, &mut rng_b).unwrap();
+        let mesh_b = generate_leaves(&tips, &dirs, &[], &params, &mut rng_b).unwrap();
 
         assert_eq!(mesh_a.vertex_count(), mesh_b.vertex_count());
         assert_eq!(mesh_a.triangle_count(), mesh_b.triangle_count());
@@ -385,10 +472,85 @@ mod tests {
             ..LeafParams::default()
         };
         let mut rng = SeededRng::new(42);
-        let mesh = generate_leaves(&tips, &dirs, &params, &mut rng).unwrap();
+        let mesh = generate_leaves(&tips, &dirs, &[], &params, &mut rng).unwrap();
 
         // 6 quads × 4 verts = 24 verts, 6 quads × 2 tris = 12 tris
         assert_eq!(mesh.vertex_count(), 24);
         assert_eq!(mesh.triangle_count(), 12);
+    }
+
+    #[test]
+    fn along_branch_placement_adds_leaves() {
+        let tips = vec![Vec3::new(0.0, 5.0, 0.0)];
+        let dirs = vec![Vec3::UP];
+        let segments = vec![
+            BranchSegment {
+                start: Vec3::new(0.0, 3.0, 0.0),
+                end: Vec3::new(1.0, 4.0, 0.0),
+                radius_start: 0.08,
+                radius_end: 0.05,
+                depth: 2,
+            },
+            BranchSegment {
+                start: Vec3::new(1.0, 4.0, 0.0),
+                end: Vec3::new(2.0, 4.5, 0.5),
+                radius_start: 0.05,
+                radius_end: 0.03,
+                depth: 3,
+            },
+        ];
+
+        // Without along-branch
+        let params_no_along = LeafParams {
+            density: 1.0,
+            leaf_along_branch_density: 0.0,
+            ..LeafParams::default()
+        };
+        let mut rng1 = SeededRng::new(42);
+        let mesh_no = generate_leaves(&tips, &dirs, &segments, &params_no_along, &mut rng1).unwrap();
+
+        // With along-branch
+        let params_along = LeafParams {
+            density: 1.0,
+            leaf_along_branch_density: 1.0,
+            leaf_along_branch_min_depth: 2,
+            ..LeafParams::default()
+        };
+        let mut rng2 = SeededRng::new(42);
+        let mesh_yes = generate_leaves(&tips, &dirs, &segments, &params_along, &mut rng2).unwrap();
+
+        assert!(
+            mesh_yes.vertex_count() > mesh_no.vertex_count(),
+            "along-branch placement ({}) should produce more vertices than tip-only ({})",
+            mesh_yes.vertex_count(),
+            mesh_no.vertex_count()
+        );
+    }
+
+    #[test]
+    fn along_branch_respects_min_depth() {
+        let tips: Vec<Vec3> = vec![];
+        let dirs: Vec<Vec3> = vec![];
+        let segments = vec![
+            BranchSegment {
+                start: Vec3::new(0.0, 3.0, 0.0),
+                end: Vec3::new(1.0, 4.0, 0.0),
+                radius_start: 0.1,
+                radius_end: 0.08,
+                depth: 1, // below min_depth=2
+            },
+        ];
+
+        let params = LeafParams {
+            density: 1.0,
+            leaf_along_branch_density: 1.0,
+            leaf_along_branch_min_depth: 2,
+            ..LeafParams::default()
+        };
+        let mut rng = SeededRng::new(42);
+        let mesh = generate_leaves(&tips, &dirs, &segments, &params, &mut rng).unwrap();
+
+        // No tips and segment depth < min_depth, so no leaves
+        assert_eq!(mesh.vertex_count(), 0);
     }
 }

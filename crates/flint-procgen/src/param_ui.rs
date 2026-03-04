@@ -44,6 +44,8 @@ pub enum ParamFieldType {
     StringArray {
         item_enum: Option<Vec<String>>,
     },
+    /// Array of objects (e.g. bones, body_parts, limb_chains).
+    ObjectArray,
 }
 
 /// Parse a generator's JSON Schema into a list of UI field descriptors.
@@ -116,6 +118,12 @@ fn classify_field(prop: &Value) -> ParamFieldType {
             ParamFieldType::String
         }
         "array" => {
+            // Check if items are objects (e.g. bones, body_parts, limb_chains)
+            if let Some(items) = prop.get("items") {
+                if items.get("type").and_then(|t| t.as_str()) == Some("object") {
+                    return ParamFieldType::ObjectArray;
+                }
+            }
             let item_enum = prop
                 .get("items")
                 .and_then(extract_string_enum);
@@ -294,6 +302,51 @@ mod tests {
         });
         let fields = parse_param_schema(&schema);
         assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn test_object_array_field() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "bones": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "parent": { "type": "string" },
+                            "position": { "type": "array" }
+                        }
+                    }
+                }
+            }
+        });
+        let fields = parse_param_schema(&schema);
+        assert_eq!(fields.len(), 1);
+        assert!(matches!(fields[0].field_type, ParamFieldType::ObjectArray));
+    }
+
+    #[test]
+    fn test_string_array_without_enum_still_works() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": ["fast", "heavy"]
+                }
+            }
+        });
+        let fields = parse_param_schema(&schema);
+        assert_eq!(fields.len(), 1);
+        match &fields[0].field_type {
+            ParamFieldType::StringArray { item_enum } => {
+                assert!(item_enum.is_none());
+            }
+            _ => panic!("expected StringArray"),
+        }
     }
 
     #[test]

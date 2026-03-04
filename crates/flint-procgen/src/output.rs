@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::skinning::SkinnedMeshData;
 use crate::types::{ImageData, MeshData};
 
 /// The kind of asset a generator produces.
@@ -30,6 +31,8 @@ pub enum GeneratorOutput {
     Image(ImageData),
     /// Multiple related images (e.g. albedo + normal + roughness maps).
     ImageSet(Vec<ImageData>),
+    /// Generated skinned mesh with skeleton (single LOD).
+    SkinnedMesh(SkinnedMeshData),
     /// Generated audio (raw bytes, format TBD).
     Sound(Vec<u8>),
 }
@@ -38,7 +41,7 @@ impl GeneratorOutput {
     /// Which kind of output this is.
     pub fn kind(&self) -> OutputKind {
         match self {
-            Self::Mesh(_) | Self::MeshWithLods(_) => OutputKind::Mesh,
+            Self::Mesh(_) | Self::MeshWithLods(_) | Self::SkinnedMesh(_) => OutputKind::Mesh,
             Self::Image(_) | Self::ImageSet(_) => OutputKind::Image,
             Self::Sound(_) => OutputKind::Sound,
         }
@@ -104,6 +107,22 @@ impl GeneratorOutput {
     pub fn into_image_set(self) -> Option<Vec<ImageData>> {
         match self {
             Self::ImageSet(images) => Some(images),
+            _ => None,
+        }
+    }
+
+    /// Borrow the skinned mesh data, if this is a `SkinnedMesh` variant.
+    pub fn as_skinned_mesh(&self) -> Option<&SkinnedMeshData> {
+        match self {
+            Self::SkinnedMesh(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Consume and return the skinned mesh data, if this is a `SkinnedMesh` variant.
+    pub fn into_skinned_mesh(self) -> Option<SkinnedMeshData> {
+        match self {
+            Self::SkinnedMesh(m) => Some(m),
             _ => None,
         }
     }

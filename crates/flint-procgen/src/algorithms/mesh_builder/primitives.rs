@@ -30,6 +30,16 @@ pub struct SphereParams {
     pub rings: u32,    // latitude
 }
 
+/// Parameters for generating an ellipsoid (sphere with per-axis radii).
+#[derive(Debug, Clone)]
+pub struct EllipsoidParams {
+    pub radius_x: f32,
+    pub radius_y: f32,
+    pub radius_z: f32,
+    pub segments: u32, // longitude
+    pub rings: u32,    // latitude
+}
+
 /// Parameters for generating a cone.
 #[derive(Debug, Clone)]
 pub struct ConeParams {
@@ -235,6 +245,91 @@ pub fn sphere(params: &SphereParams) -> MeshData {
             vertices.push(Vertex {
                 position: [x * params.radius, y * params.radius, z * params.radius],
                 normal: [x, y, z], // normalized position = normal for unit sphere
+                tangent: [0.0, 0.0, 0.0, 1.0],
+                uv: [u, v],
+            });
+        }
+    }
+
+    let row_width = s + 1;
+    for j in 0..ri {
+        for i in 0..s {
+            let a = j * row_width + i;
+            let b = a + 1;
+            let c = (j + 1) * row_width + i;
+            let d = c + 1;
+
+            indices.push(a);
+            indices.push(c);
+            indices.push(b);
+
+            indices.push(b);
+            indices.push(c);
+            indices.push(d);
+        }
+    }
+
+    let bbox =
+        BoundingBox::from_positions(&vertices.iter().map(|v| v.position).collect::<Vec<_>>());
+
+    MeshData {
+        vertices,
+        indices,
+        materials: vec![MaterialData::default()],
+        submeshes: vec![],
+        bounding_box: bbox,
+    }
+}
+
+/// Generate an ellipsoid (UV sphere with per-axis radii).
+///
+/// Vertices: `(segments + 1) * (rings + 1)`
+/// Triangles: `segments * rings * 2`
+pub fn ellipsoid(params: &EllipsoidParams) -> MeshData {
+    let s = params.segments;
+    let ri = params.rings;
+
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for j in 0..=ri {
+        let phi = std::f32::consts::PI * j as f32 / ri as f32;
+        let sin_phi = phi.sin();
+        let cos_phi = phi.cos();
+
+        for i in 0..=s {
+            let theta = TAU * i as f32 / s as f32;
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+
+            // Unit sphere direction
+            let ux = sin_phi * cos_theta;
+            let uy = cos_phi;
+            let uz = sin_phi * sin_theta;
+
+            // Position scaled by per-axis radii
+            let px = ux * params.radius_x;
+            let py = uy * params.radius_y;
+            let pz = uz * params.radius_z;
+
+            // Normal: gradient of the implicit ellipsoid surface x²/a² + y²/b² + z²/c² = 1
+            // ∇ = (2x/a², 2y/b², 2z/c²), normalized
+            let nx = ux / params.radius_x;
+            let ny = uy / params.radius_y;
+            let nz = uz / params.radius_z;
+            let n_len = (nx * nx + ny * ny + nz * nz).sqrt();
+            let (nx, ny, nz) = if n_len > 1e-10 {
+                (nx / n_len, ny / n_len, nz / n_len)
+            } else {
+                (0.0, 1.0, 0.0)
+            };
+
+            let u = i as f32 / s as f32;
+            let v = j as f32 / ri as f32;
+
+            vertices.push(Vertex {
+                position: [px, py, pz],
+                normal: [nx, ny, nz],
                 tangent: [0.0, 0.0, 0.0, 1.0],
                 uv: [u, v],
             });
@@ -509,6 +604,113 @@ mod tests {
             cap: true,
         });
         assert!(mesh.validate().is_ok());
+    }
+
+    #[test]
+    fn ellipsoid_vertex_count() {
+        let s = 16;
+        let ri = 12;
+        let mesh = ellipsoid(&EllipsoidParams {
+            radius_x: 2.0,
+            radius_y: 1.0,
+            radius_z: 1.5,
+            segments: s,
+            rings: ri,
+        });
+
+        let expected_verts = (s + 1) * (ri + 1);
+        assert_eq!(mesh.vertex_count(), expected_verts as usize);
+
+        let expected_tris = s * ri * 2;
+        assert_eq!(mesh.triangle_count(), expected_tris as usize);
+    }
+
+    #[test]
+    fn ellipsoid_validates() {
+        let mesh = ellipsoid(&EllipsoidParams {
+            radius_x: 2.0,
+            radius_y: 1.5,
+            radius_z: 3.0,
+            segments: 16,
+            rings: 12,
+        });
+        assert!(mesh.validate().is_ok());
+    }
+
+    #[test]
+    fn ellipsoid_bounding_box() {
+        let mesh = ellipsoid(&EllipsoidParams {
+            radius_x: 2.0,
+            radius_y: 1.0,
+            radius_z: 3.0,
+            segments: 32,
+            rings: 16,
+        });
+
+        let bb = &mesh.bounding_box;
+        assert!((bb.max.x - 2.0).abs() < 0.1, "max x should be ~radius_x");
+        assert!((bb.max.y - 1.0).abs() < 0.1, "max y should be ~radius_y");
+        assert!((bb.max.z - 3.0).abs() < 0.1, "max z should be ~radius_z");
+    }
+
+    #[test]
+    fn ellipsoid_normals_unit_length() {
+        let mesh = ellipsoid(&EllipsoidParams {
+            radius_x: 2.0,
+            radius_y: 1.0,
+            radius_z: 1.5,
+            segments: 8,
+            rings: 6,
+        });
+
+        for v in &mesh.vertices {
+            let len = Vec3::from_array(v.normal).length();
+            assert!(
+                (len - 1.0).abs() < 1e-4,
+                "ellipsoid normal should be unit length, got {}",
+                len
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsoid_equal_radii_matches_sphere() {
+        let r = 1.5;
+        let s = 12;
+        let ri = 8;
+        let sphere_mesh = sphere(&SphereParams {
+            radius: r,
+            segments: s,
+            rings: ri,
+        });
+        let ellipsoid_mesh = ellipsoid(&EllipsoidParams {
+            radius_x: r,
+            radius_y: r,
+            radius_z: r,
+            segments: s,
+            rings: ri,
+        });
+
+        assert_eq!(sphere_mesh.vertex_count(), ellipsoid_mesh.vertex_count());
+        assert_eq!(
+            sphere_mesh.triangle_count(),
+            ellipsoid_mesh.triangle_count()
+        );
+
+        // Positions should match
+        for (sv, ev) in sphere_mesh
+            .vertices
+            .iter()
+            .zip(ellipsoid_mesh.vertices.iter())
+        {
+            for k in 0..3 {
+                assert!(
+                    (sv.position[k] - ev.position[k]).abs() < 1e-5,
+                    "position mismatch at axis {}",
+                    k
+                );
+            }
+        }
     }
 
     #[test]

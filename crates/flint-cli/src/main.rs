@@ -198,6 +198,10 @@ enum Commands {
         /// Sample animation at a specific time in seconds (headless --render mode only)
         #[arg(long)]
         anim_time: Option<f32>,
+
+        /// Start with auto-orbit enabled
+        #[arg(long)]
+        auto_orbit: bool,
     },
 
     /// Run a procedural generation spec
@@ -350,7 +354,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off")),
         )
         .init();
 
@@ -414,6 +418,7 @@ fn main() -> Result<()> {
             clip,
             anim_speed,
             anim_time,
+            auto_orbit,
         } => preview::run(preview::PreviewArgs {
             model,
             render: render_output,
@@ -430,6 +435,7 @@ fn main() -> Result<()> {
             clip,
             anim_speed,
             anim_time,
+            auto_orbit,
         }),
         Commands::Serve {
             scene,

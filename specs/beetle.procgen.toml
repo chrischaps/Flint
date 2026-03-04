@@ -1,0 +1,113 @@
+generator = "creature_v1"
+
+[meta]
+name = "beetle_01"
+description = "A ground beetle"
+version = "1.0.0"
+tags = ["insect", "creature"]
+
+[seed]
+mode = "random"
+
+[params]
+symmetry = "bilateral"
+
+# --- Bone hierarchy (non-limb bones) ---
+[[params.bones]]
+name = "root"
+position = [0, 0.3, 0]
+
+[[params.bones]]
+name = "abdomen"
+parent = "root"
+position = [0, 0, -0.5]
+rotation = [-10, 0, 0]
+
+[[params.bones]]
+name = "thorax"
+parent = "root"
+position = [0, 0.05, 0.2]
+
+[[params.bones]]
+name = "head"
+parent = "thorax"
+position = [0, 0.05, 0.4]
+
+# --- Body part geometry (attached to bones) ---
+[[params.body_parts]]
+bone = "abdomen"
+shape = "ellipsoid"
+dimensions = [0.35, 0.25, 0.55]
+material = "elytra"
+
+[[params.body_parts]]
+bone = "thorax"
+shape = "ellipsoid"
+dimensions = [0.25, 0.22, 0.3]
+material = "chitin"
+
+[[params.body_parts]]
+bone = "head"
+shape = "ellipsoid"
+dimensions = [0.15, 0.12, 0.18]
+material = "chitin"
+
+# --- Limb chains (auto-generate bones + geometry) ---
+[[params.limb_chains]]
+name = "front_leg"
+parent_bone = "thorax"
+attach_offset = [0.2, -0.1, 0.15]
+mirror = true
+segments = [
+  { length = 0.12, radius_start = 0.03, radius_end = 0.025, rest_angles = [-40, 0, -30] },
+  { length = 0.2, radius_start = 0.025, radius_end = 0.018, rest_angles = [70, 0, 0] },
+  { length = 0.15, radius_start = 0.018, radius_end = 0.008, rest_angles = [-50, 0, 0] },
+]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "mid_leg"
+parent_bone = "thorax"
+attach_offset = [0.22, -0.12, 0]
+mirror = true
+segments = [
+  { length = 0.15, radius_start = 0.035, radius_end = 0.028, rest_angles = [-30, 0, -60] },
+  { length = 0.25, radius_start = 0.028, radius_end = 0.02, rest_angles = [65, 0, 0] },
+  { length = 0.18, radius_start = 0.02, radius_end = 0.009, rest_angles = [-45, 0, 0] },
+]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "hind_leg"
+parent_bone = "thorax"
+attach_offset = [0.2, -0.1, -0.15]
+mirror = true
+segments = [
+  { length = 0.18, radius_start = 0.04, radius_end = 0.03, rest_angles = [-25, 0, -80] },
+  { length = 0.3, radius_start = 0.03, radius_end = 0.022, rest_angles = [60, 0, 0] },
+  { length = 0.2, radius_start = 0.022, radius_end = 0.01, rest_angles = [-40, 0, 0] },
+]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "antenna"
+parent_bone = "head"
+attach_offset = [0.06, 0.08, 0.12]
+mirror = true
+segments = [
+  { length = 0.1, radius_start = 0.012, radius_end = 0.01, rest_angles = [40, 0, 15] },
+  { length = 0.12, radius_start = 0.01, radius_end = 0.006, rest_angles = [20, 0, 10] },
+  { length = 0.08, radius_start = 0.006, radius_end = 0.003, rest_angles = [10, 0, 5] },
+]
+material = "chitin"
+
+# --- Materials ---
+[params.materials.chitin]
+base_color = "#2a1f0e"
+roughness = 0.35
+metallic = 0.05
+
+[params.materials.elytra]
+base_color = "#1a3a1a"
+roughness = 0.25
+metallic = 0.15

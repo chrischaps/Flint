@@ -17,8 +17,8 @@ pub use extrude::{
 };
 pub use normals::compute_normals;
 pub use primitives::{
-    cone, cylinder, sphere, tapered_cylinder, ConeParams, CylinderParams, SphereParams,
-    TaperedCylinderParams,
+    cone, cylinder, ellipsoid, sphere, tapered_cylinder, ConeParams, CylinderParams,
+    EllipsoidParams, SphereParams, TaperedCylinderParams,
 };
 pub use simplify::simplify;
 pub use tangents::compute_tangents;

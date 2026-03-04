@@ -71,6 +71,8 @@ pub struct DebugState {
     pub show_normals: bool,
     /// Length of normal-direction arrows in model-space units
     pub normal_arrow_length: f32,
+    /// Whether skeleton/armature bone lines are drawn (F4 toggles)
+    pub show_skeleton: bool,
 }
 
 impl Default for DebugState {
@@ -80,6 +82,7 @@ impl Default for DebugState {
             wireframe_overlay: false,
             show_normals: false,
             normal_arrow_length: 0.3,
+            show_skeleton: false,
         }
     }
 }

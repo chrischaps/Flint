@@ -5,7 +5,7 @@
 //! Parameters are derived from each generator's `param_schema()` JSON Schema.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,14 +15,17 @@ use flint_core::components as comp;
 use flint_core::Vec3;
 use flint_ecs::FlintWorld;
 use flint_procgen::{
-    parse_param_schema, GeneratorOutput, GeneratorRegistry, MeshData, ParamFieldSpec,
+    export_glb, parse_param_schema, GeneratorOutput, GeneratorRegistry, MeshData, ParamFieldSpec,
     ParamFieldType, ProcGenSpec, SeedConfig, SeedMode,
 };
-use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer, Vertex as RenderVertex};
+use flint_render::{
+    Camera, OrbitCameraController, RenderContext, RendererConfig, SceneRenderer,
+    Vertex as RenderVertex,
+};
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -49,6 +52,10 @@ pub struct GenPreviewArgs {
     /// Disable the ground grid
     #[arg(long)]
     pub no_grid: bool,
+
+    /// Start with auto-orbit enabled
+    #[arg(long)]
+    pub auto_orbit: bool,
 }
 
 pub fn run(args: GenPreviewArgs) -> Result<()> {
@@ -105,6 +112,8 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
         Some(debouncer)
     };
 
+    let auto_orbit = args.auto_orbit;
+
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
@@ -127,10 +136,16 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
         current_seed: args.seed.unwrap_or(42),
 
         // Generation output
+        last_skeleton: None,
         last_mesh: None,
         last_images: Vec::new(),
         selected_image_tab: 0,
+        texture_zoom: 1.0,
+        texture_offset: [0.0, 0.0],
+        texture_tiled: false,
+        texture_tile_count: 3,
         gen_time_ms: 0.0,
+        last_world: None,
 
         // Window / GPU
         args,
@@ -140,9 +155,7 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
         camera: Camera::new(),
 
         // Input
-        mouse_pressed: false,
-        right_mouse_pressed: false,
-        last_mouse_pos: None,
+        orbit: OrbitCameraController::new(),
         last_frame_time: Instant::now(),
 
         // egui
@@ -163,7 +176,11 @@ pub fn run(args: GenPreviewArgs) -> Result<()> {
 
         // Save state
         watcher_paused_until: None,
+
+        // Status message
+        status_message: None,
     };
+    app.orbit.auto_orbit = auto_orbit;
 
     event_loop.run_app(&mut app)?;
     Ok(())
@@ -192,10 +209,16 @@ struct GenPreviewApp {
     current_seed: u64,
 
     // Generation output
+    last_skeleton: Option<flint_procgen::SkeletonDef>,
     last_mesh: Option<MeshData>,
     last_images: Vec<flint_procgen::ImageData>,
     selected_image_tab: usize,
+    texture_zoom: f32,
+    texture_offset: [f32; 2],
+    texture_tiled: bool,
+    texture_tile_count: usize,
     gen_time_ms: f64,
+    last_world: Option<FlintWorld>,
 
     // Window / GPU
     args: GenPreviewArgs,
@@ -205,9 +228,7 @@ struct GenPreviewApp {
     camera: Camera,
 
     // Input
-    mouse_pressed: bool,
-    right_mouse_pressed: bool,
-    last_mouse_pos: Option<(f64, f64)>,
+    orbit: OrbitCameraController,
     last_frame_time: Instant,
 
     // egui
@@ -228,6 +249,9 @@ struct GenPreviewApp {
 
     // Save state: temporarily ignore file watcher events after saving
     watcher_paused_until: Option<Instant>,
+
+    // Status message shown briefly in the UI after actions
+    status_message: Option<(String, Instant)>,
 }
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -300,11 +324,13 @@ impl GenPreviewApp {
                 GeneratorOutput::Mesh(mesh) => {
                     self.upload_mesh(&mesh, 0);
                     self.last_mesh = Some(mesh);
+                    self.last_skeleton = None;
                     self.last_images.clear();
                     self.lod_count = 1;
                     self.selected_lod = 0;
                 }
                 GeneratorOutput::MeshWithLods(lods) => {
+                    self.last_skeleton = None;
                     self.lod_count = lods.len();
                     if self.selected_lod >= self.lod_count {
                         self.selected_lod = 0;
@@ -328,6 +354,34 @@ impl GenPreviewApp {
                     }
                     self.update_egui_textures();
                 }
+                GeneratorOutput::SkinnedMesh(skinned) => {
+                    // Store skeleton for visualization
+                    self.last_skeleton = Some(skinned.skeleton.clone());
+
+                    // Convert skinned mesh to regular MeshData for preview
+                    // (renders the rest-pose geometry without skinning)
+                    let mesh = flint_procgen::MeshData {
+                        vertices: skinned
+                            .vertices
+                            .iter()
+                            .map(|v| flint_procgen::Vertex {
+                                position: v.position,
+                                normal: v.normal,
+                                tangent: v.tangent,
+                                uv: v.uv,
+                            })
+                            .collect(),
+                        indices: skinned.indices.clone(),
+                        materials: skinned.materials.clone(),
+                        submeshes: skinned.submeshes.clone(),
+                        bounding_box: skinned.bounding_box,
+                    };
+                    self.upload_mesh(&mesh, 0);
+                    self.last_mesh = Some(mesh);
+                    self.last_images.clear();
+                    self.lod_count = 1;
+                    self.selected_lod = 0;
+                }
                 GeneratorOutput::Sound(_) => {
                     tracing::warn!("Sound output not supported in gen-preview");
                 }
@@ -338,6 +392,9 @@ impl GenPreviewApp {
         }
 
         self.dirty = false;
+
+        // Refresh skeleton overlay if enabled
+        self.update_skeleton_overlay();
     }
 
     /// Convert procgen MeshData to render vertices and upload to the GPU.
@@ -398,6 +455,7 @@ impl GenPreviewApp {
         {
             renderer.update_from_world(&world, &context.device);
         }
+        self.last_world = Some(world);
 
         self.auto_fit_to_mesh(mesh);
     }
@@ -470,6 +528,7 @@ impl GenPreviewApp {
         {
             renderer.update_from_world(&world, &context.device);
         }
+        self.last_world = Some(world);
 
         self.auto_fit_to_mesh(mesh);
     }
@@ -488,6 +547,37 @@ impl GenPreviewApp {
         self.camera.yaw = std::f32::consts::FRAC_PI_4;
         self.camera.pitch = 0.5;
         self.camera.update_orbit();
+    }
+
+    /// Update skeleton overlay from stored skeleton data.
+    fn update_skeleton_overlay(&mut self) {
+        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
+        else {
+            return;
+        };
+
+        if !renderer.debug_state().show_skeleton {
+            renderer.clear_skeleton_overlay();
+            return;
+        }
+
+        let Some(skeleton) = &self.last_skeleton else {
+            renderer.clear_skeleton_overlay();
+            return;
+        };
+
+        let world_transforms = skeleton.compute_world_transforms();
+        let positions: Vec<[f32; 3]> = world_transforms
+            .iter()
+            .map(|m| {
+                // Extract translation from column-major 4x4 matrix (columns 12,13,14)
+                [m[12], m[13], m[14]]
+            })
+            .collect();
+        let parents: Vec<Option<usize>> = skeleton.bones.iter().map(|b| b.parent).collect();
+
+        let mesh = flint_render::generate_skeleton_lines(&positions, &parents);
+        renderer.set_skeleton_overlay(&context.device, &mesh);
     }
 
     /// Convert ImageData to egui texture handles for display.
@@ -569,18 +659,204 @@ impl GenPreviewApp {
         match toml::to_string_pretty(&self.spec) {
             Ok(content) => {
                 if let Err(e) = std::fs::write(&self.spec_path, &content) {
-                    tracing::error!("Failed to save spec: {}", e);
+                    self.set_status(&format!("Failed to save: {e}"));
                 } else {
                     // Pause watcher to avoid reload loop
                     self.watcher_paused_until =
                         Some(Instant::now() + Duration::from_millis(1000));
-                    tracing::info!("Spec saved to {}", self.spec_path.display());
+                    self.set_status(&format!("Saved {}", self.spec_path.display()));
                 }
             }
             Err(e) => {
-                tracing::error!("Failed to serialize spec: {}", e);
+                self.set_status(&format!("Serialize failed: {e}"));
             }
         }
+    }
+
+    // ─── Export output ────────────────────────────────────────────────────
+
+    fn export_output(&mut self) {
+        // Determine default filename and extension from the spec name
+        let base_name = self
+            .spec
+            .meta
+            .name
+            .replace(' ', "_")
+            .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "");
+
+        let has_mesh = self.last_mesh.is_some();
+        let has_images = !self.last_images.is_empty();
+
+        if !has_mesh && !has_images {
+            self.set_status("Nothing to export");
+            return;
+        }
+
+        if has_mesh {
+            let dialog = rfd::FileDialog::new()
+                .set_title("Export GLB")
+                .add_filter("glTF Binary", &["glb"])
+                .set_file_name(format!("{base_name}.glb"));
+            let dialog = if let Some(parent) = self.spec_path.parent() {
+                dialog.set_directory(parent)
+            } else {
+                dialog
+            };
+
+            if let Some(path) = dialog.save_file() {
+                self.export_mesh_to_path(&path);
+            }
+        } else if has_images {
+            if self.last_images.len() == 1 {
+                let dialog = rfd::FileDialog::new()
+                    .set_title("Export PNG")
+                    .add_filter("PNG Image", &["png"])
+                    .set_file_name(format!("{base_name}.png"));
+                let dialog = if let Some(parent) = self.spec_path.parent() {
+                    dialog.set_directory(parent)
+                } else {
+                    dialog
+                };
+
+                if let Some(path) = dialog.save_file() {
+                    self.export_image_to_path(&self.last_images[0].clone(), &path);
+                }
+            } else {
+                // Multiple images: pick a directory, save with suffixed names
+                let dialog = rfd::FileDialog::new()
+                    .set_title("Export PNGs (select folder)")
+                    .set_file_name(format!("{base_name}.png"));
+                let dialog = if let Some(parent) = self.spec_path.parent() {
+                    dialog.set_directory(parent)
+                } else {
+                    dialog
+                };
+
+                if let Some(base_path) = dialog.save_file() {
+                    let stem = base_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("output");
+                    let parent = base_path.parent().unwrap_or(Path::new("."));
+                    let images = self.last_images.clone();
+                    let mut count = 0;
+                    for img in &images {
+                        let suffix = format!("{:?}", img.channel_semantics).to_lowercase();
+                        let img_path = parent.join(format!("{stem}_{suffix}.png"));
+                        if let Err(e) = img.save_png(&img_path) {
+                            tracing::error!("Failed to save {}: {}", img_path.display(), e);
+                        } else {
+                            count += 1;
+                        }
+                    }
+                    self.set_status(&format!("Exported {count} PNGs to {}", parent.display()));
+                }
+            }
+        }
+    }
+
+    fn export_mesh_to_path(&mut self, path: &Path) {
+        // Re-generate to get the current output (need the full GeneratorOutput for LODs/skinned)
+        self.spec.params = toml::Value::Table(self.params.clone());
+        self.spec.seed = SeedConfig {
+            mode: SeedMode::Fixed,
+            value: Some(self.current_seed),
+            derive_from: None,
+        };
+
+        let result = self.registry.generate_from_spec(&self.spec);
+        match result {
+            Ok(GeneratorOutput::Mesh(mesh)) => {
+                match export_glb::mesh_to_glb(&mesh) {
+                    Ok(glb) => match std::fs::write(path, &glb) {
+                        Ok(()) => self.set_status(&format!("Exported {}", path.display())),
+                        Err(e) => self.set_status(&format!("Write failed: {e}")),
+                    },
+                    Err(e) => self.set_status(&format!("GLB export failed: {e}")),
+                }
+            }
+            Ok(GeneratorOutput::MeshWithLods(lods)) => {
+                match export_glb::mesh_lods_to_glb(&lods) {
+                    Ok(glb) => match std::fs::write(path, &glb) {
+                        Ok(()) => self.set_status(&format!(
+                            "Exported {} ({} LODs)",
+                            path.display(),
+                            lods.len()
+                        )),
+                        Err(e) => self.set_status(&format!("Write failed: {e}")),
+                    },
+                    Err(e) => self.set_status(&format!("GLB export failed: {e}")),
+                }
+            }
+            Ok(GeneratorOutput::SkinnedMesh(mesh)) => {
+                match export_glb::skinned_mesh_to_glb(&mesh) {
+                    Ok(glb) => match std::fs::write(path, &glb) {
+                        Ok(()) => self.set_status(&format!("Exported {}", path.display())),
+                        Err(e) => self.set_status(&format!("Write failed: {e}")),
+                    },
+                    Err(e) => self.set_status(&format!("GLB export failed: {e}")),
+                }
+            }
+            Ok(_) => self.set_status("No mesh to export"),
+            Err(e) => self.set_status(&format!("Generation failed: {e}")),
+        }
+    }
+
+    fn export_image_to_path(&mut self, img: &flint_procgen::ImageData, path: &Path) {
+        match img.save_png(path) {
+            Ok(()) => self.set_status(&format!("Exported {}", path.display())),
+            Err(e) => self.set_status(&format!("Save failed: {e}")),
+        }
+    }
+
+    // ─── Save spec as ────────────────────────────────────────────────────
+
+    fn save_spec_as(&mut self) {
+        let dialog = rfd::FileDialog::new()
+            .set_title("Save Spec As")
+            .add_filter("ProcGen Spec", &["toml"])
+            .set_file_name(
+                self.spec_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("spec.procgen.toml"),
+            );
+        let dialog = if let Some(parent) = self.spec_path.parent() {
+            dialog.set_directory(parent)
+        } else {
+            dialog
+        };
+
+        if let Some(path) = dialog.save_file() {
+            self.spec.params = toml::Value::Table(self.params.clone());
+            self.spec.seed = SeedConfig {
+                mode: SeedMode::Fixed,
+                value: Some(self.current_seed),
+                derive_from: None,
+            };
+
+            match toml::to_string_pretty(&self.spec) {
+                Ok(content) => {
+                    if let Err(e) = std::fs::write(&path, &content) {
+                        self.set_status(&format!("Failed to save: {e}"));
+                    } else {
+                        // Update the spec path to the new location
+                        self.spec_path = path.clone();
+                        self.watcher_paused_until =
+                            Some(Instant::now() + Duration::from_millis(1000));
+                        self.set_status(&format!("Saved to {}", path.display()));
+                    }
+                }
+                Err(e) => {
+                    self.set_status(&format!("Serialize failed: {e}"));
+                }
+            }
+        }
+    }
+
+    fn set_status(&mut self, msg: &str) {
+        tracing::info!("{}", msg);
+        self.status_message = Some((msg.to_string(), Instant::now()));
     }
 
     // ─── egui parameter panel ───────────────────────────────────────────
@@ -612,10 +888,17 @@ impl GenPreviewApp {
         let generator_name = self.spec.generator.clone();
         let is_texture = !self.last_images.is_empty();
         let mut selected_tab = self.selected_image_tab;
+        let mut texture_zoom = self.texture_zoom;
+        let mut texture_offset = self.texture_offset;
+        let mut texture_tiled = self.texture_tiled;
+        let mut texture_tile_count = self.texture_tile_count;
         let egui_textures = &self.egui_textures;
+        let status_msg = self.status_message.clone();
 
         let mut dirty = false;
         let mut want_save = false;
+        let mut want_save_as = false;
+        let mut want_export = false;
         let mut want_reset = false;
         let mut want_randomize = false;
 
@@ -644,7 +927,68 @@ impl GenPreviewApp {
                     });
                     ui.separator();
 
-                    // Parameter groups
+                    // Bottom section (stats, buttons, status) — always visible
+                    egui::TopBottomPanel::bottom("param_panel_bottom")
+                        .show_inside(ui, |ui| {
+                            // LOD selector
+                            if lod_count > 1 {
+                                ui.horizontal(|ui| {
+                                    ui.label("LOD:");
+                                    for i in 0..lod_count {
+                                        if ui.selectable_label(selected_lod == i, format!("{}", i)).clicked() {
+                                            selected_lod = i;
+                                            dirty = true;
+                                        }
+                                    }
+                                });
+                                ui.separator();
+                            }
+
+                            // Stats
+                            if let Some(mesh) = last_mesh {
+                                ui.label(format!(
+                                    "Vertices: {}  Triangles: {}",
+                                    format_count(mesh.vertex_count() as u64),
+                                    format_count(mesh.triangle_count() as u64),
+                                ));
+                            }
+                            ui.label(format!("Gen time: {:.1} ms", gen_time_ms));
+
+                            ui.separator();
+
+                            // Action buttons
+                            ui.horizontal(|ui| {
+                                if ui.button("Save").clicked() {
+                                    want_save = true;
+                                }
+                                if ui.button("Save As").clicked() {
+                                    want_save_as = true;
+                                }
+                                if ui.button("Export").clicked() {
+                                    want_export = true;
+                                }
+                                if ui.button("Reset").clicked() {
+                                    want_reset = true;
+                                }
+                            });
+
+                            // Status message (auto-fades after 4 seconds)
+                            if let Some((msg, when)) = &status_msg {
+                                let age = when.elapsed().as_secs_f32();
+                                if age < 4.0 {
+                                    let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
+                                    ui.label(
+                                        egui::RichText::new(msg)
+                                            .small()
+                                            .color(egui::Color32::from_rgba_unmultiplied(
+                                                180, 220, 180, (alpha * 255.0) as u8,
+                                            )),
+                                    );
+                                }
+                            }
+                        });
+
+                    // Parameter groups — fills remaining space with scroll
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
@@ -661,73 +1005,109 @@ impl GenPreviewApp {
                                     });
                             }
                         });
-
-                    ui.separator();
-
-                    // LOD selector
-                    if lod_count > 1 {
-                        ui.horizontal(|ui| {
-                            ui.label("LOD:");
-                            for i in 0..lod_count {
-                                if ui.selectable_label(selected_lod == i, format!("{}", i)).clicked() {
-                                    selected_lod = i;
-                                    dirty = true;
-                                }
-                            }
-                        });
-                        ui.separator();
-                    }
-
-                    // Stats
-                    if let Some(mesh) = last_mesh {
-                        ui.label(format!(
-                            "Vertices: {}  Triangles: {}",
-                            format_count(mesh.vertex_count() as u64),
-                            format_count(mesh.triangle_count() as u64),
-                        ));
-                    }
-                    ui.label(format!("Gen time: {:.1} ms", gen_time_ms));
-                    ui.label(format!("FPS: {:.0}", fps));
-
-                    ui.separator();
-
-                    // Action buttons
-                    ui.horizontal(|ui| {
-                        if ui.button("Save Spec").clicked() {
-                            want_save = true;
-                        }
-                        if ui.button("Reset").clicked() {
-                            want_reset = true;
-                        }
-                    });
                 });
 
             // Texture display in central panel (only for image output)
             if is_texture && !egui_textures.is_empty() {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    // Tab bar
+                    // Toolbar: channel tabs + view controls
                     ui.horizontal(|ui| {
                         for (i, (label, _)) in egui_textures.iter().enumerate() {
                             if ui.selectable_label(selected_tab == i, label).clicked() {
                                 selected_tab = i;
                             }
                         }
+                        ui.separator();
+                        ui.checkbox(&mut texture_tiled, "Tiled");
+                        if texture_tiled {
+                            for n in [2usize, 3, 4] {
+                                if ui.selectable_label(texture_tile_count == n, format!("{n}x{n}")).clicked() {
+                                    texture_tile_count = n;
+                                }
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("\u{2212}").clicked() {
+                            texture_zoom = (texture_zoom / 1.25).max(0.1);
+                        }
+                        ui.label(format!("{:.0}%", texture_zoom * 100.0));
+                        if ui.button("+").clicked() {
+                            texture_zoom = (texture_zoom * 1.25).min(20.0);
+                        }
+                        if ui.button("Fit").clicked() {
+                            texture_zoom = 1.0;
+                            texture_offset = [0.0, 0.0];
+                        }
                     });
                     ui.separator();
 
-                    // Display selected texture
+                    // Display selected texture with zoom/pan/tiling
                     if let Some((_, handle)) = egui_textures.get(selected_tab) {
-                        let available = ui.available_size();
                         let tex_size = handle.size_vec2();
-                        let scale = (available.x / tex_size.x).min(available.y / tex_size.y).min(1.0);
-                        let display_size = egui::vec2(tex_size.x * scale, tex_size.y * scale);
+                        let available = ui.available_size();
 
-                        ui.centered_and_justified(|ui| {
-                            ui.image(egui::load::SizedTexture::new(
-                                handle.id(),
-                                display_size,
-                            ));
-                        });
+                        // Fit scale: zoom 1.0 = content fits in viewport
+                        let tiles_f = if texture_tiled { texture_tile_count as f32 } else { 1.0 };
+                        let fit_scale = (available.x / (tex_size.x * tiles_f))
+                            .min(available.y / (tex_size.y * tiles_f));
+
+                        // Interactive area for zoom/pan
+                        let (response, painter) = ui.allocate_painter(
+                            available,
+                            egui::Sense::click_and_drag(),
+                        );
+                        let rect = response.rect;
+
+                        // Scroll-to-zoom (centered on cursor)
+                        if response.hovered() {
+                            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                            if scroll != 0.0 {
+                                let old_zoom = texture_zoom;
+                                texture_zoom = (texture_zoom * (1.0 + scroll * 0.003)).clamp(0.1, 20.0);
+                                if let Some(mouse_pos) = response.hover_pos() {
+                                    let factor = texture_zoom / old_zoom;
+                                    let rel = mouse_pos - rect.center();
+                                    texture_offset[0] = texture_offset[0] * factor + rel.x * (1.0 - factor);
+                                    texture_offset[1] = texture_offset[1] * factor + rel.y * (1.0 - factor);
+                                }
+                            }
+                        }
+
+                        // Drag-to-pan
+                        if response.dragged() {
+                            let delta = response.drag_delta();
+                            texture_offset[0] += delta.x;
+                            texture_offset[1] += delta.y;
+                        }
+
+                        // Double-click to reset
+                        if response.double_clicked() {
+                            texture_zoom = 1.0;
+                            texture_offset = [0.0, 0.0];
+                        }
+
+                        // Calculate tile size and draw
+                        let tile_px = egui::vec2(
+                            tex_size.x * fit_scale * texture_zoom,
+                            tex_size.y * fit_scale * texture_zoom,
+                        );
+                        let total = egui::vec2(tile_px.x * tiles_f, tile_px.y * tiles_f);
+                        let origin = rect.center()
+                            + egui::vec2(texture_offset[0], texture_offset[1])
+                            - total * 0.5;
+
+                        let uv = egui::Rect::from_min_max(
+                            egui::pos2(0.0, 0.0),
+                            egui::pos2(1.0, 1.0),
+                        );
+                        let tiles_n = if texture_tiled { texture_tile_count } else { 1 };
+                        for ty in 0..tiles_n {
+                            for tx in 0..tiles_n {
+                                let pos = origin + egui::vec2(tx as f32 * tile_px.x, ty as f32 * tile_px.y);
+                                let tile_rect = egui::Rect::from_min_size(pos, tile_px);
+                                painter.image(handle.id(), tile_rect, uv, egui::Color32::WHITE);
+                            }
+                        }
                     }
                 });
             }
@@ -814,12 +1194,22 @@ impl GenPreviewApp {
         if selected_tab != self.selected_image_tab {
             self.selected_image_tab = selected_tab;
         }
+        self.texture_zoom = texture_zoom;
+        self.texture_offset = texture_offset;
+        self.texture_tiled = texture_tiled;
+        self.texture_tile_count = texture_tile_count;
         if want_randomize {
             self.current_seed = random_seed();
             self.mark_dirty();
         }
         if want_save {
             self.save_spec();
+        }
+        if want_save_as {
+            self.save_spec_as();
+        }
+        if want_export {
+            self.export_output();
         }
         if want_reset {
             self.reload_from_disk();
@@ -883,6 +1273,9 @@ impl ApplicationHandler for GenPreviewApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Let orbit controller track WASD/QE held state
+                self.orbit.handle_key_event(&event);
+
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Escape) => {
@@ -895,83 +1288,138 @@ impl ApplicationHandler for GenPreviewApp {
                             self.current_seed = random_seed();
                             self.mark_dirty();
                         }
-                        PhysicalKey::Code(KeyCode::KeyS) if !event.repeat => {
-                            // Save spec (S key — only fires when egui doesn't have focus)
-                            self.save_spec();
+                        PhysicalKey::Code(KeyCode::KeyS)
+                            if !event.repeat && event.state == ElementState::Pressed =>
+                        {
+                            let mods = self.egui_ctx.input(|i| i.modifiers);
+                            if mods.command && mods.shift {
+                                // Save As (Ctrl+Shift+S)
+                                self.save_spec_as();
+                            } else if mods.command {
+                                // Save spec (Ctrl+S)
+                                self.save_spec();
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::KeyE)
+                            if !event.repeat && event.state == ElementState::Pressed =>
+                        {
+                            // Export output (Ctrl+E)
+                            if self.egui_ctx.input(|i| i.modifiers.command) {
+                                self.export_output();
+                            }
                         }
                         PhysicalKey::Code(KeyCode::Space) => {
-                            // Reset camera
+                            // Reset camera / texture view
                             if let Some(mesh) = &self.last_mesh {
                                 let mesh_clone = mesh.clone();
                                 self.auto_fit_to_mesh(&mesh_clone);
                             }
+                            self.texture_zoom = 1.0;
+                            self.texture_offset = [0.0, 0.0];
+                        }
+                        PhysicalKey::Code(KeyCode::KeyT) => {
+                            if !self.last_images.is_empty() {
+                                self.texture_tiled = !self.texture_tiled;
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F1) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let next = renderer.debug_state().mode.next();
+                                renderer.set_debug_mode(next);
+                                println!("Debug mode: {}", next.label());
+                                if let (Some(world), Some(context)) =
+                                    (&self.last_world, &self.render_context)
+                                {
+                                    renderer.update_from_world(world, &context.device);
+                                }
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F2) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let on = renderer.toggle_wireframe_overlay();
+                                println!(
+                                    "Wireframe overlay: {}",
+                                    if on { "ON" } else { "OFF" }
+                                );
+                                if let (Some(world), Some(context)) =
+                                    (&self.last_world, &self.render_context)
+                                {
+                                    renderer.update_from_world(world, &context.device);
+                                }
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F3) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let on = renderer.toggle_normal_arrows();
+                                println!(
+                                    "Normal arrows: {}",
+                                    if on { "ON" } else { "OFF" }
+                                );
+                                if let (Some(world), Some(context)) =
+                                    (&self.last_world, &self.render_context)
+                                {
+                                    renderer.update_from_world(world, &context.device);
+                                }
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F4) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let on = renderer.toggle_skeleton_overlay();
+                                println!(
+                                    "Skeleton overlay: {}",
+                                    if on { "ON" } else { "OFF" }
+                                );
+                            }
+                            self.update_skeleton_overlay();
+                        }
+                        PhysicalKey::Code(KeyCode::KeyO) => {
+                            self.orbit.auto_orbit = !self.orbit.auto_orbit;
+                            println!(
+                                "Auto-orbit: {}",
+                                if self.orbit.auto_orbit { "ON" } else { "OFF" }
+                            );
+                        }
+                        PhysicalKey::Code(KeyCode::BracketRight) => {
+                            self.orbit.adjust_auto_orbit_speed(1.5);
+                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
+                        }
+                        PhysicalKey::Code(KeyCode::BracketLeft) => {
+                            self.orbit.adjust_auto_orbit_speed(1.0 / 1.5);
+                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
                         }
                         _ => {}
                     }
                 }
             }
 
-            WindowEvent::MouseInput { state, button, .. } => {
-                if !self.egui_ctx.is_pointer_over_area() {
-                    match button {
-                        MouseButton::Left => {
-                            self.mouse_pressed = state == ElementState::Pressed;
-                        }
-                        MouseButton::Right => {
-                            self.right_mouse_pressed = state == ElementState::Pressed;
-                        }
-                        _ => {}
-                    }
-                    if state == ElementState::Released {
-                        self.last_mouse_pos = None;
-                    }
-                }
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                if !self.egui_ctx.is_pointer_over_area() {
-                    if let Some((lx, ly)) = self.last_mouse_pos {
-                        let dx = position.x - lx;
-                        let dy = position.y - ly;
-
-                        if self.mouse_pressed {
-                            // Orbit
-                            self.camera.yaw -= dx as f32 * 0.005;
-                            self.camera.pitch += dy as f32 * 0.005;
-                            self.camera.pitch = self.camera.pitch.clamp(-1.4, 1.4);
-                            self.camera.update_orbit();
-                        } else if self.right_mouse_pressed {
-                            // Pan
-                            let right_x = self.camera.yaw.cos();
-                            let right_z = -self.camera.yaw.sin();
-                            let pan_speed = self.camera.distance * 0.002;
-                            self.camera.target.x -= dx as f32 * right_x * pan_speed;
-                            self.camera.target.z -= dx as f32 * right_z * pan_speed;
-                            let up_y = self.camera.pitch.cos();
-                            self.camera.target.y += dy as f32 * up_y * pan_speed;
-                            self.camera.update_orbit();
-                        }
-                    }
-                    self.last_mouse_pos = Some((position.x, position.y));
-                }
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                if !self.egui_ctx.is_pointer_over_area() {
-                    let scroll = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
-                    };
-                    self.camera.distance *= 1.0 - scroll * 0.1;
-                    self.camera.distance = self.camera.distance.max(0.1);
-                    self.camera.update_orbit();
-                }
+            ref ev @ (WindowEvent::MouseInput { .. }
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseWheel { .. }) => {
+                self.orbit.handle_event(
+                    ev,
+                    &mut self.camera,
+                    self.egui_ctx.is_pointer_over_area(),
+                );
             }
 
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
-                let _dt = self.last_frame_time.elapsed().as_secs_f64();
+                let dt = self.last_frame_time.elapsed().as_secs_f32();
                 self.last_frame_time = now;
+
+                // Apply held keyboard orbit/zoom
+                self.orbit.update(&mut self.camera, dt);
+
+                // Texture zoom via Q/E keys (same keys as 3D zoom)
+                if !self.last_images.is_empty() {
+                    let zoom_speed = 2.0;
+                    if self.orbit.is_key_held(KeyCode::KeyE) {
+                        self.texture_zoom = (self.texture_zoom * (1.0 + zoom_speed * dt)).min(20.0);
+                    }
+                    if self.orbit.is_key_held(KeyCode::KeyQ) {
+                        self.texture_zoom = (self.texture_zoom * (1.0 - zoom_speed * dt)).max(0.1);
+                    }
+                }
 
                 // FPS tracking
                 self.frame_times.push_back(now);
@@ -1329,6 +1777,47 @@ fn render_param_field(
 
             return changed;
         }
+
+        ParamFieldType::ObjectArray => {
+            if let Some(toml::Value::Array(arr)) = params.get(&field.name) {
+                let count = arr.len();
+                egui::CollapsingHeader::new(format!("{} ({})", display_name, count))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        for (i, item) in arr.iter().enumerate() {
+                            let label = if let Some(toml::Value::String(name)) =
+                                item.as_table().and_then(|t| t.get("name"))
+                            {
+                                name.clone()
+                            } else {
+                                format!("[{}]", i)
+                            };
+                            egui::CollapsingHeader::new(&label)
+                                .id_salt(format!("{}_{}", field.name, i))
+                                .default_open(false)
+                                .show(ui, |ui| {
+                                    if let Some(table) = item.as_table() {
+                                        egui::Grid::new(format!("{}_{}_{}", field.name, i, "grid"))
+                                            .num_columns(2)
+                                            .spacing([8.0, 2.0])
+                                            .show(ui, |ui| {
+                                                for (k, v) in table {
+                                                    ui.label(k);
+                                                    ui.monospace(format_toml_value_compact(v));
+                                                    ui.end_row();
+                                                }
+                                            });
+                                    }
+                                });
+                        }
+                    });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}:", display_name));
+                    ui.monospace("[]");
+                });
+            }
+        }
     }
 
     false
@@ -1467,6 +1956,34 @@ fn random_seed() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64;
     (nanos ^ millis.wrapping_mul(6364136223846793005)) % 1_000_000
+}
+
+/// Format a TOML value compactly for display in the object array UI.
+fn format_toml_value_compact(v: &toml::Value) -> String {
+    match v {
+        toml::Value::String(s) => s.clone(),
+        toml::Value::Integer(i) => i.to_string(),
+        toml::Value::Float(f) => {
+            // Trim trailing zeros but keep at least one decimal
+            let s = format!("{:.4}", f);
+            let s = s.trim_end_matches('0');
+            let s = s.trim_end_matches('.');
+            s.to_string()
+        }
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(format_toml_value_compact).collect();
+            format!("[{}]", items.join(", "))
+        }
+        toml::Value::Table(t) => {
+            let items: Vec<String> = t
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, format_toml_value_compact(v)))
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        toml::Value::Datetime(dt) => dt.to_string(),
+    }
 }
 
 /// Human-friendly count with commas.

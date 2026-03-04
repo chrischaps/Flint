@@ -20,7 +20,7 @@ use crate::generator::{GenerationCost, Generator};
 use crate::generators::util::{parse_hex_color, toml_f32, toml_string, toml_u32};
 use crate::output::{GeneratorOutput, OutputKind};
 use crate::spec::ProcGenSpec;
-use crate::types::{ImageData, MeshData};
+use crate::types::{BranchSegment, ImageData, MeshData};
 use crate::{ProcGenError, Result, SeededRng};
 use flint_core::Vec3;
 
@@ -438,6 +438,13 @@ pub struct LeafParams {
     pub leaf_size_variation: f32,
     /// How many leaf quads/meshes per branch tip.
     pub leaves_per_tip: u32,
+    /// Radius of the sphere around each placement point within which leaves scatter.
+    pub leaf_spread_radius: f32,
+    /// Probability of placing leaves at each qualifying branch segment (0.0–1.0).
+    /// 0.0 disables along-branch placement (default, backward compatible).
+    pub leaf_along_branch_density: f32,
+    /// Minimum branch depth for along-branch leaf placement.
+    pub leaf_along_branch_min_depth: u32,
 }
 
 impl Default for LeafParams {
@@ -450,6 +457,9 @@ impl Default for LeafParams {
             leaf_size: 0.15,
             leaf_size_variation: 0.3,
             leaves_per_tip: 5,
+            leaf_spread_radius: 0.3,
+            leaf_along_branch_density: 0.0,
+            leaf_along_branch_min_depth: 2,
         }
     }
 }
@@ -545,6 +555,30 @@ impl LeafParams {
             }
         }
 
+        if let Some(v) = table.get("leaf_spread_radius") {
+            p.leaf_spread_radius = toml_f32(v, "leaf_spread_radius")?;
+            if p.leaf_spread_radius < 0.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_spread_radius".into(),
+                    reason: "must be non-negative".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_along_branch_density") {
+            p.leaf_along_branch_density = toml_f32(v, "leaf_along_branch_density")?;
+            if !(0.0..=1.0).contains(&p.leaf_along_branch_density) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_along_branch_density".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_along_branch_min_depth") {
+            p.leaf_along_branch_min_depth = toml_u32(v, "leaf_along_branch_min_depth")?;
+        }
+
         Ok(p)
     }
 }
@@ -562,6 +596,8 @@ pub struct BranchOutput {
     pub tip_directions: Vec<Vec3>,
     /// Total number of branch segments generated.
     pub segment_count: usize,
+    /// All branch segments (for along-branch leaf placement).
+    pub segments: Vec<BranchSegment>,
 }
 
 /// Output of full tree generation (trunk + branches).
@@ -575,6 +611,8 @@ pub struct TreeOutput {
     pub branch_tips: Vec<Vec3>,
     /// Directions at terminal branch tips.
     pub branch_tip_directions: Vec<Vec3>,
+    /// All branch segments (for along-branch leaf placement).
+    pub branch_segments: Vec<BranchSegment>,
 }
 
 // ─── Combined Tree Generation ───────────────────────────────────────────────
@@ -617,6 +655,7 @@ pub fn generate_tree(
         normal_map: trunk.normal_map,
         branch_tips: branch_output.tip_positions,
         branch_tip_directions: branch_output.tip_directions,
+        branch_segments: branch_output.segments,
     })
 }
 
@@ -652,6 +691,7 @@ impl Generator for TreeGenerator {
         let leaf_mesh = generate_leaves(
             &tree.branch_tips,
             &tree.branch_tip_directions,
+            &tree.branch_segments,
             &leaf_params,
             &mut rng.fork("leaves"),
         )?;
@@ -711,7 +751,10 @@ impl Generator for TreeGenerator {
                 "leaf_color_variation": { "type": "number", "minimum": 0.0, "default": 0.08 },
                 "leaf_size": { "type": "number", "minimum": 0.01, "default": 0.15 },
                 "leaf_size_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 },
-                "leaves_per_tip": { "type": "integer", "minimum": 1, "default": 5 }
+                "leaves_per_tip": { "type": "integer", "minimum": 1, "default": 5 },
+                "leaf_spread_radius": { "type": "number", "minimum": 0.0, "default": 0.3 },
+                "leaf_along_branch_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                "leaf_along_branch_min_depth": { "type": "integer", "minimum": 0, "default": 2 }
             },
             "additionalProperties": false
         })

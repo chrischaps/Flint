@@ -14,6 +14,7 @@ use gltf::json::mesh::{Mode, Primitive, Semantic};
 use gltf::json::validation::{Checked, USize64};
 use gltf::json;
 
+use crate::skinning::SkinnedMeshData;
 use crate::types::{MaterialData, MeshData};
 use crate::Result;
 
@@ -31,6 +32,404 @@ pub fn mesh_to_glb(mesh: &MeshData) -> Result<Vec<u8>> {
 pub fn mesh_lods_to_glb(meshes: &[MeshData]) -> Result<Vec<u8>> {
     let refs: Vec<&MeshData> = meshes.iter().collect();
     meshes_to_glb_inner(&refs)
+}
+
+/// Bytes per skinned vertex: position(12) + normal(12) + tangent(16) + uv(8) + joints(8) + weights(16) = 72.
+const SKINNED_VERTEX_STRIDE: usize = 72;
+
+/// Convert a [`SkinnedMeshData`] into a self-contained GLB binary with skeleton.
+pub fn skinned_mesh_to_glb(mesh: &SkinnedMeshData) -> Result<Vec<u8>> {
+    mesh.validate().map_err(|e| {
+        crate::ProcGenError::InvalidMesh(format!("skinned mesh validation failed: {e}"))
+    })?;
+
+    let bin_data = build_skinned_buffer(mesh);
+    let root = build_skinned_gltf_root(mesh, bin_data.len());
+    write_glb(&root, &bin_data)
+}
+
+/// Pack skinned vertex + index + inverse bind matrix data into a single binary buffer.
+fn build_skinned_buffer(mesh: &SkinnedMeshData) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    // Vertices: interleaved pos(3) + normal(3) + tangent(4) + uv(2) + joints(4 u16) + weights(4 f32)
+    for v in &mesh.vertices {
+        buf.extend_from_slice(bytemuck_f32_slice(&v.position));
+        buf.extend_from_slice(bytemuck_f32_slice(&v.normal));
+        buf.extend_from_slice(bytemuck_f32_slice(&v.tangent));
+        buf.extend_from_slice(bytemuck_f32_slice(&v.uv));
+        // Joint indices as u16
+        for &j in &v.joint_indices {
+            buf.extend_from_slice(&j.to_le_bytes());
+        }
+        // Joint weights as f32
+        buf.extend_from_slice(bytemuck_f32_slice(&v.joint_weights));
+    }
+
+    // Pad to 4-byte alignment
+    while buf.len() % 4 != 0 {
+        buf.push(0);
+    }
+
+    // Indices: u32
+    for &idx in &mesh.indices {
+        buf.extend_from_slice(&idx.to_le_bytes());
+    }
+
+    // Pad to 4-byte alignment
+    while buf.len() % 4 != 0 {
+        buf.push(0);
+    }
+
+    // Inverse bind matrices: 16 floats per bone
+    let ibms = mesh.skeleton.compute_inverse_bind_matrices();
+    for ibm in &ibms {
+        buf.extend_from_slice(bytemuck_f32_slice(ibm));
+    }
+
+    // Pad to 4-byte alignment
+    while buf.len() % 4 != 0 {
+        buf.push(0);
+    }
+
+    buf
+}
+
+/// Build the glTF JSON root for a skinned mesh with skeleton.
+fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) -> json::Root {
+    let mut root = json::Root::default();
+    root.asset.generator = Some("Flint Procgen".into());
+
+    let buffer_idx = root.push(json::Buffer {
+        byte_length: USize64::from(buffer_byte_length),
+        name: None,
+        uri: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // ─── Compute buffer layout ──────────────────────────────────────────
+    let vertex_bytes = mesh.vertices.len() * SKINNED_VERTEX_STRIDE;
+    let padded_vertex_bytes = (vertex_bytes + 3) & !3;
+
+    let index_bytes = mesh.indices.len() * mem::size_of::<u32>();
+    let index_offset = padded_vertex_bytes;
+    let padded_index_bytes = (index_bytes + 3) & !3;
+
+    let ibm_offset = index_offset + padded_index_bytes;
+    let ibm_bytes = mesh.skeleton.bones.len() * 16 * mem::size_of::<f32>();
+
+    // ─── Buffer views ───────────────────────────────────────────────────
+    let vtx_view_idx = root.push(json::buffer::View {
+        buffer: buffer_idx,
+        byte_length: USize64::from(vertex_bytes),
+        byte_offset: Some(USize64::from(0usize)),
+        byte_stride: Some(json::buffer::Stride(SKINNED_VERTEX_STRIDE)),
+        name: None,
+        target: Some(Checked::Valid(Target::ArrayBuffer)),
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    let idx_view_idx = root.push(json::buffer::View {
+        buffer: buffer_idx,
+        byte_length: USize64::from(index_bytes),
+        byte_offset: Some(USize64::from(index_offset)),
+        byte_stride: None,
+        name: None,
+        target: Some(Checked::Valid(Target::ElementArrayBuffer)),
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    let ibm_view_idx = root.push(json::buffer::View {
+        buffer: buffer_idx,
+        byte_length: USize64::from(ibm_bytes),
+        byte_offset: Some(USize64::from(ibm_offset)),
+        byte_stride: None,
+        name: None,
+        target: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // ─── Accessors ──────────────────────────────────────────────────────
+    let bb = &mesh.bounding_box;
+    let pos_min = serde_json::json!([bb.min.x, bb.min.y, bb.min.z]);
+    let pos_max = serde_json::json!([bb.max.x, bb.max.y, bb.max.z]);
+    let vertex_count = mesh.vertices.len();
+
+    // POSITION (offset 0)
+    let pos_acc = root.push(json::Accessor {
+        buffer_view: Some(vtx_view_idx),
+        byte_offset: Some(USize64::from(0u64)),
+        count: USize64::from(vertex_count),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::F32)),
+        type_: Checked::Valid(Type::Vec3),
+        min: Some(pos_min),
+        max: Some(pos_max),
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // NORMAL (offset 12)
+    let norm_acc = root.push(json::Accessor {
+        buffer_view: Some(vtx_view_idx),
+        byte_offset: Some(USize64::from(12u64)),
+        count: USize64::from(vertex_count),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::F32)),
+        type_: Checked::Valid(Type::Vec3),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // TANGENT (offset 24)
+    let tang_acc = root.push(json::Accessor {
+        buffer_view: Some(vtx_view_idx),
+        byte_offset: Some(USize64::from(24u64)),
+        count: USize64::from(vertex_count),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::F32)),
+        type_: Checked::Valid(Type::Vec4),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // TEXCOORD_0 (offset 40)
+    let uv_acc = root.push(json::Accessor {
+        buffer_view: Some(vtx_view_idx),
+        byte_offset: Some(USize64::from(40u64)),
+        count: USize64::from(vertex_count),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::F32)),
+        type_: Checked::Valid(Type::Vec2),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // JOINTS_0 (offset 48, u16x4)
+    let joints_acc = root.push(json::Accessor {
+        buffer_view: Some(vtx_view_idx),
+        byte_offset: Some(USize64::from(48u64)),
+        count: USize64::from(vertex_count),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::U16)),
+        type_: Checked::Valid(Type::Vec4),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // WEIGHTS_0 (offset 56, f32x4)
+    let weights_acc = root.push(json::Accessor {
+        buffer_view: Some(vtx_view_idx),
+        byte_offset: Some(USize64::from(56u64)),
+        count: USize64::from(vertex_count),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::F32)),
+        type_: Checked::Valid(Type::Vec4),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // Index accessor
+    let idx_acc = root.push(json::Accessor {
+        buffer_view: Some(idx_view_idx),
+        byte_offset: Some(USize64::from(0u64)),
+        count: USize64::from(mesh.indices.len()),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::U32)),
+        type_: Checked::Valid(Type::Scalar),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // Inverse bind matrices accessor
+    let ibm_acc = root.push(json::Accessor {
+        buffer_view: Some(ibm_view_idx),
+        byte_offset: Some(USize64::from(0u64)),
+        count: USize64::from(mesh.skeleton.bones.len()),
+        component_type: Checked::Valid(GenericComponentType(ComponentType::F32)),
+        type_: Checked::Valid(Type::Mat4),
+        min: None,
+        max: None,
+        name: None,
+        normalized: false,
+        sparse: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // ─── Vertex attributes ──────────────────────────────────────────────
+    let mut attributes = BTreeMap::new();
+    attributes.insert(Checked::Valid(Semantic::Positions), pos_acc);
+    attributes.insert(Checked::Valid(Semantic::Normals), norm_acc);
+    attributes.insert(Checked::Valid(Semantic::Tangents), tang_acc);
+    attributes.insert(Checked::Valid(Semantic::TexCoords(0)), uv_acc);
+    attributes.insert(Checked::Valid(Semantic::Joints(0)), joints_acc);
+    attributes.insert(Checked::Valid(Semantic::Weights(0)), weights_acc);
+
+    // ─── Primitives & materials ─────────────────────────────────────────
+    let primitives = if mesh.submeshes.is_empty() {
+        let mat_data = mesh.materials.first().cloned().unwrap_or_default();
+        let mat_idx = root.push(material_from_data(&mat_data));
+        vec![Primitive {
+            attributes,
+            extensions: None,
+            extras: Default::default(),
+            indices: Some(idx_acc),
+            material: Some(mat_idx),
+            mode: Checked::Valid(Mode::Triangles),
+            targets: None,
+        }]
+    } else {
+        mesh.submeshes
+            .iter()
+            .map(|sub| {
+                let mat_data = mesh
+                    .materials
+                    .get(sub.material_index)
+                    .cloned()
+                    .unwrap_or_default();
+                let mat_idx = root.push(material_from_data(&mat_data));
+
+                let sub_idx_acc = root.push(json::Accessor {
+                    buffer_view: Some(idx_view_idx),
+                    byte_offset: Some(USize64::from(
+                        sub.index_start as usize * mem::size_of::<u32>(),
+                    )),
+                    count: USize64::from(sub.index_count as usize),
+                    component_type: Checked::Valid(GenericComponentType(ComponentType::U32)),
+                    type_: Checked::Valid(Type::Scalar),
+                    min: None,
+                    max: None,
+                    name: None,
+                    normalized: false,
+                    sparse: None,
+                    extensions: None,
+                    extras: Default::default(),
+                });
+
+                Primitive {
+                    attributes: attributes.clone(),
+                    extensions: None,
+                    extras: Default::default(),
+                    indices: Some(sub_idx_acc),
+                    material: Some(mat_idx),
+                    mode: Checked::Valid(Mode::Triangles),
+                    targets: None,
+                }
+            })
+            .collect()
+    };
+
+    // ─── Bone nodes ─────────────────────────────────────────────────────
+    let bone_node_base = root.nodes.len() as u32;
+    let mut joint_indices = Vec::new();
+
+    for bone in &mesh.skeleton.bones {
+        let [tx, ty, tz] = bone.rest_translation;
+        let [rx, ry, rz, rw] = bone.rest_rotation;
+        let [sx, sy, sz] = bone.rest_scale;
+
+        let node_idx = root.push(json::Node {
+            name: Some(bone.name.clone()),
+            translation: Some([tx, ty, tz]),
+            rotation: Some(json::scene::UnitQuaternion([rx, ry, rz, rw])),
+            scale: Some([sx, sy, sz]),
+            children: None,
+            mesh: None,
+            ..Default::default()
+        });
+        joint_indices.push(node_idx);
+    }
+
+    // Set up parent-child relationships
+    for (i, bone) in mesh.skeleton.bones.iter().enumerate() {
+        if let Some(parent) = bone.parent {
+            let parent_node: json::Index<json::Node> =
+                json::Index::new(bone_node_base + parent as u32);
+            let child_node: json::Index<json::Node> =
+                json::Index::new(bone_node_base + i as u32);
+            if let Some(ref mut children) = root.nodes[parent_node.value()].children {
+                children.push(child_node);
+            } else {
+                root.nodes[parent_node.value()].children = Some(vec![child_node]);
+            }
+        }
+    }
+
+    // ─── Skin ───────────────────────────────────────────────────────────
+    let skin_idx = root.push(json::Skin {
+        name: Some("Armature".into()),
+        inverse_bind_matrices: Some(ibm_acc),
+        joints: joint_indices.clone(),
+        skeleton: joint_indices.first().copied(),
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    // ─── Mesh node (with skin reference) ────────────────────────────────
+    let mesh_idx = root.push(json::Mesh {
+        extensions: None,
+        extras: Default::default(),
+        name: Some("Mesh".into()),
+        primitives,
+        weights: None,
+    });
+
+    let mesh_node_idx = root.push(json::Node {
+        mesh: Some(mesh_idx),
+        skin: Some(skin_idx),
+        name: Some("Mesh".into()),
+        ..Default::default()
+    });
+
+    // ─── Scene ──────────────────────────────────────────────────────────
+    // Scene nodes: mesh node + root bone nodes (bones without parents)
+    let mut scene_nodes = vec![mesh_node_idx];
+    for (i, bone) in mesh.skeleton.bones.iter().enumerate() {
+        if bone.parent.is_none() {
+            scene_nodes.push(json::Index::new(bone_node_base + i as u32));
+        }
+    }
+
+    let scene_idx = root.push(json::Scene {
+        extensions: None,
+        extras: Default::default(),
+        name: Some("Scene".into()),
+        nodes: scene_nodes,
+    });
+    root.scene = Some(scene_idx);
+
+    root
 }
 
 /// Internal: build a GLB from one or more meshes sharing a single binary buffer.
@@ -517,6 +916,96 @@ mod tests {
     fn glb_empty_meshes_error() {
         let result = meshes_to_glb_inner(&[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn glb_skinned_mesh_has_skin() {
+        use crate::skinning::{BoneDef, SkeletonDef, SkinnedMeshData, SkinnedVertex};
+
+        let mesh = SkinnedMeshData {
+            vertices: vec![
+                SkinnedVertex {
+                    position: [0.0, 0.0, 0.0],
+                    normal: [0.0, 0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    uv: [0.0, 0.0],
+                    joint_indices: [0, 0, 0, 0],
+                    joint_weights: [1.0, 0.0, 0.0, 0.0],
+                },
+                SkinnedVertex {
+                    position: [1.0, 0.0, 0.0],
+                    normal: [0.0, 0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    joint_indices: [0, 0, 0, 0],
+                    joint_weights: [1.0, 0.0, 0.0, 0.0],
+                },
+                SkinnedVertex {
+                    position: [0.0, 1.0, 0.0],
+                    normal: [0.0, 0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0, 1.0],
+                    uv: [0.0, 1.0],
+                    joint_indices: [1, 0, 0, 0],
+                    joint_weights: [1.0, 0.0, 0.0, 0.0],
+                },
+            ],
+            indices: vec![0, 1, 2],
+            materials: vec![MaterialData {
+                name: "test".into(),
+                base_color: [0.5, 0.5, 0.5, 1.0],
+                metallic: 0.0,
+                roughness: 0.5,
+            }],
+            submeshes: vec![],
+            bounding_box: BoundingBox {
+                min: Vec3::new(0.0, 0.0, 0.0),
+                max: Vec3::new(1.0, 1.0, 0.0),
+            },
+            skeleton: SkeletonDef {
+                bones: vec![
+                    BoneDef {
+                        name: "root".into(),
+                        parent: None,
+                        rest_translation: [0.0, 0.0, 0.0],
+                        rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                        rest_scale: [1.0, 1.0, 1.0],
+                    },
+                    BoneDef {
+                        name: "child".into(),
+                        parent: Some(0),
+                        rest_translation: [0.0, 1.0, 0.0],
+                        rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                        rest_scale: [1.0, 1.0, 1.0],
+                    },
+                ],
+            },
+        };
+
+        let glb_bytes = skinned_mesh_to_glb(&mesh).unwrap();
+
+        // Parse and verify
+        let gltf = gltf::Glb::from_slice(&glb_bytes).unwrap();
+        let json: json::Root = json::deserialize::from_slice(&gltf.json).unwrap();
+
+        assert_eq!(json.meshes.len(), 1);
+        assert_eq!(json.skins.len(), 1);
+
+        let skin = &json.skins[0];
+        assert_eq!(skin.joints.len(), 2);
+        assert!(skin.inverse_bind_matrices.is_some());
+
+        // Mesh primitive should have JOINTS_0 and WEIGHTS_0
+        let prim = &json.meshes[0].primitives[0];
+        assert!(prim
+            .attributes
+            .contains_key(&Checked::Valid(Semantic::Joints(0))));
+        assert!(prim
+            .attributes
+            .contains_key(&Checked::Valid(Semantic::Weights(0))));
+
+        // Mesh node should reference the skin
+        let mesh_node = json.nodes.iter().find(|n| n.mesh.is_some()).unwrap();
+        assert!(mesh_node.skin.is_some());
     }
 
     #[test]

@@ -13,7 +13,7 @@ tags = [
 
 [seed]
 mode = "fixed"
-value = 770481
+value = 42
 
 [params]
 base_color = "#8A7D6B"

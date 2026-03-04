@@ -15,7 +15,9 @@ use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult, MeshBounds};
 use flint_render::model_loader::{self, ModelLoadConfig, ModelLoadResult};
-use flint_render::{Camera, DebugMode, HeadlessContext, RendererConfig, SceneRenderer};
+use flint_render::{
+    Camera, DebugMode, HeadlessContext, OrbitCameraController, RendererConfig, SceneRenderer,
+};
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -23,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -44,6 +46,7 @@ pub struct PreviewArgs {
     pub clip: Option<String>,
     pub anim_speed: f32,
     pub anim_time: Option<f32>,
+    pub auto_orbit: bool,
 }
 
 pub fn run(args: PreviewArgs) -> Result<()> {
@@ -530,6 +533,8 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
+    let auto_orbit = args.auto_orbit;
+
     let mut app = PreviewApp {
         state,
         window: None,
@@ -539,9 +544,7 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         initial_bounds,
         args,
 
-        mouse_pressed: false,
-        right_mouse_pressed: false,
-        last_mouse_pos: None,
+        orbit: OrbitCameraController::new(),
         last_frame_time: Instant::now(),
 
         // Animation
@@ -562,6 +565,7 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         fps: 0.0,
         last_fps_update: Instant::now(),
     };
+    app.orbit.auto_orbit = auto_orbit;
 
     event_loop.run_app(&mut app)?;
 
@@ -578,9 +582,7 @@ struct PreviewApp {
     args: PreviewArgs,
 
     // Input
-    mouse_pressed: bool,
-    right_mouse_pressed: bool,
-    last_mouse_pos: Option<(f64, f64)>,
+    orbit: OrbitCameraController,
     last_frame_time: Instant,
 
     // Animation
@@ -993,6 +995,48 @@ impl PreviewApp {
         }
     }
 
+    /// Update skeleton overlay for imported glTF models.
+    ///
+    /// Extracts rest-pose bone positions from inverse bind matrices.
+    fn update_skeleton_overlay_from_model(&mut self) {
+        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
+        else {
+            return;
+        };
+
+        if !renderer.debug_state().show_skeleton {
+            renderer.clear_skeleton_overlay();
+            return;
+        }
+
+        let state_guard = self.state.lock().ok();
+        let skeleton = state_guard.as_ref().and_then(|s| {
+            s.import_result.as_ref().and_then(|ir| ir.skeletons.first())
+        });
+
+        let Some(skeleton) = skeleton else {
+            renderer.clear_skeleton_overlay();
+            return;
+        };
+
+        // Extract rest-pose world positions from inverse bind matrices.
+        // world_pos = inverse(inverse_bind_matrix) translation column.
+        let positions: Vec<[f32; 3]> = skeleton
+            .joints
+            .iter()
+            .map(|j| {
+                let ibm = &j.inverse_bind_matrix;
+                // Invert the 4x4 matrix to get world transform, extract translation
+                let world = invert_4x4(ibm);
+                [world[3][0], world[3][1], world[3][2]]
+            })
+            .collect();
+
+        let parents: Vec<Option<usize>> = skeleton.joints.iter().map(|j| j.parent).collect();
+        let mesh = flint_render::generate_skeleton_lines(&positions, &parents);
+        renderer.set_skeleton_overlay(&context.device, &mesh);
+    }
+
     // -----------------------------------------------------------------------
     // egui overlay rendering
     // -----------------------------------------------------------------------
@@ -1028,6 +1072,11 @@ impl PreviewApp {
             .scene_renderer
             .as_ref()
             .map(|r| r.debug_state().show_normals)
+            .unwrap_or(false);
+        let current_skeleton = self
+            .scene_renderer
+            .as_ref()
+            .map(|r| r.debug_state().show_skeleton)
             .unwrap_or(false);
         let current_grid = self
             .scene_renderer
@@ -1147,6 +1196,7 @@ impl PreviewApp {
         let mut new_debug_mode: Option<DebugMode> = None;
         let mut new_wireframe: Option<bool> = None;
         let mut new_normals: Option<bool> = None;
+        let mut new_skeleton: Option<bool> = None;
         let mut new_grid: Option<bool> = None;
         let mut new_anim_paused: Option<bool> = None;
         let mut new_clip_index: Option<usize> = None;
@@ -1312,6 +1362,13 @@ impl PreviewApp {
                             ui.checkbox(&mut na, "Show normals");
                             if na != current_normals {
                                 new_normals = Some(na);
+                            }
+
+                            // Skeleton overlay
+                            let mut sk = current_skeleton;
+                            ui.checkbox(&mut sk, "Show skeleton");
+                            if sk != current_skeleton {
+                                new_skeleton = Some(sk);
                             }
 
                             // Grid
@@ -1503,6 +1560,13 @@ impl PreviewApp {
                 renderer.debug_state_mut().show_normals = na;
             }
         }
+        if let Some(sk) = new_skeleton {
+            if let Some(renderer) = &mut self.scene_renderer {
+                renderer.debug_state_mut().show_skeleton = sk;
+            }
+            // Generate skeleton overlay from imported model's inverse bind matrices
+            self.update_skeleton_overlay_from_model();
+        }
         if let Some(gr) = new_grid {
             if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
                 renderer.set_show_grid(&ctx.device, gr);
@@ -1556,6 +1620,60 @@ impl PreviewApp {
 }
 
 /// Recursively render a node tree in the UI
+/// Invert a row-major 4x4 matrix (for extracting world transforms from inverse bind matrices).
+fn invert_4x4(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    // Use cofactor expansion for a general 4x4 inverse
+    let s = [
+        m[0][0] * m[1][1] - m[1][0] * m[0][1],
+        m[0][0] * m[1][2] - m[1][0] * m[0][2],
+        m[0][0] * m[1][3] - m[1][0] * m[0][3],
+        m[0][1] * m[1][2] - m[1][1] * m[0][2],
+        m[0][1] * m[1][3] - m[1][1] * m[0][3],
+        m[0][2] * m[1][3] - m[1][2] * m[0][3],
+    ];
+    let c = [
+        m[2][0] * m[3][1] - m[3][0] * m[2][1],
+        m[2][0] * m[3][2] - m[3][0] * m[2][2],
+        m[2][0] * m[3][3] - m[3][0] * m[2][3],
+        m[2][1] * m[3][2] - m[3][1] * m[2][2],
+        m[2][1] * m[3][3] - m[3][1] * m[2][3],
+        m[2][2] * m[3][3] - m[3][2] * m[2][3],
+    ];
+
+    let det = s[0] * c[5] - s[1] * c[4] + s[2] * c[3] + s[3] * c[2] - s[4] * c[1] + s[5] * c[0];
+    if det.abs() < 1e-12 {
+        return [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    }
+    let inv_det = 1.0 / det;
+
+    [
+        [
+            ( m[1][1] * c[5] - m[1][2] * c[4] + m[1][3] * c[3]) * inv_det,
+            (-m[0][1] * c[5] + m[0][2] * c[4] - m[0][3] * c[3]) * inv_det,
+            ( m[3][1] * s[5] - m[3][2] * s[4] + m[3][3] * s[3]) * inv_det,
+            (-m[2][1] * s[5] + m[2][2] * s[4] - m[2][3] * s[3]) * inv_det,
+        ],
+        [
+            (-m[1][0] * c[5] + m[1][2] * c[2] - m[1][3] * c[1]) * inv_det,
+            ( m[0][0] * c[5] - m[0][2] * c[2] + m[0][3] * c[1]) * inv_det,
+            (-m[3][0] * s[5] + m[3][2] * s[2] - m[3][3] * s[1]) * inv_det,
+            ( m[2][0] * s[5] - m[2][2] * s[2] + m[2][3] * s[1]) * inv_det,
+        ],
+        [
+            ( m[1][0] * c[4] - m[1][1] * c[2] + m[1][3] * c[0]) * inv_det,
+            (-m[0][0] * c[4] + m[0][1] * c[2] - m[0][3] * c[0]) * inv_det,
+            ( m[3][0] * s[4] - m[3][1] * s[2] + m[3][3] * s[0]) * inv_det,
+            (-m[2][0] * s[4] + m[2][1] * s[2] - m[2][3] * s[0]) * inv_det,
+        ],
+        [
+            (-m[1][0] * c[3] + m[1][1] * c[1] - m[1][2] * c[0]) * inv_det,
+            ( m[0][0] * c[3] - m[0][1] * c[1] + m[0][2] * c[0]) * inv_det,
+            (-m[3][0] * s[3] + m[3][1] * s[1] - m[3][2] * s[0]) * inv_det,
+            ( m[2][0] * s[3] - m[2][1] * s[1] + m[2][2] * s[0]) * inv_det,
+        ],
+    ]
+}
+
 fn render_node_tree(
     ui: &mut egui::Ui,
     nodes: &[(String, Vec<usize>, bool)],
@@ -1618,6 +1736,9 @@ impl ApplicationHandler for PreviewApp {
                 event_loop.exit();
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // Let orbit controller track WASD/QE held state
+                self.orbit.handle_key_event(&event);
+
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Escape) => {
@@ -1659,14 +1780,14 @@ impl ApplicationHandler for PreviewApp {
                                 }
                             }
                         }
-                        PhysicalKey::Code(KeyCode::BracketRight) => {
+                        PhysicalKey::Code(KeyCode::Period) => {
                             // Next clip
                             if let Some(info) = &self.anim_info {
                                 let next = (info.current_clip_index + 1) % info.clip_names.len();
                                 self.switch_clip(next);
                             }
                         }
-                        PhysicalKey::Code(KeyCode::BracketLeft) => {
+                        PhysicalKey::Code(KeyCode::Comma) => {
                             // Previous clip
                             if let Some(info) = &self.anim_info {
                                 let prev = if info.current_clip_index == 0 {
@@ -1676,6 +1797,21 @@ impl ApplicationHandler for PreviewApp {
                                 };
                                 self.switch_clip(prev);
                             }
+                        }
+                        PhysicalKey::Code(KeyCode::KeyO) => {
+                            self.orbit.auto_orbit = !self.orbit.auto_orbit;
+                            println!(
+                                "Auto-orbit: {}",
+                                if self.orbit.auto_orbit { "ON" } else { "OFF" }
+                            );
+                        }
+                        PhysicalKey::Code(KeyCode::BracketRight) => {
+                            self.orbit.adjust_auto_orbit_speed(1.5);
+                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
+                        }
+                        PhysicalKey::Code(KeyCode::BracketLeft) => {
+                            self.orbit.adjust_auto_orbit_speed(1.0 / 1.5);
+                            println!("Auto-orbit speed: {:.2} rad/s", self.orbit.auto_orbit_speed);
                         }
                         PhysicalKey::Code(KeyCode::Equal) => {
                             // Increase speed (×1.5)
@@ -1775,71 +1911,22 @@ impl ApplicationHandler for PreviewApp {
             WindowEvent::DroppedFile(path) => {
                 self.load_model_file(path);
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                if self.egui_ctx.is_pointer_over_area() {
-                    // egui is handling this click
-                } else {
-                    match button {
-                        MouseButton::Left => {
-                            self.mouse_pressed = state == ElementState::Pressed;
-                            if !self.mouse_pressed {
-                                self.last_mouse_pos = None;
-                            }
-                        }
-                        MouseButton::Right => {
-                            self.right_mouse_pressed = state == ElementState::Pressed;
-                            if !self.right_mouse_pressed {
-                                self.last_mouse_pos = None;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let (x, y) = (position.x, position.y);
-                if !self.egui_ctx.is_pointer_over_area() {
-                    if let Some((lx, ly)) = self.last_mouse_pos {
-                        let dx = (x - lx) as f32;
-                        let dy = (y - ly) as f32;
-
-                        if self.mouse_pressed {
-                            // Orbit
-                            self.camera.yaw -= dx * 0.005;
-                            self.camera.pitch += dy * 0.005;
-                            self.camera.pitch = self.camera.pitch.clamp(-1.4, 1.4);
-                            self.camera.update_orbit();
-                        } else if self.right_mouse_pressed {
-                            // Pan
-                            let right_x = self.camera.yaw.cos();
-                            let right_z = -self.camera.yaw.sin();
-                            let up_y = 1.0;
-
-                            let pan_speed = self.camera.distance * 0.002;
-                            self.camera.target.x -= dx * right_x * pan_speed;
-                            self.camera.target.z -= dx * right_z * pan_speed;
-                            self.camera.target.y += dy * up_y * pan_speed;
-                            self.camera.update_orbit();
-                        }
-                    }
-                }
-                self.last_mouse_pos = Some((x, y));
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                if !self.egui_ctx.is_pointer_over_area() {
-                    let scroll = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
-                    };
-                    self.camera.distance *= 1.0 - scroll * 0.1;
-                    self.camera.distance = self.camera.distance.max(0.1);
-                    self.camera.update_orbit();
-                }
+            ref ev @ (WindowEvent::MouseInput { .. }
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseWheel { .. }) => {
+                self.orbit.handle_event(
+                    ev,
+                    &mut self.camera,
+                    self.egui_ctx.is_pointer_over_area(),
+                );
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
-                let dt = self.last_frame_time.elapsed().as_secs_f64();
+                let dt_secs = self.last_frame_time.elapsed().as_secs_f64();
                 self.last_frame_time = now;
+
+                // Apply held keyboard orbit/zoom
+                self.orbit.update(&mut self.camera, dt_secs as f32);
 
                 // FPS tracking
                 self.frame_times.push_back(now);
@@ -1882,12 +1969,12 @@ impl ApplicationHandler for PreviewApp {
 
                         // Advance all animation tiers
                         self.animation
-                            .advance_property_and_write(&mut state.world, dt);
-                        self.animation.advance_skeletal(dt);
+                            .advance_property_and_write(&mut state.world, dt_secs);
+                        self.animation.advance_skeletal(dt_secs);
                         self.animation
-                            .advance_node_and_apply(&mut state.world, dt);
+                            .advance_node_and_apply(&mut state.world, dt_secs);
 
-                        self.anim_time_accumulator += dt;
+                        self.anim_time_accumulator += dt_secs;
                     }
 
                     // Upload bone matrices for skinned meshes

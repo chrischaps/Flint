@@ -52,7 +52,7 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen-preview specs/stone_wall.procgen.toml --seed 42
    flint gen-preview specs/oak_tree.procgen.toml --no-grid
    ```
-   Features: auto-generated parameter sliders from JSON Schema, debounced regeneration, orbit camera (mesh) or texture tabs (images), file watching, Save Spec / Reset, seed randomization. Keyboard: Tab=toggle UI, R=randomize seed, Space=reset camera.
+   Features: auto-generated parameter sliders from JSON Schema, debounced regeneration, orbit camera (mesh) or texture tabs (images), file watching, Save/Save As/Export/Reset, seed randomization. Keyboard: Tab=toggle UI, R=randomize seed, Space=reset camera, WASD=orbit, Q/E=zoom, Ctrl+S=save spec, Ctrl+Shift+S=save as, Ctrl+E=export GLB/PNG.
 
 5. **`flint serve --watch`** -- Interactive 3D viewer with hot-reload for orbit-camera inspection.
 

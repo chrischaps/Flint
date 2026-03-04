@@ -443,6 +443,18 @@ impl SceneRenderer {
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
+
+        // Update skeleton overlay transforms
+        for draw in &self.skeleton_overlay_draws {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: draw.model,
+                model_inv_transpose: draw.model_inv_transpose,
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
     }
 
     /// Execute the main render pass: skybox → grid → terrain → entities → sprites → particles → debug.
@@ -511,6 +523,19 @@ impl SceneRenderer {
         if self.debug_state.show_normals {
             render_pass.set_pipeline(&self.pipeline.line_pipeline);
             for draw in &self.normal_arrow_draws {
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+
+        // Skeleton overlay pass (bone lines, always uses line pipeline)
+        if self.debug_state.show_skeleton {
+            render_pass.set_pipeline(&self.pipeline.line_pipeline);
+            for draw in &self.skeleton_overlay_draws {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));

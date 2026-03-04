@@ -125,6 +125,9 @@ rand_chacha = "0.9"
 # glTF
 gltf = "1.4"
 
+# File dialogs
+rfd = "0.15"
+
 # GUI
 egui = "0.30.0"
 egui-wgpu = "0.30.0"

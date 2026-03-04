@@ -360,11 +360,15 @@ pub fn stochastic_tree_lsystem(
             let child_rad = radius * radius_decay;
             let left_angle = base_angle + rng.next_range(-angle_variation, angle_variation);
             let right_angle = base_angle + rng.next_range(-angle_variation, angle_variation);
+            // Roll the branching plane by a random angle so branches spread
+            // in 3D rather than staying in a single plane.
+            let roll_angle = rng.next_range(30.0, 150.0);
             Some(vec![
                 Symbol::Forward {
                     length: *length,
                     radius: *radius,
                 },
+                Symbol::RollCw { angle: roll_angle },
                 Symbol::Push,
                 Symbol::YawLeft { angle: left_angle },
                 Symbol::Forward {

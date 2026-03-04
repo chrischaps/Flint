@@ -501,3 +501,75 @@ pub fn generate_normal_arrows(vertices: &[Vertex], indices: &[u32], arrow_length
         indices: arrow_indices,
     }
 }
+
+/// Generate line-segment geometry showing a skeleton armature.
+///
+/// Creates yellow lines from each bone to its parent, plus small axis crosses
+/// at each joint position for orientation reference.
+pub fn generate_skeleton_lines(
+    bone_world_positions: &[[f32; 3]],
+    bone_parents: &[Option<usize>],
+) -> Mesh {
+    let yellow = [1.0, 1.0, 0.0, 1.0];
+    let red = [1.0, 0.2, 0.2, 1.0];
+    let green = [0.2, 1.0, 0.2, 1.0];
+    let blue = [0.2, 0.2, 1.0, 1.0];
+
+    let mut verts = Vec::new();
+    let mut indices = Vec::new();
+    let mut idx = 0u32;
+
+    let axis_len = 0.05;
+
+    for (i, pos) in bone_world_positions.iter().enumerate() {
+        // Bone-to-parent line (yellow)
+        if let Some(parent) = bone_parents[i] {
+            let parent_pos = bone_world_positions[parent];
+            verts.push(Vertex {
+                position: parent_pos,
+                normal: [0.0, 1.0, 0.0],
+                color: yellow,
+                uv: [0.0, 0.0],
+            });
+            verts.push(Vertex {
+                position: *pos,
+                normal: [0.0, 1.0, 0.0],
+                color: yellow,
+                uv: [0.0, 0.0],
+            });
+            indices.push(idx);
+            indices.push(idx + 1);
+            idx += 2;
+        }
+
+        // Small axis cross at joint position
+        for (axis_offset, color) in [
+            ([axis_len, 0.0, 0.0], red),
+            ([0.0, axis_len, 0.0], green),
+            ([0.0, 0.0, axis_len], blue),
+        ] {
+            let tip = [
+                pos[0] + axis_offset[0],
+                pos[1] + axis_offset[1],
+                pos[2] + axis_offset[2],
+            ];
+            verts.push(Vertex {
+                position: *pos,
+                normal: [0.0, 1.0, 0.0],
+                color,
+                uv: [0.0, 0.0],
+            });
+            verts.push(Vertex {
+                position: tip,
+                normal: [0.0, 1.0, 0.0],
+                color,
+                uv: [0.0, 0.0],
+            });
+            indices.push(idx);
+            indices.push(idx + 1);
+            idx += 2;
+        }
+    }
+
+    Mesh { vertices: verts, indices }
+}

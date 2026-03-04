@@ -256,6 +256,7 @@ pub struct ViewerApp {
     right_mouse_pressed: bool,
     middle_mouse_pressed: bool,
     modifiers: ModifiersState,
+    held_orbit_keys: std::collections::HashSet<KeyCode>,
 
     // egui state
     egui_ctx: egui::Context,
@@ -317,6 +318,7 @@ impl ViewerApp {
             right_mouse_pressed: false,
             middle_mouse_pressed: false,
             modifiers: ModifiersState::empty(),
+            held_orbit_keys: std::collections::HashSet::new(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -354,6 +356,7 @@ impl ViewerApp {
             right_mouse_pressed: false,
             middle_mouse_pressed: false,
             modifiers: ModifiersState::empty(),
+            held_orbit_keys: std::collections::HashSet::new(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -570,6 +573,42 @@ impl ViewerApp {
         let now = Instant::now();
         let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
+
+        // Keyboard orbit: WASD to orbit, Q/E to zoom
+        {
+            let speed = 2.0f32;
+            let zoom_speed = 2.0f32;
+            let mut yaw_delta = 0.0f32;
+            let mut pitch_delta = 0.0f32;
+            let mut zoom_factor = 1.0f32;
+
+            if self.held_orbit_keys.contains(&KeyCode::KeyA) {
+                yaw_delta += speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyD) {
+                yaw_delta -= speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyW) {
+                pitch_delta += speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyS) {
+                pitch_delta -= speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyQ) {
+                zoom_factor *= 1.0 + zoom_speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyE) {
+                zoom_factor *= 1.0 - zoom_speed * dt;
+            }
+
+            if yaw_delta != 0.0 || pitch_delta != 0.0 || zoom_factor != 1.0 {
+                self.camera.yaw += yaw_delta;
+                self.camera.pitch = (self.camera.pitch + pitch_delta).clamp(-1.4, 1.4);
+                self.camera.distance = (self.camera.distance * zoom_factor).max(0.1);
+                self.camera.update_orbit();
+                self.camera_snap_target = None;
+            }
+        }
 
         if let Some((target_yaw, target_pitch)) = self.camera_snap_target {
             let t = 1.0 - (-12.0 * dt).exp();
@@ -1605,6 +1644,21 @@ impl ApplicationHandler for ViewerApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Track WASD/QE held state for keyboard orbit
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    match code {
+                        KeyCode::KeyW | KeyCode::KeyA | KeyCode::KeyS | KeyCode::KeyD
+                        | KeyCode::KeyQ | KeyCode::KeyE => {
+                            if event.state == ElementState::Pressed {
+                                self.held_orbit_keys.insert(code);
+                            } else {
+                                self.held_orbit_keys.remove(&code);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::Escape)
