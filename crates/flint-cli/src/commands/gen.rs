@@ -8,8 +8,10 @@ use anyhow::{Context, Result};
 use clap::Args;
 use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
 use flint_core::ContentHash;
+use flint_asset_gen::StyleGuide;
 use flint_procgen::{
     export_glb, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig, SeedMode,
+    ValidationConstraints,
 };
 
 #[derive(Args)]
@@ -48,6 +50,18 @@ pub struct GenArgs {
     /// Regenerate even if cached in content store
     #[arg(long)]
     pub force: bool,
+
+    /// Validate output after generation
+    #[arg(long)]
+    pub validate: bool,
+
+    /// Treat warnings as failures (exit code 1)
+    #[arg(long)]
+    pub strict: bool,
+
+    /// Style guide TOML path for additional validation constraints
+    #[arg(long)]
+    pub style_guide: Option<String>,
 }
 
 fn parse_format(s: &str) -> std::result::Result<String, String> {
@@ -108,6 +122,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         let seed_start = args.seed_start.unwrap_or(0);
         let mut generated = 0u32;
         let mut skipped = 0u32;
+        let mut validation_failed = false;
 
         for i in 0..batch_count {
             let seed = seed_start + i as u64;
@@ -137,13 +152,26 @@ pub fn run(args: GenArgs) -> Result<()> {
                 seed
             );
 
-            generate_one(&batch_spec, &registry, &out_path, args.format.as_deref())?;
+            let output = generate_one(&batch_spec, &registry, &out_path, args.format.as_deref())?;
             generated += 1;
 
             // Register in content store
             if args.register {
                 if let Some(ref sh) = spec_hash {
                     register_output(&out_path, &batch_spec, sh, seed)?;
+                }
+            }
+
+            // Validate
+            if args.validate {
+                let passed = run_validation(
+                    &output,
+                    &batch_spec,
+                    args.style_guide.as_deref(),
+                    args.strict,
+                )?;
+                if !passed {
+                    validation_failed = true;
                 }
             }
         }
@@ -153,6 +181,10 @@ pub fn run(args: GenArgs) -> Result<()> {
             "Batch complete: {} generated, {} cached",
             generated, skipped
         );
+
+        if validation_failed {
+            std::process::exit(1);
+        }
     } else {
         // Single generation
         if let Some(seed_val) = args.seed {
@@ -179,7 +211,7 @@ pub fn run(args: GenArgs) -> Result<()> {
                 }
             }
 
-            generate_one(&spec, &registry, &out_path, args.format.as_deref())?;
+            let output = generate_one(&spec, &registry, &out_path, args.format.as_deref())?;
 
             if args.register {
                 if let Some(ref sh) = spec_hash {
@@ -187,14 +219,38 @@ pub fn run(args: GenArgs) -> Result<()> {
                     register_output(&out_path, &spec, sh, s)?;
                 }
             }
+
+            if args.validate {
+                let passed = run_validation(
+                    &output,
+                    &spec,
+                    args.style_guide.as_deref(),
+                    args.strict,
+                )?;
+                if !passed {
+                    std::process::exit(1);
+                }
+            }
         } else {
             // No explicit output — generate, then determine path from output type
-            let out_path = generate_single_auto_path(&spec, &registry, &args)?;
+            let (out_path, output) = generate_single_auto_path(&spec, &registry, &args)?;
 
             if args.register {
                 if let Some(ref sh) = spec_hash {
                     let s = seed_val.unwrap_or(0);
                     register_output(&out_path, &spec, sh, s)?;
+                }
+            }
+
+            if args.validate {
+                let passed = run_validation(
+                    &output,
+                    &spec,
+                    args.style_guide.as_deref(),
+                    args.strict,
+                )?;
+                if !passed {
+                    std::process::exit(1);
                 }
             }
         }
@@ -214,34 +270,39 @@ fn spec_with_seed(spec: &ProcGenSpec, seed: u64) -> ProcGenSpec {
     s
 }
 
+/// Generate output from a spec, returning the output and generation time.
+fn generate_and_get_output(
+    spec: &ProcGenSpec,
+    registry: &GeneratorRegistry,
+) -> Result<(GeneratorOutput, std::time::Duration)> {
+    let start = Instant::now();
+    let output = registry
+        .generate_from_spec(spec)
+        .with_context(|| format!("generation failed for '{}'", spec.meta.name))?;
+    let gen_time = start.elapsed();
+    Ok((output, gen_time))
+}
+
 /// Generate a single output from a spec and write it to disk at the given path.
 fn generate_one(
     spec: &ProcGenSpec,
     registry: &GeneratorRegistry,
     out_path: &Path,
     _format: Option<&str>,
-) -> Result<()> {
-    let start = Instant::now();
-    let output = registry
-        .generate_from_spec(spec)
-        .with_context(|| format!("generation failed for '{}'", spec.meta.name))?;
-    let gen_time = start.elapsed();
-
-    write_output(&output, out_path, gen_time)
+) -> Result<GeneratorOutput> {
+    let (output, gen_time) = generate_and_get_output(spec, registry)?;
+    write_output(&output, out_path, gen_time)?;
+    Ok(output)
 }
 
 /// Generate a single output with auto-detected output path (no explicit -o given).
-/// Returns the path the output was written to.
+/// Returns the path and the output.
 fn generate_single_auto_path(
     spec: &ProcGenSpec,
     registry: &GeneratorRegistry,
     args: &GenArgs,
-) -> Result<PathBuf> {
-    let start = Instant::now();
-    let output = registry
-        .generate_from_spec(spec)
-        .with_context(|| format!("generation failed for '{}'", spec.meta.name))?;
-    let gen_time = start.elapsed();
+) -> Result<(PathBuf, GeneratorOutput)> {
+    let (output, gen_time) = generate_and_get_output(spec, registry)?;
 
     let default_ext = match output.kind() {
         OutputKind::Mesh => "glb",
@@ -257,7 +318,7 @@ fn generate_single_auto_path(
     let out_path = PathBuf::from(format!("{name}.{ext}"));
 
     write_output(&output, &out_path, gen_time)?;
-    Ok(out_path)
+    Ok((out_path, output))
 }
 
 /// Write a GeneratorOutput to disk and print summary info.
@@ -519,6 +580,78 @@ fn resolve_batch_output_path(base: &Path, seed: u64) -> PathBuf {
     parent.join(format!("{stem}_{seed}.{ext}"))
 }
 
+/// Build validation constraints from spec and optional style guide.
+fn build_validation_constraints(
+    spec: &ProcGenSpec,
+    style_guide: Option<&StyleGuide>,
+) -> ValidationConstraints {
+    let mut c = ValidationConstraints::default();
+
+    // Extract max_triangles from LOD level 0 target if present
+    if let Some(ref lods) = spec.lod {
+        if let Some(lod0) = lods.iter().find(|l| l.level == 0) {
+            c.max_triangles = Some(lod0.target_triangles);
+        }
+    }
+
+    // Extract texture dimensions from spec params if present
+    if let Some(table) = spec.params.as_table() {
+        if let Some(w) = table.get("width").and_then(|v| v.as_integer()) {
+            c.expected_texture_width = Some(w as u32);
+        }
+        if let Some(h) = table.get("height").and_then(|v| v.as_integer()) {
+            c.expected_texture_height = Some(h as u32);
+        }
+    }
+
+    // Overlay style guide constraints
+    if let Some(style) = style_guide {
+        if let Some(max_tris) = style.geometry.max_triangles {
+            c.max_triangles = Some(max_tris);
+        }
+        c.roughness_range = style.materials.roughness_range;
+        c.metallic_range = style.materials.metallic_range;
+        c.palette = style.palette.clone();
+    }
+
+    c
+}
+
+/// Run validation on a generator output, printing results. Returns true if passed.
+fn run_validation(
+    output: &GeneratorOutput,
+    spec: &ProcGenSpec,
+    style_guide_path: Option<&str>,
+    strict: bool,
+) -> Result<bool> {
+    let style_guide = if let Some(path) = style_guide_path {
+        Some(
+            StyleGuide::load(Path::new(path))
+                .map_err(|e| anyhow::anyhow!("{}", e))
+                .with_context(|| format!("failed to load style guide from {path}"))?,
+        )
+    } else {
+        None
+    };
+
+    let constraints = build_validation_constraints(spec, style_guide.as_ref());
+    let report = flint_procgen::validate_output(output, spec, &constraints);
+
+    println!();
+    report.print_checks();
+    println!();
+    report.print_summary();
+
+    if report.has_failures() {
+        Ok(false)
+    } else if strict && report.has_warnings() {
+        println!("Strict mode: warnings treated as failures");
+        Ok(false)
+    } else {
+        Ok(true)
+    }
+}
+
 /// Human-friendly byte size.
 fn format_bytes(bytes: u64) -> String {
     if bytes < 1024 {
@@ -597,5 +730,94 @@ mod tests {
         assert_eq!(format_count(42), "42");
         assert_eq!(format_count(1234), "1,234");
         assert_eq!(format_count(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn test_build_validation_constraints_from_spec_lod() {
+        let spec = ProcGenSpec::parse(
+            r#"
+generator = "mock"
+[meta]
+name = "test"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+[[lod]]
+level = 0
+target_triangles = 5000
+[[lod]]
+level = 1
+target_triangles = 1000
+"#,
+        )
+        .unwrap();
+        let constraints = build_validation_constraints(&spec, None);
+        assert_eq!(constraints.max_triangles, Some(5000));
+    }
+
+    #[test]
+    fn test_build_validation_constraints_from_style() {
+        let spec = ProcGenSpec::parse(
+            r#"
+generator = "mock"
+[meta]
+name = "test"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+"#,
+        )
+        .unwrap();
+
+        // Build a StyleGuide manually for testing
+        use flint_asset_gen::style::{GeometryConstraints, MaterialConstraints};
+        let style = StyleGuide {
+            name: "test_style".into(),
+            description: None,
+            prompt_prefix: None,
+            prompt_suffix: None,
+            negative_prompt: None,
+            palette: vec!["#FF0000".into()],
+            materials: MaterialConstraints {
+                roughness_range: Some([0.6, 0.95]),
+                metallic_range: Some([0.0, 0.15]),
+                preferred_materials: vec![],
+            },
+            geometry: GeometryConstraints {
+                max_triangles: Some(3000),
+                require_uvs: None,
+                require_normals: None,
+            },
+        };
+
+        let constraints = build_validation_constraints(&spec, Some(&style));
+        assert_eq!(constraints.max_triangles, Some(3000));
+        assert_eq!(constraints.roughness_range, Some([0.6, 0.95]));
+        assert_eq!(constraints.metallic_range, Some([0.0, 0.15]));
+        assert_eq!(constraints.palette, vec!["#FF0000".to_string()]);
+    }
+
+    #[test]
+    fn test_build_validation_constraints_texture_dims_from_params() {
+        let spec = ProcGenSpec::parse(
+            r#"
+generator = "texture"
+[meta]
+name = "test"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+[params]
+width = 512
+height = 512
+"#,
+        )
+        .unwrap();
+        let constraints = build_validation_constraints(&spec, None);
+        assert_eq!(constraints.expected_texture_width, Some(512));
+        assert_eq!(constraints.expected_texture_height, Some(512));
     }
 }

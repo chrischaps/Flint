@@ -19,6 +19,7 @@ mod seed;
 pub mod skinning;
 mod spec;
 mod types;
+pub mod validate;
 
 pub use error::{ProcGenError, Result};
 pub use export_glb::{mesh_lods_to_glb, mesh_to_glb, skinned_mesh_to_glb};
@@ -39,6 +40,7 @@ pub use types::{
 };
 
 pub use param_ui::{parse_param_schema, ParamFieldSpec, ParamFieldType};
+pub use validate::{CheckStatus, ValidationCheck, ValidationConstraints, ValidationReport, validate_output};
 
 // Texture pattern types
 pub use generators::texture::{
