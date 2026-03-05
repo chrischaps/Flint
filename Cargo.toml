@@ -21,6 +21,7 @@ members = [
     "crates/flint-particles",
     "crates/flint-terrain",
     "crates/flint-procgen",
+    "crates/flint-procgen-ai",
     "crates/flint-cli",
     "crates/flint-android",
 ]
@@ -153,5 +154,6 @@ flint-asset-gen = { path = "crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 flint-procgen = { path = "crates/flint-procgen" }
+flint-procgen-ai = { path = "crates/flint-procgen-ai" }
 flint-player = { path = "crates/flint-player" }
 flint-android = { path = "crates/flint-android" }

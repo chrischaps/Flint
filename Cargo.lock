@@ -1741,6 +1741,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-procgen-ai"
+version = "0.1.0"
+dependencies = [
+ "flint-procgen",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
 name = "flint-query"
 version = "0.1.0"
 dependencies = [
