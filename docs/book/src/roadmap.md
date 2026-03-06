@@ -177,5 +177,4 @@ These are ideas under consideration, not committed plans:
 - **Plugin system** — third-party engine extensions
 - **Package manager** — share schemas, constraints, and assets between projects
 - **WebAssembly** — browser-based viewer and potentially runtime
-- **Volumetric lighting** — light shafts and fog volumes
 - **Shader graph** — visual shader editing for non-programmers
