@@ -52,9 +52,11 @@ var layer3_sampler: sampler;
 // Bind group 2: Lights + shadows (shared with PBR)
 struct DirectionalLight {
     direction: vec3<f32>,
-    _pad0: f32,
+    volumetric_intensity: f32,
     color: vec3<f32>,
     intensity: f32,
+    volumetric_color: vec3<f32>,
+    _pad1: f32,
 };
 
 struct PointLight {

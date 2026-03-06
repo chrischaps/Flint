@@ -1829,11 +1829,22 @@ impl SceneRenderer {
                         if (dir_count as usize) < MAX_DIRECTIONAL_LIGHTS {
                             let direction = Self::extract_light_vec3(&light, "direction")
                                 .unwrap_or([0.0, -1.0, 0.0]);
+                            let volumetric_intensity = light
+                                .get("volumetric_intensity")
+                                .and_then(toml_f32)
+                                .unwrap_or(0.0);
+                            let volumetric_color = Self::extract_light_vec3(
+                                &light,
+                                "volumetric_color",
+                            )
+                            .unwrap_or(color);
                             directionals[dir_count as usize] = DirectionalLight {
                                 direction,
-                                _pad0: 0.0,
+                                volumetric_intensity,
                                 color,
                                 intensity,
+                                volumetric_color,
+                                _pad1: 0.0,
                             };
                             dir_count += 1;
                         }

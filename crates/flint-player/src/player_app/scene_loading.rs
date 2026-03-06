@@ -41,6 +41,13 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
     config.fog_height_enabled = pp_def.fog_height_enabled;
     config.fog_height_falloff = pp_def.fog_height_falloff;
     config.fog_height_origin = pp_def.fog_height_origin;
+    config.dither_enabled = pp_def.dither_enabled;
+    config.dither_intensity = pp_def.dither_intensity;
+    config.volumetric_enabled = pp_def.volumetric_enabled;
+    config.volumetric_samples = pp_def.volumetric_samples;
+    config.volumetric_density = pp_def.volumetric_density;
+    config.volumetric_max_distance = pp_def.volumetric_max_distance;
+    config.volumetric_decay = pp_def.volumetric_decay;
     config
 }
 

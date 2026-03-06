@@ -1,7 +1,3 @@
 [archetype.room]
-description = "A room or enclosed space"
-components = ["transform", "bounds"]
-
-[archetype.room.defaults.bounds]
-min = [0, 0, 0]
-max = [10, 4, 10]
+description = "A room or enclosed space (transform-only parent container)"
+components = ["transform"]

@@ -119,18 +119,22 @@ impl Default for MaterialUniforms {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct DirectionalLight {
     pub direction: [f32; 3],
-    pub _pad0: f32,
+    pub volumetric_intensity: f32, // 0.0 = no volumetric (was _pad0)
     pub color: [f32; 3],
     pub intensity: f32,
+    pub volumetric_color: [f32; 3], // god ray tint, defaults to light color
+    pub _pad1: f32,
 }
 
 impl Default for DirectionalLight {
     fn default() -> Self {
         Self {
             direction: [0.0, -1.0, 0.0],
-            _pad0: 0.0,
+            volumetric_intensity: 0.0,
             color: [1.0, 1.0, 1.0],
             intensity: 0.0,
+            volumetric_color: [1.0, 1.0, 1.0],
+            _pad1: 0.0,
         }
     }
 }
@@ -217,17 +221,21 @@ impl LightUniforms {
         // Key light (warm sun from upper-right)
         lights.directional_lights[0] = DirectionalLight {
             direction: [0.5, 1.0, 0.3],
-            _pad0: 0.0,
+            volumetric_intensity: 0.0,
             color: [1.0, 0.98, 0.95],
             intensity: 3.0,
+            volumetric_color: [1.0, 0.98, 0.95],
+            _pad1: 0.0,
         };
 
         // Fill light (cool, from lower-left-behind)
         lights.directional_lights[1] = DirectionalLight {
             direction: [-0.4, -0.3, -0.6],
-            _pad0: 0.0,
+            volumetric_intensity: 0.0,
             color: [0.6, 0.7, 0.9],
             intensity: 0.8,
+            volumetric_color: [0.6, 0.7, 0.9],
+            _pad1: 0.0,
         };
 
         lights.directional_count = 2;

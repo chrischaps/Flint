@@ -1,4 +1,6 @@
-# Phase 5: AI Asset Pipeline
+# Phase 5: AI Asset Pipeline *(Complete)*
+
+> **Status:** All stages complete. Phase 5 added AI asset generation (Flux, Meshy, ElevenLabs), style guides, batch resolution, build manifests, and semantic asset definitions.
 
 Phase 5 adds AI-powered asset generation to Flint, completing the "AI-agent-optimized" thesis. A new `flint-asset-gen` crate provides a pluggable provider framework with three concrete integrations.
 

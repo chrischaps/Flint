@@ -1,4 +1,6 @@
-# Phase 4: Interactive Runtime
+# Phase 4: Interactive Runtime *(Complete)*
+
+> **Status:** All stages complete. Phase 4 added physics, audio, skeletal animation, Rhai scripting, particles, and a full interactive demo scene.
 
 Phase 4 transforms Flint from a scene viewer into an interactive game engine with real-time physics, player control, and eventually scripted gameplay.
 

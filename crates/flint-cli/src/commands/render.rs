@@ -38,6 +38,9 @@ pub struct RenderArgs {
     pub fog_density: Option<f32>,
     pub fog_color: Option<[f32; 3]>,
     pub fog_height_falloff: Option<f32>,
+    pub dither_intensity: Option<f32>,
+    pub volumetric_density: Option<f32>,
+    pub volumetric_samples: Option<u32>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -228,6 +231,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
         if let Some(falloff) = args.fog_height_falloff {
             pp_config.fog_height_falloff = falloff;
             pp_config.fog_height_enabled = true;
+        }
+        if let Some(intensity) = args.dither_intensity {
+            pp_config.dither_intensity = intensity;
+            pp_config.dither_enabled = intensity > 0.0;
+        }
+        if let Some(density) = args.volumetric_density {
+            pp_config.volumetric_density = density;
+            pp_config.volumetric_enabled = density > 0.0;
+        }
+        if let Some(samples) = args.volumetric_samples {
+            pp_config.volumetric_samples = samples;
         }
 
         renderer.set_post_process_config(pp_config);
