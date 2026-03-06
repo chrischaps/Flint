@@ -7,3 +7,4 @@ metallic = { type = "float", description = "Metallic factor 0.0-1.0", default = 
 roughness = { type = "float", description = "Roughness factor 0.0-1.0", default = 0.7 }
 opacity = { type = "float", description = "Opacity 0.0-1.0", default = 1.0 }
 blend_mode = { type = "string", description = "Blend mode: alpha, additive, multiply", default = "alpha" }
+texture_scale = { type = "float", description = "UV multiplier for texture tiling. Default 1.0. Values < 1 make textures appear larger.", default = 1.0 }

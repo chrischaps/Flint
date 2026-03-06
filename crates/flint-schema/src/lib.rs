@@ -10,5 +10,5 @@ mod validation;
 
 pub use archetype::ArchetypeSchema;
 pub use component::{ComponentSchema, FieldSchema, FieldType};
-pub use registry::SchemaRegistry;
+pub use registry::{discover_schema_dirs, SchemaRegistry};
 pub use validation::validate_component_data;

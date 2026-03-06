@@ -17,8 +17,16 @@ pub struct ValidateArgs {
 }
 
 pub fn run(args: ValidateArgs) -> Result<()> {
-    let existing: Vec<&str> = args
-        .schemas
+    // Merge explicit schemas with auto-discovered dirs from scene path
+    let mut all_schemas = args.schemas.clone();
+    for dir in flint_schema::discover_schema_dirs(&args.scene) {
+        let s = dir.to_string_lossy().into_owned();
+        if !all_schemas.contains(&s) {
+            all_schemas.push(s);
+        }
+    }
+
+    let existing: Vec<&str> = all_schemas
         .iter()
         .map(|s| s.as_str())
         .filter(|p| std::path::Path::new(p).exists())

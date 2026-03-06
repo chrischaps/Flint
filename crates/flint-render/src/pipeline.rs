@@ -65,7 +65,7 @@ pub struct MaterialUniforms {
     pub selection_highlight: u32,
     pub opacity: f32,
     pub alpha_cutoff: f32,
-    pub _pad_sel2: u32,
+    pub texture_scale: f32,
 }
 
 impl MaterialUniforms {
@@ -84,7 +84,7 @@ impl MaterialUniforms {
             selection_highlight: 0,
             opacity: 1.0,
             alpha_cutoff: 0.5,
-            _pad_sel2: 0,
+            texture_scale: 1.0,
         }
     }
 
@@ -103,7 +103,7 @@ impl MaterialUniforms {
             selection_highlight: 0,
             opacity: 1.0,
             alpha_cutoff: 0.5,
-            _pad_sel2: 0,
+            texture_scale: 1.0,
         }
     }
 }

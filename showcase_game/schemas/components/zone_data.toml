@@ -1,0 +1,12 @@
+[component.zone_data]
+description = "Metadata for zone door entities"
+
+[component.zone_data.fields.zone_name]
+type = "string"
+default = ""
+description = "Display name of the target zone"
+
+[component.zone_data.fields.target_scene]
+type = "string"
+default = ""
+description = "Scene file to load when entering this zone"

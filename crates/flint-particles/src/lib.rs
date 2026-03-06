@@ -55,6 +55,7 @@ impl RuntimeSystem for ParticleSystem {
         if count > 0 {
             println!("[particles] Discovered {count} emitter(s)");
         }
+
         Ok(())
     }
 

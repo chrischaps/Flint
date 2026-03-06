@@ -92,6 +92,19 @@ impl SeededRng {
         ]
     }
 
+    /// Perturb a base RGBA color in HSL space, preserving hue.
+    ///
+    /// Varies lightness by `±variation` and saturation by `±variation/2`.
+    /// This prevents hue drift that can occur with independent per-channel
+    /// RGB variation (e.g. brown shifting to magenta).
+    pub fn next_color_variation_hsl(&mut self, base: [f32; 4], variation: f32) -> [f32; 4] {
+        let (h, s, l) = rgb_to_hsl(base[0], base[1], base[2]);
+        let l2 = (l + self.next_range(-variation, variation)).clamp(0.0, 1.0);
+        let s2 = (s + self.next_range(-variation * 0.5, variation * 0.5)).clamp(0.0, 1.0);
+        let (r, g, b) = hsl_to_rgb(h, s2, l2);
+        [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), base[3]]
+    }
+
     /// Derive a child RNG from a label string.
     ///
     /// The child's seed is deterministic — the same parent state + label always
@@ -109,6 +122,132 @@ impl SeededRng {
         // Advance parent state so forking has a side-effect.
         let _: u64 = self.inner.random();
         SeededRng::new(child_seed)
+    }
+}
+
+// ─── HSV Helpers ──────────────────────────────────────────────────────────
+
+/// Convert linear RGB to HSV. H is in [0, 1], S and V in [0, 1].
+pub fn rgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let v = max;
+
+    if d.abs() < 1e-6 {
+        return (0.0, 0.0, v);
+    }
+
+    let s = d / max.max(1e-6);
+
+    let h = if (max - r).abs() < 1e-6 {
+        let mut h = (g - b) / d;
+        if g < b {
+            h += 6.0;
+        }
+        h
+    } else if (max - g).abs() < 1e-6 {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+
+    (h / 6.0, s.clamp(0.0, 1.0), v.clamp(0.0, 1.0))
+}
+
+/// Convert HSV to linear RGB. H is in [0, 1], S and V in [0, 1].
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    if s < 1e-6 {
+        return (v, v, v);
+    }
+
+    let h6 = (h.fract() + 1.0).fract() * 6.0;
+    let i = h6.floor() as u32;
+    let f = h6 - h6.floor();
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+
+    match i % 6 {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
+}
+
+// ─── HSL Helpers ──────────────────────────────────────────────────────────
+
+/// Convert linear RGB to HSL. H is in [0, 1], S and L in [0, 1].
+fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) * 0.5;
+
+    if (max - min).abs() < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+
+    let d = max - min;
+    let s = if l > 0.5 {
+        d / (2.0 - max - min).max(1e-6)
+    } else {
+        d / (max + min).max(1e-6)
+    };
+
+    let h = if (max - r).abs() < 1e-6 {
+        let mut h = (g - b) / d;
+        if g < b {
+            h += 6.0;
+        }
+        h
+    } else if (max - g).abs() < 1e-6 {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+
+    (h / 6.0, s.clamp(0.0, 1.0), l.clamp(0.0, 1.0))
+}
+
+/// Convert HSL to linear RGB. H is in [0, 1], S and L in [0, 1].
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+    if s < 1e-6 {
+        return (l, l, l);
+    }
+
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+
+    let r = hue_to_rgb(p, q, h + 1.0 / 3.0);
+    let g = hue_to_rgb(p, q, h);
+    let b = hue_to_rgb(p, q, h - 1.0 / 3.0);
+
+    (r, g, b)
+}
+
+fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
+    let t = if t < 0.0 {
+        t + 1.0
+    } else if t > 1.0 {
+        t - 1.0
+    } else {
+        t
+    };
+    if t < 1.0 / 6.0 {
+        p + (q - p) * 6.0 * t
+    } else if t < 0.5 {
+        q
+    } else if t < 2.0 / 3.0 {
+        p + (q - p) * (2.0 / 3.0 - t) * 6.0
+    } else {
+        p
     }
 }
 
@@ -231,5 +370,65 @@ mod tests {
     fn seed_accessor() {
         let rng = SeededRng::new(12345);
         assert_eq!(rng.seed(), 12345);
+    }
+
+    #[test]
+    fn hsl_roundtrip() {
+        // Brown color: convert to HSL and back, verify roundtrip
+        let r = 0.47_f32;
+        let g = 0.28_f32;
+        let b = 0.14_f32;
+        let (h, s, l) = rgb_to_hsl(r, g, b);
+        let (r2, g2, b2) = hsl_to_rgb(h, s, l);
+        assert!((r - r2).abs() < 1e-4, "red roundtrip: {r} vs {r2}");
+        assert!((g - g2).abs() < 1e-4, "green roundtrip: {g} vs {g2}");
+        assert!((b - b2).abs() < 1e-4, "blue roundtrip: {b} vs {b2}");
+    }
+
+    #[test]
+    fn hsl_variation_preserves_hue() {
+        let base = [0.47, 0.28, 0.14, 1.0]; // brown
+        let (base_h, _, _) = rgb_to_hsl(base[0], base[1], base[2]);
+
+        let mut rng = SeededRng::new(42);
+        for _ in 0..100 {
+            let c = rng.next_color_variation_hsl(base, 0.15);
+            let (h, _, _) = rgb_to_hsl(c[0], c[1], c[2]);
+            // Hue should be preserved (within floating point tolerance)
+            assert!(
+                (h - base_h).abs() < 0.02,
+                "hue drifted: base_h={base_h:.4} got h={h:.4}"
+            );
+            // All channels valid
+            for i in 0..3 {
+                assert!(c[i] >= 0.0 && c[i] <= 1.0, "channel {i} out of range: {}", c[i]);
+            }
+            assert_eq!(c[3], 1.0, "alpha preserved");
+        }
+    }
+
+    #[test]
+    fn hsv_roundtrip() {
+        let r = 0.47_f32;
+        let g = 0.28_f32;
+        let b = 0.14_f32;
+        let (h, s, v) = rgb_to_hsv(r, g, b);
+        let (r2, g2, b2) = hsv_to_rgb(h, s, v);
+        assert!((r - r2).abs() < 1e-4, "red roundtrip: {r} vs {r2}");
+        assert!((g - g2).abs() < 1e-4, "green roundtrip: {g} vs {g2}");
+        assert!((b - b2).abs() < 1e-4, "blue roundtrip: {b} vs {b2}");
+    }
+
+    #[test]
+    fn hsl_variation_clamps() {
+        let mut rng = SeededRng::new(0);
+        let base = [0.0, 1.0, 0.5, 0.8];
+        for _ in 0..100 {
+            let c = rng.next_color_variation_hsl(base, 0.5);
+            for i in 0..3 {
+                assert!(c[i] >= 0.0 && c[i] <= 1.0, "channel {i} out of range: {}", c[i]);
+            }
+            assert_eq!(c[3], 0.8, "alpha should be preserved");
+        }
     }
 }

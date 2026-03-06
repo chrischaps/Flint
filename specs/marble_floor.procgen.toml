@@ -1,0 +1,141 @@
+generator = "texture_v1"
+
+[meta]
+name = "marble_floor"
+description = "Polished marble tile with veins using wave distortion, color_ramp, and smoothstep mapping"
+version = "1.0.0"
+tags = ["texture", "marble", "floor", "elegant"]
+
+[seed]
+mode = "fixed"
+value = 83120
+
+[params]
+pattern = "pipeline"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# Tile grid — large square tiles
+[[params.ops]]
+type = "brick_grid"
+columns = 3
+rows = 3
+stagger = 0.0
+gap_width = 0.012
+
+# Primary vein pattern — stretched noise for streaky veins
+[[params.ops]]
+type = "noise_layer"
+output = "vein_primary"
+noise_type = "perlin"
+frequency = 3.0
+octaves = 5
+scale_x = 3.0
+scale_y = 1.0
+
+# Secondary vein detail at different orientation
+[[params.ops]]
+type = "noise_layer"
+output = "vein_secondary"
+noise_type = "simplex"
+frequency = 5.0
+octaves = 3
+scale_x = 1.0
+scale_y = 2.5
+
+# Darken blend for crossing vein patterns
+[[params.ops]]
+type = "blend"
+source = "vein_secondary"
+target = "vein_primary"
+mode = "darken"
+strength = 0.35
+
+# Remap to narrow the vein intensity — most of the surface is light
+[[params.ops]]
+type = "map_range"
+input = "vein_primary"
+output = "veins"
+from_min = 0.25
+from_max = 0.65
+to_min = 0.0
+to_max = 1.0
+interpolation = "smootherstep"
+clamp = true
+
+# Color ramp: cream base with subtle warm gray veins
+[[params.ops]]
+type = "color_ramp"
+input = "veins"
+interpolation = "ease"
+
+[[params.ops.stops]]
+position = 0.0
+color = "#EEE8E0"
+
+[[params.ops.stops]]
+position = 0.5
+color = "#D8D0C6"
+
+[[params.ops.stops]]
+position = 0.75
+color = "#C0B5A8"
+
+[[params.ops.stops]]
+position = 1.0
+color = "#A09588"
+
+# Tint mortar/grout lines darker
+[[params.ops]]
+type = "mortar_color"
+color = "#3A3530"
+threshold = 0.015
+
+# Height from veins — veins are slightly recessed
+[[params.ops]]
+type = "invert"
+input = "veins"
+output = "height_base"
+factor = 0.3
+
+# Mortar groove for tile edges
+[[params.ops]]
+type = "mortar_groove"
+depth = 0.25
+width = 0.012
+
+# Very subtle surface noise
+[[params.ops]]
+type = "noise_layer"
+output = "surface_micro"
+noise_type = "value"
+frequency = 60.0
+octaves = 2
+scale_x = 1.0
+scale_y = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "surface_micro"
+target = "height"
+mode = "add"
+strength = 0.02
+
+# Derive normal map
+[[params.ops]]
+type = "derive_normal"
+strength = 1.2
+
+# Roughness: polished marble is very smooth, grout is rougher
+[[params.ops]]
+type = "map_range"
+input = "veins"
+output = "roughness"
+from_min = 0.0
+from_max = 1.0
+to_min = 0.15
+to_max = 0.35
+interpolation = "smoothstep"
+clamp = true

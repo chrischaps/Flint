@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, edit, entity, gen, gen_preview, init, play, prefab, preview, query, render, scene,
-    schema, validate,
+    schema, tex_edit, validate,
 };
 
 #[derive(Parser)]
@@ -209,6 +209,9 @@ enum Commands {
 
     /// Interactive previewer for procedural generation specs
     GenPreview(gen_preview::GenPreviewArgs),
+
+    /// Visual node editor for texture pipeline specs
+    TexEdit(tex_edit::TexEditArgs),
 
     /// Render a scene to a PNG image (headless)
     Render {
@@ -449,6 +452,7 @@ fn main() -> Result<()> {
         }
         Commands::Gen(args) => gen::run(args),
         Commands::GenPreview(args) => gen_preview::run(args),
+        Commands::TexEdit(args) => tex_edit::run(args),
         Commands::Render {
             scene,
             output,

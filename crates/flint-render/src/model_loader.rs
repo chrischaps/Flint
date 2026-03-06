@@ -113,16 +113,35 @@ fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<Path
             return Some(path.clone());
         }
     }
-    let p = config.scene_dir.join(tex_name);
-    if p.exists() {
-        return Some(p);
-    }
+
+    // Candidate names: the bare name, then with common extensions (for procgen textures)
+    let candidates: Vec<String> = if tex_name.contains('.') {
+        vec![tex_name.to_string()]
+    } else {
+        vec![
+            tex_name.to_string(),
+            format!("{}.png", tex_name),
+            format!("{}_color.png", tex_name),
+        ]
+    };
+
+    // Search directories: scene_dir, scene_dir/textures, parent, parent/textures
+    let mut search_dirs: Vec<PathBuf> = vec![config.scene_dir.clone()];
+    search_dirs.push(config.scene_dir.join("textures"));
     if let Some(parent) = config.scene_dir.parent() {
-        let p = parent.join(tex_name);
-        if p.exists() {
-            return Some(p);
+        search_dirs.push(parent.to_path_buf());
+        search_dirs.push(parent.join("textures"));
+    }
+
+    for dir in &search_dirs {
+        for name in &candidates {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
+
     None
 }
 
@@ -560,6 +579,26 @@ pub fn load_textures_from_world(
                 Ok(false) => {}
                 Err(e) => {
                     tracing::warn!("Failed to load texture '{}': {}", tex_name, e);
+                }
+            }
+
+            // Try loading companion PBR maps (_normal, _roughness) alongside the color texture
+            for suffix in &["_normal", "_roughness"] {
+                let companion_name = format!("{}{}", tex_name, suffix);
+                if loaded.contains(&companion_name) {
+                    continue;
+                }
+                if let Some(companion_path) = resolve_texture_path(config, &companion_name) {
+                    loaded.insert(companion_name.clone());
+                    match renderer.load_texture_file(device, queue, &companion_name, &companion_path) {
+                        Ok(true) => {
+                            println!("Loaded texture: {}", companion_name);
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!("Failed to load texture '{}': {}", companion_name, e);
+                        }
+                    }
                 }
             }
         }

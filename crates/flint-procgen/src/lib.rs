@@ -50,7 +50,10 @@ pub use validate::{CheckStatus, ValidationCheck, ValidationConstraints, Validati
 
 // Texture pattern types
 pub use generators::texture::{
-    derive_maps, Pattern, PatternCell, PatternField, PerlinOrganicParams, PerlinOrganicPattern,
-    TextureMapParams, TilingGridParams, TilingGridPattern, VoronoiBrickParams,
-    VoronoiBrickPattern,
+    derive_maps, OpPortInfo, Pattern, PatternCell, PatternField, PerlinOrganicParams,
+    PerlinOrganicPattern, TextureField, TextureMapParams, TextureOp, TilingGridParams,
+    TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
+};
+pub use generators::texture::pipeline::{
+    op_default_params, op_param_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
 };

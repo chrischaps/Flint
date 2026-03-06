@@ -119,6 +119,12 @@ impl SceneRenderer {
                 .unwrap_or_default();
             let blend_mode = parse_blend_mode(&ecs_blend_mode_str);
             material_uniforms.opacity = ecs_opacity;
+            material_uniforms.texture_scale = world
+                .get_components(entity_id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get("texture_scale"))
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
 
             let is_transparent = ecs_opacity < 1.0
                 || gltf_alpha < 1.0
@@ -251,6 +257,12 @@ impl SceneRenderer {
                 .unwrap_or_default();
             let blend_mode = parse_blend_mode(&ecs_blend_mode_str);
             material_uniforms.opacity = ecs_opacity;
+            material_uniforms.texture_scale = world
+                .get_components(entity_id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get("texture_scale"))
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
 
             let gltf_alpha = gpu_mesh.material.base_color[3];
             let is_transparent = ecs_opacity < 1.0
@@ -873,6 +885,11 @@ impl SceneRenderer {
             .and_then(|m| m.get("opacity"))
             .and_then(toml_f32)
             .unwrap_or(1.0);
+        let proc_texture_scale = material_component
+            .as_ref()
+            .and_then(|m| m.get("texture_scale"))
+            .and_then(toml_f32)
+            .unwrap_or(1.0);
         let proc_blend_mode_str = material_component
             .as_ref()
             .and_then(|m| m.get("blend_mode"))
@@ -901,10 +918,27 @@ impl SceneRenderer {
                         .and_then(toml_f32)
                         .unwrap_or(0.7);
 
+                    // Try companion PBR maps (e.g. tavern_brick_normal, tavern_brick_roughness)
+                    let normal_name = format!("{}_normal", tex_name);
+                    let roughness_name = format!("{}_roughness", tex_name);
+                    let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+                        tex_cache,
+                        Some(normal_name.as_str()),
+                        &tex_cache.default_normal,
+                    );
+                    let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+                        tex_cache,
+                        Some(roughness_name.as_str()),
+                        &tex_cache.default_metallic_roughness,
+                    );
+
                     let mut material_uniforms =
                         MaterialUniforms::from_pbr([1.0, 1.0, 1.0, 1.0], metallic, roughness);
                     material_uniforms.has_base_color_tex = 1;
+                    material_uniforms.has_normal_map = if has_nm { 1 } else { 0 };
+                    material_uniforms.has_metallic_roughness_tex = if has_mr { 1 } else { 0 };
                     material_uniforms.opacity = proc_opacity;
+                    material_uniforms.texture_scale = proc_texture_scale;
 
                     let mut draw = Self::create_textured_draw_call(
                         device,
@@ -914,10 +948,10 @@ impl SceneRenderer {
                         material_uniforms,
                         bc_view,
                         bc_sampler,
-                        &tex_cache.default_normal.view,
-                        &tex_cache.default_normal.sampler,
-                        &tex_cache.default_metallic_roughness.view,
-                        &tex_cache.default_metallic_roughness.sampler,
+                        nm_view,
+                        nm_sampler,
+                        mr_view,
+                        mr_sampler,
                     );
                     draw.entity_id = Some(entity_id);
                     draw.blend_mode = proc_blend_mode;
@@ -962,6 +996,7 @@ impl SceneRenderer {
                     MaterialUniforms::procedural()
                 };
                 mat_uniforms.opacity = proc_opacity;
+                mat_uniforms.texture_scale = proc_texture_scale;
 
                 let mut draw = Self::create_draw_call(
                     device,

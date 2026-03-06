@@ -166,6 +166,38 @@ impl NoiseSource for WorleyNoise {
 }
 
 // ---------------------------------------------------------------------------
+// Value noise
+// ---------------------------------------------------------------------------
+
+/// Value noise — random values at grid points with smooth interpolation.
+pub struct ValueNoise {
+    inner: noise::Value,
+}
+
+impl ValueNoise {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            inner: noise::Value::new(seed as u32),
+        }
+    }
+
+    pub fn from_rng(rng: &mut SeededRng) -> Self {
+        let child = rng.fork("value");
+        Self::new(child.seed())
+    }
+}
+
+impl NoiseSource for ValueNoise {
+    fn sample_2d(&self, x: f64, y: f64) -> f64 {
+        self.inner.get([x, y])
+    }
+
+    fn sample_3d(&self, x: f64, y: f64, z: f64) -> f64 {
+        self.inner.get([x, y, z])
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FBM combinator
 // ---------------------------------------------------------------------------
 
@@ -245,6 +277,304 @@ impl<S: NoiseSource> NoiseSource for Fbm<S> {
 
         value / max_amplitude
     }
+}
+
+// ---------------------------------------------------------------------------
+// Custom Voronoi
+// ---------------------------------------------------------------------------
+
+/// Distance metric for Voronoi cells.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VoronoiMetric {
+    Euclidean,
+    Manhattan,
+    Chebyshev,
+    Minkowski(f64),
+}
+
+/// Feature output for Voronoi texture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VoronoiFeature {
+    F1,
+    F2,
+    SmoothF1,
+    DistanceToEdge,
+}
+
+/// Result of a Voronoi sample — contains both the feature value and cell ID.
+pub struct VoronoiResult {
+    pub value: f64,
+    pub cell_id: f64,
+}
+
+/// Hash a 2D grid cell to produce a pseudo-random feature point offset.
+fn voronoi_hash(ix: i32, iy: i32, seed: u64) -> (f64, f64) {
+    // Mix coordinates with seed using integer hashing
+    let mut h = seed
+        .wrapping_add(ix as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(iy as u64)
+        .wrapping_mul(0x6C62_272E_07BB_0142);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    h ^= h >> 33;
+    let x = (h & 0xFFFF_FFFF) as f64 / u32::MAX as f64;
+    h = h.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+    h ^= h >> 33;
+    let y = (h & 0xFFFF_FFFF) as f64 / u32::MAX as f64;
+    (x, y)
+}
+
+/// Compute distance with the given metric.
+fn voronoi_distance(dx: f64, dy: f64, metric: VoronoiMetric) -> f64 {
+    match metric {
+        VoronoiMetric::Euclidean => (dx * dx + dy * dy).sqrt(),
+        VoronoiMetric::Manhattan => dx.abs() + dy.abs(),
+        VoronoiMetric::Chebyshev => dx.abs().max(dy.abs()),
+        VoronoiMetric::Minkowski(e) => (dx.abs().powf(e) + dy.abs().powf(e)).powf(1.0 / e),
+    }
+}
+
+/// Sample the custom Voronoi at a 2D point.
+///
+/// `scale` multiplies the input coordinates. `randomness` in \[0, 1\] controls
+/// how far feature points deviate from grid centers (0 = grid, 1 = fully random).
+pub fn voronoi_sample(
+    x: f64,
+    y: f64,
+    seed: u64,
+    scale: f64,
+    randomness: f64,
+    feature: VoronoiFeature,
+    metric: VoronoiMetric,
+) -> VoronoiResult {
+    let sx = x * scale;
+    let sy = y * scale;
+    let ix = sx.floor() as i32;
+    let iy = sy.floor() as i32;
+
+    let mut d1 = f64::MAX;
+    let mut d2 = f64::MAX;
+    let mut closest_cell = (0i32, 0i32);
+
+    // Search 3x3 neighborhood
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let cx = ix + dx;
+            let cy = iy + dy;
+            let (ox, oy) = voronoi_hash(cx, cy, seed);
+            let px = cx as f64 + 0.5 + (ox - 0.5) * randomness;
+            let py = cy as f64 + 0.5 + (oy - 0.5) * randomness;
+            let dist = voronoi_distance(sx - px, sy - py, metric);
+
+            if dist < d1 {
+                d2 = d1;
+                d1 = dist;
+                closest_cell = (cx, cy);
+            } else if dist < d2 {
+                d2 = dist;
+            }
+        }
+    }
+
+    // Cell ID: hash the closest cell to a 0-1 value
+    let (cell_hash, _) = voronoi_hash(closest_cell.0, closest_cell.1, seed.wrapping_add(1));
+
+    let value = match feature {
+        VoronoiFeature::F1 => d1,
+        VoronoiFeature::F2 => d2,
+        VoronoiFeature::SmoothF1 => {
+            // Smooth minimum approximation
+            let k = 0.1_f64;
+            let a = (-d1 / k).exp();
+            let b = (-d2 / k).exp();
+            -(a + b).ln() * k
+        }
+        VoronoiFeature::DistanceToEdge => {
+            // Approximate distance to the nearest cell edge
+            // by finding the midpoint between closest and second-closest
+            // and computing distance to that bisector plane
+            (d2 - d1) * 0.5
+        }
+    };
+
+    VoronoiResult {
+        value,
+        cell_id: cell_hash,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Musgrave FBM variants
+// ---------------------------------------------------------------------------
+
+/// Musgrave noise type selector.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MusgraveType {
+    Fbm,
+    Multifractal,
+    RidgedMultifractal,
+    HybridMultifractal,
+    HeteroTerrain,
+}
+
+/// Sample a Musgrave-type FBM variant from a noise source.
+///
+/// Parameters:
+/// - `dimension`: fractal dimension (controls how fast amplitude drops per octave)
+/// - `offset`: used by ridged/hybrid/hetero variants
+/// - `gain`: used by ridged/hybrid variants
+///
+/// Returns a value roughly centered on 0 but range depends on variant.
+#[allow(clippy::too_many_arguments)]
+pub fn musgrave_sample(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    musgrave_type: MusgraveType,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+    gain: f64,
+) -> f64 {
+    match musgrave_type {
+        MusgraveType::Fbm => musgrave_fbm(source, x, y, frequency, octaves, lacunarity, dimension),
+        MusgraveType::Multifractal => {
+            musgrave_multifractal(source, x, y, frequency, octaves, lacunarity, dimension, offset)
+        }
+        MusgraveType::RidgedMultifractal => musgrave_ridged(
+            source, x, y, frequency, octaves, lacunarity, dimension, offset, gain,
+        ),
+        MusgraveType::HybridMultifractal => musgrave_hybrid(
+            source, x, y, frequency, octaves, lacunarity, dimension, offset, gain,
+        ),
+        MusgraveType::HeteroTerrain => {
+            musgrave_hetero(source, x, y, frequency, octaves, lacunarity, dimension, offset)
+        }
+    }
+}
+
+fn musgrave_fbm(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+) -> f64 {
+    let mut value = 0.0;
+    let mut freq = frequency;
+    for i in 0..octaves {
+        let amp = freq.powf(-dimension);
+        value += source.sample_2d(x * freq, y * freq) * amp;
+        freq *= lacunarity;
+        // Small offset per octave to decorrelate
+        let _ = i;
+    }
+    value
+}
+
+#[allow(clippy::too_many_arguments)]
+fn musgrave_multifractal(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+) -> f64 {
+    let mut value = 1.0;
+    let mut freq = frequency;
+    for _ in 0..octaves {
+        let amp = freq.powf(-dimension);
+        value *= (source.sample_2d(x * freq, y * freq) + offset) * amp;
+        freq *= lacunarity;
+    }
+    value
+}
+
+#[allow(clippy::too_many_arguments)]
+fn musgrave_ridged(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+    gain: f64,
+) -> f64 {
+    let mut value = 0.0;
+    let mut weight = 1.0;
+    let mut freq = frequency;
+    for _ in 0..octaves {
+        let amp = freq.powf(-dimension);
+        let signal = offset - source.sample_2d(x * freq, y * freq).abs();
+        let signal = signal * signal * weight;
+        weight = (signal * gain).clamp(0.0, 1.0);
+        value += signal * amp;
+        freq *= lacunarity;
+    }
+    value
+}
+
+#[allow(clippy::too_many_arguments)]
+fn musgrave_hybrid(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+    gain: f64,
+) -> f64 {
+    let mut freq = frequency;
+    let amp0 = freq.powf(-dimension);
+    let mut value = (source.sample_2d(x * freq, y * freq) + offset) * amp0;
+    let mut weight = value;
+    freq *= lacunarity;
+
+    for _ in 1..octaves {
+        weight = (weight * gain).clamp(0.0, 1.0);
+        let amp = freq.powf(-dimension);
+        let signal = (source.sample_2d(x * freq, y * freq) + offset) * amp;
+        value += weight * signal;
+        freq *= lacunarity;
+    }
+    value
+}
+
+#[allow(clippy::too_many_arguments)]
+fn musgrave_hetero(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+) -> f64 {
+    let mut freq = frequency;
+    let amp0 = freq.powf(-dimension);
+    let mut value = (source.sample_2d(x * freq, y * freq) + offset) * amp0;
+    freq *= lacunarity;
+
+    for _ in 1..octaves {
+        let amp = freq.powf(-dimension);
+        let increment = (source.sample_2d(x * freq, y * freq) + offset) * amp * value;
+        value += increment;
+        freq *= lacunarity;
+    }
+    value
 }
 
 // ---------------------------------------------------------------------------

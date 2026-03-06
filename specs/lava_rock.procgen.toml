@@ -1,0 +1,124 @@
+generator = "texture_v1"
+
+[meta]
+name = "lava_rock"
+description = "Volcanic rock with glowing lava cracks using voronoi distance_to_edge, color_ramp, and gamma"
+version = "1.0.0"
+tags = ["texture", "lava", "volcanic", "emissive"]
+
+[seed]
+mode = "fixed"
+value = 66740
+
+[params]
+pattern = "pipeline"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# Voronoi cells for rock chunks — distance_to_edge reveals the cracks
+[[params.ops]]
+type = "voronoi_texture"
+output = "crack_dist"
+cell_output = "rock_id"
+scale = 5.0
+randomness = 1.0
+feature = "distance_to_edge"
+metric = "euclidean"
+
+# Gamma push to widen the cracks
+[[params.ops]]
+type = "gamma"
+input = "crack_dist"
+output = "crack_wide"
+gamma = 0.4
+
+# Invert so cracks are bright (for lava glow)
+[[params.ops]]
+type = "invert"
+input = "crack_wide"
+output = "lava_glow"
+factor = 1.0
+
+# Map the glow through a hot color ramp: black rock → red → orange → yellow
+[[params.ops]]
+type = "color_ramp"
+input = "lava_glow"
+interpolation = "linear"
+
+[[params.ops.stops]]
+position = 0.0
+color = "#1A1A1A"
+
+[[params.ops.stops]]
+position = 0.4
+color = "#2A1A10"
+
+[[params.ops.stops]]
+position = 0.6
+color = "#8B1A00"
+
+[[params.ops.stops]]
+position = 0.8
+color = "#CC4400"
+
+[[params.ops.stops]]
+position = 1.0
+color = "#FF8800"
+
+# HSV adjust: boost saturation for more vivid lava
+[[params.ops]]
+type = "hsv_adjust"
+hue_offset = 0.0
+saturation_factor = 1.4
+value_factor = 1.1
+
+# Rock surface texture from musgrave
+[[params.ops]]
+type = "musgrave_texture"
+output = "rock_surface"
+noise_type = "perlin"
+musgrave_type = "hybrid_multifractal"
+frequency = 15.0
+octaves = 5
+lacunarity = 2.2
+dimension = 0.8
+offset = 0.7
+gain = 1.5
+scale_x = 1.0
+scale_y = 1.0
+
+# Height: combine rock surface with crack depth
+[[params.ops]]
+type = "math"
+operation = "multiply"
+input_a = "rock_surface"
+input_b = "crack_wide"
+output = "height"
+clamp = false
+
+# Brighten/contrast push on the final color
+[[params.ops]]
+type = "brightness_contrast"
+input = "height"
+output = "height_adj"
+brightness = 0.1
+contrast = 0.3
+
+# Derive normals from height
+[[params.ops]]
+type = "derive_normal"
+strength = 2.5
+
+# Roughness: rock is very rough, lava cracks are smoother (molten)
+[[params.ops]]
+type = "map_range"
+input = "lava_glow"
+output = "roughness"
+from_min = 0.0
+from_max = 1.0
+to_min = 0.9
+to_max = 0.2
+interpolation = "smoothstep"
+clamp = true

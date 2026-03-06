@@ -1,0 +1,33 @@
+generator = "texture_v1"
+
+[meta]
+name = "dark_stone"
+description = "Dark, damp stone walls for the Sunken Crypt"
+version = "1.0.0"
+tags = ["texture", "stone", "wall", "crypt", "dark"]
+
+[seed]
+mode = "derived"
+derive_from = "crypt:dark_stone"
+
+[params]
+pattern = "voronoi_brick"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+base_color = "#4A4540"
+color_variation = 0.12
+mortar_color = "#2A2520"
+mortar_width = 0.04
+mortar_threshold = 0.07
+cell_count = 18
+regularity = 0.2
+height_variation = 0.4
+roughness_base = 0.88
+roughness_variation = 0.06
+roughness_mortar = 0.6
+normal_strength = 1.3
+detail_scale = 45.0
+detail_strength = 0.08

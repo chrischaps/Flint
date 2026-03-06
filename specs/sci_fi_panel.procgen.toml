@@ -1,0 +1,167 @@
+generator = "texture_v1"
+
+[meta]
+name = "sci_fi_panel"
+description = "Sci-fi wall panel with checker insets, edge-detected panel lines, and gradient wear"
+version = "1.0.0"
+tags = ["texture", "sci-fi", "metal", "panel"]
+
+[seed]
+mode = "fixed"
+value = 42100
+
+[params]
+pattern = "pipeline"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# Panel grid — rectangular panels
+[[params.ops]]
+type = "brick_grid"
+columns = 4
+rows = 6
+stagger = 0.0
+gap_width = 0.02
+
+# Cell height for subtle panel depth variation
+[[params.ops]]
+type = "cell_height"
+variation = 0.15
+
+# Panel groove at edges
+[[params.ops]]
+type = "mortar_groove"
+depth = 0.35
+width = 0.02
+
+# Checker inset pattern within each panel
+[[params.ops]]
+type = "checker_texture"
+output = "checker"
+scale_x = 16.0
+scale_y = 24.0
+
+# Blend checker subtly into height (indented checker squares)
+[[params.ops]]
+type = "blend"
+source = "checker"
+target = "height"
+mode = "subtract"
+strength = 0.04
+
+# Edge detect on height for panel line highlight
+[[params.ops]]
+type = "edge_detect"
+input = "height"
+output = "edges"
+
+# Gradient for vertical wear pattern (bottom is more worn)
+[[params.ops]]
+type = "gradient_texture"
+output = "wear_gradient"
+gradient_type = "linear"
+
+# Invert so bottom is worn
+[[params.ops]]
+type = "invert"
+input = "wear_gradient"
+output = "wear_mask"
+factor = 1.0
+
+# Base panel color
+[[params.ops]]
+type = "cell_color"
+base_color = "#5A6068"
+variation = 0.04
+
+# Darken with overlay using wear pattern
+[[params.ops]]
+type = "noise_layer"
+output = "grime"
+noise_type = "simplex"
+frequency = 3.0
+octaves = 3
+scale_x = 1.0
+scale_y = 1.0
+
+# Combine wear gradient with grime noise
+[[params.ops]]
+type = "math"
+operation = "multiply"
+input_a = "wear_mask"
+input_b = "grime"
+output = "dirt_mask"
+clamp = true
+
+# Use screen blend to lighten where edges are (panel line highlights)
+[[params.ops]]
+type = "blend"
+source = "edges"
+target = "r"
+mode = "screen"
+strength = 0.3
+
+[[params.ops]]
+type = "blend"
+source = "edges"
+target = "g"
+mode = "screen"
+strength = 0.3
+
+[[params.ops]]
+type = "blend"
+source = "edges"
+target = "b"
+mode = "screen"
+strength = 0.3
+
+# Darken with color_burn where dirty
+[[params.ops]]
+type = "blend"
+source = "dirt_mask"
+target = "r"
+mode = "color_burn"
+strength = 0.15
+
+[[params.ops]]
+type = "blend"
+source = "dirt_mask"
+target = "g"
+mode = "color_burn"
+strength = 0.15
+
+[[params.ops]]
+type = "blend"
+source = "dirt_mask"
+target = "b"
+mode = "color_burn"
+strength = 0.15
+
+# Groove color
+[[params.ops]]
+type = "mortar_color"
+color = "#1A1A1E"
+threshold = 0.025
+
+# Derive normals
+[[params.ops]]
+type = "derive_normal"
+strength = 2.0
+
+# Roughness: panels are smooth, grooves and dirty areas are rougher
+[[params.ops]]
+type = "cell_roughness"
+base = 0.3
+variation = 0.03
+mortar = 0.7
+mortar_threshold = 0.02
+
+# Blend dirt into roughness — dirty areas get rougher
+[[params.ops]]
+type = "blend"
+source = "dirt_mask"
+target = "roughness"
+mode = "add"
+strength = 0.2

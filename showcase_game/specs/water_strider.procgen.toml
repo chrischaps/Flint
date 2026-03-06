@@ -1,0 +1,110 @@
+generator = "creature_v1"
+
+[meta]
+name = "water_strider"
+description = "Long-legged water strider — garden guardian"
+version = "1.0.0"
+tags = ["insect", "creature", "strider", "garden"]
+
+[seed]
+mode = "random"
+
+[params]
+symmetry = "bilateral"
+
+[[params.bones]]
+name = "root"
+position = [0, 0.5, 0]
+
+[[params.bones]]
+name = "abdomen"
+parent = "root"
+position = [0, 0, -0.3]
+rotation = [-5, 0, 0]
+
+[[params.bones]]
+name = "thorax"
+parent = "root"
+position = [0, 0.02, 0.15]
+
+[[params.bones]]
+name = "head"
+parent = "thorax"
+position = [0, 0.03, 0.25]
+
+# Flat, elongated body
+[[params.body_parts]]
+bone = "abdomen"
+shape = "ellipsoid"
+dimensions = [0.15, 0.08, 0.35]
+material = "carapace"
+
+[[params.body_parts]]
+bone = "thorax"
+shape = "ellipsoid"
+dimensions = [0.12, 0.1, 0.2]
+material = "carapace"
+
+[[params.body_parts]]
+bone = "head"
+shape = "ellipsoid"
+dimensions = [0.08, 0.06, 0.1]
+material = "carapace"
+
+# Very long, thin legs
+[[params.limb_chains]]
+name = "front_leg"
+parent_bone = "thorax"
+attach_offset = [0.1, -0.05, 0.1]
+mirror = true
+segments = [
+  { length = 0.15, radius_start = 0.015, radius_end = 0.012, rest_angles = [-50, 0, -20] },
+  { length = 0.35, radius_start = 0.012, radius_end = 0.008, rest_angles = [80, 0, 0] },
+  { length = 0.25, radius_start = 0.008, radius_end = 0.003, rest_angles = [-40, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "mid_leg"
+parent_bone = "thorax"
+attach_offset = [0.1, -0.06, 0]
+mirror = true
+segments = [
+  { length = 0.2, radius_start = 0.018, radius_end = 0.014, rest_angles = [-40, 0, -70] },
+  { length = 0.45, radius_start = 0.014, radius_end = 0.009, rest_angles = [70, 0, 0] },
+  { length = 0.3, radius_start = 0.009, radius_end = 0.004, rest_angles = [-35, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "hind_leg"
+parent_bone = "thorax"
+attach_offset = [0.1, -0.05, -0.1]
+mirror = true
+segments = [
+  { length = 0.25, radius_start = 0.02, radius_end = 0.015, rest_angles = [-30, 0, -85] },
+  { length = 0.5, radius_start = 0.015, radius_end = 0.01, rest_angles = [60, 0, 0] },
+  { length = 0.35, radius_start = 0.01, radius_end = 0.004, rest_angles = [-30, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "antenna"
+parent_bone = "head"
+attach_offset = [0.03, 0.04, 0.08]
+mirror = true
+segments = [
+  { length = 0.08, radius_start = 0.006, radius_end = 0.004, rest_angles = [45, 0, 10] },
+  { length = 0.1, radius_start = 0.004, radius_end = 0.002, rest_angles = [25, 0, 5] },
+]
+material = "legs"
+
+[params.materials.carapace]
+base_color = "#2A4A3A"
+roughness = 0.3
+metallic = 0.12
+
+[params.materials.legs]
+base_color = "#1A3A2A"
+roughness = 0.4
+metallic = 0.05

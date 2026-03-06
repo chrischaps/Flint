@@ -519,12 +519,19 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
 
-        // Initialize scripting
+        // Initialize scripting (state_scope required so on_init can access persist store)
         load_scripts_from_world(&self.scene_path, &mut self.script);
         self.script.set_current_scene(&self.scene_path);
-        self.script
-            .initialize(&mut self.world)
-            .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
+        {
+            let _state_scope = self.script.state_scope(
+                &mut self.state_machine,
+                &mut self.persistent_store,
+                &self.physics,
+            );
+            self.script
+                .initialize(&mut self.world)
+                .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
+        }
 
         // Capture cursor for first-person look (only if FPS player exists).
         // On Android, always set cursor_captured = true so touch input flows
@@ -1606,6 +1613,14 @@ impl PlayerApp {
 
         // Resolve scene path relative to current scene
         let new_scene_path = resolve_scene_path(&self.scene_path, target_scene);
+
+        // Auto-discover schema dirs from the new scene path and merge
+        for dir in flint_schema::discover_schema_dirs(&new_scene_path) {
+            let s = dir.to_string_lossy().into_owned();
+            if !self.schema_paths.contains(&s) {
+                self.schema_paths.push(s);
+            }
+        }
 
         // Load schema registry
         let registry = if self.schema_paths.is_empty() {

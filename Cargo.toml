@@ -133,6 +133,7 @@ rfd = "0.15"
 egui = "0.30.0"
 egui-wgpu = "0.30.0"
 egui-winit = "0.30.0"
+egui-snarl = "0.6.0"
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }

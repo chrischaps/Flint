@@ -22,7 +22,7 @@ struct MaterialUniforms {
     selection_highlight: u32,
     opacity: f32,
     alpha_cutoff: f32,
-    _pad_sel2: u32,
+    texture_scale: f32,
 };
 
 @group(0) @binding(0)
@@ -348,6 +348,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // --- Standard PBR path (mode 0) ---
 
+    // Scale UVs for texture tiling
+    let scaled_uv = in.uv * material.texture_scale;
+
     // Determine base color from vertex color, texture, or material uniform
     var albedo: vec3<f32>;
     var alpha: f32;
@@ -361,7 +364,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Sample base color texture if available
     if (material.has_base_color_tex == 1u) {
-        let tex_color = textureSample(base_color_texture, base_color_sampler, in.uv);
+        let tex_color = textureSample(base_color_texture, base_color_sampler, scaled_uv);
         albedo = tex_color.rgb * albedo;
         alpha = tex_color.a * alpha;
     }
@@ -370,7 +373,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var metallic = material.metallic;
     var roughness = material.roughness;
     if (material.has_metallic_roughness_tex == 1u) {
-        let mr = textureSample(metallic_roughness_texture, metallic_roughness_sampler, in.uv);
+        let mr = textureSample(metallic_roughness_texture, metallic_roughness_sampler, scaled_uv);
         // glTF packing: green = roughness, blue = metallic
         roughness = mr.g * material.roughness;
         metallic = mr.b * material.metallic;
@@ -380,9 +383,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal from interpolated vertex normal, optionally perturbed by normal map
     var N = normalize(in.normal);
     if (material.has_normal_map == 1u) {
-        let map_sample = textureSample(normal_map_texture, normal_map_sampler, in.uv);
+        let map_sample = textureSample(normal_map_texture, normal_map_sampler, scaled_uv);
         let map_normal = map_sample.rgb * 2.0 - 1.0;
-        N = perturb_normal(N, in.world_pos, in.uv, map_normal);
+        N = perturb_normal(N, in.world_pos, scaled_uv, map_normal);
     }
 
     let V = normalize(transform.camera_pos - in.world_pos);

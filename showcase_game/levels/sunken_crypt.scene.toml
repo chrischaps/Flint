@@ -1,0 +1,522 @@
+# ================================================================
+#  THE OVERGROWN RUINS — Sunken Crypt
+# ================================================================
+#
+#  Zone 1: Dark underground cavern with bioluminescent mushrooms
+#  and cave beetles. Heavy fog, low exposure, green-tinted torches.
+#
+#  Procgen showcase:
+#    - texture_v1 (voronoi_brick): dark_stone walls
+#    - texture_v1 (perlin_organic): crypt_floor
+#    - tree_v1: crypt_mushroom (bioluminescent, 3 LODs)
+#    - creature_v1: cave_beetle (random seed — each unique)
+#    - creature_v1: boss_beetle (fixed seed — always the same)
+#    - Runtime: LRU cache for shared mushroom spec, frame-budget queue
+# ================================================================
+
+[scene]
+name = "The Sunken Crypt"
+version = "1.0"
+description = "Dark underground cavern with bioluminescent mushrooms and cave beetles"
+input_config = "showcase_game/config/input_ruins.toml"
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.2
+bloom_threshold = 0.6
+vignette_enabled = true
+vignette_intensity = 0.5
+vignette_smoothness = 1.8
+exposure = 0.8
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 1.4
+fog_enabled = true
+fog_color = [0.04, 0.06, 0.03]
+fog_density = 0.06
+fog_start = 2.0
+fog_end = 20.0
+
+
+# ============================================================
+#  PLAYER
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 8]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.script]
+source = "footsteps.rhai"
+
+
+# ============================================================
+#  CONTROLLERS
+# ============================================================
+
+[entities.hud_controller]
+[entities.hud_controller.script]
+source = "zone_hud.rhai"
+
+[entities.game_controller]
+[entities.game_controller.script]
+source = "game_controller.rhai"
+
+[entities.ambient_controller]
+[entities.ambient_controller.transform]
+position = [0, 0, 0]
+[entities.ambient_controller.script]
+source = "zone_ambience.rhai"
+
+
+# ============================================================
+#  LIGHTING — dim green-tinted torches
+# ============================================================
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 0.7, 0.4]
+color = [0.1, 0.12, 0.08]
+intensity = 0.5
+
+[entities.torch_entrance]
+parent = "crypt_main"
+[entities.torch_entrance.transform]
+position = [0, 3, 7]
+[entities.torch_entrance.light]
+type = "point"
+color = [0.3, 0.8, 0.4]
+intensity = 10.0
+radius = 12.0
+[entities.torch_entrance.script]
+source = "torch_flicker.rhai"
+
+[entities.torch_center]
+parent = "crypt_main"
+[entities.torch_center.transform]
+position = [-4, 2.5, 0]
+[entities.torch_center.light]
+type = "point"
+color = [0.3, 0.9, 0.4]
+intensity = 12.0
+radius = 14.0
+[entities.torch_center.script]
+source = "torch_flicker.rhai"
+
+[entities.torch_deep]
+parent = "crypt_main"
+[entities.torch_deep.transform]
+position = [3, 2.5, -6]
+[entities.torch_deep.light]
+type = "point"
+color = [0.2, 0.7, 0.3]
+intensity = 8.0
+radius = 10.0
+[entities.torch_deep.script]
+source = "torch_flicker.rhai"
+
+# Boss chamber light — eerie glow
+[entities.boss_light]
+parent = "crypt_main"
+[entities.boss_light.transform]
+position = [0, 2, -10]
+[entities.boss_light.light]
+type = "point"
+color = [0.15, 0.6, 0.25]
+intensity = 15.0
+radius = 12.0
+[entities.boss_light.script]
+source = "torch_flicker.rhai"
+
+
+# ============================================================
+#  ROOM
+# ============================================================
+
+[entities.crypt_main]
+archetype = "room"
+[entities.crypt_main.transform]
+position = [0, 0, 0]
+
+
+# ============================================================
+#  CEILING
+# ============================================================
+
+[entities.ceiling]
+archetype = "wall"
+parent = "crypt_main"
+[entities.ceiling.transform]
+position = [0, 5, 0]
+[entities.ceiling.bounds]
+min = [-8, -0.1, -14]
+max = [8, 0.1, 10]
+[entities.ceiling.material]
+texture = "dark_stone"
+roughness = 0.9
+
+
+# ============================================================
+#  FLOOR — procgen crypt_floor
+# ============================================================
+
+[entities.ground]
+archetype = "floor"
+[entities.ground.transform]
+position = [0, -0.1, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0.0, 20]
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [40, 0.2, 40]
+friction = 0.8
+[entities.ground.material]
+texture = "crypt_floor"
+roughness = 0.5
+
+
+# ============================================================
+#  WALLS — procgen dark_stone
+# ============================================================
+
+[entities.wall_west]
+archetype = "wall"
+parent = "crypt_main"
+[entities.wall_west.transform]
+position = [-8, 2.5, -2]
+[entities.wall_west.bounds]
+min = [-0.15, -2.5, -12]
+max = [0.15, 2.5, 12]
+[entities.wall_west.rigidbody]
+body_type = "static"
+[entities.wall_west.collider]
+shape = "box"
+size = [0.3, 5, 24]
+[entities.wall_west.material]
+texture = "dark_stone"
+roughness = 0.88
+
+[entities.wall_east]
+archetype = "wall"
+parent = "crypt_main"
+[entities.wall_east.transform]
+position = [8, 2.5, -2]
+[entities.wall_east.bounds]
+min = [-0.15, -2.5, -12]
+max = [0.15, 2.5, 12]
+[entities.wall_east.rigidbody]
+body_type = "static"
+[entities.wall_east.collider]
+shape = "box"
+size = [0.3, 5, 24]
+[entities.wall_east.material]
+texture = "dark_stone"
+roughness = 0.88
+
+# South wall with doorway (entrance from tavern)
+[entities.wall_south_left]
+archetype = "wall"
+parent = "crypt_main"
+[entities.wall_south_left.transform]
+position = [-4, 2.5, 10]
+[entities.wall_south_left.bounds]
+min = [-4, -2.5, -0.15]
+max = [4, 2.5, 0.15]
+[entities.wall_south_left.rigidbody]
+body_type = "static"
+[entities.wall_south_left.collider]
+shape = "box"
+size = [8, 5, 0.3]
+[entities.wall_south_left.material]
+texture = "dark_stone"
+roughness = 0.88
+
+[entities.wall_south_right]
+archetype = "wall"
+parent = "crypt_main"
+[entities.wall_south_right.transform]
+position = [4, 2.5, 10]
+[entities.wall_south_right.bounds]
+min = [-4, -2.5, -0.15]
+max = [4, 2.5, 0.15]
+[entities.wall_south_right.rigidbody]
+body_type = "static"
+[entities.wall_south_right.collider]
+shape = "box"
+size = [8, 5, 0.3]
+[entities.wall_south_right.material]
+texture = "dark_stone"
+roughness = 0.88
+
+# North wall (back of crypt)
+[entities.wall_north]
+archetype = "wall"
+parent = "crypt_main"
+[entities.wall_north.transform]
+position = [0, 2.5, -14]
+[entities.wall_north.bounds]
+min = [-8, -2.5, -0.15]
+max = [8, 2.5, 0.15]
+[entities.wall_north.rigidbody]
+body_type = "static"
+[entities.wall_north.collider]
+shape = "box"
+size = [16, 5, 0.3]
+[entities.wall_north.material]
+texture = "dark_stone"
+roughness = 0.88
+
+
+# ============================================================
+#  MUSHROOM-TREES — procgen crypt_mushroom (3 LODs, cache demo)
+# ============================================================
+
+[entities.mushroom_1]
+archetype = "character"
+parent = "crypt_main"
+[entities.mushroom_1.transform]
+position = [-3, 0, 4]
+scale = [1.0, 1.0, 1.0]
+[entities.mushroom_1.model]
+asset = "crypt_mushroom"
+
+[entities.mushroom_2]
+archetype = "character"
+parent = "crypt_main"
+[entities.mushroom_2.transform]
+position = [4, 0, 1]
+scale = [0.8, 0.8, 0.8]
+[entities.mushroom_2.model]
+asset = "crypt_mushroom"
+
+[entities.mushroom_3]
+archetype = "character"
+parent = "crypt_main"
+[entities.mushroom_3.transform]
+position = [-5, 0, -4]
+scale = [1.2, 1.2, 1.2]
+[entities.mushroom_3.model]
+asset = "crypt_mushroom"
+
+[entities.mushroom_4]
+archetype = "character"
+parent = "crypt_main"
+[entities.mushroom_4.transform]
+position = [2, 0, -8]
+scale = [0.9, 0.9, 0.9]
+[entities.mushroom_4.model]
+asset = "crypt_mushroom"
+
+[entities.mushroom_5]
+archetype = "character"
+parent = "crypt_main"
+[entities.mushroom_5.transform]
+position = [-6, 0, -10]
+scale = [1.1, 1.1, 1.1]
+[entities.mushroom_5.model]
+asset = "crypt_mushroom"
+
+[entities.mushroom_6]
+archetype = "character"
+parent = "crypt_main"
+[entities.mushroom_6.transform]
+position = [5, 0, -12]
+scale = [0.7, 0.7, 0.7]
+[entities.mushroom_6.model]
+asset = "crypt_mushroom"
+
+
+# ============================================================
+#  CAVE BEETLES — procgen cave_beetle (random seed = each unique)
+# ============================================================
+
+[entities.beetle_1]
+archetype = "character"
+parent = "crypt_main"
+[entities.beetle_1.transform]
+position = [-2, 0.3, 2]
+rotation = [0, 45, 0]
+scale = [1.0, 1.0, 1.0]
+[entities.beetle_1.model]
+asset = "cave_beetle"
+[entities.beetle_1.interactable]
+prompt_text = "Cave Beetle"
+range = 2.0
+interaction_type = "examine"
+enabled = true
+[entities.beetle_1.script]
+source = "creature_idle.rhai"
+
+[entities.beetle_2]
+archetype = "character"
+parent = "crypt_main"
+[entities.beetle_2.transform]
+position = [5, 0.3, -5]
+rotation = [0, 180, 0]
+scale = [1.1, 1.1, 1.1]
+[entities.beetle_2.model]
+asset = "cave_beetle"
+[entities.beetle_2.interactable]
+prompt_text = "Cave Beetle"
+range = 2.0
+interaction_type = "examine"
+enabled = true
+[entities.beetle_2.script]
+source = "creature_idle.rhai"
+
+[entities.beetle_3]
+archetype = "character"
+parent = "crypt_main"
+[entities.beetle_3.transform]
+position = [-4, 0.3, -7]
+rotation = [0, -60, 0]
+scale = [0.9, 0.9, 0.9]
+[entities.beetle_3.model]
+asset = "cave_beetle"
+[entities.beetle_3.interactable]
+prompt_text = "Cave Beetle"
+range = 2.0
+interaction_type = "examine"
+enabled = true
+[entities.beetle_3.script]
+source = "creature_idle.rhai"
+
+
+# ============================================================
+#  BOSS BEETLE — procgen boss_beetle (fixed seed = always same)
+# ============================================================
+
+[entities.boss]
+archetype = "character"
+parent = "crypt_main"
+[entities.boss.transform]
+position = [0, 0.4, -12]
+rotation = [0, 180, 0]
+scale = [1.5, 1.5, 1.5]
+[entities.boss.model]
+asset = "boss_beetle"
+[entities.boss.interactable]
+prompt_text = "Ancient Guardian"
+range = 3.0
+interaction_type = "examine"
+enabled = true
+[entities.boss.script]
+source = "creature_idle.rhai"
+
+
+# ============================================================
+#  ESSENCE PICKUPS
+# ============================================================
+
+[entities.essence_1]
+archetype = "essence"
+parent = "crypt_main"
+[entities.essence_1.transform]
+position = [5, 1.2, 3]
+[entities.essence_1.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_2]
+archetype = "essence"
+parent = "crypt_main"
+[entities.essence_2.transform]
+position = [-6, 1.0, -3]
+[entities.essence_2.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_3]
+archetype = "essence"
+parent = "crypt_main"
+[entities.essence_3.transform]
+position = [3, 1.5, -9]
+[entities.essence_3.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_4]
+archetype = "essence"
+parent = "crypt_main"
+[entities.essence_4.transform]
+position = [-2, 1.8, -12]
+[entities.essence_4.script]
+source = "essence_pickup.rhai"
+
+
+# ============================================================
+#  RETURN DOOR — back to tavern
+# ============================================================
+
+[entities.return_door]
+archetype = "door"
+parent = "crypt_main"
+[entities.return_door.transform]
+position = [-0.75, 0, 10]
+[entities.return_door.bounds]
+min = [0, 0, -0.05]
+max = [1.5, 2.5, 0.05]
+[entities.return_door.material]
+texture = "dark_stone"
+roughness = 0.6
+[entities.return_door.rigidbody]
+body_type = "kinematic"
+[entities.return_door.collider]
+shape = "box"
+size = [1.5, 2.5, 0.1]
+[entities.return_door.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+[entities.return_door.interactable]
+prompt_text = "Return to Tavern"
+range = 2.5
+interaction_type = "use"
+enabled = true
+[entities.return_door.zone_data]
+zone_name = "Tavern"
+target_scene = "tavern_hub.scene.toml"
+[entities.return_door.script]
+source = "zone_door.rhai"
+
+
+# ============================================================
+#  AUDIO
+# ============================================================
+
+[entities.drip_sound]
+parent = "crypt_main"
+[entities.drip_sound.transform]
+position = [-3, 3, -2]
+[entities.drip_sound.audio_source]
+file = "audio/fire_crackle.ogg"
+volume = 0.4
+spatial = true
+loop = true
+autoplay = true
+min_distance = 1.0
+max_distance = 15.0

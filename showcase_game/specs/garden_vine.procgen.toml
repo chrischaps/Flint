@@ -1,0 +1,56 @@
+generator = "tree_v1"
+
+[meta]
+name = "garden_vine"
+description = "Climbing vine growing up ruin pillars — thin, curvy, leafy"
+version = "1.0.0"
+tags = ["tree", "vine", "vegetation", "garden", "climbing"]
+
+[seed]
+mode = "derived"
+derive_from = "garden:vine"
+
+[params]
+trunk_height = 4.0
+trunk_radius_base = 0.06
+trunk_radius_top = 0.03
+trunk_segments = 16
+radial_segments = 6
+trunk_curve_noise = 0.3
+bark_color_base = "#3D6B2A"
+bark_roughness = 0.7
+
+branch_method = "lsystem"
+branch_levels = 2
+branch_angle_min = 30.0
+branch_angle_max = 70.0
+branch_length_falloff = 0.5
+branch_radius_falloff = 0.6
+lsystem_iterations = 2
+lsystem_angle_variation = 20.0
+
+crown_shape = "ellipsoid"
+crown_radius = 1.0
+
+leaf_style = "billboard"
+leaf_density = 0.8
+leaf_color_base = "#2A8A0A"
+leaf_color_variation = 0.15
+leaf_size = 0.12
+leaf_size_variation = 0.3
+leaves_per_tip = 4
+leaf_spread_radius = 0.3
+leaf_along_branch_density = 0.8
+leaf_along_branch_min_depth = 1
+
+[[lod]]
+level = 0
+target_triangles = 3000
+
+[[lod]]
+level = 1
+target_triangles = 800
+
+[[lod]]
+level = 2
+target_triangles = 200

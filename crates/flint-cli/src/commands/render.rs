@@ -41,9 +41,17 @@ pub struct RenderArgs {
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
+    // Merge explicit schemas with auto-discovered dirs from scene path
+    let mut all_schemas = args.schemas.clone();
+    for dir in flint_schema::discover_schema_dirs(&args.scene) {
+        let s = dir.to_string_lossy().into_owned();
+        if !all_schemas.contains(&s) {
+            all_schemas.push(s);
+        }
+    }
+
     // Load schemas from all directories
-    let existing: Vec<&str> = args
-        .schemas
+    let existing: Vec<&str> = all_schemas
         .iter()
         .map(|s| s.as_str())
         .filter(|p| Path::new(p).exists())

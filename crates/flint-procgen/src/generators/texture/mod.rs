@@ -11,14 +11,20 @@
 //! - **Organic** ([`PerlinOrganicPattern`]) — layered rock, dirt, bark, natural surfaces
 //! - **Grid** ([`TilingGridPattern`]) — manufactured tiles, bricks, panels
 
+pub mod field;
 pub mod grid;
 pub mod maps;
+pub mod node_graph;
+pub mod ops;
 pub mod organic;
 pub mod pattern;
+pub mod pipeline;
 pub mod voronoi;
 
+pub use field::TextureField;
 pub use grid::{TilingGridParams, TilingGridPattern};
 pub use maps::{derive_maps, TextureMapParams};
+pub use ops::{OpPortInfo, TextureOp};
 pub use organic::{PerlinOrganicParams, PerlinOrganicPattern};
 pub use pattern::{Pattern, PatternCell, PatternField};
 pub use voronoi::{VoronoiBrickParams, VoronoiBrickPattern};
@@ -51,7 +57,14 @@ impl Generator for TextureGenerator {
         // 1. Parse shared map-derivation params
         let map_params = TextureMapParams::from_toml(&spec.params)?;
 
-        // 2. Dispatch on pattern type to build the pattern field
+        // 2. Composable pipeline: ops define the full generation flow
+        if map_params.pattern == "pipeline" {
+            let mut pipeline_rng = rng.fork("pipeline");
+            let maps = pipeline::run_pipeline(&spec.params, &map_params, &mut pipeline_rng)?;
+            return Ok(GeneratorOutput::ImageSet(maps));
+        }
+
+        // 3. Legacy patterns: build a PatternField, then derive PBR maps
         let mut pattern_rng = rng.fork("pattern");
         let field = match map_params.pattern.as_str() {
             "voronoi_brick" => {
@@ -73,13 +86,13 @@ impl Generator for TextureGenerator {
                 return Err(ProcGenError::InvalidParameter {
                     name: "pattern".into(),
                     reason: format!(
-                        "unknown pattern \"{other}\"; expected \"voronoi_brick\", \"perlin_organic\", or \"tiling_grid\""
+                        "unknown pattern \"{other}\"; expected \"voronoi_brick\", \"perlin_organic\", \"tiling_grid\", or \"pipeline\""
                     ),
                 });
             }
         };
 
-        // 3. Derive PBR maps from the pattern field
+        // 4. Derive PBR maps from the pattern field
         let mut derive_rng = rng.fork("derive_maps");
         let maps = derive_maps(&field, &map_params, &mut derive_rng);
 
@@ -94,7 +107,7 @@ impl Generator for TextureGenerator {
                 "height": { "type": "integer", "minimum": 1, "default": 512 },
                 "pattern": {
                     "type": "string",
-                    "enum": ["voronoi_brick", "perlin_organic", "tiling_grid"],
+                    "enum": ["voronoi_brick", "perlin_organic", "tiling_grid", "pipeline"],
                     "default": "voronoi_brick"
                 },
                 "output_maps": {
@@ -391,6 +404,64 @@ mortar_color = "#3A3228"
         assert!(schema["properties"]["noise_type"].is_object());
         assert!(schema["properties"]["columns"].is_object());
         assert_eq!(schema["required"][0], "pattern");
+        // Pipeline should be in the enum
+        let patterns = &schema["properties"]["pattern"]["enum"];
+        assert!(patterns.as_array().unwrap().iter().any(|v| v == "pipeline"));
+    }
+
+    #[test]
+    fn texture_generator_pipeline_end_to_end() {
+        let spec = ProcGenSpec::parse(
+            r##"
+generator = "texture_v1"
+[meta]
+name = "test_pipeline"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 42
+[params]
+width = 64
+height = 64
+pattern = "pipeline"
+
+[[params.ops]]
+type = "brick_grid"
+columns = 4
+rows = 8
+
+[[params.ops]]
+type = "cell_height"
+variation = 0.3
+
+[[params.ops]]
+type = "cell_color"
+base_color = "#8B5A3A"
+variation = 0.12
+
+[[params.ops]]
+type = "derive_normal"
+strength = 1.5
+
+[[params.ops]]
+type = "cell_roughness"
+base = 0.75
+"##,
+        )
+        .unwrap();
+
+        let mut rng = SeededRng::new(42);
+        let output = TextureGenerator.generate(&spec, &mut rng).unwrap();
+
+        let images = output.as_image_set().unwrap();
+        assert_eq!(images.len(), 3);
+        assert_eq!(images[0].channel_semantics, ChannelSemantics::Color);
+        assert_eq!(images[1].channel_semantics, ChannelSemantics::Normal);
+        assert_eq!(images[2].channel_semantics, ChannelSemantics::Roughness);
+        for img in images {
+            assert_eq!(img.width, 64);
+            assert!(img.validate().is_ok());
+        }
     }
 
     #[test]

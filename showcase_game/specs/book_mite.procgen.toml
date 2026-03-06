@@ -1,0 +1,122 @@
+generator = "creature_v1"
+
+[meta]
+name = "book_mite"
+description = "Tiny round creature with many stubby legs — library guardian"
+version = "1.0.0"
+tags = ["insect", "creature", "mite", "library"]
+
+[seed]
+mode = "random"
+
+[params]
+symmetry = "bilateral"
+
+[[params.bones]]
+name = "root"
+position = [0, 0.12, 0]
+
+[[params.bones]]
+name = "abdomen"
+parent = "root"
+position = [0, 0, -0.08]
+rotation = [-5, 0, 0]
+
+[[params.bones]]
+name = "thorax"
+parent = "root"
+position = [0, 0.01, 0.06]
+
+[[params.bones]]
+name = "head"
+parent = "thorax"
+position = [0, 0.02, 0.1]
+
+# Round, compact body
+[[params.body_parts]]
+bone = "abdomen"
+shape = "ellipsoid"
+dimensions = [0.12, 0.1, 0.14]
+material = "shell"
+
+[[params.body_parts]]
+bone = "thorax"
+shape = "ellipsoid"
+dimensions = [0.1, 0.09, 0.1]
+material = "shell"
+
+[[params.body_parts]]
+bone = "head"
+shape = "ellipsoid"
+dimensions = [0.06, 0.05, 0.06]
+material = "shell"
+
+# Many short stubby legs (4 pairs)
+[[params.limb_chains]]
+name = "front_leg"
+parent_bone = "thorax"
+attach_offset = [0.08, -0.04, 0.06]
+mirror = true
+segments = [
+  { length = 0.04, radius_start = 0.012, radius_end = 0.01, rest_angles = [-45, 0, -25] },
+  { length = 0.06, radius_start = 0.01, radius_end = 0.007, rest_angles = [60, 0, 0] },
+  { length = 0.05, radius_start = 0.007, radius_end = 0.004, rest_angles = [-40, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "mid_front_leg"
+parent_bone = "thorax"
+attach_offset = [0.09, -0.05, 0.02]
+mirror = true
+segments = [
+  { length = 0.05, radius_start = 0.013, radius_end = 0.011, rest_angles = [-35, 0, -45] },
+  { length = 0.07, radius_start = 0.011, radius_end = 0.008, rest_angles = [55, 0, 0] },
+  { length = 0.05, radius_start = 0.008, radius_end = 0.004, rest_angles = [-35, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "mid_hind_leg"
+parent_bone = "thorax"
+attach_offset = [0.09, -0.05, -0.02]
+mirror = true
+segments = [
+  { length = 0.05, radius_start = 0.013, radius_end = 0.011, rest_angles = [-30, 0, -60] },
+  { length = 0.07, radius_start = 0.011, radius_end = 0.008, rest_angles = [50, 0, 0] },
+  { length = 0.05, radius_start = 0.008, radius_end = 0.004, rest_angles = [-30, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "hind_leg"
+parent_bone = "thorax"
+attach_offset = [0.08, -0.04, -0.06]
+mirror = true
+segments = [
+  { length = 0.05, radius_start = 0.014, radius_end = 0.012, rest_angles = [-25, 0, -75] },
+  { length = 0.08, radius_start = 0.012, radius_end = 0.009, rest_angles = [45, 0, 0] },
+  { length = 0.06, radius_start = 0.009, radius_end = 0.004, rest_angles = [-25, 0, 0] },
+]
+material = "legs"
+
+[[params.limb_chains]]
+name = "antenna"
+parent_bone = "head"
+attach_offset = [0.02, 0.03, 0.04]
+mirror = true
+segments = [
+  { length = 0.04, radius_start = 0.004, radius_end = 0.003, rest_angles = [50, 0, 10] },
+  { length = 0.03, radius_start = 0.003, radius_end = 0.002, rest_angles = [20, 0, 5] },
+]
+material = "legs"
+
+[params.materials.shell]
+base_color = "#8A7A5A"
+roughness = 0.5
+metallic = 0.02
+
+[params.materials.legs]
+base_color = "#6A5A3A"
+roughness = 0.55
+metallic = 0.02

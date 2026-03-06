@@ -43,9 +43,17 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    // Merge explicit schemas with auto-discovered dirs from scene path
+    let mut all_schemas = args.schemas.clone();
+    for dir in flint_schema::discover_schema_dirs(&args.scene) {
+        let s = dir.to_string_lossy().into_owned();
+        if !all_schemas.contains(&s) {
+            all_schemas.push(s);
+        }
+    }
+
     // Load schemas from all directories
-    let existing: Vec<&str> = args
-        .schemas
+    let existing: Vec<&str> = all_schemas
         .iter()
         .map(|s| s.as_str())
         .filter(|p| Path::new(p).exists())
@@ -100,8 +108,8 @@ fn main() -> Result<()> {
     // Pass post-processing settings from scene
     app.scene_post_process = scene_file.post_process.clone();
 
-    // Preserve schema paths for scene transitions
-    app.set_schema_paths(args.schemas);
+    // Preserve schema paths for scene transitions (includes auto-discovered)
+    app.set_schema_paths(all_schemas);
 
     event_loop.run_app(&mut app)?;
 
