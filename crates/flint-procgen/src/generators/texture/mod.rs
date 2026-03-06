@@ -20,6 +20,7 @@ pub mod organic;
 pub mod pattern;
 pub mod pipeline;
 pub mod voronoi;
+pub mod voronoi_util;
 
 pub use field::TextureField;
 pub use grid::{TilingGridParams, TilingGridPattern};

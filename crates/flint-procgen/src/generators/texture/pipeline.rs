@@ -367,6 +367,8 @@ fn resolve_output_channels(
 /// All known op type identifiers.
 pub const ALL_OP_TYPES: &[&str] = &[
     "brick_grid",
+    "voronoi_grid",
+    "domain_warp",
     "cell_height",
     "noise_layer",
     "blend",
@@ -407,7 +409,32 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "columns": { "type": "integer", "minimum": 1, "default": 8 },
                 "rows": { "type": "integer", "minimum": 1, "default": 16 },
                 "stagger": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
-                "gap_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.04 }
+                "gap_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.04 },
+                "width_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                "warp_x": { "type": "string" },
+                "warp_y": { "type": "string" },
+                "warp_strength": { "type": "number", "minimum": 0.0, "default": 0.0 }
+            }
+        }),
+        "voronoi_grid" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "cell_count": { "type": "integer", "minimum": 1, "default": 20 },
+                "regularity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                "mortar_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03 },
+                "warp_x": { "type": "string" },
+                "warp_y": { "type": "string" },
+                "warp_strength": { "type": "number", "minimum": 0.0, "default": 0.0 }
+            }
+        }),
+        "domain_warp" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "input": { "type": "string", "default": "input" },
+                "output": { "type": "string", "default": "output" },
+                "warp_x": { "type": "string", "default": "warp_x" },
+                "warp_y": { "type": "string", "default": "warp_y" },
+                "strength": { "type": "number", "minimum": 0.0, "default": 0.1 }
             }
         }),
         "cell_height" => serde_json::json!({
@@ -710,11 +737,65 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let rows = opt_u32(table, "rows")?.unwrap_or(16);
             let stagger = opt_f32(table, "stagger")?.unwrap_or(0.5);
             let gap_width = opt_f32(table, "gap_width")?.unwrap_or(0.04);
+            let width_variation = opt_f32(table, "width_variation")?.unwrap_or(0.0);
+            let warp_x = table.get("warp_x").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let warp_y = table.get("warp_y").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
             Ok(Box::new(BrickGridOp {
                 columns,
                 rows,
                 stagger,
                 gap_width,
+                width_variation,
+                warp_x,
+                warp_y,
+                warp_strength,
+            }))
+        }
+        "voronoi_grid" => {
+            let cell_count = opt_u32(table, "cell_count")?.unwrap_or(20);
+            let regularity = opt_f32(table, "regularity")?.unwrap_or(0.0);
+            let mortar_width = opt_f32(table, "mortar_width")?.unwrap_or(0.03);
+            let warp_x = table.get("warp_x").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let warp_y = table.get("warp_y").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
+            Ok(Box::new(VoronoiGridOp {
+                cell_count,
+                regularity,
+                mortar_width,
+                warp_x,
+                warp_y,
+                warp_strength,
+            }))
+        }
+        "domain_warp" => {
+            let input = table
+                .get("input")
+                .and_then(|v| v.as_str())
+                .unwrap_or("input")
+                .to_string();
+            let output = table
+                .get("output")
+                .and_then(|v| v.as_str())
+                .unwrap_or("output")
+                .to_string();
+            let warp_x = table
+                .get("warp_x")
+                .and_then(|v| v.as_str())
+                .unwrap_or("warp_x")
+                .to_string();
+            let warp_y = table
+                .get("warp_y")
+                .and_then(|v| v.as_str())
+                .unwrap_or("warp_y")
+                .to_string();
+            let strength = opt_f32(table, "strength")?.unwrap_or(0.1);
+            Ok(Box::new(DomainWarpOp {
+                input,
+                output,
+                warp_x,
+                warp_y,
+                strength,
             }))
         }
         "cell_height" => {

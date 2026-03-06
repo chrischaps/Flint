@@ -19,6 +19,7 @@ use crate::rng::{rgb_to_hsv, hsv_to_rgb};
 use crate::SeededRng;
 
 use super::field::TextureField;
+use super::voronoi_util::{self, SpatialGrid};
 
 /// Linear interpolation helper.
 #[inline]
@@ -72,6 +73,12 @@ pub struct BrickGridOp {
     pub stagger: f32,
     /// Fraction of cell size that is gap/mortar. Controls edge_dist normalization.
     pub gap_width: f32,
+    /// Per-row column width randomization (0.0 = uniform, 1.0 = max variation).
+    pub width_variation: f32,
+    /// Optional channel names for structural domain warp (UV displacement before cell lookup).
+    pub warp_x: Option<String>,
+    pub warp_y: Option<String>,
+    pub warp_strength: f32,
 }
 
 impl TextureOp for BrickGridOp {
@@ -85,7 +92,7 @@ impl TextureOp for BrickGridOp {
         }
     }
 
-    fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
+    fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
         let w = field.width;
         let h = field.height;
         let cols = self.columns.max(1);
@@ -94,10 +101,56 @@ impl TextureOp for BrickGridOp {
         field.ensure_channel("edge_dist");
         field.ensure_channel("mask");
 
+        // Pre-compute per-row column boundaries when width_variation > 0
+        let seed = rng.seed();
+        let col_boundaries: Vec<Vec<f32>> = if self.width_variation > 0.0 {
+            (0..rows)
+                .map(|row| {
+                    let row_seed = seed
+                        .wrapping_mul(0x6C62_272E_07BB_0142)
+                        .wrapping_add(row as u64);
+                    let mut row_rng = SeededRng::new(row_seed);
+                    // Generate random multipliers per column
+                    let raw: Vec<f32> = (0..cols)
+                        .map(|_| {
+                            let r = row_rng.next_f32(); // 0..1
+                            1.0 + (r - 0.5) * self.width_variation * 2.0
+                        })
+                        .collect();
+                    let sum: f32 = raw.iter().sum();
+                    // Cumulative boundaries: [0.0, w0, w0+w1, ..., 1.0]
+                    let mut bounds = Vec::with_capacity(cols as usize + 1);
+                    bounds.push(0.0);
+                    let mut accum = 0.0;
+                    for &r in &raw {
+                        accum += r / sum;
+                        bounds.push(accum);
+                    }
+                    // Ensure last boundary is exactly 1.0
+                    if let Some(last) = bounds.last_mut() {
+                        *last = 1.0;
+                    }
+                    bounds
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         for y in 0..h {
             for x in 0..w {
-                let u = (x as f32 + 0.5) / w as f32;
-                let v = (y as f32 + 0.5) / h as f32;
+                let mut u = (x as f32 + 0.5) / w as f32;
+                let mut v = (y as f32 + 0.5) / h as f32;
+
+                // Optional structural domain warp
+                if let (Some(wx_ch), Some(wy_ch)) = (&self.warp_x, &self.warp_y) {
+                    if self.warp_strength > 0.0 {
+                        let dx = field.get(wx_ch, x, y) - 0.5;
+                        let dy = field.get(wy_ch, x, y) - 0.5;
+                        u = (u + dx * self.warp_strength).rem_euclid(1.0);
+                        v = (v + dy * self.warp_strength).rem_euclid(1.0);
+                    }
+                }
 
                 // Row computation
                 let row_f = v * rows as f32;
@@ -107,9 +160,32 @@ impl TextureOp for BrickGridOp {
                 // Column computation with additive stagger per row
                 let stagger_offset = (row as f32 * self.stagger) / cols as f32;
                 let u_shifted = (u + stagger_offset).fract();
-                let col_f = u_shifted * cols as f32;
-                let col = (col_f.floor() as u32) % cols;
-                let col_frac = col_f.fract();
+
+                let (col, col_frac) = if !col_boundaries.is_empty() {
+                    // Variable-width columns
+                    let bounds = &col_boundaries[row as usize];
+                    let mut c = 0u32;
+                    for i in 1..bounds.len() {
+                        if u_shifted < bounds[i] {
+                            c = (i - 1) as u32;
+                            break;
+                        }
+                    }
+                    let c = c.min(cols - 1);
+                    let lo = bounds[c as usize];
+                    let hi = bounds[c as usize + 1];
+                    let frac = if (hi - lo).abs() < 1e-10 {
+                        0.5
+                    } else {
+                        (u_shifted - lo) / (hi - lo)
+                    };
+                    (c, frac)
+                } else {
+                    // Uniform columns
+                    let col_f = u_shifted * cols as f32;
+                    let c = (col_f.floor() as u32) % cols;
+                    (c, col_f.fract())
+                };
 
                 // Unique cell ID
                 let cell_id = row * cols + col;
@@ -126,6 +202,176 @@ impl TextureOp for BrickGridOp {
                 field.set("cell_id", x, y, cell_id as f32);
                 field.set("edge_dist", x, y, dist);
                 field.set("mask", x, y, mask);
+            }
+        }
+    }
+}
+
+// ─── VoronoiGridOp ────────────────────────────────────────────────────────
+
+/// Voronoi tessellation cell layout for irregular stone patterns.
+///
+/// Writes `cell_id`, `edge_dist`, and `mask` channels — compatible with all
+/// cell ops (`cell_height`, `cell_color`, `cell_roughness`, `mortar_groove`,
+/// `mortar_color`).
+pub struct VoronoiGridOp {
+    /// Number of Voronoi cells (seed points).
+    pub cell_count: u32,
+    /// Regularity: 0 = random, 1 = fully Lloyd's-relaxed.
+    pub regularity: f32,
+    /// Width of mortar as a fraction of texture space.
+    pub mortar_width: f32,
+    /// Optional channel names for structural domain warp.
+    pub warp_x: Option<String>,
+    pub warp_y: Option<String>,
+    pub warp_strength: f32,
+}
+
+impl TextureOp for VoronoiGridOp {
+    fn port_info(&self) -> OpPortInfo {
+        OpPortInfo {
+            op_type: "voronoi_grid",
+            label: "Voronoi Grid",
+            reads: &[],
+            writes: &["cell_id", "edge_dist", "mask"],
+            modifies: &[],
+        }
+    }
+
+    fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
+        let w = field.width;
+        let h = field.height;
+        let cell_count = self.cell_count.max(1) as usize;
+        field.ensure_channel("cell_id");
+        field.ensure_channel("edge_dist");
+        field.ensure_channel("mask");
+
+        // Generate seed points in [0, 1)²
+        let mut points = voronoi_util::generate_seed_points(rng, cell_count);
+
+        // Apply Lloyd's relaxation for regularity
+        if self.regularity > 0.0 {
+            let iterations = (self.regularity * 10.0).ceil() as usize;
+            let relaxed = voronoi_util::lloyds_relaxation(&points, iterations, true);
+            for i in 0..points.len() {
+                points[i].0 = voronoi_util::lerp(points[i].0, relaxed[i].0, self.regularity);
+                points[i].1 = voronoi_util::lerp(points[i].1, relaxed[i].1, self.regularity);
+            }
+        }
+
+        // Build spatial acceleration grid (always seamless for tiling)
+        let grid = SpatialGrid::new(&points, true);
+
+        let mortar_w = self.mortar_width.max(1e-6);
+
+        for y in 0..h {
+            for x in 0..w {
+                let mut u = (x as f32 + 0.5) / w as f32;
+                let mut v = (y as f32 + 0.5) / h as f32;
+
+                // Optional structural domain warp
+                if let (Some(wx_ch), Some(wy_ch)) = (&self.warp_x, &self.warp_y) {
+                    if self.warp_strength > 0.0 {
+                        let dx = field.get(wx_ch, x, y) - 0.5;
+                        let dy = field.get(wy_ch, x, y) - 0.5;
+                        u = (u + dx * self.warp_strength).rem_euclid(1.0);
+                        v = (v + dy * self.warp_strength).rem_euclid(1.0);
+                    }
+                }
+
+                let (closest_id, dist1, dist2) = grid.find_two_nearest(u, v, &points, true);
+
+                // Edge distance: normalized gap between nearest and second-nearest
+                let raw_edge_dist = dist2 - dist1;
+                let edge_normalized = (raw_edge_dist / mortar_w).min(1.0);
+
+                // Binary mask: 1.0 inside cell, 0.0 in mortar zone
+                let mask = if edge_normalized > 1e-3 { 1.0 } else { 0.0 };
+
+                field.set("cell_id", x, y, closest_id as f32);
+                field.set("edge_dist", x, y, edge_normalized);
+                field.set("mask", x, y, mask);
+            }
+        }
+    }
+}
+
+// ─── DomainWarpOp ─────────────────────────────────────────────────────────
+
+/// General-purpose coordinate displacement op.
+///
+/// Reads displacement from two channels and warps a target channel using
+/// bilinear interpolation.
+pub struct DomainWarpOp {
+    /// Channel to warp.
+    pub input: String,
+    /// Output channel (can be same as input for in-place).
+    pub output: String,
+    /// Channel providing horizontal displacement.
+    pub warp_x: String,
+    /// Channel providing vertical displacement.
+    pub warp_y: String,
+    /// Displacement strength in texture-space units.
+    pub strength: f32,
+}
+
+impl TextureOp for DomainWarpOp {
+    fn port_info(&self) -> OpPortInfo {
+        OpPortInfo {
+            op_type: "domain_warp",
+            label: "Domain Warp",
+            reads: &["<input>", "<warp_x>", "<warp_y>"],
+            writes: &["<output>"],
+            modifies: &[],
+        }
+    }
+
+    fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
+        let w = field.width;
+        let h = field.height;
+        field.ensure_channel(&self.output);
+
+        // Snapshot input channel for reading during write
+        let snapshot: Vec<f32> = (0..(w * h))
+            .map(|i| field.get(&self.input, i % w, i / w))
+            .collect();
+
+        for y in 0..h {
+            for x in 0..w {
+                let u = (x as f32 + 0.5) / w as f32;
+                let v = (y as f32 + 0.5) / h as f32;
+
+                let dx = (field.get(&self.warp_x, x, y) - 0.5) * self.strength;
+                let dy = (field.get(&self.warp_y, x, y) - 0.5) * self.strength;
+
+                // Displaced coordinates with wrapping
+                let su = (u + dx).rem_euclid(1.0) * w as f32 - 0.5;
+                let sv = (v + dy).rem_euclid(1.0) * h as f32 - 0.5;
+
+                // Bilinear interpolation
+                let x0 = su.floor() as i32;
+                let y0 = sv.floor() as i32;
+                let fx = su - x0 as f32;
+                let fy = sv - y0 as f32;
+
+                let sample = |sx: i32, sy: i32| -> f32 {
+                    let wx = ((sx % w as i32) + w as i32) as u32 % w;
+                    let wy = ((sy % h as i32) + h as i32) as u32 % h;
+                    snapshot[(wy * w + wx) as usize]
+                };
+
+                let v00 = sample(x0, y0);
+                let v10 = sample(x0 + 1, y0);
+                let v01 = sample(x0, y0 + 1);
+                let v11 = sample(x0 + 1, y0 + 1);
+
+                let result = lerp(
+                    lerp(v00, v10, fx),
+                    lerp(v01, v11, fx),
+                    fy,
+                );
+
+                field.set(&self.output, x, y, result);
             }
         }
     }
@@ -1948,6 +2194,10 @@ mod tests {
             rows: 8,
             stagger: 0.5,
             gap_width: 0.04,
+            width_variation: 0.0,
+            warp_x: None,
+            warp_y: None,
+            warp_strength: 0.0,
         };
         op.apply(&mut field, &mut rng);
 
@@ -1974,6 +2224,10 @@ mod tests {
             rows: 16,
             stagger: 0.5,
             gap_width: 0.04,
+            width_variation: 0.0,
+            warp_x: None,
+            warp_y: None,
+            warp_strength: 0.0,
         };
         op.apply(&mut field, &mut rng);
 
@@ -1995,6 +2249,10 @@ mod tests {
             rows: 4,
             stagger: 0.5,
             gap_width: 0.04,
+            width_variation: 0.0,
+            warp_x: None,
+            warp_y: None,
+            warp_strength: 0.0,
         };
         op.apply(&mut field, &mut rng);
 
@@ -2236,6 +2494,10 @@ mod tests {
                 rows: 8,
                 stagger: 0.5,
                 gap_width: 0.04,
+                width_variation: 0.0,
+                warp_x: None,
+                warp_y: None,
+                warp_strength: 0.0,
             }),
             Box::new(CellHeightOp { variation: 0.3 }),
             Box::new(MortarGrooveOp {
