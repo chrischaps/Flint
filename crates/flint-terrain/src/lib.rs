@@ -4,12 +4,23 @@
 //! for physics collision. Does not depend on flint-render — outputs raw
 //! vertex data (positions, normals, UVs, indices) for the renderer to consume.
 
+pub mod brush;
 pub mod chunk;
 pub mod heightmap;
+pub mod procgen;
+pub mod splatgen;
+pub mod spec;
 pub mod terrain;
 
+pub use brush::{
+    apply_height_brush, apply_splat_brush, ray_heightmap_intersect, BrushParams, HeightBrushMode,
+    SplatBrushMode,
+};
 pub use chunk::TerrainChunk;
 pub use heightmap::Heightmap;
+pub use procgen::generate_heightmap;
+pub use splatgen::generate_splat_map;
+pub use spec::TerrainSpec;
 pub use terrain::{Terrain, TerrainConfig};
 
 #[cfg(test)]

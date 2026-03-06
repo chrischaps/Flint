@@ -31,12 +31,18 @@ Flint uses an **edit -> validate -> play** loop:
      --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid --shadows
    ```
 
-2. **`flint preview`** -- Quick model previewer with orbit camera, drag-and-drop, headless render, file watching.
+2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:
    ```bash
-   flint preview models/character.glb
-   flint preview models/character.glb --render preview.png --distance 5 --yaw 45
-   flint preview models/character.glb --watch
+   flint edit levels/demo.scene.toml              # Scene viewer (hot-reload)
+   flint edit levels/demo.scene.toml --spline      # Spline/track editor
+   flint edit models/character.glb                 # Model previewer (orbit camera)
+   flint edit models/character.glb --watch         # Model previewer with file watching
+   flint edit specs/oak_tree.procgen.toml          # Procgen previewer (mesh/texture)
+   flint edit specs/stone_wall.procgen.toml        # Texture pipeline editor (if pipeline pattern)
+   flint edit terrain.terrain.toml                 # Terrain editor
    ```
+   Supported extensions: `.scene.toml`, `.chunk.toml`, `.procgen.toml`, `.terrain.toml`, `.glb`, `.gltf`.
+   Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.
 
 3. **`flint gen`** -- Run a procedural generation spec to produce meshes (GLB) or textures (PNG).
    ```bash
@@ -46,17 +52,7 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
    ```
 
-4. **`flint gen-preview`** -- Interactive previewer for procedural generation specs with live parameter tuning.
-   ```bash
-   flint gen-preview specs/oak_tree.procgen.toml
-   flint gen-preview specs/stone_wall.procgen.toml --seed 42
-   flint gen-preview specs/oak_tree.procgen.toml --no-grid
-   ```
-   Features: auto-generated parameter sliders from JSON Schema, debounced regeneration, orbit camera (mesh) or texture tabs (images), file watching, Save/Save As/Export/Reset, seed randomization. Keyboard: Tab=toggle UI, R=randomize seed, Space=reset camera, WASD=orbit, Q/E=zoom, Ctrl+S=save spec, Ctrl+Shift+S=save as, Ctrl+E=export GLB/PNG.
-
-5. **`flint serve --watch`** -- Interactive 3D viewer with hot-reload for orbit-camera inspection.
-
-6. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
+4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
 
 **For AI agents:** After visual changes, always run `flint render` to verify before moving on. The render command loads models (searches `scene_dir/models/` then `../models/`), generates geometry, and computes the full transform hierarchy.
 
@@ -65,7 +61,7 @@ Flint uses an **edit -> validate -> play** loop:
 21-crate Cargo workspace:
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, serve, play, validate, asset, preview, render, gen, gen-preview
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, validate, asset, render, gen
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
   └── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
 flint-android       Android entry point (NativeActivity, APK asset extraction)

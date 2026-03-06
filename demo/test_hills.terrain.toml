@@ -1,0 +1,94 @@
+# Test Terrain — Rolling hills with rocky ridges and grassy valleys
+
+[meta]
+name = "test_hills"
+version = "1.0.0"
+
+[seed]
+mode = "fixed"
+value = 42
+
+[geometry]
+width = 256.0
+depth = 256.0
+height_scale = 40.0
+resolution = 256
+chunk_resolution = 64
+
+[textures]
+texture_tile = 16.0
+roughness = 0.85
+metallic = 0.0
+
+# Base rolling hills
+[[height_layers]]
+op = "noise"
+noise_type = "perlin"
+octaves = 6
+frequency = 2.0
+lacunarity = 2.0
+persistence = 0.5
+amplitude = 1.0
+blend = "add"
+
+# Rocky ridges layered on top
+[[height_layers]]
+op = "noise"
+noise_type = "ridged"
+octaves = 4
+frequency = 3.0
+lacunarity = 2.2
+persistence = 0.45
+amplitude = 0.4
+blend = "add"
+
+# Flatten low areas into valleys
+[[height_layers]]
+op = "flatten"
+height = 0.15
+falloff = 0.08
+mode = "below"
+
+# Thermal erosion for natural weathering
+[[height_layers]]
+op = "erosion"
+kind = "thermal"
+iterations = 80
+talus_angle = 0.5
+strength = 0.4
+
+# Layer 0: Grass on low flat areas
+[[splat_rules]]
+layer = 0
+height_min = 0.0
+height_max = 0.45
+slope_max = 0.4
+noise_amount = 0.2
+noise_scale = 6.0
+
+# Layer 1: Dirt on mid-height slopes
+[[splat_rules]]
+layer = 1
+height_min = 0.3
+height_max = 0.7
+slope_max = 0.7
+noise_amount = 0.15
+noise_scale = 4.0
+
+# Layer 2: Rock on steep slopes and high ridges
+[[splat_rules]]
+layer = 2
+height_min = 0.5
+height_max = 1.0
+slope_max = 1.0
+noise_amount = 0.1
+noise_scale = 8.0
+
+# Layer 3: Sand in the lowest valleys
+[[splat_rules]]
+layer = 3
+height_min = 0.0
+height_max = 0.2
+slope_max = 0.25
+noise_amount = 0.3
+noise_scale = 3.0

@@ -550,11 +550,211 @@ impl SceneRenderer {
         );
     }
 
+    /// Reload only the terrain geometry (vertex/index buffers) without rebuilding
+    /// the material bind group. Used for brush sculpting where only the mesh changes.
+    pub fn reload_terrain_geometry(
+        &mut self,
+        device: &wgpu::Device,
+        chunks: &[flint_terrain::TerrainChunk],
+        transform: &Transform,
+    ) {
+        // Keep existing material bind group and buffer
+        self.terrain_draws.clear();
+
+        let model = transform.to_matrix();
+        let model_inv_transpose = mat4_inv_transpose(&model);
+
+        for chunk in chunks {
+            let vertices: Vec<crate::primitives::Vertex> = (0..chunk.positions.len())
+                .map(|i| crate::primitives::Vertex {
+                    position: chunk.positions[i],
+                    normal: chunk.normals[i],
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    uv: chunk.uvs[i],
+                })
+                .collect();
+
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Vertex Buffer"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Index Buffer"),
+                contents: bytemuck::cast_slice(&chunk.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+            let transform_uniforms = TransformUniforms {
+                view_proj: [[0.0; 4]; 4],
+                model,
+                model_inv_transpose,
+                camera_pos: [0.0; 3],
+                _pad: 0.0,
+            };
+
+            let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Terrain Chunk Transform Buffer"),
+                contents: bytemuck::cast_slice(&[transform_uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+            let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.pipeline.transform_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: transform_buffer.as_entire_binding(),
+                }],
+                label: Some("Terrain Chunk Transform Bind Group"),
+            });
+
+            self.terrain_draws.push(TerrainDrawCall {
+                vertex_buffer,
+                index_buffer,
+                index_count: chunk.indices.len() as u32,
+                transform_buffer,
+                transform_bind_group,
+                model,
+                model_inv_transpose,
+            });
+        }
+    }
+
+    /// Load terrain from raw data (heightmap-generated chunks + raw splat RGBA).
+    /// Like `load_terrain()` but accepts raw splat data instead of a file path.
+    pub fn load_terrain_from_data(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        chunks: &[flint_terrain::TerrainChunk],
+        transform: &Transform,
+        texture_tile: f32,
+        metallic: f32,
+        roughness: f32,
+        splat_data: &[u8],
+        splat_res: u32,
+        layer_paths: &[String; 4],
+        spec_dir: &Path,
+    ) {
+        let tp = match &self.terrain_pipeline {
+            Some(tp) => tp,
+            None => return,
+        };
+
+        // Load textures into texture cache
+        let tc = match &mut self.texture_cache {
+            Some(tc) => tc,
+            None => return,
+        };
+
+        // Upload splat map from raw data
+        tc.remove_texture("terrain_splat");
+        let _ = tc.upload_rgba(device, queue, "terrain_splat", splat_res, splat_res, splat_data, false);
+
+        // Load layer textures
+        for (i, layer_path) in layer_paths.iter().enumerate() {
+            if !layer_path.is_empty() {
+                let name = format!("terrain_layer{}", i);
+                tc.remove_texture(&name);
+                let path = spec_dir.join(layer_path);
+                if path.exists() {
+                    let _ = tc.load_file(device, queue, &name, &path);
+                }
+            }
+        }
+
+        // Get texture references (fallback to white)
+        let tc = self.texture_cache.as_ref().unwrap();
+
+        let splat_tex = tc.get("terrain_splat").unwrap_or(&tc.default_white);
+        let layer0_tex = tc.get("terrain_layer0").unwrap_or(&tc.default_white);
+        let layer1_tex = tc.get("terrain_layer1").unwrap_or(&tc.default_white);
+        let layer2_tex = tc.get("terrain_layer2").unwrap_or(&tc.default_white);
+        let layer3_tex = tc.get("terrain_layer3").unwrap_or(&tc.default_white);
+
+        // Create terrain uniform buffer
+        let terrain_uniforms = TerrainUniforms {
+            texture_tile,
+            metallic,
+            roughness,
+            enable_tonemapping: 0,
+        };
+
+        let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Terrain Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[terrain_uniforms]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &tp.material_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: material_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&splat_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&splat_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&layer0_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&layer0_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&layer1_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(&layer1_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&layer2_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(&layer2_tex.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(&layer3_tex.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(&layer3_tex.sampler),
+                },
+            ],
+            label: Some("Terrain Material Bind Group"),
+        });
+
+        self.terrain_material_buffer = Some(material_buffer);
+        self.terrain_material_bind_group = Some(material_bind_group);
+
+        // Build chunk draw calls
+        self.reload_terrain_geometry(device, chunks, transform);
+    }
+
     /// Clear terrain draw calls (for scene transitions)
     pub fn clear_terrain(&mut self) {
         self.terrain_draws.clear();
         self.terrain_material_bind_group = None;
         self.terrain_material_buffer = None;
+    }
+
+    /// Get an immutable reference to the texture cache.
+    pub fn texture_cache(&self) -> Option<&TextureCache> {
+        self.texture_cache.as_ref()
     }
 
     /// Clear all model/mesh data so a new model can be loaded cleanly.

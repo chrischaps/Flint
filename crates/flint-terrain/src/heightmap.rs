@@ -114,6 +114,48 @@ impl Heightmap {
         self.heights.clone()
     }
 
+    /// Get a reference to the raw height data.
+    pub fn heights(&self) -> &[f32] {
+        &self.heights
+    }
+
+    /// Get a mutable reference to the raw height data.
+    pub fn heights_mut(&mut self) -> &mut [f32] {
+        &mut self.heights
+    }
+
+    /// Replace the height data entirely.
+    pub fn set_heights(&mut self, heights: Vec<f32>) {
+        assert_eq!(heights.len(), (self.width * self.depth) as usize);
+        self.heights = heights;
+    }
+
+    /// Export the heightmap as a 16-bit grayscale PNG.
+    pub fn save_png(&self, path: &std::path::Path) -> Result<(), String> {
+        let mut buf = Vec::with_capacity((self.width * self.depth * 2) as usize);
+        for &h in &self.heights {
+            let val = (h.clamp(0.0, 1.0) * 65535.0) as u16;
+            buf.extend_from_slice(&val.to_be_bytes());
+        }
+
+        let file = std::fs::File::create(path)
+            .map_err(|e| format!("Failed to create '{}': {}", path.display(), e))?;
+        let w = std::io::BufWriter::new(file);
+
+        let encoder = image::codecs::png::PngEncoder::new(w);
+        use image::ImageEncoder;
+        encoder
+            .write_image(
+                &buf,
+                self.width,
+                self.depth,
+                image::ExtendedColorType::L16,
+            )
+            .map_err(|e| format!("PNG encode failed: {}", e))?;
+
+        Ok(())
+    }
+
     fn get(&self, x: u32, z: u32) -> f32 {
         self.heights[(z * self.width + x) as usize]
     }

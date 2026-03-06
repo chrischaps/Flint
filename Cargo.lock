@@ -1853,6 +1853,11 @@ version = "0.1.0"
 dependencies = [
  "flint-core",
  "image",
+ "noise",
+ "rand 0.9.2",
+ "rand_chacha",
+ "serde",
+ "toml",
 ]
 
 [[package]]

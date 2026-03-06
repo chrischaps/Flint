@@ -243,6 +243,49 @@ impl Camera {
         let proj = self.projection_matrix();
         mat4_inverse(&proj)
     }
+
+    /// Unproject a screen-space NDC point into a world-space ray.
+    /// `ndc_x` and `ndc_y` are in [-1, 1] (left-to-right, bottom-to-top).
+    /// Returns `(origin, direction)` as `[f32; 3]` arrays.
+    pub fn unproject_ray(&self, ndc_x: f32, ndc_y: f32) -> ([f32; 3], [f32; 3]) {
+        let inv_vp = self.inverse_view_projection_matrix();
+
+        // Near point in clip space
+        let near_clip = [ndc_x, ndc_y, 0.0, 1.0];
+        // Far point in clip space
+        let far_clip = [ndc_x, ndc_y, 1.0, 1.0];
+
+        let near_world = mat4_mul_vec4(&inv_vp, &near_clip);
+        let far_world = mat4_mul_vec4(&inv_vp, &far_clip);
+
+        let origin = [
+            near_world[0] / near_world[3],
+            near_world[1] / near_world[3],
+            near_world[2] / near_world[3],
+        ];
+        let far = [
+            far_world[0] / far_world[3],
+            far_world[1] / far_world[3],
+            far_world[2] / far_world[3],
+        ];
+
+        let dir = [far[0] - origin[0], far[1] - origin[1], far[2] - origin[2]];
+        let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+        if len > 1e-8 {
+            (origin, [dir[0] / len, dir[1] / len, dir[2] / len])
+        } else {
+            (origin, [0.0, -1.0, 0.0])
+        }
+    }
+}
+
+/// Multiply a 4x4 column-major matrix by a 4D vector
+fn mat4_mul_vec4(m: &[[f32; 4]; 4], v: &[f32; 4]) -> [f32; 4] {
+    let mut result = [0.0f32; 4];
+    for row in 0..4 {
+        result[row] = m[0][row] * v[0] + m[1][row] * v[1] + m[2][row] * v[2] + m[3][row] * v[3];
+    }
+    result
 }
 
 /// Compute the inverse of a 4x4 column-major matrix using cofactor expansion

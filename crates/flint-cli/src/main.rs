@@ -5,8 +5,8 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, edit, entity, gen, gen_preview, init, play, prefab, preview, query, render, scene,
-    schema, tex_edit, validate,
+    asset, edit_router, entity, gen, gen_preview, init, play, prefab, preview, query, render,
+    scene, schema, spline_edit, terrain_edit, tex_edit, validate,
 };
 
 #[derive(Parser)]
@@ -58,7 +58,86 @@ enum Commands {
         schemas: Vec<String>,
     },
 
+    /// Open a file in the appropriate interactive editor
+    Edit {
+        /// Path to file (.scene.toml, .procgen.toml, .terrain.toml, .glb, .gltf)
+        file: String,
+
+        /// Paths to schemas directories (can specify multiple)
+        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
+        schemas: Vec<String>,
+
+        /// Window width in pixels
+        #[arg(long)]
+        width: Option<u32>,
+
+        /// Window height in pixels
+        #[arg(long)]
+        height: Option<u32>,
+
+        /// Disable the ground grid
+        #[arg(long)]
+        no_grid: bool,
+
+        /// Watch for file changes
+        #[arg(long)]
+        watch: bool,
+
+        /// Override seed
+        #[arg(long)]
+        seed: Option<u64>,
+
+        /// Hide the egui inspector panels (scene only)
+        #[arg(long)]
+        no_inspector: bool,
+
+        /// Open the spline/track editor (scene only)
+        #[arg(long)]
+        spline: bool,
+
+        /// Start with auto-orbit enabled (model/procgen)
+        #[arg(long)]
+        auto_orbit: bool,
+
+        /// Camera orbit distance (model)
+        #[arg(long)]
+        distance: Option<f32>,
+
+        /// Camera horizontal angle in degrees (model)
+        #[arg(long)]
+        yaw: Option<f32>,
+
+        /// Camera vertical angle in degrees (model)
+        #[arg(long)]
+        pitch: Option<f32>,
+
+        /// Camera look-at point as comma-separated x,y,z (model)
+        #[arg(long, value_parser = parse_vec3)]
+        target: Option<[f32; 3]>,
+
+        /// Field of view in degrees (model)
+        #[arg(long)]
+        fov: Option<f32>,
+
+        /// Disable animation playback (model)
+        #[arg(long)]
+        no_animate: bool,
+
+        /// Start with a specific animation clip by name (model)
+        #[arg(long)]
+        clip: Option<String>,
+
+        /// Animation playback speed multiplier (model)
+        #[arg(long)]
+        anim_speed: Option<f32>,
+
+        /// Render to a PNG file instead of opening a window (model)
+        #[arg(long)]
+        render: Option<String>,
+    },
+
     /// Start the scene viewer with hot-reload
+    #[command(hide = true)]
     Serve {
         /// Path to scene file
         scene: String,
@@ -77,7 +156,8 @@ enum Commands {
     },
 
     /// Open the interactive track editor for a scene with spline data
-    Edit {
+    #[command(hide = true)]
+    SplineEdit {
         /// Path to scene file
         scene: String,
 
@@ -139,6 +219,7 @@ enum Commands {
     },
 
     /// Preview a 3D model file (GLB/glTF) with orbit camera
+    #[command(hide = true)]
     Preview {
         /// Path to model file (.glb or .gltf). If omitted, opens an empty window for drag-and-drop.
         model: Option<String>,
@@ -208,9 +289,15 @@ enum Commands {
     Gen(gen::GenArgs),
 
     /// Interactive previewer for procedural generation specs
+    #[command(hide = true)]
     GenPreview(gen_preview::GenPreviewArgs),
 
+    /// Interactive terrain editor with procgen, sculpting, and painting
+    #[command(hide = true)]
+    TerrainEdit(terrain_edit::TerrainEditArgs),
+
     /// Visual node editor for texture pipeline specs
+    #[command(hide = true)]
     TexEdit(tex_edit::TexEditArgs),
 
     /// Render a scene to a PNG image (headless)
@@ -404,7 +491,50 @@ fn main() -> Result<()> {
         }),
         Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),
-        Commands::Edit { scene, schemas } => edit::run(edit::EditArgs { scene, schemas }),
+        Commands::Edit {
+            file,
+            schemas,
+            width,
+            height,
+            no_grid,
+            watch,
+            seed,
+            no_inspector,
+            spline,
+            auto_orbit,
+            distance,
+            yaw,
+            pitch,
+            target,
+            fov,
+            no_animate,
+            clip,
+            anim_speed,
+            render: render_to,
+        } => edit_router::run(edit_router::EditArgs {
+            file,
+            schemas,
+            width,
+            height,
+            no_grid,
+            watch,
+            seed,
+            no_inspector,
+            spline,
+            auto_orbit,
+            distance,
+            yaw,
+            pitch,
+            target,
+            fov,
+            no_animate,
+            clip,
+            anim_speed,
+            render: render_to,
+        }),
+        Commands::SplineEdit { scene, schemas } => {
+            spline_edit::run(spline_edit::EditArgs { scene, schemas })
+        }
         Commands::Preview {
             model,
             render: render_output,
@@ -452,6 +582,7 @@ fn main() -> Result<()> {
         }
         Commands::Gen(args) => gen::run(args),
         Commands::GenPreview(args) => gen_preview::run(args),
+        Commands::TerrainEdit(args) => terrain_edit::run(args),
         Commands::TexEdit(args) => tex_edit::run(args),
         Commands::Render {
             scene,

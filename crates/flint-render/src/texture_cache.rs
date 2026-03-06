@@ -322,6 +322,55 @@ impl TextureCache {
         self.textures.get(name).map(|t| (t.width, t.height))
     }
 
+    /// Update an existing texture's pixel data in-place on the GPU.
+    ///
+    /// The texture must already exist and the data must match its dimensions.
+    /// Uses `queue.write_texture()` — no bind group rebuild needed.
+    pub fn update_rgba(&self, queue: &wgpu::Queue, name: &str, data: &[u8]) -> Result<(), String> {
+        let tex = self
+            .textures
+            .get(name)
+            .ok_or_else(|| format!("Texture '{}' not found in cache", name))?;
+
+        let expected = (tex.width * tex.height * 4) as usize;
+        if data.len() != expected {
+            return Err(format!(
+                "Data length {} doesn't match {}x{}x4 = {}",
+                data.len(),
+                tex.width,
+                tex.height,
+                expected
+            ));
+        }
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(tex.width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: tex.width,
+                height: tex.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Remove a texture from the cache by name.
+    pub fn remove_texture(&mut self, name: &str) {
+        self.textures.remove(name);
+    }
+
     /// Clear all user-loaded textures (preserves built-in defaults)
     pub fn clear_user_textures(&mut self) {
         self.textures.clear();
