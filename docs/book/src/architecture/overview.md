@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a nineteen-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a twenty-three-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -9,13 +9,17 @@ flint/
 ├── crates/
 │   ├── flint-cli/          # CLI binary (clap). Entry point for all commands.
 │   ├── flint-asset-gen/    # AI asset generation: providers, style guides, batch resolution
+│   ├── flint-procgen/      # Procedural generation: Generator trait, registry, tree/texture/creature generators
+│   ├── flint-procgen-ai/   # AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 │   ├── flint-player/       # Standalone player binary with game loop, physics, audio, animation, scripting
+│   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
-│   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus)
+│   ├── flint-terrain/      # Heightmap terrain with splat-map blending
+│   ├── flint-runtime/      # Game loop infrastructure (GameClock, InputState, EventBus, GameStateMachine)
 │   ├── flint-physics/      # Rapier 3D integration (PhysicsWorld, CharacterController)
 │   ├── flint-render/       # wgpu PBR renderer with Cook-Torrance shading + skinned mesh pipeline
 │   ├── flint-import/       # File importers (glTF/GLB with skeleton/skin extraction)
@@ -94,7 +98,9 @@ User / AI Agent
       ├──► flint-render    (renderer)    ├──► flint-animation (tweens + skeletal)
       ├──► flint-constraint(validation)  ├──► flint-particles (GPU particles)
       ├──► flint-asset     (catalog)     ├──► flint-script    (Rhai scripting)
-      ├──► flint-asset-gen (AI gen)      └──► flint-render    (PBR + skinned mesh)
+      ├──► flint-asset-gen (AI gen)      ├──► flint-terrain   (heightmap terrain)
+      ├──► flint-procgen   (proc gen)    └──► flint-render    (PBR + skinned mesh)
+      ├──► flint-procgen-ai(AI procgen)          │
       └──► flint-import    (glTF import)         │
               │                                  ▼
               ▼                              flint-import  (glTF meshes + skins)
@@ -172,9 +178,11 @@ egui-based GUI inspector built on top of `flint-render`:
 
 Game loop infrastructure for interactive scenes:
 - `GameClock` --- fixed-timestep accumulator (1/60s default)
-- `InputState` --- keyboard and mouse tracking with action bindings
+- `InputState` and `InputConfig` --- keyboard/mouse/gamepad tracking with TOML-configured action bindings
 - `EventBus` --- decoupled event dispatch between systems
 - `RuntimeSystem` trait --- standard interface for update/render systems
+- `GameStateMachine` --- pushdown automaton for game states (play, pause, menu) with per-system `SystemPolicy`
+- `PersistentStore` --- key-value data that survives scene transitions
 
 ### flint-physics
 
@@ -234,6 +242,38 @@ AI asset generation pipeline:
 - `FlintConfig` --- layered configuration for API keys and provider settings
 - `JobStore` --- persistent tracking of async generation jobs (for long-running 3D model generation)
 
+### flint-procgen
+
+Procedural generation framework:
+- `Generator` trait --- pluggable generator interface with `generate()`, `param_schema()`, `estimate_cost()`
+- `GeneratorRegistry` --- register and look up generators by type name
+- `ProcGenSpec` --- TOML spec format with metadata, seed config, and generator parameters
+- Built-in generators: `tree_v1` (L-system/space colonization trees), `texture_v1` (PBR texture maps), `creature_v1`
+- `ProcGenCache` --- LRU cache keyed by (spec_hash, seed) with memory budget
+- Algorithmic building blocks: noise (Perlin, simplex, Worley, FBM), L-system engine, mesh builder, space colonization
+
+### flint-procgen-ai
+
+AI-assisted procedural generation (tool-time only):
+- `ProcGenAgent` trait --- `interpret_spec()`, `create_spec_from_prompt()`, `refine_spec()`
+- `MockAgent` implementation for testing
+
+### flint-terrain
+
+Heightmap terrain system:
+- Chunked mesh generation from grayscale PNG heightmaps
+- RGBA splat-map blending for up to 4 texture layers
+- Bilinear height interpolation for smooth surfaces
+- `terrain_height(x, z)` callback for script queries
+- Does NOT depend on `flint-render`; uses standard `Vertex` format
+
+### flint-android
+
+Android entry point (excluded from default workspace members):
+- `NativeActivity` integration
+- APK asset extraction
+- Build via `cargo ndk -p flint-android`; min API 26
+
 ### flint-player
 
 Standalone player binary that wires together runtime, physics, audio, animation, particles, scripting, and rendering:
@@ -249,7 +289,7 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `serve`, `play`, `validate`, `asset`, `render`.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `edit`, `play`, `validate`, `asset`, `render`, `gen`, `prefab`.
 
 ## Further Reading
 

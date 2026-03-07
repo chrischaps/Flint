@@ -254,7 +254,11 @@ impl ShadowPass {
         }
     }
 
-    /// Compute cascade splits and light view-projection matrices
+    /// Compute cascade splits and light view-projection matrices.
+    ///
+    /// `max_shadow_distance` extends the shadow frustum depth along the light
+    /// direction so that off-screen shadow casters (ceilings, walls behind the
+    /// camera, etc.) are captured in the shadow map.
     pub fn update_cascades(
         &mut self,
         light_dir: [f32; 3],
@@ -262,6 +266,7 @@ impl ShadowPass {
         camera_view_proj_inv: [[f32; 4]; 4],
         near: f32,
         far: f32,
+        max_shadow_distance: f32,
     ) {
         // Practical cascade split scheme (logarithmic/uniform blend)
         let lambda = 0.5f32; // blend factor
@@ -280,8 +285,13 @@ impl ShadowPass {
                 frustum_corners(cascade_near, cascade_far, near, far, &camera_view_proj_inv);
 
             // Compute tight orthographic bounds from light's perspective
-            let light_vp =
-                compute_light_matrix(&corners, &light_dir_norm, camera_pos, self.resolution);
+            let light_vp = compute_light_matrix(
+                &corners,
+                &light_dir_norm,
+                camera_pos,
+                self.resolution,
+                max_shadow_distance,
+            );
             self.shadow_uniforms.cascade_view_proj[i] = light_vp;
         }
     }
@@ -351,6 +361,7 @@ fn compute_light_matrix(
     light_dir: &[f32; 3],
     _camera_pos: [f32; 3],
     shadow_resolution: u32,
+    max_shadow_distance: f32,
 ) -> [[f32; 4]; 4] {
     // Compute frustum center
     let mut center = [0.0f32; 3];
@@ -378,15 +389,18 @@ fn compute_light_matrix(
     // Snap radius to avoid shimmering
     radius = radius.ceil();
 
-    // Light view matrix: position eye where the light source is (along light direction)
+    // Pull the light eye back far enough to capture shadow casters beyond the
+    // camera frustum (ceilings, walls behind the camera, etc.).  XY bounds stay
+    // tight to the frustum sphere so shadow resolution is preserved.
+    let pull_back = radius.max(max_shadow_distance);
     let eye = [
-        center[0] + light_dir[0] * radius,
-        center[1] + light_dir[1] * radius,
-        center[2] + light_dir[2] * radius,
+        center[0] + light_dir[0] * pull_back,
+        center[1] + light_dir[1] * pull_back,
+        center[2] + light_dir[2] * pull_back,
     ];
 
     let view = look_at(&eye, &center);
-    let proj = ortho(-radius, radius, -radius, radius, 0.0, 2.0 * radius);
+    let proj = ortho(-radius, radius, -radius, radius, 0.0, pull_back + radius);
 
     let mut light_matrix = mat4_mul(&proj, &view);
 

@@ -15,12 +15,12 @@ A scannable cheat sheet for daily Flint development.
 | `flint query "<expr>"` | Query entities (e.g., `"entities where archetype == 'door'"`) |
 | `flint schema <name>` | Inspect a component or archetype schema |
 | `flint validate <scene>` | Validate scene against constraints (`--fix` to auto-fix) |
-| `flint serve <scene> --watch` | Interactive viewer with hot-reload |
+| `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play <scene>` | First-person gameplay with physics + scripting |
 | `flint render <scene> -o out.png` | Headless render to PNG |
+| `flint gen <spec> -o out.glb` | Run procgen spec to produce mesh/texture |
 | `flint asset generate <type>` | AI asset generation (texture, model, audio) |
 | `flint asset import <file>` | Import file into asset catalog |
-| `flint edit <scene>` | Interactive spline/track editor |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
 
 ## Keyboard Shortcuts
@@ -44,7 +44,7 @@ A scannable cheat sheet for daily Flint development.
 | F11 | Toggle fullscreen |
 | Escape | Release cursor / Exit |
 
-### Viewer (`flint serve`)
+### Scene Viewer (`flint edit <scene.toml>`)
 
 | Key | Action |
 |-----|--------|
@@ -60,7 +60,7 @@ A scannable cheat sheet for daily Flint development.
 | F3 | Toggle normal arrows |
 | F4 | Toggle shadows |
 
-### Editor (`flint edit`)
+### Spline Editor (`flint edit <scene.toml> --spline`)
 
 | Key | Action |
 |-----|--------|
@@ -74,6 +74,15 @@ A scannable cheat sheet for daily Flint development.
 | Delete | Remove point |
 | Ctrl+S | Save spline |
 | Ctrl+Z | Undo |
+
+### File Type Auto-Detection (`flint edit`)
+
+| Extension | Opens |
+|-----------|-------|
+| `.scene.toml`, `.chunk.toml` | Scene viewer |
+| `.procgen.toml` | Procgen previewer (or texture pipeline editor) |
+| `.terrain.toml` | Terrain editor |
+| `.glb`, `.gltf` | Model previewer (orbit camera) |
 
 ## Common TOML Snippets
 

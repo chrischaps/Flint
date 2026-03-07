@@ -17,12 +17,8 @@ This file tracks the **remaining** items from the approved audit plan that are *
 - [ ] Projectile system
 - [ ] Add runtime projectile component/schema and update loop integration
 - [ ] Add collision/damage/splash hooks for script and gameplay usage
-- [ ] Game state machine and level transitions
-- [ ] Add `GameState` runtime gating (play/pause/death/menu)
-- [ ] Add scene transition request flow and safe runtime teardown/reload
-- [ ] Particle system
-- [ ] Add emitter data model and update loop
-- [ ] Add billboard-based particle rendering integration
+- [x] ~~Game state machine and level transitions~~ *(Implemented: `GameStateMachine` pushdown automaton with `SystemPolicy`, `TransitionPhase` lifecycle, `PersistentStore`, `load_scene()` script API)*
+- [x] ~~Particle system~~ *(Implemented: `flint-particles` crate with GPU-instanced rendering, emission shapes, value-over-lifetime interpolation)*
 - [ ] Enemy pathing baseline
 - [ ] Add simple navigation/pathing suitable for Doom-style arena movement
 - [ ] Settings persistence
@@ -30,7 +26,7 @@ This file tracks the **remaining** items from the approved audit plan that are *
 
 ## 3) Public Interface Follow-ups (Pending)
 
-- [ ] Add explicit runtime transition interface (`load_scene` request/event path)
+- [x] ~~Add explicit runtime transition interface~~ *(Implemented: `load_scene()` Rhai API, `TransitionPhase` lifecycle)*
 - [ ] Document provider retry/timeout config in user-facing docs
 - [ ] Add docs for nested asset reference resolution behavior
 

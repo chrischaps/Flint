@@ -83,6 +83,20 @@ pub struct PostProcessDef {
     pub fog_height_falloff: f32,
     #[serde(default)]
     pub fog_height_origin: f32,
+    #[serde(default)]
+    pub dither_enabled: bool,
+    #[serde(default = "default_dither_intensity")]
+    pub dither_intensity: f32,
+    #[serde(default)]
+    pub volumetric_enabled: bool,
+    #[serde(default = "default_volumetric_samples")]
+    pub volumetric_samples: u32,
+    #[serde(default = "default_volumetric_density")]
+    pub volumetric_density: f32,
+    #[serde(default = "default_volumetric_max_distance")]
+    pub volumetric_max_distance: f32,
+    #[serde(default = "default_volumetric_decay")]
+    pub volumetric_decay: f32,
 }
 
 fn default_true() -> bool {
@@ -135,6 +149,26 @@ fn default_fog_end() -> f32 {
 
 fn default_fog_height_falloff() -> f32 {
     0.1
+}
+
+fn default_dither_intensity() -> f32 {
+    0.03
+}
+
+fn default_volumetric_samples() -> u32 {
+    32
+}
+
+fn default_volumetric_density() -> f32 {
+    1.0
+}
+
+fn default_volumetric_max_distance() -> f32 {
+    100.0
+}
+
+fn default_volumetric_decay() -> f32 {
+    0.98
 }
 
 /// Camera configuration for the scene

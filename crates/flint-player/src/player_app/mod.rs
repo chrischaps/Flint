@@ -1957,6 +1957,20 @@ impl ApplicationHandler for PlayerApp {
                                         renderer.set_post_process_config(config);
                                     }
                                 }
+                                KeyCode::F9 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config = renderer.post_process_config().clone();
+                                        config.dither_enabled = !config.dither_enabled;
+                                        renderer.set_post_process_config(config);
+                                    }
+                                }
+                                KeyCode::F10 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config = renderer.post_process_config().clone();
+                                        config.volumetric_enabled = !config.volumetric_enabled;
+                                        renderer.set_post_process_config(config);
+                                    }
+                                }
                                 KeyCode::F11 => {
                                     if let Some(window) = &self.window {
                                         if window.fullscreen().is_some() {

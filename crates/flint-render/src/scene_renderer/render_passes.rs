@@ -36,7 +36,7 @@ impl SceneRenderer {
 
         // Update cascade matrices
         let camera_inv = camera.inverse_view_projection_matrix();
-        shadow_pass.update_cascades(light.direction, camera_pos, camera_inv, 0.1, 200.0);
+        shadow_pass.update_cascades(light.direction, camera_pos, camera_inv, 0.1, 200.0, 100.0);
 
         // Write shadow uniforms
         queue.write_buffer(
@@ -916,6 +916,26 @@ impl SceneRenderer {
             );
         }
 
+        // Run volumetric (god rays) if enabled and shadows are available
+        if self.postprocess_config.enabled && self.postprocess_config.volumetric_enabled {
+            if let Some(shadow_pass) = &self.shadow_pass {
+                if shadow_pass.enabled {
+                    pp.run_volumetric(
+                        device,
+                        queue,
+                        resources,
+                        &self.postprocess_config,
+                        depth_view,
+                        camera,
+                        &shadow_pass.shadow_view,
+                        &shadow_pass.shadow_sampler,
+                        &shadow_pass.shadow_uniforms_buffer,
+                        &self.light_buffer,
+                    );
+                }
+            }
+        }
+
         // Run bloom if post-processing effects are enabled
         if self.postprocess_config.enabled
             && self.postprocess_config.bloom_enabled
@@ -924,7 +944,7 @@ impl SceneRenderer {
             pp.run_bloom(device, queue, resources, &self.postprocess_config);
         }
 
-        // Composite: HDR + bloom + SSAO + fog → tonemapped sRGB surface
+        // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
         pp.composite(
             device,

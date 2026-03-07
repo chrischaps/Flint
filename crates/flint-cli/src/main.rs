@@ -404,6 +404,18 @@ enum Commands {
         /// Fog height falloff (enables height fog; default: 0.1)
         #[arg(long)]
         fog_height_falloff: Option<f32>,
+
+        /// Dither intensity (enables ordered dither; default: 0.03, 0 = disabled)
+        #[arg(long)]
+        dither_intensity: Option<f32>,
+
+        /// Volumetric light density (enables god rays; default: 1.0)
+        #[arg(long)]
+        volumetric_density: Option<f32>,
+
+        /// Volumetric ray-march sample count (default: 32)
+        #[arg(long)]
+        volumetric_samples: Option<u32>,
     },
 }
 
@@ -611,6 +623,9 @@ fn main() -> Result<()> {
             fog_density,
             fog_color,
             fog_height_falloff,
+            dither_intensity,
+            volumetric_density,
+            volumetric_samples,
         } => render::run(render::RenderArgs {
             scene,
             output,
@@ -638,6 +653,9 @@ fn main() -> Result<()> {
             fog_density,
             fog_color,
             fog_height_falloff,
+            dither_intensity,
+            volumetric_density,
+            volumetric_samples,
         }),
     }
 }

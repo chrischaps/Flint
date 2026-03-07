@@ -1,6 +1,6 @@
 # Crate Dependency Graph
 
-This page shows how Flint's nineteen crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
+This page shows how Flint's twenty-three crates depend on each other. Dependencies flow downward --- higher crates depend on lower ones, never the reverse.
 
 ## Dependency Diagram
 
@@ -68,9 +68,13 @@ This page shows how Flint's nineteen crates depend on each other. Dependencies f
 | `flint-animation` | core, ecs, import, runtime | player |
 | `flint-particles` | core, ecs, runtime | player |
 | `flint-script` | core, ecs, runtime, physics | player |
+| `flint-terrain` | core | player |
 | `flint-asset-gen` | core, asset, import | cli |
+| `flint-procgen` | core | cli, player, procgen-ai |
+| `flint-procgen-ai` | core, procgen | cli |
 | `flint-viewer` | core, ecs, scene, schema, render, import, constraint | cli |
-| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, particles, script, import, asset | *(binary entry point)* |
+| `flint-player` | core, schema, ecs, scene, render, runtime, physics, audio, animation, particles, script, import, asset, terrain, procgen | *(binary entry point)* |
+| `flint-android` | player | *(binary entry point, excluded from default members)* |
 | `flint-cli` | all crates | *(binary entry point)* |
 
 ## Key Properties
@@ -81,9 +85,9 @@ This page shows how Flint's nineteen crates depend on each other. Dependencies f
 1. **Core** --- fundamental types (`flint-core`)
 2. **Schema** --- data definitions (`flint-schema`)
 3. **Storage** --- entity and asset management (`flint-ecs`, `flint-asset`)
-4. **Logic** --- query, scene, constraint, import, asset-gen
-5. **Systems** --- render, runtime, physics, audio, animation, particles, script
-6. **Applications** --- viewer, player
+4. **Logic** --- query, scene, constraint, import, asset-gen, procgen, procgen-ai
+5. **Systems** --- render, runtime, physics, audio, animation, particles, script, terrain
+6. **Applications** --- viewer, player, android
 7. **Interface** --- CLI binary (`flint-cli`), player binary (`flint-player`)
 
 **Two entry points.** The CLI binary (`flint-cli`) serves scene authoring and validation workflows. The player binary (`flint-player`) serves interactive gameplay. Both share the same underlying crate hierarchy.

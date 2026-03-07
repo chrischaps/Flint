@@ -28,7 +28,7 @@ struct PostProcessUniforms {
     near: f32,
     far: f32,
     fog_height_enabled: f32,
-    _pad2: f32,
+    dither_intensity: f32,
     inv_view_proj: mat4x4<f32>,
 };
 
@@ -54,6 +54,11 @@ var ssao_sampler: sampler;
 var depth_texture: texture_2d<f32>;
 @group(3) @binding(3)
 var depth_sampler_nn: sampler;
+
+@group(3) @binding(4)
+var volumetric_texture: texture_2d<f32>;
+@group(3) @binding(5)
+var volumetric_sampler: sampler;
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -124,6 +129,26 @@ fn compute_fog(uv: vec2<f32>) -> f32 {
     return clamp(max(dist_fog, height_fog), 0.0, 1.0);
 }
 
+// 8x8 Bayer ordered dither matrix — returns value in [0, 1)
+fn bayer8(pos: vec2<f32>) -> f32 {
+    let x = u32(pos.x) % 8u;
+    let y = u32(pos.y) % 8u;
+
+    // Build recursively from 2x2 base
+    var value = 0u;
+    var xm = x;
+    var ym = y;
+
+    // Bit 5-4 (from 4x4 → 8x8)
+    value = value + ((((xm ^ ym) & 4u) >> 1u) | ((ym & 4u) >> 2u));
+    // Bit 3-2 (from 2x2 → 4x4)
+    value = value * 4u + ((((xm ^ ym) & 2u)) | ((ym & 2u) >> 1u));
+    // Bit 1-0 (base 2x2)
+    value = value * 4u + ((((xm ^ ym) & 1u) << 1u) | (ym & 1u));
+
+    return f32(value) / 64.0;
+}
+
 @fragment
 fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     let uv = in.uv;
@@ -164,6 +189,10 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     let ao = textureSample(ssao_texture, ssao_sampler, uv).r;
     color = color * ao;
 
+    // ── Volumetric (God Rays) — additive blend before bloom ──
+    let vol = textureSample(volumetric_texture, volumetric_sampler, uv).rgb;
+    color = color + vol;
+
     // ── Bloom ──
     let bloom = textureSample(bloom_texture, bloom_sampler, uv).rgb;
     color = color + bloom * params.bloom_intensity;
@@ -184,6 +213,13 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         let vdist = dist * 1.41421356;
         let vignette = 1.0 - pow(vdist, params.vignette_smoothness) * params.vignette_intensity;
         mapped = mapped * max(vignette, 0.0);
+    }
+
+    // ── Ordered (Bayer) Dither ──
+    if (params.dither_intensity > 0.0) {
+        let dither = bayer8(in.position.xy) - 0.5;
+        mapped = mapped + vec3<f32>(dither * params.dither_intensity);
+        mapped = max(mapped, vec3<f32>(0.0));
     }
 
     return vec4<f32>(mapped, 1.0);

@@ -1,8 +1,8 @@
 # Flint Engine Design Document
 
-**Version:** 0.4 (Phase 4 Stage 3)
-**Date:** February 2026
-**Status:** Active development --- Phases 1--3 complete, Phase 4 Stages 1--3 complete
+**Version:** 0.7 (Phase 7 in progress)
+**Date:** March 2026
+**Status:** Active development --- Phases 1--6 complete, Phase 7 (AI-assisted procgen) in progress
 
 ---
 
@@ -35,26 +35,32 @@ Flint inverts this: the primary interface is CLI and code, with visual tools foc
 flint/
 ├── crates/
 │   ├── flint-core/           # Fundamental types, IDs, content hashing
-│   ├── flint-ecs/            # ECS layer (wraps hecs or bevy_ecs standalone)
+│   ├── flint-ecs/            # ECS layer (wraps hecs)
 │   ├── flint-schema/         # Component schemas, introspection registry
 │   ├── flint-query/          # Query language parser and executor
 │   ├── flint-asset/          # Content-addressed asset system
-│   ├── flint-scene/          # Scene format, serialization (TOML/RON)
+│   ├── flint-scene/          # Scene format, serialization (TOML)
 │   ├── flint-constraint/     # Constraint definitions and solver
-│   ├── flint-render/         # wgpu-based renderer
-│   ├── flint-animation/      # Animation playback (property tweens + skeletal)
-│   ├── flint-physics/        # Rapier integration
-│   ├── flint-audio/          # Kira integration
-│   ├── flint-script/         # Rhai scripting integration
-│   ├── flint-cli/            # CLI application
-│   └── flint-viewer/         # Minimal GUI for human validation
+│   ├── flint-render/         # wgpu PBR renderer (HDR, bloom, SSAO, fog)
+│   ├── flint-import/         # glTF/GLB importer (meshes, skins, animations)
+│   ├── flint-viewer/         # egui inspector with gizmos, undo/redo
+│   ├── flint-runtime/        # GameClock, InputState, EventBus, GameStateMachine
+│   ├── flint-physics/        # Rapier 3D integration
+│   ├── flint-audio/          # Kira spatial audio
+│   ├── flint-animation/      # Property tweens + skeletal animation
+│   ├── flint-particles/      # GPU-instanced particle system
+│   ├── flint-script/         # Rhai scripting with hot-reload
+│   ├── flint-terrain/        # Heightmap terrain with splat-map blending
+│   ├── flint-asset-gen/      # AI generation providers (Flux, Meshy, ElevenLabs)
+│   ├── flint-procgen/        # Procedural generation (trees, textures, creatures)
+│   ├── flint-procgen-ai/     # AI-assisted procgen (ProcGenAgent trait)
+│   ├── flint-player/         # Standalone game player binary
+│   ├── flint-android/        # Android entry point (NativeActivity)
+│   └── flint-cli/            # CLI application
 │
-├── tools/
-│   ├── flint-asset-gen/      # AI generation provider integrations
-│   └── flint-import/         # Converters from common formats (glTF, FBX, etc.)
-│
-└── runtime/
-    └── flint-player/         # Standalone game player/executable
+├── schemas/                  # Engine component and archetype definitions
+├── demo/                     # Showcase scenes, scripts, audio, animations
+└── docs/                     # Design docs and mdBook documentation
 ```
 
 ### Technology Choices
@@ -66,9 +72,9 @@ flint/
 | Rendering | wgpu | Cross-platform, modern API, Rust-native |
 | Physics | Rapier | Rust-native, deterministic, well-maintained |
 | Audio | Kira | Rust-native, game-focused, good API |
-| ECS | hecs or bevy_ecs | Standalone, well-tested, introspectable |
+| ECS | hecs | Lightweight, standalone, well-tested |
 | Scene format | TOML | Human-readable, diffable, good Rust support |
-| Asset metadata | TOML/RON | Consistent with scene format |
+| Asset metadata | TOML | Consistent with scene format |
 
 ### Data Flow
 
@@ -118,46 +124,41 @@ The CLI is the primary interface for both humans and AI agents.
 
 ```bash
 # Project management
-flint new my-game
-flint build --release
-flint serve --watch
+flint init my-game
 
 # Scene operations
-flint scene create levels/tavern.scene
+flint scene create levels/tavern.scene.toml
 flint scene list
-flint scene validate levels/tavern.scene
+flint validate levels/tavern.scene.toml
 
 # Entity operations
-flint entity create --archetype door --name "front_door"
-flint entity link front_door --connects "room.foyer" "exterior.porch"
-flint entity list --scene levels/tavern.scene
+flint entity create --archetype door --name "front_door" --scene levels/tavern.scene.toml
+flint entity list --scene levels/tavern.scene.toml
 
 # Asset operations
 flint asset import models/chair.glb
 flint asset list --type mesh
-flint asset resolve --strategy placeholder
+flint asset resolve levels/tavern.scene.toml
+
+# Interactive editing and playback
+flint edit levels/tavern.scene.toml     # Unified editor (auto-detects file type)
+flint render levels/tavern.scene.toml -o shot.png
+flint play levels/tavern.scene.toml
+
+# Procedural generation
+flint gen specs/oak_tree.procgen.toml -o tree.glb
 ```
 
 #### Structured I/O
 
-All commands output JSON/TOML by default for machine consumption:
+Commands that output data support `--format json|toml|text`:
 
 ```bash
-flint scene list --format json | \
-  jq '.entities[] | select(.archetype == "door")' | \
-  flint batch modify --set "material_style=rusty_metal"
+flint scene list --format json
+flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml --format json
 ```
 
-#### Transaction Mode
-
-For multi-step atomic operations:
-
-```bash
-flint transaction begin
-flint entity create --archetype door --name "vault_door"
-flint entity link vault_door --connects "room.vault" "room.corridor"
-flint transaction commit  # or rollback
-```
+> **Note:** `batch modify` and `transaction` commands described in early designs are not implemented. Batch operations are done via scripting or direct TOML editing.
 
 #### Watch Mode
 
@@ -178,21 +179,15 @@ The engine's internal object model is queryable as data.
 
 ```bash
 # Find entities by criteria
-flint query "entities where archetype == 'door'"
-flint query "entities where materials contains 'brick_worn'"
-
-# Dependency analysis
-flint deps texture/brick_diffuse.png --reverse
-# Returns: 12 materials reference this texture
-
-# Impact analysis
-flint impact --dry-run "delete texture/brick_diffuse.png"
-# Returns: 12 materials, 47 entities would be affected
+flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml
+flint query "entities where material.roughness > 0.5" --scene levels/tavern.scene.toml
 
 # Schema introspection
-flint schema entity.door
-# Returns: archetype definition, required fields, optional fields, valid relationships
+flint schema door
+# Returns: component or archetype definition with field types and defaults
 ```
+
+> **Note:** `flint deps` and `flint impact` commands described in early designs are not implemented.
 
 #### Query Language
 
@@ -708,21 +703,23 @@ wgpu-based renderer targeting indie-level fidelity.
 #### Implemented
 
 - Skinned mesh rendering pipeline with GPU vertex skinning (see Animation System)
+- HDR post-processing pipeline (`Rgba16Float`) with bloom, SSAO, fog, vignette
+- Billboard sprite pipeline for camera-facing quads with sprite sheet animation
+- Cascaded shadow mapping for directional lights
+- Headless render-to-PNG with full debug mode and post-processing controls
 
 #### Future Considerations
 
-- Screen-space ambient occlusion
-- Bloom
 - Simple global illumination (light probes)
 - LOD system
 
 #### Headless Mode
 
-Rendering can run headless for CI/validation:
+Rendering runs headless for CI/validation via `flint render`:
 
 ```bash
-flint render --headless --output frame.png scenes/level1.scene
-flint render --headless --output-diff baseline.png current.png
+flint render scenes/level1.scene.toml --output frame.png --schemas schemas
+flint render scenes/level1.scene.toml -o debug.png --debug-mode wireframe --no-postprocess
 ```
 
 ---
@@ -787,52 +784,71 @@ The viewer answers: "Did the agent do what I asked?" not "Let me build this myse
 
 **Milestone:** `flint serve --watch` shows live scene, hot-reloads on changes.
 
-### Phase 4: Runtime
+### Phase 4: Runtime *(Complete)*
 
 **Goal:** Playable game loop with physics, animation, audio, and scripting.
 
 **Deliverables:**
-- flint-physics: Rapier integration (Stage 1 --- complete)
-- flint-runtime: Game loop, input, event bus (Stage 1 --- complete)
-- flint-player: Standalone executable (Stage 1 --- complete)
-- flint-audio: Kira spatial audio integration (Stage 2 --- complete)
-- flint-animation: Property tweens + skeletal animation from glTF (Stage 3 --- complete)
-- flint-script: Rhai scripting with animation/audio APIs (Stage 4)
-- Integration demo: Animated, interactive tavern scene (Stage 5)
+- flint-physics: Rapier integration --- complete
+- flint-runtime: Game loop, input, event bus, GameStateMachine --- complete
+- flint-player: Standalone executable --- complete
+- flint-audio: Kira spatial audio integration --- complete
+- flint-animation: Property tweens + skeletal animation from glTF --- complete
+- flint-script: Rhai scripting with animation/audio APIs --- complete
+- flint-particles: GPU-instanced particle system --- complete
+- Integration demo: Animated, interactive tavern scene --- complete
 
-**Milestone:** Walk around a tavern, open animated doors, see NPC idle animations, hear sounds.
-
-### Phase 5: AI Asset Pipeline
+### Phase 5: AI Asset Pipeline *(Complete)*
 
 **Goal:** Integrated AI generation workflow.
 
 **Deliverables:**
-- flint-asset-gen: Provider integrations (texture, mesh, audio)
-- Style consistency validation
-- Human task generation for fallback
+- flint-asset-gen: Provider integrations (Flux, Meshy, ElevenLabs, Mock) --- complete
+- Style consistency validation --- complete
+- Human task generation for fallback --- complete
+- Batch scene resolution and build manifests --- complete
 
-**Milestone:** `flint asset generate model --provider meshy` produces usable assets.
+### Phase 6: Procedural Generation *(Complete)*
+
+**Goal:** Runtime procgen with caching and frame-budgeted generation.
+
+**Deliverables:**
+- flint-procgen: Generator trait, registry, tree/texture/creature generators --- complete
+- CLI `flint gen` command with batch, validation, registration --- complete
+- Runtime procgen cache with LRU eviction --- complete
+- Frame-budgeted generation queue --- complete
+- Runtime resolution integration in flint-player --- complete
+
+See `docs/flint-procgen-implementation-plan.md` for details.
+
+### Phase 7: AI-Assisted Procgen *(In Progress)*
+
+**Goal:** AI agents that create and refine procgen specs from natural language.
+
+**Deliverables:**
+- flint-procgen-ai: ProcGenAgent trait and MockAgent --- complete
+- Anthropic provider implementation --- pending
+- CLI integration with cost tracking --- pending
 
 ---
 
 ## Open Questions
 
-### Technical
+### Technical (Resolved)
 
-1. **ECS choice:** hecs vs bevy_ecs standalone. hecs is simpler; bevy_ecs has more features and ecosystem momentum.
+1. **ECS choice:** hecs --- chosen for simplicity and lightweight footprint.
+2. **Query language:** Implemented with equality, comparison, and `contains` operators via pest PEG grammar.
+3. **Hot reload granularity:** Scene-level full re-parse. Script-level per-file hot-reload with timestamp checking.
 
-2. **Query language complexity:** Start minimal (equality, contains) or include more operators (regex, nested queries) from the start?
+### Technical (Open)
 
-3. **Hot reload granularity:** Scene-level? Entity-level? Component-level?
-
-4. **Networking:** Not yet addressed. Needed for multiplayer games. Defer to Phase 5+?
+1. **Networking:** Not yet addressed. Needed for multiplayer games.
+2. **LOD system:** Procgen generates LOD levels, but no runtime LOD selection yet.
 
 ### Product
 
 1. **Licensing:** Open source? Dual license? This affects ecosystem growth.
-
-2. **Documentation strategy:** API docs + tutorials? Interactive examples?
-
+2. **Documentation strategy:** mdBook-based docs in `docs/book/`; API docs via `cargo doc`.
 3. **Community:** Discord? GitHub discussions? How to gather feedback?
 
 ---

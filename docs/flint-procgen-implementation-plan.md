@@ -4,6 +4,8 @@
 **Task size constraint:** No task exceeds 3 days of effort.
 **Estimates:** Given in ideal dev-days (1 day ≈ focused day of work by a developer or AI coding agent).
 
+> **Progress:** Phases 1–6 complete. Phase 7.1 (crate scaffolding + MockAgent) complete. Phases 7.2–7.3 and Phase 8 are pending.
+
 ---
 
 ## Phase 1: Foundation (5 days)

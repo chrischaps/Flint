@@ -1714,6 +1714,54 @@ impl ApplicationHandler for ViewerApp {
                                 println!("Shadows: {}", if on { "ON" } else { "OFF" });
                             }
                         }
+                        PhysicalKey::Code(KeyCode::F5) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let mut config = renderer.post_process_config().clone();
+                                config.bloom_enabled = !config.bloom_enabled;
+                                println!("Bloom: {}", if config.bloom_enabled { "ON" } else { "OFF" });
+                                renderer.set_post_process_config(config);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F6) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let mut config = renderer.post_process_config().clone();
+                                config.enabled = !config.enabled;
+                                println!("Post-processing: {}", if config.enabled { "ON" } else { "OFF" });
+                                renderer.set_post_process_config(config);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F7) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let mut config = renderer.post_process_config().clone();
+                                config.ssao_enabled = !config.ssao_enabled;
+                                println!("SSAO: {}", if config.ssao_enabled { "ON" } else { "OFF" });
+                                renderer.set_post_process_config(config);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F8) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let mut config = renderer.post_process_config().clone();
+                                config.fog_enabled = !config.fog_enabled;
+                                println!("Fog: {}", if config.fog_enabled { "ON" } else { "OFF" });
+                                renderer.set_post_process_config(config);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F9) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let mut config = renderer.post_process_config().clone();
+                                config.dither_enabled = !config.dither_enabled;
+                                println!("Dither: {}", if config.dither_enabled { "ON" } else { "OFF" });
+                                renderer.set_post_process_config(config);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F10) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let mut config = renderer.post_process_config().clone();
+                                config.volumetric_enabled = !config.volumetric_enabled;
+                                println!("Volumetric: {}", if config.volumetric_enabled { "ON" } else { "OFF" });
+                                renderer.set_post_process_config(config);
+                            }
+                        }
                         _ => {}
                     }
                 }

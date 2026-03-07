@@ -28,7 +28,16 @@ Flint uses an **edit -> validate -> play** loop:
    ```bash
    flint render levels/demo.scene.toml --output test.png --schemas schemas --width 1280 --height 720
    flint render levels/demo.scene.toml --output test.png --schemas schemas \
-     --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid --shadows
+     --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
+   # Debug/post-processing flags:
+   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough
+   #   --wireframe-overlay    --show-normals    --no-tonemapping
+   #   --no-shadows           --shadow-resolution 2048
+   #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
+   #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
+   #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
+   #   --dither-intensity 0.03
+   #   --volumetric-density 1.0  --volumetric-samples 32
    ```
 
 2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:
@@ -42,6 +51,9 @@ Flint uses an **edit -> validate -> play** loop:
    flint edit terrain.terrain.toml                 # Terrain editor
    ```
    Supported extensions: `.scene.toml`, `.chunk.toml`, `.procgen.toml`, `.terrain.toml`, `.glb`, `.gltf`.
+   Common flags: `--width`, `--height`, `--no-grid`, `--watch`, `--seed`, `--no-inspector`, `--auto-orbit`.
+   Model flags: `--clip <name>`, `--anim-speed <f32>`, `--render <path.png>`, `--no-animate`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov`.
+   Scene flags: `--spline` (opens spline/track editor).
    Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.
 
 3. **`flint gen`** -- Run a procedural generation spec to produce meshes (GLB) or textures (PNG).
@@ -58,12 +70,13 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-21-crate Cargo workspace:
+23-crate Cargo workspace:
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, validate, asset, render, gen
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, validate, asset, render, gen, prefab
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
-  └── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
+  ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
+  └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 flint-android       Android entry point (NativeActivity, APK asset extraction)
 flint-player        Standalone player (game loop, physics, audio, animation, scripting, egui HUD)
   ├── flint-script   Rhai scripting with hot-reload
@@ -95,7 +108,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `--schemas engine/schemas --schemas schemas` for layered overrides
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
-- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, vignette; `[post_process]` TOML block; F5-F8 runtime toggles; when active, PBR shaders output linear HDR
+- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), vignette; `[post_process]` TOML block; F5-F9 runtime toggles, F10 volumetric; when active, PBR shaders output linear HDR
 - **Scene transitions** -- `TransitionPhase` lifecycle with script-driven visuals; `PersistentStore` survives transitions; `GameStateMachine` pushdown automaton with per-system `SystemPolicy`
 - **Input system** -- TOML-based `InputConfig` with layered loading (built-in -> game -> user overrides -> CLI); keyboard/mouse/gamepad/touch unified via `Binding` enum
 
@@ -107,7 +120,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - Rapier v0.22: character controller types in `rapier3d::control`, NOT `rapier3d::prelude`
 - Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`
 - `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
-- Rhai v1.24 `sync`: `call_fn()` Scope visible only to direct callee, NOT sub-functions; entity IDs as `i64`
+- Rhai v1.24 `sync`: `call_fn()` Scope visible only to direct callee, NOT sub-functions; entity IDs as `i64`; no implicit numeric coercion (`0.0` is NOT `0`); draw `_ex` functions take `layer` as int (`0`), not float (`0.0`)
 - `ScriptCallContext` uses raw `*mut FlintWorld` -- only valid during `call_update()`/`process_events()` scope
 - `on_update()` is parameterless -- use `delta_time()` API; `on_interact` checks `interactable.range` + `.enabled`
 - `on_draw_ui()` ALWAYS runs even when scripts paused (pause menus need it)

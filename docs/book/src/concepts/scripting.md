@@ -398,7 +398,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 
 #### Layer Ordering
 
-All draw commands accept a `layer` parameter (or default to 0). Commands are sorted by layer before rendering:
+All `_ex` draw variants accept a `layer` parameter which must be an **integer** (`0`, `1`, `-1`), not a float. Using `0.0` instead of `0` will cause a "Function not found" error because Rhai does not implicitly convert between `float` and `int`. Commands are sorted by layer before rendering:
 
 - **Negative layers** render behind (background elements)
 - **Layer 0** is the default
