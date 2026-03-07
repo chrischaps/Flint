@@ -7,7 +7,7 @@
 //! # Op categories
 //!
 //! - **Grid ops**: `BrickGridOp` — write `cell_id` and `edge_dist`
-//! - **Height ops**: `CellHeightOp`, `NoiseLayerOp`, `MortarGrooveOp` — write/modify `height`
+//! - **Height ops**: `CellHeightOp`, `CellBulgeOp`, `NoiseLayerOp`, `MortarGrooveOp` — write/modify `height`
 //! - **Color ops**: `CellColorOp`, `MortarColorOp` — write `r`, `g`, `b`
 //! - **Output ops**: `DeriveNormalOp`, `CellRoughnessOp` — write final map channels
 
@@ -75,6 +75,8 @@ pub struct BrickGridOp {
     pub gap_width: f32,
     /// Per-row column width randomization (0.0 = uniform, 1.0 = max variation).
     pub width_variation: f32,
+    /// Row height randomization (0.0 = uniform, 1.0 = max variation).
+    pub row_height_variation: f32,
     /// Optional channel names for structural domain warp (UV displacement before cell lookup).
     pub warp_x: Option<String>,
     pub warp_y: Option<String>,
@@ -137,6 +139,34 @@ impl TextureOp for BrickGridOp {
             Vec::new()
         };
 
+        // Pre-compute row boundaries when row_height_variation > 0
+        let row_boundaries: Vec<f32> = if self.row_height_variation > 0.0 {
+            let row_h_seed = seed
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(0);
+            let mut row_rng = SeededRng::new(row_h_seed);
+            let raw: Vec<f32> = (0..rows)
+                .map(|_| {
+                    let r = row_rng.next_f32();
+                    1.0 + (r - 0.5) * self.row_height_variation * 2.0
+                })
+                .collect();
+            let sum: f32 = raw.iter().sum();
+            let mut bounds = Vec::with_capacity(rows as usize + 1);
+            bounds.push(0.0);
+            let mut accum = 0.0;
+            for &r in &raw {
+                accum += r / sum;
+                bounds.push(accum);
+            }
+            if let Some(last) = bounds.last_mut() {
+                *last = 1.0;
+            }
+            bounds
+        } else {
+            Vec::new()
+        };
+
         for y in 0..h {
             for x in 0..w {
                 let mut u = (x as f32 + 0.5) / w as f32;
@@ -153,9 +183,27 @@ impl TextureOp for BrickGridOp {
                 }
 
                 // Row computation
-                let row_f = v * rows as f32;
-                let row = (row_f.floor() as u32) % rows;
-                let row_frac = row_f.fract();
+                let (row, row_frac) = if !row_boundaries.is_empty() {
+                    let mut r = 0u32;
+                    for i in 1..row_boundaries.len() {
+                        if v < row_boundaries[i] {
+                            r = (i - 1) as u32;
+                            break;
+                        }
+                    }
+                    let r = r.min(rows - 1);
+                    let lo = row_boundaries[r as usize];
+                    let hi = row_boundaries[r as usize + 1];
+                    let frac = if (hi - lo).abs() < 1e-10 {
+                        0.5
+                    } else {
+                        (v - lo) / (hi - lo)
+                    };
+                    (r, frac)
+                } else {
+                    let row_f = v * rows as f32;
+                    ((row_f.floor() as u32) % rows, row_f.fract())
+                };
 
                 // Column computation with additive stagger per row
                 let stagger_offset = (row as f32 * self.stagger) / cols as f32;
@@ -424,6 +472,108 @@ fn cell_height_for_id(cell_id: u32, variation: f32, rng_seed: u64) -> f32 {
     h.clamp(0.0, 1.0)
 }
 
+/// Deterministic per-cell UV offset for noise decorrelation.
+fn cell_noise_offset(cell_id: u32, rng_seed: u64) -> (f64, f64) {
+    let cell_seed = rng_seed
+        .wrapping_mul(0xA076_1D64_78BD_642F)
+        .wrapping_add(cell_id as u64);
+    let mut cell_rng = SeededRng::new(cell_seed);
+    (cell_rng.next_f64() * 1000.0, cell_rng.next_f64() * 1000.0)
+}
+
+// ─── CellBulgeOp ──────────────────────────────────────────────────────────
+
+/// Falloff curve for dome profile within each cell.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BulgeFalloff {
+    /// `t` — cone shape.
+    Linear,
+    /// `1 - (1-t)^2` — convex dome, flat top.
+    Parabolic,
+    /// `(1 - cos(t*π)) / 2` — smooth S-curve, zero derivative at edges and center.
+    Cosine,
+}
+
+impl BulgeFalloff {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "linear" => Self::Linear,
+            "parabolic" => Self::Parabolic,
+            _ => Self::Cosine,
+        }
+    }
+
+    /// Map `t` in [0,1] (0=boundary, 1=center) to bulge factor in [0,1].
+    #[inline]
+    pub fn apply(self, t: f32) -> f32 {
+        match self {
+            Self::Linear => t,
+            Self::Parabolic => 1.0 - (1.0 - t) * (1.0 - t),
+            Self::Cosine => (1.0 - (t * std::f32::consts::PI).cos()) * 0.5,
+        }
+    }
+}
+
+/// Add dome-shaped height curvature within each cell.
+///
+/// Reads `cell_id` and `edge_dist`, modifies `height`. Uses a two-pass
+/// algorithm to normalize `edge_dist` per cell before applying the falloff,
+/// ensuring consistent dome profiles regardless of cell size/shape.
+pub struct CellBulgeOp {
+    /// Maximum height added at cell center (default 0.3).
+    pub strength: f32,
+    /// Falloff curve (default Cosine).
+    pub falloff: BulgeFalloff,
+}
+
+impl TextureOp for CellBulgeOp {
+    fn port_info(&self) -> OpPortInfo {
+        OpPortInfo {
+            op_type: "cell_bulge",
+            label: "Cell Bulge",
+            reads: &["cell_id", "edge_dist"],
+            writes: &[],
+            modifies: &["height"],
+        }
+    }
+
+    fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
+        let w = field.width;
+        let h = field.height;
+        field.ensure_channel("height");
+
+        // Pass 1: find max edge_dist per cell
+        let mut max_dist: std::collections::HashMap<u32, f32> =
+            std::collections::HashMap::new();
+        for y in 0..h {
+            for x in 0..w {
+                let cell_id = field.get("cell_id", x, y) as u32;
+                let dist = field.get("edge_dist", x, y);
+                let entry = max_dist.entry(cell_id).or_insert(0.0);
+                if dist > *entry {
+                    *entry = dist;
+                }
+            }
+        }
+
+        // Pass 2: apply normalized bulge
+        for y in 0..h {
+            for x in 0..w {
+                let cell_id = field.get("cell_id", x, y) as u32;
+                let dist = field.get("edge_dist", x, y);
+                let max = max_dist.get(&cell_id).copied().unwrap_or(1.0);
+                if max <= 0.0 {
+                    continue;
+                }
+                let t = (dist / max).clamp(0.0, 1.0);
+                let bulge = self.strength * self.falloff.apply(t);
+                let cur = field.get("height", x, y);
+                field.set("height", x, y, cur + bulge);
+            }
+        }
+    }
+}
+
 // ─── NoiseType ────────────────────────────────────────────────────────────
 
 /// Selects the base noise algorithm for [`NoiseLayerOp`].
@@ -474,6 +624,8 @@ pub struct NoiseLayerOp {
     pub scale_x: f32,
     /// Vertical scale multiplier (>1 compresses vertically → horizontal streaks).
     pub scale_y: f32,
+    /// When true, offset noise UVs per cell using `cell_id` channel for decorrelation.
+    pub cell_offset: bool,
 }
 
 impl TextureOp for NoiseLayerOp {
@@ -522,10 +674,18 @@ impl TextureOp for NoiseLayerOp {
 
         field.ensure_channel(&self.output);
 
+        let use_cell_offset = self.cell_offset && field.has_channel("cell_id");
+
         for y in 0..h {
             for x in 0..w {
-                let nx = x as f64 / w as f64 * self.scale_x as f64;
-                let ny = y as f64 / h as f64 * self.scale_y as f64;
+                let mut nx = x as f64 / w as f64 * self.scale_x as f64;
+                let mut ny = y as f64 / h as f64 * self.scale_y as f64;
+                if use_cell_offset {
+                    let cid = field.get("cell_id", x, y) as u32;
+                    let (ox, oy) = cell_noise_offset(cid, seed);
+                    nx += ox;
+                    ny += oy;
+                }
                 let val = noise.sample_2d(nx, ny) as f32 * 0.5 + 0.5;
                 field.set(&self.output, x, y, val);
             }
@@ -547,12 +707,16 @@ pub struct BlendOp {
     pub mode: BlendMode,
     /// Blend strength / amplitude.
     pub strength: f32,
+    /// Optional mask channel – blend is scaled by the mask value at each pixel.
+    pub mask: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlendMode {
     /// target += (source - 0.5) * strength
     Add,
+    /// target += source * strength (no centering)
+    AddRaw,
     /// target *= lerp(1.0, source, strength)
     Multiply,
     /// target = lerp(target, source, strength)
@@ -594,6 +758,7 @@ impl BlendMode {
             "color_dodge" => BlendMode::ColorDodge,
             "color_burn" => BlendMode::ColorBurn,
             "subtract" => BlendMode::Subtract,
+            "add_raw" => BlendMode::AddRaw,
             _ => BlendMode::Add,
         }
     }
@@ -601,6 +766,7 @@ impl BlendMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             BlendMode::Add => "add",
+            BlendMode::AddRaw => "add_raw",
             BlendMode::Multiply => "multiply",
             BlendMode::Mix => "mix",
             BlendMode::Screen => "screen",
@@ -639,6 +805,7 @@ impl TextureOp for BlendOp {
                 let dst = field.get(&self.target, x, y);
                 let blended = match self.mode {
                     BlendMode::Add => dst + (src - 0.5) * self.strength,
+                    BlendMode::AddRaw => dst + src * self.strength,
                     BlendMode::Multiply => dst * (1.0 + (src - 1.0) * self.strength),
                     BlendMode::Mix => dst + (src - dst) * self.strength,
                     BlendMode::Screen => {
@@ -686,6 +853,13 @@ impl TextureOp for BlendOp {
                         let b = dst - src;
                         lerp(dst, b, self.strength)
                     }
+                };
+                let blended = match &self.mask {
+                    Some(ch) => {
+                        let m = field.get(ch, x, y);
+                        lerp(dst, blended, m)
+                    }
+                    None => blended,
                 };
                 field.set(&self.target, x, y, blended.clamp(0.0, 1.0));
             }
@@ -1715,6 +1889,8 @@ pub struct MusgraveTextureOp {
     pub gain: f32,
     pub scale_x: f32,
     pub scale_y: f32,
+    /// When true, offset noise UVs per cell using `cell_id` channel for decorrelation.
+    pub cell_offset: bool,
 }
 
 impl TextureOp for MusgraveTextureOp {
@@ -1742,10 +1918,18 @@ impl TextureOp for MusgraveTextureOp {
             NoiseType::Voronoi => Box::new(WorleyNoise::new(seed)),
         };
 
+        let use_cell_offset = self.cell_offset && field.has_channel("cell_id");
+
         for y in 0..h {
             for x in 0..w {
-                let nx = x as f64 / w as f64 * self.scale_x as f64;
-                let ny = y as f64 / h as f64 * self.scale_y as f64;
+                let mut nx = x as f64 / w as f64 * self.scale_x as f64;
+                let mut ny = y as f64 / h as f64 * self.scale_y as f64;
+                if use_cell_offset {
+                    let cid = field.get("cell_id", x, y) as u32;
+                    let (ox, oy) = cell_noise_offset(cid, seed);
+                    nx += ox;
+                    ny += oy;
+                }
                 let val = crate::algorithms::noise::musgrave_sample(
                     source.as_ref(),
                     nx,
@@ -2179,6 +2363,144 @@ impl TextureOp for EdgeDetectOp {
     }
 }
 
+// ─── EdgeErodeOp ──────────────────────────────────────────────────────────
+
+/// Erode cell boundaries with high-frequency noise displacement.
+///
+/// Snapshots `cell_id`, `edge_dist`, and `mask`, then for pixels near edges
+/// (where `edge_dist` < `edge_width`) samples noise-displaced positions via
+/// nearest-neighbor lookup, effectively nibbling irregular chips into cell
+/// boundaries. Strength fades linearly toward the interior.
+///
+/// A low-frequency mask noise gates the erosion so that only some regions
+/// along each edge are affected (`threshold` controls sparsity). This
+/// prevents the "puzzle piece" look of continuous edge displacement.
+pub struct EdgeErodeOp {
+    /// Noise frequency — higher = more granular/chippy edges.
+    pub noise_frequency: f32,
+    /// Displacement strength in texture-space fraction.
+    pub strength: f32,
+    /// Only affects pixels with `edge_dist` < this value.
+    pub edge_width: f32,
+    /// Base noise algorithm.
+    pub noise_type: NoiseType,
+    /// FBM octaves (1 = sharpest grain).
+    pub octaves: u32,
+    /// Sparsity gate: 0.0 = erode everywhere, 1.0 = no erosion. A separate
+    /// low-frequency noise is sampled and erosion only occurs where that
+    /// noise exceeds this threshold, creating intermittent chips.
+    pub threshold: f32,
+}
+
+impl TextureOp for EdgeErodeOp {
+    fn port_info(&self) -> OpPortInfo {
+        OpPortInfo {
+            op_type: "edge_erode",
+            label: "Edge Erode",
+            reads: &[],
+            writes: &[],
+            modifies: &["cell_id", "edge_dist", "mask"],
+        }
+    }
+
+    fn apply(&self, field: &mut TextureField, rng: &mut SeededRng) {
+        let w = field.width;
+        let h = field.height;
+        let noise_rng = rng.fork("edge_erode");
+        let seed = noise_rng.seed();
+        let freq = self.noise_frequency as f64;
+
+        // Helper: build FBM noise source with given seed and frequency
+        let make_noise = |s: u64, f: f64| -> Box<dyn NoiseSource> {
+            match self.noise_type {
+                NoiseType::Perlin => Box::new(
+                    Fbm::new(PerlinNoise::new(s))
+                        .with_octaves(self.octaves)
+                        .with_frequency(f),
+                ),
+                NoiseType::Simplex => Box::new(
+                    Fbm::new(SimplexNoise::new(s))
+                        .with_octaves(self.octaves)
+                        .with_frequency(f),
+                ),
+                NoiseType::Value => Box::new(
+                    Fbm::new(ValueNoise::new(s))
+                        .with_octaves(self.octaves)
+                        .with_frequency(f),
+                ),
+                NoiseType::Voronoi => Box::new(
+                    Fbm::new(WorleyNoise::new(s))
+                        .with_octaves(self.octaves)
+                        .with_frequency(f),
+                ),
+            }
+        };
+
+        let noise_x = make_noise(seed, freq);
+        let noise_y = make_noise(seed.wrapping_add(7919), freq);
+
+        // Low-frequency mask noise for sparsity gating (~1/4 displacement freq)
+        let mask_freq = (self.noise_frequency * 0.25).max(1.0) as f64;
+        let noise_mask: Box<dyn NoiseSource> = Box::new(
+            Fbm::new(PerlinNoise::new(seed.wrapping_add(15937)))
+                .with_octaves(1)
+                .with_frequency(mask_freq),
+        );
+
+        // Snapshot the three channels we'll resample
+        let snap_cell_id: Vec<f32> = (0..(w * h))
+            .map(|i| field.get("cell_id", i % w, i / w))
+            .collect();
+        let snap_edge_dist: Vec<f32> = (0..(w * h))
+            .map(|i| field.get("edge_dist", i % w, i / w))
+            .collect();
+        let snap_mask: Vec<f32> = (0..(w * h))
+            .map(|i| field.get("mask", i % w, i / w))
+            .collect();
+
+        let wf = w as f32;
+        let hf = h as f32;
+
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) as usize;
+                let ed = snap_edge_dist[idx];
+
+                if ed >= self.edge_width {
+                    continue;
+                }
+
+                let u = (x as f32 + 0.5) / wf;
+                let v = (y as f32 + 0.5) / hf;
+
+                // Sparsity gate: remap noise from ~[-1,1] to [0,1], skip if below threshold
+                let mask_val = noise_mask.sample_2d(u as f64, v as f64) as f32 * 0.5 + 0.5;
+                if mask_val < self.threshold {
+                    continue;
+                }
+
+                // Fade strength: full at edge (ed=0), zero at edge_width
+                let factor = 1.0 - (ed / self.edge_width);
+
+                // Noise returns ~[-1, 1]; scale by strength and fade factor
+                let dx = noise_x.sample_2d(u as f64, v as f64) as f32 * self.strength * factor;
+                let dy = noise_y.sample_2d(u as f64, v as f64) as f32 * self.strength * factor;
+
+                // Displaced pixel coordinates (nearest-neighbor, wrapping)
+                let sx = ((u + dx) * wf).round() as i32;
+                let sy = ((v + dy) * hf).round() as i32;
+                let wx = ((sx % w as i32) + w as i32) as u32 % w;
+                let wy = ((sy % h as i32) + h as i32) as u32 % h;
+                let src_idx = (wy * w + wx) as usize;
+
+                field.set("cell_id", x, y, snap_cell_id[src_idx]);
+                field.set("edge_dist", x, y, snap_edge_dist[src_idx]);
+                field.set("mask", x, y, snap_mask[src_idx]);
+            }
+        }
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2195,6 +2517,7 @@ mod tests {
             stagger: 0.5,
             gap_width: 0.04,
             width_variation: 0.0,
+            row_height_variation: 0.0,
             warp_x: None,
             warp_y: None,
             warp_strength: 0.0,
@@ -2225,6 +2548,7 @@ mod tests {
             stagger: 0.5,
             gap_width: 0.04,
             width_variation: 0.0,
+            row_height_variation: 0.0,
             warp_x: None,
             warp_y: None,
             warp_strength: 0.0,
@@ -2250,6 +2574,7 @@ mod tests {
             stagger: 0.5,
             gap_width: 0.04,
             width_variation: 0.0,
+            row_height_variation: 0.0,
             warp_x: None,
             warp_y: None,
             warp_strength: 0.0,
@@ -2441,6 +2766,7 @@ mod tests {
             noise_type: NoiseType::Perlin,
             scale_x: 1.0,
             scale_y: 1.0,
+            cell_offset: false,
         };
         op.apply(&mut field, &mut rng);
 
@@ -2474,6 +2800,7 @@ mod tests {
             target: "height".into(),
             mode: BlendMode::Add,
             strength: 0.2,
+            mask: None,
         };
         op.apply(&mut field, &mut rng);
 
@@ -2495,6 +2822,7 @@ mod tests {
                 stagger: 0.5,
                 gap_width: 0.04,
                 width_variation: 0.0,
+                row_height_variation: 0.0,
                 warp_x: None,
                 warp_y: None,
                 warp_strength: 0.0,
@@ -2554,7 +2882,7 @@ mod tests {
             field.set("b", x, y, 0.5);
         }}
         let mut rng = SeededRng::new(42);
-        let op = BlendOp { source: "b".into(), target: "a".into(), mode: BlendMode::Screen, strength: 1.0 };
+        let op = BlendOp { source: "b".into(), target: "a".into(), mode: BlendMode::Screen, strength: 1.0, mask: None };
         op.apply(&mut field, &mut rng);
         let v = field.get("a", 0, 0);
         assert!((v - 0.75).abs() < 0.01, "screen(0.5,0.5) should be ~0.75, got {v}");
@@ -2698,7 +3026,7 @@ mod tests {
             musgrave_type: MusgraveType::RidgedMultifractal,
             frequency: 4.0, octaves: 4, lacunarity: 2.0,
             dimension: 1.0, offset: 1.0, gain: 2.0,
-            scale_x: 1.0, scale_y: 1.0,
+            scale_x: 1.0, scale_y: 1.0, cell_offset: false,
         };
         op.apply(&mut field, &mut rng);
         assert!(field.has_channel("mus"));
@@ -2818,5 +3146,349 @@ mod tests {
         let left = field.get("out", 2, 8);
         let right = field.get("out", 13, 8);
         assert!(right > left, "sharpen should maintain or enhance contrast");
+    }
+
+    // ─── CellBulgeOp tests ──────────────────────────────────────────────
+
+    #[test]
+    fn bulge_falloff_boundary_conditions() {
+        for falloff in [BulgeFalloff::Linear, BulgeFalloff::Parabolic, BulgeFalloff::Cosine] {
+            let at_zero = falloff.apply(0.0);
+            let at_one = falloff.apply(1.0);
+            assert!(
+                at_zero.abs() < 1e-6,
+                "{falloff:?}: expected ~0 at t=0, got {at_zero}"
+            );
+            assert!(
+                (at_one - 1.0).abs() < 1e-6,
+                "{falloff:?}: expected ~1 at t=1, got {at_one}"
+            );
+        }
+    }
+
+    #[test]
+    fn cell_bulge_raises_center_not_boundary() {
+        let mut field = TextureField::new(64, 64);
+        let mut rng = SeededRng::new(42);
+
+        // Set up two cells: left half = cell 1, right half = cell 2
+        // edge_dist = distance from nearest cell boundary (higher = more interior)
+        field.ensure_channel("cell_id");
+        field.ensure_channel("edge_dist");
+        field.ensure_channel("height");
+        for y in 0..64 {
+            for x in 0..64 {
+                let (cell_id, dist) = if x < 32 {
+                    (1.0, (x as f32).min(31.0 - x as f32) / 31.0)
+                } else {
+                    (2.0, ((x - 32) as f32).min(63.0 - x as f32) / 31.0)
+                };
+                field.set("cell_id", x, y, cell_id);
+                field.set("edge_dist", x, y, dist);
+                field.set("height", x, y, 0.5);
+            }
+        }
+
+        let op = CellBulgeOp {
+            strength: 0.3,
+            falloff: BulgeFalloff::Cosine,
+        };
+        op.apply(&mut field, &mut rng);
+
+        // Center of cell 1 (x=16) should be raised
+        let center_h = field.get("height", 16, 32);
+        assert!(center_h > 0.5, "center should be raised, got {center_h}");
+
+        // Boundary of cell 1 (x=0) should be ~unchanged
+        let edge_h = field.get("height", 0, 32);
+        assert!(
+            (edge_h - 0.5).abs() < 0.01,
+            "boundary should be ~unchanged, got {edge_h}"
+        );
+    }
+
+    #[test]
+    fn cell_bulge_per_cell_normalization() {
+        let mut field = TextureField::new(64, 64);
+        let mut rng = SeededRng::new(42);
+
+        field.ensure_channel("cell_id");
+        field.ensure_channel("edge_dist");
+        field.ensure_channel("height");
+
+        // Cell 1 (top half): max edge_dist = 0.5
+        // Cell 2 (bottom half): max edge_dist = 1.0
+        for y in 0..64 {
+            for x in 0..64 {
+                let (cell_id, max_d) = if y < 32 { (1.0, 0.5) } else { (2.0, 1.0) };
+                let fy = if y < 32 { y as f32 } else { (y - 32) as f32 };
+                let dist = (fy / 31.0).min(1.0) * max_d;
+                field.set("cell_id", x, y, cell_id);
+                field.set("edge_dist", x, y, dist);
+                field.set("height", x, y, 0.0);
+            }
+        }
+
+        let op = CellBulgeOp {
+            strength: 1.0,
+            falloff: BulgeFalloff::Linear,
+        };
+        op.apply(&mut field, &mut rng);
+
+        // Both cells should reach similar peak height at their center
+        // despite different max edge_dist ranges
+        let peak1 = field.get("height", 32, 31); // cell 1 center-ish
+        let peak2 = field.get("height", 32, 63); // cell 2 center-ish
+        let diff = (peak1 - peak2).abs();
+        assert!(
+            diff < 0.15,
+            "peaks should be similar after normalization: cell1={peak1}, cell2={peak2}"
+        );
+    }
+
+    #[test]
+    fn noise_layer_cell_offset_decorrelates() {
+        // Two-cell field: left half = cell 0, right half = cell 1
+        let size = 64;
+        let mut field = TextureField::new(size, size);
+        field.ensure_channel("cell_id");
+        for y in 0..size {
+            for x in 0..size {
+                let cid = if x < size / 2 { 0.0 } else { 1.0 };
+                field.set("cell_id", x, y, cid);
+            }
+        }
+
+        // With cell_offset = true, noise should differ across cells
+        let mut rng_on = SeededRng::new(99);
+        let op_on = NoiseLayerOp {
+            output: "n_on".into(),
+            frequency: 10.0, octaves: 4,
+            noise_type: NoiseType::Perlin,
+            scale_x: 1.0, scale_y: 1.0,
+            cell_offset: true,
+        };
+        op_on.apply(&mut field, &mut rng_on);
+
+        // With cell_offset = false, noise should be the same at mirrored positions
+        let mut rng_off = SeededRng::new(99);
+        let op_off = NoiseLayerOp {
+            output: "n_off".into(),
+            frequency: 10.0, octaves: 4,
+            noise_type: NoiseType::Perlin,
+            scale_x: 1.0, scale_y: 1.0,
+            cell_offset: false,
+        };
+        op_off.apply(&mut field, &mut rng_off);
+
+        // Compare a sample point in each half — with offset they should differ
+        let y = size / 2;
+        let x_left = size / 4;
+        let x_right = size / 4 + size / 2;
+        let on_left = field.get("n_on", x_left, y);
+        let on_right = field.get("n_on", x_right, y);
+        let off_left = field.get("n_off", x_left, y);
+        let off_right = field.get("n_off", x_right, y);
+
+        // Without offset, mirrored positions sample same UV → same value
+        assert!(
+            (off_left - off_right).abs() < 0.01,
+            "without cell_offset, mirrored positions should match: {off_left} vs {off_right}"
+        );
+        // With offset, cells should be decorrelated
+        assert!(
+            (on_left - on_right).abs() > 0.01,
+            "with cell_offset, different cells should differ: {on_left} vs {on_right}"
+        );
+    }
+
+    #[test]
+    fn cell_offset_no_cell_id_fallback() {
+        // No cell_id channel — cell_offset=true should not panic and match cell_offset=false
+        let size = 32;
+        let mut field_on = TextureField::new(size, size);
+        let mut rng_on = SeededRng::new(55);
+        let op_on = NoiseLayerOp {
+            output: "sig".into(),
+            frequency: 8.0, octaves: 3,
+            noise_type: NoiseType::Perlin,
+            scale_x: 1.0, scale_y: 1.0,
+            cell_offset: true,
+        };
+        op_on.apply(&mut field_on, &mut rng_on);
+
+        let mut field_off = TextureField::new(size, size);
+        let mut rng_off = SeededRng::new(55);
+        let op_off = NoiseLayerOp {
+            output: "sig".into(),
+            frequency: 8.0, octaves: 3,
+            noise_type: NoiseType::Perlin,
+            scale_x: 1.0, scale_y: 1.0,
+            cell_offset: false,
+        };
+        op_off.apply(&mut field_off, &mut rng_off);
+
+        for y in 0..size {
+            for x in 0..size {
+                let a = field_on.get("sig", x, y);
+                let b = field_off.get("sig", x, y);
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "without cell_id channel, results should match: ({x},{y}) {a} vs {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn musgrave_cell_offset_decorrelates() {
+        let size = 64;
+        let mut field = TextureField::new(size, size);
+        field.ensure_channel("cell_id");
+        for y in 0..size {
+            for x in 0..size {
+                let cid = if x < size / 2 { 0.0 } else { 1.0 };
+                field.set("cell_id", x, y, cid);
+            }
+        }
+
+        let mut rng_on = SeededRng::new(77);
+        let op_on = MusgraveTextureOp {
+            output: "m_on".into(),
+            noise_type: NoiseType::Perlin,
+            musgrave_type: MusgraveType::HybridMultifractal,
+            frequency: 8.0, octaves: 4, lacunarity: 2.0,
+            dimension: 1.0, offset: 1.0, gain: 2.0,
+            scale_x: 1.0, scale_y: 1.0,
+            cell_offset: true,
+        };
+        op_on.apply(&mut field, &mut rng_on);
+
+        let mut rng_off = SeededRng::new(77);
+        let op_off = MusgraveTextureOp {
+            output: "m_off".into(),
+            noise_type: NoiseType::Perlin,
+            musgrave_type: MusgraveType::HybridMultifractal,
+            frequency: 8.0, octaves: 4, lacunarity: 2.0,
+            dimension: 1.0, offset: 1.0, gain: 2.0,
+            scale_x: 1.0, scale_y: 1.0,
+            cell_offset: false,
+        };
+        op_off.apply(&mut field, &mut rng_off);
+
+        let y = size / 2;
+        let x_left = size / 4;
+        let x_right = size / 4 + size / 2;
+        let off_left = field.get("m_off", x_left, y);
+        let off_right = field.get("m_off", x_right, y);
+        let on_left = field.get("m_on", x_left, y);
+        let on_right = field.get("m_on", x_right, y);
+
+        assert!(
+            (off_left - off_right).abs() < 0.01,
+            "without cell_offset, mirrored musgrave should match: {off_left} vs {off_right}"
+        );
+        assert!(
+            (on_left - on_right).abs() > 0.01,
+            "with cell_offset, different cells should differ: {on_left} vs {on_right}"
+        );
+    }
+
+    #[test]
+    fn cell_noise_offset_determinism() {
+        // Same inputs → same outputs
+        let (a1, b1) = cell_noise_offset(5, 12345);
+        let (a2, b2) = cell_noise_offset(5, 12345);
+        assert_eq!(a1, a2);
+        assert_eq!(b1, b2);
+
+        // Different cell_ids → different offsets
+        let (a3, b3) = cell_noise_offset(6, 12345);
+        assert!(a1 != a3 || b1 != b3, "different cell_ids should give different offsets");
+
+        // Different seeds → different offsets
+        let (a4, b4) = cell_noise_offset(5, 99999);
+        assert!(a1 != a4 || b1 != b4, "different seeds should give different offsets");
+    }
+
+    #[test]
+    fn edge_erode_modifies_boundaries_not_interiors() {
+        let mut field = TextureField::new(64, 64);
+        let mut rng = SeededRng::new(42);
+
+        // Create a simple brick grid
+        let grid = BrickGridOp {
+            columns: 4,
+            rows: 4,
+            stagger: 0.5,
+            gap_width: 0.04,
+            width_variation: 0.0,
+            row_height_variation: 0.0,
+            warp_x: None,
+            warp_y: None,
+            warp_strength: 0.0,
+        };
+        grid.apply(&mut field, &mut rng);
+
+        // Snapshot cell_id before erosion
+        let pre_cell_id: Vec<f32> = (0..64 * 64)
+            .map(|i| field.get("cell_id", i % 64, i / 64))
+            .collect();
+
+        let erode = EdgeErodeOp {
+            noise_frequency: 40.0,
+            strength: 0.02,
+            edge_width: 0.06,
+            noise_type: NoiseType::Perlin,
+            octaves: 1,
+            threshold: 0.0, // erode everywhere for test coverage
+        };
+        erode.apply(&mut field, &mut rng);
+
+        // Interior pixels (edge_dist >= 0.06) should be unchanged
+        let mut interior_unchanged = 0u32;
+        let mut interior_total = 0u32;
+        // Boundary pixels (edge_dist < 0.06) should have at least some changes
+        let mut boundary_changed = 0u32;
+        let mut boundary_total = 0u32;
+
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                let idx = (y * 64 + x) as usize;
+                let pre_ed = {
+                    // Use the pre-erosion edge_dist from the snapshot
+                    // Re-run grid to get a clean snapshot of edge_dist
+                    // (we already have pre_cell_id, but need edge_dist too)
+                    // Instead, just check post-erosion state vs pre cell_id
+                    let post_cid = field.get("cell_id", x, y);
+                    let pre_cid = pre_cell_id[idx];
+                    // Pixels far from edges have large edge_dist and were skipped
+                    if (post_cid - pre_cid).abs() < 0.001 {
+                        interior_unchanged += 1;
+                    }
+                    if field.get("edge_dist", x, y) < 0.06 {
+                        boundary_total += 1;
+                        if (post_cid - pre_cid).abs() > 0.001 {
+                            boundary_changed += 1;
+                        }
+                    } else {
+                        interior_total += 1;
+                    }
+                };
+                let _ = pre_ed;
+            }
+        }
+
+        // All interior pixels should be unchanged
+        assert_eq!(
+            interior_unchanged,
+            interior_total + boundary_total - boundary_changed,
+            "some interior pixels were modified unexpectedly"
+        );
+        // At least some boundary pixels should have changed cell_id
+        assert!(
+            boundary_changed > 0,
+            "edge_erode should modify at least some boundary pixels, but changed 0 out of {boundary_total}"
+        );
     }
 }

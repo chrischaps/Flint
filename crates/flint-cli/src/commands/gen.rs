@@ -373,11 +373,24 @@ fn write_output(
             println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::ImageSet(images) => {
-            let stem = out_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("output");
-            let parent = out_path.parent().unwrap_or(Path::new("."));
+            // If out_path is a directory (exists as dir or ends with separator),
+            // write images directly inside it with stem "output".
+            let (parent, stem) = if out_path.is_dir()
+                || out_path.to_str().map_or(false, |s| s.ends_with('/') || s.ends_with('\\'))
+            {
+                let dir = out_path;
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("failed to create directory {}", dir.display()))?;
+                (dir as &Path, "output")
+            } else {
+                (
+                    out_path.parent().unwrap_or(Path::new(".")),
+                    out_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("output"),
+                )
+            };
             let mut total_size: u64 = 0;
             for img in images {
                 let suffix = format!("{:?}", img.channel_semantics).to_lowercase();

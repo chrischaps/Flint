@@ -370,6 +370,7 @@ pub const ALL_OP_TYPES: &[&str] = &[
     "voronoi_grid",
     "domain_warp",
     "cell_height",
+    "cell_bulge",
     "noise_layer",
     "blend",
     "mortar_groove",
@@ -398,6 +399,8 @@ pub const ALL_OP_TYPES: &[&str] = &[
     "blur",
     "sharpen",
     "edge_detect",
+    // Phase 5
+    "edge_erode",
 ];
 
 /// Return a JSON Schema describing the parameters for a given op type.
@@ -411,6 +414,7 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "stagger": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
                 "gap_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.04 },
                 "width_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                "row_height_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
                 "warp_x": { "type": "string" },
                 "warp_y": { "type": "string" },
                 "warp_strength": { "type": "number", "minimum": 0.0, "default": 0.0 }
@@ -443,6 +447,13 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 }
             }
         }),
+        "cell_bulge" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "strength": { "type": "number", "minimum": 0.0, "default": 0.3 },
+                "falloff": { "type": "string", "enum": ["cosine", "parabolic", "linear"], "default": "cosine" }
+            }
+        }),
         "noise_layer" => serde_json::json!({
             "type": "object",
             "properties": {
@@ -460,11 +471,12 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "source": { "type": "string", "default": "noise" },
                 "target": { "type": "string", "default": "height" },
                 "mode": { "type": "string", "enum": [
-                    "add", "multiply", "mix", "screen", "overlay", "soft_light",
+                    "add", "add_raw", "multiply", "mix", "screen", "overlay", "soft_light",
                     "linear_light", "difference", "darken", "lighten",
                     "color_dodge", "color_burn", "subtract"
                 ], "default": "add" },
-                "strength": { "type": "number", "minimum": 0.0, "default": 0.1 }
+                "strength": { "type": "number", "minimum": 0.0, "default": 0.1 },
+                "mask": { "type": "string", "description": "Optional channel to mask the blend (e.g. cell mask)" }
             }
         }),
         "mortar_groove" => serde_json::json!({
@@ -676,6 +688,17 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "output": { "type": "string", "default": "output" }
             }
         }),
+        "edge_erode" => serde_json::json!({
+            "type": "object",
+            "properties": {
+                "noise_frequency": { "type": "number", "minimum": 0.1, "default": 40.0 },
+                "strength": { "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.02 },
+                "edge_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06 },
+                "noise_type": { "type": "string", "enum": ["perlin", "simplex", "value"], "default": "perlin" },
+                "octaves": { "type": "integer", "minimum": 1, "maximum": 8, "default": 1 },
+                "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 }
+            }
+        }),
         _ => serde_json::json!({ "type": "object", "properties": {} }),
     }
 }
@@ -738,6 +761,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let stagger = opt_f32(table, "stagger")?.unwrap_or(0.5);
             let gap_width = opt_f32(table, "gap_width")?.unwrap_or(0.04);
             let width_variation = opt_f32(table, "width_variation")?.unwrap_or(0.0);
+            let row_height_variation = opt_f32(table, "row_height_variation")?.unwrap_or(0.0);
             let warp_x = table.get("warp_x").and_then(|v| v.as_str()).map(|s| s.to_string());
             let warp_y = table.get("warp_y").and_then(|v| v.as_str()).map(|s| s.to_string());
             let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
@@ -747,6 +771,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 stagger,
                 gap_width,
                 width_variation,
+                row_height_variation,
                 warp_x,
                 warp_y,
                 warp_strength,
@@ -802,6 +827,15 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let variation = opt_f32(table, "variation")?.unwrap_or(0.3);
             Ok(Box::new(CellHeightOp { variation }))
         }
+        "cell_bulge" => {
+            let strength = opt_f32(table, "strength")?.unwrap_or(0.3);
+            let falloff = table
+                .get("falloff")
+                .and_then(|v| v.as_str())
+                .map(BulgeFalloff::from_str)
+                .unwrap_or(BulgeFalloff::Cosine);
+            Ok(Box::new(CellBulgeOp { strength, falloff }))
+        }
         "noise_layer" => {
             let output = table
                 .get("output")
@@ -817,6 +851,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let octaves = opt_u32(table, "octaves")?.unwrap_or(4);
             let scale_x = opt_f32(table, "scale_x")?.unwrap_or(1.0);
             let scale_y = opt_f32(table, "scale_y")?.unwrap_or(1.0);
+            let cell_offset = table.get("cell_offset").and_then(|v| v.as_bool()).unwrap_or(false);
             Ok(Box::new(NoiseLayerOp {
                 output,
                 frequency,
@@ -824,6 +859,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 noise_type,
                 scale_x,
                 scale_y,
+                cell_offset,
             }))
         }
         "blend" => {
@@ -843,11 +879,13 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 .map(BlendMode::from_str)
                 .unwrap_or(BlendMode::Add);
             let strength = opt_f32(table, "strength")?.unwrap_or(0.1);
+            let mask = table.get("mask").and_then(|v| v.as_str()).map(String::from);
             Ok(Box::new(BlendOp {
                 source,
                 target,
                 mode,
                 strength,
+                mask,
             }))
         }
         "mortar_groove" => {
@@ -1144,6 +1182,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let gain = opt_f32(table, "gain")?.unwrap_or(2.0);
             let scale_x = opt_f32(table, "scale_x")?.unwrap_or(1.0);
             let scale_y = opt_f32(table, "scale_y")?.unwrap_or(1.0);
+            let cell_offset = table.get("cell_offset").and_then(|v| v.as_bool()).unwrap_or(false);
             Ok(Box::new(MusgraveTextureOp {
                 output,
                 noise_type,
@@ -1156,6 +1195,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 gain,
                 scale_x,
                 scale_y,
+                cell_offset,
             }))
         }
         // ── Phase 3 ──────────────────────────────────────────────────
@@ -1298,6 +1338,24 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 .unwrap_or("output")
                 .to_string();
             Ok(Box::new(EdgeDetectOp { input, output }))
+        }
+        "edge_erode" => {
+            let noise_frequency = opt_f32(table, "noise_frequency")?.unwrap_or(40.0);
+            let strength = opt_f32(table, "strength")?.unwrap_or(0.02);
+            let edge_width = opt_f32(table, "edge_width")?.unwrap_or(0.06);
+            let noise_type = NoiseType::from_str(
+                table.get("noise_type").and_then(|v| v.as_str()).unwrap_or("perlin"),
+            );
+            let octaves = opt_u32(table, "octaves")?.unwrap_or(1);
+            let threshold = opt_f32(table, "threshold")?.unwrap_or(0.3);
+            Ok(Box::new(EdgeErodeOp {
+                noise_frequency,
+                strength,
+                edge_width,
+                noise_type,
+                octaves,
+                threshold,
+            }))
         }
         other => Err(ProcGenError::InvalidParameter {
             name: format!("ops[{index}].type"),
