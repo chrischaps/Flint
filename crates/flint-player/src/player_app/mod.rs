@@ -492,7 +492,7 @@ impl PlayerApp {
             scene_renderer
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
             scene_renderer
-                .ensure_kuwahara_resources(&render_context.device, &render_context.queue);
+                .ensure_kuwahara_resources(&render_context.device, &render_context.queue, &render_context.adapter);
         }
 
         self.render_context = Some(render_context);
@@ -1752,7 +1752,7 @@ impl PlayerApp {
             if let Some(pp_def) = &self.scene_post_process {
                 renderer
                     .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
-                renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                renderer.ensure_kuwahara_resources(&context.device, &context.queue, &context.adapter);
             }
         }
 
@@ -1995,6 +1995,7 @@ impl ApplicationHandler for PlayerApp {
                                         renderer.ensure_kuwahara_resources(
                                             &ctx.device,
                                             &ctx.queue,
+                                            &ctx.adapter,
                                         );
                                     }
                                 }

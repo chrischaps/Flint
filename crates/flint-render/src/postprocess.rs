@@ -311,11 +311,116 @@ impl KuwaharaTextures {
 }
 
 impl KuwaharaPipelines {
+    /// Probe shader compilation on a throwaway device so that a driver crash
+    /// (device loss) does not destroy the main rendering device.
+    fn probe_shader_support(adapter: &wgpu::Adapter) -> bool {
+        let Ok((probe_device, _)) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("Kuwahara Probe Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+            },
+            None,
+        )) else {
+            return false;
+        };
+
+        probe_device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+        let shader = probe_device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Kuwahara Probe Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("kuwahara_tensor_shader.wgsl").into(),
+            ),
+        });
+
+        let bgl = probe_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Probe BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let tex_bgl = probe_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Probe Tex BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let layout = probe_device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Probe Layout"),
+            bind_group_layouts: &[&bgl, &tex_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let _pipeline = probe_device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Kuwahara Probe Pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let error = pollster::block_on(probe_device.pop_error_scope());
+        // probe_device is dropped here — if it's lost, only the probe is affected
+        error.is_none()
+    }
+
     /// Try to create Kuwahara pipelines. Returns None if the GPU driver
     /// cannot compile the shaders (e.g. Intel Skylake Vulkan).
-    pub fn try_new(device: &wgpu::Device) -> Option<Self> {
-        // Push an error scope so validation errors are captured instead of panicking
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+    pub fn try_new(device: &wgpu::Device, adapter: &wgpu::Adapter) -> Option<Self> {
+        // Probe on a throwaway device first to avoid killing the main device
+        if !Self::probe_shader_support(adapter) {
+            tracing::warn!(
+                "Kuwahara filter unavailable on this GPU. \
+                 Try running with WGPU_BACKEND=gl"
+            );
+            return None;
+        }
 
         let kuwahara_tensor_shader =
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -607,13 +712,6 @@ impl KuwaharaPipelines {
             mapped_at_creation: false,
         });
 
-        // Check if any pipeline creation failed
-        let error = pollster::block_on(device.pop_error_scope());
-        if let Some(err) = error {
-            tracing::warn!("Kuwahara filter unavailable on this GPU: {err}");
-            return None;
-        }
-
         Some(Self {
             tensor_pipeline,
             tensor_uniform_bgl,
@@ -727,6 +825,7 @@ impl PostProcessPipeline {
         queue: &wgpu::Queue,
         surface_format: wgpu::TextureFormat,
         kuwahara_enabled: bool,
+        adapter: Option<&wgpu::Adapter>,
     ) -> Self {
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("PostProcess Linear Sampler"),
@@ -1654,7 +1753,11 @@ impl PostProcessPipeline {
 
         // --- Kuwahara pipelines (only when enabled) ---
         let kuwahara = if kuwahara_enabled {
-            KuwaharaPipelines::try_new(device)
+            if let Some(adapter) = adapter {
+                KuwaharaPipelines::try_new(device, adapter)
+            } else {
+                None
+            }
         } else {
             None
         };

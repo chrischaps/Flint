@@ -29,8 +29,7 @@ pub struct RenderContext {
     pub depth_view: wgpu::TextureView,
     // Retained for surface recreation on Android resume
     instance: wgpu::Instance,
-    #[allow(dead_code)] // Used by recreate_surface(); adapter must outlive surfaces
-    adapter: wgpu::Adapter,
+    pub adapter: wgpu::Adapter,
 }
 
 impl RenderContext {
