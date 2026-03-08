@@ -185,6 +185,34 @@ pub struct SsaoBlurUniforms {
     pub _pad: [f32; 2],
 }
 
+/// Uniform data for the structure tensor pass.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct KuwaharaTensorUniforms {
+    pub texel_size: [f32; 2],
+    pub _pad: [f32; 2],
+}
+
+/// Uniform data for the structure tensor blur pass.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct KuwaharaTensorBlurUniforms {
+    pub texel_size: [f32; 2],
+    pub _pad: [f32; 2],
+}
+
+/// Uniform data for the anisotropic Kuwahara filter pass.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct KuwaharaUniforms {
+    pub texel_size: [f32; 2],
+    pub radius: f32,
+    pub sharpness: f32,
+    pub hardness: f32,
+    pub anisotropy: f32,
+    pub _pad: [f32; 2],
+}
+
 /// SSAO texture format (single-channel occlusion).
 const SSAO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
