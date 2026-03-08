@@ -1980,7 +1980,14 @@ impl SceneRenderer {
         // Create only the Kuwahara pipelines (not the entire PostProcessPipeline)
         if let Some(pp) = &mut self.postprocess_pipeline {
             if pp.kuwahara.is_none() {
-                pp.kuwahara = Some(crate::postprocess::KuwaharaPipelines::new(device));
+                match crate::postprocess::KuwaharaPipelines::try_new(device) {
+                    Some(pipelines) => pp.kuwahara = Some(pipelines),
+                    None => {
+                        // GPU can't compile Kuwahara shaders — disable and bail
+                        self.postprocess_config.kuwahara_enabled = false;
+                        return;
+                    }
+                }
             }
         }
 

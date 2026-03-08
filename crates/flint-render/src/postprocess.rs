@@ -311,7 +311,12 @@ impl KuwaharaTextures {
 }
 
 impl KuwaharaPipelines {
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// Try to create Kuwahara pipelines. Returns None if the GPU driver
+    /// cannot compile the shaders (e.g. Intel Skylake Vulkan).
+    pub fn try_new(device: &wgpu::Device) -> Option<Self> {
+        // Push an error scope so validation errors are captured instead of panicking
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+
         let kuwahara_tensor_shader =
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Kuwahara Tensor Shader"),
@@ -602,7 +607,14 @@ impl KuwaharaPipelines {
             mapped_at_creation: false,
         });
 
-        Self {
+        // Check if any pipeline creation failed
+        let error = pollster::block_on(device.pop_error_scope());
+        if let Some(err) = error {
+            tracing::warn!("Kuwahara filter unavailable on this GPU: {err}");
+            return None;
+        }
+
+        Some(Self {
             tensor_pipeline,
             tensor_uniform_bgl,
             tensor_texture_bgl,
@@ -616,7 +628,7 @@ impl KuwaharaPipelines {
             hdr_bgl,
             tensor_input_bgl,
             uniform_buffer,
-        }
+        })
     }
 }
 
@@ -1642,7 +1654,7 @@ impl PostProcessPipeline {
 
         // --- Kuwahara pipelines (only when enabled) ---
         let kuwahara = if kuwahara_enabled {
-            Some(KuwaharaPipelines::new(device))
+            KuwaharaPipelines::try_new(device)
         } else {
             None
         };
