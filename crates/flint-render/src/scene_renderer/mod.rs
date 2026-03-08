@@ -1970,6 +1970,36 @@ impl SceneRenderer {
         self.postprocess_config = config;
     }
 
+    /// Ensure Kuwahara GPU resources exist (call after enabling kuwahara at runtime).
+    /// Creates pipelines and textures on demand if they haven't been allocated yet.
+    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if !self.postprocess_config.kuwahara_enabled {
+            return;
+        }
+
+        // Create pipelines if needed
+        if let Some(pp) = &self.postprocess_pipeline {
+            if pp.kuwahara.is_none() {
+                let surface_format = self.surface_format;
+                self.postprocess_pipeline = Some(PostProcessPipeline::new(
+                    device,
+                    queue,
+                    surface_format,
+                    true,
+                ));
+            }
+        }
+
+        // Create textures if needed
+        if let Some(resources) = &self.postprocess_resources {
+            if resources.kuwahara.is_none() {
+                let (w, h) = (resources.width, resources.height);
+                self.postprocess_resources =
+                    Some(PostProcessResources::new(device, w, h, true));
+            }
+        }
+    }
+
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
 
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
