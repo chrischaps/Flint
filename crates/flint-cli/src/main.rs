@@ -416,6 +416,19 @@ enum Commands {
         /// Volumetric ray-march sample count (default: 32)
         #[arg(long)]
         volumetric_samples: Option<u32>,
+
+        /// Kuwahara filter radius (enables Kuwahara; default: 4)
+        #[arg(long)]
+        kuwahara_radius: Option<u32>,
+        /// Kuwahara sector sharpness (default: 8.0)
+        #[arg(long)]
+        kuwahara_sharpness: Option<f32>,
+        /// Kuwahara sector hardness (default: 8.0)
+        #[arg(long)]
+        kuwahara_hardness: Option<f32>,
+        /// Kuwahara anisotropy strength (0=isotropic, 1=full; default: 1.0)
+        #[arg(long)]
+        kuwahara_anisotropy: Option<f32>,
     },
 }
 
@@ -626,6 +639,10 @@ fn main() -> Result<()> {
             dither_intensity,
             volumetric_density,
             volumetric_samples,
+            kuwahara_radius,
+            kuwahara_sharpness,
+            kuwahara_hardness,
+            kuwahara_anisotropy,
         } => render::run(render::RenderArgs {
             scene,
             output,
@@ -656,6 +673,10 @@ fn main() -> Result<()> {
             dither_intensity,
             volumetric_density,
             volumetric_samples,
+            kuwahara_radius,
+            kuwahara_sharpness,
+            kuwahara_hardness,
+            kuwahara_anisotropy,
         }),
     }
 }

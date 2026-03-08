@@ -1982,6 +1982,13 @@ impl ApplicationHandler for PlayerApp {
                                         }
                                     }
                                 }
+                                KeyCode::F12 => {
+                                    if let Some(renderer) = &mut self.scene_renderer {
+                                        let mut config = renderer.post_process_config().clone();
+                                        config.kuwahara_enabled = !config.kuwahara_enabled;
+                                        renderer.set_post_process_config(config);
+                                    }
+                                }
                                 _ => {}
                             }
 

@@ -41,6 +41,10 @@ pub struct RenderArgs {
     pub dither_intensity: Option<f32>,
     pub volumetric_density: Option<f32>,
     pub volumetric_samples: Option<u32>,
+    pub kuwahara_radius: Option<u32>,
+    pub kuwahara_sharpness: Option<f32>,
+    pub kuwahara_hardness: Option<f32>,
+    pub kuwahara_anisotropy: Option<f32>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -242,6 +246,22 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
         if let Some(samples) = args.volumetric_samples {
             pp_config.volumetric_samples = samples;
+        }
+        if let Some(radius) = args.kuwahara_radius {
+            pp_config.kuwahara_radius = radius;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(sharpness) = args.kuwahara_sharpness {
+            pp_config.kuwahara_sharpness = sharpness;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(hardness) = args.kuwahara_hardness {
+            pp_config.kuwahara_hardness = hardness;
+            pp_config.kuwahara_enabled = true;
+        }
+        if let Some(anisotropy) = args.kuwahara_anisotropy {
+            pp_config.kuwahara_anisotropy = anisotropy;
+            pp_config.kuwahara_enabled = true;
         }
 
         renderer.set_post_process_config(pp_config);
