@@ -38,6 +38,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
    #   --dither-intensity 0.03
    #   --volumetric-density 1.0  --volumetric-samples 32
+   #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
+   #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
    ```
 
 2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:
@@ -108,7 +110,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `--schemas engine/schemas --schemas schemas` for layered overrides
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
-- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), vignette; `[post_process]` TOML block; F5-F9 runtime toggles, F10 volumetric; when active, PBR shaders output linear HDR
+- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), Kuwahara (anisotropic painterly filter), vignette; `[post_process]` TOML block; F5-F9 runtime toggles, F10 volumetric, F12 Kuwahara; when active, PBR shaders output linear HDR
 - **Scene transitions** -- `TransitionPhase` lifecycle with script-driven visuals; `PersistentStore` survives transitions; `GameStateMachine` pushdown automaton with per-system `SystemPolicy`
 - **Input system** -- TOML-based `InputConfig` with layered loading (built-in -> game -> user overrides -> CLI); keyboard/mouse/gamepad/touch unified via `Binding` enum
 
