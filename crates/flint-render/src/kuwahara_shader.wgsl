@@ -98,30 +98,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let sx = rx;
                 let sy = ry * aniso;
 
-                // Check if sample is within the elliptical radius
+                // Check if sample is within the elliptical radius and correct sector
                 let dist = sqrt(sx * sx + sy * sy);
-                if (dist > f32(radius)) {
-                    continue;
+                if (dist <= f32(radius)) {
+                    let sample_angle = atan2(sy, sx) + PI;
+                    let sector_idx = u32(floor(sample_angle / sector_angle)) % NUM_SECTORS;
+
+                    if (sector_idx == s) {
+                        // Polynomial weight (Gaussian-like falloff from center)
+                        let norm_dist = dist / f32(radius);
+                        let w = pow(1.0 - norm_dist, params.hardness);
+
+                        let offset = vec2<f32>(f32(x) * tx.x, f32(y) * tx.y);
+                        let color = textureSample(hdr_texture, hdr_sampler, in.uv + offset).rgb;
+
+                        mean += color * w;
+                        mean_sq += color * color * w;
+                        w_sum += w;
+                    }
                 }
-
-                // Determine which sector this sample falls in
-                let sample_angle = atan2(sy, sx) + PI;
-                var sector_idx = u32(floor(sample_angle / sector_angle)) % NUM_SECTORS;
-
-                if (sector_idx != s) {
-                    continue;
-                }
-
-                // Polynomial weight (Gaussian-like falloff from center)
-                let norm_dist = dist / f32(radius);
-                let w = pow(1.0 - norm_dist, params.hardness);
-
-                let offset = vec2<f32>(f32(x) * tx.x, f32(y) * tx.y);
-                let color = textureSample(hdr_texture, hdr_sampler, in.uv + offset).rgb;
-
-                mean += color * w;
-                mean_sq += color * color * w;
-                w_sum += w;
             }
         }
 
