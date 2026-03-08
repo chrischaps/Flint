@@ -212,7 +212,7 @@ impl SceneRenderer {
         // Create post-processing pipeline and resources
         let postprocess_config = PostProcessConfig::default();
         let postprocess_pipeline =
-            PostProcessPipeline::new(&context.device, &context.queue, surface_format, postprocess_config.kuwahara_enabled, Some(&context.adapter));
+            PostProcessPipeline::new(&context.device, &context.queue, surface_format, postprocess_config.kuwahara_enabled);
         let postprocess_resources =
             PostProcessResources::new(&context.device, context.config.width, context.config.height, postprocess_config.kuwahara_enabled);
 
@@ -835,7 +835,7 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format, postprocess_config.kuwahara_enabled, None);
+        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format, postprocess_config.kuwahara_enabled);
         let postprocess_resources = PostProcessResources::new(device, width, height, postprocess_config.kuwahara_enabled);
 
         Self {
@@ -1972,23 +1972,30 @@ impl SceneRenderer {
 
     /// Ensure Kuwahara GPU resources exist (call after enabling kuwahara at runtime).
     /// Creates pipelines and textures on demand if they haven't been allocated yet.
-    pub fn ensure_kuwahara_resources(
-        &mut self,
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        adapter: &wgpu::Adapter,
-    ) {
+    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
         if !self.postprocess_config.kuwahara_enabled {
             return;
         }
 
-        // Create only the Kuwahara pipelines (not the entire PostProcessPipeline)
+        // Create only the Kuwahara pipelines (not the entire PostProcessPipeline).
+        // Uses catch_unwind because some GPU drivers (Intel Skylake) crash with
+        // unrecoverable device loss when compiling these shaders.
         if let Some(pp) = &mut self.postprocess_pipeline {
             if pp.kuwahara.is_none() {
-                match crate::postprocess::KuwaharaPipelines::try_new(device, adapter) {
-                    Some(pipelines) => pp.kuwahara = Some(pipelines),
-                    None => {
-                        // GPU can't compile Kuwahara shaders — disable and bail
+                use std::panic::{catch_unwind, AssertUnwindSafe};
+                let device_ptr = device as *const wgpu::Device;
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    // SAFETY: device_ptr is valid for the duration of this closure
+                    let dev = unsafe { &*device_ptr };
+                    crate::postprocess::KuwaharaPipelines::new(dev)
+                }));
+                match result {
+                    Ok(pipelines) => pp.kuwahara = Some(pipelines),
+                    Err(_) => {
+                        tracing::warn!(
+                            "Kuwahara filter unavailable: GPU driver crashed during \
+                             shader compilation. Try updating your graphics drivers."
+                        );
                         self.postprocess_config.kuwahara_enabled = false;
                         return;
                     }
