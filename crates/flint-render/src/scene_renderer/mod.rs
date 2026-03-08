@@ -210,11 +210,11 @@ impl SceneRenderer {
         let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
 
         // Create post-processing pipeline and resources
-        let postprocess_pipeline =
-            PostProcessPipeline::new(&context.device, &context.queue, surface_format);
-        let postprocess_resources =
-            PostProcessResources::new(&context.device, context.config.width, context.config.height);
         let postprocess_config = PostProcessConfig::default();
+        let postprocess_pipeline =
+            PostProcessPipeline::new(&context.device, &context.queue, surface_format, postprocess_config.kuwahara_enabled);
+        let postprocess_resources =
+            PostProcessResources::new(&context.device, context.config.width, context.config.height, postprocess_config.kuwahara_enabled);
 
         Self {
             pipeline,
@@ -834,9 +834,9 @@ impl SceneRenderer {
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
 
         // Create post-processing pipeline and resources for headless
-        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format);
-        let postprocess_resources = PostProcessResources::new(device, width, height);
         let postprocess_config = PostProcessConfig::default();
+        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format, postprocess_config.kuwahara_enabled);
+        let postprocess_resources = PostProcessResources::new(device, width, height, postprocess_config.kuwahara_enabled);
 
         Self {
             pipeline,
@@ -1957,7 +1957,7 @@ impl SceneRenderer {
         if width == 0 || height == 0 {
             return;
         }
-        self.postprocess_resources = Some(PostProcessResources::new(device, width, height));
+        self.postprocess_resources = Some(PostProcessResources::new(device, width, height, self.postprocess_config.kuwahara_enabled));
     }
 
     /// Get the current post-processing configuration.

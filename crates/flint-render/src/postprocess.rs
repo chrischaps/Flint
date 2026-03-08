@@ -216,6 +216,33 @@ pub struct KuwaharaUniforms {
 /// SSAO texture format (single-channel occlusion).
 const SSAO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
+/// GPU resources for the Kuwahara filter (created on demand).
+pub struct KuwaharaTextures {
+    pub tensor_texture: wgpu::Texture,
+    pub tensor_view: wgpu::TextureView,
+    pub tensor_blur_texture: wgpu::Texture,
+    pub tensor_blur_view: wgpu::TextureView,
+    pub output_texture: wgpu::Texture,
+    pub output_view: wgpu::TextureView,
+}
+
+/// Pipelines and bind group layouts for the Kuwahara filter (created on demand).
+pub struct KuwaharaPipelines {
+    pub tensor_pipeline: wgpu::RenderPipeline,
+    pub tensor_uniform_bgl: wgpu::BindGroupLayout,
+    pub tensor_texture_bgl: wgpu::BindGroupLayout,
+    pub tensor_uniform_buffer: wgpu::Buffer,
+    pub tensor_blur_pipeline: wgpu::RenderPipeline,
+    pub tensor_blur_uniform_bgl: wgpu::BindGroupLayout,
+    pub tensor_blur_texture_bgl: wgpu::BindGroupLayout,
+    pub tensor_blur_uniform_buffer: wgpu::Buffer,
+    pub pipeline: wgpu::RenderPipeline,
+    pub uniform_bgl: wgpu::BindGroupLayout,
+    pub hdr_bgl: wgpu::BindGroupLayout,
+    pub tensor_input_bgl: wgpu::BindGroupLayout,
+    pub uniform_buffer: wgpu::Buffer,
+}
+
 /// GPU resources for the HDR buffer and bloom mip chain.
 /// Recreated on resize.
 pub struct PostProcessResources {
@@ -236,13 +263,8 @@ pub struct PostProcessResources {
     pub volumetric_view: wgpu::TextureView,
     pub volumetric_blur_texture: wgpu::Texture,
     pub volumetric_blur_view: wgpu::TextureView,
-    // Kuwahara textures (full resolution, Rgba16Float)
-    pub kuwahara_tensor_texture: wgpu::Texture,
-    pub kuwahara_tensor_view: wgpu::TextureView,
-    pub kuwahara_tensor_blur_texture: wgpu::Texture,
-    pub kuwahara_tensor_blur_view: wgpu::TextureView,
-    pub kuwahara_texture: wgpu::Texture,
-    pub kuwahara_view: wgpu::TextureView,
+    // Kuwahara textures (full resolution, Rgba16Float) — only allocated when enabled
+    pub kuwahara: Option<KuwaharaTextures>,
 }
 
 /// A single level in the bloom mip chain.
@@ -303,28 +325,19 @@ pub struct PostProcessPipeline {
     pub volumetric_blur_uniform_buffer: wgpu::Buffer,
     // 1x1 black HDR fallback when volumetric is disabled
     pub volumetric_black_view: wgpu::TextureView,
-    // Kuwahara filter pipelines and resources
-    pub kuwahara_tensor_pipeline: wgpu::RenderPipeline,
-    pub kuwahara_tensor_uniform_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_tensor_texture_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_tensor_uniform_buffer: wgpu::Buffer,
-    pub kuwahara_tensor_blur_pipeline: wgpu::RenderPipeline,
-    pub kuwahara_tensor_blur_uniform_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_tensor_blur_texture_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_tensor_blur_uniform_buffer: wgpu::Buffer,
-    pub kuwahara_pipeline: wgpu::RenderPipeline,
-    pub kuwahara_uniform_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_hdr_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_tensor_input_bgl: wgpu::BindGroupLayout,
-    pub kuwahara_uniform_buffer: wgpu::Buffer,
+    // Kuwahara filter pipelines and resources — only allocated when enabled
+    pub kuwahara: Option<KuwaharaPipelines>,
 }
 
 impl PostProcessPipeline {
     /// Create all post-processing pipelines and shared resources.
+    /// Kuwahara pipelines are only created when `kuwahara_enabled` is true
+    /// to avoid exhausting VRAM on constrained GPUs.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         surface_format: wgpu::TextureFormat,
+        kuwahara_enabled: bool,
     ) -> Self {
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("PostProcess Linear Sampler"),
@@ -1250,314 +1263,325 @@ impl PostProcessPipeline {
         let volumetric_black_view =
             volumetric_black_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // --- Kuwahara structure tensor pipeline ---
-        let kuwahara_tensor_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Kuwahara Tensor Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("kuwahara_tensor_shader.wgsl").into(),
-            ),
-        });
+        // --- Kuwahara pipelines (only when enabled) ---
+        let kuwahara = if kuwahara_enabled {
+            let kuwahara_tensor_shader =
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("Kuwahara Tensor Shader"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("kuwahara_tensor_shader.wgsl").into(),
+                    ),
+                });
 
-        // Tensor Group 0: KuwaharaTensorUniforms
-        let kuwahara_tensor_uniform_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara Tensor Uniform BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        // Tensor Group 1: HDR texture (filterable float) + linear sampler
-        let kuwahara_tensor_texture_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara Tensor Texture BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
+            // Tensor Group 0: KuwaharaTensorUniforms
+            let tensor_uniform_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Uniform BGL"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
+                    }],
+                });
+
+            // Tensor Group 1: HDR texture (filterable float) + linear sampler
+            let tensor_texture_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Texture BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+            let tensor_pipeline_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Pipeline Layout"),
+                    bind_group_layouts: &[&tensor_uniform_bgl, &tensor_texture_bgl],
+                    push_constant_ranges: &[],
+                });
+
+            let tensor_pipeline =
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Kuwahara Tensor Pipeline"),
+                    layout: Some(&tensor_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &kuwahara_tensor_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    fragment: Some(wgpu::FragmentState {
+                        module: &kuwahara_tensor_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
                     },
-                ],
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+
+            let tensor_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Kuwahara Tensor Uniform Buffer"),
+                size: std::mem::size_of::<KuwaharaTensorUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
 
-        let kuwahara_tensor_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Kuwahara Tensor Pipeline Layout"),
-                bind_group_layouts: &[
-                    &kuwahara_tensor_uniform_bgl,
-                    &kuwahara_tensor_texture_bgl,
-                ],
-                push_constant_ranges: &[],
-            });
+            // --- Kuwahara tensor blur pipeline ---
+            let kuwahara_tensor_blur_shader =
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("Kuwahara Tensor Blur Shader"),
+                    source: wgpu::ShaderSource::Wgsl(
+                        include_str!("kuwahara_tensor_blur_shader.wgsl").into(),
+                    ),
+                });
 
-        let kuwahara_tensor_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Kuwahara Tensor Pipeline"),
-                layout: Some(&kuwahara_tensor_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &kuwahara_tensor_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &kuwahara_tensor_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
-
-        let kuwahara_tensor_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Kuwahara Tensor Uniform Buffer"),
-            size: std::mem::size_of::<KuwaharaTensorUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // --- Kuwahara tensor blur pipeline ---
-        let kuwahara_tensor_blur_shader =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Kuwahara Tensor Blur Shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("kuwahara_tensor_blur_shader.wgsl").into(),
-                ),
-            });
-
-        // Tensor blur Group 0: KuwaharaTensorBlurUniforms
-        let kuwahara_tensor_blur_uniform_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara Tensor Blur Uniform BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        // Tensor blur Group 1: tensor texture (filterable float) + linear sampler
-        let kuwahara_tensor_blur_texture_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara Tensor Blur Texture BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
+            // Tensor blur Group 0: KuwaharaTensorBlurUniforms
+            let tensor_blur_uniform_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Blur Uniform BGL"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
+                    }],
+                });
+
+            // Tensor blur Group 1: tensor texture (filterable float) + linear sampler
+            let tensor_blur_texture_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Blur Texture BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+            let tensor_blur_pipeline_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Blur Pipeline Layout"),
+                    bind_group_layouts: &[&tensor_blur_uniform_bgl, &tensor_blur_texture_bgl],
+                    push_constant_ranges: &[],
+                });
+
+            let tensor_blur_pipeline =
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Kuwahara Tensor Blur Pipeline"),
+                    layout: Some(&tensor_blur_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &kuwahara_tensor_blur_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    fragment: Some(wgpu::FragmentState {
+                        module: &kuwahara_tensor_blur_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
                     },
-                ],
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+
+            let tensor_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Kuwahara Tensor Blur Uniform Buffer"),
+                size: std::mem::size_of::<KuwaharaTensorBlurUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
 
-        let kuwahara_tensor_blur_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Kuwahara Tensor Blur Pipeline Layout"),
-                bind_group_layouts: &[
-                    &kuwahara_tensor_blur_uniform_bgl,
-                    &kuwahara_tensor_blur_texture_bgl,
-                ],
-                push_constant_ranges: &[],
+            // --- Kuwahara (anisotropic) pipeline ---
+            let kuwahara_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Kuwahara Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("kuwahara_shader.wgsl").into()),
             });
 
-        let kuwahara_tensor_blur_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Kuwahara Tensor Blur Pipeline"),
-                layout: Some(&kuwahara_tensor_blur_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &kuwahara_tensor_blur_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &kuwahara_tensor_blur_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
-
-        let kuwahara_tensor_blur_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Kuwahara Tensor Blur Uniform Buffer"),
-            size: std::mem::size_of::<KuwaharaTensorBlurUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // --- Kuwahara (anisotropic) pipeline ---
-        let kuwahara_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Kuwahara Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("kuwahara_shader.wgsl").into()),
-        });
-
-        // Kuwahara Group 0: KuwaharaUniforms
-        let kuwahara_uniform_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara Uniform BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        // Kuwahara Group 1: HDR texture (filterable float) + linear sampler
-        let kuwahara_hdr_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara HDR BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
+            // Kuwahara Group 0: KuwaharaUniforms
+            let uniform_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara Uniform BGL"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    }],
+                });
 
-        // Kuwahara Group 2: blurred tensor texture (filterable float) + linear sampler
-        let kuwahara_tensor_input_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Kuwahara Tensor Input BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+            // Kuwahara Group 1: HDR texture (filterable float) + linear sampler
+            let hdr_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara HDR BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
                         },
-                        count: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+            // Kuwahara Group 2: blurred tensor texture (filterable float) + linear sampler
+            let tensor_input_bgl =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Kuwahara Tensor Input BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+            let kuwahara_pipeline_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Kuwahara Pipeline Layout"),
+                    bind_group_layouts: &[&uniform_bgl, &hdr_bgl, &tensor_input_bgl],
+                    push_constant_ranges: &[],
+                });
+
+            let pipeline =
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Kuwahara Pipeline"),
+                    layout: Some(&kuwahara_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &kuwahara_shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    fragment: Some(wgpu::FragmentState {
+                        module: &kuwahara_shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
                     },
-                ],
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
+
+            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Kuwahara Uniform Buffer"),
+                size: std::mem::size_of::<KuwaharaUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
 
-        let kuwahara_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Kuwahara Pipeline Layout"),
-                bind_group_layouts: &[
-                    &kuwahara_uniform_bgl,
-                    &kuwahara_hdr_bgl,
-                    &kuwahara_tensor_input_bgl,
-                ],
-                push_constant_ranges: &[],
-            });
-
-        let kuwahara_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Kuwahara Pipeline"),
-                layout: Some(&kuwahara_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &kuwahara_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &kuwahara_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
-
-        let kuwahara_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Kuwahara Uniform Buffer"),
-            size: std::mem::size_of::<KuwaharaUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+            Some(KuwaharaPipelines {
+                tensor_pipeline,
+                tensor_uniform_bgl,
+                tensor_texture_bgl,
+                tensor_uniform_buffer,
+                tensor_blur_pipeline,
+                tensor_blur_uniform_bgl,
+                tensor_blur_texture_bgl,
+                tensor_blur_uniform_buffer,
+                pipeline,
+                uniform_bgl,
+                hdr_bgl,
+                tensor_input_bgl,
+                uniform_buffer,
+            })
+        } else {
+            None
+        };
 
         Self {
             composite_pipeline,
@@ -1598,19 +1622,7 @@ impl PostProcessPipeline {
             volumetric_blur_texture_bgl,
             volumetric_blur_uniform_buffer,
             volumetric_black_view,
-            kuwahara_tensor_pipeline,
-            kuwahara_tensor_uniform_bgl,
-            kuwahara_tensor_texture_bgl,
-            kuwahara_tensor_uniform_buffer,
-            kuwahara_tensor_blur_pipeline,
-            kuwahara_tensor_blur_uniform_bgl,
-            kuwahara_tensor_blur_texture_bgl,
-            kuwahara_tensor_blur_uniform_buffer,
-            kuwahara_pipeline,
-            kuwahara_uniform_bgl,
-            kuwahara_hdr_bgl,
-            kuwahara_tensor_input_bgl,
-            kuwahara_uniform_buffer,
+            kuwahara,
         }
     }
 
@@ -2187,7 +2199,8 @@ impl PostProcessPipeline {
 
     /// Run the anisotropic Kuwahara filter (3 passes: structure tensor, tensor blur, Kuwahara).
     /// Reads the HDR scene texture and writes the painterly-filtered result to
-    /// `resources.kuwahara_view`.
+    /// `resources.kuwahara.output_view`.
+    /// Returns early (no-op) if Kuwahara pipelines or textures were not allocated.
     pub fn run_kuwahara(
         &self,
         device: &wgpu::Device,
@@ -2195,6 +2208,15 @@ impl PostProcessPipeline {
         resources: &PostProcessResources,
         config: &PostProcessConfig,
     ) {
+        let kp = match &self.kuwahara {
+            Some(kp) => kp,
+            None => return,
+        };
+        let kt = match &resources.kuwahara {
+            Some(kt) => kt,
+            None => return,
+        };
+
         let texel_size = [1.0 / resources.width as f32, 1.0 / resources.height as f32];
 
         // --- Pass 1: Structure tensor ---
@@ -2204,23 +2226,23 @@ impl PostProcessPipeline {
                 _pad: [0.0; 2],
             };
             queue.write_buffer(
-                &self.kuwahara_tensor_uniform_buffer,
+                &kp.tensor_uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[uniforms]),
             );
 
             let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara Tensor Uniform BG"),
-                layout: &self.kuwahara_tensor_uniform_bgl,
+                layout: &kp.tensor_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.kuwahara_tensor_uniform_buffer.as_entire_binding(),
+                    resource: kp.tensor_uniform_buffer.as_entire_binding(),
                 }],
             });
 
             let texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara Tensor Texture BG"),
-                layout: &self.kuwahara_tensor_texture_bgl,
+                layout: &kp.tensor_texture_bgl,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -2241,7 +2263,7 @@ impl PostProcessPipeline {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Kuwahara Tensor Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &resources.kuwahara_tensor_view,
+                        view: &kt.tensor_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -2253,7 +2275,7 @@ impl PostProcessPipeline {
                     occlusion_query_set: None,
                 });
 
-                pass.set_pipeline(&self.kuwahara_tensor_pipeline);
+                pass.set_pipeline(&kp.tensor_pipeline);
                 pass.set_bind_group(0, &uniform_bg, &[]);
                 pass.set_bind_group(1, &texture_bg, &[]);
                 pass.draw(0..3, 0..1);
@@ -2269,28 +2291,28 @@ impl PostProcessPipeline {
                 _pad: [0.0; 2],
             };
             queue.write_buffer(
-                &self.kuwahara_tensor_blur_uniform_buffer,
+                &kp.tensor_blur_uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[uniforms]),
             );
 
             let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara Tensor Blur Uniform BG"),
-                layout: &self.kuwahara_tensor_blur_uniform_bgl,
+                layout: &kp.tensor_blur_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.kuwahara_tensor_blur_uniform_buffer.as_entire_binding(),
+                    resource: kp.tensor_blur_uniform_buffer.as_entire_binding(),
                 }],
             });
 
             let texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara Tensor Blur Texture BG"),
-                layout: &self.kuwahara_tensor_blur_texture_bgl,
+                layout: &kp.tensor_blur_texture_bgl,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(
-                            &resources.kuwahara_tensor_view,
+                            &kt.tensor_view,
                         ),
                     },
                     wgpu::BindGroupEntry {
@@ -2308,7 +2330,7 @@ impl PostProcessPipeline {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Kuwahara Tensor Blur Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &resources.kuwahara_tensor_blur_view,
+                        view: &kt.tensor_blur_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -2320,7 +2342,7 @@ impl PostProcessPipeline {
                     occlusion_query_set: None,
                 });
 
-                pass.set_pipeline(&self.kuwahara_tensor_blur_pipeline);
+                pass.set_pipeline(&kp.tensor_blur_pipeline);
                 pass.set_bind_group(0, &uniform_bg, &[]);
                 pass.set_bind_group(1, &texture_bg, &[]);
                 pass.draw(0..3, 0..1);
@@ -2340,23 +2362,23 @@ impl PostProcessPipeline {
                 _pad: [0.0; 2],
             };
             queue.write_buffer(
-                &self.kuwahara_uniform_buffer,
+                &kp.uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[uniforms]),
             );
 
             let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara Uniform BG"),
-                layout: &self.kuwahara_uniform_bgl,
+                layout: &kp.uniform_bgl,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.kuwahara_uniform_buffer.as_entire_binding(),
+                    resource: kp.uniform_buffer.as_entire_binding(),
                 }],
             });
 
             let hdr_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara HDR BG"),
-                layout: &self.kuwahara_hdr_bgl,
+                layout: &kp.hdr_bgl,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -2371,12 +2393,12 @@ impl PostProcessPipeline {
 
             let tensor_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Kuwahara Tensor Input BG"),
-                layout: &self.kuwahara_tensor_input_bgl,
+                layout: &kp.tensor_input_bgl,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(
-                            &resources.kuwahara_tensor_blur_view,
+                            &kt.tensor_blur_view,
                         ),
                     },
                     wgpu::BindGroupEntry {
@@ -2394,7 +2416,7 @@ impl PostProcessPipeline {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Kuwahara Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &resources.kuwahara_view,
+                        view: &kt.output_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -2406,7 +2428,7 @@ impl PostProcessPipeline {
                     occlusion_query_set: None,
                 });
 
-                pass.set_pipeline(&self.kuwahara_pipeline);
+                pass.set_pipeline(&kp.pipeline);
                 pass.set_bind_group(0, &uniform_bg, &[]);
                 pass.set_bind_group(1, &hdr_bg, &[]);
                 pass.set_bind_group(2, &tensor_bg, &[]);
@@ -2530,9 +2552,12 @@ impl PostProcessPipeline {
             }],
         });
 
-        // Kuwahara: use filtered result if enabled, raw HDR otherwise
+        // Kuwahara: use filtered result if enabled and allocated, raw HDR otherwise
         let scene_view = if config.enabled && config.kuwahara_enabled {
-            &resources.kuwahara_view
+            match &resources.kuwahara {
+                Some(kt) => &kt.output_view,
+                None => &resources.hdr_view,
+            }
         } else {
             &resources.hdr_view
         };
@@ -2608,7 +2633,9 @@ impl PostProcessPipeline {
 
 impl PostProcessResources {
     /// Create HDR buffer and bloom mip chain for the given dimensions.
-    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    /// Kuwahara textures are only allocated when `kuwahara_enabled` is true
+    /// to avoid exhausting VRAM on constrained GPUs.
+    pub fn new(device: &wgpu::Device, width: u32, height: u32, kuwahara_enabled: bool) -> Self {
         let hdr_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("HDR Scene Texture"),
             size: wgpu::Extent3d {
@@ -2736,57 +2763,73 @@ impl PostProcessResources {
         let volumetric_blur_view =
             volumetric_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Kuwahara textures (full resolution, Rgba16Float)
-        let kuwahara_tensor_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Kuwahara Tensor Texture"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let kuwahara_tensor_view =
-            kuwahara_tensor_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // Kuwahara textures (full resolution, Rgba16Float) — only when enabled
+        let kuwahara = if kuwahara_enabled {
+            let tensor_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Kuwahara Tensor Texture"),
+                size: wgpu::Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let tensor_view =
+                tensor_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let kuwahara_tensor_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Kuwahara Tensor Blur Texture"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let kuwahara_tensor_blur_view =
-            kuwahara_tensor_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let tensor_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Kuwahara Tensor Blur Texture"),
+                size: wgpu::Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let tensor_blur_view =
+                tensor_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let kuwahara_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Kuwahara Texture"),
-            size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let kuwahara_view =
-            kuwahara_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let output_texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Kuwahara Texture"),
+                size: wgpu::Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let output_view =
+                output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            Some(KuwaharaTextures {
+                tensor_texture,
+                tensor_view,
+                tensor_blur_texture,
+                tensor_blur_view,
+                output_texture,
+                output_view,
+            })
+        } else {
+            None
+        };
 
         Self {
             hdr_texture,
@@ -2803,12 +2846,7 @@ impl PostProcessResources {
             volumetric_view,
             volumetric_blur_texture,
             volumetric_blur_view,
-            kuwahara_tensor_texture,
-            kuwahara_tensor_view,
-            kuwahara_tensor_blur_texture,
-            kuwahara_tensor_blur_view,
-            kuwahara_texture,
-            kuwahara_view,
+            kuwahara,
         }
     }
 }
