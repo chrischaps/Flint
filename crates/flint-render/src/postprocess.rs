@@ -313,101 +313,118 @@ impl KuwaharaTextures {
 impl KuwaharaPipelines {
     /// Probe shader compilation on a throwaway device so that a driver crash
     /// (device loss) does not destroy the main rendering device.
+    /// Uses catch_unwind because device loss bypasses wgpu error scopes and
+    /// triggers the default panic handler.
     fn probe_shader_support(adapter: &wgpu::Adapter) -> bool {
-        let Ok((probe_device, _)) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Kuwahara Probe Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: Default::default(),
-            },
-            None,
-        )) else {
-            return false;
-        };
+        use std::panic::{catch_unwind, AssertUnwindSafe};
 
-        probe_device.push_error_scope(wgpu::ErrorFilter::Validation);
-
-        let shader = probe_device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Kuwahara Probe Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("kuwahara_tensor_shader.wgsl").into(),
-            ),
-        });
-
-        let bgl = probe_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Probe BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let (probe_device, _) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Kuwahara Probe Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: Default::default(),
                 },
-                count: None,
-            }],
-        });
-        let tex_bgl = probe_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Probe Tex BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                None,
+            ))
+            .ok()?;
+
+            probe_device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+            let shader = probe_device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Kuwahara Probe Shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("kuwahara_tensor_shader.wgsl").into(),
+                ),
+            });
+
+            let bgl =
+                probe_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Probe BGL"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+            let tex_bgl =
+                probe_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Probe Tex BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float {
+                                    filterable: true,
+                                },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(
+                                wgpu::SamplerBindingType::Filtering,
+                            ),
+                            count: None,
+                        },
+                    ],
+                });
+
+            let layout =
+                probe_device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Probe Layout"),
+                    bind_group_layouts: &[&bgl, &tex_bgl],
+                    push_constant_ranges: &[],
+                });
+
+            let _pipeline =
+                probe_device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("Kuwahara Probe Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                });
 
-        let layout = probe_device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Probe Layout"),
-            bind_group_layouts: &[&bgl, &tex_bgl],
-            push_constant_ranges: &[],
-        });
+            let error = pollster::block_on(probe_device.pop_error_scope());
+            if error.is_some() {
+                return None;
+            }
+            Some(())
+        }));
 
-        let _pipeline = probe_device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Kuwahara Probe Pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let error = pollster::block_on(probe_device.pop_error_scope());
-        // probe_device is dropped here — if it's lost, only the probe is affected
-        error.is_none()
+        matches!(result, Ok(Some(())))
     }
 
     /// Try to create Kuwahara pipelines. Returns None if the GPU driver
