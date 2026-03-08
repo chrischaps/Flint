@@ -236,6 +236,13 @@ pub struct PostProcessResources {
     pub volumetric_view: wgpu::TextureView,
     pub volumetric_blur_texture: wgpu::Texture,
     pub volumetric_blur_view: wgpu::TextureView,
+    // Kuwahara textures (full resolution, Rgba16Float)
+    pub kuwahara_tensor_texture: wgpu::Texture,
+    pub kuwahara_tensor_view: wgpu::TextureView,
+    pub kuwahara_tensor_blur_texture: wgpu::Texture,
+    pub kuwahara_tensor_blur_view: wgpu::TextureView,
+    pub kuwahara_texture: wgpu::Texture,
+    pub kuwahara_view: wgpu::TextureView,
 }
 
 /// A single level in the bloom mip chain.
@@ -2154,6 +2161,58 @@ impl PostProcessResources {
         let volumetric_blur_view =
             volumetric_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Kuwahara textures (full resolution, Rgba16Float)
+        let kuwahara_tensor_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Kuwahara Tensor Texture"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let kuwahara_tensor_view =
+            kuwahara_tensor_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let kuwahara_tensor_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Kuwahara Tensor Blur Texture"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let kuwahara_tensor_blur_view =
+            kuwahara_tensor_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let kuwahara_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Kuwahara Texture"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let kuwahara_view =
+            kuwahara_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         Self {
             hdr_texture,
             hdr_view,
@@ -2169,6 +2228,12 @@ impl PostProcessResources {
             volumetric_view,
             volumetric_blur_texture,
             volumetric_blur_view,
+            kuwahara_tensor_texture,
+            kuwahara_tensor_view,
+            kuwahara_tensor_blur_texture,
+            kuwahara_tensor_blur_view,
+            kuwahara_texture,
+            kuwahara_view,
         }
     }
 }
