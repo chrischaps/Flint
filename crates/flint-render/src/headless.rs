@@ -4,6 +4,7 @@ use crate::context::RenderError;
 
 /// Offscreen wgpu context that renders to a texture instead of a window surface
 pub struct HeadlessContext {
+    pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub format: wgpu::TextureFormat,
@@ -82,6 +83,7 @@ impl HeadlessContext {
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         Ok(Self {
+            adapter,
             device,
             queue,
             format,
