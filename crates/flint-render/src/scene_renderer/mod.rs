@@ -1972,30 +1972,24 @@ impl SceneRenderer {
 
     /// Ensure Kuwahara GPU resources exist (call after enabling kuwahara at runtime).
     /// Creates pipelines and textures on demand if they haven't been allocated yet.
-    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn ensure_kuwahara_resources(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue) {
         if !self.postprocess_config.kuwahara_enabled {
             return;
         }
 
-        // Create pipelines if needed
-        if let Some(pp) = &self.postprocess_pipeline {
+        // Create only the Kuwahara pipelines (not the entire PostProcessPipeline)
+        if let Some(pp) = &mut self.postprocess_pipeline {
             if pp.kuwahara.is_none() {
-                let surface_format = self.surface_format;
-                self.postprocess_pipeline = Some(PostProcessPipeline::new(
-                    device,
-                    queue,
-                    surface_format,
-                    true,
-                ));
+                pp.kuwahara = Some(crate::postprocess::KuwaharaPipelines::new(device));
             }
         }
 
-        // Create textures if needed
-        if let Some(resources) = &self.postprocess_resources {
+        // Create only the Kuwahara textures (not the entire PostProcessResources)
+        if let Some(resources) = &mut self.postprocess_resources {
             if resources.kuwahara.is_none() {
                 let (w, h) = (resources.width, resources.height);
-                self.postprocess_resources =
-                    Some(PostProcessResources::new(device, w, h, true));
+                resources.kuwahara =
+                    Some(crate::postprocess::KuwaharaTextures::new(device, w, h));
             }
         }
     }
