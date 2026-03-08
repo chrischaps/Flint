@@ -97,6 +97,16 @@ pub struct PostProcessDef {
     pub volumetric_max_distance: f32,
     #[serde(default = "default_volumetric_decay")]
     pub volumetric_decay: f32,
+    #[serde(default)]
+    pub kuwahara_enabled: bool,
+    #[serde(default = "default_kuwahara_radius")]
+    pub kuwahara_radius: u32,
+    #[serde(default = "default_kuwahara_sharpness")]
+    pub kuwahara_sharpness: f32,
+    #[serde(default = "default_kuwahara_hardness")]
+    pub kuwahara_hardness: f32,
+    #[serde(default = "default_kuwahara_anisotropy")]
+    pub kuwahara_anisotropy: f32,
 }
 
 fn default_true() -> bool {
@@ -169,6 +179,22 @@ fn default_volumetric_max_distance() -> f32 {
 
 fn default_volumetric_decay() -> f32 {
     0.98
+}
+
+fn default_kuwahara_radius() -> u32 {
+    4
+}
+
+fn default_kuwahara_sharpness() -> f32 {
+    8.0
+}
+
+fn default_kuwahara_hardness() -> f32 {
+    8.0
+}
+
+fn default_kuwahara_anisotropy() -> f32 {
+    1.0
 }
 
 /// Camera configuration for the scene
