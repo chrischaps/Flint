@@ -2185,6 +2185,238 @@ impl PostProcessPipeline {
         queue.submit(std::iter::once(encoder.finish()));
     }
 
+    /// Run the anisotropic Kuwahara filter (3 passes: structure tensor, tensor blur, Kuwahara).
+    /// Reads the HDR scene texture and writes the painterly-filtered result to
+    /// `resources.kuwahara_view`.
+    pub fn run_kuwahara(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &PostProcessResources,
+        config: &PostProcessConfig,
+    ) {
+        let texel_size = [1.0 / resources.width as f32, 1.0 / resources.height as f32];
+
+        // --- Pass 1: Structure tensor ---
+        {
+            let uniforms = KuwaharaTensorUniforms {
+                texel_size,
+                _pad: [0.0; 2],
+            };
+            queue.write_buffer(
+                &self.kuwahara_tensor_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[uniforms]),
+            );
+
+            let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara Tensor Uniform BG"),
+                layout: &self.kuwahara_tensor_uniform_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.kuwahara_tensor_uniform_buffer.as_entire_binding(),
+                }],
+            });
+
+            let texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara Tensor Texture BG"),
+                layout: &self.kuwahara_tensor_texture_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&resources.hdr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Kuwahara Tensor Encoder"),
+            });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Kuwahara Tensor Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &resources.kuwahara_tensor_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&self.kuwahara_tensor_pipeline);
+                pass.set_bind_group(0, &uniform_bg, &[]);
+                pass.set_bind_group(1, &texture_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+
+        // --- Pass 2: Tensor blur ---
+        {
+            let uniforms = KuwaharaTensorBlurUniforms {
+                texel_size,
+                _pad: [0.0; 2],
+            };
+            queue.write_buffer(
+                &self.kuwahara_tensor_blur_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[uniforms]),
+            );
+
+            let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara Tensor Blur Uniform BG"),
+                layout: &self.kuwahara_tensor_blur_uniform_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.kuwahara_tensor_blur_uniform_buffer.as_entire_binding(),
+                }],
+            });
+
+            let texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara Tensor Blur Texture BG"),
+                layout: &self.kuwahara_tensor_blur_texture_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.kuwahara_tensor_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Kuwahara Tensor Blur Encoder"),
+            });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Kuwahara Tensor Blur Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &resources.kuwahara_tensor_blur_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&self.kuwahara_tensor_blur_pipeline);
+                pass.set_bind_group(0, &uniform_bg, &[]);
+                pass.set_bind_group(1, &texture_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+
+        // --- Pass 3: Anisotropic Kuwahara filter ---
+        {
+            let uniforms = KuwaharaUniforms {
+                texel_size,
+                radius: config.kuwahara_radius as f32,
+                sharpness: config.kuwahara_sharpness,
+                hardness: config.kuwahara_hardness,
+                anisotropy: config.kuwahara_anisotropy,
+                _pad: [0.0; 2],
+            };
+            queue.write_buffer(
+                &self.kuwahara_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[uniforms]),
+            );
+
+            let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara Uniform BG"),
+                layout: &self.kuwahara_uniform_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.kuwahara_uniform_buffer.as_entire_binding(),
+                }],
+            });
+
+            let hdr_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara HDR BG"),
+                layout: &self.kuwahara_hdr_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&resources.hdr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                ],
+            });
+
+            let tensor_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Kuwahara Tensor Input BG"),
+                layout: &self.kuwahara_tensor_input_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            &resources.kuwahara_tensor_blur_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Kuwahara Encoder"),
+            });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Kuwahara Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &resources.kuwahara_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&self.kuwahara_pipeline);
+                pass.set_bind_group(0, &uniform_bg, &[]);
+                pass.set_bind_group(1, &hdr_bg, &[]);
+                pass.set_bind_group(2, &tensor_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+    }
+
     /// Run the composite pass: combine HDR scene + bloom + SSAO + volumetric + fog → tonemapped sRGB surface.
     pub fn composite(
         &self,
