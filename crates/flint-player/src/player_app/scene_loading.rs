@@ -48,6 +48,11 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
     config.volumetric_density = pp_def.volumetric_density;
     config.volumetric_max_distance = pp_def.volumetric_max_distance;
     config.volumetric_decay = pp_def.volumetric_decay;
+    config.kuwahara_enabled = pp_def.kuwahara_enabled;
+    config.kuwahara_radius = pp_def.kuwahara_radius;
+    config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
+    config.kuwahara_hardness = pp_def.kuwahara_hardness;
+    config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
     config
 }
 
