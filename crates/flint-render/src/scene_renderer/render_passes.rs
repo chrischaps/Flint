@@ -904,6 +904,11 @@ impl SceneRenderer {
             None => return,
         };
 
+        // Run Kuwahara filter if enabled
+        if self.postprocess_config.enabled && self.postprocess_config.kuwahara_enabled {
+            pp.run_kuwahara(device, queue, resources, &self.postprocess_config);
+        }
+
         // Run SSAO if enabled
         if self.postprocess_config.enabled && self.postprocess_config.ssao_enabled {
             pp.run_ssao(

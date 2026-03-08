@@ -2530,13 +2530,20 @@ impl PostProcessPipeline {
             }],
         });
 
+        // Kuwahara: use filtered result if enabled, raw HDR otherwise
+        let scene_view = if config.enabled && config.kuwahara_enabled {
+            &resources.kuwahara_view
+        } else {
+            &resources.hdr_view
+        };
+
         let scene_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Composite Scene BG"),
             layout: &self.composite_scene_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&resources.hdr_view),
+                    resource: wgpu::BindingResource::TextureView(scene_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
