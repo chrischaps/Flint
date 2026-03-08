@@ -46,6 +46,11 @@ pub struct PostProcessConfig {
     pub volumetric_density: f32,
     pub volumetric_max_distance: f32,
     pub volumetric_decay: f32,
+    pub kuwahara_enabled: bool,
+    pub kuwahara_radius: u32,
+    pub kuwahara_sharpness: f32,
+    pub kuwahara_hardness: f32,
+    pub kuwahara_anisotropy: f32,
 }
 
 impl Default for PostProcessConfig {
@@ -81,6 +86,11 @@ impl Default for PostProcessConfig {
             volumetric_density: 1.0,
             volumetric_max_distance: 100.0,
             volumetric_decay: 0.98,
+            kuwahara_enabled: false,
+            kuwahara_radius: 4,
+            kuwahara_sharpness: 8.0,
+            kuwahara_hardness: 8.0,
+            kuwahara_anisotropy: 1.0,
         }
     }
 }
