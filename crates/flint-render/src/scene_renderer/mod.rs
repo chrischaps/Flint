@@ -25,6 +25,10 @@ use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::skinned_pipeline::SkinnedPipeline;
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
+use crate::grass_pipeline::{
+    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
+    GrassRenderUniforms, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
+};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
 use flint_core::components as comp;
@@ -136,6 +140,26 @@ pub struct SceneRenderer {
     terrain_draws: Vec<TerrainDrawCall>,
     terrain_material_bind_group: Option<wgpu::BindGroup>,
     terrain_material_buffer: Option<wgpu::Buffer>,
+    // Grass
+    grass_pipeline: Option<GrassPipeline>,
+    grass_instance_buffer: Option<wgpu::Buffer>,
+    grass_instance_count: u32,
+    grass_max_instances: u32,
+    grass_counter_buffer: Option<wgpu::Buffer>,
+    grass_staging_buffer: Option<wgpu::Buffer>,
+    grass_compute_uniform_buffer: Option<wgpu::Buffer>,
+    grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
+    grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
+    grass_compute_storage_bind_group: Option<wgpu::BindGroup>,
+    grass_render_uniform_buffer: Option<wgpu::Buffer>,
+    grass_render_uniform_bind_group: Option<wgpu::BindGroup>,
+    grass_render_instance_bind_group: Option<wgpu::BindGroup>,
+    grass_entity_buffer: Option<wgpu::Buffer>,
+    grass_config: Option<flint_terrain::GrassConfig>,
+    grass_terrain_offset: [f32; 3],
+    grass_terrain_width: f32,
+    grass_terrain_depth: f32,
+    grass_terrain_height_scale: f32,
     // Particles
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
@@ -205,6 +229,22 @@ impl SceneRenderer {
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
         );
+
+        // Graceful degradation: wrap in catch_unwind like the Kuwahara pipeline.
+        // If compute shaders aren't supported, grass is silently disabled.
+        let grass_pipeline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            GrassPipeline::new(
+                &context.device,
+                scene_format,
+                &pipeline.transform_bind_group_layout,
+                &pipeline.light_bind_group_layout,
+            )
+        }))
+        .unwrap_or_else(|_| {
+            tracing::warn!("Grass pipeline creation failed — grass disabled");
+            None
+        });
+
         let particle_pipeline = ParticlePipeline::new(&context.device, scene_format);
         let sprite2d_pipeline = Sprite2dPipeline::new(&context.device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
@@ -247,6 +287,25 @@ impl SceneRenderer {
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
+            grass_pipeline,
+            grass_instance_buffer: None,
+            grass_instance_count: 0,
+            grass_max_instances: 0,
+            grass_counter_buffer: None,
+            grass_staging_buffer: None,
+            grass_compute_uniform_buffer: None,
+            grass_compute_uniform_bind_group: None,
+            grass_compute_texture_bind_group: None,
+            grass_compute_storage_bind_group: None,
+            grass_render_uniform_buffer: None,
+            grass_render_uniform_bind_group: None,
+            grass_render_instance_bind_group: None,
+            grass_entity_buffer: None,
+            grass_config: None,
+            grass_terrain_offset: [0.0; 3],
+            grass_terrain_width: 0.0,
+            grass_terrain_depth: 0.0,
+            grass_terrain_height_scale: 0.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
             sprite2d_pipeline: Some(sprite2d_pipeline),
@@ -752,6 +811,298 @@ impl SceneRenderer {
         self.terrain_material_buffer = None;
     }
 
+    /// Initialize grass GPU resources for the loaded terrain.
+    /// Call after load_terrain() when grass is enabled.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_grass(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        config: &flint_terrain::GrassConfig,
+        heightmap_data: &[f32],
+        heightmap_width: u32,
+        heightmap_depth: u32,
+        splat_data: &[u8],
+        splat_width: u32,
+        splat_height: u32,
+        terrain_offset: [f32; 3],
+        terrain_width: f32,
+        terrain_depth: f32,
+        height_scale: f32,
+    ) {
+        let grass_pipeline = match &self.grass_pipeline {
+            Some(p) => p,
+            None => return,
+        };
+
+        let max_instances = config.max_instances(terrain_width, terrain_depth);
+        let instance_buffer_size =
+            (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
+
+        // Instance storage buffer (compute writes, render reads)
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Instance Buffer"),
+            size: instance_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Atomic counter buffer (u32)
+        let counter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Counter Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Staging buffer for reading counter back to CPU
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Staging Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Compute uniform buffer
+        let compute_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Compute Uniform Buffer"),
+            size: std::mem::size_of::<GrassComputeUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let compute_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.compute_uniform_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: compute_uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("Grass Compute Uniform Bind Group"),
+        });
+
+        // Upload heightmap as R32Float texture
+        let hm_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Grass Heightmap Texture"),
+            size: wgpu::Extent3d {
+                width: heightmap_width,
+                height: heightmap_depth,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &hm_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(heightmap_data),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(heightmap_width * 4),
+                rows_per_image: Some(heightmap_depth),
+            },
+            wgpu::Extent3d {
+                width: heightmap_width,
+                height: heightmap_depth,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // Upload splat map as RGBA8 texture
+        let splat_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Grass Splat Texture"),
+            size: wgpu::Extent3d {
+                width: splat_width,
+                height: splat_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &splat_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            splat_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(splat_width * 4),
+                rows_per_image: Some(splat_height),
+            },
+            wgpu::Extent3d {
+                width: splat_width,
+                height: splat_height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Grass Linear Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let hm_view = hm_texture.create_view(&Default::default());
+        let splat_view = splat_texture.create_view(&Default::default());
+
+        let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.compute_texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&hm_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&splat_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
+                },
+            ],
+            label: Some("Grass Compute Texture Bind Group"),
+        });
+
+        let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.compute_storage_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instance_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: counter_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("Grass Compute Storage Bind Group"),
+        });
+
+        // Render uniform buffer
+        let render_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Render Uniform Buffer"),
+            size: std::mem::size_of::<GrassRenderUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let render_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.render_grass_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: render_uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("Grass Render Uniform Bind Group"),
+        });
+
+        // Entity positions buffer
+        let entity_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Entity Buffer"),
+            size: (MAX_GRASS_ENTITIES * std::mem::size_of::<GrassEntityPosition>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let render_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.render_instance_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instance_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: entity_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("Grass Render Instance Bind Group"),
+        });
+
+        // Store everything
+        self.grass_instance_buffer = Some(instance_buffer);
+        self.grass_instance_count = 0;
+        self.grass_max_instances = max_instances;
+        self.grass_counter_buffer = Some(counter_buffer);
+        self.grass_staging_buffer = Some(staging_buffer);
+        self.grass_compute_uniform_buffer = Some(compute_uniform_buffer);
+        self.grass_compute_uniform_bind_group = Some(compute_uniform_bind_group);
+        self.grass_compute_texture_bind_group = Some(compute_texture_bind_group);
+        self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
+        self.grass_render_uniform_buffer = Some(render_uniform_buffer);
+        self.grass_render_uniform_bind_group = Some(render_uniform_bind_group);
+        self.grass_render_instance_bind_group = Some(render_instance_bind_group);
+        self.grass_entity_buffer = Some(entity_buffer);
+        self.grass_config = Some(config.clone());
+        self.grass_terrain_offset = terrain_offset;
+        self.grass_terrain_width = terrain_width;
+        self.grass_terrain_depth = terrain_depth;
+        self.grass_terrain_height_scale = height_scale;
+
+        tracing::info!(
+            "Grass loaded: max {} instances, {:.1}MB buffer",
+            max_instances,
+            instance_buffer_size as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    /// Clear all grass GPU resources.
+    pub fn unload_grass(&mut self) {
+        self.grass_instance_buffer = None;
+        self.grass_instance_count = 0;
+        self.grass_max_instances = 0;
+        self.grass_counter_buffer = None;
+        self.grass_staging_buffer = None;
+        self.grass_compute_uniform_buffer = None;
+        self.grass_compute_uniform_bind_group = None;
+        self.grass_compute_texture_bind_group = None;
+        self.grass_compute_storage_bind_group = None;
+        self.grass_render_uniform_buffer = None;
+        self.grass_render_uniform_bind_group = None;
+        self.grass_render_instance_bind_group = None;
+        self.grass_entity_buffer = None;
+        self.grass_config = None;
+    }
+
+    /// Update entity positions for grass bend-on-contact.
+    /// Also updates entity_count in the render uniform buffer.
+    pub fn update_grass_entities(&self, queue: &wgpu::Queue, positions: &[GrassEntityPosition]) {
+        let count = positions.len().min(MAX_GRASS_ENTITIES);
+        if let Some(buf) = &self.grass_entity_buffer {
+            if count > 0 {
+                queue.write_buffer(buf, 0, bytemuck::cast_slice(&positions[..count]));
+            }
+        }
+        // Update entity_count in the render uniform buffer (at byte offset of entity_count field)
+        if let Some(render_buf) = &self.grass_render_uniform_buffer {
+            let offset = std::mem::offset_of!(GrassRenderUniforms, entity_count) as u64;
+            queue.write_buffer(render_buf, offset, bytemuck::cast_slice(&[count as u32]));
+        }
+    }
+
     /// Get an immutable reference to the texture cache.
     pub fn texture_cache(&self) -> Option<&TextureCache> {
         self.texture_cache.as_ref()
@@ -829,6 +1180,20 @@ impl SceneRenderer {
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
         );
+
+        let grass_pipeline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            GrassPipeline::new(
+                device,
+                scene_format,
+                &pipeline.transform_bind_group_layout,
+                &pipeline.light_bind_group_layout,
+            )
+        }))
+        .unwrap_or_else(|_| {
+            tracing::warn!("Grass pipeline creation failed — grass disabled");
+            None
+        });
+
         let billboard_pipeline = BillboardPipeline::new(device, scene_format);
         let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
@@ -869,6 +1234,25 @@ impl SceneRenderer {
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
+            grass_pipeline,
+            grass_instance_buffer: None,
+            grass_instance_count: 0,
+            grass_max_instances: 0,
+            grass_counter_buffer: None,
+            grass_staging_buffer: None,
+            grass_compute_uniform_buffer: None,
+            grass_compute_uniform_bind_group: None,
+            grass_compute_texture_bind_group: None,
+            grass_compute_storage_bind_group: None,
+            grass_render_uniform_buffer: None,
+            grass_render_uniform_bind_group: None,
+            grass_render_instance_bind_group: None,
+            grass_entity_buffer: None,
+            grass_config: None,
+            grass_terrain_offset: [0.0; 3],
+            grass_terrain_width: 0.0,
+            grass_terrain_depth: 0.0,
+            grass_terrain_height_scale: 0.0,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
             sprite2d_pipeline: Some(sprite2d_pipeline),
