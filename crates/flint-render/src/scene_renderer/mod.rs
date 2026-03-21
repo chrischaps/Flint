@@ -155,6 +155,7 @@ pub struct SceneRenderer {
     grass_render_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_render_instance_bind_group: Option<wgpu::BindGroup>,
     grass_entity_buffer: Option<wgpu::Buffer>,
+    grass_entity_count: u32,
     grass_config: Option<flint_terrain::GrassConfig>,
     grass_terrain_offset: [f32; 3],
     grass_terrain_width: f32,
@@ -303,6 +304,7 @@ impl SceneRenderer {
             grass_render_uniform_bind_group: None,
             grass_render_instance_bind_group: None,
             grass_entity_buffer: None,
+            grass_entity_count: 0,
             grass_config: None,
             grass_terrain_offset: [0.0; 3],
             grass_terrain_width: 0.0,
@@ -1095,23 +1097,22 @@ impl SceneRenderer {
         self.grass_render_uniform_bind_group = None;
         self.grass_render_instance_bind_group = None;
         self.grass_entity_buffer = None;
+        self.grass_entity_count = 0;
         self.grass_config = None;
     }
 
     /// Update entity positions for grass bend-on-contact.
     /// Also updates entity_count in the render uniform buffer.
-    pub fn update_grass_entities(&self, queue: &wgpu::Queue, positions: &[GrassEntityPosition]) {
+    pub fn update_grass_entities(&mut self, queue: &wgpu::Queue, positions: &[GrassEntityPosition]) {
         let count = positions.len().min(MAX_GRASS_ENTITIES);
+        self.grass_entity_count = count as u32;
         if let Some(buf) = &self.grass_entity_buffer {
             if count > 0 {
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(&positions[..count]));
             }
         }
-        // Update entity_count in the render uniform buffer (at byte offset of entity_count field)
-        if let Some(render_buf) = &self.grass_render_uniform_buffer {
-            let offset = std::mem::offset_of!(GrassRenderUniforms, entity_count) as u64;
-            queue.write_buffer(render_buf, offset, bytemuck::cast_slice(&[count as u32]));
-        }
+        // Note: entity_count is written to the render uniform buffer in dispatch_grass_compute,
+        // which uses self.grass_entity_count to preserve the value set here.
     }
 
     /// Get an immutable reference to the texture cache.
@@ -1259,6 +1260,7 @@ impl SceneRenderer {
             grass_render_uniform_bind_group: None,
             grass_render_instance_bind_group: None,
             grass_entity_buffer: None,
+            grass_entity_count: 0,
             grass_config: None,
             grass_terrain_offset: [0.0; 3],
             grass_terrain_width: 0.0,

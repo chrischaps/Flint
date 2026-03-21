@@ -729,7 +729,10 @@ impl SceneRenderer {
             &self.grass_render_instance_bind_group,
         ) {
             if self.grass_instance_count > 0 {
-                // Bind group 0 (transform) is already set from terrain pass with correct view_proj
+                // Explicitly set bind group 0 (transform) — cannot rely on terrain having set it
+                if let Some(first_terrain) = self.terrain_draws.first() {
+                    render_pass.set_bind_group(0, &first_terrain.transform_bind_group, &[]);
+                }
                 render_pass.set_pipeline(&gp.render_pipeline);
                 render_pass.set_bind_group(1, render_bg, &[]);
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
@@ -1122,7 +1125,7 @@ impl SceneRenderer {
             blade_height: config.blade_height,
             color_dry: config.color_dry,
             dry_amount: config.dry_amount,
-            entity_count: 0, // Updated by update_grass_entities
+            entity_count: self.grass_entity_count,
             _pad0: 0.0,
             _pad1: 0.0,
             _pad2: 0.0,

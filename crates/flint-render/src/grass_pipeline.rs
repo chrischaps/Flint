@@ -7,7 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 /// Per-instance data written by compute shader, read by vertex shader.
-/// 24 bytes, tightly packed.
+/// 32 bytes — must match WGSL `GrassInstance` stride (vec3<f32> forces 16-byte alignment).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GrassInstanceGpu {
@@ -15,6 +15,8 @@ pub struct GrassInstanceGpu {
     pub rotation: f32,       // Y-axis rotation (radians)
     pub height: f32,         // Scale factor (1.0 ± variation)
     pub tint: u32,           // Packed RGBA8 color shift
+    pub _pad0: u32,          // Padding to match 32-byte WGSL stride
+    pub _pad1: u32,
 }
 
 /// Uniform buffer for the compute shader.
