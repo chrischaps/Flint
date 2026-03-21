@@ -1,6 +1,7 @@
 //! Terrain configuration and orchestration
 
 use crate::chunk::{generate_chunk, TerrainChunk};
+use crate::grass_config::GrassConfig;
 use crate::heightmap::Heightmap;
 
 /// Configuration for terrain generation, parsed from the `terrain` component
@@ -25,6 +26,8 @@ pub struct TerrainConfig {
     pub metallic: f32,
     /// PBR roughness factor
     pub roughness: f32,
+    /// Optional grass rendering configuration
+    pub grass: Option<GrassConfig>,
 }
 
 /// A complete terrain composed of chunks
