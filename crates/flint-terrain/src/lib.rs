@@ -43,6 +43,7 @@ mod tests {
             layer_textures: [String::new(), String::new(), String::new(), String::new()],
             metallic: 0.0,
             roughness: 0.85,
+            grass: None,
         };
 
         let terrain = Terrain::generate(&hm, &config);
@@ -83,6 +84,7 @@ mod tests {
             layer_textures: [String::new(), String::new(), String::new(), String::new()],
             metallic: 0.0,
             roughness: 0.85,
+            grass: None,
         };
 
         // At the origin (0,0), height should be 0.5 * 40.0 = 20.0
@@ -104,6 +106,7 @@ mod tests {
             layer_textures: [String::new(), String::new(), String::new(), String::new()],
             metallic: 0.0,
             roughness: 0.85,
+            grass: None,
         };
 
         let terrain = Terrain::generate(&hm, &config);
