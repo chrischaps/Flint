@@ -11,6 +11,10 @@
 # Claude Code local settings
 .claude/
 
+# Worktrees and brainstorming artifacts
+.worktrees/
+.superpowers/
+
 # OS
 .DS_Store
 Thumbs.db
