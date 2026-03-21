@@ -141,4 +141,10 @@ mod tests {
         let source = include_str!("sprite2d_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("sprite2d_shader.wgsl failed to parse");
     }
+
+    #[test]
+    fn grass_compute_shader_wgsl_parses() {
+        let source = include_str!("grass_compute.wgsl");
+        naga::front::wgsl::parse_str(source).expect("grass_compute.wgsl failed to parse");
+    }
 }
