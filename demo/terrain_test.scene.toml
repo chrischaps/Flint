@@ -47,6 +47,10 @@ chunk_resolution = 64
 texture_tile = 12.0
 roughness = 0.85
 metallic = 0.0
+"grass.enabled" = true
+"grass.density" = 6.0
+"grass.blade_height" = 0.35
+"grass.max_distance" = 60.0
 
 # --- Lights ---
 

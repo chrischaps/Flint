@@ -957,6 +957,14 @@ impl SceneRenderer {
             },
         );
 
+        // Heightmap uses nearest (non-filtering) sampler since R32Float is not filterable
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Grass Nearest Sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Grass Linear Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -976,7 +984,7 @@ impl SceneRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
+                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -2450,13 +2458,18 @@ impl SceneRenderer {
             camera,
         );
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-
-        // Dispatch grass compute to scatter instances (before render pass)
-        let grass_time = self.grass_time;
-        self.dispatch_grass_compute(device, queue, &mut encoder, camera, grass_time);
+        // Grass compute: dispatch in a separate encoder+submit so we can read back
+        // the instance count before the render pass needs it.
+        if self.grass_config.as_ref().is_some_and(|c| c.enabled) {
+            let mut compute_encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Grass Compute Encoder"),
+                });
+            let grass_time = self.grass_time;
+            self.dispatch_grass_compute(device, queue, &mut compute_encoder, camera, grass_time);
+            queue.submit(std::iter::once(compute_encoder.finish()));
+            self.read_grass_instance_count(device);
+        }
 
         // Choose render target: HDR buffer or direct to surface
         let scene_target_view = if has_postprocess {
@@ -2464,6 +2477,10 @@ impl SceneRenderer {
         } else {
             target_view
         };
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2497,9 +2514,6 @@ impl SceneRenderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
-
-        // Read back grass instance count for next frame's draw call
-        self.read_grass_instance_count(device);
 
         // Composite: always needed to convert HDR → sRGB surface
         if has_postprocess {
