@@ -15,6 +15,7 @@ mod debug;
 mod gpu_mesh;
 mod headless;
 pub mod model_loader;
+pub mod grass_pipeline;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;
@@ -36,6 +37,10 @@ pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use headless::HeadlessContext;
+pub use grass_pipeline::{
+    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
+    GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
+};
 pub use particle_pipeline::{
     ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
 };
