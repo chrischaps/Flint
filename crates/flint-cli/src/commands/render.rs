@@ -390,6 +390,7 @@ fn load_terrain_for_render(
             ],
             metallic: get_f32("metallic", 0.0),
             roughness: get_f32("roughness", 0.85),
+            grass: None,
         };
 
         let terrain = Terrain::generate(&heightmap, &config);
