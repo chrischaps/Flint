@@ -147,4 +147,10 @@ mod tests {
         let source = include_str!("grass_compute.wgsl");
         naga::front::wgsl::parse_str(source).expect("grass_compute.wgsl failed to parse");
     }
+
+    #[test]
+    fn grass_render_shader_wgsl_parses() {
+        let source = include_str!("grass_render.wgsl");
+        naga::front::wgsl::parse_str(source).expect("grass_render.wgsl failed to parse");
+    }
 }
