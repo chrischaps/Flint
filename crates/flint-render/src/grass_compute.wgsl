@@ -108,8 +108,13 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // Sample heightmap for Y position
-    let height_sample = textureSampleLevel(heightmap_texture, heightmap_sampler, vec2<f32>(u, v), 0.0).r;
+    // Load heightmap texel for Y position (R32Float is not filterable)
+    let hm_dims = textureDimensions(heightmap_texture, 0);
+    let hm_coord = vec2<i32>(
+        clamp(i32(u * f32(hm_dims.x)), 0, i32(hm_dims.x) - 1),
+        clamp(i32(v * f32(hm_dims.y)), 0, i32(hm_dims.y) - 1),
+    );
+    let height_sample = textureLoad(heightmap_texture, hm_coord, 0).r;
     let world_y = params.terrain_offset.y + height_sample * params.height_scale;
 
     // Distance check for LOD/density falloff
