@@ -180,6 +180,8 @@ pub struct SceneRenderer {
     bitmap_font_cache: HashMap<String, BitmapFont>,
     /// Scene directory for resolving relative font/texture paths
     pub scene_dir: Option<std::path::PathBuf>,
+    /// Time in seconds, used for grass wind animation. Set by the player before render().
+    pub grass_time: f32,
 }
 
 impl SceneRenderer {
@@ -319,6 +321,7 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            grass_time: 0.0,
         }
     }
 
@@ -1266,6 +1269,7 @@ impl SceneRenderer {
             aspect_ratio: 16.0 / 9.0,
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
+            grass_time: 0.0,
         }
     }
 
@@ -2446,16 +2450,20 @@ impl SceneRenderer {
             camera,
         );
 
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        // Dispatch grass compute to scatter instances (before render pass)
+        let grass_time = self.grass_time;
+        self.dispatch_grass_compute(device, queue, &mut encoder, camera, grass_time);
+
         // Choose render target: HDR buffer or direct to surface
         let scene_target_view = if has_postprocess {
             &self.postprocess_resources.as_ref().unwrap().hdr_view
         } else {
             target_view
         };
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2489,6 +2497,9 @@ impl SceneRenderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Read back grass instance count for next frame's draw call
+        self.read_grass_instance_count(device);
 
         // Composite: always needed to convert HDR → sRGB surface
         if has_postprocess {
