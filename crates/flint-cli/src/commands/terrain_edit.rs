@@ -335,6 +335,7 @@ impl TerrainEditApp {
             layer_textures: self.spec.layer_paths(),
             metallic: self.spec.textures.metallic,
             roughness: self.spec.textures.roughness,
+            grass: None,
         };
         let terrain = Terrain::generate(&hm, &config);
         let spec_dir = self
@@ -380,6 +381,7 @@ impl TerrainEditApp {
             layer_textures: self.spec.layer_paths(),
             metallic: self.spec.textures.metallic,
             roughness: self.spec.textures.roughness,
+            grass: None,
         };
         let terrain = Terrain::generate(&hm, &config);
 
