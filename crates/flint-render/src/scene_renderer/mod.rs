@@ -27,7 +27,7 @@ use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::grass_pipeline::{
     GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
-    GrassRenderUniforms, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
+    GrassRenderUniforms, MAX_GRASS_ENTITIES,
 };
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
