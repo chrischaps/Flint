@@ -6,6 +6,7 @@
 
 pub mod brush;
 pub mod chunk;
+pub mod grass_config;
 pub mod heightmap;
 pub mod procgen;
 pub mod splatgen;
@@ -21,6 +22,7 @@ pub use heightmap::Heightmap;
 pub use procgen::generate_heightmap;
 pub use splatgen::generate_splat_map;
 pub use spec::TerrainSpec;
+pub use grass_config::GrassConfig;
 pub use terrain::{Terrain, TerrainConfig};
 
 #[cfg(test)]
