@@ -4,6 +4,7 @@
 //! Two-pass system: compute shader places instances, render pass draws cross-quads.
 
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
 
 /// Per-instance data written by compute shader, read by vertex shader.
 /// 24 bytes, tightly packed.
@@ -78,6 +79,21 @@ pub const MAX_GRASS_ENTITIES: usize = 8;
 pub struct GrassVertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
+}
+
+impl GrassVertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x2,
+    ];
+
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GrassVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
 }
 
 /// Number of indices in the shared blade mesh (3 quads × 4 triangles × 3 = 36)
@@ -179,4 +195,306 @@ pub struct GrassPipeline {
     // Shared blade mesh
     pub blade_vertex_buffer: wgpu::Buffer,
     pub blade_index_buffer: wgpu::Buffer,
+}
+
+impl GrassPipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        scene_format: wgpu::TextureFormat,
+        transform_bind_group_layout: &wgpu::BindGroupLayout,
+        light_bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Option<Self> {
+        // Compute shader
+        let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Grass Compute Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("grass_compute.wgsl").into()),
+        });
+
+        // Render shader
+        let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Grass Render Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("grass_render.wgsl").into()),
+        });
+
+        // --- Compute bind group layouts ---
+
+        // Group 0: Compute uniforms
+        let compute_uniform_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("Grass Compute Uniform Layout"),
+            });
+
+        // Group 1: Heightmap + splat textures
+        let compute_texture_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("Grass Compute Texture Layout"),
+            });
+
+        // Group 2: Instance storage buffer (read-write) + atomic counter
+        let compute_storage_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("Grass Compute Storage Layout"),
+            });
+
+        // Compute pipeline
+        let compute_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[
+                    &compute_uniform_layout,
+                    &compute_texture_layout,
+                    &compute_storage_layout,
+                ],
+                push_constant_ranges: &[],
+                label: Some("Grass Compute Pipeline Layout"),
+            });
+
+        let compute_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Grass Compute Pipeline"),
+                layout: Some(&compute_pipeline_layout),
+                module: &compute_shader,
+                entry_point: Some("cs_main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        // --- Render bind group layouts ---
+
+        // Group 1: Grass render uniforms
+        let render_grass_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("Grass Render Uniform Layout"),
+            });
+
+        // Group 3: Instance buffer (read) + entity positions (read)
+        let render_instance_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("Grass Render Instance Layout"),
+            });
+
+        // Render pipeline
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[
+                    transform_bind_group_layout, // Group 0
+                    &render_grass_layout,         // Group 1
+                    light_bind_group_layout,      // Group 2
+                    &render_instance_layout,      // Group 3
+                ],
+                push_constant_ranges: &[],
+                label: Some("Grass Render Pipeline Layout"),
+            });
+
+        let render_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Grass Render Pipeline"),
+                layout: Some(&render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &render_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[GrassVertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &render_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: scene_format,
+                        blend: None, // Opaque with alpha test (discard in shader)
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None, // Double-sided grass blades
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Shadow pipeline (depth-only, uses vs_shadow entry point)
+        // Uses same 4-group layout as render pipeline so the shader's @group bindings match.
+        // Group 2 (lights) is bound but unused by the shadow shader — needed for layout compat.
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[
+                    transform_bind_group_layout, // Group 0
+                    &render_grass_layout,         // Group 1
+                    light_bind_group_layout,      // Group 2
+                    &render_instance_layout,      // Group 3
+                ],
+                push_constant_ranges: &[],
+                label: Some("Grass Shadow Pipeline Layout"),
+            });
+
+        let shadow_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Grass Shadow Pipeline"),
+                layout: Some(&shadow_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &render_shader,
+                    entry_point: Some("vs_shadow"),
+                    buffers: &[GrassVertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: None, // Depth-only
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 2,
+                        slope_scale: 1.5,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        // Generate blade mesh
+        let (blade_verts, blade_indices) = generate_blade_mesh();
+
+        let blade_vertex_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grass Blade Vertex Buffer"),
+                contents: bytemuck::cast_slice(&blade_verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+        let blade_index_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Grass Blade Index Buffer"),
+                contents: bytemuck::cast_slice(&blade_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        Some(Self {
+            compute_pipeline,
+            render_pipeline,
+            shadow_pipeline,
+            compute_uniform_layout,
+            compute_texture_layout,
+            compute_storage_layout,
+            render_grass_layout,
+            render_instance_layout,
+            blade_vertex_buffer,
+            blade_index_buffer,
+        })
+    }
 }
