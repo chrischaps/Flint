@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-22
 **Status:** Approved
-**Scope:** `flint-render` (stats collection + overlay), `flint-player` (integration), `flint-viewer` (integration, replaces old panel)
+**Scope:** `flint-render` (stats collection), `flint-player` (integration + overlay rendering), `flint-viewer` (integration + overlay rendering, replaces old panel)
 
 ## Problem
 
@@ -27,12 +27,13 @@ pub struct RenderStats {
     pub skinned_draws: u32,
     pub terrain_draws: u32,
     pub terrain_total_chunks: u32,
-    pub transparent_draws: u32,
+    pub transparent_draws: u32,      // includes transparent_skinned_draws
     pub billboard_draws: u32,
     pub particle_draws: u32,
     pub particle_instances: u32,
     pub sprite_batches: u32,
     pub grass_instances: u32,
+    pub grass_draw_calls: u32,       // 0 or 1
     // Shadow pass
     pub shadow_draw_calls: u32,
     pub shadow_triangles: u32,
@@ -43,7 +44,13 @@ pub struct RenderStats {
 
 Implements `Default` for initialization.
 
-**`render_stats_overlay(ctx: &egui::Context, stats: &RenderStats)`** — renders the stats as a semi-transparent egui `Window` anchored to the top-right corner. Layout:
+**`format_count(n: u32) -> String`** — human-readable formatting helper. Lives in this file alongside the struct. Values >= 1,000,000 display as `1.2M`, >= 1,000 as `1.2K`, otherwise plain number.
+
+Note: `flint-render` does NOT depend on `egui`, and we keep it that way. This file only contains the `RenderStats` data struct and the formatting helper — no UI code. The overlay rendering function lives in the consumer crates (player and viewer), which already depend on `egui`.
+
+### Overlay rendering (in player and viewer)
+
+**`render_stats_overlay(ctx: &egui::Context, stats: &RenderStats)`** — a small function duplicated in both `flint-player` and `flint-viewer` (or extracted into a shared utility if duplication becomes a problem). Renders the stats as a semi-transparent egui `Window` anchored to the top-right corner. Layout:
 
 ```
 ┌─ RENDERING STATS ──────────┐
@@ -75,12 +82,20 @@ Numbers use human-readable formatting: values >= 1000 display as `1.2K`, >= 1000
 
 **`pub fn collect_stats(&self) -> RenderStats`** — aggregates stats from internal draw call vectors:
 
-- `draw_calls`: sum of all draw call vector lengths (entity_draws + skinned_entity_draws + terrain_draws + transparent_draws + transparent_skinned_draws + billboard_draws + particle_draws + sprite2d_batches)
-- `triangles`: sum of all `index_count / 3` across all draw call types. For particles, each particle draw uses instanced rendering so triangle count = instance_count * particle_mesh_tris. For sprites, each instance = 2 triangles (quad).
+- `draw_calls`: sum of all draw call vector lengths (entity_draws + skinned_entity_draws + terrain_draws + transparent_draws + transparent_skinned_draws + billboard_draws + particle_draws + sprite2d_batches + grass (0 or 1))
+- `triangles`: sum per type, since not all draw call structs have `index_count`:
+  - `entity_draws`, `skinned_entity_draws`, `transparent_draws`, `transparent_skinned_draws`: each has `index_count` field → sum `index_count / 3`
+  - `terrain_draws`: each has `index_count` → sum `index_count / 3`
+  - `billboard_draws`: no `index_count` — each billboard is a fixed quad → 2 triangles per draw
+  - `particle_draws`: no `index_count` — each uses instanced quads → `instance_count * 2` per draw
+  - `sprite2d_batches`: no `index_count` — each instance is a quad → `instance_count * 2` per batch
+  - grass: uses `BLADE_INDEX_COUNT` indices per instance → `grass_instance_count * BLADE_INDEX_COUNT / 3`
 - Per-system counts: `.len()` of each vector
-- `terrain_total_chunks`: `terrain_draws.len()` reflects drawn chunks. Total chunks requires knowing the original chunk count — store `terrain_total_chunks: u32` on `SceneRenderer`, set during `load_terrain()` from the chunks slice length.
+- `transparent_draws`: includes both `transparent_draws.len()` and `transparent_skinned_draws.len()`
+- `terrain_total_chunks`: total chunks before culling. Store `terrain_total_chunks: u32` on `SceneRenderer`, set during `load_terrain()` and `load_terrain_from_data()` from the chunks slice length.
 - `grass_instances`: from `self.grass_instance_count`
-- `shadow_draw_calls` and `shadow_triangles`: these are harder to collect since the shadow pass creates temporary buffers. Instead, compute them from the same draw call vectors (same entity/terrain draws are submitted per cascade, minus culled chunks). For simplicity, report the count of drawable entities + terrain chunks * CASCADE_COUNT as an estimate. Or omit and just report the main pass stats.
+- `grass_draw_calls`: 1 if `grass_instance_count > 0`, else 0
+- `shadow_draw_calls` and `shadow_triangles`: estimated from main pass data × `CASCADE_COUNT` (currently 3, defined in `shadow.rs`). This overestimates (doesn't account for shadow frustum culling) but gives useful order-of-magnitude.
 - `fps` and `frame_time_ms`: set to 0.0 by `collect_stats()` — the caller fills these in from their own timing source.
 - `resolution`: set to `[0, 0]` — the caller fills this in from their render context.
 
@@ -99,20 +114,19 @@ In `crates/flint-viewer/src/app.rs`:
 
 - Replace the existing `RenderStats` usage with the new shared `collect_stats()` + `render_stats_overlay()`
 - Add `show_stats: bool` field (default false)
-- F2 key handler: toggle `show_stats`
+- F2 is already taken in the viewer (wireframe overlay toggle), and F3 is taken (normal arrows). Use **backtick/grave (`` ` ``)** as the toggle key in the viewer, since it's a common debug key in game engines. Alternatively, add a checkbox to the viewer's existing egui inspector panel.
+- The viewer must retain its own FPS tracking mechanism (rolling `VecDeque<Instant>` window, same pattern as existing `RenderStats`) to populate `fps`/`frame_time_ms` on the struct before passing to the overlay function.
 - Remove or simplify `crates/flint-viewer/src/panels/render_stats.rs` (the old FPS-only panel)
 
 ### Module registration
 
-Add `pub mod render_stats;` and `pub use render_stats::{RenderStats, render_stats_overlay};` in `crates/flint-render/src/lib.rs`.
-
-Note: `flint-render` already depends on `egui` (used by the viewer for inspector UI), so adding egui rendering code here requires no new dependencies.
+Add `pub mod render_stats;` and `pub use render_stats::{RenderStats, format_count};` in `crates/flint-render/src/lib.rs`. No new dependencies — `RenderStats` is a plain data struct.
 
 ## Shadow Pass Stats — Simplified Approach
 
 Computing exact shadow pass draw calls is complex (per-cascade frustum culling, conditional grass rendering, etc.). Instead of tracking these at render time, estimate from the main pass data:
 
-- `shadow_draw_calls`: (entity_draws + skinned_draws + terrain_draws_visible) * CASCADE_COUNT (currently 4)
+- `shadow_draw_calls`: (entity_draws + skinned_draws + terrain_draws_visible) * CASCADE_COUNT (currently 3, from `shadow.rs`)
 - `shadow_triangles`: corresponding triangle sum * CASCADE_COUNT
 
 This is an overestimate (doesn't account for shadow frustum culling) but gives a useful order-of-magnitude. If precise shadow stats are needed later, the shadow pass can be instrumented to count actual submissions.
@@ -130,11 +144,11 @@ The overlay rendering itself is visual and tested via `flint render` / `flint pl
 
 | File | Change |
 |------|--------|
-| `crates/flint-render/src/render_stats.rs` | **New** — `RenderStats` struct, `collect_stats()` return type, `render_stats_overlay()` egui function, number formatting |
+| `crates/flint-render/src/render_stats.rs` | **New** — `RenderStats` struct, `format_count()` helper |
 | `crates/flint-render/src/lib.rs` | Add `mod render_stats`, pub use exports |
-| `crates/flint-render/src/scene_renderer/mod.rs` | Add `terrain_total_chunks: u32` field, set in `load_terrain()`, add `pub fn collect_stats(&self) -> RenderStats` |
-| `crates/flint-player/src/player_app/mod.rs` | Add `show_stats` bool, F2 handler, stats collection + overlay rendering in frame loop |
-| `crates/flint-viewer/src/app.rs` | Add `show_stats` bool, F2 handler, replace old stats with new overlay |
+| `crates/flint-render/src/scene_renderer/mod.rs` | Add `terrain_total_chunks: u32` field (set in `load_terrain()` and `load_terrain_from_data()`), add `pub fn collect_stats(&self) -> RenderStats` |
+| `crates/flint-player/src/player_app/mod.rs` | Add `show_stats` bool, F2 handler, `render_stats_overlay()` function, stats collection + overlay rendering in frame loop |
+| `crates/flint-viewer/src/app.rs` | Add `show_stats` bool, backtick toggle, `render_stats_overlay()` function, replace old stats with new overlay |
 | `crates/flint-viewer/src/panels/render_stats.rs` | Remove or simplify (replaced by shared impl) |
 
 ## Out of Scope
