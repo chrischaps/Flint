@@ -105,8 +105,12 @@ impl SceneRenderer {
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
 
-                // Render terrain chunks into shadow map
+                // Render terrain chunks into shadow map (frustum cull per cascade)
+                let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
                 for draw in &self.terrain_draws {
+                    if !cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
+                        continue;
+                    }
                     let shadow_uniforms = ShadowDrawUniforms {
                         light_view_proj: cascade_vp,
                         model: draw.model,
