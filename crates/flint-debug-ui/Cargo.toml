@@ -1,0 +1,13 @@
+[package]
+name = "flint-debug-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+flint-terrain = { workspace = true }
+flint-scene = { workspace = true }
+egui = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }

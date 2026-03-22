@@ -20,6 +20,7 @@ members = [
     "crates/flint-script",
     "crates/flint-particles",
     "crates/flint-terrain",
+    "crates/flint-debug-ui",
     "crates/flint-procgen",
     "crates/flint-procgen-ai",
     "crates/flint-cli",
@@ -47,6 +48,7 @@ default-members = [
     "crates/flint-script",
     "crates/flint-particles",
     "crates/flint-terrain",
+    "crates/flint-debug-ui",
     "crates/flint-procgen",
     "crates/flint-cli",
 ]
@@ -156,5 +158,6 @@ flint-particles = { path = "crates/flint-particles" }
 flint-terrain = { path = "crates/flint-terrain" }
 flint-procgen = { path = "crates/flint-procgen" }
 flint-procgen-ai = { path = "crates/flint-procgen-ai" }
+flint-debug-ui = { path = "crates/flint-debug-ui" }
 flint-player = { path = "crates/flint-player" }
 flint-android = { path = "crates/flint-android" }
