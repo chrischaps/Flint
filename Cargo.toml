@@ -25,6 +25,7 @@ members = [
     "crates/flint-procgen-ai",
     "crates/flint-cli",
     "crates/flint-android",
+    "tools/arch-analyzer",
 ]
 # flint-android depends on ndk-sys which only compiles for Android targets.
 # Exclude it from default `cargo build`; build with `cargo ndk -p flint-android`.

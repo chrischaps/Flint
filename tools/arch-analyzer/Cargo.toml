@@ -1,0 +1,18 @@
+[package]
+name = "flint-arch-analyzer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Static analysis tool that generates architecture data for the Flint engine"
+
+[[bin]]
+name = "flint-arch-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+syn = { version = "2", features = ["full", "visit"] }
+walkdir = "2"
+chrono = { version = "0.4", features = ["serde"] }
