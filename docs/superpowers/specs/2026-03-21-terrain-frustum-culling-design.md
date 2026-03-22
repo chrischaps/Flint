@@ -54,9 +54,15 @@ pub struct TerrainDrawCall {
 }
 ```
 
-### Changes to `load_terrain()`
+### Changes to `TerrainDrawCall` construction sites
 
-In `crates/flint-render/src/scene_renderer/mod.rs`, copy chunk AABBs when constructing each `TerrainDrawCall`:
+All sites that construct `TerrainDrawCall` must supply `aabb_min` and `aabb_max`. There are three:
+
+1. `load_terrain()` (~line 602 of `mod.rs`) — primary load path
+2. `reload_terrain_geometry()` (~line 679 of `mod.rs`) — editor brush sculpting path
+3. `load_terrain_from_data()` (~line 812 of `mod.rs`) — delegates to `reload_terrain_geometry()`
+
+Each copies the AABB from the chunk:
 
 ```rust
 self.terrain_draws.push(TerrainDrawCall {
@@ -80,7 +86,15 @@ for draw in &self.terrain_draws {
 }
 ```
 
-The `view_proj` matrix must be available in the render pass method. It is already computed in `render_to()` — thread it through to the terrain rendering path.
+The `view_proj` matrix is computed in `render_to()` but not currently available inside `render_normal_pass()`. Store the camera frustum as a field on `SceneRenderer` — set it during `update_per_frame_uniforms()` or at the top of `render_to()`:
+
+```rust
+self.camera_frustum = Some(Frustum::from_view_projection(&view_proj));
+```
+
+Then `render_normal_pass()` accesses `self.camera_frustum` without any signature changes.
+
+**Model transform note:** The frustum test uses `view_proj * model` as the combined matrix when extracting planes (or equivalently, transforms the AABB into world space). In practice terrain model matrices are identity or simple translations, but the implementation should handle the general case by incorporating `draw.model` into the VP before extraction, or by transforming the AABB min/max by the model matrix before testing.
 
 ### Changes to shadow pass
 
@@ -108,8 +122,13 @@ Unit tests in `frustum.rs`:
 | `crates/flint-render/src/frustum.rs` | **New** — `Frustum` struct, extraction, AABB test |
 | `crates/flint-render/src/lib.rs` | Add `mod frustum` |
 | `crates/flint-render/src/terrain_pipeline.rs` | Add `aabb_min`/`aabb_max` to `TerrainDrawCall` |
-| `crates/flint-render/src/scene_renderer/mod.rs` | Copy AABB in `load_terrain()` |
+| `crates/flint-render/src/scene_renderer/mod.rs` | Copy AABB in `load_terrain()`, `reload_terrain_geometry()`, `load_terrain_from_data()` |
 | `crates/flint-render/src/scene_renderer/render_passes.rs` | Frustum cull in normal + shadow terrain loops |
+
+## Notes
+
+- **Projection agnostic:** The Griggs/Hartmann extraction works for both perspective and orthographic projection matrices. No special-casing needed.
+- **Grass rendering unaffected:** Grass uses a single GPU-instanced draw call covering the entire terrain, not per-chunk draws. It is not culled by this change.
 
 ## Out of Scope
 
@@ -117,3 +136,4 @@ Unit tests in `frustum.rs`:
 - Occlusion culling
 - Temporal coherence / caching visibility flags across frames
 - LOD selection (Priority 2 on terrain roadmap)
+- Grass instance culling (single instanced draw, not per-chunk)
