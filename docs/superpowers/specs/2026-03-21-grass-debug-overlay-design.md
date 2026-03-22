@@ -54,11 +54,11 @@ Implements `DebugPanel`. Stores:
 - `terrain_entity_name: String` — TOML entity key (e.g., "ground") for patching
 - `open: bool` — visibility toggle
 - `dirty: bool` — tracks whether config has changed since last applied
-- `density_changed: bool` — tracks whether density specifically changed (requires buffer reallocation)
+- `density_changed: bool` — tracks whether the `density` field specifically changed (requires instance buffer reallocation); `density_threshold` changes do NOT set this flag
 
 ## Panel Layout
 
-egui `SidePanel::right`, collapsible sections (right side is consistent with the viewer's inspector panel convention):
+egui `SidePanel::right` with `.default_width(280.0)`, collapsible sections (right side is consistent with the viewer's inspector panel convention):
 
 ### Enable
 | Field | Widget |
@@ -125,7 +125,7 @@ Formats the working `GrassConfig` as a TOML snippet:
 "grass.blade_width" = 0.09
 ...
 ```
-Copies to clipboard via `ui.output_mut(|o| o.copied_text = snippet)`.
+Copies to clipboard via `ui.output_mut(|o| o.copied_text = snippet)`. The snippet is valid for pasting under an existing `[entities.<name>.terrain]` header in a scene TOML file.
 
 ### Commit to File
 
@@ -160,7 +160,7 @@ for panel in &mut self.debug_panels {
 
 ### Mouse Capture
 
-When the egui side panel has pointer focus, egui consumes mouse events. The character controller's mouse look should be gated on `!ctx.wants_pointer_input()` to prevent camera rotation while interacting with sliders.
+The player uses `DeviceEvent::MouseMotion` raw deltas for camera look, which bypass egui. The cursor must be released (Escape) before interacting with the debug panel — this is the natural flow since the panel requires a visible cursor. Pressing F3 to open the panel should auto-release cursor capture. Closing the panel (F3 again) re-captures the cursor. Additionally, gate character controller mouse look on `!ctx.wants_pointer_input()` as a safety check.
 
 ## SceneRenderer API Changes
 
@@ -176,14 +176,18 @@ pub fn set_grass_config(&mut self, config: GrassConfig) {
 
 /// Reallocate the grass instance buffer for a new density value,
 /// reusing the existing heightmap/splat GPU textures.
-pub fn reload_grass_config(&mut self, config: GrassConfig, terrain_width: f32, terrain_depth: f32) {
-    // Reallocate instance buffer based on new config.max_instances(width, depth)
-    // Reuse existing grass_compute_texture_bind_group (heightmap + splat already on GPU)
+/// Uses self.grass_terrain_width / self.grass_terrain_depth (already stored from load_grass).
+pub fn reload_grass_config(&mut self, device: &wgpu::Device, config: GrassConfig) {
+    // Reallocate instance buffer based on config.max_instances(self.grass_terrain_width, self.grass_terrain_depth)
+    // Recreate compute_storage_bind_group (binds instance buffer at binding 0)
+    // Recreate render_instance_bind_group (binds instance buffer at binding 0)
+    // Reuse: grass_compute_texture_bind_group, compute_uniform_bind_group,
+    //        render_uniform_bind_group, entity_buffer, render_uniform_buffer
     // Store new config
 }
 ```
 
-`set_grass_config` handles the common case (all fields except density). `reload_grass_config` handles density changes that affect instance buffer capacity — it reuses the already-uploaded heightmap and splat textures rather than re-reading from disk.
+`set_grass_config` handles the common case (all fields except density). `reload_grass_config` handles density changes that affect instance buffer capacity — it reads terrain dimensions from `self` (already stored from `load_grass`), reallocates the instance buffer, and recreates the two bind groups that reference it, while reusing all other GPU resources. Note: `density_threshold` does NOT require reallocation (it's a compute uniform that filters instances at dispatch time), only the `density` field affects buffer capacity via `max_instances()`.
 
 ## File Changes Summary
 
@@ -195,4 +199,4 @@ pub fn reload_grass_config(&mut self, config: GrassConfig, terrain_width: f32, t
 | `crates/flint-debug-ui/src/grass_panel.rs` | `GrassDebugPanel` implementation |
 | `crates/flint-player/Cargo.toml` | Add `flint-debug-ui` dependency |
 | `crates/flint-player/src/player_app/mod.rs` | F3 handler, debug panel storage, render integration, per-frame config push |
-| `crates/flint-render/src/scene_renderer/mod.rs` | Add `set_grass_config()` method |
+| `crates/flint-render/src/scene_renderer/mod.rs` | Add `set_grass_config()` and `reload_grass_config()` methods |
