@@ -10,13 +10,14 @@ pub mod billboard_pipeline;
 pub mod bitmap_font;
 mod camera;
 mod context;
-pub mod orbit_controller;
 mod debug;
-mod gpu_mesh;
-mod headless;
 pub mod frustum;
-pub mod model_loader;
+mod gpu_mesh;
+pub mod render_stats;
 pub mod grass_pipeline;
+mod headless;
+pub mod model_loader;
+pub mod orbit_controller;
 pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;
@@ -33,15 +34,17 @@ pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
-pub use orbit_controller::OrbitCameraController;
 pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};
+pub use frustum::Frustum;
+pub use render_stats::{RenderStats, format_count};
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
-pub use headless::HeadlessContext;
 pub use grass_pipeline::{
     GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
     GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
 };
+pub use headless::HeadlessContext;
+pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{
     ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
 };
@@ -62,7 +65,6 @@ pub use sprite2d_pipeline::{
 };
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::TextureCache;
-pub use frustum::Frustum;
 
 #[cfg(test)]
 mod tests {
