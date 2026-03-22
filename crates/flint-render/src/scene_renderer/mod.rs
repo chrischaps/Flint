@@ -140,6 +140,7 @@ pub struct SceneRenderer {
     terrain_draws: Vec<TerrainDrawCall>,
     terrain_material_bind_group: Option<wgpu::BindGroup>,
     terrain_material_buffer: Option<wgpu::Buffer>,
+    camera_frustum: Option<crate::frustum::Frustum>,
     // Grass
     grass_pipeline: Option<GrassPipeline>,
     grass_instance_buffer: Option<wgpu::Buffer>,
@@ -300,6 +301,7 @@ impl SceneRenderer {
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
+            camera_frustum: None,
             grass_pipeline,
             grass_instance_buffer: None,
             grass_instance_count: 0,
@@ -1287,6 +1289,7 @@ impl SceneRenderer {
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
+            camera_frustum: None,
             grass_pipeline,
             grass_instance_buffer: None,
             grass_instance_count: 0,
@@ -2480,6 +2483,7 @@ impl SceneRenderer {
             return;
         }
         let view_proj = camera.view_projection_matrix();
+        self.camera_frustum = Some(crate::frustum::Frustum::from_view_projection(&view_proj));
         let camera_pos = camera.position_array();
         let debug_mode_u32 = self.debug_state.mode.as_u32();
         let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;

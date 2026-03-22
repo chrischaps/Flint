@@ -150,13 +150,12 @@ impl SceneRenderer {
                                 camera_pos: [0.0; 3],
                                 _pad: 0.0,
                             };
-                            let grass_shadow_buffer = device.create_buffer_init(
-                                &wgpu::util::BufferInitDescriptor {
+                            let grass_shadow_buffer =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                                     label: Some("Grass Shadow Transform"),
                                     contents: bytemuck::cast_slice(&[grass_shadow_uniforms]),
                                     usage: wgpu::BufferUsages::UNIFORM,
-                                },
-                            );
+                                });
                             let grass_shadow_bind =
                                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                                     layout: &self.pipeline.transform_bind_group_layout,
@@ -713,6 +712,11 @@ impl SceneRenderer {
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
 
                 for draw in &self.terrain_draws {
+                    if let Some(ref frustum) = self.camera_frustum {
+                        if !frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
+                            continue;
+                        }
+                    }
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     render_pass
@@ -738,15 +742,9 @@ impl SceneRenderer {
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
                 render_pass.set_bind_group(3, instance_bg, &[]);
                 render_pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    gp.blade_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint16,
-                );
-                render_pass.draw_indexed(
-                    0..BLADE_INDEX_COUNT,
-                    0,
-                    0..self.grass_instance_count,
-                );
+                render_pass
+                    .set_index_buffer(gp.blade_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                render_pass.draw_indexed(0..BLADE_INDEX_COUNT, 0, 0..self.grass_instance_count);
             }
         }
 
