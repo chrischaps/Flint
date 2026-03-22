@@ -1,5 +1,10 @@
 // app.js — Flint Architecture Explorer
 
+// Register the dagre layout extension
+if (typeof cytoscapeDagre !== 'undefined') {
+  cytoscape.use(cytoscapeDagre);
+}
+
 const TIER_COLORS = {
   0: '#4ade80', 1: '#60a5fa', 2: '#a78bfa',
   3: '#fbbf24', 4: '#f87171', 5: '#f87171',
