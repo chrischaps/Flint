@@ -1949,6 +1949,18 @@ impl ApplicationHandler for PlayerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Forward window events to egui when a debug panel is open
+        // so interactive widgets (sliders, buttons) receive mouse input.
+        let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
+        if any_panel_open {
+            if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
+                let response = egui_winit.on_window_event(window, &event);
+                if response.consumed {
+                    return;
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
