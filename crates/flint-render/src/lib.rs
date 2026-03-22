@@ -14,6 +14,7 @@ pub mod orbit_controller;
 mod debug;
 mod gpu_mesh;
 mod headless;
+pub mod frustum;
 pub mod model_loader;
 pub mod grass_pipeline;
 pub mod particle_pipeline;
@@ -61,6 +62,7 @@ pub use sprite2d_pipeline::{
 };
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 pub use texture_cache::TextureCache;
+pub use frustum::Frustum;
 
 #[cfg(test)]
 mod tests {
