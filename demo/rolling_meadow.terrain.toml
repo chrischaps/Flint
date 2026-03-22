@@ -1,0 +1,116 @@
+# Rolling Meadow — gentle hills with wide-open grasslands
+# Designed to showcase the grass rendering system
+
+[meta]
+name = "rolling_meadow"
+version = "1.0.0"
+
+[seed]
+mode = "fixed"
+value = 7
+
+[geometry]
+width = 384.0
+depth = 384.0
+height_scale = 25.0
+resolution = 512
+chunk_resolution = 64
+
+[textures]
+texture_tile = 20.0
+roughness = 0.85
+metallic = 0.0
+
+# Base terrain: smooth rolling hills
+[[height_layers]]
+op = "noise"
+noise_type = "perlin"
+octaves = 5
+frequency = 1.5
+lacunarity = 2.0
+persistence = 0.55
+amplitude = 1.0
+blend = "add"
+
+# Subtle ridged overlay for gentle variation
+[[height_layers]]
+op = "noise"
+noise_type = "ridged"
+octaves = 3
+frequency = 2.5
+lacunarity = 2.0
+persistence = 0.4
+amplitude = 0.15
+blend = "add"
+
+# Flatten valleys to create meadow floors
+[[height_layers]]
+op = "flatten"
+height = 0.12
+falloff = 0.1
+mode = "below"
+
+# Light thermal erosion for natural feel
+[[height_layers]]
+op = "erosion"
+kind = "thermal"
+iterations = 40
+talus_angle = 0.6
+strength = 0.3
+
+# Splat rules: heavy grass on flat/low areas
+# Layer 0 (R) = grass — dominant on low flat terrain
+[[splat_rules]]
+layer = 0
+height_min = 0.0
+height_max = 0.7
+slope_max = 0.5
+noise_amount = 0.15
+noise_scale = 5.0
+
+# Layer 1 (G) = dirt — slopes and mid-height
+[[splat_rules]]
+layer = 1
+height_min = 0.25
+height_max = 0.8
+slope_max = 0.8
+noise_amount = 0.2
+noise_scale = 4.0
+
+# Layer 2 (B) = rock — steep slopes and peaks
+[[splat_rules]]
+layer = 2
+height_min = 0.6
+height_max = 1.0
+slope_max = 1.0
+noise_amount = 0.1
+noise_scale = 6.0
+
+# Layer 3 (A) = sand — lowest valleys
+[[splat_rules]]
+layer = 3
+height_min = 0.0
+height_max = 0.15
+slope_max = 0.3
+noise_amount = 0.25
+noise_scale = 3.0
+
+# Grass configuration
+[grass]
+enabled = true
+density = 10.0
+max_distance = 100.0
+fade_start = 70.0
+blade_width = 0.09
+blade_height = 0.45
+height_variation = 0.35
+color_base = [0.12, 0.42, 0.08]
+color_tip = [0.35, 0.72, 0.18]
+color_dry = [0.50, 0.48, 0.18]
+dry_amount = 0.2
+wind_direction = [0.8, 0.0, 0.6]
+wind_speed = 1.2
+wind_strength = 0.18
+bend_radius = 2.5
+bend_strength = 0.85
+density_threshold = 0.08
