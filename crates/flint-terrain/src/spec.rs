@@ -1,5 +1,6 @@
 //! Terrain spec format — `.terrain.toml` parsing and serialization
 
+use crate::grass_config::GrassConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -17,6 +18,8 @@ pub struct TerrainSpec {
     pub height_layers: Vec<HeightLayer>,
     #[serde(default)]
     pub splat_rules: Vec<SplatRule>,
+    #[serde(default)]
+    pub grass: Option<GrassConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,6 +328,7 @@ impl TerrainSpec {
                 blend: BlendMode::Add,
             })],
             splat_rules: Vec::new(),
+            grass: None,
         }
     }
 
@@ -415,6 +419,39 @@ height_max = 0.5
             HeightLayer::Erosion(e) => assert_eq!(e.kind, ErosionKind::Hydraulic),
             _ => panic!("Expected erosion layer"),
         }
+    }
+
+    #[test]
+    fn parse_spec_with_grass() {
+        let toml_str = r#"
+[meta]
+name = "grassy_hills"
+
+[grass]
+enabled = true
+density = 12.0
+max_distance = 100.0
+blade_height = 0.6
+wind_strength = 0.2
+density_source = "splat"
+density_layer = 0
+density_threshold = 0.15
+"#;
+        let spec: TerrainSpec = toml::from_str(toml_str).unwrap();
+        let grass = spec.grass.expect("grass section should be present");
+        assert!(grass.enabled);
+        assert_eq!(grass.density, 12.0);
+        assert_eq!(grass.max_distance, 100.0);
+        assert_eq!(grass.blade_height, 0.6);
+        assert_eq!(grass.wind_strength, 0.2);
+        assert_eq!(grass.density_layer, 0);
+        assert_eq!(grass.density_threshold, 0.15);
+    }
+
+    #[test]
+    fn spec_without_grass_has_none() {
+        let spec = TerrainSpec::default_spec("no_grass");
+        assert!(spec.grass.is_none());
     }
 
     #[test]

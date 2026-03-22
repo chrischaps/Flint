@@ -17,7 +17,10 @@ use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::model_loader;
-use flint_render::{Camera, ParticleDrawData, ParticleInstanceGpu, RenderContext, SceneRenderer};
+use flint_render::{
+    Camera, GrassEntityPosition, ParticleDrawData, ParticleInstanceGpu, RenderContext,
+    SceneRenderer,
+};
 use flint_runtime::{
     Binding, GameClock, GameEvent, GameStateMachine, InputConfig, InputState, PersistentStore,
     RebindMode, RuntimeSystem, SystemPolicy,
@@ -1149,6 +1152,18 @@ impl PlayerApp {
                 })
                 .collect();
             renderer.update_particles(&context.device, render_draw_data);
+        }
+
+        // Update grass time and entity positions for bend-on-contact
+        if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            renderer.grass_time = self.clock.total_time as f32;
+
+            let cam_pos = self.camera.position;
+            let grass_entities = vec![GrassEntityPosition {
+                position: [cam_pos.x, cam_pos.y, cam_pos.z],
+                _pad: 0.0,
+            }];
+            renderer.update_grass_entities(&context.queue, &grass_entities);
         }
 
         // Drain script post-processing overrides for this frame

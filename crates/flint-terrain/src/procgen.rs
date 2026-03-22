@@ -315,6 +315,7 @@ mod tests {
                 blend: BlendMode::Add,
             })],
             splat_rules: Vec::new(),
+            grass: None,
         }
     }
 

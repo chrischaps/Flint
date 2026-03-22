@@ -15,3 +15,24 @@ layer2_texture = { type = "string", description = "Texture for splat B channel (
 layer3_texture = { type = "string", description = "Texture for splat A channel (e.g. sand)", default = "" }
 metallic = { type = "float", description = "PBR metallic factor 0.0-1.0", default = 0.0 }
 roughness = { type = "float", description = "PBR roughness factor 0.0-1.0", default = 0.85 }
+
+# Grass rendering
+"grass.enabled" = { type = "boolean", description = "Enable grass rendering", default = false }
+"grass.density" = { type = "float", description = "Blades per square meter", default = 8.0 }
+"grass.max_distance" = { type = "float", description = "Grass fade-out distance in meters", default = 80.0 }
+"grass.fade_start" = { type = "float", description = "Distance where density falloff begins", default = 60.0 }
+"grass.blade_width" = { type = "float", description = "Base blade width in meters", default = 0.08 }
+"grass.blade_height" = { type = "float", description = "Base blade height in meters", default = 0.4 }
+"grass.height_variation" = { type = "float", description = "Random height scale variation 0..1", default = 0.3 }
+"grass.color_base" = { type = "vec3", description = "Dark base color (RGB linear)", default = [0.15, 0.45, 0.1] }
+"grass.color_tip" = { type = "vec3", description = "Bright tip color (RGB linear)", default = [0.3, 0.7, 0.15] }
+"grass.color_dry" = { type = "vec3", description = "Dry/dead tint (RGB linear)", default = [0.55, 0.5, 0.2] }
+"grass.dry_amount" = { type = "float", description = "Dry grass mix amount 0..1", default = 0.15 }
+"grass.wind_direction" = { type = "vec3", description = "Wind direction (XZ plane)", default = [1.0, 0.0, 0.3] }
+"grass.wind_speed" = { type = "float", description = "Wind sway frequency multiplier", default = 1.0 }
+"grass.wind_strength" = { type = "float", description = "Max sway displacement in meters", default = 0.15 }
+"grass.bend_radius" = { type = "float", description = "Entity bend influence radius in meters", default = 2.0 }
+"grass.bend_strength" = { type = "float", description = "Entity bend amount 0..1", default = 0.8 }
+"grass.density_source" = { type = "string", description = "Density source: splat or map", default = "splat" }
+"grass.density_layer" = { type = "integer", description = "Which splat layer drives grass density (0=R)", default = 0 }
+"grass.density_threshold" = { type = "float", description = "Min splat weight to spawn grass 0..1", default = 0.1 }

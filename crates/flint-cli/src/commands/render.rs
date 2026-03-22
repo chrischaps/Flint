@@ -390,6 +390,7 @@ fn load_terrain_for_render(
             ],
             metallic: get_f32("metallic", 0.0),
             roughness: get_f32("roughness", 0.85),
+            grass: None,
         };
 
         let terrain = Terrain::generate(&heightmap, &config);
@@ -417,6 +418,104 @@ fn load_terrain_for_render(
             &config.layer_textures,
             scene_dir,
         );
+
+        // Load grass if enabled
+        let grass_config = {
+            let mut gc = flint_terrain::GrassConfig::default();
+            if let Some(enabled) = terrain_comp.get("grass.enabled") {
+                if enabled.as_bool().unwrap_or(false) {
+                    gc.enabled = true;
+                    gc.density = get_f32("grass.density", gc.density);
+                    gc.max_distance = get_f32("grass.max_distance", gc.max_distance);
+                    gc.fade_start = get_f32("grass.fade_start", gc.fade_start);
+                    gc.blade_width = get_f32("grass.blade_width", gc.blade_width);
+                    gc.blade_height = get_f32("grass.blade_height", gc.blade_height);
+                    gc.height_variation =
+                        get_f32("grass.height_variation", gc.height_variation);
+                    gc.wind_speed = get_f32("grass.wind_speed", gc.wind_speed);
+                    gc.wind_strength = get_f32("grass.wind_strength", gc.wind_strength);
+                    gc.bend_radius = get_f32("grass.bend_radius", gc.bend_radius);
+                    gc.bend_strength = get_f32("grass.bend_strength", gc.bend_strength);
+                    gc.density_threshold =
+                        get_f32("grass.density_threshold", gc.density_threshold);
+                    gc.density_layer =
+                        get_i32("grass.density_layer", gc.density_layer as i32) as u32;
+                    gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
+
+                    if let Some(v) = terrain_comp.get("grass.color_base").and_then(toml_vec3) {
+                        gc.color_base = v;
+                    }
+                    if let Some(v) = terrain_comp.get("grass.color_tip").and_then(toml_vec3) {
+                        gc.color_tip = v;
+                    }
+                    if let Some(v) = terrain_comp.get("grass.color_dry").and_then(toml_vec3) {
+                        gc.color_dry = v;
+                    }
+                    if let Some(v) =
+                        terrain_comp.get("grass.wind_direction").and_then(toml_vec3)
+                    {
+                        gc.wind_direction = v;
+                    }
+                }
+            }
+            gc
+        };
+
+        if grass_config.enabled {
+            let hm_data = heightmap.clone_heights();
+            let hm_w = heightmap.width;
+            let hm_d = heightmap.depth;
+
+            let splat_path = {
+                let p = scene_dir.join(&config.splat_map_path);
+                if p.exists() {
+                    p
+                } else {
+                    scene_dir
+                        .parent()
+                        .map(|pp| pp.join(&config.splat_map_path))
+                        .filter(|pp| pp.exists())
+                        .unwrap_or(p)
+                }
+            };
+
+            let offset = [
+                transform.position.x,
+                transform.position.y,
+                transform.position.z,
+            ];
+
+            if let Ok(splat_img) = image::open(&splat_path) {
+                let splat_rgba = splat_img.to_rgba8();
+                let (sw, sh) = splat_rgba.dimensions();
+
+                renderer.load_grass(
+                    device,
+                    queue,
+                    &grass_config,
+                    &hm_data,
+                    hm_w,
+                    hm_d,
+                    splat_rgba.as_raw(),
+                    sw,
+                    sh,
+                    offset,
+                    config.width,
+                    config.depth,
+                    config.height_scale,
+                );
+
+                println!(
+                    "[grass] Enabled: density={}, max_dist={}",
+                    grass_config.density, grass_config.max_distance
+                );
+            } else {
+                println!(
+                    "[grass] Warning: splat map not found at {:?}",
+                    splat_path
+                );
+            }
+        }
 
         println!(
             "[terrain] Loaded terrain: {}x{} heightmap, {} chunks",

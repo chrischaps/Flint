@@ -6,6 +6,7 @@ use super::helpers::identity_matrix;
 use super::SceneRenderer;
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::{mat4_inverse, mat4_mul, Camera};
+use crate::grass_pipeline::{GrassComputeUniforms, GrassRenderUniforms, BLADE_INDEX_COUNT};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, CASCADE_COUNT};
@@ -131,6 +132,58 @@ impl SceneRenderer {
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+
+                // Render grass into shadow cascade (nearest 2 only)
+                if cascade < 2 {
+                    if let (Some(gp), Some(render_bg), Some(instance_bg)) = (
+                        &self.grass_pipeline,
+                        &self.grass_render_uniform_bind_group,
+                        &self.grass_render_instance_bind_group,
+                    ) {
+                        if self.grass_instance_count > 0 {
+                            // Grass shadow pipeline uses TransformUniforms (same layout as PBR)
+                            let grass_shadow_uniforms = TransformUniforms {
+                                view_proj: cascade_vp,
+                                model: identity_matrix(),
+                                model_inv_transpose: identity_matrix(),
+                                camera_pos: [0.0; 3],
+                                _pad: 0.0,
+                            };
+                            let grass_shadow_buffer = device.create_buffer_init(
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some("Grass Shadow Transform"),
+                                    contents: bytemuck::cast_slice(&[grass_shadow_uniforms]),
+                                    usage: wgpu::BufferUsages::UNIFORM,
+                                },
+                            );
+                            let grass_shadow_bind =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    layout: &self.pipeline.transform_bind_group_layout,
+                                    entries: &[wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: grass_shadow_buffer.as_entire_binding(),
+                                    }],
+                                    label: Some("Grass Shadow Transform Bind Group"),
+                                });
+
+                            pass.set_pipeline(&gp.shadow_pipeline);
+                            pass.set_bind_group(0, &grass_shadow_bind, &[]);
+                            pass.set_bind_group(1, render_bg, &[]);
+                            pass.set_bind_group(2, &gp.shadow_dummy_bind_group, &[]);
+                            pass.set_bind_group(3, instance_bg, &[]);
+                            pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                gp.blade_index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint16,
+                            );
+                            pass.draw_indexed(
+                                0..BLADE_INDEX_COUNT,
+                                0,
+                                0..self.grass_instance_count,
+                            );
+                        }
+                    }
                 }
 
                 // Render transparent entities into shadow map (skip very transparent)
@@ -669,6 +722,34 @@ impl SceneRenderer {
             }
         }
 
+        // Grass rendering (after terrain -- also writes depth)
+        if let (Some(gp), Some(render_bg), Some(instance_bg)) = (
+            &self.grass_pipeline,
+            &self.grass_render_uniform_bind_group,
+            &self.grass_render_instance_bind_group,
+        ) {
+            if self.grass_instance_count > 0 {
+                // Explicitly set bind group 0 (transform) — cannot rely on terrain having set it
+                if let Some(first_terrain) = self.terrain_draws.first() {
+                    render_pass.set_bind_group(0, &first_terrain.transform_bind_group, &[]);
+                }
+                render_pass.set_pipeline(&gp.render_pipeline);
+                render_pass.set_bind_group(1, render_bg, &[]);
+                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                render_pass.set_bind_group(3, instance_bg, &[]);
+                render_pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    gp.blade_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint16,
+                );
+                render_pass.draw_indexed(
+                    0..BLADE_INDEX_COUNT,
+                    0,
+                    0..self.grass_instance_count,
+                );
+            }
+        }
+
         // Outline pass for selected standard entities (before normal rendering)
         if let Some(sel_id) = self.selected_entity {
             render_pass.set_pipeline(&self.pipeline.outline_pipeline);
@@ -960,5 +1041,148 @@ impl SceneRenderer {
             depth_view,
             camera,
         );
+    }
+
+    /// Dispatch the grass compute shader to scatter instances.
+    /// Call before render_main_pass, after update_per_frame_uniforms.
+    pub fn dispatch_grass_compute(
+        &mut self,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        camera: &Camera,
+        time: f32,
+    ) {
+        let config = match &self.grass_config {
+            Some(c) if c.enabled => c.clone(),
+            _ => return,
+        };
+
+        let grass_pipeline = match &self.grass_pipeline {
+            Some(p) => p,
+            None => return,
+        };
+
+        let compute_uniform_bg = match &self.grass_compute_uniform_bind_group {
+            Some(bg) => bg,
+            None => return,
+        };
+        let compute_texture_bg = match &self.grass_compute_texture_bind_group {
+            Some(bg) => bg,
+            None => return,
+        };
+        let compute_storage_bg = match &self.grass_compute_storage_bind_group {
+            Some(bg) => bg,
+            None => return,
+        };
+
+        // Reset atomic counter to 0
+        if let Some(counter_buf) = &self.grass_counter_buffer {
+            queue.write_buffer(counter_buf, 0, &[0u8; 4]);
+        }
+
+        // Update compute uniforms
+        let uniforms = GrassComputeUniforms {
+            camera_pos: [camera.position.x, camera.position.y, camera.position.z],
+            time,
+            terrain_offset: self.grass_terrain_offset,
+            density: config.density,
+            terrain_width: self.grass_terrain_width,
+            terrain_depth: self.grass_terrain_depth,
+            height_scale: self.grass_terrain_height_scale,
+            max_distance: config.max_distance,
+            fade_start: config.fade_start,
+            density_threshold: config.density_threshold,
+            density_layer: config.density_layer,
+            blade_height: config.blade_height,
+            height_variation: config.height_variation,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+        };
+
+        if let Some(buf) = &self.grass_compute_uniform_buffer {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Update render uniforms (wind, colors, etc.)
+        let wind_dir = {
+            let d = config.wind_direction;
+            let len = (d[0] * d[0] + d[2] * d[2]).sqrt().max(0.001);
+            [d[0] / len, d[1], d[2] / len]
+        };
+
+        let render_uniforms = GrassRenderUniforms {
+            wind_direction: wind_dir,
+            wind_speed: config.wind_speed,
+            wind_strength: config.wind_strength,
+            time,
+            bend_radius: config.bend_radius,
+            bend_strength: config.bend_strength,
+            color_base: config.color_base,
+            blade_width: config.blade_width,
+            color_tip: config.color_tip,
+            blade_height: config.blade_height,
+            color_dry: config.color_dry,
+            dry_amount: config.dry_amount,
+            entity_count: self.grass_entity_count,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+        };
+
+        if let Some(buf) = &self.grass_render_uniform_buffer {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[render_uniforms]));
+        }
+
+        // Compute dispatch
+        let spacing = 1.0 / config.density.sqrt();
+        let grid_x = (self.grass_terrain_width / spacing).ceil() as u32;
+        let grid_z = (self.grass_terrain_depth / spacing).ceil() as u32;
+        let workgroups_x = (grid_x + 7) / 8;
+        let workgroups_z = (grid_z + 7) / 8;
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Grass Compute Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&grass_pipeline.compute_pipeline);
+            pass.set_bind_group(0, compute_uniform_bg, &[]);
+            pass.set_bind_group(1, compute_texture_bg, &[]);
+            pass.set_bind_group(2, compute_storage_bg, &[]);
+            pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
+        }
+
+        // Copy counter to staging buffer for CPU readback
+        if let (Some(counter), Some(staging)) =
+            (&self.grass_counter_buffer, &self.grass_staging_buffer)
+        {
+            encoder.copy_buffer_to_buffer(counter, 0, staging, 0, 4);
+        }
+    }
+
+    /// Read back the grass instance count from the staging buffer.
+    /// Call after submitting the command buffer from the previous frame.
+    pub fn read_grass_instance_count(&mut self, device: &wgpu::Device) {
+        let staging = match &self.grass_staging_buffer {
+            Some(s) => s,
+            None => return,
+        };
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(wgpu::Maintain::Wait);
+
+        if let Ok(Ok(())) = rx.recv() {
+            let data = slice.get_mapped_range();
+            let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+            self.grass_instance_count = count.min(self.grass_max_instances);
+            drop(data);
+            staging.unmap();
+        }
     }
 }
