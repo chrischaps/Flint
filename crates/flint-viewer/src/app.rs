@@ -268,6 +268,7 @@ pub struct ViewerApp {
     scene_tree: SceneTree,
     entity_inspector: EntityInspector,
     render_stats: RenderStats,
+    show_stats: bool,
     view_gizmo: ViewGizmo,
     transform_gizmo: TransformGizmo,
 
@@ -326,6 +327,7 @@ impl ViewerApp {
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
+            show_stats: false,
             view_gizmo: ViewGizmo::new(),
             transform_gizmo: TransformGizmo::new(),
             camera_snap_target: None,
@@ -364,6 +366,7 @@ impl ViewerApp {
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
+            show_stats: false,
             view_gizmo: ViewGizmo::new(),
             transform_gizmo: TransformGizmo::new(),
             camera_snap_target: None,
@@ -663,6 +666,21 @@ impl ViewerApp {
         let undo_stack = &self.undo_stack;
         let status_message = &self.status_message;
 
+        // Pre-compute render stats snapshot for the overlay (borrows scene_renderer before closure)
+        let overlay_stats: Option<flint_render::RenderStats> = if self.show_stats {
+            self.scene_renderer.as_ref().map(|r| {
+                let mut s = r.collect_stats();
+                s.fps = render_stats.fps();
+                s.frame_time_ms = if s.fps > 0.0 { 1000.0 / s.fps } else { 0.0 };
+                if let Some(ctx) = &self.render_context {
+                    s.resolution = [ctx.config.width, ctx.config.height];
+                }
+                s
+            })
+        } else {
+            None
+        };
+
         let mut gizmo_action = None;
         let mut panel_actions: Vec<SplinePanelAction> = Vec::new();
         let mut inspector_edits: Vec<EditAction> = Vec::new();
@@ -711,9 +729,6 @@ impl ViewerApp {
                     .resizable(true)
                     .show(ctx, |ui| {
                         ui.horizontal(|ui| {
-                            render_stats.ui(ui);
-                            ui.separator();
-
                             if violation_count == 0 {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(100, 200, 100),
@@ -849,6 +864,11 @@ impl ViewerApp {
                     camera,
                     [screen_rect.width(), screen_rect.height()],
                 );
+            }
+
+            // Render stats overlay (F2 toggle)
+            if let Some(ref s) = overlay_stats {
+                render_stats_overlay(ctx, s);
             }
         });
 
@@ -1686,6 +1706,9 @@ impl ApplicationHandler for ViewerApp {
                                 }
                             }
                         }
+                        PhysicalKey::Code(KeyCode::F2) => {
+                            self.show_stats = !self.show_stats;
+                        }
                         PhysicalKey::Code(KeyCode::F3) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_normal_arrows();
@@ -1862,4 +1885,95 @@ fn shortest_angle_diff(from: f32, to: f32) -> f32 {
 
 fn lerp_angle(from: f32, to: f32, t: f32) -> f32 {
     from + shortest_angle_diff(from, to) * t
+}
+
+fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) {
+    use flint_render::format_count;
+
+    egui::Area::new(egui::Id::new("render_stats_overlay"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+                ))
+                .rounding(egui::Rounding::same(4.0))
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.style_mut().override_font_id =
+                        Some(egui::FontId::monospace(11.0));
+                    ui.set_min_width(180.0);
+
+                    ui.colored_label(
+                        egui::Color32::from_gray(136),
+                        egui::RichText::new("RENDERING STATS").size(9.0),
+                    );
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("FPS:");
+                        ui.colored_label(
+                            egui::Color32::from_rgb(74, 222, 128),
+                            format!("{:.0}", stats.fps),
+                        );
+                        ui.colored_label(
+                            egui::Color32::from_gray(102),
+                            format!("({:.1}ms)", stats.frame_time_ms),
+                        );
+                    });
+                    ui.label(format!("Draw Calls: {}", stats.draw_calls));
+                    ui.label(format!("Triangles: {}", format_count(stats.triangles)));
+
+                    ui.separator();
+
+                    ui.label(format!("Entities: {}", stats.entity_draws));
+                    if stats.skinned_draws > 0 {
+                        ui.label(format!("Skinned: {}", stats.skinned_draws));
+                    }
+                    ui.label(format!(
+                        "Terrain: {}/{} chunks",
+                        stats.terrain_draws, stats.terrain_total_chunks
+                    ));
+                    if stats.transparent_draws > 0 {
+                        ui.label(format!("Transparent: {}", stats.transparent_draws));
+                    }
+                    if stats.billboard_draws > 0 {
+                        ui.label(format!("Billboards: {}", stats.billboard_draws));
+                    }
+                    if stats.particle_draws > 0 {
+                        ui.label(format!(
+                            "Particles: {} ({} inst)",
+                            stats.particle_draws,
+                            format_count(stats.particle_instances)
+                        ));
+                    }
+                    if stats.sprite_batches > 0 {
+                        ui.label(format!("Sprites: {}", stats.sprite_batches));
+                    }
+                    if stats.grass_instances > 0 {
+                        ui.label(format!(
+                            "Grass: {} inst",
+                            format_count(stats.grass_instances)
+                        ));
+                    }
+
+                    ui.separator();
+
+                    ui.label(format!("Shadow Calls: {}", stats.shadow_draw_calls));
+                    ui.label(format!(
+                        "Shadow Tris: {}",
+                        format_count(stats.shadow_triangles)
+                    ));
+
+                    ui.separator();
+
+                    ui.colored_label(
+                        egui::Color32::from_gray(102),
+                        format!("{}x{}", stats.resolution[0], stats.resolution[1]),
+                    );
+                });
+        });
 }

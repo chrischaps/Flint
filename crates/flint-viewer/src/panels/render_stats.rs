@@ -43,6 +43,11 @@ impl RenderStats {
         }
     }
 
+    /// Return the current FPS value
+    pub fn fps(&self) -> f32 {
+        self.fps
+    }
+
     /// Draw the stats UI
     pub fn ui(&self, ui: &mut egui::Ui) {
         ui.monospace(format!("FPS: {:.0}", self.fps));
