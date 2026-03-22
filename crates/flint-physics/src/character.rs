@@ -201,7 +201,9 @@ impl CharacterController {
             physics.collider_set.get(collider_handle).unwrap().shape(),
             physics.rigid_body_set.get(body_handle).unwrap().position(),
             desired,
-            QueryFilter::default().exclude_rigid_body(body_handle),
+            QueryFilter::default()
+                .exclude_rigid_body(body_handle)
+                .exclude_sensors(),
             |_| {},
         );
 

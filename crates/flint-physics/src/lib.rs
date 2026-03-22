@@ -138,7 +138,9 @@ impl PhysicsSystem {
             shape,
             &position,
             desired,
-            QueryFilter::default().exclude_rigid_body(body_handle),
+            QueryFilter::default()
+                .exclude_rigid_body(body_handle)
+                .exclude_sensors(),
             |_| {},
         );
 

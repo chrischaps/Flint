@@ -183,6 +183,8 @@ pub struct SceneRenderer {
     pub scene_dir: Option<std::path::PathBuf>,
     /// Time in seconds, used for grass wind animation. Set by the player before render().
     pub grass_time: f32,
+    /// Set when GPU device is lost (e.g. driver crash); skips all rendering
+    device_lost: bool,
 }
 
 impl SceneRenderer {
@@ -324,6 +326,7 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             grass_time: 0.0,
+            device_lost: false,
         }
     }
 
@@ -1280,6 +1283,7 @@ impl SceneRenderer {
             bitmap_font_cache: HashMap::new(),
             scene_dir: None,
             grass_time: 0.0,
+            device_lost: false,
         }
     }
 
@@ -1379,6 +1383,9 @@ impl SceneRenderer {
         asset_name: &str,
         matrices: &[[[f32; 4]; 4]],
     ) {
+        if self.device_lost {
+            return;
+        }
         if let Some(skinned_meshes) = self.mesh_cache.get_skinned_mut(asset_name) {
             for mesh in skinned_meshes.iter_mut() {
                 queue.write_buffer(&mesh.bone_buffer, 0, bytemuck::cast_slice(matrices));
@@ -1762,6 +1769,9 @@ impl SceneRenderer {
 
     /// Update meshes from the world state
     pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
+        if self.device_lost {
+            return;
+        }
         self.entity_draws.clear();
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
@@ -2340,6 +2350,9 @@ impl SceneRenderer {
         camera: &Camera,
         view: &wgpu::TextureView,
     ) -> Result<(), wgpu::SurfaceError> {
+        if self.device_lost {
+            return Ok(());
+        }
         self.render_to(
             &context.device,
             &context.queue,
@@ -2395,6 +2408,7 @@ impl SceneRenderer {
                              shader compilation. Try updating your graphics drivers."
                         );
                         self.postprocess_config.kuwahara_enabled = false;
+                        self.device_lost = true;
                         return;
                     }
                 }
@@ -2422,6 +2436,9 @@ impl SceneRenderer {
         camera: &Camera,
         target_view: &wgpu::TextureView,
     ) {
+        if self.device_lost {
+            return;
+        }
         let view_proj = camera.view_projection_matrix();
         let camera_pos = camera.position_array();
         let debug_mode_u32 = self.debug_state.mode.as_u32();
