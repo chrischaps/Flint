@@ -25,6 +25,11 @@ let archData = null;
 const _dataRegistry = {};
 let _dataId = 0;
 
+function clearRegistry() {
+  Object.keys(_dataRegistry).forEach(function(k) { delete _dataRegistry[k]; });
+  _dataId = 0;
+}
+
 function registerData(obj) {
   const id = '_d' + (_dataId++);
   _dataRegistry[id] = obj;
@@ -311,6 +316,7 @@ function setupDetailDelegation() {
 // ---- Detail Panel Renderers ----
 
 function showCrateDetail(crate) {
+  clearRegistry();
   const tierColor = TIER_COLORS[crate.tier] || '#ccc';
   let html = '';
   html += '<div class="detail-label">Crate</div>';
@@ -351,6 +357,7 @@ function showCrateDetail(crate) {
 }
 
 function showModuleDetail(mod, crateName) {
+  clearRegistry();
   var depCrate = archData.crates.find(function(c) { return c.name === crateName; });
   const tierColor = TIER_COLORS[depCrate ? depCrate.tier : undefined] || '#ccc';
   let html = '';
@@ -385,6 +392,7 @@ function showModuleDetail(mod, crateName) {
 }
 
 function showItemDetail(item) {
+  clearRegistry();
   let html = '';
   html += '<div class="detail-label">' + escapeHtml(item.kind) + '</div>';
   html += '<div class="detail-name">' + escapeHtml(item.name) + '</div>';
@@ -409,6 +417,7 @@ function showItemDetail(item) {
 }
 
 function showEdgeDetail(source, target) {
+  clearRegistry();
   const srcCrate = archData.crates.find(function(c) { return c.name === source; });
   const tgtCrate = archData.crates.find(function(c) { return c.name === target; });
   const srcColor = TIER_COLORS[srcCrate ? srcCrate.tier : undefined] || '#ccc';
@@ -621,7 +630,7 @@ function setupMetrics() {
       });
     } else {
       cy.nodes('[type="crate"]').forEach(function(node) {
-        node.style({ 'width': '', 'height': '30px', 'font-size': '11px' });
+        node.style({ 'width': 'label', 'height': '30px', 'font-size': '11px' });
       });
     }
   });
@@ -682,11 +691,11 @@ function onDepExplorerClick(e) {
 
   document.getElementById('detail-content').innerHTML =
     '<div class="detail-label">Dependency Explorer</div>' +
-    '<div class="detail-name" style="color:' + TIER_COLORS[node.data('tier')] + '">' + node.data('label') + '</div>' +
+    '<div class="detail-name" style="color:' + TIER_COLORS[node.data('tier')] + '">' + escapeHtml(node.data('label')) + '</div>' +
     '<div class="detail-label">Depends On (' + upNames.length + ')</div>' +
-    '<div class="detail-stat">' + (upNames.join(', ') || 'None') + '</div>' +
+    '<div class="detail-stat">' + (upNames.map(escapeHtml).join(', ') || 'None') + '</div>' +
     '<div class="detail-label">Depended On By (' + downNames.length + ')</div>' +
-    '<div class="detail-stat">' + (downNames.join(', ') || 'None') + '</div>';
+    '<div class="detail-stat">' + (downNames.map(escapeHtml).join(', ') || 'None') + '</div>';
 }
 
 // ---- Footer ----
@@ -694,7 +703,7 @@ function onDepExplorerClick(e) {
 function updateFooter() {
   const footer = document.getElementById('toolbar-footer');
   const date = new Date(archData.generated_at).toLocaleDateString();
-  footer.innerHTML = archData.crates.length + ' crates &middot; ' + archData.edges.length + ' edges<br>Generated: ' + date;
+  footer.textContent = archData.crates.length + ' crates \u00B7 ' + archData.edges.length + ' edges\nGenerated: ' + date;
 }
 
 // ---- Start ----
