@@ -12,6 +12,10 @@ use crate::camera::Camera;
 use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
+use crate::grass_pipeline::{
+    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
+    GrassRenderUniforms, MAX_GRASS_ENTITIES,
+};
 use crate::particle_pipeline::{ParticleDrawCall, ParticleDrawData, ParticlePipeline};
 use crate::pipeline::{
     BlendMode, DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline,
@@ -25,10 +29,6 @@ use crate::shadow::{ShadowPass, DEFAULT_SHADOW_RESOLUTION};
 use crate::skinned_pipeline::SkinnedPipeline;
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
-use crate::grass_pipeline::{
-    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
-    GrassRenderUniforms, MAX_GRASS_ENTITIES,
-};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
 use crate::texture_cache::TextureCache;
 use flint_core::components as comp;
@@ -256,10 +256,18 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline =
-            PostProcessPipeline::new(&context.device, &context.queue, surface_format, postprocess_config.kuwahara_enabled);
-        let postprocess_resources =
-            PostProcessResources::new(&context.device, context.config.width, context.config.height, postprocess_config.kuwahara_enabled);
+        let postprocess_pipeline = PostProcessPipeline::new(
+            &context.device,
+            &context.queue,
+            surface_format,
+            postprocess_config.kuwahara_enabled,
+        );
+        let postprocess_resources = PostProcessResources::new(
+            &context.device,
+            context.config.width,
+            context.config.height,
+            postprocess_config.kuwahara_enabled,
+        );
 
         Self {
             pipeline,
@@ -553,6 +561,10 @@ impl SceneRenderer {
         let model = transform.to_matrix();
         let model_inv_transpose = mat4_inv_transpose(&model);
 
+        let tx = model[3][0];
+        let ty = model[3][1];
+        let tz = model[3][2];
+
         for chunk in chunks {
             // Build Vertex array from chunk data
             let vertices: Vec<crate::primitives::Vertex> = (0..chunk.positions.len())
@@ -607,6 +619,8 @@ impl SceneRenderer {
                 transform_bind_group,
                 model,
                 model_inv_transpose,
+                aabb_min: [chunk.aabb_min[0] + tx, chunk.aabb_min[1] + ty, chunk.aabb_min[2] + tz],
+                aabb_max: [chunk.aabb_max[0] + tx, chunk.aabb_max[1] + ty, chunk.aabb_max[2] + tz],
             });
         }
 
@@ -630,6 +644,10 @@ impl SceneRenderer {
 
         let model = transform.to_matrix();
         let model_inv_transpose = mat4_inv_transpose(&model);
+
+        let tx = model[3][0];
+        let ty = model[3][1];
+        let tz = model[3][2];
 
         for chunk in chunks {
             let vertices: Vec<crate::primitives::Vertex> = (0..chunk.positions.len())
@@ -684,6 +702,8 @@ impl SceneRenderer {
                 transform_bind_group,
                 model,
                 model_inv_transpose,
+                aabb_min: [chunk.aabb_min[0] + tx, chunk.aabb_min[1] + ty, chunk.aabb_min[2] + tz],
+                aabb_max: [chunk.aabb_max[0] + tx, chunk.aabb_max[1] + ty, chunk.aabb_max[2] + tz],
             });
         }
     }
@@ -717,7 +737,15 @@ impl SceneRenderer {
 
         // Upload splat map from raw data
         tc.remove_texture("terrain_splat");
-        let _ = tc.upload_rgba(device, queue, "terrain_splat", splat_res, splat_res, splat_data, false);
+        let _ = tc.upload_rgba(
+            device,
+            queue,
+            "terrain_splat",
+            splat_res,
+            splat_res,
+            splat_data,
+            false,
+        );
 
         // Load layer textures
         for (i, layer_path) in layer_paths.iter().enumerate() {
@@ -1106,7 +1134,11 @@ impl SceneRenderer {
 
     /// Update entity positions for grass bend-on-contact.
     /// Also updates entity_count in the render uniform buffer.
-    pub fn update_grass_entities(&mut self, queue: &wgpu::Queue, positions: &[GrassEntityPosition]) {
+    pub fn update_grass_entities(
+        &mut self,
+        queue: &wgpu::Queue,
+        positions: &[GrassEntityPosition],
+    ) {
         let count = positions.len().min(MAX_GRASS_ENTITIES);
         self.grass_entity_count = count as u32;
         if let Some(buf) = &self.grass_entity_buffer {
@@ -1215,8 +1247,14 @@ impl SceneRenderer {
 
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
-        let postprocess_pipeline = PostProcessPipeline::new(device, queue, surface_format, postprocess_config.kuwahara_enabled);
-        let postprocess_resources = PostProcessResources::new(device, width, height, postprocess_config.kuwahara_enabled);
+        let postprocess_pipeline = PostProcessPipeline::new(
+            device,
+            queue,
+            surface_format,
+            postprocess_config.kuwahara_enabled,
+        );
+        let postprocess_resources =
+            PostProcessResources::new(device, width, height, postprocess_config.kuwahara_enabled);
 
         Self {
             pipeline,
@@ -2241,11 +2279,9 @@ impl SceneRenderer {
                                 .get("volumetric_intensity")
                                 .and_then(toml_f32)
                                 .unwrap_or(0.0);
-                            let volumetric_color = Self::extract_light_vec3(
-                                &light,
-                                "volumetric_color",
-                            )
-                            .unwrap_or(color);
+                            let volumetric_color =
+                                Self::extract_light_vec3(&light, "volumetric_color")
+                                    .unwrap_or(color);
                             directionals[dir_count as usize] = DirectionalLight {
                                 direction,
                                 volumetric_intensity,
@@ -2368,7 +2404,12 @@ impl SceneRenderer {
         if width == 0 || height == 0 {
             return;
         }
-        self.postprocess_resources = Some(PostProcessResources::new(device, width, height, self.postprocess_config.kuwahara_enabled));
+        self.postprocess_resources = Some(PostProcessResources::new(
+            device,
+            width,
+            height,
+            self.postprocess_config.kuwahara_enabled,
+        ));
     }
 
     /// Get the current post-processing configuration.
@@ -2419,8 +2460,7 @@ impl SceneRenderer {
         if let Some(resources) = &mut self.postprocess_resources {
             if resources.kuwahara.is_none() {
                 let (w, h) = (resources.width, resources.height);
-                resources.kuwahara =
-                    Some(crate::postprocess::KuwaharaTextures::new(device, w, h));
+                resources.kuwahara = Some(crate::postprocess::KuwaharaTextures::new(device, w, h));
             }
         }
     }

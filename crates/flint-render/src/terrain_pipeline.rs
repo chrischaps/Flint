@@ -22,6 +22,10 @@ pub struct TerrainDrawCall {
     pub transform_bind_group: wgpu::BindGroup,
     pub model: [[f32; 4]; 4],
     pub model_inv_transpose: [[f32; 4]; 4],
+    /// World-space AABB minimum corner (chunk local AABB + model translation)
+    pub aabb_min: [f32; 3],
+    /// World-space AABB maximum corner (chunk local AABB + model translation)
+    pub aabb_max: [f32; 3],
 }
 
 /// The terrain render pipeline
