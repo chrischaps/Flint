@@ -125,7 +125,7 @@ Context-sensitive based on selection:
 - **Crate selected:** description, internal/external deps, line count, tier
 - **Module selected:** file path, line count, list of public items (color-coded by kind)
 - **Item selected:** full signature, members/fields, type information
-- **Edge selected:** which crate depends on which, and what it uses
+- **Edge selected:** which crate depends on which, with links to both crate detail views
 
 Clickable dependency links in the panel navigate the graph (centers + highlights the target node).
 
@@ -190,4 +190,8 @@ tools/
 - **Local:** `cargo run -p flint-arch-analyzer` then open `tools/arch-viewer/index.html` in a browser. No server needed.
 - **GitHub Pages:** CI runs the analyzer and deploys `tools/arch-viewer/` as a static site (with generated `arch-data.json` included).
 - **Freshness:** `generated_at` timestamp displayed in the UI footer. Stale data is immediately visible.
-- **Cytoscape.js** loaded from CDN (`<script>` tag) with a vendored fallback for offline use.
+- **Cytoscape.js** loaded from CDN (`<script>` tag). Optionally vendor `cytoscape.min.js` into the viewer directory for offline use.
+
+## Workspace Integration
+
+`flint-arch-analyzer` is added to the workspace `[members]` list but excluded from `default-members` (like `flint-android`) so it doesn't build during normal development. Invoked explicitly via `cargo run -p flint-arch-analyzer`.
