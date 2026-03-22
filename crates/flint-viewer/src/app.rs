@@ -1686,17 +1686,6 @@ impl ApplicationHandler for ViewerApp {
                                 }
                             }
                         }
-                        PhysicalKey::Code(KeyCode::F2) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_wireframe_overlay();
-                                println!("Wireframe overlay: {}", if on { "ON" } else { "OFF" });
-
-                                if let Some(context) = &self.render_context {
-                                    let state = self.state.lock().unwrap();
-                                    renderer.update_from_world(&state.world, &context.device);
-                                }
-                            }
-                        }
                         PhysicalKey::Code(KeyCode::F3) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_normal_arrows();

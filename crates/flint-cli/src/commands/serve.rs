@@ -6,7 +6,7 @@ use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
-use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
+use flint_render::{Camera, DebugMode, RenderContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
@@ -434,10 +434,15 @@ impl ApplicationHandler for ViewerApp {
                             }
                         }
                         PhysicalKey::Code(KeyCode::F2) => {
-                            // Toggle wireframe overlay
+                            // Toggle wireframe overlay mode
                             if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_wireframe_overlay();
-                                println!("Wireframe overlay: {}", if on { "ON" } else { "OFF" });
+                                let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
+                                    DebugMode::Pbr
+                                } else {
+                                    DebugMode::WireframeOverlay
+                                };
+                                renderer.set_debug_mode(mode);
+                                println!("Debug mode: {}", mode.label());
 
                                 // Regenerate auxiliary draws
                                 if let Some(context) = &self.render_context {

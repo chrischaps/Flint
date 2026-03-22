@@ -1063,11 +1063,7 @@ impl PreviewApp {
             .as_ref()
             .map(|r| r.debug_state().mode)
             .unwrap_or_default();
-        let current_wireframe = self
-            .scene_renderer
-            .as_ref()
-            .map(|r| r.debug_state().wireframe_overlay)
-            .unwrap_or(false);
+        let current_wireframe = current_debug_mode == DebugMode::WireframeOverlay;
         let current_normals = self
             .scene_renderer
             .as_ref()
@@ -1331,6 +1327,7 @@ impl PreviewApp {
                             // Debug mode combo
                             let modes = [
                                 DebugMode::Pbr,
+                                DebugMode::WireframeOverlay,
                                 DebugMode::WireframeOnly,
                                 DebugMode::Normals,
                                 DebugMode::Depth,
@@ -1552,7 +1549,8 @@ impl PreviewApp {
         }
         if let Some(wf) = new_wireframe {
             if let Some(renderer) = &mut self.scene_renderer {
-                renderer.debug_state_mut().wireframe_overlay = wf;
+                let mode = if wf { DebugMode::WireframeOverlay } else { DebugMode::Pbr };
+                renderer.set_debug_mode(mode);
             }
         }
         if let Some(na) = new_normals {

@@ -4,6 +4,7 @@
 
 use super::helpers::identity_matrix;
 use super::SceneRenderer;
+use crate::debug::DebugMode;
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::{mat4_inverse, mat4_mul, Camera};
 use crate::grass_pipeline::{GrassComputeUniforms, GrassRenderUniforms, BLADE_INDEX_COUNT};
@@ -956,7 +957,7 @@ impl SceneRenderer {
         }
 
         // Wireframe overlay pass (on top of solid geometry)
-        if self.debug_state.wireframe_overlay {
+        if self.debug_state.mode == DebugMode::WireframeOverlay {
             render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
             for draw in &self.wireframe_overlay_draws {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);

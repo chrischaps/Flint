@@ -19,7 +19,7 @@ use flint_procgen::{
     ProcGenSpec, SeedConfig, SeedMode,
 };
 use flint_render::{
-    Camera, OrbitCameraController, RenderContext, RendererConfig, SceneRenderer,
+    Camera, DebugMode, OrbitCameraController, RenderContext, RendererConfig, SceneRenderer,
     Vertex as RenderVertex,
 };
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
@@ -1336,11 +1336,13 @@ impl ApplicationHandler for GenPreviewApp {
                         }
                         PhysicalKey::Code(KeyCode::F2) => {
                             if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_wireframe_overlay();
-                                println!(
-                                    "Wireframe overlay: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
+                                let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
+                                    DebugMode::Pbr
+                                } else {
+                                    DebugMode::WireframeOverlay
+                                };
+                                renderer.set_debug_mode(mode);
+                                println!("Debug mode: {}", mode.label());
                                 if let (Some(world), Some(context)) =
                                     (&self.last_world, &self.render_context)
                                 {

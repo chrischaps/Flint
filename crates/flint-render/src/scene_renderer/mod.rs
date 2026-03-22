@@ -1625,12 +1625,6 @@ impl SceneRenderer {
         self.debug_state.mode = mode;
     }
 
-    /// Toggle wireframe overlay on/off, returns the new state
-    pub fn toggle_wireframe_overlay(&mut self) -> bool {
-        self.debug_state.wireframe_overlay = !self.debug_state.wireframe_overlay;
-        self.debug_state.wireframe_overlay
-    }
-
     /// Collect rendering statistics for the current frame.
     ///
     /// Timing (`fps`, `frame_time_ms`) and `resolution` are left at zero —
@@ -2037,7 +2031,7 @@ impl SceneRenderer {
         self.extract_lights_from_world(world);
 
         let need_overlay =
-            self.debug_state.wireframe_overlay || self.debug_state.mode == DebugMode::WireframeOnly;
+            self.debug_state.mode == DebugMode::WireframeOverlay || self.debug_state.mode == DebugMode::WireframeOnly;
         let need_normals = self.debug_state.show_normals;
         let arrow_length = self.debug_state.normal_arrow_length;
 

@@ -168,6 +168,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
     // Apply debug state
     if let Some(mode_str) = &args.debug_mode {
         let mode = match mode_str.as_str() {
+            "wireframe-overlay" => DebugMode::WireframeOverlay,
             "wireframe" => DebugMode::WireframeOnly,
             "normals" => DebugMode::Normals,
             "depth" => DebugMode::Depth,
@@ -179,7 +180,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
         renderer.set_debug_mode(mode);
     }
     if args.wireframe_overlay {
-        renderer.toggle_wireframe_overlay();
+        renderer.set_debug_mode(DebugMode::WireframeOverlay);
     }
     if args.show_normals {
         renderer.toggle_normal_arrows();
