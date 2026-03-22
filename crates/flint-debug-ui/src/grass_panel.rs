@@ -25,31 +25,33 @@ fn drag_f32(ui: &mut egui::Ui, label: &str, value: &mut f32, speed: f64, range: 
 /// Labeled [f32; 3] drag row with R/G/B prefixes (for colors). Returns true if any element changed.
 fn drag_vec3(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3], speed: f64, range: std::ops::RangeInclusive<f64>) -> bool {
     let before = *value;
+    let [r, g, b] = value;
     ui.horizontal(|ui| {
         ui.label(label);
         ui.label("R");
-        ui.add(egui::DragValue::new(&mut value[0]).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(egui::DragValue::new(r).speed(speed).range(range.clone()).max_decimals(3));
         ui.label("G");
-        ui.add(egui::DragValue::new(&mut value[1]).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(egui::DragValue::new(g).speed(speed).range(range.clone()).max_decimals(3));
         ui.label("B");
-        ui.add(egui::DragValue::new(&mut value[2]).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(egui::DragValue::new(b).speed(speed).range(range.clone()).max_decimals(3));
     });
-    *value != before
+    before != [*r, *g, *b]
 }
 
 /// Labeled [f32; 3] drag row with X/Y/Z prefixes (for directions). Returns true if any element changed.
 fn drag_xyz(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3], speed: f64, range: std::ops::RangeInclusive<f64>) -> bool {
     let before = *value;
+    let [x, y, z] = value;
     ui.horizontal(|ui| {
         ui.label(label);
         ui.label("X");
-        ui.add(egui::DragValue::new(&mut value[0]).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(egui::DragValue::new(x).speed(speed).range(range.clone()).max_decimals(3));
         ui.label("Y");
-        ui.add(egui::DragValue::new(&mut value[1]).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(egui::DragValue::new(y).speed(speed).range(range.clone()).max_decimals(3));
         ui.label("Z");
-        ui.add(egui::DragValue::new(&mut value[2]).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(egui::DragValue::new(z).speed(speed).range(range.clone()).max_decimals(3));
     });
-    *value != before
+    before != [*x, *y, *z]
 }
 
 // ---------------------------------------------------------------------------
