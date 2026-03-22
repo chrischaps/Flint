@@ -108,13 +108,33 @@ In `crates/flint-player/src/player_app/mod.rs`:
 - After `render_to()`, if `show_stats`: call `self.scene_renderer.collect_stats()`, fill in FPS (from smoothed `GameClock.delta_time`), frame_time_ms, and resolution, then call `render_stats_overlay(&self.egui_ctx, &stats)` during the egui pass
 - FPS smoothing: maintain a rolling window of delta_time samples over the last ~0.5s, display the average
 
+### Free up F2 in the viewer
+
+The viewer currently uses F2 for wireframe overlay (shaded geometry + wireframe lines on top). This is distinct from `WireframeOnly` in the F1 debug mode cycle, which shows only wireframe lines. To free F2 for the stats overlay, fold wireframe overlay into the F1 cycle as a new `DebugMode::WireframeOverlay` variant:
+
+**Changes to `crates/flint-render/src/debug.rs`:**
+- Add `WireframeOverlay` variant to `DebugMode` enum (between `Pbr` and `WireframeOnly`)
+- Update `next()` cycle: `Pbr → WireframeOverlay → WireframeOnly → Normals → Depth → UV → Unlit → MetalRough → Pbr`
+- `WireframeOverlay` returns `as_u32() = 0` (same as `WireframeOnly` — shader stays PBR, wireframe handled by pipeline swap)
+- Update `label()` to return `"Wireframe Overlay"` for the new variant
+
+**Changes to render passes:**
+- In `render_normal_pass` and the wireframe overlay section, check for `self.debug_state.mode == DebugMode::WireframeOverlay` instead of `self.debug_state.wireframe_overlay`
+- The `wireframe_overlay: bool` field on `DebugState` can be removed (replaced by the enum variant)
+
+**Changes to viewer (`crates/flint-viewer/src/app.rs`):**
+- Remove the F2 wireframe overlay handler
+- Remove the F3 normal arrows handler (already accessible via F1 cycling to Normals mode, or keep F3 as-is if normal arrows are a separate overlay concept)
+
+This frees F2 for the stats overlay in both the player and viewer.
+
 ### Viewer integration
 
 In `crates/flint-viewer/src/app.rs`:
 
 - Replace the existing `RenderStats` usage with the new shared `collect_stats()` + `render_stats_overlay()`
 - Add `show_stats: bool` field (default false)
-- F2 is already taken in the viewer (wireframe overlay toggle), and F3 is taken (normal arrows). Use **backtick/grave (`` ` ``)** as the toggle key in the viewer, since it's a common debug key in game engines. Alternatively, add a checkbox to the viewer's existing egui inspector panel.
+- F2 key handler: toggle `show_stats` (now free after wireframe overlay moved to F1 cycle)
 - The viewer must retain its own FPS tracking mechanism (rolling `VecDeque<Instant>` window, same pattern as existing `RenderStats`) to populate `fps`/`frame_time_ms` on the struct before passing to the overlay function.
 - Remove or simplify `crates/flint-viewer/src/panels/render_stats.rs` (the old FPS-only panel)
 
@@ -146,9 +166,11 @@ The overlay rendering itself is visual and tested via `flint render` / `flint pl
 |------|--------|
 | `crates/flint-render/src/render_stats.rs` | **New** — `RenderStats` struct, `format_count()` helper |
 | `crates/flint-render/src/lib.rs` | Add `mod render_stats`, pub use exports |
-| `crates/flint-render/src/scene_renderer/mod.rs` | Add `terrain_total_chunks: u32` field (set in `load_terrain()` and `load_terrain_from_data()`), add `pub fn collect_stats(&self) -> RenderStats` |
+| `crates/flint-render/src/debug.rs` | Add `WireframeOverlay` variant to `DebugMode`, update `next()` cycle, remove `wireframe_overlay` bool from `DebugState` |
+| `crates/flint-render/src/scene_renderer/mod.rs` | Add `terrain_total_chunks: u32` field (set in `load_terrain()` and `load_terrain_from_data()`), add `pub fn collect_stats(&self) -> RenderStats`, update wireframe overlay references |
+| `crates/flint-render/src/scene_renderer/render_passes.rs` | Check `DebugMode::WireframeOverlay` instead of `wireframe_overlay` bool |
 | `crates/flint-player/src/player_app/mod.rs` | Add `show_stats` bool, F2 handler, `render_stats_overlay()` function, stats collection + overlay rendering in frame loop |
-| `crates/flint-viewer/src/app.rs` | Add `show_stats` bool, backtick toggle, `render_stats_overlay()` function, replace old stats with new overlay |
+| `crates/flint-viewer/src/app.rs` | Add `show_stats` bool, F2 handler, `render_stats_overlay()` function, replace old stats with new overlay, remove old F2/F3 wireframe/normal handlers |
 | `crates/flint-viewer/src/panels/render_stats.rs` | Remove or simplify (replaced by shared impl) |
 
 ## Out of Scope
