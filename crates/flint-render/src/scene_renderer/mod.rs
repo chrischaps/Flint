@@ -1134,6 +1134,116 @@ impl SceneRenderer {
         self.grass_config = None;
     }
 
+    /// Update grass config without buffer reallocation.
+    /// Compute and render passes read `grass_config` fresh each frame to build
+    /// uniforms, so changes take effect on the next `render()` call.
+    pub fn set_grass_config(&mut self, config: flint_terrain::GrassConfig) {
+        self.grass_config = Some(config);
+    }
+
+    /// Reallocate the grass instance buffer for a new density value,
+    /// reusing existing heightmap/splat GPU textures.
+    /// Call this when `GrassConfig.density` changes (affects buffer capacity).
+    pub fn reload_grass_config(
+        &mut self,
+        device: &wgpu::Device,
+        config: flint_terrain::GrassConfig,
+    ) {
+        let grass_pipeline = match &self.grass_pipeline {
+            Some(p) => p,
+            None => return,
+        };
+
+        let max_instances = config.max_instances(self.grass_terrain_width, self.grass_terrain_depth);
+        let instance_buffer_size =
+            (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
+
+        // Reallocate instance buffer
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Instance Buffer"),
+            size: instance_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Reallocate counter buffer
+        let counter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Counter Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Reallocate staging buffer
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Grass Staging Buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Recreate compute storage bind group (binds instance buffer at binding 0)
+        let compute_storage_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.compute_storage_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instance_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: counter_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("Grass Compute Storage Bind Group"),
+            });
+
+        // Recreate render instance bind group (binds instance buffer at binding 0)
+        let entity_buffer = self.grass_entity_buffer.as_ref().expect("grass entity buffer");
+        let render_instance_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &grass_pipeline.render_instance_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: instance_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: entity_buffer.as_entire_binding(),
+                    },
+                ],
+                label: Some("Grass Render Instance Bind Group"),
+            });
+
+        // Update stored state
+        // Note: grass_compute_texture_bind_group, compute_uniform_bind_group,
+        // render_uniform_bind_group, and entity_buffer are intentionally NOT
+        // recreated — they don't reference the instance buffer.
+        self.grass_instance_buffer = Some(instance_buffer);
+        self.grass_instance_count = 0;
+        self.grass_max_instances = max_instances;
+        self.grass_counter_buffer = Some(counter_buffer);
+        self.grass_staging_buffer = Some(staging_buffer);
+        self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
+        self.grass_render_instance_bind_group = Some(render_instance_bind_group);
+        self.grass_config = Some(config);
+
+        tracing::info!(
+            "Grass reloaded: max {} instances, {:.1}MB buffer",
+            max_instances,
+            instance_buffer_size as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    /// Read-only access to the current grass config (if loaded).
+    pub fn grass_config(&self) -> Option<&flint_terrain::GrassConfig> {
+        self.grass_config.as_ref()
+    }
+
     /// Update entity positions for grass bend-on-contact.
     /// Also updates entity_count in the render uniform buffer.
     pub fn update_grass_entities(
