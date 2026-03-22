@@ -140,6 +140,8 @@ pub struct SceneRenderer {
     terrain_draws: Vec<TerrainDrawCall>,
     terrain_material_bind_group: Option<wgpu::BindGroup>,
     terrain_material_buffer: Option<wgpu::Buffer>,
+    terrain_total_chunks: u32,
+    terrain_visible_chunks: u32,
     camera_frustum: Option<crate::frustum::Frustum>,
     // Grass
     grass_pipeline: Option<GrassPipeline>,
@@ -301,6 +303,8 @@ impl SceneRenderer {
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
+            terrain_total_chunks: 0,
+            terrain_visible_chunks: 0,
             camera_frustum: None,
             grass_pipeline,
             grass_instance_buffer: None,
@@ -559,6 +563,7 @@ impl SceneRenderer {
 
         // Create per-chunk draw calls
         self.terrain_draws.clear();
+        self.terrain_total_chunks = chunks.len() as u32;
 
         let model = transform.to_matrix();
         let model_inv_transpose = mat4_inv_transpose(&model);
@@ -839,6 +844,7 @@ impl SceneRenderer {
         self.terrain_material_bind_group = Some(material_bind_group);
 
         // Build chunk draw calls
+        self.terrain_total_chunks = chunks.len() as u32;
         self.reload_terrain_geometry(device, chunks, transform);
     }
 
@@ -1399,6 +1405,8 @@ impl SceneRenderer {
             terrain_draws: Vec::new(),
             terrain_material_bind_group: None,
             terrain_material_buffer: None,
+            terrain_total_chunks: 0,
+            terrain_visible_chunks: 0,
             camera_frustum: None,
             grass_pipeline,
             grass_instance_buffer: None,
@@ -1621,6 +1629,99 @@ impl SceneRenderer {
     pub fn toggle_wireframe_overlay(&mut self) -> bool {
         self.debug_state.wireframe_overlay = !self.debug_state.wireframe_overlay;
         self.debug_state.wireframe_overlay
+    }
+
+    /// Collect rendering statistics for the current frame.
+    ///
+    /// Timing (`fps`, `frame_time_ms`) and `resolution` are left at zero —
+    /// the caller fills these from their own timing and context.
+    pub fn collect_stats(&self) -> crate::render_stats::RenderStats {
+        use crate::grass_pipeline::BLADE_INDEX_COUNT;
+
+        let entity_draws = self.entity_draws.len() as u32;
+        let skinned_draws = self.skinned_entity_draws.len() as u32;
+        let terrain_draws = self.terrain_visible_chunks;
+        let transparent_draws =
+            (self.transparent_draws.len() + self.transparent_skinned_draws.len()) as u32;
+        let billboard_draws = self.billboard_draws.len() as u32;
+        let particle_draws = self.particle_draws.len() as u32;
+        let sprite_batches = self.sprite2d_batches.len() as u32;
+        let grass_draw_calls = if self.grass_instance_count > 0 { 1u32 } else { 0 };
+
+        let draw_calls = entity_draws
+            + skinned_draws
+            + terrain_draws
+            + transparent_draws
+            + billboard_draws
+            + particle_draws
+            + sprite_batches
+            + grass_draw_calls;
+
+        // Triangles: sum index_count/3 for types that have it, fixed counts for others
+        let mut triangles: u32 = 0;
+        for d in &self.entity_draws {
+            triangles += d.index_count / 3;
+        }
+        for d in &self.skinned_entity_draws {
+            triangles += d.index_count / 3;
+        }
+        for d in &self.transparent_draws {
+            triangles += d.index_count / 3;
+        }
+        for d in &self.transparent_skinned_draws {
+            triangles += d.index_count / 3;
+        }
+        for d in &self.terrain_draws {
+            triangles += d.index_count / 3;
+        }
+        // Billboards: each is a fixed quad (2 triangles)
+        triangles += billboard_draws * 2;
+        // Particles: instanced quads (2 triangles per instance)
+        let particle_instances: u32 = self.particle_draws.iter().map(|d| d.instance_count).sum();
+        triangles += particle_instances * 2;
+        // Sprites: instanced quads (2 triangles per instance)
+        let sprite_instances: u32 =
+            self.sprite2d_batches.iter().map(|b| b.instance_count).sum();
+        triangles += sprite_instances * 2;
+        // Grass: BLADE_INDEX_COUNT indices per instance
+        triangles += self.grass_instance_count * BLADE_INDEX_COUNT / 3;
+
+        // Shadow stats: estimate as main pass × CASCADE_COUNT
+        let cascade_count = crate::shadow::CASCADE_COUNT as u32;
+        let shadow_entity_draws = entity_draws + skinned_draws + terrain_draws;
+        let shadow_draw_calls = shadow_entity_draws * cascade_count;
+        let shadow_triangles = {
+            let mut t: u32 = 0;
+            for d in &self.entity_draws {
+                t += d.index_count / 3;
+            }
+            for d in &self.skinned_entity_draws {
+                t += d.index_count / 3;
+            }
+            for d in &self.terrain_draws {
+                t += d.index_count / 3;
+            }
+            t * cascade_count
+        };
+
+        crate::render_stats::RenderStats {
+            draw_calls,
+            triangles,
+            entity_draws,
+            skinned_draws,
+            terrain_draws,
+            terrain_total_chunks: self.terrain_total_chunks,
+            transparent_draws,
+            billboard_draws,
+            particle_draws,
+            particle_instances,
+            sprite_batches,
+            grass_instances: self.grass_instance_count,
+            grass_draw_calls,
+            shadow_draw_calls,
+            shadow_triangles,
+            ..Default::default()
+        }
     }
 
     /// Toggle normal direction arrows on/off, returns the new state
@@ -2594,6 +2695,17 @@ impl SceneRenderer {
         }
         let view_proj = camera.view_projection_matrix();
         self.camera_frustum = Some(crate::frustum::Frustum::from_view_projection(&view_proj));
+
+        // Count visible terrain chunks for stats
+        self.terrain_visible_chunks = if let Some(ref frustum) = self.camera_frustum {
+            self.terrain_draws
+                .iter()
+                .filter(|d| frustum.aabb_visible(d.aabb_min, d.aabb_max))
+                .count() as u32
+        } else {
+            self.terrain_draws.len() as u32
+        };
+
         let camera_pos = camera.position_array();
         let debug_mode_u32 = self.debug_state.mode.as_u32();
         let wireframe_only = self.debug_state.mode == DebugMode::WireframeOnly;
