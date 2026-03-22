@@ -170,7 +170,7 @@ impl SceneRenderer {
                             pass.set_pipeline(&gp.shadow_pipeline);
                             pass.set_bind_group(0, &grass_shadow_bind, &[]);
                             pass.set_bind_group(1, render_bg, &[]);
-                            pass.set_bind_group(2, &self.light_bind_group, &[]);
+                            pass.set_bind_group(2, &gp.shadow_dummy_bind_group, &[]);
                             pass.set_bind_group(3, instance_bg, &[]);
                             pass.set_vertex_buffer(0, gp.blade_vertex_buffer.slice(..));
                             pass.set_index_buffer(

@@ -194,6 +194,8 @@ pub struct GrassPipeline {
     pub compute_storage_layout: wgpu::BindGroupLayout,
     pub render_grass_layout: wgpu::BindGroupLayout,
     pub render_instance_layout: wgpu::BindGroupLayout,
+    pub shadow_dummy_layout: wgpu::BindGroupLayout,
+    pub shadow_dummy_bind_group: wgpu::BindGroup,
     // Shared blade mesh
     pub blade_vertex_buffer: wgpu::Buffer,
     pub blade_index_buffer: wgpu::Buffer,
@@ -424,14 +426,29 @@ impl GrassPipeline {
             });
 
         // Shadow pipeline (depth-only, uses vs_shadow entry point)
-        // Uses same 4-group layout as render pipeline so the shader's @group bindings match.
-        // Group 2 (lights) is bound but unused by the shadow shader — needed for layout compat.
+        // Shadow pipeline uses same 4-group layout as render so @group bindings match,
+        // but group 2 is an EMPTY placeholder instead of the light bind group.
+        // This avoids a texture usage conflict: the light bind group references the
+        // shadow depth texture as a resource, but the shadow pass writes to that same
+        // texture as a depth attachment. Using an empty group at position 2 sidesteps this.
+        let shadow_dummy_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[],
+                label: Some("Grass Shadow Dummy Layout"),
+            });
+
+        let shadow_dummy_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &shadow_dummy_layout,
+            entries: &[],
+            label: Some("Grass Shadow Dummy Bind Group"),
+        });
+
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[
                     transform_bind_group_layout, // Group 0
                     &render_grass_layout,         // Group 1
-                    light_bind_group_layout,      // Group 2
+                    &shadow_dummy_layout,         // Group 2: empty placeholder (NOT light bind group)
                     &render_instance_layout,      // Group 3
                 ],
                 push_constant_ranges: &[],
@@ -496,6 +513,8 @@ impl GrassPipeline {
             compute_storage_layout,
             render_grass_layout,
             render_instance_layout,
+            shadow_dummy_layout,
+            shadow_dummy_bind_group,
             blade_vertex_buffer,
             blade_index_buffer,
         })
