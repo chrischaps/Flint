@@ -57,6 +57,12 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
 }
 
 /// Load terrain from world entities. Free function to avoid borrow conflicts.
+/// Info about loaded grass, returned from terrain loading for debug panel creation.
+pub(super) struct LoadedGrassInfo {
+    pub config: flint_terrain::GrassConfig,
+    pub terrain_entity_name: String,
+}
+
 pub(super) fn load_terrain_from_world_inner(
     world: &FlintWorld,
     scene_path: &str,
@@ -65,6 +71,7 @@ pub(super) fn load_terrain_from_world_inner(
     scene_renderer: &mut SceneRenderer,
     physics: &mut PhysicsSystem,
     terrain_out: &mut Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
+    grass_info_out: &mut Option<LoadedGrassInfo>,
 ) {
     use flint_core::Transform;
     use flint_terrain::{Heightmap, Terrain, TerrainConfig};
@@ -290,6 +297,11 @@ pub(super) fn load_terrain_from_world_inner(
                     grass_config.density,
                     grass_config.max_distance
                 );
+
+                *grass_info_out = Some(LoadedGrassInfo {
+                    config: grass_config.clone(),
+                    terrain_entity_name: entity.name.clone(),
+                });
             } else {
                 tracing::warn!(
                     "Grass enabled but splat map not found at {:?}",

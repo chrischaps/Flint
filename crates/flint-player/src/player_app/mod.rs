@@ -178,6 +178,9 @@ pub struct PlayerApp {
     // Terrain data for height queries
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 
+    // Debug overlay panels (F3 toggle)
+    debug_panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+
     // Procedural generation resolver for runtime asset resolution
     procgen_resolver: flint_procgen::ProcGenResolver,
 
@@ -250,6 +253,7 @@ impl PlayerApp {
             transition_phase: TransitionPhase::Idle,
             schema_paths: Vec::new(),
             terrain: None,
+            debug_panels: Vec::new(),
             procgen_resolver: flint_procgen::ProcGenResolver::new(),
             loaded_chunks: HashMap::new(),
             #[cfg(target_os = "android")]
@@ -478,6 +482,7 @@ impl PlayerApp {
         }
 
         // Load terrain from world
+        self.debug_panels.clear();
         self.load_terrain_from_world(
             &render_context.device,
             &render_context.queue,
@@ -569,6 +574,7 @@ impl PlayerApp {
         queue: &wgpu::Queue,
         scene_renderer: &mut SceneRenderer,
     ) {
+        let mut grass_info = None;
         load_terrain_from_world_inner(
             &self.world,
             &self.scene_path,
@@ -577,7 +583,18 @@ impl PlayerApp {
             scene_renderer,
             &mut self.physics,
             &mut self.terrain,
+            &mut grass_info,
         );
+
+        // Create grass debug panel if grass was loaded
+        if let Some(info) = grass_info {
+            let panel = flint_debug_ui::GrassDebugPanel::new(
+                info.config,
+                std::path::PathBuf::from(&self.scene_path),
+                info.terrain_entity_name,
+            );
+            self.debug_panels.push(Box::new(panel));
+        }
     }
 
     /// Update the terrain height callback on the script system.
@@ -895,6 +912,23 @@ impl PlayerApp {
             renderer.set_post_process_config(config);
         }
 
+        // Push debug panel grass config changes to renderer
+        for panel in &mut self.debug_panels {
+            if panel.name() == "Grass Debug" && panel.is_dirty() {
+                let grass_panel = panel
+                    .as_any_mut()
+                    .downcast_mut::<flint_debug_ui::GrassDebugPanel>()
+                    .unwrap();
+                if grass_panel.density_changed() {
+                    renderer.reload_grass_config(&context.device, grass_panel.config().clone());
+                    grass_panel.clear_density_changed();
+                } else {
+                    renderer.set_grass_config(grass_panel.config().clone());
+                }
+                panel.clear_dirty();
+            }
+        }
+
         if let Err(e) = renderer.render(context, &self.camera, &view) {
             tracing::warn!("Render error: {:?}", e);
         }
@@ -1202,13 +1236,27 @@ impl PlayerApp {
         let raw_input = egui_winit.take_egui_input(window);
 
         let draw_commands = std::mem::take(&mut self.draw_commands);
+        let mut debug_panels = std::mem::take(&mut self.debug_panels);
         let ui_textures = &self.ui_textures;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            for panel in debug_panels.iter_mut() {
+                if panel.is_open() {
+                    let panel_name = panel.name().to_owned();
+                    egui::SidePanel::right(egui::Id::new(&panel_name))
+                        .default_width(280.0)
+                        .show(ctx, |ui| {
+                            ui.heading(&panel_name);
+                            ui.separator();
+                            panel.ui(ui);
+                        });
+                }
+            }
             render_draw_commands(ctx, &draw_commands, ui_textures);
         });
 
         self.draw_commands = draw_commands;
+        self.debug_panels = debug_panels;
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
@@ -1772,7 +1820,9 @@ impl PlayerApp {
         }
 
         // Reload terrain
+        self.debug_panels.clear();
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
+            let mut grass_info = None;
             load_terrain_from_world_inner(
                 &self.world,
                 &self.scene_path,
@@ -1781,7 +1831,18 @@ impl PlayerApp {
                 renderer,
                 &mut self.physics,
                 &mut self.terrain,
+                &mut grass_info,
             );
+
+            // Create grass debug panel if grass was loaded
+            if let Some(info) = grass_info {
+                let panel = flint_debug_ui::GrassDebugPanel::new(
+                    info.config,
+                    std::path::PathBuf::from(&self.scene_path),
+                    info.terrain_entity_name,
+                );
+                self.debug_panels.push(Box::new(panel));
+            }
         }
 
         // Update terrain height callback for scripts
@@ -1942,6 +2003,26 @@ impl ApplicationHandler for PlayerApp {
                                         }
                                     }
                                 }
+                                KeyCode::F3 => {
+                                    let has_grass_panel = self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
+                                    if has_grass_panel {
+                                        // Toggle the panel, then adjust cursor outside the borrow
+                                        let mut opened = false;
+                                        for panel in &mut self.debug_panels {
+                                            if panel.name() == "Grass Debug" {
+                                                panel.toggle();
+                                                opened = panel.is_open();
+                                            }
+                                        }
+                                        if opened {
+                                            self.release_cursor();
+                                        } else if self.physics.has_player_entity() {
+                                            self.capture_cursor();
+                                        }
+                                    } else {
+                                        tracing::info!("No terrain with grass in current scene");
+                                    }
+                                }
                                 KeyCode::F4 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
                                         renderer.toggle_shadows();
@@ -2079,7 +2160,9 @@ impl ApplicationHandler for PlayerApp {
             WindowEvent::MouseInput { state, button, .. } => {
                 if !self.cursor_captured {
                     if state == ElementState::Pressed && button == MouseButton::Left {
-                        self.capture_cursor();
+                        if !self.debug_panels.iter().any(|p| p.is_open()) {
+                            self.capture_cursor();
+                        }
                     }
                     return;
                 }
