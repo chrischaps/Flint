@@ -17,11 +17,7 @@ pub fn extract_public_items(source: &str) -> Vec<PublicItem> {
                         .named
                         .iter()
                         .map(|f| Member {
-                            name: f
-                                .ident
-                                .as_ref()
-                                .map(|i| i.to_string())
-                                .unwrap_or_default(),
+                            name: f.ident.as_ref().map(|i| i.to_string()).unwrap_or_default(),
                             ty: type_to_string(&f.ty),
                         })
                         .collect(),
@@ -139,7 +135,11 @@ fn pat_to_string(pat: &syn::Pat) -> String {
 }
 
 fn fn_signature_string(sig: &syn::Signature) -> String {
-    let params: Vec<String> = sig.inputs.iter().map(|arg| quote::quote!(#arg).to_string()).collect();
+    let params: Vec<String> = sig
+        .inputs
+        .iter()
+        .map(|arg| quote::quote!(#arg).to_string())
+        .collect();
     let ret = match &sig.output {
         ReturnType::Default => String::new(),
         ReturnType::Type(_, ty) => format!(" -> {}", type_to_string(ty)),
@@ -279,7 +279,10 @@ mod tests {
         let items = extract_public_items(source);
         assert_eq!(items.len(), 2, "Expected 2 public items, got {:?}", items);
 
-        let foo = items.iter().find(|i| i.name == "Foo").expect("No Foo found");
+        let foo = items
+            .iter()
+            .find(|i| i.name == "Foo")
+            .expect("No Foo found");
         assert!(matches!(foo.kind, ItemKind::Struct));
         assert_eq!(foo.members.len(), 2);
         assert_eq!(foo.members[0].name, "x");

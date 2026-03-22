@@ -11,8 +11,11 @@ pub struct CrateMeta {
 
 pub fn find_crate_dirs(workspace_root: &Path) -> Vec<PathBuf> {
     let cargo_toml = workspace_root.join("Cargo.toml");
-    let content = std::fs::read_to_string(&cargo_toml).expect("Failed to read workspace Cargo.toml");
-    let parsed: toml::Value = content.parse().expect("Failed to parse workspace Cargo.toml");
+    let content =
+        std::fs::read_to_string(&cargo_toml).expect("Failed to read workspace Cargo.toml");
+    let parsed: toml::Value = content
+        .parse()
+        .expect("Failed to parse workspace Cargo.toml");
 
     let members = parsed["workspace"]["members"]
         .as_array()
@@ -34,14 +37,19 @@ pub fn parse_crate(workspace_root: &Path, crate_dir: &Path) -> (CrateMeta, Vec<E
     let cargo_toml = crate_dir.join("Cargo.toml");
     let content = std::fs::read_to_string(&cargo_toml)
         .unwrap_or_else(|_| panic!("Failed to read {:?}", cargo_toml));
-    let parsed: toml::Value = content.parse()
+    let parsed: toml::Value = content
+        .parse()
         .unwrap_or_else(|_| panic!("Failed to parse {:?}", cargo_toml));
 
     let package = &parsed["package"];
     let name = package["name"].as_str().unwrap().to_string();
-    let description = package.get("description").and_then(|d| d.as_str()).map(|s| s.to_string());
+    let description = package
+        .get("description")
+        .and_then(|d| d.as_str())
+        .map(|s| s.to_string());
 
-    let rel_path = crate_dir.strip_prefix(workspace_root)
+    let rel_path = crate_dir
+        .strip_prefix(workspace_root)
         .unwrap_or(crate_dir)
         .to_string_lossy()
         .to_string();
@@ -67,7 +75,16 @@ pub fn parse_crate(workspace_root: &Path, crate_dir: &Path) -> (CrateMeta, Vec<E
     internal_deps.sort();
     external_deps.sort();
 
-    (CrateMeta { name, path: rel_path, description, external_deps, internal_deps }, edges)
+    (
+        CrateMeta {
+            name,
+            path: rel_path,
+            description,
+            external_deps,
+            internal_deps,
+        },
+        edges,
+    )
 }
 
 #[cfg(test)]
@@ -78,9 +95,17 @@ mod tests {
     fn test_find_crate_dirs_finds_flint_crates() {
         let root = find_workspace_root_for_test();
         let dirs = find_crate_dirs(&root);
-        assert!(dirs.len() >= 20, "Expected at least 20 crates, found {}", dirs.len());
+        assert!(
+            dirs.len() >= 20,
+            "Expected at least 20 crates, found {}",
+            dirs.len()
+        );
         for dir in &dirs {
-            assert!(dir.join("Cargo.toml").exists(), "Missing Cargo.toml in {:?}", dir);
+            assert!(
+                dir.join("Cargo.toml").exists(),
+                "Missing Cargo.toml in {:?}",
+                dir
+            );
         }
     }
 
@@ -92,7 +117,9 @@ mod tests {
         assert_eq!(meta.name, "flint-ecs");
         assert!(meta.internal_deps.contains(&"flint-core".to_string()));
         assert!(meta.internal_deps.contains(&"flint-schema".to_string()));
-        assert!(edges.iter().any(|e| e.from == "flint-ecs" && e.to == "flint-core"));
+        assert!(edges
+            .iter()
+            .any(|e| e.from == "flint-ecs" && e.to == "flint-core"));
     }
 
     #[test]
@@ -100,7 +127,10 @@ mod tests {
         let root = find_workspace_root_for_test();
         let crate_dir = root.join("crates/flint-core");
         let (meta, _) = parse_crate(&root, &crate_dir);
-        assert!(!meta.external_deps.is_empty(), "Expected external deps for flint-core");
+        assert!(
+            !meta.external_deps.is_empty(),
+            "Expected external deps for flint-core"
+        );
     }
 
     fn find_workspace_root_for_test() -> std::path::PathBuf {
