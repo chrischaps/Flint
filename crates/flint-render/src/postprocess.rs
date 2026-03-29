@@ -224,6 +224,8 @@ pub struct KuwaharaTextures {
     pub tensor_blur_view: wgpu::TextureView,
     pub output_texture: wgpu::Texture,
     pub output_view: wgpu::TextureView,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Pipelines and bind group layouts for the Kuwahara filter (created on demand).
@@ -306,6 +308,8 @@ impl KuwaharaTextures {
             tensor_blur_view,
             output_texture,
             output_view,
+            width: width.max(1),
+            height: height.max(1),
         }
     }
 }

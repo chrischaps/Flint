@@ -2133,11 +2133,14 @@ impl ApplicationHandler for PlayerApp {
                                     {
                                         let mut config = renderer.post_process_config().clone();
                                         config.kuwahara_enabled = !config.kuwahara_enabled;
+                                        let enabled = config.kuwahara_enabled;
                                         renderer.set_post_process_config(config);
                                         renderer.ensure_kuwahara_resources(
                                             &ctx.device,
                                             &ctx.queue,
                                         );
+                                        eprintln!("Kuwahara filter: {}",
+                                            if enabled { "ON" } else { "OFF" });
                                     }
                                 }
                                 _ => {}

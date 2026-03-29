@@ -39,15 +39,15 @@ fn luminance(c: vec3<f32>) -> f32 {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tx = params.texel_size;
 
-    // Sample 3x3 neighborhood luminance
-    let tl = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, -tx.y)).rgb);
-    let tc = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, -tx.y)).rgb);
-    let tr = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, -tx.y)).rgb);
-    let ml = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, 0.0)).rgb);
-    let mr = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, 0.0)).rgb);
-    let bl = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, tx.y)).rgb);
-    let bc = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, tx.y)).rgb);
-    let br = luminance(textureSample(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, tx.y)).rgb);
+    // Sample 3x3 neighborhood luminance (explicit LOD — single-mip textures)
+    let tl = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, -tx.y), 0.0).rgb);
+    let tc = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, -tx.y), 0.0).rgb);
+    let tr = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, -tx.y), 0.0).rgb);
+    let ml = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, 0.0), 0.0).rgb);
+    let mr = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, 0.0), 0.0).rgb);
+    let bl = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(-tx.x, tx.y), 0.0).rgb);
+    let bc = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(0.0, tx.y), 0.0).rgb);
+    let br = luminance(textureSampleLevel(hdr_texture, hdr_sampler, in.uv + vec2<f32>(tx.x, tx.y), 0.0).rgb);
 
     // Sobel gradients
     let jx = (tr + 2.0 * mr + br) - (tl + 2.0 * ml + bl);

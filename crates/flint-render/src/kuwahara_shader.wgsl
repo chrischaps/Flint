@@ -53,8 +53,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tx = params.texel_size;
     let radius = i32(params.radius);
 
-    // Sample blurred structure tensor
-    let tensor = textureSample(tensor_texture, tensor_sampler, in.uv);
+    // Sample blurred structure tensor (explicit LOD — no derivative requirement)
+    let tensor = textureSampleLevel(tensor_texture, tensor_sampler, in.uv, 0.0);
     let E = tensor.r; // Jx*Jx
     let F = tensor.g; // Jx*Jy
     let G = tensor.b; // Jy*Jy
@@ -110,7 +110,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                         let w = pow(1.0 - norm_dist, params.hardness);
 
                         let offset = vec2<f32>(f32(x) * tx.x, f32(y) * tx.y);
-                        let color = textureSample(hdr_texture, hdr_sampler, in.uv + offset).rgb;
+                        let color = textureSampleLevel(hdr_texture, hdr_sampler, in.uv + offset, 0.0).rgb;
 
                         mean += color * w;
                         mean_sq += color * color * w;
@@ -134,7 +134,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (total_weight > 0.0) {
         total_color /= total_weight;
     } else {
-        total_color = textureSample(hdr_texture, hdr_sampler, in.uv).rgb;
+        total_color = textureSampleLevel(hdr_texture, hdr_sampler, in.uv, 0.0).rgb;
     }
 
     return vec4<f32>(total_color, 1.0);

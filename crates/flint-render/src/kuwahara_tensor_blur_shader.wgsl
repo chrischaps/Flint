@@ -1,7 +1,10 @@
 // Structure Tensor Gaussian Blur for Anisotropic Kuwahara filter
 //
-// 5x5 Gaussian blur on the structure tensor texture.
+// 5x5 Gaussian blur on the structure tensor texture (fully unrolled).
 // NOT depth-aware — orientations should bleed smoothly for coherent brush strokes.
+//
+// Kernel: outer product of [1,4,6,4,1]/16, giving weights /256.
+// Unrolled to avoid dynamic array indexing that crashes some Vulkan shader compilers.
 
 struct KuwaharaTensorBlurUniforms {
     texel_size: vec2<f32>,
@@ -30,21 +33,48 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
     return out;
 }
 
+// Helper: sample tensor at pixel offset
+fn tap(uv: vec2<f32>, ox: f32, oy: f32) -> vec4<f32> {
+    let tx = params.texel_size;
+    return textureSampleLevel(tensor_texture, tensor_sampler, uv + vec2<f32>(ox * tx.x, oy * tx.y), 0.0);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let tx = params.texel_size;
+    let uv = in.uv;
 
-    // 5x5 Gaussian kernel (sigma ~1.0, separable product normalized)
-    let w = array<f32, 5>(1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0);
+    // 5x5 Gaussian blur — separable kernel [1, 4, 6, 4, 1] / 16
+    // Full 2D weights = outer product / 256
+    // Row -2 (col weights: 1, 4, 6, 4, 1)
+    var r  = tap(uv, -2.0, -2.0) * (1.0 / 256.0);
+    r     += tap(uv, -1.0, -2.0) * (4.0 / 256.0);
+    r     += tap(uv,  0.0, -2.0) * (6.0 / 256.0);
+    r     += tap(uv,  1.0, -2.0) * (4.0 / 256.0);
+    r     += tap(uv,  2.0, -2.0) * (1.0 / 256.0);
+    // Row -1
+    r     += tap(uv, -2.0, -1.0) * (4.0 / 256.0);
+    r     += tap(uv, -1.0, -1.0) * (16.0 / 256.0);
+    r     += tap(uv,  0.0, -1.0) * (24.0 / 256.0);
+    r     += tap(uv,  1.0, -1.0) * (16.0 / 256.0);
+    r     += tap(uv,  2.0, -1.0) * (4.0 / 256.0);
+    // Row 0 (center)
+    r     += tap(uv, -2.0,  0.0) * (6.0 / 256.0);
+    r     += tap(uv, -1.0,  0.0) * (24.0 / 256.0);
+    r     += tap(uv,  0.0,  0.0) * (36.0 / 256.0);
+    r     += tap(uv,  1.0,  0.0) * (24.0 / 256.0);
+    r     += tap(uv,  2.0,  0.0) * (6.0 / 256.0);
+    // Row +1
+    r     += tap(uv, -2.0,  1.0) * (4.0 / 256.0);
+    r     += tap(uv, -1.0,  1.0) * (16.0 / 256.0);
+    r     += tap(uv,  0.0,  1.0) * (24.0 / 256.0);
+    r     += tap(uv,  1.0,  1.0) * (16.0 / 256.0);
+    r     += tap(uv,  2.0,  1.0) * (4.0 / 256.0);
+    // Row +2
+    r     += tap(uv, -2.0,  2.0) * (1.0 / 256.0);
+    r     += tap(uv, -1.0,  2.0) * (4.0 / 256.0);
+    r     += tap(uv,  0.0,  2.0) * (6.0 / 256.0);
+    r     += tap(uv,  1.0,  2.0) * (4.0 / 256.0);
+    r     += tap(uv,  2.0,  2.0) * (1.0 / 256.0);
 
-    var result = vec4<f32>(0.0);
-    for (var y: i32 = -2; y <= 2; y = y + 1) {
-        for (var x: i32 = -2; x <= 2; x = x + 1) {
-            let offset = vec2<f32>(f32(x) * tx.x, f32(y) * tx.y);
-            let weight = w[x + 2] * w[y + 2];
-            result += textureSample(tensor_texture, tensor_sampler, in.uv + offset) * weight;
-        }
-    }
-
-    return result;
+    return r;
 }
