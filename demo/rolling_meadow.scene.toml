@@ -11,6 +11,19 @@ pitch = 22.0
 yaw = -30.0
 target = [0.0, 3.0, 0.0]
 
+# -- Player --
+
+# Capsule player with third-person camera
+[entities.player]
+archetype = "player"
+[entities.player.transform]
+position = [0, 12, 0]
+[entities.player.character_controller]
+move_speed = 6.0
+jump_force = 7.0
+[entities.player.script]
+path = "scripts/third_person_camera.rhai"
+
 # Post-processing: warm golden-hour atmosphere
 [post_process]
 bloom_enabled = true
@@ -75,22 +88,22 @@ texture_tile = 20.0
 roughness = 0.85
 metallic = 0.0
 "grass.enabled" = true
-"grass.density" = 10.0
+"grass.density" = 50.0
 "grass.max_distance" = 100.0
 "grass.fade_start" = 70.0
-"grass.blade_width" = 0.09
-"grass.blade_height" = 0.45
-"grass.height_variation" = 0.35
-"grass.color_base" = [0.12, 0.42, 0.08]
-"grass.color_tip" = [0.35, 0.72, 0.18]
-"grass.color_dry" = [0.50, 0.48, 0.18]
-"grass.dry_amount" = 0.2
-"grass.wind_direction" = [0.8, 0.0, 0.6]
-"grass.wind_speed" = 1.2
-"grass.wind_strength" = 0.18
+"grass.blade_width" = 0.2150000035762787
+"grass.blade_height" = 0.4300000071525574
+"grass.height_variation" = 0.3499999940395355
+"grass.color_base" = [0.11999999731779099, 0.41999998688697815, 0.07999999821186066]
+"grass.color_tip" = [0.3499999940395355, 0.7200000286102295, 0.18000000715255737]
+"grass.color_dry" = [0.5, 0.47999998927116394, 0.18000000715255737]
+"grass.dry_amount" = 0.20000000298023224
+"grass.wind_direction" = [0.800000011920929, 0.0, 0.6000000238418579]
+"grass.wind_speed" = 0.5
+"grass.wind_strength" = 0.09000000357627869
 "grass.bend_radius" = 2.5
-"grass.bend_strength" = 0.85
-"grass.density_threshold" = 0.08
+"grass.bend_strength" = 0.8500000238418579
+"grass.density_threshold" = 0.07999999821186066
 
 # -- Props for scale --
 

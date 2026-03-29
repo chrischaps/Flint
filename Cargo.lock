@@ -1562,6 +1562,7 @@ name = "flint-arch-analyzer"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "quote",
  "serde",
  "serde_json",
  "syn",

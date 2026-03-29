@@ -571,5 +571,8 @@ pub fn generate_skeleton_lines(
         }
     }
 
-    Mesh { vertices: verts, indices }
+    Mesh {
+        vertices: verts,
+        indices,
+    }
 }

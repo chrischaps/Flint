@@ -11,11 +11,11 @@ use wgpu::util::DeviceExt;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct GrassInstanceGpu {
-    pub position: [f32; 3],  // World XYZ on terrain
-    pub rotation: f32,       // Y-axis rotation (radians)
-    pub height: f32,         // Scale factor (1.0 ± variation)
-    pub tint: u32,           // Packed RGBA8 color shift
-    pub _pad0: u32,          // Padding to match 32-byte WGSL stride
+    pub position: [f32; 3], // World XYZ on terrain
+    pub rotation: f32,      // Y-axis rotation (radians)
+    pub height: f32,        // Scale factor (1.0 ± variation)
+    pub tint: u32,          // Packed RGBA8 color shift
+    pub _pad0: u32,         // Padding to match 32-byte WGSL stride
     pub _pad1: u32,
 }
 
@@ -123,10 +123,10 @@ pub fn generate_blade_mesh() -> (Vec<GrassVertex>, Vec<u16>) {
         // Row 2: v=0.66
         // Row 3 (tip): v=1.0 (single vertex)
         let rows: [(f32, f32); 4] = [
-            (0.0, half_w),     // base: full width
+            (0.0, half_w), // base: full width
             (0.33, half_w * 0.7),
             (0.66, half_w * 0.35),
-            (1.0, 0.0),       // tip: zero width (point)
+            (1.0, 0.0), // tip: zero width (point)
         ];
 
         for (row_idx, &(v, hw)) in rows.iter().enumerate() {
@@ -319,15 +319,14 @@ impl GrassPipeline {
                 label: Some("Grass Compute Pipeline Layout"),
             });
 
-        let compute_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("Grass Compute Pipeline"),
-                layout: Some(&compute_pipeline_layout),
-                module: &compute_shader,
-                entry_point: Some("cs_main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Grass Compute Pipeline"),
+            layout: Some(&compute_pipeline_layout),
+            module: &compute_shader,
+            entry_point: Some("cs_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
 
         // --- Render bind group layouts ---
 
@@ -380,50 +379,49 @@ impl GrassPipeline {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[
                     transform_bind_group_layout, // Group 0
-                    &render_grass_layout,         // Group 1
-                    light_bind_group_layout,      // Group 2
-                    &render_instance_layout,      // Group 3
+                    &render_grass_layout,        // Group 1
+                    light_bind_group_layout,     // Group 2
+                    &render_instance_layout,     // Group 3
                 ],
                 push_constant_ranges: &[],
                 label: Some("Grass Render Pipeline Layout"),
             });
 
-        let render_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Grass Render Pipeline"),
-                layout: Some(&render_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &render_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[GrassVertex::desc()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &render_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: scene_format,
-                        blend: None, // Opaque with alpha test (discard in shader)
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None, // Double-sided grass blades
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                multiview: None,
-                cache: None,
-            });
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Grass Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &render_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[GrassVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &render_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: scene_format,
+                    blend: None, // Opaque with alpha test (discard in shader)
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None, // Double-sided grass blades
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
 
         // Shadow pipeline (depth-only, uses vs_shadow entry point)
         // Shadow pipeline uses same 4-group layout as render so @group bindings match,
@@ -447,62 +445,59 @@ impl GrassPipeline {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 bind_group_layouts: &[
                     transform_bind_group_layout, // Group 0
-                    &render_grass_layout,         // Group 1
-                    &shadow_dummy_layout,         // Group 2: empty placeholder (NOT light bind group)
-                    &render_instance_layout,      // Group 3
+                    &render_grass_layout,        // Group 1
+                    &shadow_dummy_layout, // Group 2: empty placeholder (NOT light bind group)
+                    &render_instance_layout, // Group 3
                 ],
                 push_constant_ranges: &[],
                 label: Some("Grass Shadow Pipeline Layout"),
             });
 
-        let shadow_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Grass Shadow Pipeline"),
-                layout: Some(&shadow_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &render_shader,
-                    entry_point: Some("vs_shadow"),
-                    buffers: &[GrassVertex::desc()],
-                    compilation_options: Default::default(),
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Grass Shadow Pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &render_shader,
+                entry_point: Some("vs_shadow"),
+                buffers: &[GrassVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: None, // Depth-only
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 1.5,
+                    clamp: 0.0,
                 },
-                fragment: None, // Depth-only
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: Default::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: 2,
-                        slope_scale: 1.5,
-                        clamp: 0.0,
-                    },
-                }),
-                multisample: Default::default(),
-                multiview: None,
-                cache: None,
-            });
+            }),
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
 
         // Generate blade mesh
         let (blade_verts, blade_indices) = generate_blade_mesh();
 
-        let blade_vertex_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Grass Blade Vertex Buffer"),
-                contents: bytemuck::cast_slice(&blade_verts),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let blade_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Grass Blade Vertex Buffer"),
+            contents: bytemuck::cast_slice(&blade_verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
 
-        let blade_index_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Grass Blade Index Buffer"),
-                contents: bytemuck::cast_slice(&blade_indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let blade_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Grass Blade Index Buffer"),
+            contents: bytemuck::cast_slice(&blade_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
 
         Some(Self {
             compute_pipeline,
