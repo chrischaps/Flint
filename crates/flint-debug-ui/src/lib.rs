@@ -1,8 +1,10 @@
 mod grass_panel;
 mod ocean_panel;
+mod tod_panel;
 
 pub use grass_panel::GrassDebugPanel;
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
+pub use tod_panel::{TimeOfDayDebugPanel, TimeOfDayPanelConfig};
 
 /// Common interface for debug overlay panels.
 /// The player app holds `Vec<Box<dyn DebugPanel>>` and renders them generically.

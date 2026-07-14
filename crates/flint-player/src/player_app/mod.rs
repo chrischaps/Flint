@@ -10,7 +10,12 @@ use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
+use flint_debug_ui::DebugPanel as _;
 use flint_core::components as comp;
+
+/// Game-side day/night component driven by a script; the player only knows
+/// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
+const TIME_OF_DAY_COMPONENT: &str = "time_of_day";
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
@@ -605,6 +610,7 @@ impl PlayerApp {
         }
 
         self.create_ocean_debug_panel();
+        self.create_tod_debug_panel();
     }
 
     /// Create the ocean tuning panel if the scene has an `ocean` component.
@@ -629,6 +635,36 @@ impl PlayerApp {
         };
         let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean_comp);
         let panel = flint_debug_ui::OceanDebugPanel::new(
+            config,
+            std::path::PathBuf::from(&self.scene_path),
+            name,
+        );
+        self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Create the time-of-day scrubber if the scene has a `time_of_day`
+    /// component (a game-side convention — see flint-debug-ui tod_panel).
+    fn create_tod_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(TIME_OF_DAY_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let Some(tod_comp) = self
+            .world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT).cloned())
+        else {
+            return;
+        };
+        let config = flint_debug_ui::TimeOfDayPanelConfig::from_component(&tod_comp);
+        let panel = flint_debug_ui::TimeOfDayDebugPanel::new(
             config,
             std::path::PathBuf::from(&self.scene_path),
             name,
@@ -988,6 +1024,38 @@ impl PlayerApp {
                     }
                 }
                 panel.clear_dirty();
+            }
+        }
+
+        // Time-of-day panel: push edits into the component; while auto time
+        // advances (the game script owns time_hours), pull it back so the
+        // slider tracks the sky instead of going stale.
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Time of Day" {
+                continue;
+            }
+            let tod_panel = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::TimeOfDayDebugPanel>()
+                .unwrap();
+            let Some(entity_id) = self.world.get_id(tod_panel.entity_name()) else {
+                continue;
+            };
+            if tod_panel.is_dirty() {
+                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                    for (field, value) in tod_panel.config().to_fields() {
+                        comps.set_field(TIME_OF_DAY_COMPONENT, field, value);
+                    }
+                }
+                tod_panel.clear_dirty();
+            } else if let Some(hours) = self
+                .world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT))
+                .and_then(|c| c.get("time_hours"))
+                .and_then(flint_core::toml_util::toml_f32)
+            {
+                tod_panel.sync_time(hours);
             }
         }
 
@@ -1947,6 +2015,7 @@ impl PlayerApp {
             }
         }
         self.create_ocean_debug_panel();
+        self.create_tod_debug_panel();
 
         // Update terrain height callback for scripts
         self.update_terrain_height_fn();
