@@ -1275,6 +1275,17 @@ impl PlayerApp {
             self.audio.set_filter_cutoff(cutoff);
         }
 
+        // Apply cursor capture request from scripts (skipped while a debug
+        // panel is open — the panel needs the mouse).
+        if let Some(capture) = self.script.take_cursor_capture_override() {
+            let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+            if capture && !panel_open && !self.cursor_captured {
+                self.capture_cursor();
+            } else if !capture && self.cursor_captured {
+                self.release_cursor();
+            }
+        }
+
         // Clear per-frame input state
         self.input.end_frame();
     }

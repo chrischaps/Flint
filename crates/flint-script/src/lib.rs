@@ -279,6 +279,12 @@ impl ScriptSystem {
         c.audio_lowpass_cutoff_override.take()
     }
 
+    /// Take the cursor capture request set by scripts this frame (clears it)
+    pub fn take_cursor_capture_override(&mut self) -> Option<bool> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.cursor_captured_override.take()
+    }
+
     /// Set up the script system's scripts directory from the scene path
     pub fn load_scripts_from_scene(&mut self, scene_path: &str) {
         sync::load_scripts_from_scene(scene_path, &mut self.sync);

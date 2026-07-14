@@ -1241,6 +1241,17 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             c.audio_lowpass_cutoff_override = Some(cutoff_hz as f32);
         });
     }
+
+    // set_cursor_captured(captured) — request cursor capture/release.
+    // Mouse deltas only flow while captured; games without a character
+    // controller (which normally gates capture) call this for mouse look.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_cursor_captured", move |captured: bool| {
+            let mut c = ctx.lock().unwrap();
+            c.cursor_captured_override = Some(captured);
+        });
+    }
 }
 
 // ─── 2D Physics API ──────────────────────────────────────

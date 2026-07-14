@@ -257,6 +257,9 @@ pub struct ScriptCallContext {
     pub postprocess_fog_density_override: Option<f32>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
+    /// Script-driven cursor capture request. Games without a character
+    /// controller (which normally gates capture) use this for mouse look.
+    pub cursor_captured_override: Option<bool>,
     /// Raw pointer to the GameStateMachine — valid only during call scope
     pub state_machine: *mut GameStateMachine,
     /// Raw pointer to the PersistentStore — valid only during call scope
@@ -318,6 +321,7 @@ impl ScriptCallContext {
             postprocess_ssao_intensity_override: None,
             postprocess_fog_density_override: None,
             audio_lowpass_cutoff_override: None,
+            cursor_captured_override: None,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),
             transition_progress: -1.0,
