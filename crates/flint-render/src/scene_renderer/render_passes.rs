@@ -571,37 +571,91 @@ impl SceneRenderer {
         // Bind lights once for the entire pass (group 2 is shared)
         render_pass.set_bind_group(2, &self.light_bind_group, &[]);
 
-        // Render skybox (before everything else, at the far plane)
-        if let (Some(sp), Some(ub), Some(ubg), Some(tbg)) = (
-            &self.skybox_pipeline,
-            &self.skybox_uniform_buffer,
-            &self.skybox_uniform_bind_group,
-            &self.skybox_texture_bind_group,
-        ) {
-            // Build view matrix with translation stripped (rotation only)
-            let view = camera.view_matrix();
-            let view_rot_only = [
-                view[0],
-                view[1],
-                view[2],
-                [0.0, 0.0, 0.0, 1.0], // zero out translation column
-            ];
-            let proj = camera.projection_matrix();
-            let vp = mat4_mul(&proj, &view_rot_only);
-            let inv_vp = mat4_inverse(&vp);
+        // Render sky at the far plane: the procedural sky (driven by the
+        // `sky` component) replaces the texture skybox when present.
+        let mut sky_drawn = false;
+        if self.sky_active {
+            if let (Some(sp), Some(ub), Some(ubg)) = (
+                &self.sky_pipeline,
+                &self.sky_uniform_buffer,
+                &self.sky_uniform_bind_group,
+            ) {
+                let view = camera.view_matrix();
+                let view_rot_only =
+                    [view[0], view[1], view[2], [0.0, 0.0, 0.0, 1.0]];
+                let proj = camera.projection_matrix();
+                let vp = mat4_mul(&proj, &view_rot_only);
+                let inv_vp = mat4_inverse(&vp);
 
-            queue.write_buffer(
-                ub,
-                0,
-                bytemuck::cast_slice(&[SkyboxUniforms {
+                // Sun disc = the scene's first directional light, so the
+                // drawn sun and the lighting can never disagree.
+                let sun = &self.light_uniforms.directional_lights[0];
+                let p = &self.sky_params;
+                let uniforms = crate::sky_pipeline::SkyUniformsGpu {
                     inv_view_proj: inv_vp,
-                }]),
-            );
+                    sun_dir: sun.direction,
+                    sun_disc_size: p.sun_disc_size,
+                    sun_color: [
+                        sun.color[0] * sun.intensity,
+                        sun.color[1] * sun.intensity,
+                        sun.color[2] * sun.intensity,
+                        1.0,
+                    ],
+                    zenith_color: p.zenith_color,
+                    horizon_color: p.horizon_color,
+                    haze_color: p.haze_color,
+                    cloud_tint: p.cloud_tint,
+                    sun_glow: p.sun_glow,
+                    star_opacity: p.star_opacity,
+                    cloud_coverage: p.cloud_coverage,
+                    cloud_density: p.cloud_density,
+                    cloud_scale: p.cloud_scale,
+                    cloud_drift_x: p.cloud_drift_x,
+                    cloud_drift_y: p.cloud_drift_y,
+                    time: (self.ocean_time % 100_000.0) as f32,
+                };
+                queue.write_buffer(ub, 0, bytemuck::cast_slice(&[uniforms]));
 
-            render_pass.set_pipeline(&sp.pipeline);
-            render_pass.set_bind_group(0, ubg, &[]);
-            render_pass.set_bind_group(1, tbg, &[]);
-            render_pass.draw(0..3, 0..1);
+                render_pass.set_pipeline(&sp.pipeline);
+                render_pass.set_bind_group(0, ubg, &[]);
+                render_pass.draw(0..3, 0..1);
+                sky_drawn = true;
+            }
+        }
+
+        // Render texture skybox (before everything else, at the far plane)
+        if !sky_drawn {
+            if let (Some(sp), Some(ub), Some(ubg), Some(tbg)) = (
+                &self.skybox_pipeline,
+                &self.skybox_uniform_buffer,
+                &self.skybox_uniform_bind_group,
+                &self.skybox_texture_bind_group,
+            ) {
+                // Build view matrix with translation stripped (rotation only)
+                let view = camera.view_matrix();
+                let view_rot_only = [
+                    view[0],
+                    view[1],
+                    view[2],
+                    [0.0, 0.0, 0.0, 1.0], // zero out translation column
+                ];
+                let proj = camera.projection_matrix();
+                let vp = mat4_mul(&proj, &view_rot_only);
+                let inv_vp = mat4_inverse(&vp);
+
+                queue.write_buffer(
+                    ub,
+                    0,
+                    bytemuck::cast_slice(&[SkyboxUniforms {
+                        inv_view_proj: inv_vp,
+                    }]),
+                );
+
+                render_pass.set_pipeline(&sp.pipeline);
+                render_pass.set_bind_group(0, ubg, &[]);
+                render_pass.set_bind_group(1, tbg, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
         }
 
         // Render grid

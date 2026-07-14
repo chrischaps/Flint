@@ -285,6 +285,12 @@ impl ScriptSystem {
         c.cursor_captured_override.take()
     }
 
+    /// Take the fog color override set by scripts this frame (clears it)
+    pub fn take_fog_color_override(&mut self) -> Option<[f32; 3]> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.postprocess_fog_color_override.take()
+    }
+
     /// Set up the script system's scripts directory from the scene path
     pub fn load_scripts_from_scene(&mut self, scene_path: &str) {
         sync::load_scripts_from_scene(scene_path, &mut self.sync);

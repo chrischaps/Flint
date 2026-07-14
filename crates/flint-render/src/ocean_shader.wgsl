@@ -359,16 +359,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Lighting composition. The water body color is treated as pre-lit
     // (stylized): tinted by the sun, dimmed in shadow, foam takes light fully.
+    // Ambient lights the COMPOSED surface (water + foam) so moonlit nights
+    // keep their foam instead of crushing it to black when the sun is out.
     let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
-    var color = water_color * sun_tint * mix(0.55, 1.0, sf);
-    color = mix(color, ocean.foam_color.rgb * sun_tint * mix(0.6, 1.0, sf),
-                clamp(foam_hard + foam_halo, 0.0, 1.0));
+    let foam_mix = clamp(foam_hard + foam_halo, 0.0, 1.0);
+    let base = mix(water_color, ocean.foam_color.rgb, foam_mix);
+    var color = base * sun_tint * mix(0.55, 1.0, sf);
     color += sun_radiance * spec * sf * foam_distance_fade;
 
-    // Hemisphere ambient (kept subtle) so night scenes don't crush to black.
     let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     color += mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight)
-        * water_color * 0.35;
+        * base * 0.5;
 
     if (ocean.enable_tonemapping == 1u) {
         color = aces_filmic(color);

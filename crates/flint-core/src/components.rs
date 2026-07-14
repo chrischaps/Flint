@@ -41,6 +41,9 @@ pub const TERRAIN: &str = "terrain";
 // --- Ocean ---
 pub const OCEAN: &str = "ocean";
 
+// --- Procedural sky ---
+pub const SKY: &str = "sky";
+
 // --- Splines ---
 pub const SPLINE: &str = "spline";
 pub const SPLINE_DATA: &str = "spline_data";

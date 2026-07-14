@@ -154,6 +154,7 @@ pub struct PlayerApp {
     pp_radial_blur_override: Option<f32>,
     pp_ssao_intensity_override: Option<f32>,
     pp_fog_density_override: Option<f32>,
+    pp_fog_color_override: Option<[f32; 3]>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -242,6 +243,7 @@ impl PlayerApp {
             pp_radial_blur_override: None,
             pp_ssao_intensity_override: None,
             pp_fog_density_override: None,
+            pp_fog_color_override: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -922,6 +924,7 @@ impl PlayerApp {
             || self.pp_radial_blur_override.is_some()
             || self.pp_ssao_intensity_override.is_some()
             || self.pp_fog_density_override.is_some()
+            || self.pp_fog_color_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -945,6 +948,9 @@ impl PlayerApp {
             }
             if let Some(fd) = self.pp_fog_density_override {
                 config.fog_density = fd;
+            }
+            if let Some(fc) = self.pp_fog_color_override {
+                config.fog_color = fc;
             }
             renderer.set_post_process_config(config);
         }
@@ -1269,6 +1275,7 @@ impl PlayerApp {
         self.pp_radial_blur_override = pp_rb;
         self.pp_ssao_intensity_override = pp_ssao;
         self.pp_fog_density_override = pp_fog;
+        self.pp_fog_color_override = self.script.take_fog_color_override();
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {

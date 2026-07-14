@@ -164,6 +164,12 @@ pub struct SceneRenderer {
     grass_terrain_width: f32,
     grass_terrain_depth: f32,
     grass_terrain_height_scale: f32,
+    // Procedural sky (replaces the texture skybox when a `sky` component exists)
+    sky_pipeline: Option<crate::sky_pipeline::SkyPipeline>,
+    sky_uniform_buffer: Option<wgpu::Buffer>,
+    sky_uniform_bind_group: Option<wgpu::BindGroup>,
+    sky_params: crate::sky_pipeline::SkyParams,
+    sky_active: bool,
     // Ocean
     ocean_pipeline: Option<crate::ocean_pipeline::OceanPipeline>,
     ocean_uniform_buffer: Option<wgpu::Buffer>,
@@ -256,6 +262,7 @@ impl SceneRenderer {
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
         );
+        let sky_resources = Self::create_sky_resources(&context.device, scene_format);
 
         // Graceful degradation: wrap in catch_unwind like the Kuwahara pipeline.
         // If compute shaders aren't supported, grass is silently disabled.
@@ -345,6 +352,11 @@ impl SceneRenderer {
             grass_terrain_width: 0.0,
             grass_terrain_depth: 0.0,
             grass_terrain_height_scale: 0.0,
+            sky_pipeline: sky_resources.0,
+            sky_uniform_buffer: sky_resources.1,
+            sky_uniform_bind_group: sky_resources.2,
+            sky_params: crate::sky_pipeline::SkyParams::default(),
+            sky_active: false,
             ocean_pipeline: ocean_resources.0,
             ocean_uniform_buffer: ocean_resources.1,
             ocean_uniform_bind_group: ocean_resources.2,
@@ -370,6 +382,43 @@ impl SceneRenderer {
             grass_time: 0.0,
             device_lost: false,
         }
+    }
+
+    /// Create the procedural sky pipeline + uniform buffer/bind group.
+    /// catch_unwind so shader failures degrade to "texture skybox only".
+    fn create_sky_resources(
+        device: &wgpu::Device,
+        scene_format: wgpu::TextureFormat,
+    ) -> (
+        Option<crate::sky_pipeline::SkyPipeline>,
+        Option<wgpu::Buffer>,
+        Option<wgpu::BindGroup>,
+    ) {
+        let pipeline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::sky_pipeline::SkyPipeline::new(device, scene_format)
+        }));
+        let pipeline = match pipeline {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!("Sky pipeline creation failed — procedural sky disabled");
+                return (None, None, None);
+            }
+        };
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sky Uniform Buffer"),
+            size: std::mem::size_of::<crate::sky_pipeline::SkyUniformsGpu>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+            label: Some("Sky Uniform Bind Group"),
+        });
+        (Some(pipeline), Some(buffer), Some(bind_group))
     }
 
     /// Create the ocean pipeline plus its uniform/transform buffers and bind
@@ -1468,6 +1517,7 @@ impl SceneRenderer {
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
         );
+        let sky_resources = Self::create_sky_resources(device, scene_format);
 
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
@@ -1534,6 +1584,11 @@ impl SceneRenderer {
             grass_terrain_width: 0.0,
             grass_terrain_depth: 0.0,
             grass_terrain_height_scale: 0.0,
+            sky_pipeline: sky_resources.0,
+            sky_uniform_buffer: sky_resources.1,
+            sky_uniform_bind_group: sky_resources.2,
+            sky_params: crate::sky_pipeline::SkyParams::default(),
+            sky_active: false,
             ocean_pipeline: ocean_resources.0,
             ocean_uniform_buffer: ocean_resources.1,
             ocean_uniform_bind_group: ocean_resources.2,
@@ -2148,6 +2203,9 @@ impl SceneRenderer {
         // Extract ocean params (regenerates the wave spectrum only on change)
         self.extract_ocean_from_world(world);
 
+        // Extract procedural sky params (+ optional ambient override)
+        self.extract_sky_from_world(world);
+
         let need_overlay =
             self.debug_state.mode == DebugMode::WireframeOverlay || self.debug_state.mode == DebugMode::WireframeOnly;
         let need_normals = self.debug_state.show_normals;
@@ -2597,6 +2655,32 @@ impl SceneRenderer {
                 crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
             self.ocean_active = self.ocean_pipeline.is_some();
             break; // one ocean per scene
+        }
+    }
+
+    // ── Sky extraction ──
+
+    /// Extract the first `sky` component. When present, the procedural sky
+    /// replaces the texture skybox, and its optional ambient fields override
+    /// the hemisphere ambient in the light uniforms (so a time-of-day script
+    /// can darken nights by writing component fields).
+    fn extract_sky_from_world(&mut self, world: &FlintWorld) {
+        self.sky_active = false;
+        for &entity_id in world.entities_with_component(comp::SKY) {
+            let sky_comp = world
+                .get_components(entity_id)
+                .and_then(|components| components.get(comp::SKY).cloned());
+            let Some(sky_comp) = sky_comp else { continue };
+
+            self.sky_params = crate::sky_pipeline::SkyParams::from_component(&sky_comp);
+            if let Some(ambient_sky) = self.sky_params.ambient_sky {
+                self.light_uniforms.ambient_sky = ambient_sky;
+            }
+            if let Some(ambient_ground) = self.sky_params.ambient_ground {
+                self.light_uniforms.ambient_ground = ambient_ground;
+            }
+            self.sky_active = self.sky_pipeline.is_some();
+            break;
         }
     }
 

@@ -255,6 +255,7 @@ pub struct ScriptCallContext {
     pub postprocess_radial_blur_override: Option<f32>,
     pub postprocess_ssao_intensity_override: Option<f32>,
     pub postprocess_fog_density_override: Option<f32>,
+    pub postprocess_fog_color_override: Option<[f32; 3]>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
     /// Script-driven cursor capture request. Games without a character
@@ -320,6 +321,7 @@ impl ScriptCallContext {
             postprocess_radial_blur_override: None,
             postprocess_ssao_intensity_override: None,
             postprocess_fog_density_override: None,
+            postprocess_fog_color_override: None,
             audio_lowpass_cutoff_override: None,
             cursor_captured_override: None,
             state_machine: std::ptr::null_mut(),

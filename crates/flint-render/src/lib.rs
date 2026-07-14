@@ -26,6 +26,7 @@ mod primitives;
 mod scene_renderer;
 pub mod shadow;
 pub mod skinned_pipeline;
+pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
@@ -61,6 +62,7 @@ pub use primitives::{
 };
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use skinned_pipeline::SkinnedPipeline;
+pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
 pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
