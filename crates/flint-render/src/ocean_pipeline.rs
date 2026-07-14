@@ -49,6 +49,13 @@ pub struct OceanUniformsGpu {
     pub grab_enabled: u32,
     /// Scene fog color (rgb) + self-fog strength (a) for the horizon fade.
     pub fog_color: [f32; 4],
+    /// Sky gradient snapshot for analytic reflections (from the `sky`
+    /// component; strength 0 when the scene has no procedural sky).
+    pub sky_zenith: [f32; 4],
+    pub sky_horizon: [f32; 4],
+    pub sky_haze: [f32; 4],
+    pub sky_reflection_strength: f32,
+    pub _pad_r: [f32; 3],
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -72,6 +79,8 @@ pub struct OceanVisuals {
     pub refraction_strength: f32,
     /// Per-channel absorption tint (red absorbs first in seawater).
     pub absorption_color: [f32; 3],
+    /// Fresnel-weighted analytic sky reflection amount (0 disables).
+    pub sky_reflection_strength: f32,
 }
 
 impl Default for OceanVisuals {
@@ -92,6 +101,7 @@ impl Default for OceanVisuals {
             turbidity: 0.8,
             refraction_strength: 0.6,
             absorption_color: [0.9, 0.35, 0.22],
+            sky_reflection_strength: 0.8,
         }
     }
 }
@@ -119,6 +129,8 @@ impl OceanVisuals {
                 .get("absorption_color")
                 .and_then(flint_core::toml_util::toml_vec3)
                 .unwrap_or(d.absorption_color),
+            sky_reflection_strength: f("sky_reflection_strength", d.sky_reflection_strength)
+                .clamp(0.0, 2.0),
         }
     }
 
@@ -401,9 +413,9 @@ mod tests {
     fn uniform_struct_matches_wgsl_layout() {
         // waves(512) + 4 colors(64) + grid_offset(8) + 2×u32(8) + 8×f32(32)
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
-        // + fog_color(16) = 672
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 672);
-        assert_eq!(672 % 16, 0, "uniform size must be 16-byte aligned");
+        // + fog_color(16) + sky snapshot 3×vec4 + strength/pads(64) = 736
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 736);
+        assert_eq!(736 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     #[test]

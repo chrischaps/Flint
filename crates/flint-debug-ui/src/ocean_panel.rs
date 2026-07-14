@@ -75,6 +75,9 @@ pub struct OceanPanelConfig {
     pub direction_deg: f32,
     pub spread_deg: f32,
     pub speed_scale: f32,
+    pub wind_speed: f32,
+    pub fetch_km: f32,
+    pub peak_enhancement: f32,
     // Style
     pub deep_color: [f32; 4],
     pub shallow_color: [f32; 4],
@@ -87,6 +90,7 @@ pub struct OceanPanelConfig {
     // Refraction
     pub turbidity: f32,
     pub refraction_strength: f32,
+    pub sky_reflection_strength: f32,
     // Grid
     pub grid_scale: f32,
     pub fade_start: f32,
@@ -109,6 +113,9 @@ impl OceanPanelConfig {
             direction_deg: p.direction_deg,
             spread_deg: p.spread_deg,
             speed_scale: p.speed_scale,
+            wind_speed: p.wind_speed,
+            fetch_km: p.fetch_km,
+            peak_enhancement: p.peak_enhancement,
             deep_color: c("deep_color", [0.055, 0.22, 0.53, 1.0]),
             shallow_color: c("shallow_color", [0.16, 0.51, 0.83, 1.0]),
             foam_color: c("foam_color", [0.96, 0.99, 1.0, 1.0]),
@@ -119,6 +126,7 @@ impl OceanPanelConfig {
             specular_strength: f("specular_strength", 1.0),
             turbidity: f("turbidity", 0.8),
             refraction_strength: f("refraction_strength", 0.6),
+            sky_reflection_strength: f("sky_reflection_strength", 0.8),
             grid_scale: f("grid_scale", 60.0),
             fade_start: f("fade_start", 90.0),
             fade_end: f("fade_end", 170.0),
@@ -142,6 +150,9 @@ impl OceanPanelConfig {
             ("direction_deg", f(self.direction_deg)),
             ("spread_deg", f(self.spread_deg)),
             ("speed_scale", f(self.speed_scale)),
+            ("wind_speed", f(self.wind_speed)),
+            ("fetch_km", f(self.fetch_km)),
+            ("peak_enhancement", f(self.peak_enhancement)),
             ("deep_color", c(self.deep_color)),
             ("shallow_color", c(self.shallow_color)),
             ("foam_color", c(self.foam_color)),
@@ -152,6 +163,7 @@ impl OceanPanelConfig {
             ("specular_strength", f(self.specular_strength)),
             ("turbidity", f(self.turbidity)),
             ("refraction_strength", f(self.refraction_strength)),
+            ("sky_reflection_strength", f(self.sky_reflection_strength)),
             ("grid_scale", f(self.grid_scale)),
             ("fade_start", f(self.fade_start)),
             ("fade_end", f(self.fade_end)),
@@ -227,6 +239,9 @@ impl DebugPanel for OceanDebugPanel {
                 changed |= drag_f32(ui, "Direction (deg)", &mut self.config.direction_deg, 1.0, -360.0..=360.0);
                 changed |= drag_f32(ui, "Spread (deg)", &mut self.config.spread_deg, 1.0, 0.0..=180.0);
                 changed |= drag_f32(ui, "Speed Scale", &mut self.config.speed_scale, 0.01, 0.0..=8.0);
+                changed |= drag_f32(ui, "Wind (m/s)", &mut self.config.wind_speed, 0.1, 0.5..=40.0);
+                changed |= drag_f32(ui, "Fetch (km)", &mut self.config.fetch_km, 1.0, 1.0..=2000.0);
+                changed |= drag_f32(ui, "Peak Gamma", &mut self.config.peak_enhancement, 0.05, 1.0..=10.0);
                 changed |= drag_i64(ui, "Wave Count", &mut self.config.num_waves, 1..=16);
                 changed |= drag_i64(ui, "Seed", &mut self.config.seed, 0..=9999);
             });
@@ -249,6 +264,7 @@ impl DebugPanel for OceanDebugPanel {
             .show(ui, |ui| {
                 changed |= drag_f32(ui, "Turbidity", &mut self.config.turbidity, 0.01, 0.0..=10.0);
                 changed |= drag_f32(ui, "Refraction", &mut self.config.refraction_strength, 0.01, 0.0..=4.0);
+                changed |= drag_f32(ui, "Sky Reflection", &mut self.config.sky_reflection_strength, 0.01, 0.0..=2.0);
             });
 
         egui::CollapsingHeader::new("Grid")

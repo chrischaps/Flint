@@ -59,6 +59,16 @@ pub struct OceanParams {
     pub spread_deg: f32,
     /// Multiplier on time — a "becalmed" slider (1 = physical speed).
     pub speed_scale: f32,
+    /// Wind speed in m/s — shapes the JONSWAP energy distribution
+    /// (which wavelengths carry the sea's energy). Total height stays
+    /// governed by `amplitude`; this shifts WHERE that height lives.
+    pub wind_speed: f32,
+    /// Wind fetch in kilometers (how far the wind has blown over open
+    /// water). Longer fetch → energy concentrates in longer swells.
+    pub fetch_km: f32,
+    /// JONSWAP peak-enhancement γ: 1 = broad Pierson-Moskowitz sea,
+    /// 3.3 = typical North Sea, higher = narrow single-swell character.
+    pub peak_enhancement: f32,
 }
 
 impl Default for OceanParams {
@@ -73,6 +83,9 @@ impl Default for OceanParams {
             direction_deg: 25.0,
             spread_deg: 40.0,
             speed_scale: 1.0,
+            wind_speed: 7.0,
+            fetch_km: 60.0,
+            peak_enhancement: 3.3,
         }
     }
 }
@@ -96,8 +109,33 @@ impl OceanParams {
             direction_deg: f("direction_deg", d.direction_deg),
             spread_deg: f("spread_deg", d.spread_deg).clamp(0.0, 180.0),
             speed_scale: f("speed_scale", d.speed_scale).clamp(0.0, 8.0),
+            wind_speed: f("wind_speed", d.wind_speed).clamp(0.5, 40.0),
+            fetch_km: f("fetch_km", d.fetch_km).clamp(1.0, 2000.0),
+            peak_enhancement: f("peak_enhancement", d.peak_enhancement).clamp(1.0, 10.0),
         }
     }
+}
+
+/// JONSWAP spectral density S(ω) — energy per unit angular frequency for a
+/// wind-driven sea (Hasselmann et al., Joint North Sea Wave Project).
+/// Absolute scale is irrelevant here (amplitudes are renormalized to the
+/// user's `amplitude`); what matters is the SHAPE: a sharp peak at ωₚ set
+/// by wind speed + fetch, a steep low-frequency cutoff, and an ω⁻⁵ tail.
+fn jonswap_density(omega: f64, wind_speed: f64, fetch_m: f64, gamma: f64) -> f64 {
+    if omega <= 1e-6 {
+        return 0.0;
+    }
+    let g = GRAVITY;
+    // Peak angular frequency from wind speed U and fetch F.
+    let omega_p = 22.0 * (g * g / (wind_speed * fetch_m)).powf(1.0 / 3.0);
+    // Phillips "constant" with fetch dependence.
+    let alpha = 0.076 * (wind_speed * wind_speed / (fetch_m * g)).powf(0.22);
+    // Peak-enhancement exponent (σ narrower below the peak than above).
+    let sigma = if omega <= omega_p { 0.07 } else { 0.09 };
+    let r = (-((omega - omega_p) * (omega - omega_p))
+        / (2.0 * sigma * sigma * omega_p * omega_p))
+        .exp();
+    alpha * g * g / omega.powi(5) * (-1.25 * (omega_p / omega).powi(4)).exp() * gamma.powf(r)
 }
 
 /// One Gerstner wave. All fields precomputed at spectrum generation.
@@ -157,6 +195,10 @@ impl WaveSpectrum {
         let wind = (params.direction_deg as f64).to_radians();
         let spread = (params.spread_deg as f64).to_radians();
 
+        let wind_speed = params.wind_speed as f64;
+        let fetch_m = params.fetch_km as f64 * 1000.0;
+        let gamma = params.peak_enhancement as f64;
+
         let mut waves = Vec::with_capacity(n);
         let mut amp_sum = 0.0_f64;
         for i in 0..n {
@@ -172,9 +214,20 @@ impl WaveSpectrum {
             let angle = wind + rng.range(-1.0, 1.0) * spread * wander;
             let dir = [angle.sin() as f32, angle.cos() as f32]; // 0° = +Z
 
-            // Amplitude proportional to wavelength (constant slope), then the
-            // whole set is normalized to Σ A = params.amplitude below.
-            let amp = lambda * rng.range(0.75, 1.25);
+            // Amplitude from the JONSWAP energy in this wave's frequency bin
+            // (A²/2 = S(ω)·Δω), so energy concentrates around the wind/fetch
+            // peak instead of spreading evenly. The whole set is normalized
+            // to Σ A = params.amplitude below — JONSWAP shapes WHERE the
+            // height lives, `amplitude` still says how much there is.
+            let half_bin = 0.5 / n.max(2) as f64;
+            let edge = |uu: f64| -> f64 {
+                let l = lmin * (lmax / lmin).powf(uu.clamp(0.0, 1.0));
+                (GRAVITY * std::f64::consts::TAU / l).sqrt() // ω = √(g·k)
+            };
+            let d_omega = (edge(u - half_bin) - edge(u + half_bin)).abs().max(1e-6);
+            let omega_center = (GRAVITY * k).sqrt();
+            let energy = jonswap_density(omega_center, wind_speed, fetch_m, gamma) * d_omega;
+            let amp = (2.0 * energy).sqrt() * rng.range(0.9, 1.1);
 
             // omega derives from the f32-rounded k so stored fields are
             // exactly consistent with what the GPU receives.
@@ -191,17 +244,21 @@ impl WaveSpectrum {
         }
 
         // Normalize amplitudes to the requested total, then distribute
-        // steepness so Σ Qᵢ·kᵢ·Aᵢ = choppiness (≤ 1 ⇒ no cusps/loops).
+        // steepness by ENERGY SHARE: Qᵢ = choppiness/(kᵢ·ΣA), which keeps
+        // Σ Qᵢ·kᵢ·Aᵢ = choppiness (≤ 1 ⇒ no cusps/loops) while making each
+        // wave's horizontal pinch Qᵢ·Aᵢ ∝ Aᵢ. (An equal per-wave split gave
+        // every wave the same pinch regardless of amplitude, so JONSWAP's
+        // near-dead short waves foamed the whole surface into mist.)
         let amp_scale = if amp_sum > 0.0 {
             params.amplitude as f64 / amp_sum
         } else {
             0.0
         };
+        let amp_total = params.amplitude.max(1e-6);
         for w in &mut waves {
             w.amp = (w.amp as f64 * amp_scale) as f32;
-            let ka = w.k * w.amp;
-            w.q = if ka > 1e-6 {
-                params.choppiness / (ka * n as f32)
+            w.q = if w.k > 1e-6 {
+                params.choppiness / (w.k * amp_total)
             } else {
                 0.0
             };
@@ -445,6 +502,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn jonswap_peak_dominates_the_spectrum() {
+        // Defaults: wind 7 m/s, fetch 60 km → ωₚ ≈ 1.35 rad/s (λₚ ≈ 34 m).
+        // The largest-amplitude wave must sit near that peak, not at the
+        // band edges (the old A ∝ λ rule always crowned the longest wave).
+        let spec = spectrum();
+        let omega_p = 22.0
+            * (GRAVITY * GRAVITY
+                / (spec.params.wind_speed as f64 * spec.params.fetch_km as f64 * 1000.0))
+                .powf(1.0 / 3.0);
+        let biggest = spec
+            .waves
+            .iter()
+            .max_by(|a, b| a.amp.partial_cmp(&b.amp).unwrap())
+            .unwrap();
+        let ratio = biggest.omega / omega_p;
+        assert!(
+            (0.6..=1.6).contains(&ratio),
+            "dominant wave ω {} not near JONSWAP peak {} (ratio {})",
+            biggest.omega,
+            omega_p,
+            ratio
+        );
+    }
+
+    #[test]
+    fn stronger_wind_shifts_energy_to_longer_waves() {
+        let calm = WaveSpectrum::generate(&OceanParams {
+            wind_speed: 3.0,
+            ..Default::default()
+        });
+        let storm = WaveSpectrum::generate(&OceanParams {
+            wind_speed: 20.0,
+            ..Default::default()
+        });
+        let mean_lambda = |s: &WaveSpectrum| -> f32 {
+            let total: f32 = s.waves.iter().map(|w| w.amp).sum();
+            s.waves
+                .iter()
+                .map(|w| (std::f32::consts::TAU / w.k) * w.amp / total)
+                .sum()
+        };
+        assert!(
+            mean_lambda(&storm) > mean_lambda(&calm),
+            "storm sea should carry its energy in longer waves"
+        );
     }
 
     #[test]

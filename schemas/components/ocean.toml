@@ -12,6 +12,9 @@ choppiness = { type = "float", description = "0 = rolling swells, 1 = sharp troc
 direction_deg = { type = "float", description = "Primary wave travel direction in degrees (0 = +Z)", default = 25.0 }
 spread_deg = { type = "float", description = "Directional spread in degrees; small waves wander more", default = 40.0 }
 speed_scale = { type = "float", description = "Time multiplier: 0 = frozen, 1 = physical speed", default = 1.0 }
+wind_speed = { type = "float", description = "Wind speed m/s: shapes the JONSWAP energy peak (where the height lives)", default = 7.0 }
+fetch_km = { type = "float", description = "Wind fetch in km: longer = energy in longer swells", default = 60.0 }
+peak_enhancement = { type = "float", description = "JONSWAP gamma: 1 = broad sea, 3.3 = typical, higher = single narrow swell", default = 3.3 }
 
 # ── Style (flint_render OceanVisuals) ───────────────────────────────────
 deep_color = { type = "vec4", description = "Water color in wave shadow (RGBA linear)", default = [0.055, 0.22, 0.53, 1.0] }
@@ -27,6 +30,7 @@ specular_strength = { type = "float", description = "Sun glint intensity (0 disa
 turbidity = { type = "float", description = "Water cloudiness: 0 = glass-clear legs, high = murk in half a meter", default = 0.8 }
 refraction_strength = { type = "float", description = "Screen-space refraction distortion of underwater objects", default = 0.6 }
 absorption_color = { type = "vec3", description = "Per-channel absorption rate (red dies first in seawater)", default = [0.9, 0.35, 0.22] }
+sky_reflection_strength = { type = "float", description = "Fresnel-weighted analytic sky reflection (needs a sky component; 0 disables)", default = 0.8 }
 
 # ── Grid ────────────────────────────────────────────────────────────────
 grid_scale = { type = "float", description = "Inner metric scale of the camera-following grid (m)", default = 60.0 }

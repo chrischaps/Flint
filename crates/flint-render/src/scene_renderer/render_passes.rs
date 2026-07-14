@@ -468,6 +468,17 @@ impl SceneRenderer {
                         let strength = if self.postprocess_config.fog_enabled { 1.0 } else { 0.0 };
                         [c[0], c[1], c[2], strength]
                     },
+                    sky_zenith: self.sky_params.zenith_color,
+                    sky_horizon: self.sky_params.horizon_color,
+                    sky_haze: self.sky_params.haze_color,
+                    // Reflections need a procedural sky to reflect; scenes
+                    // with a texture skybox (or none) keep the old look.
+                    sky_reflection_strength: if self.sky_active {
+                        v.sky_reflection_strength
+                    } else {
+                        0.0
+                    },
+                    _pad_r: [0.0; 3],
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
             }

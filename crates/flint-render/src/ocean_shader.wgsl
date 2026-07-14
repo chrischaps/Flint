@@ -56,6 +56,17 @@ struct OceanUniforms {
     // as an unfogged dark band at the horizon. The ocean fades itself to the
     // scene fog color before that threshold instead.
     fog_color: vec4<f32>,
+    // Analytic sky reflection: a snapshot of the procedural sky's gradient
+    // (copied per frame from the `sky` component, so reflections track the
+    // time of day for free). Deliberately no sun disc — the cel specular IS
+    // the sun's reflection; including it here would double the sun.
+    sky_zenith: vec4<f32>,
+    sky_horizon: vec4<f32>,
+    sky_haze: vec4<f32>,           // rgb + haze strength in alpha
+    sky_reflection_strength: f32,  // 0 disables (also 0 when no sky component)
+    _pad_r0: f32,
+    _pad_r1: f32,
+    _pad_r2: f32,
 };
 
 @group(1) @binding(0)
@@ -437,6 +448,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let ndv = max(dot(N, V), 0.0);
         let see_through = pow(ndv, 1.5) * (1.0 - foam_mix) * foam_distance_fade * 0.9;
         color = mix(color, transmitted, see_through);
+    }
+
+    // ── Analytic sky reflection (Schlick fresnel, F0 = 0.02 for water) ──
+    // Our sky is a function, not a cubemap: evaluate its gradient with the
+    // reflected ray. Strongest at grazing angles, suppressed by foam.
+    if (ocean.sky_reflection_strength > 0.001) {
+        let R = reflect(-V, N);
+        let r_up = pow(clamp(R.y, 0.0, 1.0), 0.62);
+        var sky_ref = mix(ocean.sky_horizon.rgb, ocean.sky_zenith.rgb, r_up);
+        let r_haze = exp(-abs(clamp(R.y, -1.0, 1.0)) * 9.0);
+        sky_ref = mix(sky_ref, ocean.sky_haze.rgb, r_haze * ocean.sky_haze.a);
+
+        let ndv = max(dot(N, V), 0.0);
+        let fresnel = 0.02 + 0.98 * pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
+        let reflect_amt = fresnel * ocean.sky_reflection_strength
+            * (1.0 - foam_mix) * sf;
+        color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
     }
 
     // ── Self-fog toward the horizon (see fog_color comment above) ───────
