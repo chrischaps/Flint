@@ -51,6 +51,11 @@ struct OceanUniforms {
     camera_near: f32,
     camera_far: f32,
     grab_enabled: u32,          // 1 when scene color/depth copies are valid
+    // Self-fog: the composite fog skips depth ≥ 0.9999 (to spare the sky),
+    // which with GL-style depth is all water beyond ~700 m — it would render
+    // as an unfogged dark band at the horizon. The ocean fades itself to the
+    // scene fog color before that threshold instead.
+    fog_color: vec4<f32>,
 };
 
 @group(1) @binding(0)
@@ -137,9 +142,11 @@ const TAU: f32 = 6.28318530718;
 
 // ── Grid warp ───────────────────────────────────────────────────────────
 // Chebyshev-radius exponential-ish warp: dense center, km-scale rim.
+// The divisor floor puts the rim ~7.5 km out (grid_scale 60) — beyond the
+// geometric horizon at seated eye height, so the water edge is never seen.
 fn warp_grid(p: vec2<f32>) -> vec2<f32> {
     let r = max(abs(p.x), abs(p.y));
-    return p * (ocean.grid_scale / (1.02 - r));
+    return p * (ocean.grid_scale / (1.008 - r));
 }
 
 // ── Gerstner evaluation (MUST mirror flint-core ocean.rs) ───────────────
@@ -431,6 +438,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let see_through = pow(ndv, 1.5) * (1.0 - foam_mix) * foam_distance_fade * 0.9;
         color = mix(color, transmitted, see_through);
     }
+
+    // ── Self-fog toward the horizon (see fog_color comment above) ───────
+    let horizon_fade = smoothstep(380.0, 640.0, view_depth);
+    color = mix(color, ocean.fog_color.rgb, horizon_fade * ocean.fog_color.a);
 
     if (ocean.enable_tonemapping == 1u) {
         color = aces_filmic(color);
