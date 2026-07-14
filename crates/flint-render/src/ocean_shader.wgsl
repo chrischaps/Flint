@@ -345,6 +345,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let V = normalize(transform.camera_pos - in.world_pos);
     let view_depth = length(transform.camera_pos - in.world_pos);
+    let ndv = max(dot(N, V), 0.0);
+    // Schlick fresnel, F0 = 0.02 for water: ALL reflections — the sun's
+    // specular included — are ~2% looking straight down and only get strong
+    // at grazing angles. Skipping this on the specular painted a big
+    // bloomed sun-disc on the water right under the camera.
+    let fresnel = 0.02 + 0.98 * pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
 
     // Primary light (the sun). Fall back to top-down white if scene has none.
     var L = vec3<f32>(0.0, 1.0, 0.0);
@@ -412,7 +418,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let base = mix(water_color, ocean.foam_color.rgb, foam_mix);
     var color = base * sun_tint * shadow_dim;
-    color += sun_radiance * spec * sf * foam_distance_fade;
+    // Fresnel-weighted glint: full glitter path at grazing (sunset), nearly
+    // nothing looking straight down (×3 so the path saturates early).
+    color += sun_radiance * spec * sf * foam_distance_fade
+        * clamp(fresnel * 3.0, 0.0, 1.0);
     color += ambient * base * 0.5;
 
     // ── Refraction + turbidity (grab pass): see through to the legs ─────
@@ -445,7 +454,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // Looking straight down = window into the water; grazing = mirror-ish
         // styled surface. Foam is always opaque.
-        let ndv = max(dot(N, V), 0.0);
         let see_through = pow(ndv, 1.5) * (1.0 - foam_mix) * foam_distance_fade * 0.9;
         color = mix(color, transmitted, see_through);
     }
@@ -460,8 +468,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let r_haze = exp(-abs(clamp(R.y, -1.0, 1.0)) * 9.0);
         sky_ref = mix(sky_ref, ocean.sky_haze.rgb, r_haze * ocean.sky_haze.a);
 
-        let ndv = max(dot(N, V), 0.0);
-        let fresnel = 0.02 + 0.98 * pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
         let reflect_amt = fresnel * ocean.sky_reflection_strength
             * (1.0 - foam_mix) * sf;
         color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
