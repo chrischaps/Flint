@@ -1652,6 +1652,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-debug-ui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "flint-scene",
+ "flint-terrain",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "flint-ecs"
 version = "0.1.0"
 dependencies = [
@@ -1714,6 +1725,7 @@ dependencies = [
  "flint-asset",
  "flint-audio",
  "flint-core",
+ "flint-debug-ui",
  "flint-ecs",
  "flint-import",
  "flint-particles",
