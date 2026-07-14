@@ -35,7 +35,77 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_camera_2d_api(engine, ctx.clone());
     register_chunk_api(engine, ctx.clone());
     register_screen_ui_api(engine, ctx.clone());
+    register_ocean_api(engine, ctx.clone());
     register_log_api(engine, ctx);
+}
+
+// ─── Ocean API ───────────────────────────────────────────
+//
+// Samples the same Gerstner spectrum the renderer displaces vertices with
+// (flint_core::ocean is the single source of truth, and total_time is the
+// same clock the player hands the renderer as ocean_time). The spectrum is
+// cached and regenerated only when the `ocean` component's params change.
+
+fn register_ocean_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    use flint_core::ocean::{OceanParams, WaveSpectrum};
+
+    type SpectrumCache = Arc<Mutex<Option<WaveSpectrum>>>;
+    let cache: SpectrumCache = Arc::new(Mutex::new(None));
+
+    // Reads the first `ocean` component and returns (spectrum ready?, time).
+    fn with_spectrum<R>(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        cache: &Arc<Mutex<Option<WaveSpectrum>>>,
+        f: impl FnOnce(&WaveSpectrum, f64) -> R,
+    ) -> Option<R> {
+        let c = ctx.lock().unwrap();
+        let world = unsafe { c.world_ref() };
+        let entity_id = world
+            .entities_with_component(comp::OCEAN)
+            .iter()
+            .next()
+            .copied()?;
+        let ocean_comp = world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(comp::OCEAN).cloned())?;
+        let params = OceanParams::from_component(&ocean_comp);
+
+        let mut cached = cache.lock().unwrap();
+        let needs_regen = cached.as_ref().map(|s| s.params != params).unwrap_or(true);
+        if needs_regen {
+            *cached = Some(WaveSpectrum::generate(&params));
+        }
+        Some(f(cached.as_ref().unwrap(), c.total_time))
+    }
+
+    // ocean_height(x, z) -> f64 — Eulerian surface height at world (x, z).
+    {
+        let ctx = ctx.clone();
+        let cache = cache.clone();
+        engine.register_fn("ocean_height", move |x: f64, z: f64| -> f64 {
+            with_spectrum(&ctx, &cache, |spec, t| {
+                spec.sample_height(x as f32, z as f32, t) as f64
+            })
+            .unwrap_or(0.0)
+        });
+    }
+
+    // ocean_normal(x, z) -> #{x, y, z} — surface normal at world (x, z).
+    {
+        let ctx = ctx.clone();
+        let cache = cache.clone();
+        engine.register_fn("ocean_normal", move |x: f64, z: f64| -> Map {
+            let n = with_spectrum(&ctx, &cache, |spec, t| {
+                spec.sample_normal(x as f32, z as f32, t)
+            })
+            .unwrap_or([0.0, 1.0, 0.0]);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(n[0] as f64));
+            map.insert("y".into(), Dynamic::from(n[1] as f64));
+            map.insert("z".into(), Dynamic::from(n[2] as f64));
+            map
+        });
+    }
 }
 
 // ─── Entity API ──────────────────────────────────────────

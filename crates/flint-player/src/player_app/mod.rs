@@ -601,6 +601,37 @@ impl PlayerApp {
             );
             self.debug_panels.push(Box::new(panel));
         }
+
+        self.create_ocean_debug_panel();
+    }
+
+    /// Create the ocean tuning panel if the scene has an `ocean` component.
+    fn create_ocean_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(comp::OCEAN)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let Some(ocean_comp) = self
+            .world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(comp::OCEAN).cloned())
+        else {
+            return;
+        };
+        let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean_comp);
+        let panel = flint_debug_ui::OceanDebugPanel::new(
+            config,
+            std::path::PathBuf::from(&self.scene_path),
+            name,
+        );
+        self.debug_panels.push(Box::new(panel));
     }
 
     /// Update the terrain height callback on the script system.
@@ -935,6 +966,25 @@ impl PlayerApp {
             }
         }
 
+        // Push ocean panel edits into the world's `ocean` component — the
+        // renderer extraction and the script API both read from there.
+        for panel in &mut self.debug_panels {
+            if panel.name() == "Ocean Debug" && panel.is_dirty() {
+                let ocean_panel = panel
+                    .as_any_mut()
+                    .downcast_mut::<flint_debug_ui::OceanDebugPanel>()
+                    .unwrap();
+                if let Some(entity_id) = self.world.get_id(ocean_panel.entity_name()) {
+                    if let Some(comps) = self.world.get_components_mut(entity_id) {
+                        for (field, value) in ocean_panel.config().to_fields() {
+                            comps.set_field(comp::OCEAN, field, value);
+                        }
+                    }
+                }
+                panel.clear_dirty();
+            }
+        }
+
         if let Err(e) = renderer.render(context, &self.camera, &view) {
             tracing::warn!("Render error: {:?}", e);
         }
@@ -1197,6 +1247,9 @@ impl PlayerApp {
         // Update grass time and entity positions for bend-on-contact
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             renderer.grass_time = self.clock.total_time as f32;
+            // Ocean waves run on the same clock scripts see via total_time(),
+            // keeping script-side ocean_height() queries in sync with the GPU.
+            renderer.ocean_time = self.clock.total_time;
 
             let cam_pos = self.camera.position;
             let grass_entities = vec![GrassEntityPosition {
@@ -1875,6 +1928,7 @@ impl PlayerApp {
                 self.debug_panels.push(Box::new(panel));
             }
         }
+        self.create_ocean_debug_panel();
 
         // Update terrain height callback for scripts
         self.update_terrain_height_fn();
@@ -2050,23 +2104,21 @@ impl ApplicationHandler for PlayerApp {
                                     self.show_stats = !self.show_stats;
                                 }
                                 KeyCode::F3 => {
-                                    let has_grass_panel = self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
-                                    if has_grass_panel {
-                                        // Toggle the panel, then adjust cursor outside the borrow
-                                        let mut opened = false;
+                                    // Toggle all registered debug panels (grass, ocean, ...)
+                                    if self.debug_panels.is_empty() {
+                                        tracing::info!("No debug panels in current scene");
+                                    } else {
+                                        // Toggle the panels, then adjust cursor outside the borrow
+                                        let mut any_open = false;
                                         for panel in &mut self.debug_panels {
-                                            if panel.name() == "Grass Debug" {
-                                                panel.toggle();
-                                                opened = panel.is_open();
-                                            }
+                                            panel.toggle();
+                                            any_open |= panel.is_open();
                                         }
-                                        if opened {
+                                        if any_open {
                                             self.release_cursor();
                                         } else if self.physics.has_player_entity() {
                                             self.capture_cursor();
                                         }
-                                    } else {
-                                        tracing::info!("No terrain with grass in current scene");
                                     }
                                 }
                                 KeyCode::F4 => {

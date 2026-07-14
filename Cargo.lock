@@ -1656,6 +1656,7 @@ name = "flint-debug-ui"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "flint-core",
  "flint-scene",
  "flint-terrain",
  "toml",

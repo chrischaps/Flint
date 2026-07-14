@@ -38,6 +38,9 @@ pub const PARTICLE_EMITTER: &str = "particle_emitter";
 // --- Terrain ---
 pub const TERRAIN: &str = "terrain";
 
+// --- Ocean ---
+pub const OCEAN: &str = "ocean";
+
 // --- Splines ---
 pub const SPLINE: &str = "spline";
 pub const SPLINE_DATA: &str = "spline_data";

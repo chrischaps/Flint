@@ -1,0 +1,378 @@
+// Flint ocean shader — Gerstner displacement + stylized cel-banded shading.
+//
+// The wave array is generated on the CPU (flint-core/src/ocean.rs) and
+// uploaded verbatim; this shader only sums it. Keep the summation formulas
+// IDENTICAL to WaveSpectrum::displacement()/normal() — CPU/GPU parity is
+// what buoyancy relies on (tested by gpu_packing_matches_cpu_evaluation).
+//
+// Mesh: a normalized [-1,1]² grid, radially warped so the center is dense
+// (sub-meter cells for displacement) and the rim reaches kilometers (flat,
+// fog-eaten horizon). The whole grid follows the camera via grid_offset,
+// snapped to inner-cell multiples so waves stay world-anchored.
+
+struct TransformUniforms {
+    view_proj: mat4x4<f32>,
+    model: mat4x4<f32>,
+    model_inv_transpose: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _pad: f32,
+};
+
+@group(0) @binding(0)
+var<uniform> transform: TransformUniforms;
+
+// Two vec4s per wave: a = [dir.x, dir.y, k, amp], b = [phase_t, q, 0, 0].
+// phase_t = (omega*t - phase0) mod 2pi, precomputed in f64 on the CPU.
+struct Wave {
+    a: vec4<f32>,
+    b: vec4<f32>,
+};
+
+struct OceanUniforms {
+    waves: array<Wave, 16>,
+    deep_color: vec4<f32>,
+    shallow_color: vec4<f32>,
+    foam_color: vec4<f32>,
+    sss_color: vec4<f32>,
+    grid_offset: vec2<f32>,     // snapped camera XZ
+    num_waves: u32,
+    enable_tonemapping: u32,
+    grid_scale: f32,            // inner metric scale of the warped grid
+    fade_start: f32,            // displacement fade start (m from camera)
+    fade_end: f32,              // fully flat beyond (m)
+    foam_threshold: f32,        // foam where Jacobian < threshold
+    foam_noise_scale: f32,      // world-space noise frequency for foam breakup
+    ramp_steps: f32,            // cel bands in the diffuse ramp
+    specular_strength: f32,
+    time: f32,                  // seconds (foam drift only; waves use phase_t)
+};
+
+@group(1) @binding(0)
+var<uniform> ocean: OceanUniforms;
+
+// Bind group 2: lights + shadows (same layout as shader.wgsl / terrain)
+struct DirectionalLight {
+    direction: vec3<f32>,
+    volumetric_intensity: f32,
+    color: vec3<f32>,
+    intensity: f32,
+    volumetric_color: vec3<f32>,
+    _pad1: f32,
+};
+
+struct PointLight {
+    position: vec3<f32>,
+    radius: f32,
+    color: vec3<f32>,
+    intensity: f32,
+};
+
+struct SpotLight {
+    position: vec3<f32>,
+    radius: f32,
+    direction: vec3<f32>,
+    inner_angle: f32,
+    color: vec3<f32>,
+    outer_angle: f32,
+    intensity: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
+struct LightUniforms {
+    directional_lights: array<DirectionalLight, 4>,
+    point_lights: array<PointLight, 16>,
+    spot_lights: array<SpotLight, 8>,
+    directional_count: u32,
+    point_count: u32,
+    spot_count: u32,
+    _pad: u32,
+    ambient_sky: vec4<f32>,
+    ambient_ground: vec4<f32>,
+};
+
+@group(2) @binding(0)
+var<uniform> lights: LightUniforms;
+
+@group(2) @binding(1)
+var shadow_maps: texture_depth_2d_array;
+@group(2) @binding(2)
+var shadow_sampler: sampler_comparison;
+
+struct ShadowUniforms {
+    cascade_view_proj: array<mat4x4<f32>, 3>,
+    cascade_splits: vec4<f32>,
+};
+
+@group(2) @binding(3)
+var<uniform> shadow: ShadowUniforms;
+
+struct VertexInput {
+    @location(0) pos: vec2<f32>,    // normalized grid coords in [-1, 1]
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,   // displaced surface position
+    @location(1) param_xz: vec2<f32>,    // pre-displacement world column
+    @location(2) fade: f32,              // displacement fade factor
+};
+
+const PI: f32 = 3.14159265359;
+const TAU: f32 = 6.28318530718;
+
+// ── Grid warp ───────────────────────────────────────────────────────────
+// Chebyshev-radius exponential-ish warp: dense center, km-scale rim.
+fn warp_grid(p: vec2<f32>) -> vec2<f32> {
+    let r = max(abs(p.x), abs(p.y));
+    return p * (ocean.grid_scale / (1.02 - r));
+}
+
+// ── Gerstner evaluation (MUST mirror flint-core ocean.rs) ───────────────
+
+fn gerstner_offset(p: vec2<f32>, amp_scale: f32) -> vec3<f32> {
+    var off = vec3<f32>(0.0);
+    for (var i = 0u; i < ocean.num_waves; i = i + 1u) {
+        let w = ocean.waves[i];
+        let dir = w.a.xy;
+        let k = w.a.z;
+        let amp = w.a.w * amp_scale;
+        let theta = k * dot(dir, p) - w.b.x;
+        let s = sin(theta);
+        let c = cos(theta);
+        let q = w.b.y;
+        off.x += q * amp * dir.x * c;
+        off.y += amp * s;
+        off.z += q * amp * dir.y * c;
+    }
+    return off;
+}
+
+// Normal + horizontal-displacement Jacobian determinant at param point p.
+// Jacobian < 1 means particles bunch (crest pinch) — that's where foam lives.
+fn gerstner_normal_jacobian(p: vec2<f32>, amp_scale: f32) -> vec4<f32> {
+    var n = vec3<f32>(0.0, 1.0, 0.0);
+    var jxx = 1.0;
+    var jzz = 1.0;
+    var jxz = 0.0;
+    for (var i = 0u; i < ocean.num_waves; i = i + 1u) {
+        let w = ocean.waves[i];
+        let dir = w.a.xy;
+        let k = w.a.z;
+        let amp = w.a.w * amp_scale;
+        let theta = k * dot(dir, p) - w.b.x;
+        let s = sin(theta);
+        let c = cos(theta);
+        let q = w.b.y;
+        let ka = k * amp;
+        n.x -= dir.x * ka * c;
+        n.y -= q * ka * s;
+        n.z -= dir.y * ka * c;
+        let qkas = q * ka * s;
+        jxx -= dir.x * dir.x * qkas;
+        jzz -= dir.y * dir.y * qkas;
+        jxz -= dir.x * dir.y * qkas;
+    }
+    let jacobian = jxx * jzz - jxz * jxz;
+    return vec4<f32>(normalize(n), jacobian);
+}
+
+// ── Noise (foam breakup) ────────────────────────────────────────────────
+
+fn hash2(p: vec2<f32>) -> f32 {
+    let h = dot(p, vec2<f32>(127.1, 311.7));
+    return fract(sin(h) * 43758.5453123);
+}
+
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = hash2(i);
+    let b = hash2(i + vec2<f32>(1.0, 0.0));
+    let c = hash2(i + vec2<f32>(0.0, 1.0));
+    let d = hash2(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn fbm(p: vec2<f32>) -> f32 {
+    var v = 0.0;
+    var a = 0.5;
+    var q = p;
+    for (var i = 0; i < 3; i = i + 1) {
+        v += a * value_noise(q);
+        q = q * 2.13 + vec2<f32>(17.0, 9.2);
+        a *= 0.5;
+    }
+    return v;
+}
+
+// ── Vertex ──────────────────────────────────────────────────────────────
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    let flat_xz = warp_grid(in.pos) + ocean.grid_offset;
+    let cam_dist = distance(flat_xz, transform.camera_pos.xz);
+    let fade = 1.0 - smoothstep(ocean.fade_start, ocean.fade_end, cam_dist);
+
+    let off = gerstner_offset(flat_xz, fade);
+    let world_pos = vec3<f32>(flat_xz.x + off.x, off.y, flat_xz.y + off.z);
+
+    out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    out.world_pos = world_pos;
+    out.param_xz = flat_xz;
+    out.fade = fade;
+    return out;
+}
+
+// ── Shadow sampling (same as terrain_shader.wgsl) ───────────────────────
+
+fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
+    let shadow_far = shadow.cascade_splits.z;
+    let fade_start = shadow_far * 0.75;
+    if (view_depth > shadow_far) {
+        return 1.0;
+    }
+    let distance_fade = 1.0 - smoothstep(fade_start, shadow_far, view_depth);
+
+    var cascade: i32 = 0;
+    if (view_depth > shadow.cascade_splits.x) {
+        cascade = 1;
+    }
+    if (view_depth > shadow.cascade_splits.y) {
+        cascade = 2;
+    }
+
+    let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(world_pos, 1.0);
+    let proj = light_space.xyz / light_space.w;
+    let shadow_uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+
+    let edge_fade = min(
+        min(smoothstep(0.0, 0.02, shadow_uv.x), smoothstep(0.0, 0.02, 1.0 - shadow_uv.x)),
+        min(smoothstep(0.0, 0.02, shadow_uv.y), smoothstep(0.0, 0.02, 1.0 - shadow_uv.y))
+    );
+    if (edge_fade <= 0.0) {
+        return 1.0;
+    }
+
+    let depth = proj.z;
+    let texel_size = 1.0 / 2048.0;
+    var shadow_sum = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow_sum += textureSampleCompareLevel(
+                shadow_maps, shadow_sampler, shadow_uv + offset, cascade, depth
+            );
+        }
+    }
+
+    let raw_shadow = shadow_sum / 9.0;
+    return mix(1.0, raw_shadow, distance_fade * edge_fade);
+}
+
+fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+}
+
+// Quantize a 0..1 value into `steps` hard bands with fwidth anti-aliasing.
+// AA width is clamped away from zero: fwidth() is 0 in flat regions, and a
+// degenerate smoothstep(e, e, x) is 0/0 = NaN — one NaN pixel poisons the
+// whole bloom mip chain into black rectangles.
+fn cel_band(value: f32, steps: f32) -> f32 {
+    let scaled = value * steps;
+    let band = floor(scaled);
+    let frac_part = scaled - band;
+    let aa = clamp(fwidth(scaled) * 1.5, 1e-4, 0.5);
+    let edge = smoothstep(0.5 - aa, 0.5 + aa, frac_part);
+    return clamp((band + edge) / steps, 0.0, 1.0);
+}
+
+// ── Fragment ────────────────────────────────────────────────────────────
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let nj = gerstner_normal_jacobian(in.param_xz, in.fade);
+    let N = nj.xyz;
+    let jacobian = nj.w;
+
+    let V = normalize(transform.camera_pos - in.world_pos);
+    let view_depth = length(transform.camera_pos - in.world_pos);
+
+    // Primary light (the sun). Fall back to top-down white if scene has none.
+    var L = vec3<f32>(0.0, 1.0, 0.0);
+    var sun_radiance = vec3<f32>(1.0);
+    if (lights.directional_count > 0u) {
+        let sun = lights.directional_lights[0];
+        L = normalize(sun.direction);
+        sun_radiance = sun.color * sun.intensity;
+    }
+
+    // ── Cel-banded shade: wave shape + sun drive the deep→shallow ramp ──
+    // Height rides the swell (troughs deep, crests light) so the bands read
+    // as graphic wave shapes even with the sun overhead — the woodblock look.
+    let ndl = max(dot(N, L), 0.0);
+    let height01 = clamp(in.world_pos.y * 0.5 + 0.5, 0.0, 1.0);
+    let shade = clamp(ndl * 0.55 + height01 * 0.65 - 0.10, 0.0, 1.0);
+    let ramp = cel_band(shade, max(ocean.ramp_steps, 1.0));
+    var water_color = mix(ocean.deep_color.rgb, ocean.shallow_color.rgb, ramp);
+
+    // ── Fake subsurface: sun glowing through wave flanks facing us ─────
+    // clamp: N.y can exceed 1.0 by a float ulp after normalize, and
+    // pow(negative, 1.5) is NaN — one NaN poisons the bloom chain black.
+    let rim = pow(clamp(1.0 - N.y, 0.0, 1.0), 1.5);
+    let toward_sun = pow(max(dot(V, -L), 0.0), 2.0);
+    water_color += ocean.sss_color.rgb * (rim * toward_sun * height01);
+
+    // ── Foam: crest pinch (Jacobian) broken up by drifting noise ───────
+    // Foam fades with distance: graphic detail near the raft, flat color
+    // toward the horizon (matches the reference art and hides aliasing).
+    let foam_distance_fade = 1.0 - smoothstep(60.0, 140.0, view_depth);
+    let foam_noise = fbm(in.param_xz * ocean.foam_noise_scale
+        + vec2<f32>(ocean.time * 0.35, ocean.time * -0.21));
+    let foam_field = jacobian + (foam_noise - 0.5) * 0.30
+        + (1.0 - foam_distance_fade) * 10.0;
+    let foam_aa = clamp(fwidth(foam_field) * 1.5, 1e-4, 0.4);
+    // Hard-edged graphic foam, with a fainter halo band beneath it.
+    let foam_hard = 1.0 - smoothstep(ocean.foam_threshold - foam_aa,
+                                     ocean.foam_threshold + foam_aa, foam_field);
+    let foam_halo = (1.0 - smoothstep(ocean.foam_threshold,
+                                      ocean.foam_threshold + 0.30, foam_field))
+        * 0.30 * (1.0 - foam_hard);
+
+    // ── Cel specular glint (sun path sparkle) ───────────────────────────
+    let H = normalize(V + L);
+    let spec_raw = pow(max(dot(N, H), 0.0), 220.0) * ocean.specular_strength;
+    let spec_aa = clamp(fwidth(spec_raw) * 1.5, 1e-4, 0.4);
+    let spec = smoothstep(0.30 - spec_aa, 0.30 + spec_aa, spec_raw);
+
+    // ── Shadows (raft silhouette on the water) ──────────────────────────
+    let sf = shadow_factor(in.world_pos, view_depth);
+
+    // Lighting composition. The water body color is treated as pre-lit
+    // (stylized): tinted by the sun, dimmed in shadow, foam takes light fully.
+    let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
+    var color = water_color * sun_tint * mix(0.55, 1.0, sf);
+    color = mix(color, ocean.foam_color.rgb * sun_tint * mix(0.6, 1.0, sf),
+                clamp(foam_hard + foam_halo, 0.0, 1.0));
+    color += sun_radiance * spec * sf * foam_distance_fade;
+
+    // Hemisphere ambient (kept subtle) so night scenes don't crush to black.
+    let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
+    color += mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight)
+        * water_color * 0.35;
+
+    if (ocean.enable_tonemapping == 1u) {
+        color = aces_filmic(color);
+    }
+
+    return vec4<f32>(color, 1.0);
+}

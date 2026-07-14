@@ -397,6 +397,52 @@ impl SceneRenderer {
             queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
         }
 
+        // Update ocean uniforms (wave phases in f64, grid follows the camera)
+        if self.ocean_active {
+            if let (Some(spectrum), Some(ubuf), Some(tbuf)) = (
+                &self.ocean_spectrum,
+                &self.ocean_uniform_buffer,
+                &self.ocean_transform_buffer,
+            ) {
+                let transform = TransformUniforms {
+                    view_proj,
+                    model: identity_matrix(),
+                    model_inv_transpose: identity_matrix(),
+                    camera_pos,
+                    _pad: 0.0,
+                };
+                queue.write_buffer(tbuf, 0, bytemuck::cast_slice(&[transform]));
+
+                let v = &self.ocean_visuals;
+                // Snap the grid to inner-cell multiples so wave sampling
+                // positions stay world-anchored while the mesh follows us.
+                let q = v.snap_quantum();
+                let grid_offset = [
+                    (camera_pos[0] / q).floor() * q,
+                    (camera_pos[2] / q).floor() * q,
+                ];
+                let uniforms = crate::ocean_pipeline::OceanUniformsGpu {
+                    waves: spectrum.to_gpu(self.ocean_time),
+                    deep_color: v.deep_color,
+                    shallow_color: v.shallow_color,
+                    foam_color: v.foam_color,
+                    sss_color: v.sss_color,
+                    grid_offset,
+                    num_waves: spectrum.waves.len() as u32,
+                    enable_tonemapping: tonemapping_u32,
+                    grid_scale: v.grid_scale,
+                    fade_start: v.fade_start,
+                    fade_end: v.fade_end,
+                    foam_threshold: v.foam_threshold,
+                    foam_noise_scale: v.foam_noise_scale,
+                    ramp_steps: v.ramp_steps,
+                    specular_strength: v.specular_strength,
+                    time: (self.ocean_time % 100_000.0) as f32,
+                };
+                queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
+            }
+        }
+
         // Sort transparent draws back-to-front (descending distance from camera)
         {
             let cam = camera_pos;
@@ -750,6 +796,24 @@ impl SceneRenderer {
                 render_pass
                     .set_index_buffer(gp.blade_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                 render_pass.draw_indexed(0..BLADE_INDEX_COUNT, 0, 0..self.grass_instance_count);
+            }
+        }
+
+        // Ocean rendering (after grass — opaque, writes depth so fog applies)
+        if self.ocean_active {
+            if let (Some(op), Some(ocean_bg), Some(transform_bg)) = (
+                &self.ocean_pipeline,
+                &self.ocean_uniform_bind_group,
+                &self.ocean_transform_bind_group,
+            ) {
+                render_pass.set_pipeline(&op.pipeline);
+                render_pass.set_bind_group(0, transform_bg, &[]);
+                render_pass.set_bind_group(1, ocean_bg, &[]);
+                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, op.grid_vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(op.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..op.grid_index_count, 0, 0..1);
             }
         }
 

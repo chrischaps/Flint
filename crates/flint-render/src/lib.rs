@@ -17,6 +17,7 @@ pub mod render_stats;
 pub mod grass_pipeline;
 mod headless;
 pub mod model_loader;
+pub mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod particle_pipeline;
 mod pipeline;
@@ -44,6 +45,7 @@ pub use grass_pipeline::{
     GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
 };
 pub use headless::HeadlessContext;
+pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{
     ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,

@@ -164,6 +164,19 @@ pub struct SceneRenderer {
     grass_terrain_width: f32,
     grass_terrain_depth: f32,
     grass_terrain_height_scale: f32,
+    // Ocean
+    ocean_pipeline: Option<crate::ocean_pipeline::OceanPipeline>,
+    ocean_uniform_buffer: Option<wgpu::Buffer>,
+    ocean_uniform_bind_group: Option<wgpu::BindGroup>,
+    ocean_transform_buffer: Option<wgpu::Buffer>,
+    ocean_transform_bind_group: Option<wgpu::BindGroup>,
+    ocean_spectrum: Option<flint_core::ocean::WaveSpectrum>,
+    ocean_visuals: crate::ocean_pipeline::OceanVisuals,
+    ocean_active: bool,
+    /// Time in seconds driving wave phases. Set by the player each frame from
+    /// the game clock — the same clock scripts see via total_time(), which is
+    /// what keeps script-side ocean_height() queries in sync with the GPU.
+    pub ocean_time: f64,
     // Particles
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
@@ -232,6 +245,12 @@ impl SceneRenderer {
 
         let billboard_pipeline = BillboardPipeline::new(&context.device, scene_format);
         let terrain_pipeline = TerrainPipeline::new(
+            &context.device,
+            scene_format,
+            &pipeline.transform_bind_group_layout,
+            &pipeline.light_bind_group_layout,
+        );
+        let ocean_resources = Self::create_ocean_resources(
             &context.device,
             scene_format,
             &pipeline.transform_bind_group_layout,
@@ -326,6 +345,15 @@ impl SceneRenderer {
             grass_terrain_width: 0.0,
             grass_terrain_depth: 0.0,
             grass_terrain_height_scale: 0.0,
+            ocean_pipeline: ocean_resources.0,
+            ocean_uniform_buffer: ocean_resources.1,
+            ocean_uniform_bind_group: ocean_resources.2,
+            ocean_transform_buffer: ocean_resources.3,
+            ocean_transform_bind_group: ocean_resources.4,
+            ocean_spectrum: None,
+            ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
+            ocean_active: false,
+            ocean_time: 0.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
             sprite2d_pipeline: Some(sprite2d_pipeline),
@@ -342,6 +370,77 @@ impl SceneRenderer {
             grass_time: 0.0,
             device_lost: false,
         }
+    }
+
+    /// Create the ocean pipeline plus its uniform/transform buffers and bind
+    /// groups. Wrapped in catch_unwind like grass so shader-compilation
+    /// failures degrade to "no ocean" instead of crashing the renderer.
+    #[allow(clippy::type_complexity)]
+    fn create_ocean_resources(
+        device: &wgpu::Device,
+        scene_format: wgpu::TextureFormat,
+        transform_layout: &wgpu::BindGroupLayout,
+        light_layout: &wgpu::BindGroupLayout,
+    ) -> (
+        Option<crate::ocean_pipeline::OceanPipeline>,
+        Option<wgpu::Buffer>,
+        Option<wgpu::BindGroup>,
+        Option<wgpu::Buffer>,
+        Option<wgpu::BindGroup>,
+    ) {
+        let pipeline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::ocean_pipeline::OceanPipeline::new(
+                device,
+                scene_format,
+                transform_layout,
+                light_layout,
+            )
+        }));
+        let pipeline = match pipeline {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!("Ocean pipeline creation failed — ocean disabled");
+                return (None, None, None, None, None);
+            }
+        };
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Uniform Buffer"),
+            size: std::mem::size_of::<crate::ocean_pipeline::OceanUniformsGpu>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &pipeline.ocean_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("Ocean Uniform Bind Group"),
+        });
+
+        let transform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Ocean Transform Buffer"),
+            size: std::mem::size_of::<TransformUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: transform_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: transform_buffer.as_entire_binding(),
+            }],
+            label: Some("Ocean Transform Bind Group"),
+        });
+
+        (
+            Some(pipeline),
+            Some(uniform_buffer),
+            Some(uniform_bind_group),
+            Some(transform_buffer),
+            Some(transform_bind_group),
+        )
     }
 
     /// Upload particle instance data from the simulation and create draw calls.
@@ -1363,6 +1462,13 @@ impl SceneRenderer {
         let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format);
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
 
+        let ocean_resources = Self::create_ocean_resources(
+            device,
+            scene_format,
+            &pipeline.transform_bind_group_layout,
+            &pipeline.light_bind_group_layout,
+        );
+
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
         let postprocess_pipeline = PostProcessPipeline::new(
@@ -1428,6 +1534,15 @@ impl SceneRenderer {
             grass_terrain_width: 0.0,
             grass_terrain_depth: 0.0,
             grass_terrain_height_scale: 0.0,
+            ocean_pipeline: ocean_resources.0,
+            ocean_uniform_buffer: ocean_resources.1,
+            ocean_uniform_bind_group: ocean_resources.2,
+            ocean_transform_buffer: ocean_resources.3,
+            ocean_transform_bind_group: ocean_resources.4,
+            ocean_spectrum: None,
+            ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
+            ocean_active: false,
+            ocean_time: 0.0,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
             sprite2d_pipeline: Some(sprite2d_pipeline),
@@ -2030,6 +2145,9 @@ impl SceneRenderer {
         // Extract lights from scene entities
         self.extract_lights_from_world(world);
 
+        // Extract ocean params (regenerates the wave spectrum only on change)
+        self.extract_ocean_from_world(world);
+
         let need_overlay =
             self.debug_state.mode == DebugMode::WireframeOverlay || self.debug_state.mode == DebugMode::WireframeOnly;
         let need_normals = self.debug_state.show_normals;
@@ -2451,6 +2569,35 @@ impl SceneRenderer {
         });
 
         (buffer, bind_group)
+    }
+
+    // ── Ocean extraction ──
+
+    /// Extract the first `ocean` component from the world. The wave spectrum
+    /// is regenerated only when simulation params change (cheap: N sin/cos
+    /// coefficient sets), so live-tweaking any field takes effect next frame.
+    fn extract_ocean_from_world(&mut self, world: &FlintWorld) {
+        self.ocean_active = false;
+        for &entity_id in world.entities_with_component(comp::OCEAN) {
+            let ocean_comp = world
+                .get_components(entity_id)
+                .and_then(|components| components.get(comp::OCEAN).cloned());
+            let Some(ocean_comp) = ocean_comp else { continue };
+
+            let params = flint_core::ocean::OceanParams::from_component(&ocean_comp);
+            let needs_regen = self
+                .ocean_spectrum
+                .as_ref()
+                .map(|s| s.params != params)
+                .unwrap_or(true);
+            if needs_regen {
+                self.ocean_spectrum = Some(flint_core::ocean::WaveSpectrum::generate(&params));
+            }
+            self.ocean_visuals =
+                crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
+            self.ocean_active = self.ocean_pipeline.is_some();
+            break; // one ocean per scene
+        }
     }
 
     // ── Light extraction ──

@@ -1,0 +1,29 @@
+[component.ocean]
+description = "Endless Gerstner-wave ocean surface with stylized cel shading. One per scene; the grid follows the camera."
+
+[component.ocean.fields]
+# ── Simulation (flint_core::ocean::OceanParams) ─────────────────────────
+seed = { type = "integer", description = "Wave spectrum RNG seed (same seed = same ocean)", default = 7 }
+num_waves = { type = "integer", description = "Number of Gerstner waves, 1-16", default = 12 }
+wavelength_min = { type = "float", description = "Shortest wavelength in meters", default = 4.0 }
+wavelength_max = { type = "float", description = "Longest wavelength in meters", default = 55.0 }
+amplitude = { type = "float", description = "Total wave amplitude in meters (max crest height)", default = 0.85 }
+choppiness = { type = "float", description = "0 = rolling swells, 1 = sharp trochoids (pre-cusp)", default = 0.7 }
+direction_deg = { type = "float", description = "Primary wave travel direction in degrees (0 = +Z)", default = 25.0 }
+spread_deg = { type = "float", description = "Directional spread in degrees; small waves wander more", default = 40.0 }
+speed_scale = { type = "float", description = "Time multiplier: 0 = frozen, 1 = physical speed", default = 1.0 }
+
+# ── Style (flint_render OceanVisuals) ───────────────────────────────────
+deep_color = { type = "vec4", description = "Water color in wave shadow (RGBA linear)", default = [0.055, 0.22, 0.53, 1.0] }
+shallow_color = { type = "vec4", description = "Water color in full light (RGBA linear)", default = [0.16, 0.51, 0.83, 1.0] }
+foam_color = { type = "vec4", description = "Crest foam color (RGBA linear)", default = [0.96, 0.99, 1.0, 1.0] }
+sss_color = { type = "vec4", description = "Fake subsurface glow through backlit wave flanks", default = [0.10, 0.75, 0.75, 1.0] }
+foam_threshold = { type = "float", description = "Jacobian threshold: higher = more foam", default = 0.62 }
+foam_noise_scale = { type = "float", description = "World-space frequency of foam breakup noise", default = 0.35 }
+ramp_steps = { type = "float", description = "Cel bands in the diffuse ramp (1-8)", default = 3.0 }
+specular_strength = { type = "float", description = "Sun glint intensity (0 disables)", default = 1.0 }
+
+# ── Grid ────────────────────────────────────────────────────────────────
+grid_scale = { type = "float", description = "Inner metric scale of the camera-following grid (m)", default = 60.0 }
+fade_start = { type = "float", description = "Distance where wave displacement starts fading (m)", default = 90.0 }
+fade_end = { type = "float", description = "Distance where the ocean is flat (m)", default = 170.0 }
