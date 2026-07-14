@@ -39,6 +39,14 @@ pub struct OceanUniformsGpu {
     pub ramp_steps: f32,
     pub specular_strength: f32,
     pub time: f32,
+    // ── Refraction / turbidity (grab pass) ──
+    pub absorption_color: [f32; 3],
+    pub turbidity: f32,
+    pub refraction_strength: f32,
+    pub camera_near: f32,
+    pub camera_far: f32,
+    /// 1 when the grab pass ran this frame (scene color/depth are valid).
+    pub grab_enabled: u32,
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -56,6 +64,12 @@ pub struct OceanVisuals {
     pub foam_noise_scale: f32,
     pub ramp_steps: f32,
     pub specular_strength: f32,
+    /// Water cloudiness: 0 = glass-clear, higher = murk sooner (1/m-ish).
+    pub turbidity: f32,
+    /// Screen-space refraction distortion strength.
+    pub refraction_strength: f32,
+    /// Per-channel absorption tint (red absorbs first in seawater).
+    pub absorption_color: [f32; 3],
 }
 
 impl Default for OceanVisuals {
@@ -73,6 +87,9 @@ impl Default for OceanVisuals {
             foam_noise_scale: 0.35,
             ramp_steps: 3.0,
             specular_strength: 1.0,
+            turbidity: 0.8,
+            refraction_strength: 0.6,
+            absorption_color: [0.9, 0.35, 0.22],
         }
     }
 }
@@ -94,6 +111,12 @@ impl OceanVisuals {
             foam_noise_scale: f("foam_noise_scale", d.foam_noise_scale).max(0.001),
             ramp_steps: f("ramp_steps", d.ramp_steps).clamp(1.0, 8.0),
             specular_strength: f("specular_strength", d.specular_strength).max(0.0),
+            turbidity: f("turbidity", d.turbidity).max(0.0),
+            refraction_strength: f("refraction_strength", d.refraction_strength).max(0.0),
+            absorption_color: value
+                .get("absorption_color")
+                .and_then(flint_core::toml_util::toml_vec3)
+                .unwrap_or(d.absorption_color),
         }
     }
 
@@ -150,13 +173,40 @@ pub fn generate_ocean_grid(cells: u32) -> (Vec<OceanVertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-/// The ocean render pipeline plus its static grid mesh.
+/// The ocean render pipeline plus its static grid mesh and the grab-pass
+/// blit pipeline (snapshots opaque scene color/depth for refraction).
 pub struct OceanPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub ocean_bind_group_layout: wgpu::BindGroupLayout,
+    /// Group 3: grabbed scene color (Rgba16Float) + depth-as-R32Float.
+    pub grab_bind_group_layout: wgpu::BindGroupLayout,
+    pub blit_pipeline: wgpu::RenderPipeline,
+    pub blit_bind_group_layout: wgpu::BindGroupLayout,
     pub grid_vertex_buffer: wgpu::Buffer,
     pub grid_index_buffer: wgpu::Buffer,
     pub grid_index_count: u32,
+}
+
+/// Create a 1x1 texture usable as a grab-pass placeholder binding.
+pub fn create_dummy_grab_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    label: &str,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    })
 }
 
 impl OceanPipeline {
@@ -186,11 +236,29 @@ impl OceanPipeline {
                 label: Some("Ocean Bind Group Layout"),
             });
 
+        // Group 3: grabbed scene color + depth (textureLoad — no samplers).
+        let non_filtering_tex = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let grab_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[non_filtering_tex(0), non_filtering_tex(1)],
+                label: Some("Ocean Grab Bind Group Layout"),
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[
-                transform_layout,        // group 0
+                transform_layout,         // group 0
                 &ocean_bind_group_layout, // group 1
-                light_layout,            // group 2
+                light_layout,             // group 2
+                &grab_bind_group_layout,  // group 3
             ],
             push_constant_ranges: &[],
             label: Some("Ocean Pipeline Layout"),
@@ -233,6 +301,71 @@ impl OceanPipeline {
             cache: None,
         });
 
+        // ── Grab blit pipeline: opaque scene color+depth → sampleable copies ──
+        let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Grab Blit Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("grab_blit_shader.wgsl").into()),
+        });
+        let blit_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    non_filtering_tex(0),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("Grab Blit Bind Group Layout"),
+            });
+        let blit_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                bind_group_layouts: &[&blit_bind_group_layout],
+                push_constant_ranges: &[],
+                label: Some("Grab Blit Pipeline Layout"),
+            });
+        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Grab Blit Pipeline"),
+            layout: Some(&blit_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &blit_shader,
+                entry_point: Some("vs_blit"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &blit_shader,
+                entry_point: Some("fs_blit"),
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: crate::postprocess::HDR_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R32Float,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let (vertices, indices) = generate_ocean_grid(OCEAN_GRID_CELLS);
         let grid_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Ocean Grid Vertex Buffer"),
@@ -248,6 +381,9 @@ impl OceanPipeline {
         Self {
             pipeline,
             ocean_bind_group_layout,
+            grab_bind_group_layout,
+            blit_pipeline,
+            blit_bind_group_layout,
             grid_vertex_buffer,
             grid_index_buffer,
             grid_index_count: indices.len() as u32,
@@ -261,9 +397,10 @@ mod tests {
 
     #[test]
     fn uniform_struct_matches_wgsl_layout() {
-        // waves(512) + 4 colors(64) + grid_offset(8) + 2×u32(8) + 8×f32(32) = 624
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 624);
-        assert_eq!(624 % 16, 0, "uniform size must be 16-byte aligned");
+        // waves(512) + 4 colors(64) + grid_offset(8) + 2×u32(8) + 8×f32(32)
+        // + absorption vec3+turbidity(16) + refr/near/far/grab(16) = 656
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 656);
+        assert_eq!(656 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     #[test]

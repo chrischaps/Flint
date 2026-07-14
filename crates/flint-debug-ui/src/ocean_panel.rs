@@ -84,6 +84,9 @@ pub struct OceanPanelConfig {
     pub foam_noise_scale: f32,
     pub ramp_steps: f32,
     pub specular_strength: f32,
+    // Refraction
+    pub turbidity: f32,
+    pub refraction_strength: f32,
     // Grid
     pub grid_scale: f32,
     pub fade_start: f32,
@@ -114,6 +117,8 @@ impl OceanPanelConfig {
             foam_noise_scale: f("foam_noise_scale", 0.35),
             ramp_steps: f("ramp_steps", 3.0),
             specular_strength: f("specular_strength", 1.0),
+            turbidity: f("turbidity", 0.8),
+            refraction_strength: f("refraction_strength", 0.6),
             grid_scale: f("grid_scale", 60.0),
             fade_start: f("fade_start", 90.0),
             fade_end: f("fade_end", 170.0),
@@ -145,6 +150,8 @@ impl OceanPanelConfig {
             ("foam_noise_scale", f(self.foam_noise_scale)),
             ("ramp_steps", f(self.ramp_steps)),
             ("specular_strength", f(self.specular_strength)),
+            ("turbidity", f(self.turbidity)),
+            ("refraction_strength", f(self.refraction_strength)),
             ("grid_scale", f(self.grid_scale)),
             ("fade_start", f(self.fade_start)),
             ("fade_end", f(self.fade_end)),
@@ -235,6 +242,13 @@ impl DebugPanel for OceanDebugPanel {
                 changed |= drag_f32(ui, "Foam Noise Scale", &mut self.config.foam_noise_scale, 0.005, 0.01..=4.0);
                 changed |= drag_f32(ui, "Ramp Steps", &mut self.config.ramp_steps, 0.05, 1.0..=8.0);
                 changed |= drag_f32(ui, "Specular", &mut self.config.specular_strength, 0.01, 0.0..=4.0);
+            });
+
+        egui::CollapsingHeader::new("Water Clarity")
+            .default_open(true)
+            .show(ui, |ui| {
+                changed |= drag_f32(ui, "Turbidity", &mut self.config.turbidity, 0.01, 0.0..=10.0);
+                changed |= drag_f32(ui, "Refraction", &mut self.config.refraction_strength, 0.01, 0.0..=4.0);
             });
 
         egui::CollapsingHeader::new("Grid")

@@ -15,6 +15,25 @@ use crate::skybox_pipeline::SkyboxUniforms;
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 use wgpu::util::DeviceExt;
 
+/// Which slice of the main pass to render. `All` is the classic single-pass
+/// path; Pre/PostOcean split around the refraction grab (opaque scene is
+/// snapshotted between them so the ocean can sample it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RenderPhase {
+    All,
+    PreOcean,
+    PostOcean,
+}
+
+impl RenderPhase {
+    fn draws_opaque(self) -> bool {
+        self != RenderPhase::PostOcean
+    }
+    fn draws_ocean_and_after(self) -> bool {
+        self != RenderPhase::PreOcean
+    }
+}
+
 impl SceneRenderer {
     /// Render depth from light perspective for cascaded shadow mapping.
     pub(super) fn render_shadow_pass(
@@ -438,6 +457,12 @@ impl SceneRenderer {
                     ramp_steps: v.ramp_steps,
                     specular_strength: v.specular_strength,
                     time: (self.ocean_time % 100_000.0) as f32,
+                    absorption_color: v.absorption_color,
+                    turbidity: v.turbidity,
+                    refraction_strength: v.refraction_strength,
+                    camera_near: self.ocean_camera_near_far.0,
+                    camera_far: self.ocean_camera_near_far.1,
+                    grab_enabled: u32::from(self.ocean_grab_this_frame),
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
             }
@@ -567,6 +592,7 @@ impl SceneRenderer {
         wireframe_only: bool,
         queue: &wgpu::Queue,
         camera: &Camera,
+        phase: RenderPhase,
     ) {
         // Bind lights once for the entire pass (group 2 is shared)
         render_pass.set_bind_group(2, &self.light_bind_group, &[]);
@@ -574,7 +600,7 @@ impl SceneRenderer {
         // Render sky at the far plane: the procedural sky (driven by the
         // `sky` component) replaces the texture skybox when present.
         let mut sky_drawn = false;
-        if self.sky_active {
+        if self.sky_active && phase.draws_opaque() {
             if let (Some(sp), Some(ub), Some(ubg)) = (
                 &self.sky_pipeline,
                 &self.sky_uniform_buffer,
@@ -624,7 +650,7 @@ impl SceneRenderer {
         }
 
         // Render texture skybox (before everything else, at the far plane)
-        if !sky_drawn {
+        if !sky_drawn && phase.draws_opaque() {
             if let (Some(sp), Some(ub), Some(ubg), Some(tbg)) = (
                 &self.skybox_pipeline,
                 &self.skybox_uniform_buffer,
@@ -659,6 +685,7 @@ impl SceneRenderer {
         }
 
         // Render grid
+        if phase.draws_opaque() {
         if let Some(grid) = &self.grid_draw {
             render_pass.set_pipeline(&self.pipeline.line_pipeline);
             render_pass.set_bind_group(0, &grid.transform_bind_group, &[]);
@@ -667,17 +694,18 @@ impl SceneRenderer {
             render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
         }
+        }
 
         // In WireframeOnly mode: depth prepass masks outline interior,
         // then outline, then wireframe lines on top.
         if wireframe_only {
             self.render_wireframe_only_pass(render_pass);
         } else {
-            self.render_normal_pass(render_pass);
+            self.render_normal_pass(render_pass, phase);
         }
 
         // Normal arrows pass (always uses line pipeline)
-        if self.debug_state.show_normals {
+        if self.debug_state.show_normals && phase.draws_ocean_and_after() {
             render_pass.set_pipeline(&self.pipeline.line_pipeline);
             for draw in &self.normal_arrow_draws {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
@@ -690,7 +718,7 @@ impl SceneRenderer {
         }
 
         // Skeleton overlay pass (bone lines, always uses line pipeline)
-        if self.debug_state.show_skeleton {
+        if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
             render_pass.set_pipeline(&self.pipeline.line_pipeline);
             for draw in &self.skeleton_overlay_draws {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
@@ -806,8 +834,9 @@ impl SceneRenderer {
     }
 
     /// Normal mode rendering: terrain → outlines → entities → skinned → billboards → sprites → transparent → particles → wireframe.
-    fn render_normal_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    fn render_normal_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, phase: RenderPhase) {
         // Terrain rendering (early in pass — fills depth buffer for occlusion)
+        if phase.draws_opaque() {
         if let (Some(tp), Some(mat_bg)) =
             (&self.terrain_pipeline, &self.terrain_material_bind_group)
         {
@@ -852,18 +881,27 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..BLADE_INDEX_COUNT, 0, 0..self.grass_instance_count);
             }
         }
+        } // end opaque phase (terrain + grass)
 
-        // Ocean rendering (after grass — opaque, writes depth so fog applies)
-        if self.ocean_active {
-            if let (Some(op), Some(ocean_bg), Some(transform_bg)) = (
+        // Ocean rendering (after all opaque — writes depth so fog applies;
+        // group 3 holds the grab-pass snapshots, or dummies when disabled)
+        if self.ocean_active && phase.draws_ocean_and_after() {
+            let grab_bg = if self.ocean_grab_this_frame {
+                self.ocean_grab_bind_group.as_ref()
+            } else {
+                self.ocean_grab_dummy_bind_group.as_ref()
+            };
+            if let (Some(op), Some(ocean_bg), Some(transform_bg), Some(grab_bg)) = (
                 &self.ocean_pipeline,
                 &self.ocean_uniform_bind_group,
                 &self.ocean_transform_bind_group,
+                grab_bg,
             ) {
                 render_pass.set_pipeline(&op.pipeline);
                 render_pass.set_bind_group(0, transform_bg, &[]);
                 render_pass.set_bind_group(1, ocean_bg, &[]);
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                render_pass.set_bind_group(3, grab_bg, &[]);
                 render_pass.set_vertex_buffer(0, op.grid_vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(op.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -871,6 +909,7 @@ impl SceneRenderer {
             }
         }
 
+        if phase.draws_opaque() {
         // Outline pass for selected standard entities (before normal rendering)
         if let Some(sel_id) = self.selected_entity {
             render_pass.set_pipeline(&self.pipeline.outline_pipeline);
@@ -975,6 +1014,11 @@ impl SceneRenderer {
                     render_pass.draw_indexed(0..6, 0, 0..1);
                 }
             }
+        }
+        } // end opaque phase (outlines + entities + skinned + billboards)
+
+        if !phase.draws_ocean_and_after() {
+            return;
         }
 
         // 2D sprites (after billboards, instanced batched rendering)

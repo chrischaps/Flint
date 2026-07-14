@@ -23,6 +23,11 @@ foam_noise_scale = { type = "float", description = "World-space frequency of foa
 ramp_steps = { type = "float", description = "Cel bands in the diffuse ramp (1-8)", default = 3.0 }
 specular_strength = { type = "float", description = "Sun glint intensity (0 disables)", default = 1.0 }
 
+# ── Refraction / turbidity (requires post-processing) ───────────────────
+turbidity = { type = "float", description = "Water cloudiness: 0 = glass-clear legs, high = murk in half a meter", default = 0.8 }
+refraction_strength = { type = "float", description = "Screen-space refraction distortion of underwater objects", default = 0.6 }
+absorption_color = { type = "vec3", description = "Per-channel absorption rate (red dies first in seawater)", default = [0.9, 0.35, 0.22] }
+
 # ── Grid ────────────────────────────────────────────────────────────────
 grid_scale = { type = "float", description = "Inner metric scale of the camera-following grid (m)", default = 60.0 }
 fade_start = { type = "float", description = "Distance where wave displacement starts fading (m)", default = 90.0 }

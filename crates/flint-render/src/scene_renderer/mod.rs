@@ -4,6 +4,8 @@ mod extract;
 mod helpers;
 mod render_passes;
 
+use render_passes::RenderPhase;
+
 use helpers::{identity_matrix, mat4_inv_transpose};
 
 use crate::billboard_pipeline::BillboardPipeline;
@@ -179,6 +181,14 @@ pub struct SceneRenderer {
     ocean_spectrum: Option<flint_core::ocean::WaveSpectrum>,
     ocean_visuals: crate::ocean_pipeline::OceanVisuals,
     ocean_active: bool,
+    // Grab pass (refraction): opaque scene color+depth snapshots
+    ocean_grab_color: Option<(wgpu::Texture, wgpu::TextureView)>,
+    ocean_grab_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
+    ocean_grab_size: (u32, u32),
+    ocean_grab_bind_group: Option<wgpu::BindGroup>,
+    ocean_grab_dummy_bind_group: Option<wgpu::BindGroup>,
+    ocean_grab_this_frame: bool,
+    ocean_camera_near_far: (f32, f32),
     /// Time in seconds driving wave phases. Set by the player each frame from
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
@@ -365,6 +375,13 @@ impl SceneRenderer {
             ocean_spectrum: None,
             ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
             ocean_active: false,
+            ocean_grab_color: None,
+            ocean_grab_depth: None,
+            ocean_grab_size: (0, 0),
+            ocean_grab_bind_group: None,
+            ocean_grab_dummy_bind_group: None,
+            ocean_grab_this_frame: false,
+            ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
@@ -490,6 +507,94 @@ impl SceneRenderer {
             Some(transform_buffer),
             Some(transform_bind_group),
         )
+    }
+
+    /// Create the placeholder group-3 bind group (1x1 textures) so the ocean
+    /// can always bind group 3 even when the grab pass didn't run.
+    fn ensure_ocean_grab_dummy(&mut self, device: &wgpu::Device) {
+        if self.ocean_grab_dummy_bind_group.is_some() {
+            return;
+        }
+        let Some(op) = &self.ocean_pipeline else { return };
+        let dummy_color = crate::ocean_pipeline::create_dummy_grab_texture(
+            device,
+            HDR_FORMAT,
+            "Ocean Grab Dummy Color",
+        );
+        let dummy_depth = crate::ocean_pipeline::create_dummy_grab_texture(
+            device,
+            wgpu::TextureFormat::R32Float,
+            "Ocean Grab Dummy Depth",
+        );
+        let cv = dummy_color.create_view(&Default::default());
+        let dv = dummy_depth.create_view(&Default::default());
+        self.ocean_grab_dummy_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &op.grab_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&cv),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&dv),
+                    },
+                ],
+                label: Some("Ocean Grab Dummy Bind Group"),
+            }));
+    }
+
+    /// Ensure grab-pass textures + bind groups exist at the given size.
+    /// Called only on the ocean+postprocess path; cheap when size unchanged.
+    fn ensure_ocean_grab_resources(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.ensure_ocean_grab_dummy(device);
+        let Some(op) = &self.ocean_pipeline else { return };
+
+        if self.ocean_grab_size == (width, height) && self.ocean_grab_bind_group.is_some() {
+            return;
+        }
+
+        let make = |format: wgpu::TextureFormat, label: &str| {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&Default::default());
+            (tex, view)
+        };
+        let color = make(HDR_FORMAT, "Ocean Grab Color");
+        let depth = make(wgpu::TextureFormat::R32Float, "Ocean Grab Depth");
+
+        self.ocean_grab_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &op.grab_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&color.1),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&depth.1),
+                    },
+                ],
+                label: Some("Ocean Grab Bind Group"),
+            }));
+        self.ocean_grab_color = Some(color);
+        self.ocean_grab_depth = Some(depth);
+        self.ocean_grab_size = (width, height);
     }
 
     /// Upload particle instance data from the simulation and create draw calls.
@@ -1597,6 +1702,13 @@ impl SceneRenderer {
             ocean_spectrum: None,
             ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
             ocean_active: false,
+            ocean_grab_color: None,
+            ocean_grab_depth: None,
+            ocean_grab_size: (0, 0),
+            ocean_grab_bind_group: None,
+            ocean_grab_dummy_bind_group: None,
+            ocean_grab_this_frame: false,
+            ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
             particle_pipeline: None, // No particles in headless mode
             particle_draws: Vec::new(),
@@ -2202,6 +2314,11 @@ impl SceneRenderer {
 
         // Extract ocean params (regenerates the wave spectrum only on change)
         self.extract_ocean_from_world(world);
+        if self.ocean_active {
+            // Ocean always binds group 3; make sure the placeholder exists
+            // even on paths where the grab pass never runs.
+            self.ensure_ocean_grab_dummy(device);
+        }
 
         // Extract procedural sky params (+ optional ambient override)
         self.extract_sky_from_world(world);
@@ -2958,6 +3075,24 @@ impl SceneRenderer {
             0
         };
 
+        // Grab-pass refraction runs only with an active ocean + postprocess
+        // (the HDR buffer is what gets snapshotted) in normal render mode.
+        self.ocean_grab_this_frame = self.ocean_active
+            && has_postprocess
+            && !wireframe_only
+            && self.ocean_pipeline.is_some();
+        self.ocean_camera_near_far = (camera.near, camera.far);
+        if self.ocean_grab_this_frame {
+            let (w, h) = {
+                let res = self.postprocess_resources.as_ref().unwrap();
+                (res.width, res.height)
+            };
+            self.ensure_ocean_grab_resources(device, w, h);
+            if self.ocean_grab_bind_group.is_none() {
+                self.ocean_grab_this_frame = false;
+            }
+        }
+
         // Update all per-frame uniforms and sort transparent draws
         self.update_per_frame_uniforms(
             queue,
@@ -2992,7 +3127,8 @@ impl SceneRenderer {
             label: Some("Render Encoder"),
         });
 
-        {
+        if !self.ocean_grab_this_frame {
+            // Single-pass path (unchanged for scenes without an ocean).
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3019,8 +3155,132 @@ impl SceneRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            self.render_main_pass(
+                &mut render_pass,
+                wireframe_only,
+                queue,
+                camera,
+                RenderPhase::All,
+            );
+            drop(render_pass);
+        } else {
+            // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
+            // Pass A: sky + all opaque geometry (including the legs).
+            {
+                let mut pass_a = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass A (pre-ocean)"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: scene_target_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.1,
+                                g: 0.1,
+                                b: 0.15,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                self.render_main_pass(
+                    &mut pass_a,
+                    wireframe_only,
+                    queue,
+                    camera,
+                    RenderPhase::PreOcean,
+                );
+            }
 
-            self.render_main_pass(&mut render_pass, wireframe_only, queue, camera);
+            // Blit: snapshot opaque color + depth into sampleable copies.
+            {
+                let op = self.ocean_pipeline.as_ref().unwrap();
+                let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &op.blit_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(scene_target_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(depth_view),
+                        },
+                    ],
+                    label: Some("Grab Blit Bind Group"),
+                });
+                let grab_color_view = &self.ocean_grab_color.as_ref().unwrap().1;
+                let grab_depth_view = &self.ocean_grab_depth.as_ref().unwrap().1;
+                let mut blit_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Ocean Grab Blit"),
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: grab_color_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: grab_depth_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                blit_pass.set_pipeline(&op.blit_pipeline);
+                blit_pass.set_bind_group(0, &blit_bind_group, &[]);
+                blit_pass.draw(0..3, 0..1);
+            }
+
+            // Pass B: ocean (sampling the snapshots) + transparents/particles.
+            {
+                let mut pass_b = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass B (ocean + transparents)"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: scene_target_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                self.render_main_pass(
+                    &mut pass_b,
+                    wireframe_only,
+                    queue,
+                    camera,
+                    RenderPhase::PostOcean,
+                );
+            }
         }
 
         queue.submit(std::iter::once(encoder.finish()));

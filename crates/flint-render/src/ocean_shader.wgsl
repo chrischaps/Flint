@@ -45,6 +45,12 @@ struct OceanUniforms {
     ramp_steps: f32,            // cel bands in the diffuse ramp
     specular_strength: f32,
     time: f32,                  // seconds (foam drift only; waves use phase_t)
+    absorption_color: vec3<f32>, // per-channel absorption (red dies first)
+    turbidity: f32,             // cloudiness: 0 = glass-clear
+    refraction_strength: f32,   // screen-space distortion amount
+    camera_near: f32,
+    camera_far: f32,
+    grab_enabled: u32,          // 1 when scene color/depth copies are valid
 };
 
 @group(1) @binding(0)
@@ -107,6 +113,13 @@ struct ShadowUniforms {
 
 @group(2) @binding(3)
 var<uniform> shadow: ShadowUniforms;
+
+// Grab pass (valid when grab_enabled == 1): the opaque scene rendered
+// before the ocean, for refraction of whatever is underwater.
+@group(3) @binding(0)
+var grab_color: texture_2d<f32>;
+@group(3) @binding(1)
+var grab_depth: texture_2d<f32>;    // depth stored as R32Float
 
 struct VertexInput {
     @location(0) pos: vec2<f32>,    // normalized grid coords in [-1, 1]
@@ -274,6 +287,14 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
     return mix(1.0, raw_shadow, distance_fade * edge_fade);
 }
 
+// Invert the engine's GL-style projection: stored depth d ∈ [0,1] maps to
+// view distance z = 2nf / ((f+n) − d·(f−n)).
+fn linearize_depth(d: f32) -> f32 {
+    let n = ocean.camera_near;
+    let f = ocean.camera_far;
+    return (2.0 * n * f) / max((f + n) - d * (f - n), 1e-4);
+}
+
 fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
     let b = 0.03;
@@ -363,13 +384,53 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // keep their foam instead of crushing it to black when the sun is out.
     let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
     let foam_mix = clamp(foam_hard + foam_halo, 0.0, 1.0);
-    let base = mix(water_color, ocean.foam_color.rgb, foam_mix);
-    var color = base * sun_tint * mix(0.55, 1.0, sf);
-    color += sun_radiance * spec * sf * foam_distance_fade;
-
     let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
-    color += mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight)
-        * base * 0.5;
+    let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight);
+    let shadow_dim = mix(0.55, 1.0, sf);
+
+    // Styled opaque water body (no foam) — also the infinite-depth limit of
+    // the transmission below, so high turbidity converges to it seamlessly.
+    let water_body = water_color * sun_tint * shadow_dim + ambient * water_color * 0.5;
+
+    let base = mix(water_color, ocean.foam_color.rgb, foam_mix);
+    var color = base * sun_tint * shadow_dim;
+    color += sun_radiance * spec * sf * foam_distance_fade;
+    color += ambient * base * 0.5;
+
+    // ── Refraction + turbidity (grab pass): see through to the legs ─────
+    if (ocean.grab_enabled == 1u) {
+        let dims = vec2<f32>(textureDimensions(grab_color));
+        let pixel = in.clip_position.xy;
+        // Distortion attenuates with distance so far water doesn't shimmer.
+        let offset = N.xz * ocean.refraction_strength * dims.y * 0.25
+            / max(view_depth, 1.0);
+        var sample_px = clamp(pixel + offset, vec2<f32>(0.0), dims - 1.0);
+
+        let water_lin = linearize_depth(in.clip_position.z);
+        var scene_lin = linearize_depth(
+            textureLoad(grab_depth, vec2<i32>(sample_px), 0).r);
+        // Guard: if the refracted sample is CLOSER than the water surface it
+        // belongs to something above the waterline (legs against sky) —
+        // fall back to the undistorted column instead of smearing it.
+        if (scene_lin < water_lin - 0.02) {
+            sample_px = pixel;
+            scene_lin = linearize_depth(
+                textureLoad(grab_depth, vec2<i32>(sample_px), 0).r);
+        }
+
+        let column = max(scene_lin - water_lin, 0.0);
+        // Beer-Lambert per-channel absorption; turbidity IS the cloudiness
+        // slider (0 = glass, high = murk within half a meter).
+        let absorb = exp(-max(ocean.turbidity, 0.0) * ocean.absorption_color * column);
+        let scene_rgb = textureLoad(grab_color, vec2<i32>(sample_px), 0).rgb;
+        let transmitted = scene_rgb * absorb + water_body * (vec3<f32>(1.0) - absorb);
+
+        // Looking straight down = window into the water; grazing = mirror-ish
+        // styled surface. Foam is always opaque.
+        let ndv = max(dot(N, V), 0.0);
+        let see_through = pow(ndv, 1.5) * (1.0 - foam_mix) * foam_distance_fade * 0.9;
+        color = mix(color, transmitted, see_through);
+    }
 
     if (ocean.enable_tonemapping == 1u) {
         color = aces_filmic(color);
