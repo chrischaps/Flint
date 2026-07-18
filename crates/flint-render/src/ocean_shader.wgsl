@@ -561,7 +561,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let foam_mix = clamp(foam_hard + foam_flecks + contact_foam, 0.0, 1.0);
     let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight);
-    let shadow_dim = mix(0.55, 1.0, sf);
+    // Shadow dimming scales with actual sun light: with the sun down
+    // (intensity ~0 at dusk/night) a caster must not darken the water —
+    // a breaching whale was painting a 40 m twilight shadow streak.
+    let sun_lum = clamp(max(sun_radiance.r, max(sun_radiance.g, sun_radiance.b)), 0.0, 1.0);
+    let shadow_dim = mix(1.0 - 0.45 * sun_lum, 1.0, sf);
 
     // Foam ambient is pulled toward the sky's horizon glow so foam follows
     // the time-of-day palette. foam_color itself is constant white and the
@@ -632,8 +636,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let r_haze = exp(-abs(clamp(R.y, -1.0, 1.0)) * 9.0);
         sky_ref = mix(sky_ref, ocean.sky_haze.rgb, r_haze * ocean.sky_haze.a);
 
+        // Gate by the shadow factor only as far as the SUN is lit: the sky
+        // is an area source, so a caster blocking the sun must not erase
+        // the sky sheen at dusk/night (the whale's shadow was drawing a
+        // long dark streak across the twilight water).
+        let reflect_sf = mix(1.0, sf, sun_lum);
         let reflect_amt = fresnel * ocean.sky_reflection_strength
-            * (1.0 - foam_mix) * sf;
+            * (1.0 - foam_mix) * reflect_sf;
         color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
     }
 
