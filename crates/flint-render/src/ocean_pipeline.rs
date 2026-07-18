@@ -55,7 +55,27 @@ pub struct OceanUniformsGpu {
     pub sky_horizon: [f32; 4],
     pub sky_haze: [f32; 4],
     pub sky_reflection_strength: f32,
-    pub _pad_r: [f32; 3],
+    // ── Contact foam (splash ring around the `ocean_contact` hull) ──
+    /// Overall gain; forced 0 when the scene has no contact entity.
+    pub splash_strength: f32,
+    /// Max foam band width outward from the hull at full churn (m).
+    pub splash_width: f32,
+    /// Lapping-animation rate.
+    pub splash_flicker_speed: f32,
+    /// [center.x, center.z, cos(yaw), sin(yaw)] of the contact hull.
+    pub raft_a: [f32; 4],
+    /// [half_x, half_z, splash_baseline, splash_noise_scale].
+    pub raft_b: [f32; 4],
+    /// [hull_vel.x, hull_vel.y, hull_vel.z, splash_response].
+    pub raft_c: [f32; 4],
+    // ── Cel band edge treatment ──
+    /// Noise wobble amplitude on the diffuse ramp, in shade units (0 = off).
+    pub band_wobble: f32,
+    /// Halftone transition width at band edges (0 = hard line, 1 = full band).
+    pub band_dither: f32,
+    /// World-space halftone dot grid frequency (dots per meter).
+    pub band_dither_scale: f32,
+    pub _pad_band: f32,
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -81,6 +101,24 @@ pub struct OceanVisuals {
     pub absorption_color: [f32; 3],
     /// Fresnel-weighted analytic sky reflection amount (0 disables).
     pub sky_reflection_strength: f32,
+    /// Contact foam overall gain (0 disables).
+    pub splash_strength: f32,
+    /// Max contact foam band width at full churn (m).
+    pub splash_width: f32,
+    /// Contact foam lapping/flicker animation rate.
+    pub splash_flicker_speed: f32,
+    /// World-space frequency of the contact foam scalloped edge.
+    pub splash_noise_scale: f32,
+    /// Churn floor on calm water (0 = foam vanishes when flat).
+    pub splash_baseline: f32,
+    /// Impact speed → churn gain (s/m).
+    pub splash_response: f32,
+    /// Cel ramp edge wobble amplitude (0 = razor band contours).
+    pub band_wobble: f32,
+    /// Halftone dither width at band edges (0 = hard line).
+    pub band_dither: f32,
+    /// Halftone dot grid frequency (dots per meter).
+    pub band_dither_scale: f32,
 }
 
 impl Default for OceanVisuals {
@@ -102,6 +140,15 @@ impl Default for OceanVisuals {
             refraction_strength: 0.6,
             absorption_color: [0.9, 0.35, 0.22],
             sky_reflection_strength: 0.8,
+            splash_strength: 1.0,
+            splash_width: 0.35,
+            splash_flicker_speed: 1.6,
+            splash_noise_scale: 1.8,
+            splash_baseline: 0.15,
+            splash_response: 1.0,
+            band_wobble: 0.20,
+            band_dither: 0.0,
+            band_dither_scale: 1.5,
         }
     }
 }
@@ -131,6 +178,15 @@ impl OceanVisuals {
                 .unwrap_or(d.absorption_color),
             sky_reflection_strength: f("sky_reflection_strength", d.sky_reflection_strength)
                 .clamp(0.0, 2.0),
+            splash_strength: f("splash_strength", d.splash_strength).clamp(0.0, 4.0),
+            splash_width: f("splash_width", d.splash_width).max(0.01),
+            splash_flicker_speed: f("splash_flicker_speed", d.splash_flicker_speed).max(0.0),
+            splash_noise_scale: f("splash_noise_scale", d.splash_noise_scale).max(0.01),
+            splash_baseline: f("splash_baseline", d.splash_baseline).clamp(0.0, 1.0),
+            splash_response: f("splash_response", d.splash_response).clamp(0.0, 8.0),
+            band_wobble: f("band_wobble", d.band_wobble).clamp(0.0, 1.0),
+            band_dither: f("band_dither", d.band_dither).clamp(0.0, 1.0),
+            band_dither_scale: f("band_dither_scale", d.band_dither_scale).clamp(0.05, 32.0),
         }
     }
 
@@ -413,9 +469,11 @@ mod tests {
     fn uniform_struct_matches_wgsl_layout() {
         // waves(512) + 4 colors(64) + grid_offset(8) + 2×u32(8) + 8×f32(32)
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
-        // + fog_color(16) + sky snapshot 3×vec4 + strength/pads(64) = 736
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 736);
-        assert_eq!(736 % 16, 0, "uniform size must be 16-byte aligned");
+        // + fog_color(16) + sky snapshot 3×vec4 + strength(64, incl. 3
+        // splash scalars) + contact hull 3×vec4(48) + band edge 4×f32(16)
+        // = 800
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 800);
+        assert_eq!(800 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     #[test]

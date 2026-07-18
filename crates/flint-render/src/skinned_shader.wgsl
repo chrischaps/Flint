@@ -223,7 +223,9 @@ fn spot_cone_factor(light_to_frag: vec3<f32>, spot_dir: vec3<f32>, inner_angle: 
     return saturate((cos_angle - cos_outer) / max(cos_inner - cos_outer, 0.0001));
 }
 
-fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
+// N is the geometric surface normal, used for normal-offset receiver bias
+// (matches shader.wgsl — prevents acne at glancing angles on curved surfaces).
+fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
     // cascade_splits.z is the shadow far plane — fade out over the last 15%
     let shadow_far = shadow.cascade_splits.z;
     let fade_start = shadow_far * 0.75;
@@ -240,7 +242,14 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
         cascade = 2;
     }
 
-    let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(world_pos, 1.0);
+    // Normal-offset bias: push the receiver out along the surface normal by
+    // ~2 shadow texels (world units) before projecting.
+    let m = shadow.cascade_view_proj[cascade];
+    let row0_len = length(vec3<f32>(m[0].x, m[1].x, m[2].x));
+    let texel_world = 2.0 / (max(row0_len, 0.0001) * 2048.0);
+    let biased_pos = world_pos + N * texel_world * 2.0;
+
+    let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(biased_pos, 1.0);
     let proj = light_space.xyz / light_space.w;
 
     let shadow_uv = proj.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
@@ -393,7 +402,7 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
         var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v);
 
         if (i == 0u) {
-            let sf = shadow_factor(in.world_pos, view_depth);
+            let sf = shadow_factor(in.world_pos, view_depth, normalize(in.normal));
             contribution = contribution * sf;
         }
 

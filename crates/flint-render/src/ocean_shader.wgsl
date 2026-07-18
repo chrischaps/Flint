@@ -21,8 +21,10 @@ struct TransformUniforms {
 @group(0) @binding(0)
 var<uniform> transform: TransformUniforms;
 
-// Two vec4s per wave: a = [dir.x, dir.y, k, amp], b = [phase_t, q, 0, 0].
+// Two vec4s per wave: a = [dir.x, dir.y, k, amp], b = [phase_t, q, omega_eff, 0].
 // phase_t = (omega*t - phase0) mod 2pi, precomputed in f64 on the CPU.
+// omega_eff = omega*speed_scale — the rate phase_t advances at, for the
+// analytic surface velocity (contact foam).
 struct Wave {
     a: vec4<f32>,
     b: vec4<f32>,
@@ -64,9 +66,18 @@ struct OceanUniforms {
     sky_horizon: vec4<f32>,
     sky_haze: vec4<f32>,           // rgb + haze strength in alpha
     sky_reflection_strength: f32,  // 0 disables (also 0 when no sky component)
-    _pad_r0: f32,
-    _pad_r1: f32,
-    _pad_r2: f32,
+    // Contact foam: splash ring around the scene's ocean_contact hull.
+    splash_strength: f32,          // overall gain; 0 disables (also 0 with no hull)
+    splash_width: f32,             // max band width outward from the hull (m)
+    splash_flicker_speed: f32,     // lapping-animation rate
+    raft_a: vec4<f32>,             // [center.x, center.z, cos(yaw), sin(yaw)]
+    raft_b: vec4<f32>,             // [half_x, half_z, baseline, noise_scale]
+    raft_c: vec4<f32>,             // [hull_vel.xyz, response]
+    // Cel band edge treatment (see cel_band + the ramp in fs_main).
+    band_wobble: f32,              // ramp noise wobble amplitude (0 = off)
+    band_dither: f32,              // halftone transition width, 0 = hard line
+    band_dither_scale: f32,        // halftone dot grid frequency (dots/m)
+    _pad_band: f32,
 };
 
 @group(1) @binding(0)
@@ -180,6 +191,27 @@ fn gerstner_offset(p: vec2<f32>, amp_scale: f32) -> vec3<f32> {
     return off;
 }
 
+// Analytic surface velocity at param point p: d/dt of gerstner_offset.
+// theta advances at -omega_eff (w.b.z), so per wave
+//   v.xz = q*amp*dir*omega*sin(theta),  v.y = -amp*omega*cos(theta).
+// Derived motion only — surface SHAPE parity with flint-core is untouched.
+fn gerstner_velocity(p: vec2<f32>, amp_scale: f32) -> vec3<f32> {
+    var vel = vec3<f32>(0.0);
+    for (var i = 0u; i < ocean.num_waves; i = i + 1u) {
+        let w = ocean.waves[i];
+        let dir = w.a.xy;
+        let k = w.a.z;
+        let amp = w.a.w * amp_scale;
+        let theta = k * dot(dir, p) - w.b.x;
+        let q = w.b.y;
+        let omega = w.b.z;
+        vel.x += q * amp * dir.x * omega * sin(theta);
+        vel.y -= amp * omega * cos(theta);
+        vel.z += q * amp * dir.y * omega * sin(theta);
+    }
+    return vel;
+}
+
 // Normal + horizontal-displacement Jacobian determinant at param point p.
 // Jacobian < 1 means particles bunch (crest pinch) — that's where foam lives.
 fn gerstner_normal_jacobian(p: vec2<f32>, amp_scale: f32) -> vec4<f32> {
@@ -211,9 +243,13 @@ fn gerstner_normal_jacobian(p: vec2<f32>, amp_scale: f32) -> vec4<f32> {
 
 // ── Noise (foam breakup) ────────────────────────────────────────────────
 
+// Sinless hash (Hoskins): GPU sin() is only accurate near the origin, and
+// fbm octaves + time drift push lattice coords far past that — the old
+// fract(sin(...)) hash degenerated into blocky lattice artifacts.
 fn hash2(p: vec2<f32>) -> f32 {
-    let h = dot(p, vec2<f32>(127.1, 311.7));
-    return fract(sin(h) * 43758.5453123);
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
 fn value_noise(p: vec2<f32>) -> f32 {
@@ -326,12 +362,34 @@ fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
 // AA width is clamped away from zero: fwidth() is 0 in flat regions, and a
 // degenerate smoothstep(e, e, x) is 0/0 = NaN — one NaN pixel poisons the
 // whole bloom mip chain into black rectangles.
-fn cel_band(value: f32, steps: f32) -> f32 {
+fn cel_band(value: f32, steps: f32, p: vec2<f32>) -> f32 {
     let scaled = value * steps;
     let band = floor(scaled);
     let frac_part = scaled - band;
     let aa = clamp(fwidth(scaled) * 1.5, 1e-4, 0.5);
-    let edge = smoothstep(0.5 - aa, 0.5 + aa, frac_part);
+    var edge = smoothstep(0.5 - aa, 0.5 + aa, frac_part);
+
+    // Halftone band edges (band_dither > 0): a 45°-rotated world-space dot
+    // grid decides band membership inside a widened transition zone — dots
+    // of the upper band grow and merge across it, dissolving the boundary
+    // screen-print style while every dot edge stays hard (cel).
+    if (ocean.band_dither > 0.001) {
+        let zone = 0.5 * clamp(ocean.band_dither, 0.0, 1.0);
+        let t = clamp((frac_part - (0.5 - zone)) / (2.0 * zone), 0.0, 1.0);
+        let rp = vec2<f32>(p.x - p.y, p.x + p.y) * 0.7071
+            * ocean.band_dither_scale;
+        // Clustered-dot threshold: distance from the cell center, so dots
+        // start as points (t≈0) and merge past circle-packing (t→1). The
+        // 1.45 overshoot lets t=1 clear the corner distance (~1.34).
+        let pat = length(fract(rp) - vec2<f32>(0.5)) * 1.9;
+        let px = length(fwidth(rp));            // cell units per pixel
+        let paa = clamp(px * 2.8, 1e-4, 0.6);
+        let dotted = smoothstep(pat - paa, pat + paa, t * 1.45);
+        // Fall back to the plain hard edge when dots go subpixel
+        // (distance / grazing angles) — subpixel halftone reads as shimmer.
+        let minify = smoothstep(0.25, 0.55, px);
+        edge = mix(dotted, edge, minify);
+    }
     return clamp((band + edge) / steps, 0.0, 1.0);
 }
 
@@ -367,7 +425,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ndl = max(dot(N, L), 0.0);
     let height01 = clamp(in.world_pos.y * 0.5 + 0.5, 0.0, 1.0);
     let shade = clamp(ndl * 0.55 + height01 * 0.65 - 0.10, 0.0, 1.0);
-    let ramp = cel_band(shade, max(ocean.ramp_steps, 1.0));
+    // Woodblock wobble (band_wobble > 0): world-anchored noise raggedizes
+    // the ramp boundaries. A razor band edge sweeping across a big smooth
+    // swell reads as a hard "water level" contour; wobbling the field before
+    // quantizing keeps the edge HARD (cel style) but makes it an organic
+    // printed-ink line. Two scales: broad undulation (~11 m) bends the
+    // contour, fine detail (~2 m) frays it.
+    var shade_w = shade;
+    if (ocean.band_wobble > 0.0001) {
+        let wob = (fbm(in.param_xz * 0.09) - 0.44)
+            + (fbm(in.param_xz * 0.50 + vec2<f32>(31.7, 7.9)) - 0.44) * 0.5;
+        shade_w = clamp(shade + wob * ocean.band_wobble, 0.0, 1.0);
+    }
+    let ramp = cel_band(shade_w, max(ocean.ramp_steps, 1.0), in.param_xz);
     var water_color = mix(ocean.deep_color.rgb, ocean.shallow_color.rgb, ramp);
 
     // ── Fake subsurface: sun glowing through wave flanks facing us ─────
@@ -386,12 +456,92 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let foam_field = jacobian + (foam_noise - 0.5) * 0.30
         + (1.0 - foam_distance_fade) * 10.0;
     let foam_aa = clamp(fwidth(foam_field) * 1.5, 1e-4, 0.4);
-    // Hard-edged graphic foam, with a fainter halo band beneath it.
-    let foam_hard = 1.0 - smoothstep(ocean.foam_threshold - foam_aa,
-                                     ocean.foam_threshold + foam_aa, foam_field);
-    let foam_halo = (1.0 - smoothstep(ocean.foam_threshold,
-                                      ocean.foam_threshold + 0.30, foam_field))
-        * 0.30 * (1.0 - foam_hard);
+    let foam_solid = 1.0 - smoothstep(ocean.foam_threshold - foam_aa,
+                                      ocean.foam_threshold + foam_aa, foam_field);
+
+    // Lace: a second, higher-frequency noise punches holes in the foam mass
+    // (real foam is filigree, not slabs — see reference/water). Holes are
+    // biggest at the mass edge and close up toward the crest pinch, so the
+    // freshest churn stays solid while the skirt goes ragged. Edges stay
+    // hard (cel style) — the breakup is topology, not softness.
+    let lace = fbm(in.param_xz * ocean.foam_noise_scale * 6.0
+        + vec2<f32>(ocean.time * -0.13, ocean.time * 0.19));
+    let lace_aa = clamp(fwidth(lace) * 1.5, 1e-4, 0.4);
+    let foam_depth = clamp((ocean.foam_threshold - foam_field) / 0.35, 0.0, 1.0);
+    let hole_cut = mix(0.52, 0.30, foam_depth);
+    let foam_hard = foam_solid
+        * smoothstep(hole_cut - lace_aa, hole_cut + lace_aa, lace);
+
+    // Flecks: past the mass edge the same noise is thresholded into sparse
+    // full-strength dots that thin with distance from the crest — foam
+    // trails off in scatter instead of the old soft gradient halo.
+    let halo_band = 1.0 - smoothstep(ocean.foam_threshold,
+                                     ocean.foam_threshold + 0.30, foam_field);
+    let fleck_cut = mix(0.78, 0.55, halo_band);
+    let foam_flecks = smoothstep(fleck_cut - lace_aa, fleck_cut + lace_aa, lace)
+        * halo_band * (1.0 - foam_solid);
+
+    // ── Contact foam: churn where water strikes the ocean_contact hull ──
+    // Rounded-rect SDF in the hull's yawed local frame; churn is driven by
+    // the water's orbital velocity relative to the hull, projected INTO the
+    // nearest hull face — so a flat sea (or the lee side, where flow moves
+    // away from the hull) stays quiet, and the windward face flares.
+    var contact_foam = 0.0;
+    if (ocean.splash_strength > 0.001) {
+        let rel = in.world_pos.xz - ocean.raft_a.xy;
+        let cy = ocean.raft_a.z;
+        let sy = ocean.raft_a.w;
+        // World → hull-local (matches raft.rhai: fwd = (sin,cos), right = (cos,-sin)).
+        let local = vec2<f32>(rel.x * cy - rel.y * sy, rel.x * sy + rel.y * cy);
+        // Corner radius ~ log radius so foam wraps the outer logs.
+        let corner = 0.13;
+        let qd = abs(local) - (ocean.raft_b.xy - vec2<f32>(corner));
+        let sd = length(max(qd, vec2<f32>(0.0))) + min(max(qd.x, qd.y), 0.0) - corner;
+        // Derivative BEFORE the divergent branch below.
+        let sd_aa = clamp(fwidth(sd) * 1.5, 1e-4, 0.4);
+
+        if (sd < ocean.splash_width * 2.0 + 0.3) {
+            let rel_vel = gerstner_velocity(in.param_xz, in.fade) - ocean.raft_c.xyz;
+            // Outward hull normal from the SDF gradient, hull-local frame.
+            var g_local: vec2<f32>;
+            if (sd > 0.0 && (qd.x > 0.0 || qd.y > 0.0)) {
+                g_local = sign(local) * normalize(max(qd, vec2<f32>(0.0)));
+            } else if (qd.x > qd.y) {
+                g_local = vec2<f32>(sign(local.x), 0.0);
+            } else {
+                g_local = vec2<f32>(0.0, sign(local.y));
+            }
+            // sign() is 0 exactly on a hull axis — a zero vector would
+            // normalize to NaN and poison the bloom chain.
+            if (dot(g_local, g_local) < 1e-6) {
+                g_local = vec2<f32>(0.0, 1.0);
+            }
+            // Hull-local → world (inverse of the rotation above).
+            let n_out = normalize(vec2<f32>(g_local.x * cy + g_local.y * sy,
+                                            -g_local.x * sy + g_local.y * cy));
+            let impact = max(dot(vec2<f32>(rel_vel.x, rel_vel.z), -n_out), 0.0)
+                + 0.6 * abs(rel_vel.y);
+            // Crest gate: orbital flow is circular (downwind at crests,
+            // upwind in troughs, equal speed), so without this the churn
+            // would alternate sides evenly. Water riding UP the logs is
+            // what actually churns — weight impact by surface height so
+            // windward crest-strikes dominate and the lee stays quiet.
+            let crest = clamp(0.5 + in.world_pos.y * 1.2, 0.25, 1.25);
+            let churn = clamp(ocean.raft_b.z + impact * crest * ocean.raft_c.w, 0.0, 1.5);
+
+            // Scalloped, lapping edge; churn drives both width and opacity.
+            let lap = fbm(local * ocean.raft_b.w + vec2<f32>(
+                ocean.time * 0.9 * ocean.splash_flicker_speed,
+                ocean.time * -0.6 * ocean.splash_flicker_speed));
+            let width = ocean.splash_width * churn * (0.55 + 0.9 * lap);
+            let band = 1.0 - smoothstep(width - sd_aa, width + sd_aa, sd);
+            contact_foam = band * clamp(ocean.splash_strength * churn, 0.0, 1.5);
+            // Same lace as the crest foam breaks the ring into a dashed,
+            // bubbly lap — a solid band reads as a glow decal at night.
+            contact_foam *= 0.30 + 0.70 * smoothstep(0.38 - lace_aa,
+                                                     0.38 + lace_aa, lace);
+        }
+    }
 
     // ── Cel specular glint (sun path sparkle) ───────────────────────────
     let H = normalize(V + L);
@@ -407,10 +557,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Ambient lights the COMPOSED surface (water + foam) so moonlit nights
     // keep their foam instead of crushing it to black when the sun is out.
     let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
-    let foam_mix = clamp(foam_hard + foam_halo, 0.0, 1.0);
+    let foam_mix = clamp(foam_hard + foam_flecks + contact_foam, 0.0, 1.0);
     let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight);
     let shadow_dim = mix(0.55, 1.0, sf);
+
+    // Foam ambient is pulled toward the sky's horizon glow so foam follows
+    // the time-of-day palette. foam_color itself is constant white and the
+    // raw hemisphere ambient is desaturated — together they rendered dusk
+    // foam as daylight blue-gray slabs on a purple sea. Water keeps plain
+    // ambient: its palette is already TOD-driven by time_of_day.rhai.
+    var foam_ambient = ambient;
+    if (ocean.sky_reflection_strength > 0.001) {
+        let sky_glow = mix(ocean.sky_horizon.rgb, ocean.sky_haze.rgb,
+                           ocean.sky_haze.a);
+        foam_ambient = mix(ambient, sky_glow, 0.6);
+    }
 
     // Styled opaque water body (no foam) — also the infinite-depth limit of
     // the transmission below, so high turbidity converges to it seamlessly.
@@ -422,7 +584,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // nothing looking straight down (×3 so the path saturates early).
     color += sun_radiance * spec * sf * foam_distance_fade
         * clamp(fresnel * 3.0, 0.0, 1.0);
-    color += ambient * base * 0.5;
+    color += mix(ambient * water_color, foam_ambient * ocean.foam_color.rgb,
+                 foam_mix) * 0.5;
 
     // ── Refraction + turbidity (grab pass): see through to the legs ─────
     if (ocean.grab_enabled == 1u) {

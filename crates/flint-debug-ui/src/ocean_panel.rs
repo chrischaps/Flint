@@ -87,6 +87,16 @@ pub struct OceanPanelConfig {
     pub foam_noise_scale: f32,
     pub ramp_steps: f32,
     pub specular_strength: f32,
+    pub band_wobble: f32,
+    pub band_dither: f32,
+    pub band_dither_scale: f32,
+    // Contact foam (splash around the ocean_contact hull)
+    pub splash_strength: f32,
+    pub splash_width: f32,
+    pub splash_flicker_speed: f32,
+    pub splash_noise_scale: f32,
+    pub splash_baseline: f32,
+    pub splash_response: f32,
     // Refraction
     pub turbidity: f32,
     pub refraction_strength: f32,
@@ -124,6 +134,15 @@ impl OceanPanelConfig {
             foam_noise_scale: f("foam_noise_scale", 0.35),
             ramp_steps: f("ramp_steps", 3.0),
             specular_strength: f("specular_strength", 1.0),
+            band_wobble: f("band_wobble", 0.2),
+            band_dither: f("band_dither", 0.0),
+            band_dither_scale: f("band_dither_scale", 1.5),
+            splash_strength: f("splash_strength", 1.0),
+            splash_width: f("splash_width", 0.35),
+            splash_flicker_speed: f("splash_flicker_speed", 1.6),
+            splash_noise_scale: f("splash_noise_scale", 1.8),
+            splash_baseline: f("splash_baseline", 0.15),
+            splash_response: f("splash_response", 1.0),
             turbidity: f("turbidity", 0.8),
             refraction_strength: f("refraction_strength", 0.6),
             sky_reflection_strength: f("sky_reflection_strength", 0.8),
@@ -161,6 +180,15 @@ impl OceanPanelConfig {
             ("foam_noise_scale", f(self.foam_noise_scale)),
             ("ramp_steps", f(self.ramp_steps)),
             ("specular_strength", f(self.specular_strength)),
+            ("band_wobble", f(self.band_wobble)),
+            ("band_dither", f(self.band_dither)),
+            ("band_dither_scale", f(self.band_dither_scale)),
+            ("splash_strength", f(self.splash_strength)),
+            ("splash_width", f(self.splash_width)),
+            ("splash_flicker_speed", f(self.splash_flicker_speed)),
+            ("splash_noise_scale", f(self.splash_noise_scale)),
+            ("splash_baseline", f(self.splash_baseline)),
+            ("splash_response", f(self.splash_response)),
             ("turbidity", f(self.turbidity)),
             ("refraction_strength", f(self.refraction_strength)),
             ("sky_reflection_strength", f(self.sky_reflection_strength)),
@@ -257,6 +285,20 @@ impl DebugPanel for OceanDebugPanel {
                 changed |= drag_f32(ui, "Foam Noise Scale", &mut self.config.foam_noise_scale, 0.005, 0.01..=4.0);
                 changed |= drag_f32(ui, "Ramp Steps", &mut self.config.ramp_steps, 0.05, 1.0..=8.0);
                 changed |= drag_f32(ui, "Specular", &mut self.config.specular_strength, 0.01, 0.0..=4.0);
+                changed |= drag_f32(ui, "Edge Wobble", &mut self.config.band_wobble, 0.005, 0.0..=1.0);
+                changed |= drag_f32(ui, "Edge Dither", &mut self.config.band_dither, 0.005, 0.0..=1.0);
+                changed |= drag_f32(ui, "Dither Dots/m", &mut self.config.band_dither_scale, 0.01, 0.05..=16.0);
+            });
+
+        egui::CollapsingHeader::new("Contact Foam")
+            .default_open(true)
+            .show(ui, |ui| {
+                changed |= drag_f32(ui, "Splash Strength", &mut self.config.splash_strength, 0.01, 0.0..=4.0);
+                changed |= drag_f32(ui, "Splash Width (m)", &mut self.config.splash_width, 0.005, 0.01..=2.0);
+                changed |= drag_f32(ui, "Flicker Speed", &mut self.config.splash_flicker_speed, 0.01, 0.0..=8.0);
+                changed |= drag_f32(ui, "Edge Noise Scale", &mut self.config.splash_noise_scale, 0.01, 0.05..=8.0);
+                changed |= drag_f32(ui, "Baseline", &mut self.config.splash_baseline, 0.005, 0.0..=1.0);
+                changed |= drag_f32(ui, "Impact Response", &mut self.config.splash_response, 0.01, 0.0..=8.0);
             });
 
         egui::CollapsingHeader::new("Water Clarity")

@@ -181,6 +181,13 @@ pub struct SceneRenderer {
     ocean_spectrum: Option<flint_core::ocean::WaveSpectrum>,
     ocean_visuals: crate::ocean_pipeline::OceanVisuals,
     ocean_active: bool,
+    /// Contact-foam hull: ([x, z, cos_yaw, sin_yaw], [half_x, half_z]).
+    /// None when the scene has no `ocean_contact` entity.
+    ocean_contact: Option<([f32; 4], [f32; 2])>,
+    /// (ocean_time, hull position) of the previous frame, for velocity.
+    ocean_contact_prev: Option<(f64, [f32; 3])>,
+    /// Smoothed hull velocity fed to the contact-foam churn term.
+    ocean_contact_vel: [f32; 3],
     // Grab pass (refraction): opaque scene color+depth snapshots
     ocean_grab_color: Option<(wgpu::Texture, wgpu::TextureView)>,
     ocean_grab_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
@@ -375,6 +382,9 @@ impl SceneRenderer {
             ocean_spectrum: None,
             ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
             ocean_active: false,
+            ocean_contact: None,
+            ocean_contact_prev: None,
+            ocean_contact_vel: [0.0; 3],
             ocean_grab_color: None,
             ocean_grab_depth: None,
             ocean_grab_size: (0, 0),
@@ -1702,6 +1712,9 @@ impl SceneRenderer {
             ocean_spectrum: None,
             ocean_visuals: crate::ocean_pipeline::OceanVisuals::default(),
             ocean_active: false,
+            ocean_contact: None,
+            ocean_contact_prev: None,
+            ocean_contact_vel: [0.0; 3],
             ocean_grab_color: None,
             ocean_grab_depth: None,
             ocean_grab_size: (0, 0),
@@ -2314,6 +2327,7 @@ impl SceneRenderer {
 
         // Extract ocean params (regenerates the wave spectrum only on change)
         self.extract_ocean_from_world(world);
+        self.extract_ocean_contact_from_world(world);
         if self.ocean_active {
             // Ocean always binds group 3; make sure the placeholder exists
             // even on paths where the grab pass never runs.
@@ -2772,6 +2786,51 @@ impl SceneRenderer {
                 crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
             self.ocean_active = self.ocean_pipeline.is_some();
             break; // one ocean per scene
+        }
+    }
+
+    // ── Contact foam extraction ──
+
+    /// Extract the first `ocean_contact` entity: hull center/yaw/extents for
+    /// the splash ring, plus hull velocity differentiated across frames
+    /// (drift + heave both count as impact against the moving water).
+    fn extract_ocean_contact_from_world(&mut self, world: &FlintWorld) {
+        use flint_core::toml_util::{toml_f32, toml_vec3};
+        self.ocean_contact = None;
+        for &entity_id in world.entities_with_component(comp::OCEAN_CONTACT) {
+            let Some(components) = world.get_components(entity_id) else { continue };
+            let Some(contact) = components.get(comp::OCEAN_CONTACT) else { continue };
+            let Some(tf) = components.get(comp::TRANSFORM) else { continue };
+
+            let pos = tf.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
+            let rot = tf.get("rotation").and_then(toml_vec3).unwrap_or([0.0; 3]);
+            let yaw = rot[1].to_radians(); // engine Euler is degrees; Y = yaw
+            let half_x = contact.get("half_x").and_then(toml_f32).unwrap_or(1.0);
+            let half_z = contact.get("half_z").and_then(toml_f32).unwrap_or(1.0);
+
+            self.ocean_contact = Some((
+                [pos[0], pos[2], yaw.cos(), yaw.sin()],
+                [half_x.max(0.01), half_z.max(0.01)],
+            ));
+
+            // Hull velocity on the same clock as the waves. Clamped against
+            // teleports/scene loads, lightly smoothed against frame jitter.
+            if let Some((prev_t, prev_pos)) = self.ocean_contact_prev {
+                let dt = (self.ocean_time - prev_t) as f32;
+                if dt > 1e-4 {
+                    let k = (10.0 * dt).min(1.0);
+                    for i in 0..3 {
+                        let v = ((pos[i] - prev_pos[i]) / dt).clamp(-5.0, 5.0);
+                        self.ocean_contact_vel[i] += (v - self.ocean_contact_vel[i]) * k;
+                    }
+                }
+            }
+            self.ocean_contact_prev = Some((self.ocean_time, pos));
+            break; // one contact hull per scene
+        }
+        if self.ocean_contact.is_none() {
+            self.ocean_contact_prev = None;
+            self.ocean_contact_vel = [0.0; 3];
         }
     }
 

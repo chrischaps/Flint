@@ -109,6 +109,18 @@ mod tests {
     }
 
     #[test]
+    fn ocean_shader_wgsl_parses() {
+        let source = include_str!("ocean_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn sky_shader_wgsl_parses() {
+        let source = include_str!("sky_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("sky_shader.wgsl failed to parse");
+    }
+
+    #[test]
     fn outline_shader_wgsl_parses() {
         let source = include_str!("outline_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("outline_shader.wgsl failed to parse");

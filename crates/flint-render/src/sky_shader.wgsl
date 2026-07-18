@@ -49,14 +49,19 @@ fn vs_sky(@builtin(vertex_index) vid: u32) -> VsOut {
 
 // ── Noise ───────────────────────────────────────────────────────────────
 
+// Sinless hashes (Hoskins): GPU sin() is only accurate near the origin, and
+// fbm octaves + cloud drift push lattice coords far past that — the old
+// fract(sin(...)) hash degenerated into blocky lattice artifacts.
 fn hash2(p: vec2<f32>) -> f32 {
-    let h = dot(p, vec2<f32>(127.1, 311.7));
-    return fract(sin(h) * 43758.5453123);
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
 fn hash3(p: vec3<f32>) -> f32 {
-    let h = dot(p, vec3<f32>(127.1, 311.7, 74.7));
-    return fract(sin(h) * 43758.5453123);
+    var p3 = fract(p * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
+    return fract((p3.x + p3.y + p3.z) * p3.z);
 }
 
 fn value_noise(p: vec2<f32>) -> f32 {

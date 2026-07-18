@@ -40,6 +40,7 @@ pub const TERRAIN: &str = "terrain";
 
 // --- Ocean ---
 pub const OCEAN: &str = "ocean";
+pub const OCEAN_CONTACT: &str = "ocean_contact";
 
 // --- Procedural sky ---
 pub const SKY: &str = "sky";

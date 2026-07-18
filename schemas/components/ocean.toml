@@ -25,6 +25,17 @@ foam_threshold = { type = "float", description = "Jacobian threshold: higher = m
 foam_noise_scale = { type = "float", description = "World-space frequency of foam breakup noise", default = 0.35 }
 ramp_steps = { type = "float", description = "Cel bands in the diffuse ramp (1-8)", default = 3.0 }
 specular_strength = { type = "float", description = "Sun glint intensity (0 disables)", default = 1.0 }
+band_wobble = { type = "float", description = "Ramp edge wobble: noise raggedizes cel band contours (0 = razor edges)", default = 0.2 }
+band_dither = { type = "float", description = "Halftone dither width at band edges: dots grow/merge across the transition (0 = hard line)", default = 0.0 }
+band_dither_scale = { type = "float", description = "Halftone dot grid frequency in dots per meter", default = 1.5 }
+
+# ── Contact foam (splash ring around the scene's ocean_contact hull) ────
+splash_strength = { type = "float", description = "Contact foam overall gain (0 disables)", default = 1.0 }
+splash_width = { type = "float", description = "Max foam band width outward from the hull at full churn (m)", default = 0.35 }
+splash_flicker_speed = { type = "float", description = "Contact foam lapping/flicker animation rate", default = 1.6 }
+splash_noise_scale = { type = "float", description = "World-space frequency of the contact foam scalloped edge", default = 1.8 }
+splash_baseline = { type = "float", description = "Churn floor on calm water (0 = foam vanishes when flat)", default = 0.15 }
+splash_response = { type = "float", description = "Impact speed to churn gain (s/m): how hard waves striking the hull flare the foam", default = 1.0 }
 
 # ── Refraction / turbidity (requires post-processing) ───────────────────
 turbidity = { type = "float", description = "Water cloudiness: 0 = glass-clear legs, high = murk in half a meter", default = 0.8 }

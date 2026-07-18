@@ -347,14 +347,17 @@ impl WaveSpectrum {
     }
 
     /// Pack waves for the GPU: two vec4s per wave slot, MAX_WAVES slots.
-    /// Slot layout: `[dir.x, dir.y, k, amp]`, `[phase_t, q, 0, 0]`.
-    /// Unused slots are zero (amp 0 contributes nothing).
+    /// Slot layout: `[dir.x, dir.y, k, amp]`, `[phase_t, q, omega_eff, 0]`.
+    /// omega_eff = ω·speed_scale — the rate phase_t actually advances at,
+    /// so the shader's analytic surface velocity (contact foam) matches the
+    /// animation. Unused slots are zero (amp 0 contributes nothing).
     pub fn to_gpu(&self, time: f64) -> [[f32; 4]; MAX_WAVES * 2] {
         let phases = self.phases_at(time);
+        let speed = self.params.speed_scale as f64;
         let mut out = [[0.0_f32; 4]; MAX_WAVES * 2];
         for (i, (w, &ph)) in self.waves.iter().zip(&phases).enumerate().take(MAX_WAVES) {
             out[i * 2] = [w.dir[0], w.dir[1], w.k, w.amp];
-            out[i * 2 + 1] = [ph, w.q, 0.0, 0.0];
+            out[i * 2 + 1] = [ph, w.q, (w.omega * speed) as f32, 0.0];
         }
         out
     }

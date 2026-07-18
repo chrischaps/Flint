@@ -54,12 +54,12 @@ fn hash21(p: vec2<f32>) -> f32 {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+// Sinless like hash21 above — GPU sin() loses accuracy at the large
+// coordinates a big terrain produces, so fract(sin(...)) is unreliable.
 fn hash22(p: vec2<f32>) -> vec2<f32> {
-    let n = vec2<f32>(
-        dot(p, vec2<f32>(127.1, 311.7)),
-        dot(p, vec2<f32>(269.5, 183.3))
-    );
-    return fract(sin(n) * 43758.5453);
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * vec3<f32>(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((vec2<f32>(p3.x, p3.x) + vec2<f32>(p3.y, p3.z)) * vec2<f32>(p3.z, p3.y));
 }
 
 @compute @workgroup_size(8, 8, 1)
