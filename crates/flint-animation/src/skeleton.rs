@@ -31,6 +31,8 @@ pub struct Skeleton {
     pub parents: Vec<Option<usize>>,
     pub inverse_bind_matrices: Vec<[[f32; 4]; 4]>,
     pub local_poses: Vec<JointPose>,
+    /// Rest (bind) local poses — the reference for additive layers
+    pub rest_poses: Vec<JointPose>,
     /// GPU-ready bone matrices (global * inverse_bind)
     pub bone_matrices: Vec<[[f32; 4]; 4]>,
     /// Model-space joint globals from the last pose computation
@@ -55,7 +57,7 @@ impl Skeleton {
         // an unanimated joint must hold its bind-local transform — with
         // identity it collapses onto its parent (sparse clips made every
         // un-keyed limb fold into the body).
-        let local_poses = imported
+        let rest_poses: Vec<JointPose> = imported
             .joints
             .iter()
             .map(|j| JointPose {
@@ -64,6 +66,7 @@ impl Skeleton {
                 scale: j.rest_scale,
             })
             .collect();
+        let local_poses = rest_poses.clone();
         let bone_matrices = vec![IDENTITY_4X4; joint_count];
         let global_matrices = vec![IDENTITY_4X4; joint_count];
 
@@ -72,6 +75,7 @@ impl Skeleton {
             parents,
             inverse_bind_matrices,
             local_poses,
+            rest_poses,
             bone_matrices,
             global_matrices,
         }

@@ -113,6 +113,22 @@ impl SkeletalSync {
                     state.blend_duration = ecs_blend_duration;
                     state.blend_elapsed = 0.0;
                 }
+
+                // Additive layer follows the ECS every frame (weight is a
+                // live dial; changing the clip restarts its own clock).
+                let ecs_layer = animator
+                    .get("layer_clip")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if ecs_layer != state.layer_clip {
+                    state.layer_clip = ecs_layer;
+                    state.layer_time = 0.0;
+                }
+                state.layer_weight = animator
+                    .get("layer_weight")
+                    .and_then(toml_f32)
+                    .unwrap_or(1.0);
                 continue;
             }
 
@@ -156,6 +172,15 @@ impl SkeletalSync {
                 .get("blend_duration")
                 .and_then(toml_f32)
                 .unwrap_or(0.3);
+            state.layer_clip = animator
+                .get("layer_clip")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            state.layer_weight = animator
+                .get("layer_weight")
+                .and_then(toml_f32)
+                .unwrap_or(1.0);
 
             self.states.insert(entity_id, state);
         }
@@ -243,8 +268,75 @@ impl SkeletalSync {
                 }
             }
 
+            // ── Additive layer ──────────────────────────────────────
+            // Loops on its own clock, composed AFTER base + blend so it
+            // survives crossfades: each keyed joint contributes its
+            // delta-from-REST, scaled by layer_weight. Un-keyed joints
+            // are untouched (composing identity would corrupt joints
+            // whose rest rotation is non-identity). The pre-layer pose
+            // is RESTORED after matrix computation: local_poses persists
+            // across frames and base clips only overwrite the joints
+            // they key, so leaving the deltas in would compound them
+            // every frame (feet were windmilling at 120°+).
+            let mut layer_saved: Vec<(usize, JointPose)> = Vec::new();
+            if !state.layer_clip.is_empty() && state.layer_weight > 0.001 {
+                if let Some(layer_clip) = self.clips.get(&state.layer_clip) {
+                    state.layer_time += dt * state.speed;
+                    if layer_clip.duration > 0.0 {
+                        state.layer_time %= layer_clip.duration;
+                        if state.layer_time < 0.0 {
+                            state.layer_time += layer_clip.duration;
+                        }
+                    }
+                    let w = state.layer_weight.clamp(0.0, 1.0);
+                    for track in &layer_clip.joint_tracks {
+                        let idx = track.joint_index;
+                        if idx >= skeleton.local_poses.len() {
+                            continue;
+                        }
+                        if !layer_saved.iter().any(|(i, _)| *i == idx) {
+                            layer_saved.push((idx, skeleton.local_poses[idx].clone()));
+                        }
+                        let value = sample_joint_track(track, state.layer_time);
+                        match track.property {
+                            JointProperty::Rotation => {
+                                if value.len() < 4 {
+                                    continue;
+                                }
+                                let rest = skeleton.rest_poses[idx].rotation;
+                                let sampled = [value[0], value[1], value[2], value[3]];
+                                // delta = rest⁻¹ * sampled, faded toward
+                                // identity by weight, applied on the base.
+                                let delta = quat_mul(quat_conj(rest), sampled);
+                                let faded = quat_nlerp([0.0, 0.0, 0.0, 1.0], delta, w);
+                                let base = skeleton.local_poses[idx].rotation;
+                                skeleton.local_poses[idx].rotation =
+                                    quat_normalize(quat_mul(base, faded));
+                            }
+                            JointProperty::Translation => {
+                                if value.len() < 3 {
+                                    continue;
+                                }
+                                let rest = skeleton.rest_poses[idx].translation;
+                                for c in 0..3 {
+                                    skeleton.local_poses[idx].translation[c] +=
+                                        (value[c] - rest[c]) * w;
+                                }
+                            }
+                            JointProperty::Scale => {}
+                        }
+                    }
+                }
+            }
+
             // Compute final bone matrices
             skeleton.compute_bone_matrices();
+
+            // Un-apply the additive layer from the persistent pose
+            // buffer (see the accumulation note above).
+            for (idx, pose) in layer_saved {
+                skeleton.local_poses[idx] = pose;
+            }
         }
     }
 
@@ -299,6 +391,7 @@ impl SkeletalSync {
         self.skeletons.get(entity_id)?.joint_position(joint)
     }
 
+
     /// Get bone matrices for a given entity (for GPU upload)
     pub fn bone_matrices(&self, entity_id: &EntityId) -> Option<&[[[f32; 4]; 4]]> {
         self.skeletons
@@ -319,4 +412,46 @@ impl SkeletalSync {
         // Currently we only support one skin per entity; always 0
         0
     }
+}
+
+// ── Quaternion helpers for additive layer composition (xyzw) ────────────
+
+fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let [ax, ay, az, aw] = a;
+    let [bx, by, bz, bw] = b;
+    [
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    ]
+}
+
+/// Conjugate = inverse for unit quaternions
+fn quat_conj(q: [f32; 4]) -> [f32; 4] {
+    [-q[0], -q[1], -q[2], q[3]]
+}
+
+fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    if len < 1e-10 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
+}
+
+/// Normalized lerp with shortest-path correction — fine for the small
+/// angles a layer weight fades through.
+fn quat_nlerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let mut b = b;
+    let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    if dot < 0.0 {
+        b = [-b[0], -b[1], -b[2], -b[3]];
+    }
+    quat_normalize([
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ])
 }
