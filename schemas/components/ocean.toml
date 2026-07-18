@@ -28,6 +28,8 @@ specular_strength = { type = "float", description = "Sun glint intensity (0 disa
 band_wobble = { type = "float", description = "Ramp edge wobble: noise raggedizes cel band contours (0 = razor edges)", default = 0.2 }
 band_dither = { type = "float", description = "Halftone dither width at band edges: dots grow/merge across the transition (0 = hard line)", default = 0.0 }
 band_dither_scale = { type = "float", description = "Halftone dot grid frequency in dots per meter", default = 1.5 }
+foam_glow_color = { type = "vec4", description = "Bioluminescent foam glow color (RGBA linear, emissive teal-green)", default = [0.35, 0.95, 0.75, 1.0] }
+foam_glow = { type = "float", description = "Bioluminescent glow strength (0 = off; time_of_day.rhai fades it in at night)", default = 0.0 }
 
 # ── Contact foam (splash ring around the scene's ocean_contact hull) ────
 splash_strength = { type = "float", description = "Contact foam overall gain (0 disables)", default = 1.0 }

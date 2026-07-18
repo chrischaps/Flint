@@ -502,6 +502,12 @@ impl SceneRenderer {
                     band_dither: v.band_dither,
                     band_dither_scale: v.band_dither_scale,
                     _pad_band: 0.0,
+                    foam_glow: [
+                        v.foam_glow_color[0],
+                        v.foam_glow_color[1],
+                        v.foam_glow_color[2],
+                        v.foam_glow,
+                    ],
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
             }

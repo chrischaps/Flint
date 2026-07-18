@@ -90,6 +90,8 @@ pub struct OceanPanelConfig {
     pub band_wobble: f32,
     pub band_dither: f32,
     pub band_dither_scale: f32,
+    pub foam_glow_color: [f32; 4],
+    pub foam_glow: f32,
     // Contact foam (splash around the ocean_contact hull)
     pub splash_strength: f32,
     pub splash_width: f32,
@@ -137,6 +139,8 @@ impl OceanPanelConfig {
             band_wobble: f("band_wobble", 0.2),
             band_dither: f("band_dither", 0.0),
             band_dither_scale: f("band_dither_scale", 1.5),
+            foam_glow_color: c("foam_glow_color", [0.35, 0.95, 0.75, 1.0]),
+            foam_glow: f("foam_glow", 0.0),
             splash_strength: f("splash_strength", 1.0),
             splash_width: f("splash_width", 0.35),
             splash_flicker_speed: f("splash_flicker_speed", 1.6),
@@ -183,6 +187,8 @@ impl OceanPanelConfig {
             ("band_wobble", f(self.band_wobble)),
             ("band_dither", f(self.band_dither)),
             ("band_dither_scale", f(self.band_dither_scale)),
+            ("foam_glow_color", c(self.foam_glow_color)),
+            ("foam_glow", f(self.foam_glow)),
             ("splash_strength", f(self.splash_strength)),
             ("splash_width", f(self.splash_width)),
             ("splash_flicker_speed", f(self.splash_flicker_speed)),
@@ -285,6 +291,8 @@ impl DebugPanel for OceanDebugPanel {
                 changed |= drag_f32(ui, "Foam Noise Scale", &mut self.config.foam_noise_scale, 0.005, 0.01..=4.0);
                 changed |= drag_f32(ui, "Ramp Steps", &mut self.config.ramp_steps, 0.05, 1.0..=8.0);
                 changed |= drag_f32(ui, "Specular", &mut self.config.specular_strength, 0.01, 0.0..=4.0);
+                changed |= color_rgba(ui, "Glow Color", &mut self.config.foam_glow_color);
+                changed |= drag_f32(ui, "Foam Glow", &mut self.config.foam_glow, 0.005, 0.0..=2.0);
                 changed |= drag_f32(ui, "Edge Wobble", &mut self.config.band_wobble, 0.005, 0.0..=1.0);
                 changed |= drag_f32(ui, "Edge Dither", &mut self.config.band_dither, 0.005, 0.0..=1.0);
                 changed |= drag_f32(ui, "Dither Dots/m", &mut self.config.band_dither_scale, 0.01, 0.05..=16.0);

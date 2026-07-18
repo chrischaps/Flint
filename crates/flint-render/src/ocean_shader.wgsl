@@ -78,6 +78,7 @@ struct OceanUniforms {
     band_dither: f32,              // halftone transition width, 0 = hard line
     band_dither_scale: f32,        // halftone dot grid frequency (dots/m)
     _pad_band: f32,
+    foam_glow: vec4<f32>,          // bioluminescence: rgb + strength in .a
 };
 
 @group(1) @binding(0)
@@ -634,6 +635,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let reflect_amt = fresnel * ocean.sky_reflection_strength
             * (1.0 - foam_mix) * sf;
         color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
+    }
+
+    // ── Bioluminescent foam (foam_glow.a > 0, faded in at night by the
+    // TOD script). Emissive, added AFTER reflection/refraction mixing so
+    // nothing washes it out. Weighted by agitation — bioluminescence is
+    // stimulated by churn: the contact wake flares brightest, the flecks
+    // spark, the solid crest mass carries a dimmer wash.
+    if (ocean.foam_glow.a > 0.001) {
+        let agitation = clamp(
+            foam_hard * 0.5 + foam_flecks + contact_foam * 1.6, 0.0, 1.6);
+        color += ocean.foam_glow.rgb * ocean.foam_glow.a * agitation;
     }
 
     // ── Self-fog toward the horizon (see fog_color comment above) ───────

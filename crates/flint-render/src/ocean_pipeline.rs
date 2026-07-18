@@ -76,6 +76,9 @@ pub struct OceanUniformsGpu {
     /// World-space halftone dot grid frequency (dots per meter).
     pub band_dither_scale: f32,
     pub _pad_band: f32,
+    // ── Bioluminescent foam ──
+    /// Emissive glow rgb + strength in .a (TOD script fades it in at night).
+    pub foam_glow: [f32; 4],
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -119,6 +122,11 @@ pub struct OceanVisuals {
     pub band_dither: f32,
     /// Halftone dot grid frequency (dots per meter).
     pub band_dither_scale: f32,
+    /// Bioluminescent foam glow color (emissive; not TOD-lit by design —
+    /// it IS a light source. The strength below is what TOD animates).
+    pub foam_glow_color: [f32; 4],
+    /// Bioluminescent glow strength (0 = off; time_of_day.rhai drives it).
+    pub foam_glow: f32,
 }
 
 impl Default for OceanVisuals {
@@ -149,6 +157,9 @@ impl Default for OceanVisuals {
             band_wobble: 0.20,
             band_dither: 0.0,
             band_dither_scale: 1.5,
+            // Teal-green sea sparkle (dinoflagellate blue-green).
+            foam_glow_color: [0.35, 0.95, 0.75, 1.0],
+            foam_glow: 0.0,
         }
     }
 }
@@ -187,6 +198,8 @@ impl OceanVisuals {
             band_wobble: f("band_wobble", d.band_wobble).clamp(0.0, 1.0),
             band_dither: f("band_dither", d.band_dither).clamp(0.0, 1.0),
             band_dither_scale: f("band_dither_scale", d.band_dither_scale).clamp(0.05, 32.0),
+            foam_glow_color: c("foam_glow_color", d.foam_glow_color),
+            foam_glow: f("foam_glow", d.foam_glow).clamp(0.0, 2.0),
         }
     }
 
@@ -471,9 +484,9 @@ mod tests {
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
         // + fog_color(16) + sky snapshot 3×vec4 + strength(64, incl. 3
         // splash scalars) + contact hull 3×vec4(48) + band edge 4×f32(16)
-        // = 800
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 800);
-        assert_eq!(800 % 16, 0, "uniform size must be 16-byte aligned");
+        // + foam_glow vec4(16) = 816
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 816);
+        assert_eq!(816 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     #[test]
