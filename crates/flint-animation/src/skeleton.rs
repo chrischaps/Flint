@@ -47,7 +47,20 @@ impl Skeleton {
             .iter()
             .map(|j| j.inverse_bind_matrix)
             .collect();
-        let local_poses = vec![JointPose::default(); joint_count];
+        // Seed the pose buffer from the joints' REST transforms, not
+        // identity: clips only overwrite the properties they animate, so
+        // an unanimated joint must hold its bind-local transform — with
+        // identity it collapses onto its parent (sparse clips made every
+        // un-keyed limb fold into the body).
+        let local_poses = imported
+            .joints
+            .iter()
+            .map(|j| JointPose {
+                translation: j.rest_translation,
+                rotation: j.rest_rotation,
+                scale: j.rest_scale,
+            })
+            .collect();
         let bone_matrices = vec![IDENTITY_4X4; joint_count];
 
         Self {
@@ -191,12 +204,18 @@ mod tests {
                     index: 0,
                     parent: None,
                     inverse_bind_matrix: IDENTITY_4X4,
+                    rest_translation: [0.0, 0.0, 0.0],
+                    rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                    rest_scale: [1.0, 1.0, 1.0],
                 },
                 flint_import::ImportedJoint {
                     name: "child".to_string(),
                     index: 1,
                     parent: Some(0),
                     inverse_bind_matrix: IDENTITY_4X4,
+                    rest_translation: [0.0, 0.0, 0.0],
+                    rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                    rest_scale: [1.0, 1.0, 1.0],
                 },
             ],
         };
@@ -234,12 +253,18 @@ mod tests {
                     index: 0,
                     parent: None,
                     inverse_bind_matrix: IDENTITY_4X4,
+                    rest_translation: [0.0, 0.0, 0.0],
+                    rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                    rest_scale: [1.0, 1.0, 1.0],
                 },
                 flint_import::ImportedJoint {
                     name: "child".to_string(),
                     index: 1,
                     parent: Some(0),
                     inverse_bind_matrix: IDENTITY_4X4,
+                    rest_translation: [0.0, 0.0, 0.0],
+                    rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                    rest_scale: [1.0, 1.0, 1.0],
                 },
             ],
         };
@@ -256,5 +281,27 @@ mod tests {
         // Child bone matrix should have translation (1,2,0) — accumulated from parent
         assert!((skel.bone_matrices[1][3][0] - 1.0).abs() < 1e-5);
         assert!((skel.bone_matrices[1][3][1] - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn from_imported_seeds_rest_pose_not_identity() {
+        // Sparse clips only overwrite the properties they animate — an
+        // unanimated joint must hold its REST local transform. Seeding
+        // identity collapses it onto its parent (regression: the seated
+        // body's legs folded into the pelvis in the player).
+        let imported = flint_import::ImportedSkeleton {
+            name: "test".to_string(),
+            joints: vec![flint_import::ImportedJoint {
+                name: "hip".to_string(),
+                index: 0,
+                parent: None,
+                inverse_bind_matrix: IDENTITY_4X4,
+                rest_translation: [0.13, 0.0, -0.05],
+                rest_rotation: [0.0, 0.0, 0.0, 1.0],
+                rest_scale: [1.0, 1.0, 1.0],
+            }],
+        };
+        let skel = Skeleton::from_imported(&imported);
+        assert_eq!(skel.local_poses[0].translation, [0.13, 0.0, -0.05]);
     }
 }
