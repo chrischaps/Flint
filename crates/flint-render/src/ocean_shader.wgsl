@@ -646,15 +646,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         color = mix(color, sky_ref, clamp(reflect_amt, 0.0, 1.0));
     }
 
-    // ── Bioluminescent foam (foam_glow.a > 0, faded in at night by the
-    // TOD script). Emissive, added AFTER reflection/refraction mixing so
-    // nothing washes it out. Weighted by agitation — bioluminescence is
-    // stimulated by churn: the contact wake flares brightest, the flecks
-    // spark, the solid crest mass carries a dimmer wash.
+    // ── Bioluminescent foam (foam_glow.a > 0, driven by biolum.rhai on
+    // rare night bloom windows). Emissive, added AFTER reflection/
+    // refraction mixing so nothing washes it out. Weighted hard toward
+    // agitation — bioluminescence is STIMULATED light: the churned
+    // contact wake flares, flecks spark, and the passive crest mass gets
+    // almost nothing, so the raft's wake is unmistakably the source.
     if (ocean.foam_glow.a > 0.001) {
         let agitation = clamp(
-            foam_hard * 0.5 + foam_flecks + contact_foam * 1.6, 0.0, 1.6);
-        color += ocean.foam_glow.rgb * ocean.foam_glow.a * agitation;
+            foam_hard * 0.08 + foam_flecks * 0.35 + contact_foam * 1.6,
+            0.0, 1.6);
+        // Superlinear response pushes CHURNED foam past the bloom
+        // threshold (post HDR pipeline, threshold ~1.0): the stirred
+        // wake HALOS like a light source, sparse flecks stay a quiet
+        // sprinkle, and the passive crest mass barely registers — the
+        // stimulation gradient is the read.
+        let glow = ocean.foam_glow.a * agitation * (1.0 + agitation * 2.5);
+        color += ocean.foam_glow.rgb * glow;
     }
 
     // ── Self-fog toward the horizon (see fog_color comment above) ───────
