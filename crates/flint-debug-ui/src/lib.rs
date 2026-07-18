@@ -1,7 +1,9 @@
+mod camera_panel;
 mod grass_panel;
 mod ocean_panel;
 mod tod_panel;
 
+pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use grass_panel::GrassDebugPanel;
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
 pub use tod_panel::{TimeOfDayDebugPanel, TimeOfDayPanelConfig};

@@ -16,6 +16,9 @@ use flint_core::components as comp;
 /// Game-side day/night component driven by a script; the player only knows
 /// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
 const TIME_OF_DAY_COMPONENT: &str = "time_of_day";
+/// Live-tunable camera settings applied to the render camera at scene load
+/// and edited through the F3 Camera panel (see flint-debug-ui camera_panel).
+const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
@@ -507,6 +510,7 @@ impl PlayerApp {
 
         // Apply scene-level camera configuration
         self.apply_camera_def();
+        self.apply_camera_tuning();
 
         // Apply scene-level post-processing config
         if let Some(pp_def) = &self.scene_post_process {
@@ -611,6 +615,7 @@ impl PlayerApp {
 
         self.create_ocean_debug_panel();
         self.create_tod_debug_panel();
+        self.create_camera_debug_panel();
     }
 
     /// Create the ocean tuning panel if the scene has an `ocean` component.
@@ -670,6 +675,59 @@ impl PlayerApp {
             name,
         );
         self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Create the camera tuning panel if the scene has a `camera_tuning`
+    /// component.
+    fn create_camera_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(CAMERA_TUNING_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let Some(cam_comp) = self
+            .world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT).cloned())
+        else {
+            return;
+        };
+        let config = flint_debug_ui::CameraPanelConfig::from_component(&cam_comp);
+        let panel = flint_debug_ui::CameraDebugPanel::new(
+            config,
+            std::path::PathBuf::from(&self.scene_path),
+            name,
+        );
+        self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Apply the scene's `camera_tuning` component to the render camera.
+    /// Called after `apply_camera_def()` so the tuning value wins when a
+    /// scene declares both.
+    fn apply_camera_tuning(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(CAMERA_TUNING_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        if let Some(fov) = self
+            .world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT))
+            .and_then(|c| c.get("fov_deg"))
+            .and_then(flint_core::toml_util::toml_f32)
+        {
+            self.camera.fov = fov;
+        }
     }
 
     /// Update the terrain height callback on the script system.
@@ -1056,6 +1114,32 @@ impl PlayerApp {
                 .and_then(flint_core::toml_util::toml_f32)
             {
                 tod_panel.sync_time(hours);
+            }
+        }
+
+        // Camera panel: edits drive the live render camera and the component
+        // (so Commit to File persists them); while idle, track the camera so
+        // script FOV overrides don't leave the slider stale.
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Camera" {
+                continue;
+            }
+            let cam_panel = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::CameraDebugPanel>()
+                .unwrap();
+            if cam_panel.is_dirty() {
+                self.camera.fov = cam_panel.config().fov_deg;
+                if let Some(entity_id) = self.world.get_id(cam_panel.entity_name()) {
+                    if let Some(comps) = self.world.get_components_mut(entity_id) {
+                        for (field, value) in cam_panel.config().to_fields() {
+                            comps.set_field(CAMERA_TUNING_COMPONENT, field, value);
+                        }
+                    }
+                }
+                cam_panel.clear_dirty();
+            } else {
+                cam_panel.sync_fov(self.camera.fov);
             }
         }
 
@@ -2016,6 +2100,8 @@ impl PlayerApp {
         }
         self.create_ocean_debug_panel();
         self.create_tod_debug_panel();
+        self.create_camera_debug_panel();
+        self.apply_camera_tuning();
 
         // Update terrain height callback for scripts
         self.update_terrain_height_fn();
