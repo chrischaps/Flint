@@ -114,6 +114,12 @@ impl AnimationSystem {
         self.skeletal_sync.bone_matrices(entity_id)
     }
 
+    /// Model-space position of a named joint (bone_probe: camera anchors,
+    /// attachment points)
+    pub fn joint_position(&self, entity_id: &EntityId, joint: &str) -> Option<[f32; 3]> {
+        self.skeletal_sync.joint_position(entity_id, joint)
+    }
+
     /// Drain sprite animation end events
     pub fn drain_sprite_events(&mut self) -> Vec<SpriteAnimEndEvent> {
         self.sprite_sync.drain_events()

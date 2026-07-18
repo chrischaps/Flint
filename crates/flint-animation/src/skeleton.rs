@@ -33,6 +33,9 @@ pub struct Skeleton {
     pub local_poses: Vec<JointPose>,
     /// GPU-ready bone matrices (global * inverse_bind)
     pub bone_matrices: Vec<[[f32; 4]; 4]>,
+    /// Model-space joint globals from the last pose computation
+    /// (bone_probe reads these — e.g. a camera following an "eye" joint)
+    pub global_matrices: Vec<[[f32; 4]; 4]>,
 }
 
 impl Skeleton {
@@ -62,6 +65,7 @@ impl Skeleton {
             })
             .collect();
         let bone_matrices = vec![IDENTITY_4X4; joint_count];
+        let global_matrices = vec![IDENTITY_4X4; joint_count];
 
         Self {
             joint_names,
@@ -69,7 +73,15 @@ impl Skeleton {
             inverse_bind_matrices,
             local_poses,
             bone_matrices,
+            global_matrices,
         }
+    }
+
+    /// Model-space position of a joint after the last `compute_bone_matrices`.
+    pub fn joint_position(&self, name: &str) -> Option<[f32; 3]> {
+        let i = self.joint_names.iter().position(|n| n == name)?;
+        let m = self.global_matrices.get(i)?;
+        Some([m[3][0], m[3][1], m[3][2]])
     }
 
     pub fn joint_count(&self) -> usize {
@@ -82,17 +94,17 @@ impl Skeleton {
     /// so a single forward pass suffices.
     pub fn compute_bone_matrices(&mut self) {
         let count = self.joint_count();
-        let mut globals = vec![IDENTITY_4X4; count];
 
         for i in 0..count {
             let local = pose_to_mat4(&self.local_poses[i]);
 
-            globals[i] = match self.parents[i] {
-                Some(parent_idx) => mat4_mul(&globals[parent_idx], &local),
+            self.global_matrices[i] = match self.parents[i] {
+                Some(parent_idx) => mat4_mul(&self.global_matrices[parent_idx], &local),
                 None => local,
             };
 
-            self.bone_matrices[i] = mat4_mul(&globals[i], &self.inverse_bind_matrices[i]);
+            self.bone_matrices[i] =
+                mat4_mul(&self.global_matrices[i], &self.inverse_bind_matrices[i]);
         }
     }
 }

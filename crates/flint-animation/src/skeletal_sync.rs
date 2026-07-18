@@ -294,6 +294,11 @@ impl SkeletalSync {
         self.clips.get(clip_name).map(|c| c.duration)
     }
 
+    /// Model-space position of a named joint for an entity (bone_probe)
+    pub fn joint_position(&self, entity_id: &EntityId, joint: &str) -> Option<[f32; 3]> {
+        self.skeletons.get(entity_id)?.joint_position(joint)
+    }
+
     /// Get bone matrices for a given entity (for GPU upload)
     pub fn bone_matrices(&self, entity_id: &EntityId) -> Option<&[[[f32; 4]; 4]]> {
         self.skeletons

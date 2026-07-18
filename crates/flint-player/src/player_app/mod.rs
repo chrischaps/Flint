@@ -1347,6 +1347,38 @@ impl PlayerApp {
             }
         }
 
+        // Publish bone_probe joints: model-local joint positions written
+        // into the component right after the pose computation, so scripts
+        // read this frame's pose (e.g. seat_camera following the eye).
+        {
+            let probe_ids: Vec<flint_core::EntityId> = self
+                .world
+                .entities_with_component(flint_core::components::BONE_PROBE)
+                .iter()
+                .copied()
+                .collect();
+            for id in probe_ids {
+                let joint = self
+                    .world
+                    .get_components(id)
+                    .and_then(|c| c.get_field(flint_core::components::BONE_PROBE, "joint"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                if let Some(joint) = joint {
+                    if let Some(pos) = self.animation.joint_position(&id, &joint) {
+                        for (field, value) in [("x", pos[0]), ("y", pos[1]), ("z", pos[2])] {
+                            let _ = self.world.set_field(
+                                id,
+                                flint_core::components::BONE_PROBE,
+                                field,
+                                toml::Value::Float(value as f64),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Advance particle simulation (skip when paused)
         if config.particles == SystemPolicy::Run {
             self.particles
