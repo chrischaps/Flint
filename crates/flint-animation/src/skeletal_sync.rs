@@ -22,6 +22,11 @@ pub struct SkeletalSync {
     clips: HashMap<String, SkeletalClip>,
     skeletons: HashMap<EntityId, Skeleton>,
     states: HashMap<EntityId, SkeletalPlaybackState>,
+    /// Entities whose crossfade finished this frame. The ECS `blend_target`
+    /// field must be cleared for them (see [`Self::write_back`]) — otherwise
+    /// the next `sync_from_world` sees a target that no longer matches the
+    /// (now-cleared) runtime target and re-arms the same crossfade forever.
+    completed_blends: Vec<EntityId>,
 }
 
 impl SkeletalSync {
@@ -30,6 +35,7 @@ impl SkeletalSync {
             clips: HashMap::new(),
             skeletons: HashMap::new(),
             states: HashMap::new(),
+            completed_blends: Vec::new(),
         }
     }
 
@@ -38,6 +44,7 @@ impl SkeletalSync {
         self.clips.clear();
         self.skeletons.clear();
         self.states.clear();
+        self.completed_blends.clear();
     }
 
     /// Register a skeletal clip by name
@@ -160,6 +167,21 @@ impl SkeletalSync {
                 .unwrap_or(false)
                 || autoplay;
 
+            // A resolved clip that is not playing holds its first frame
+            // forever. Both flags default to false, and TOML makes it easy to
+            // strand them on a neighbouring component table (a key after the
+            // next [table] header belongs to THAT table) — which reads as
+            // "the animation is stuck on one frame" with nothing else to
+            // explain it. Say so rather than render a statue in silence.
+            if !playing {
+                println!(
+                    "WARNING: entity {:?} has animator clip '{}' but playing=false and \
+                     autoplay=false — it will hold its first frame. Check that `playing`/\
+                     `autoplay` are under [entities.<name>.animator].",
+                    entity_id, clip_name
+                );
+            }
+
             let mut state = SkeletalPlaybackState::new(clip_name, speed, looping, playing);
 
             // Read initial blend fields
@@ -260,11 +282,13 @@ impl SkeletalSync {
                         state.time = target_time;
                         state.blend_target.clear();
                         state.blend_elapsed = 0.0;
+                        self.completed_blends.push(entity_id);
                     }
                 } else {
                     // Target clip not found, clear blend
                     state.blend_target.clear();
                     state.blend_elapsed = 0.0;
+                    self.completed_blends.push(entity_id);
                 }
             }
 
@@ -340,6 +364,30 @@ impl SkeletalSync {
         }
     }
 
+    /// Retire finished crossfades in the ECS.
+    ///
+    /// `blend_to` sets the `blend_target` field and nothing else ever cleared
+    /// it, while `advance_and_compute` cleared only the runtime mirror. The
+    /// next `sync_from_world` therefore saw a non-empty ECS target that no
+    /// longer matched the empty runtime one and started the SAME crossfade
+    /// again — a self-sustaining loop with a period of `blend_duration`, so
+    /// every clip permanently replayed only its first `blend_duration`
+    /// seconds (0.3 s default ≈ 3-4 restarts/second). Clearing the field
+    /// here closes the loop and keeps `blend_to(e, same_clip, t)` meaningful
+    /// as an explicit restart.
+    pub fn write_back(&mut self, world: &mut FlintWorld) {
+        for entity_id in self.completed_blends.drain(..) {
+            let Some(components) = world.get_components_mut(entity_id) else {
+                continue;
+            };
+            components.set_field(
+                comp::ANIMATOR,
+                "blend_target",
+                toml::Value::String(String::new()),
+            );
+        }
+    }
+
     /// Sample a clip's joint tracks into a pose array
     fn sample_clip_into_poses(clip: &SkeletalClip, time: f64, poses: &mut [JointPose]) {
         for track in &clip.joint_tracks {
@@ -390,7 +438,6 @@ impl SkeletalSync {
     pub fn joint_position(&self, entity_id: &EntityId, joint: &str) -> Option<[f32; 3]> {
         self.skeletons.get(entity_id)?.joint_position(joint)
     }
-
 
     /// Get bone matrices for a given entity (for GPU upload)
     pub fn bone_matrices(&self, entity_id: &EntityId) -> Option<&[[[f32; 4]; 4]]> {
@@ -454,4 +501,195 @@ fn quat_nlerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
         a[2] + (b[2] - a[2]) * t,
         a[3] + (b[3] - a[3]) * t,
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clip::Interpolation;
+    use crate::skeletal_clip::{JointKeyframe, JointTrack};
+
+    const IDENT: [[f32; 4]; 4] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+
+    fn one_joint_skeleton() -> Skeleton {
+        Skeleton {
+            joint_names: vec!["root".into()],
+            parents: vec![None],
+            inverse_bind_matrices: vec![IDENT],
+            local_poses: vec![JointPose::default()],
+            rest_poses: vec![JointPose::default()],
+            bone_matrices: vec![IDENT],
+            global_matrices: vec![IDENT],
+        }
+    }
+
+    /// A clip that slides the single joint along +X over `duration`.
+    fn slide_clip(name: &str, duration: f64) -> SkeletalClip {
+        SkeletalClip {
+            name: name.to_string(),
+            duration,
+            joint_tracks: vec![JointTrack {
+                joint_index: 0,
+                property: JointProperty::Translation,
+                interpolation: Interpolation::Linear,
+                keyframes: vec![
+                    JointKeyframe {
+                        time: 0.0,
+                        value: vec![0.0, 0.0, 0.0],
+                    },
+                    JointKeyframe {
+                        time: duration,
+                        value: vec![duration as f32, 0.0, 0.0],
+                    },
+                ],
+            }],
+        }
+    }
+
+    fn world_with_animator(
+        clip: &str,
+        blend_target: &str,
+        blend_duration: f64,
+    ) -> (FlintWorld, EntityId) {
+        let mut world = FlintWorld::new();
+        let eid = world.spawn("rig").unwrap();
+        world
+            .set_field(
+                eid,
+                comp::ANIMATOR,
+                "clip",
+                toml::Value::String(clip.into()),
+            )
+            .unwrap();
+        world
+            .set_field(eid, comp::ANIMATOR, "playing", toml::Value::Boolean(true))
+            .unwrap();
+        world
+            .set_field(eid, comp::ANIMATOR, "loop", toml::Value::Boolean(true))
+            .unwrap();
+        world
+            .set_field(
+                eid,
+                comp::ANIMATOR,
+                "blend_target",
+                toml::Value::String(blend_target.into()),
+            )
+            .unwrap();
+        world
+            .set_field(
+                eid,
+                comp::ANIMATOR,
+                "blend_duration",
+                toml::Value::Float(blend_duration),
+            )
+            .unwrap();
+        world
+            .set_field(
+                eid,
+                comp::SKELETON,
+                "skin",
+                toml::Value::String("rig".into()),
+            )
+            .unwrap();
+        (world, eid)
+    }
+
+    fn ecs_blend_target(world: &FlintWorld, eid: EntityId) -> String {
+        world
+            .get_components(eid)
+            .and_then(|c| c.get(comp::ANIMATOR))
+            .and_then(|a| a.get("blend_target"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// A completed crossfade must be retired in the ECS, not just in the
+    /// runtime mirror. Before the fix, `blend_target` stayed set forever and
+    /// `sync_from_world` re-armed the same blend every frame — the clip
+    /// replayed only its first `blend_duration` seconds, on loop.
+    #[test]
+    fn completed_blend_clears_ecs_target_and_does_not_rearm() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("idle", 4.0));
+        sync.add_clip(slide_clip("scoot", 4.0));
+
+        let (mut world, eid) = world_with_animator("idle", "scoot", 0.2);
+        sync.add_skeleton(eid, one_joint_skeleton());
+
+        // Run 1 second at 60 Hz — far past the 0.2 s crossfade.
+        for _ in 0..60 {
+            sync.sync_from_world(&world);
+            sync.advance_and_compute(1.0 / 60.0);
+            sync.write_back(&mut world);
+        }
+
+        assert_eq!(
+            ecs_blend_target(&world, eid),
+            "",
+            "finished crossfade must clear the ECS blend_target"
+        );
+
+        let state = sync.states.get(&eid).unwrap();
+        assert_eq!(
+            state.clip_name, "scoot",
+            "should have settled on the target clip"
+        );
+        assert!(
+            state.blend_target.is_empty(),
+            "runtime blend must not be re-armed"
+        );
+        // The real symptom: time kept resetting to ~blend_duration. After
+        // ~1 s of playback the clip must be well past that.
+        assert!(
+            state.time > 0.5,
+            "clip time {} suggests the blend is restarting (stuck near blend_duration)",
+            state.time
+        );
+    }
+
+    /// Re-issuing the SAME clip must still restart it — body.rhai chains
+    /// held-key scoot steps that way.
+    #[test]
+    fn reissuing_same_clip_restarts_it() {
+        let mut sync = SkeletalSync::new();
+        sync.add_clip(slide_clip("scoot", 4.0));
+
+        let (mut world, eid) = world_with_animator("scoot", "", 0.1);
+        sync.add_skeleton(eid, one_joint_skeleton());
+
+        for _ in 0..60 {
+            sync.sync_from_world(&world);
+            sync.advance_and_compute(1.0 / 60.0);
+            sync.write_back(&mut world);
+        }
+        let before = sync.states.get(&eid).unwrap().time;
+        assert!(before > 0.5);
+
+        // blend_to(me, "scoot", 0.1) — same clip, explicit restart.
+        world
+            .set_field(
+                eid,
+                comp::ANIMATOR,
+                "blend_target",
+                toml::Value::String("scoot".into()),
+            )
+            .unwrap();
+        for _ in 0..12 {
+            sync.sync_from_world(&world);
+            sync.advance_and_compute(1.0 / 60.0);
+            sync.write_back(&mut world);
+        }
+
+        let after = sync.states.get(&eid).unwrap().time;
+        assert!(
+            after < before,
+            "re-issuing the playing clip must restart it (before {before}, after {after})"
+        );
+    }
 }

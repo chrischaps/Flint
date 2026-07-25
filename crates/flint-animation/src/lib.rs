@@ -98,7 +98,11 @@ impl AnimationSystem {
     }
 
     /// Register an entity's node name → EntityId mapping for node animation
-    pub fn register_node_entity(&mut self, entity_id: EntityId, node_map: HashMap<String, EntityId>) {
+    pub fn register_node_entity(
+        &mut self,
+        entity_id: EntityId,
+        node_map: HashMap<String, EntityId>,
+    ) {
         self.node_sync.register_entity(entity_id, node_map);
     }
 
@@ -228,6 +232,8 @@ impl RuntimeSystem for AnimationSystem {
         // Tier 2: Skeletal animation
         self.skeletal_sync.sync_from_world(world);
         self.skeletal_sync.advance_and_compute(dt);
+        // Retire finished crossfades in the ECS, or they re-arm forever.
+        self.skeletal_sync.write_back(world);
 
         // Tier 3: Node transform animation
         self.node_sync.sync_from_world(world);
