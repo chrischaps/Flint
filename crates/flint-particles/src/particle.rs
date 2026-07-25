@@ -42,7 +42,7 @@ impl Particle {
 }
 
 /// GPU instance data — matches WGSL `ParticleInstance` struct.
-/// 48 bytes, 16-byte aligned (3 rows of vec4).
+/// 64 bytes, 16-byte aligned (4 rows of vec4).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct ParticleInstance {
@@ -52,14 +52,23 @@ pub struct ParticleInstance {
     pub color: [f32; 4], // rgba
     /// Rotation, sprite frame, sprite sheet dimensions
     pub rotation_frame: [f32; 4], // x = rotation, y = frame, z = frames_x, w = frames_y
+    /// Velocity pre-scaled by the emitter's stretch factor; w > 0 enables
+    /// velocity-aligned billboard stretching (rain streaks, spray trails).
+    pub vel_stretch: [f32; 4], // xyz = velocity * stretch, w = enable flag
 }
 
 impl ParticleInstance {
-    pub fn from_particle(p: &Particle, frames_x: u32, frames_y: u32) -> Self {
+    pub fn from_particle(p: &Particle, frames_x: u32, frames_y: u32, stretch: f32) -> Self {
         Self {
             pos_size: [p.position[0], p.position[1], p.position[2], p.size],
             color: p.color,
             rotation_frame: [p.rotation, p.frame as f32, frames_x as f32, frames_y as f32],
+            vel_stretch: [
+                p.velocity[0] * stretch,
+                p.velocity[1] * stretch,
+                p.velocity[2] * stretch,
+                if stretch > 0.0 { 1.0 } else { 0.0 },
+            ],
         }
     }
 }
@@ -161,7 +170,7 @@ mod tests {
 
     #[test]
     fn particle_instance_layout() {
-        assert_eq!(std::mem::size_of::<ParticleInstance>(), 48);
+        assert_eq!(std::mem::size_of::<ParticleInstance>(), 64);
         assert_eq!(std::mem::align_of::<ParticleInstance>(), 4);
     }
 }
