@@ -28,8 +28,13 @@ pub(super) fn render_draw_commands(
     let mut sorted: Vec<&DrawCommand> = commands.iter().collect();
     sorted.sort_by_key(|cmd| cmd.layer());
 
-    let layer_id = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("script_ui_overlay"));
-    let painter = ctx.layer_painter(layer_id);
+    // Paint into the SAME layer egui panels use (`LayerId::background()`),
+    // and rely on the caller issuing this before any panel `show()`: shapes
+    // in one layer draw in insertion order, so debug panels land on top of
+    // script UI (title card, HUD). Distinct layers within the same Order
+    // composite in hash-map order — not deterministic — so don't split this
+    // into its own layer.
+    let painter = ctx.layer_painter(egui::LayerId::background());
 
     for cmd in &sorted {
         match cmd {
