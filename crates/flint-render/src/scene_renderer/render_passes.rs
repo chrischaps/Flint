@@ -501,13 +501,19 @@ impl SceneRenderer {
                     band_wobble: v.band_wobble,
                     band_dither: v.band_dither,
                     band_dither_scale: v.band_dither_scale,
-                    _pad_band: 0.0,
+                    rain_ripple: v.rain_ripple,
                     foam_glow: [
                         v.foam_glow_color[0],
                         v.foam_glow_color[1],
                         v.foam_glow_color[2],
                         v.foam_glow,
                     ],
+                    // Reality tear rides the shared post-process fields: the
+                    // remap happens in-shader AFTER the TOD palette lands in
+                    // these uniforms, so it can never race time_of_day.rhai.
+                    mode: self.postprocess_config.render_mode,
+                    mode_mix: self.postprocess_config.mode_mix,
+                    _pad_mode: [0.0; 2],
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
             }
@@ -1250,6 +1256,9 @@ impl SceneRenderer {
             target_view,
             depth_view,
             camera,
+            // Same f64 phase wrap as the ocean upload — keeps mode animation
+            // precise over long sessions. Headless render leaves this 0.0.
+            (self.ocean_time % 100_000.0) as f32,
         );
     }
 

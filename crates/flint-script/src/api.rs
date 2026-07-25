@@ -90,6 +90,19 @@ fn register_ocean_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // ocean_velocity_y(x, z) -> f64 — vertical surface velocity (m/s) at
+    // world (x, z). Analytic ∂h/∂t; pairs with ocean_height for impact cues.
+    {
+        let ctx = ctx.clone();
+        let cache = cache.clone();
+        engine.register_fn("ocean_velocity_y", move |x: f64, z: f64| -> f64 {
+            with_spectrum(&ctx, &cache, |spec, t| {
+                spec.sample_velocity_y(x as f32, z as f32, t) as f64
+            })
+            .unwrap_or(0.0)
+        });
+    }
+
     // ocean_normal(x, z) -> #{x, y, z} — surface normal at world (x, z).
     {
         let ctx = ctx.clone();
@@ -878,6 +891,17 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // any_input_just_pressed() -> bool
+    // True on any raw keyboard/mouse/gamepad press this frame, including
+    // keys with no action binding ("press any key" screens).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("any_input_just_pressed", move || -> bool {
+            let c = ctx.lock().unwrap();
+            c.input.any_just_pressed
+        });
+    }
+
     // mouse_delta_x() -> f64
     {
         let ctx = ctx.clone();
@@ -954,6 +978,24 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     name: name.to_string(),
                     position: (x, y, z),
                     volume: vol,
+                    pitch: 1.0,
+                });
+            },
+        );
+    }
+
+    // play_sound_at(name, x, y, z, vol, pitch) — 6-arg overload with pitch
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "play_sound_at",
+            move |name: &str, x: f64, y: f64, z: f64, vol: f64, pitch: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.commands.push(ScriptCommand::PlaySoundAt {
+                    name: name.to_string(),
+                    position: (x, y, z),
+                    volume: vol,
+                    pitch,
                 });
             },
         );
@@ -1240,6 +1282,33 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             let mut c = ctx.lock().unwrap();
             c.postprocess_fog_color_override = Some([r as f32, g as f32, b as f32]);
         });
+    }
+
+    // set_render_mode(mode, mix) — reality-tear render mode (0 = none,
+    // 1 = Matrix, 2 = blood, 3 = drunk, 4 = Tron) with blend strength 0..1.
+    // Transient: call every frame while a tear is active; the player zeroes
+    // the mode the frame the calls stop.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_render_mode", move |mode: i64, mix: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_render_mode_override =
+                Some((mode.max(0) as u32, mix.clamp(0.0, 1.0) as f32));
+        });
+    }
+
+    // set_render_mode_params(x, y, z, w) — per-mode tuning: x = bleed-mask
+    // scale, y = mask style (0 fbm patches / 1 iris), z = rate, w = spare.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_render_mode_params",
+            move |x: f64, y: f64, z: f64, w: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.postprocess_mode_params_override =
+                    Some([x as f32, y as f32, z as f32, w as f32]);
+            },
+        );
     }
 
     // set_audio_lowpass(cutoff_hz) — override audio low-pass filter cutoff from scripts

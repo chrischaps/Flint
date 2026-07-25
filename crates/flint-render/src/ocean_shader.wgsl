@@ -77,8 +77,12 @@ struct OceanUniforms {
     band_wobble: f32,              // ramp noise wobble amplitude (0 = off)
     band_dither: f32,              // halftone transition width, 0 = hard line
     band_dither_scale: f32,        // halftone dot grid frequency (dots/m)
-    _pad_band: f32,
+    rain_ripple: f32,              // rain impact-ring density 0..1 (weather)
     foam_glow: vec4<f32>,          // bioluminescence: rgb + strength in .a
+    // Reality tear (mirrors PostProcessConfig): 2 = blood ocean.
+    mode: u32,
+    mode_mix: f32,
+    _pad_mode: vec2<f32>,
 };
 
 @group(1) @binding(0)
@@ -411,6 +415,45 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // bloomed sun-disc on the water right under the camera.
     let fresnel = 0.02 + 0.98 * pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
 
+    // ── Reality tear, mode 2: the sea turns to blood ────────────────────
+    // The whole palette is remapped through locals BEFORE any use, so every
+    // downstream term (bands, SSS, foam, reflections) agrees. Remapping here
+    // — after the TOD script's palette landed in the uniforms — means the
+    // tear can never race time_of_day.rhai.
+    var deep_rgb = ocean.deep_color.rgb;
+    var shallow_rgb = ocean.shallow_color.rgb;
+    var sss_rgb = ocean.sss_color.rgb;
+    var foam_rgb = ocean.foam_color.rgb;
+    var sky_zen_rgb = ocean.sky_zenith.rgb;
+    var sky_hor_rgb = ocean.sky_horizon.rgb;
+    var sky_haze_rgb = ocean.sky_haze.rgb;
+    var ramp_steps = max(ocean.ramp_steps, 1.0);
+    var band_wobble = ocean.band_wobble;
+    if (ocean.mode == 2u && ocean.mode_mix > 0.001) {
+        // Blood pools: world-anchored patches that spread to full coverage
+        // as the tear deepens. Threshold sweeps the fbm span (~[0, 0.875],
+        // mean ≈ 0.44) so coverage tracks mode_mix; pinned full at mix = 1.
+        let pool = fbm(in.param_xz * 0.08 + vec2<f32>(ocean.time * 0.01, 0.0));
+        let th = 0.44 + 0.4 * (1.0 - 2.0 * ocean.mode_mix);
+        let m = max(smoothstep(th - 0.12, th + 0.12, pool),
+                    smoothstep(0.85, 1.0, ocean.mode_mix));
+        // Scale by the TOD palette's own luminance so night blood stays
+        // night-dark instead of glowing.
+        let deep_l = dot(deep_rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let k = clamp(deep_l / 0.25, 0.35, 1.3);
+        deep_rgb = mix(deep_rgb, vec3<f32>(0.10, 0.005, 0.01) * k, m);
+        shallow_rgb = mix(shallow_rgb, vec3<f32>(0.45, 0.04, 0.05) * k, m);
+        sss_rgb = mix(sss_rgb, vec3<f32>(0.85, 0.05, 0.03), m);
+        foam_rgb = mix(foam_rgb, vec3<f32>(0.95, 0.78, 0.76), m);
+        // Reflections must bleed too or the pools stay sky-blue at grazing.
+        sky_zen_rgb = mix(sky_zen_rgb, sky_zen_rgb * vec3<f32>(1.0, 0.25, 0.3), m);
+        sky_hor_rgb = mix(sky_hor_rgb, sky_hor_rgb * vec3<f32>(1.1, 0.3, 0.32), m);
+        sky_haze_rgb = mix(sky_haze_rgb, sky_haze_rgb * vec3<f32>(1.1, 0.3, 0.32), m);
+        // Viscosity: fewer, wider bands with a raggedier ink line.
+        ramp_steps = mix(ramp_steps, 2.0, m);
+        band_wobble = band_wobble + 0.15 * m;
+    }
+
     // Primary light (the sun). Fall back to top-down white if scene has none.
     var L = vec3<f32>(0.0, 1.0, 0.0);
     var sun_radiance = vec3<f32>(1.0);
@@ -433,20 +476,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // printed-ink line. Two scales: broad undulation (~11 m) bends the
     // contour, fine detail (~2 m) frays it.
     var shade_w = shade;
-    if (ocean.band_wobble > 0.0001) {
+    if (band_wobble > 0.0001) {
         let wob = (fbm(in.param_xz * 0.09) - 0.44)
             + (fbm(in.param_xz * 0.50 + vec2<f32>(31.7, 7.9)) - 0.44) * 0.5;
-        shade_w = clamp(shade + wob * ocean.band_wobble, 0.0, 1.0);
+        shade_w = clamp(shade + wob * band_wobble, 0.0, 1.0);
     }
-    let ramp = cel_band(shade_w, max(ocean.ramp_steps, 1.0), in.param_xz);
-    var water_color = mix(ocean.deep_color.rgb, ocean.shallow_color.rgb, ramp);
+    let ramp = cel_band(shade_w, ramp_steps, in.param_xz);
+    var water_color = mix(deep_rgb, shallow_rgb, ramp);
 
     // ── Fake subsurface: sun glowing through wave flanks facing us ─────
     // clamp: N.y can exceed 1.0 by a float ulp after normalize, and
     // pow(negative, 1.5) is NaN — one NaN poisons the bloom chain black.
     let rim = pow(clamp(1.0 - N.y, 0.0, 1.0), 1.5);
     let toward_sun = pow(max(dot(V, -L), 0.0), 2.0);
-    water_color += ocean.sss_color.rgb * (rim * toward_sun * height01);
+    water_color += sss_rgb * (rim * toward_sun * height01);
 
     // ── Foam: crest pinch (Jacobian) broken up by drifting noise ───────
     // Foam fades with distance: graphic detail near the raft, flat color
@@ -544,6 +587,52 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
+    // ── Rain rings: expanding impact ripples while it rains ─────────────
+    // Two jittered hash grids of ring spawners. Each cell cycles on its own
+    // random period, re-rolling its impact point every cycle; a ring is a
+    // thin expanding band that dies as it grows. World-anchored (param_xz),
+    // camera-independent, a handful of hashes per fragment — and it fades
+    // out by ~30 m where individual rings stop being readable anyway.
+    var rain_rings = 0.0;
+    if (ocean.rain_ripple > 0.001) {
+        let ring_fade = 1.0 - smoothstep(14.0, 30.0, view_depth);
+        if (ring_fade > 0.001) {
+            // One spawner grid, scanned over the fragment's 3x3 cell
+            // neighborhood so a ring can cross its cell border without
+            // clipping (rings drawn only inside their own cell tile into
+            // visible squares). ~9 ring evaluations, hash-only ALU.
+            let cell_size = 0.7;
+            let home = floor(in.param_xz / cell_size);
+            for (var gy = -1; gy <= 1; gy++) {
+                for (var gx = -1; gx <= 1; gx++) {
+                    let cell = home + vec2<f32>(f32(gx), f32(gy));
+                    let period = 0.75 + 0.35 * hash2(cell + vec2<f32>(3.7, 0.0));
+                    let t_raw = ocean.time / period + hash2(cell + vec2<f32>(0.0, 9.1));
+                    let ph = fract(t_raw);
+                    let cycle = floor(t_raw);
+                    // Density follows the rain: most cycles a cell stays
+                    // silent, so rings read as scattered impacts, not tiling.
+                    let gate = step(1.0 - ocean.rain_ripple * 0.35,
+                                    hash2(cell + vec2<f32>(cycle * 0.61, 5.0)));
+                    if (gate < 0.5) {
+                        continue;
+                    }
+                    // A fresh impact point every cycle keeps the field alive.
+                    let j = vec2<f32>(hash2(cell + vec2<f32>(cycle, 1.0)),
+                                      hash2(cell + vec2<f32>(2.0, cycle))) - 0.5;
+                    let center = (cell + 0.5 + j * 0.8) * cell_size;
+                    let r = length(in.param_xz - center);
+                    let radius = ph * 0.13;
+                    let band_w = 0.012 + 0.018 * ph + clamp(fwidth(r) * 1.5, 0.0, 0.06);
+                    let ring = (1.0 - smoothstep(0.0, band_w, abs(r - radius)))
+                        * (1.0 - ph) * (1.0 - ph);
+                    rain_rings = max(rain_rings, ring);
+                }
+            }
+            rain_rings *= ring_fade * clamp(ocean.rain_ripple, 0.0, 1.0) * 0.8;
+        }
+    }
+
     // ── Cel specular glint (sun path sparkle) ───────────────────────────
     let H = normalize(V + L);
     let spec_raw = pow(max(dot(N, H), 0.0), 220.0) * ocean.specular_strength;
@@ -558,7 +647,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Ambient lights the COMPOSED surface (water + foam) so moonlit nights
     // keep their foam instead of crushing it to black when the sun is out.
     let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
-    let foam_mix = clamp(foam_hard + foam_flecks + contact_foam, 0.0, 1.0);
+    let foam_mix = clamp(foam_hard + foam_flecks + contact_foam + rain_rings, 0.0, 1.0);
     let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight);
     // Shadow dimming scales with actual sun light: with the sun down
@@ -574,8 +663,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ambient: its palette is already TOD-driven by time_of_day.rhai.
     var foam_ambient = ambient;
     if (ocean.sky_reflection_strength > 0.001) {
-        let sky_glow = mix(ocean.sky_horizon.rgb, ocean.sky_haze.rgb,
-                           ocean.sky_haze.a);
+        let sky_glow = mix(sky_hor_rgb, sky_haze_rgb, ocean.sky_haze.a);
         foam_ambient = mix(ambient, sky_glow, 0.6);
     }
 
@@ -583,13 +671,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the transmission below, so high turbidity converges to it seamlessly.
     let water_body = water_color * sun_tint * shadow_dim + ambient * water_color * 0.5;
 
-    let base = mix(water_color, ocean.foam_color.rgb, foam_mix);
+    let base = mix(water_color, foam_rgb, foam_mix);
     var color = base * sun_tint * shadow_dim;
     // Fresnel-weighted glint: full glitter path at grazing (sunset), nearly
     // nothing looking straight down (×3 so the path saturates early).
     color += sun_radiance * spec * sf * foam_distance_fade
         * clamp(fresnel * 3.0, 0.0, 1.0);
-    color += mix(ambient * water_color, foam_ambient * ocean.foam_color.rgb,
+    color += mix(ambient * water_color, foam_ambient * foam_rgb,
                  foam_mix) * 0.5;
 
     // ── Refraction + turbidity (grab pass): see through to the legs ─────
@@ -632,9 +720,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (ocean.sky_reflection_strength > 0.001) {
         let R = reflect(-V, N);
         let r_up = pow(clamp(R.y, 0.0, 1.0), 0.62);
-        var sky_ref = mix(ocean.sky_horizon.rgb, ocean.sky_zenith.rgb, r_up);
+        var sky_ref = mix(sky_hor_rgb, sky_zen_rgb, r_up);
         let r_haze = exp(-abs(clamp(R.y, -1.0, 1.0)) * 9.0);
-        sky_ref = mix(sky_ref, ocean.sky_haze.rgb, r_haze * ocean.sky_haze.a);
+        sky_ref = mix(sky_ref, sky_haze_rgb, r_haze * ocean.sky_haze.a);
 
         // Gate by the shadow factor only as far as the SUN is lit: the sky
         // is an area source, so a caster blocking the sun must not erase

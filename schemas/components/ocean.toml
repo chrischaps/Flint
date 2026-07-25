@@ -27,6 +27,7 @@ ramp_steps = { type = "float", description = "Cel bands in the diffuse ramp (1-8
 specular_strength = { type = "float", description = "Sun glint intensity (0 disables)", default = 1.0 }
 band_wobble = { type = "float", description = "Ramp edge wobble: noise raggedizes cel band contours (0 = razor edges)", default = 0.2 }
 band_dither = { type = "float", description = "Halftone dither width at band edges: dots grow/merge across the transition (0 = hard line)", default = 0.0 }
+rain_ripple = { type = "float", description = "Rain impact-ring density 0..1 (weather-driven; 0 = off)", default = 0.0 }
 band_dither_scale = { type = "float", description = "Halftone dot grid frequency in dots per meter", default = 1.5 }
 foam_glow_color = { type = "vec4", description = "Bioluminescent foam glow color (RGBA linear, emissive teal-green)", default = [0.35, 0.95, 0.75, 1.0] }
 foam_glow = { type = "float", description = "Bioluminescent glow strength (0 = off; time_of_day.rhai fades it in at night)", default = 0.0 }
@@ -49,3 +50,6 @@ sky_reflection_strength = { type = "float", description = "Fresnel-weighted anal
 grid_scale = { type = "float", description = "Inner metric scale of the camera-following grid (m)", default = 60.0 }
 fade_start = { type = "float", description = "Distance where wave displacement starts fading (m)", default = 90.0 }
 fade_end = { type = "float", description = "Distance where the ocean is flat (m)", default = 170.0 }
+
+# ── Diagnostics ─────────────────────────────────────────────────────────
+show_probe = { type = "bool", description = "Show the CPU/GPU parity buoy (a wave_probe script pins it to ocean_height; parked underwater when false)", default = false }

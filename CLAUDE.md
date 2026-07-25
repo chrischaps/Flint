@@ -40,6 +40,9 @@ Flint uses an **edit -> validate -> play** loop:
    #   --volumetric-density 1.0  --volumetric-samples 32
    #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
    #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
+   #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
+   #     (reality-tear modes: 1=matrix 2=blood 3=drunk 4=tron; params =
+   #      mask scale, mask style 0 fbm/1 iris, rate, spare)
    ```
 
 2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:

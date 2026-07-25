@@ -335,6 +335,23 @@ impl WaveSpectrum {
         self.normal(px, pz, &phases)
     }
 
+    /// Vertical velocity (m/s) of the surface at world (x, z): ∂/∂t of the
+    /// height at the inverted parameter point. y = Σ A·sinθ with θ advancing
+    /// at ω·speed_scale, so dy/dt = −Σ A·ω_eff·cosθ. The parameter-drift term
+    /// (Q·horizontal motion) is omitted — exact at choppiness 0, bounded by
+    /// the steepness budget otherwise. Intended for audio/gameplay triggers.
+    pub fn sample_velocity_y(&self, x: f32, z: f32, time: f64) -> f32 {
+        let phases = self.phases_at(time);
+        let (px, pz) = self.invert_displacement(x, z, &phases);
+        let speed = self.params.speed_scale as f64;
+        let mut vy = 0.0_f32;
+        for (w, &ph) in self.waves.iter().zip(&phases) {
+            let theta = w.k * (w.dir[0] * px + w.dir[1] * pz) - ph;
+            vy -= w.amp * (w.omega * speed) as f32 * theta.cos();
+        }
+        vy
+    }
+
     fn invert_displacement(&self, x: f32, z: f32, phases: &[f32]) -> (f32, f32) {
         let mut px = x;
         let mut pz = z;
@@ -505,6 +522,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn velocity_y_matches_finite_difference() {
+        // Central difference of sample_height vs the analytic velocity.
+        // At choppiness 0 the omitted parameter-drift term vanishes → tight.
+        // At default choppiness the drift term bounds the error loosely.
+        let check = |choppiness: f32, abs_tol: f32, rel_tol: f32| {
+            let spec = WaveSpectrum::generate(&OceanParams {
+                choppiness,
+                ..Default::default()
+            });
+            let eps = 1e-3;
+            for i in 0..100 {
+                let x = (i as f32 * 5.1) % 200.0 - 100.0;
+                let z = (i as f32 * 9.7) % 200.0 - 100.0;
+                let t = 3.0 + i as f64 * 0.41;
+                let fd = (spec.sample_height(x, z, t + eps) as f64
+                    - spec.sample_height(x, z, t - eps) as f64)
+                    / (2.0 * eps);
+                let vy = spec.sample_velocity_y(x, z, t) as f64;
+                let err = (vy - fd).abs();
+                let tol = (abs_tol as f64).max(rel_tol as f64 * fd.abs());
+                assert!(
+                    err < tol,
+                    "velocity {} vs finite diff {} (err {}, chop {})",
+                    vy,
+                    fd,
+                    err,
+                    choppiness
+                );
+            }
+        };
+        check(0.0, 5e-3, 0.0);
+        check(OceanParams::default().choppiness, 0.25, 0.30);
     }
 
     #[test]

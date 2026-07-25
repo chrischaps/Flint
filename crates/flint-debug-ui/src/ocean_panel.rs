@@ -107,6 +107,8 @@ pub struct OceanPanelConfig {
     pub grid_scale: f32,
     pub fade_start: f32,
     pub fade_end: f32,
+    // Diagnostics
+    pub show_probe: bool,
 }
 
 impl OceanPanelConfig {
@@ -153,6 +155,10 @@ impl OceanPanelConfig {
             grid_scale: f("grid_scale", 60.0),
             fade_start: f("fade_start", 90.0),
             fade_end: f("fade_end", 170.0),
+            show_probe: value
+                .get("show_probe")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }
     }
 
@@ -201,6 +207,7 @@ impl OceanPanelConfig {
             ("grid_scale", f(self.grid_scale)),
             ("fade_start", f(self.fade_start)),
             ("fade_end", f(self.fade_end)),
+            ("show_probe", toml::Value::Boolean(self.show_probe)),
         ]
     }
 }
@@ -323,6 +330,19 @@ impl DebugPanel for OceanDebugPanel {
                 changed |= drag_f32(ui, "Grid Scale", &mut self.config.grid_scale, 0.5, 10.0..=500.0);
                 changed |= drag_f32(ui, "Fade Start", &mut self.config.fade_start, 1.0, 5.0..=1000.0);
                 changed |= drag_f32(ui, "Fade End", &mut self.config.fade_end, 1.0, 10.0..=2000.0);
+            });
+
+        egui::CollapsingHeader::new("Diagnostics")
+            .default_open(false)
+            .show(ui, |ui| {
+                changed |= ui
+                    .checkbox(&mut self.config.show_probe, "Wave probe buoy")
+                    .on_hover_text(
+                        "CPU/GPU parity check: a buoy pinned to ocean_height(). \
+                         It must sit exactly on the rendered surface; if it \
+                         detaches, the sampler and the shader have diverged.",
+                    )
+                    .changed();
             });
 
         if changed {

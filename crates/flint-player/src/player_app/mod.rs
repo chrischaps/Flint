@@ -16,6 +16,16 @@ use flint_core::components as comp;
 /// Game-side day/night component driven by a script; the player only knows
 /// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
 const TIME_OF_DAY_COMPONENT: &str = "time_of_day";
+const WEATHER_COMPONENT: &str = "weather";
+/// Reality-tear controller (rare render-mode world events) driven by a
+/// game-side script; the F3 Reality panel forces/ends tears for tuning.
+const REALITY_COMPONENT: &str = "reality";
+/// Second-raft visitor event controller driven by a game-side script; the
+/// F3 Visitor panel shows its phase/day and can force a visit for tuning.
+const RAFT_VISITOR_COMPONENT: &str = "raft_visitor";
+/// Dead-calm ocean-stillness event controller driven by a game-side script;
+/// the F3 Dead Calm panel shows its phase/envelope and can force/end one.
+const DEAD_CALM_COMPONENT: &str = "dead_calm";
 /// Live-tunable camera settings applied to the render camera at scene load
 /// and edited through the F3 Camera panel (see flint-debug-ui camera_panel).
 const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
@@ -163,6 +173,13 @@ pub struct PlayerApp {
     pp_ssao_intensity_override: Option<f32>,
     pp_fog_density_override: Option<f32>,
     pp_fog_color_override: Option<[f32; 3]>,
+    pp_render_mode_override: Option<(u32, f32)>,
+    pp_mode_params_override: Option<[f32; 4]>,
+    /// True while a script-driven reality tear is on screen. Unlike the
+    /// other (sticky) overrides, the mode is zeroed the frame the script
+    /// stops calling set_render_mode — a dead or hot-reloaded script must
+    /// never freeze a tear over the world.
+    pp_mode_was_active: bool,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -252,6 +269,9 @@ impl PlayerApp {
             pp_ssao_intensity_override: None,
             pp_fog_density_override: None,
             pp_fog_color_override: None,
+            pp_render_mode_override: None,
+            pp_mode_params_override: None,
+            pp_mode_was_active: false,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -545,6 +565,7 @@ impl PlayerApp {
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
+        self.load_particle_textures();
 
         // Initialize scripting (state_scope required so on_init can access persist store)
         load_scripts_from_world(&self.scene_path, &mut self.script);
@@ -615,6 +636,10 @@ impl PlayerApp {
 
         self.create_ocean_debug_panel();
         self.create_tod_debug_panel();
+        self.create_weather_debug_panel();
+        self.create_reality_debug_panel();
+        self.create_visitor_debug_panel();
+        self.create_dead_calm_debug_panel();
         self.create_camera_debug_panel();
     }
 
@@ -674,6 +699,102 @@ impl PlayerApp {
             std::path::PathBuf::from(&self.scene_path),
             name,
         );
+        self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Create the weather panel if the scene has a `weather` component
+    /// (a game-side convention — see flint-debug-ui weather_panel).
+    fn create_weather_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(WEATHER_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let Some(weather_comp) = self
+            .world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(WEATHER_COMPONENT).cloned())
+        else {
+            return;
+        };
+        let config = flint_debug_ui::WeatherPanelConfig::from_component(&weather_comp);
+        let panel = flint_debug_ui::WeatherDebugPanel::new(
+            config,
+            std::path::PathBuf::from(&self.scene_path),
+            name,
+        );
+        self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Create the reality-tear panel if the scene has a `reality` component
+    /// (a game-side convention — see flint-debug-ui reality_panel).
+    fn create_reality_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(REALITY_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let Some(reality_comp) = self
+            .world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(REALITY_COMPONENT).cloned())
+        else {
+            return;
+        };
+        let config = flint_debug_ui::RealityPanelConfig::from_component(&reality_comp);
+        let panel = flint_debug_ui::RealityDebugPanel::new(
+            config,
+            std::path::PathBuf::from(&self.scene_path),
+            name,
+        );
+        self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Create the visitor panel if the scene has a `raft_visitor` component
+    /// (a game-side convention — see flint-debug-ui visitor_panel).
+    fn create_visitor_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(RAFT_VISITOR_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let panel = flint_debug_ui::VisitorDebugPanel::new(name);
+        self.debug_panels.push(Box::new(panel));
+    }
+
+    /// Create the dead-calm panel if the scene has a `dead_calm` component
+    /// (a game-side convention — see flint-debug-ui dead_calm_panel).
+    fn create_dead_calm_debug_panel(&mut self) {
+        let Some(&entity_id) = self
+            .world
+            .entities_with_component(DEAD_CALM_COMPONENT)
+            .iter()
+            .next()
+        else {
+            return;
+        };
+        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
+            return;
+        };
+        let panel = flint_debug_ui::DeadCalmDebugPanel::new(name);
         self.debug_panels.push(Box::new(panel));
     }
 
@@ -1019,6 +1140,9 @@ impl PlayerApp {
             || self.pp_ssao_intensity_override.is_some()
             || self.pp_fog_density_override.is_some()
             || self.pp_fog_color_override.is_some()
+            || self.pp_render_mode_override.is_some()
+            || self.pp_mode_params_override.is_some()
+            || self.pp_mode_was_active
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -1045,6 +1169,23 @@ impl PlayerApp {
             }
             if let Some(fc) = self.pp_fog_color_override {
                 config.fog_color = fc;
+            }
+            // Reality tear: transient, unlike the sticky overrides above.
+            match self.pp_render_mode_override {
+                Some((mode, mix)) => {
+                    config.render_mode = mode;
+                    config.mode_mix = mix;
+                    self.pp_mode_was_active = mode != 0 && mix > 0.0;
+                }
+                None if self.pp_mode_was_active => {
+                    config.render_mode = 0;
+                    config.mode_mix = 0.0;
+                    self.pp_mode_was_active = false;
+                }
+                None => {}
+            }
+            if let Some(mp) = self.pp_mode_params_override {
+                config.mode_params = mp;
             }
             renderer.set_post_process_config(config);
         }
@@ -1085,11 +1226,14 @@ impl PlayerApp {
             }
         }
 
-        // Time-of-day panel: push edits into the component; while auto time
+        // Day/time panel: push edits into the component; while auto time
         // advances (the game script owns time_hours), pull it back so the
-        // slider tracks the sky instead of going stale.
+        // slider tracks the sky instead of going stale. The day counter is
+        // script-owned outright, so day edits are one-shot overrides (never
+        // part of the persistent config) and the live value is pulled back
+        // every frame for display.
         for panel in &mut self.debug_panels {
-            if panel.name() != "Time of Day" {
+            if panel.name() != "Day / Time" {
                 continue;
             }
             let tod_panel = panel
@@ -1099,6 +1243,15 @@ impl PlayerApp {
             let Some(entity_id) = self.world.get_id(tod_panel.entity_name()) else {
                 continue;
             };
+            if let Some(day) = tod_panel.take_day_set() {
+                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                    comps.set_field(
+                        TIME_OF_DAY_COMPONENT,
+                        "day",
+                        toml::Value::Float(day as f64),
+                    );
+                }
+            }
             if tod_panel.is_dirty() {
                 if let Some(comps) = self.world.get_components_mut(entity_id) {
                     for (field, value) in tod_panel.config().to_fields() {
@@ -1114,6 +1267,177 @@ impl PlayerApp {
                 .and_then(flint_core::toml_util::toml_f32)
             {
                 tod_panel.sync_time(hours);
+            }
+            let day = self
+                .world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT))
+                .and_then(|c| c.get("day"))
+                .and_then(flint_core::toml_util::toml_f32);
+            tod_panel.sync_day(day);
+        }
+
+        // Weather panel: push edits + queued one-shots into the component;
+        // the weather script owns state/wind/sea, so pull those back for the
+        // read-only status line every frame.
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Weather" {
+                continue;
+            }
+            let weather_panel = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::WeatherDebugPanel>()
+                .unwrap();
+            let Some(entity_id) = self.world.get_id(weather_panel.entity_name()) else {
+                continue;
+            };
+            let one_shots = weather_panel.take_one_shots();
+            if weather_panel.is_dirty() || !one_shots.is_empty() {
+                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                    if weather_panel.is_dirty() {
+                        for (field, value) in weather_panel.config().to_fields() {
+                            comps.set_field(WEATHER_COMPONENT, field, value);
+                        }
+                    }
+                    for (field, value) in one_shots {
+                        comps.set_field(WEATHER_COMPONENT, field, value);
+                    }
+                }
+                weather_panel.clear_dirty();
+            }
+            if let Some(comp) = self
+                .world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(WEATHER_COMPONENT))
+            {
+                let g = |name: &str| {
+                    comp.get(name)
+                        .and_then(flint_core::toml_util::toml_f32)
+                        .unwrap_or(0.0)
+                };
+                weather_panel.sync_status(g("state"), g("wind"), g("sea"));
+            }
+        }
+
+        // Reality panel: push edits + queued one-shots into the component;
+        // the reality script owns active_mode/mix/next_in_s, so pull those
+        // back for the read-only status line every frame.
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Reality" {
+                continue;
+            }
+            let reality_panel = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::RealityDebugPanel>()
+                .unwrap();
+            let Some(entity_id) = self.world.get_id(reality_panel.entity_name()) else {
+                continue;
+            };
+            let one_shots = reality_panel.take_one_shots();
+            if reality_panel.is_dirty() || !one_shots.is_empty() {
+                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                    if reality_panel.is_dirty() {
+                        for (field, value) in reality_panel.config().to_fields() {
+                            comps.set_field(REALITY_COMPONENT, field, value);
+                        }
+                    }
+                    for (field, value) in one_shots {
+                        comps.set_field(REALITY_COMPONENT, field, value);
+                    }
+                }
+                reality_panel.clear_dirty();
+            }
+            if let Some(comp) = self
+                .world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(REALITY_COMPONENT))
+            {
+                let g = |name: &str, dv: f32| {
+                    comp.get(name)
+                        .and_then(flint_core::toml_util::toml_f32)
+                        .unwrap_or(dv)
+                };
+                reality_panel.sync_status(
+                    g("active_mode", 0.0),
+                    g("mix", 0.0),
+                    g("next_in_s", -1.0),
+                );
+            }
+        }
+
+        // Visitor panel: queue the one-shot trigger into the component; the
+        // visitor script owns phase/day, so pull those back for the
+        // read-only status line every frame.
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Visitor" {
+                continue;
+            }
+            let visitor_panel = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::VisitorDebugPanel>()
+                .unwrap();
+            let Some(entity_id) = self.world.get_id(visitor_panel.entity_name()) else {
+                continue;
+            };
+            let one_shots = visitor_panel.take_one_shots();
+            if !one_shots.is_empty() {
+                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                    for (field, value) in one_shots {
+                        comps.set_field(RAFT_VISITOR_COMPONENT, field, value);
+                    }
+                }
+            }
+            if let Some(comp) = self
+                .world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(RAFT_VISITOR_COMPONENT))
+            {
+                let g = |name: &str, dv: f32| {
+                    comp.get(name)
+                        .and_then(flint_core::toml_util::toml_f32)
+                        .unwrap_or(dv)
+                };
+                visitor_panel.sync_status(g("phase", 0.0), g("day", 1.0));
+            }
+        }
+
+        // Dead Calm panel: queue the one-shot trigger/end into the
+        // component; the calm script owns phase/calm/next_in_s, so pull
+        // those back for the read-only status line every frame.
+        for panel in &mut self.debug_panels {
+            if panel.name() != "Dead Calm" {
+                continue;
+            }
+            let calm_panel = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::DeadCalmDebugPanel>()
+                .unwrap();
+            let Some(entity_id) = self.world.get_id(calm_panel.entity_name()) else {
+                continue;
+            };
+            let one_shots = calm_panel.take_one_shots();
+            if !one_shots.is_empty() {
+                if let Some(comps) = self.world.get_components_mut(entity_id) {
+                    for (field, value) in one_shots {
+                        comps.set_field(DEAD_CALM_COMPONENT, field, value);
+                    }
+                }
+            }
+            if let Some(comp) = self
+                .world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(DEAD_CALM_COMPONENT))
+            {
+                let g = |name: &str, dv: f32| {
+                    comp.get(name)
+                        .and_then(flint_core::toml_util::toml_f32)
+                        .unwrap_or(dv)
+                };
+                calm_panel.sync_status(
+                    g("phase", 0.0),
+                    g("calm", 0.0),
+                    g("next_in_s", -1.0),
+                );
             }
         }
 
@@ -1460,6 +1784,9 @@ impl PlayerApp {
         self.pp_ssao_intensity_override = pp_ssao;
         self.pp_fog_density_override = pp_fog;
         self.pp_fog_color_override = self.script.take_fog_color_override();
+        let (pp_mode, pp_mode_params) = self.script.take_render_mode_overrides();
+        self.pp_render_mode_override = pp_mode;
+        self.pp_mode_params_override = pp_mode_params;
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
@@ -1523,19 +1850,53 @@ impl PlayerApp {
         };
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            for panel in debug_panels.iter_mut() {
-                if panel.is_open() {
-                    let panel_name = panel.name().to_owned();
-                    egui::SidePanel::right(egui::Id::new(&panel_name))
-                        .default_width(280.0)
+            // Script UI first: it shares the panels' background layer, so
+            // issuing it before the panels puts the panels in front of it
+            // (title card, HUD) — see render_draw_commands.
+            render_draw_commands(ctx, &draw_commands, ui_textures);
+
+            // Open panel indices, in creation order.
+            let open: Vec<usize> = debug_panels
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.is_open())
+                .map(|(i, _)| i)
+                .collect();
+
+            if !open.is_empty() {
+                // Logical points (screen_rect), never config.width (physical px).
+                let screen_w = ctx.screen_rect().width();
+                // Panels take at most ~half the window; fewer columns when narrow.
+                let max_cols = (((screen_w * 0.5) / 300.0).floor() as usize).clamp(1, 3);
+                let names: Vec<String> = open
+                    .iter()
+                    .map(|&i| debug_panels[i].name().to_owned())
+                    .collect();
+                let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                let columns = flint_debug_ui::assign_columns(&name_refs, max_cols);
+
+                for (col_idx, col) in columns.iter().enumerate() {
+                    egui::SidePanel::right(egui::Id::new(("debug_col", col_idx)))
+                        .default_width(300.0)
+                        .min_width(280.0)
                         .show(ctx, |ui| {
-                            ui.heading(&panel_name);
-                            ui.separator();
-                            panel.ui(ui);
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for &slot in col {
+                                        let panel = &mut debug_panels[open[slot]];
+                                        let name = panel.name().to_owned();
+                                        egui::CollapsingHeader::new(
+                                            egui::RichText::new(name).heading(),
+                                        )
+                                        .default_open(true)
+                                        .show(ui, |ui| panel.ui(ui));
+                                        ui.separator();
+                                    }
+                                });
                         });
                 }
             }
-            render_draw_commands(ctx, &draw_commands, ui_textures);
             if let Some(ref stats) = stats_data {
                 render_stats_overlay(ctx, stats);
             }
@@ -1612,7 +1973,7 @@ impl PlayerApp {
                         if let Err(e) = self
                             .audio
                             .engine
-                            .play_non_spatial(&name, volume, 1.0, false)
+                            .play_non_spatial(&name, volume, 1.0, false, flint_audio::Bus::Sfx)
                         {
                             tracing::warn!(target: "script", "play_sound error: {:?}", e);
                         }
@@ -1622,10 +1983,11 @@ impl PlayerApp {
                     name,
                     position,
                     volume,
+                    pitch,
                 } => {
                     let pos =
                         FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
-                    if let Err(e) = self.audio.engine.play_at_position(&name, pos, volume) {
+                    if let Err(e) = self.audio.engine.play_at_position(&name, pos, volume, pitch) {
                         tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
                     }
                 }
@@ -2132,6 +2494,10 @@ impl PlayerApp {
         }
         self.create_ocean_debug_panel();
         self.create_tod_debug_panel();
+        self.create_weather_debug_panel();
+        self.create_reality_debug_panel();
+        self.create_visitor_debug_panel();
+        self.create_dead_calm_debug_panel();
         self.create_camera_debug_panel();
         self.apply_camera_tuning();
 
@@ -2157,6 +2523,7 @@ impl PlayerApp {
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
+        self.load_particle_textures();
 
         load_scripts_from_world(&self.scene_path, &mut self.script);
         self.script
@@ -2583,12 +2950,30 @@ impl ApplicationHandler for PlayerApp {
 use hud_render::render_draw_commands;
 use scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_scripts_from_world, load_sprite_animations_from_world, load_terrain_from_world_inner,
+    load_particle_textures_from_world, load_scripts_from_world,
+    load_sprite_animations_from_world, load_terrain_from_world_inner,
     register_node_animation_data, register_skeletal_data, resolve_procgen_assets,
     resolve_scene_path,
 };
 
 impl PlayerApp {
+    /// Load image files referenced by particle_emitter texture fields into
+    /// the renderer's texture cache (no-op until renderer/context exist).
+    fn load_particle_textures(&mut self) {
+        let (Some(renderer), Some(context)) =
+            (self.scene_renderer.as_mut(), self.render_context.as_ref())
+        else {
+            return;
+        };
+        load_particle_textures_from_world(
+            &self.world,
+            renderer,
+            &context.device,
+            &context.queue,
+            &self.scene_path,
+        );
+    }
+
     /// Load a sprite texture for UI rendering. Called lazily when a draw_sprite
     /// command references a name not yet in ui_textures.
     pub fn load_ui_texture(&mut self, name: &str) -> bool {

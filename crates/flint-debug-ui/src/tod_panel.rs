@@ -1,15 +1,24 @@
-//! Time-of-day scrubber panel (F3 family).
+//! Day / time scrubber panel (F3 family).
 //!
 //! Controls a game-side `time_of_day` component (convention: fields
-//! `time_hours` 0-24, `day_length_sec`, `auto_advance`, `sun_path_tilt_deg`;
-//! a game script interpolates keyframes from it). The panel is created only
-//! when the component exists, so games without a day/night cycle never see it.
+//! `time_hours` 0-24, `day_length_sec`, `auto_advance`, `sun_path_tilt_deg`,
+//! and optionally a script-owned `day` counter; a game script interpolates
+//! keyframes from it). The panel is created only when the component exists,
+//! so games without a day/night cycle never see it.
 //!
 //! While `auto_advance` is on, the game script owns `time_hours`; the player
 //! keeps the slider display in sync via [`TimeOfDayDebugPanel::sync_time`].
 //! Drag the slider (or uncheck auto) to force a time — the debug slider and
 //! natural passage share the game script's single interpolation path, so
 //! scrubbing is seamless.
+//!
+//! The `day` counter is different: the game script owns it outright
+//! (midnight wraps increment it; >12h `time_hours` jumps adjust it), so the
+//! panel never writes it as part of its persistent config. Day edits are a
+//! one-shot override the host drains via [`TimeOfDayDebugPanel::take_day_set`]
+//! and the display tracks the live value via
+//! [`TimeOfDayDebugPanel::sync_day`]. Scenes without a materialized `day`
+//! field (flat-rate scenes) simply hide the day UI.
 
 use crate::DebugPanel;
 use flint_core::toml_util::toml_f32;
@@ -61,6 +70,10 @@ pub struct TimeOfDayDebugPanel {
     tod_entity_name: String,
     open: bool,
     dirty: bool,
+    /// Live script-owned day counter, `None` in scenes without a `day` field.
+    day: Option<f32>,
+    /// Pending one-shot day override; drained by the host each frame.
+    pending_day: Option<f32>,
 }
 
 impl TimeOfDayDebugPanel {
@@ -76,6 +89,8 @@ impl TimeOfDayDebugPanel {
             tod_entity_name,
             open: false,
             dirty: false,
+            day: None,
+            pending_day: None,
         }
     }
 
@@ -94,12 +109,42 @@ impl TimeOfDayDebugPanel {
         }
     }
 
+    /// Track the script-owned day counter (`None` = field not in this scene).
+    pub fn sync_day(&mut self, day: Option<f32>) {
+        if self.pending_day.is_none() {
+            self.day = day;
+        }
+    }
+
+    /// Drain the one-shot day override, if the user edited the day this frame.
+    pub fn take_day_set(&mut self) -> Option<f32> {
+        self.pending_day.take()
+    }
+
     fn commit_to_file(&self) -> Result<(), String> {
         let mut doc = SceneDocument::from_file(&self.scene_path)?;
         for (field, value) in self.config.to_fields() {
             doc.patch_field(&self.tod_entity_name, "time_of_day", field, &value)?;
         }
         doc.save(&self.scene_path)
+    }
+}
+
+fn format_clock(hours: f32) -> String {
+    let h = (hours.floor() as i32).rem_euclid(24);
+    let m = (hours.fract() * 60.0).floor() as i32;
+    format!("{h:02}:{m:02}")
+}
+
+/// First-days day-length ramp fraction — mirrors scripts/time_of_day.rhai
+/// (day 0 is the compressed title day; day 4+ runs at the full rate).
+fn ramp_fraction(day: f32) -> f32 {
+    match day {
+        d if d < 0.5 => 0.1,
+        d if d < 1.5 => 0.2,
+        d if d < 2.5 => 0.4,
+        d if d < 3.5 => 0.7,
+        _ => 1.0,
     }
 }
 
@@ -118,11 +163,21 @@ fn label_for(hours: f32) -> &'static str {
 
 impl DebugPanel for TimeOfDayDebugPanel {
     fn name(&self) -> &str {
-        "Time of Day"
+        "Day / Time"
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
+
+        // ── Clock line: "Day 3 · 14:32 · midday" ────────────────────────
+        let clock = format_clock(self.config.time_hours);
+        let phase = label_for(self.config.time_hours);
+        let status = match self.day {
+            Some(d) => format!("Day {}  ·  {clock}  ·  {phase}", d.round() as i64),
+            None => format!("{clock}  ·  {phase}"),
+        };
+        ui.label(egui::RichText::new(status).strong());
+        ui.separator();
 
         let before = self.config.time_hours;
         ui.horizontal(|ui| {
@@ -132,7 +187,21 @@ impl DebugPanel for TimeOfDayDebugPanel {
                     .fixed_decimals(2)
                     .suffix(" h"),
             );
-            ui.label(label_for(self.config.time_hours));
+        });
+        // Presets jump straight to a keyframe hour; a jump across midnight
+        // reads as a wrap/scrub to the game script (day +1 / -1 by design).
+        ui.horizontal(|ui| {
+            for (name, hours) in [
+                ("Dawn", 6.0),
+                ("Noon", 12.5),
+                ("Sunset", 19.0),
+                ("Dusk", 20.4),
+                ("Night", 0.0),
+            ] {
+                if ui.small_button(name).clicked() {
+                    self.config.time_hours = hours;
+                }
+            }
         });
         if (self.config.time_hours - before).abs() > f32::EPSILON {
             changed = true;
@@ -141,6 +210,27 @@ impl DebugPanel for TimeOfDayDebugPanel {
         let before_auto = self.config.auto_advance;
         ui.checkbox(&mut self.config.auto_advance, "Advance naturally");
         changed |= self.config.auto_advance != before_auto;
+
+        // ── Day counter (script-owned; edits are one-shot overrides) ────
+        if let Some(day) = self.day {
+            ui.horizontal(|ui| {
+                ui.label("Day");
+                let mut d = self.pending_day.unwrap_or(day).round() as i32;
+                let resp = ui.add(egui::DragValue::new(&mut d).speed(0.05).range(0..=9999));
+                if resp.changed() {
+                    self.pending_day = Some(d.max(0) as f32);
+                }
+                if ui.small_button("-1").clicked() && d > 0 {
+                    self.pending_day = Some((d - 1) as f32);
+                }
+                if ui.small_button("+1").clicked() {
+                    self.pending_day = Some((d + 1) as f32);
+                }
+                if day < 0.5 {
+                    ui.weak("title day (loops)");
+                }
+            });
+        }
 
         ui.horizontal(|ui| {
             ui.label("Day length (s)");
@@ -152,6 +242,15 @@ impl DebugPanel for TimeOfDayDebugPanel {
             );
             changed |= (self.config.day_length_sec - before).abs() > f32::EPSILON;
         });
+        // Effective length under the first-days ramp (ramped scenes only).
+        if let Some(day) = self.day {
+            let frac = ramp_fraction(self.pending_day.unwrap_or(day));
+            let eff = self.config.day_length_sec * frac;
+            ui.weak(format!(
+                "effective {eff:.0} s this day (ramp x{frac:.1}) · {:.1} s / game hour",
+                eff / 24.0
+            ));
+        }
 
         ui.horizontal(|ui| {
             ui.label("Sun path tilt");
