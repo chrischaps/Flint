@@ -11,6 +11,8 @@ pub struct PlayArgs {
     pub schemas: Vec<String>,
     pub fullscreen: bool,
     pub input_config: Option<String>,
+    pub music_volume: f64,
+    pub sfx_volume: f64,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -63,6 +65,10 @@ pub fn run(args: PlayArgs) -> Result<()> {
         args.input_config,
         scene_file.scene.input_config.clone(),
     );
+
+    // Apply initial mixer bus volumes from CLI
+    app.audio.set_bus_volume(flint_player::Bus::Music, args.music_volume);
+    app.audio.set_bus_volume(flint_player::Bus::Sfx, args.sfx_volume);
 
     // Pass skybox path from scene environment settings
     if let Some(env) = &scene_file.environment {

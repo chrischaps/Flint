@@ -6,11 +6,32 @@
 use flint_core::{Result, Vec3};
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
-use kira::track::{SpatialTrackBuilder, SpatialTrackDistances, SpatialTrackHandle};
+use kira::track::{
+    SpatialTrackBuilder, SpatialTrackDistances, SpatialTrackHandle, TrackBuilder, TrackHandle,
+};
 use kira::{AudioManager, DefaultBackend, Easing, Tween};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
+
+/// Mixer bus a sound routes through. Both buses are children of the main
+/// track, so the master low-pass filter still applies to everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Bus {
+    #[default]
+    Sfx,
+    Music,
+}
+
+impl Bus {
+    /// Parse an `audio_source.bus` field value ("music"/"sfx"); unknown → Sfx
+    pub fn from_name(s: &str) -> Self {
+        match s {
+            "music" => Bus::Music,
+            _ => Bus::Sfx,
+        }
+    }
+}
 
 /// Wraps Kira's AudioManager with sound caching and listener management
 pub struct AudioEngine {
@@ -19,6 +40,11 @@ pub struct AudioEngine {
     sound_cache: HashMap<String, StaticSoundData>,
     master_volume: f64,
     filter_handle: Option<FilterHandle>,
+    /// Music mixer bus (sub-track of main)
+    music_bus: Option<TrackHandle>,
+    /// SFX mixer bus (sub-track of main); all spatial tracks hang off this
+    /// or the music bus rather than the main track directly
+    sfx_bus: Option<TrackHandle>,
     /// Keeps spatial track + sound handles alive until one-shot sounds finish
     oneshot_tracks: Vec<(SpatialTrackHandle, StaticSoundHandle)>,
 }
@@ -40,9 +66,22 @@ impl AudioEngine {
         );
 
         // Try to create the audio manager; gracefully fail if no device
-        let manager = AudioManager::<DefaultBackend>::new(settings)
+        let mut manager = AudioManager::<DefaultBackend>::new(settings)
             .map_err(|e| tracing::warn!("No audio device available ({e}), running silent"))
             .ok();
+
+        // Create the music and SFX buses as children of the main track
+        let (music_bus, sfx_bus) = match &mut manager {
+            Some(m) => (
+                m.add_sub_track(TrackBuilder::new())
+                    .map_err(|e| tracing::warn!("Failed to create music bus: {e}"))
+                    .ok(),
+                m.add_sub_track(TrackBuilder::new())
+                    .map_err(|e| tracing::warn!("Failed to create sfx bus: {e}"))
+                    .ok(),
+            ),
+            None => (None, None),
+        };
 
         let has_audio = manager.is_some();
         Self {
@@ -51,7 +90,26 @@ impl AudioEngine {
             sound_cache: HashMap::new(),
             master_volume: 1.0,
             filter_handle: if has_audio { Some(filter_handle) } else { None },
+            music_bus,
+            sfx_bus,
             oneshot_tracks: Vec::new(),
+        }
+    }
+
+    /// Set a mixer bus volume (linear amplitude, 0.0 = mute, 1.0 = unity).
+    /// Applies multiplicatively on top of per-sound volumes, so script-driven
+    /// fades keep working underneath.
+    pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
+        let handle = match bus {
+            Bus::Music => &mut self.music_bus,
+            Bus::Sfx => &mut self.sfx_bus,
+        };
+        if let Some(handle) = handle {
+            let tween = Tween {
+                duration: Duration::from_millis(16),
+                ..Default::default()
+            };
+            handle.set_volume(amplitude_to_db(volume), tween);
         }
     }
 
@@ -114,19 +172,17 @@ impl AudioEngine {
         listener.set_orientation(orientation, tween);
     }
 
-    /// Create a spatial track for an entity's audio source
+    /// Create a spatial track for an entity's audio source on the given bus
     pub fn create_spatial_track(
         &mut self,
         position: Vec3,
         min_distance: f32,
         max_distance: f32,
+        bus: Bus,
     ) -> Result<SpatialTrackHandle> {
-        let manager = match &mut self.manager {
-            Some(m) => m,
-            None => {
-                return Err(flint_core::FlintError::AudioError("No audio device".into()));
-            }
-        };
+        if self.manager.is_none() {
+            return Err(flint_core::FlintError::AudioError("No audio device".into()));
+        }
 
         let listener_id = match &self.listener {
             Some(l) => l.id(),
@@ -146,7 +202,15 @@ impl AudioEngine {
             })
             .attenuation_function(Some(Easing::OutPowf(2.0)));
 
-        let handle = manager
+        let bus_handle = match bus {
+            Bus::Music => &mut self.music_bus,
+            Bus::Sfx => &mut self.sfx_bus,
+        };
+        let bus_handle = bus_handle.as_mut().ok_or_else(|| {
+            flint_core::FlintError::AudioError(format!("Bus {bus:?} unavailable"))
+        })?;
+
+        let handle = bus_handle
             .add_spatial_sub_track(listener_id, pos, builder)
             .map_err(|e| {
                 flint_core::FlintError::AudioError(format!("Failed to create spatial track: {e}"))
@@ -187,20 +251,18 @@ impl AudioEngine {
         Ok(handle)
     }
 
-    /// Play a cached sound directly on the main track (non-spatial, e.g. ambient)
+    /// Play a cached sound on a mixer bus (non-spatial, e.g. ambient/music)
     pub fn play_non_spatial(
         &mut self,
         sound_name: &str,
         volume: f64,
         pitch: f64,
         looping: bool,
+        bus: Bus,
     ) -> Result<StaticSoundHandle> {
-        let manager = match &mut self.manager {
-            Some(m) => m,
-            None => {
-                return Err(flint_core::FlintError::AudioError("No audio device".into()));
-            }
-        };
+        if self.manager.is_none() {
+            return Err(flint_core::FlintError::AudioError("No audio device".into()));
+        }
 
         let sound_data = self
             .sound_cache
@@ -218,7 +280,15 @@ impl AudioEngine {
             data = data.loop_region(..);
         }
 
-        let handle = manager.play(data).map_err(|e| {
+        let bus_handle = match bus {
+            Bus::Music => &mut self.music_bus,
+            Bus::Sfx => &mut self.sfx_bus,
+        };
+        let bus_handle = bus_handle.as_mut().ok_or_else(|| {
+            flint_core::FlintError::AudioError(format!("Bus {bus:?} unavailable"))
+        })?;
+
+        let handle = bus_handle.play(data).map_err(|e| {
             flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
         })?;
 
@@ -232,9 +302,10 @@ impl AudioEngine {
         sound_name: &str,
         position: Vec3,
         volume: f64,
+        pitch: f64,
     ) -> Result<()> {
-        let mut track = self.create_spatial_track(position, 1.0, 25.0)?;
-        let handle = self.play_on_spatial_track(sound_name, &mut track, volume, 1.0, false)?;
+        let mut track = self.create_spatial_track(position, 1.0, 25.0, Bus::Sfx)?;
+        let handle = self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
         self.oneshot_tracks.push((track, handle));
         Ok(())
     }

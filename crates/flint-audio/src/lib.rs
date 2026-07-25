@@ -11,6 +11,7 @@ pub mod sync;
 pub mod trigger;
 
 use engine::AudioEngine;
+pub use engine::Bus;
 use flint_core::{Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, RuntimeSystem};
@@ -57,6 +58,11 @@ impl AudioSystem {
         self.engine.set_filter_cutoff(hz);
     }
 
+    /// Set a mixer bus volume (linear amplitude; 0.0 mutes the bus)
+    pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
+        self.engine.set_bus_volume(bus, volume);
+    }
+
     /// Process game events and execute resulting audio commands
     pub fn process_events(&mut self, events: &[GameEvent], world: &FlintWorld) {
         if !self.engine.is_available() {
@@ -72,10 +78,11 @@ impl AudioSystem {
                     volume,
                 } => {
                     if let Some(pos) = position {
-                        if let Err(e) = self.engine.play_at_position(&sound, pos, volume) {
+                        if let Err(e) = self.engine.play_at_position(&sound, pos, volume, 1.0) {
                             tracing::warn!("{:?}", e);
                         }
-                    } else if let Err(e) = self.engine.play_non_spatial(&sound, volume, 1.0, false)
+                    } else if let Err(e) =
+                        self.engine.play_non_spatial(&sound, volume, 1.0, false, Bus::Sfx)
                     {
                         // One-shot non-spatial: handle not needed
                         tracing::warn!("{:?}", e);
