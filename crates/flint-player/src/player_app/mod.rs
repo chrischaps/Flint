@@ -2207,7 +2207,11 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if !self.cursor_captured {
+                // FPS scenes gate mouse input behind click-to-capture (hides the
+                // cursor for mouse-look). 2D / UI scenes have no player entity, so
+                // keep the cursor visible and forward mouse buttons directly — this
+                // lets screen-space UI (e.g. card games) be clicked and dragged.
+                if !self.cursor_captured && self.physics.has_player_entity() {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         if !self.debug_panels.iter().any(|p| p.is_open()) {
                             self.capture_cursor();
