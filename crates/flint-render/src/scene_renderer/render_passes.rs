@@ -486,15 +486,15 @@ impl SceneRenderer {
                     },
                     splash_width: v.splash_width,
                     splash_flicker_speed: v.splash_flicker_speed,
-                    raft_a: self
+                    hull_a: self
                         .ocean_contact
                         .map(|(a, _)| a)
                         .unwrap_or([0.0, 0.0, 1.0, 0.0]),
-                    raft_b: {
+                    hull_b: {
                         let h = self.ocean_contact.map(|(_, h)| h).unwrap_or([1.0, 1.0]);
                         [h[0], h[1], v.splash_baseline, v.splash_noise_scale]
                     },
-                    raft_c: {
+                    hull_c: {
                         let hv = self.ocean_contact_vel;
                         [hv[0], hv[1], hv[2], v.splash_response]
                     },

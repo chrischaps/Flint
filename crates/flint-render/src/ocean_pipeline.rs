@@ -63,11 +63,11 @@ pub struct OceanUniformsGpu {
     /// Lapping-animation rate.
     pub splash_flicker_speed: f32,
     /// [center.x, center.z, cos(yaw), sin(yaw)] of the contact hull.
-    pub raft_a: [f32; 4],
+    pub hull_a: [f32; 4],
     /// [half_x, half_z, splash_baseline, splash_noise_scale].
-    pub raft_b: [f32; 4],
+    pub hull_b: [f32; 4],
     /// [hull_vel.x, hull_vel.y, hull_vel.z, splash_response].
-    pub raft_c: [f32; 4],
+    pub hull_c: [f32; 4],
     // ── Cel band edge treatment ──
     /// Noise wobble amplitude on the diffuse ramp, in shade units (0 = off).
     pub band_wobble: f32,

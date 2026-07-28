@@ -274,7 +274,7 @@ fn matrix_code(frag_xy: vec2<f32>) -> vec3<f32> {
     return mcol;
 }
 
-// Mode 2 — blood grade (sky/raft side; the ocean recolors itself with full
+// Mode 2 — blood grade (sky and geometry side; the ocean recolors itself with full
 // detail in ocean_shader.wgsl). Luminance-preserving crimson tint, weighted
 // away from pixels that are ALREADY red so the ocean's pools and pale-pink
 // foam keep their structure while the rest of the world sinks into key.

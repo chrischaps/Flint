@@ -70,9 +70,9 @@ struct OceanUniforms {
     splash_strength: f32,          // overall gain; 0 disables (also 0 with no hull)
     splash_width: f32,             // max band width outward from the hull (m)
     splash_flicker_speed: f32,     // lapping-animation rate
-    raft_a: vec4<f32>,             // [center.x, center.z, cos(yaw), sin(yaw)]
-    raft_b: vec4<f32>,             // [half_x, half_z, baseline, noise_scale]
-    raft_c: vec4<f32>,             // [hull_vel.xyz, response]
+    hull_a: vec4<f32>,             // [center.x, center.z, cos(yaw), sin(yaw)]
+    hull_b: vec4<f32>,             // [half_x, half_z, baseline, noise_scale]
+    hull_c: vec4<f32>,             // [hull_vel.xyz, response]
     // Cel band edge treatment (see cel_band + the ramp in fs_main).
     band_wobble: f32,              // ramp noise wobble amplitude (0 = off)
     band_dither: f32,              // halftone transition width, 0 = hard line
@@ -518,7 +518,7 @@ fn fs_main(in: VertexOutput,
     water_color += sss_rgb * (rim * toward_sun * height01);
 
     // ── Foam: crest pinch (Jacobian) broken up by drifting noise ───────
-    // Foam fades with distance: graphic detail near the raft, flat color
+    // Foam fades with distance: graphic detail near the camera, flat color
     // toward the horizon (matches the reference art and hides aliasing).
     let foam_distance_fade = 1.0 - smoothstep(60.0, 140.0, view_depth);
     let foam_noise = fbm(in.param_xz * ocean.foam_noise_scale
@@ -558,20 +558,21 @@ fn fs_main(in: VertexOutput,
     // away from the hull) stays quiet, and the windward face flares.
     var contact_foam = 0.0;
     if (ocean.splash_strength > 0.001) {
-        let rel = in.world_pos.xz - ocean.raft_a.xy;
-        let cy = ocean.raft_a.z;
-        let sy = ocean.raft_a.w;
-        // World → hull-local (matches raft.rhai: fwd = (sin,cos), right = (cos,-sin)).
+        let rel = in.world_pos.xz - ocean.hull_a.xy;
+        let cy = ocean.hull_a.z;
+        let sy = ocean.hull_a.w;
+        // World → hull-local. Yaw convention: forward = (sin y, cos y),
+        // right = (cos y, -sin y), matching the engine's Y-up Euler rotation.
         let local = vec2<f32>(rel.x * cy - rel.y * sy, rel.x * sy + rel.y * cy);
         // Corner radius ~ log radius so foam wraps the outer logs.
         let corner = 0.13;
-        let qd = abs(local) - (ocean.raft_b.xy - vec2<f32>(corner));
+        let qd = abs(local) - (ocean.hull_b.xy - vec2<f32>(corner));
         let sd = length(max(qd, vec2<f32>(0.0))) + min(max(qd.x, qd.y), 0.0) - corner;
         // Derivative BEFORE the divergent branch below.
         let sd_aa = clamp(fwidth(sd) * 1.5, 1e-4, 0.4);
 
         if (sd < ocean.splash_width * 2.0 + 0.3) {
-            let rel_vel = gerstner_velocity(in.param_xz, in.fade) - ocean.raft_c.xyz;
+            let rel_vel = gerstner_velocity(in.param_xz, in.fade) - ocean.hull_c.xyz;
             // Outward hull normal from the SDF gradient, hull-local frame.
             var g_local: vec2<f32>;
             if (sd > 0.0 && (qd.x > 0.0 || qd.y > 0.0)) {
@@ -597,10 +598,10 @@ fn fs_main(in: VertexOutput,
             // what actually churns — weight impact by surface height so
             // windward crest-strikes dominate and the lee stays quiet.
             let crest = clamp(0.5 + in.world_pos.y * 1.2, 0.25, 1.25);
-            let churn = clamp(ocean.raft_b.z + impact * crest * ocean.raft_c.w, 0.0, 1.5);
+            let churn = clamp(ocean.hull_b.z + impact * crest * ocean.hull_c.w, 0.0, 1.5);
 
             // Scalloped, lapping edge; churn drives both width and opacity.
-            let lap = fbm(local * ocean.raft_b.w + vec2<f32>(
+            let lap = fbm(local * ocean.hull_b.w + vec2<f32>(
                 ocean.time * 0.9 * ocean.splash_flicker_speed,
                 ocean.time * -0.6 * ocean.splash_flicker_speed));
             let width = ocean.splash_width * churn * (0.55 + 0.9 * lap);
@@ -666,7 +667,7 @@ fn fs_main(in: VertexOutput,
     let spec_aa = clamp(fwidth(spec_raw) * 1.5, 1e-4, 0.4);
     let spec = smoothstep(0.30 - spec_aa, 0.30 + spec_aa, spec_raw) * front_f;
 
-    // ── Shadows (raft silhouette on the water) ──────────────────────────
+    // ── Shadows (scene silhouettes on the water) ────────────────────────
     let sf = shadow_factor(in.world_pos, view_depth);
 
     // Lighting composition. The water body color is treated as pre-lit
@@ -766,7 +767,7 @@ fn fs_main(in: VertexOutput,
     // refraction mixing so nothing washes it out. Weighted hard toward
     // agitation — bioluminescence is STIMULATED light: the churned
     // contact wake flares, flecks spark, and the passive crest mass gets
-    // almost nothing, so the raft's wake is unmistakably the source.
+    // almost nothing, so the contact hull's wake is unmistakably the source.
     if (ocean.foam_glow.a > 0.001) {
         let agitation = clamp(
             foam_hard * 0.08 + foam_flecks * 0.35 + contact_foam * 1.6,
