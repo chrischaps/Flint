@@ -77,11 +77,7 @@ pub struct TimeOfDayDebugPanel {
 }
 
 impl TimeOfDayDebugPanel {
-    pub fn new(
-        config: TimeOfDayPanelConfig,
-        scene_path: PathBuf,
-        tod_entity_name: String,
-    ) -> Self {
+    pub fn new(config: TimeOfDayPanelConfig, scene_path: PathBuf, tod_entity_name: String) -> Self {
         Self {
             original: config.clone(),
             config,

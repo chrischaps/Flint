@@ -132,8 +132,7 @@ fn jonswap_density(omega: f64, wind_speed: f64, fetch_m: f64, gamma: f64) -> f64
     let alpha = 0.076 * (wind_speed * wind_speed / (fetch_m * g)).powf(0.22);
     // Peak-enhancement exponent (σ narrower below the peak than above).
     let sigma = if omega <= omega_p { 0.07 } else { 0.09 };
-    let r = (-((omega - omega_p) * (omega - omega_p))
-        / (2.0 * sigma * sigma * omega_p * omega_p))
+    let r = (-((omega - omega_p) * (omega - omega_p)) / (2.0 * sigma * sigma * omega_p * omega_p))
         .exp();
     alpha * g * g / omega.powi(5) * (-1.25 * (omega_p / omega).powi(4)).exp() * gamma.powf(r)
 }
@@ -203,7 +202,11 @@ impl WaveSpectrum {
         let mut amp_sum = 0.0_f64;
         for i in 0..n {
             // Log-spaced wavelengths with jitter: even coverage of the octaves.
-            let u = if n == 1 { 0.5 } else { i as f64 / (n - 1) as f64 };
+            let u = if n == 1 {
+                0.5
+            } else {
+                i as f64 / (n - 1) as f64
+            };
             let jitter = rng.range(-0.5, 0.5) / n.max(2) as f64;
             let lambda = lmin * (lmax / lmin).powf((u + jitter).clamp(0.0, 1.0));
             let k = std::f64::consts::TAU / lambda;

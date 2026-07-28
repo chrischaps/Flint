@@ -222,11 +222,7 @@ pub struct OceanDebugPanel {
 }
 
 impl OceanDebugPanel {
-    pub fn new(
-        config: OceanPanelConfig,
-        scene_path: PathBuf,
-        ocean_entity_name: String,
-    ) -> Self {
+    pub fn new(config: OceanPanelConfig, scene_path: PathBuf, ocean_entity_name: String) -> Self {
         Self {
             original: config.clone(),
             config,
@@ -273,16 +269,76 @@ impl DebugPanel for OceanDebugPanel {
         egui::CollapsingHeader::new("Waves")
             .default_open(true)
             .show(ui, |ui| {
-                changed |= drag_f32(ui, "Amplitude (m)", &mut self.config.amplitude, 0.01, 0.0..=6.0);
-                changed |= drag_f32(ui, "Choppiness", &mut self.config.choppiness, 0.005, 0.0..=1.0);
-                changed |= drag_f32(ui, "Wavelength Min", &mut self.config.wavelength_min, 0.1, 0.5..=50.0);
-                changed |= drag_f32(ui, "Wavelength Max", &mut self.config.wavelength_max, 0.5, 2.0..=400.0);
-                changed |= drag_f32(ui, "Direction (deg)", &mut self.config.direction_deg, 1.0, -360.0..=360.0);
-                changed |= drag_f32(ui, "Spread (deg)", &mut self.config.spread_deg, 1.0, 0.0..=180.0);
-                changed |= drag_f32(ui, "Speed Scale", &mut self.config.speed_scale, 0.01, 0.0..=8.0);
-                changed |= drag_f32(ui, "Wind (m/s)", &mut self.config.wind_speed, 0.1, 0.5..=40.0);
-                changed |= drag_f32(ui, "Fetch (km)", &mut self.config.fetch_km, 1.0, 1.0..=2000.0);
-                changed |= drag_f32(ui, "Peak Gamma", &mut self.config.peak_enhancement, 0.05, 1.0..=10.0);
+                changed |= drag_f32(
+                    ui,
+                    "Amplitude (m)",
+                    &mut self.config.amplitude,
+                    0.01,
+                    0.0..=6.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Choppiness",
+                    &mut self.config.choppiness,
+                    0.005,
+                    0.0..=1.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Wavelength Min",
+                    &mut self.config.wavelength_min,
+                    0.1,
+                    0.5..=50.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Wavelength Max",
+                    &mut self.config.wavelength_max,
+                    0.5,
+                    2.0..=400.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Direction (deg)",
+                    &mut self.config.direction_deg,
+                    1.0,
+                    -360.0..=360.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Spread (deg)",
+                    &mut self.config.spread_deg,
+                    1.0,
+                    0.0..=180.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Speed Scale",
+                    &mut self.config.speed_scale,
+                    0.01,
+                    0.0..=8.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Wind (m/s)",
+                    &mut self.config.wind_speed,
+                    0.1,
+                    0.5..=40.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Fetch (km)",
+                    &mut self.config.fetch_km,
+                    1.0,
+                    1.0..=2000.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Peak Gamma",
+                    &mut self.config.peak_enhancement,
+                    0.05,
+                    1.0..=10.0,
+                );
                 changed |= drag_i64(ui, "Wave Count", &mut self.config.num_waves, 1..=16);
                 changed |= drag_i64(ui, "Seed", &mut self.config.seed, 0..=9999);
             });
@@ -294,42 +350,162 @@ impl DebugPanel for OceanDebugPanel {
                 changed |= color_rgba(ui, "Shallow", &mut self.config.shallow_color);
                 changed |= color_rgba(ui, "Foam", &mut self.config.foam_color);
                 changed |= color_rgba(ui, "Subsurface", &mut self.config.sss_color);
-                changed |= drag_f32(ui, "Foam Threshold", &mut self.config.foam_threshold, 0.005, 0.0..=1.5);
-                changed |= drag_f32(ui, "Foam Noise Scale", &mut self.config.foam_noise_scale, 0.005, 0.01..=4.0);
-                changed |= drag_f32(ui, "Ramp Steps", &mut self.config.ramp_steps, 0.05, 1.0..=8.0);
-                changed |= drag_f32(ui, "Specular", &mut self.config.specular_strength, 0.01, 0.0..=4.0);
+                changed |= drag_f32(
+                    ui,
+                    "Foam Threshold",
+                    &mut self.config.foam_threshold,
+                    0.005,
+                    0.0..=1.5,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Foam Noise Scale",
+                    &mut self.config.foam_noise_scale,
+                    0.005,
+                    0.01..=4.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Ramp Steps",
+                    &mut self.config.ramp_steps,
+                    0.05,
+                    1.0..=8.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Specular",
+                    &mut self.config.specular_strength,
+                    0.01,
+                    0.0..=4.0,
+                );
                 changed |= color_rgba(ui, "Glow Color", &mut self.config.foam_glow_color);
-                changed |= drag_f32(ui, "Foam Glow", &mut self.config.foam_glow, 0.005, 0.0..=2.0);
-                changed |= drag_f32(ui, "Edge Wobble", &mut self.config.band_wobble, 0.005, 0.0..=1.0);
-                changed |= drag_f32(ui, "Edge Dither", &mut self.config.band_dither, 0.005, 0.0..=1.0);
-                changed |= drag_f32(ui, "Dither Dots/m", &mut self.config.band_dither_scale, 0.01, 0.05..=16.0);
+                changed |= drag_f32(
+                    ui,
+                    "Foam Glow",
+                    &mut self.config.foam_glow,
+                    0.005,
+                    0.0..=2.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Edge Wobble",
+                    &mut self.config.band_wobble,
+                    0.005,
+                    0.0..=1.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Edge Dither",
+                    &mut self.config.band_dither,
+                    0.005,
+                    0.0..=1.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Dither Dots/m",
+                    &mut self.config.band_dither_scale,
+                    0.01,
+                    0.05..=16.0,
+                );
             });
 
         egui::CollapsingHeader::new("Contact Foam")
             .default_open(true)
             .show(ui, |ui| {
-                changed |= drag_f32(ui, "Splash Strength", &mut self.config.splash_strength, 0.01, 0.0..=4.0);
-                changed |= drag_f32(ui, "Splash Width (m)", &mut self.config.splash_width, 0.005, 0.01..=2.0);
-                changed |= drag_f32(ui, "Flicker Speed", &mut self.config.splash_flicker_speed, 0.01, 0.0..=8.0);
-                changed |= drag_f32(ui, "Edge Noise Scale", &mut self.config.splash_noise_scale, 0.01, 0.05..=8.0);
-                changed |= drag_f32(ui, "Baseline", &mut self.config.splash_baseline, 0.005, 0.0..=1.0);
-                changed |= drag_f32(ui, "Impact Response", &mut self.config.splash_response, 0.01, 0.0..=8.0);
+                changed |= drag_f32(
+                    ui,
+                    "Splash Strength",
+                    &mut self.config.splash_strength,
+                    0.01,
+                    0.0..=4.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Splash Width (m)",
+                    &mut self.config.splash_width,
+                    0.005,
+                    0.01..=2.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Flicker Speed",
+                    &mut self.config.splash_flicker_speed,
+                    0.01,
+                    0.0..=8.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Edge Noise Scale",
+                    &mut self.config.splash_noise_scale,
+                    0.01,
+                    0.05..=8.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Baseline",
+                    &mut self.config.splash_baseline,
+                    0.005,
+                    0.0..=1.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Impact Response",
+                    &mut self.config.splash_response,
+                    0.01,
+                    0.0..=8.0,
+                );
             });
 
         egui::CollapsingHeader::new("Water Clarity")
             .default_open(true)
             .show(ui, |ui| {
-                changed |= drag_f32(ui, "Turbidity", &mut self.config.turbidity, 0.01, 0.0..=10.0);
-                changed |= drag_f32(ui, "Refraction", &mut self.config.refraction_strength, 0.01, 0.0..=4.0);
-                changed |= drag_f32(ui, "Sky Reflection", &mut self.config.sky_reflection_strength, 0.01, 0.0..=2.0);
+                changed |= drag_f32(
+                    ui,
+                    "Turbidity",
+                    &mut self.config.turbidity,
+                    0.01,
+                    0.0..=10.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Refraction",
+                    &mut self.config.refraction_strength,
+                    0.01,
+                    0.0..=4.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Sky Reflection",
+                    &mut self.config.sky_reflection_strength,
+                    0.01,
+                    0.0..=2.0,
+                );
             });
 
         egui::CollapsingHeader::new("Grid")
             .default_open(false)
             .show(ui, |ui| {
-                changed |= drag_f32(ui, "Grid Scale", &mut self.config.grid_scale, 0.5, 10.0..=500.0);
-                changed |= drag_f32(ui, "Fade Start", &mut self.config.fade_start, 1.0, 5.0..=1000.0);
-                changed |= drag_f32(ui, "Fade End", &mut self.config.fade_end, 1.0, 10.0..=2000.0);
+                changed |= drag_f32(
+                    ui,
+                    "Grid Scale",
+                    &mut self.config.grid_scale,
+                    0.5,
+                    10.0..=500.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Fade Start",
+                    &mut self.config.fade_start,
+                    1.0,
+                    5.0..=1000.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Fade End",
+                    &mut self.config.fade_end,
+                    1.0,
+                    10.0..=2000.0,
+                );
             });
 
         egui::CollapsingHeader::new("Diagnostics")

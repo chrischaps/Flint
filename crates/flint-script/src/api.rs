@@ -1307,8 +1307,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             "set_render_mode_params",
             move |x: f64, y: f64, z: f64, w: f64| {
                 let mut c = ctx.lock().unwrap();
-                c.postprocess_mode_params_override =
-                    Some([x as f32, y as f32, z as f32, w as f32]);
+                c.postprocess_mode_params_override = Some([x as f32, y as f32, z as f32, w as f32]);
             },
         );
     }

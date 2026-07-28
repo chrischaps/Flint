@@ -16,8 +16,7 @@ use flint_core::toml_util::toml_f32;
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
 
-pub const WEATHER_STATE_NAMES: [&str; 5] =
-    ["Clear", "Scattered", "Overcast", "Rain", "Storm"];
+pub const WEATHER_STATE_NAMES: [&str; 5] = ["Clear", "Scattered", "Overcast", "Rain", "Storm"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeatherPanelConfig {
@@ -62,8 +61,14 @@ impl WeatherPanelConfig {
                 toml::Value::Float(self.sea_decay_tau_s as f64),
             ),
             ("amp_storm", toml::Value::Float(self.amp_storm as f64)),
-            ("rain_rate_max", toml::Value::Float(self.rain_rate_max as f64)),
-            ("gust_strength", toml::Value::Float(self.gust_strength as f64)),
+            (
+                "rain_rate_max",
+                toml::Value::Float(self.rain_rate_max as f64),
+            ),
+            (
+                "gust_strength",
+                toml::Value::Float(self.gust_strength as f64),
+            ),
             ("raft_assist", toml::Value::Float(self.raft_assist as f64)),
         ]
     }
@@ -212,10 +217,10 @@ impl DebugPanel for WeatherDebugPanel {
 
         ui.separator();
         let drag = |ui: &mut egui::Ui,
-                        label: &str,
-                        value: &mut f32,
-                        speed: f64,
-                        range: std::ops::RangeInclusive<f64>|
+                    label: &str,
+                    value: &mut f32,
+                    speed: f64,
+                    range: std::ops::RangeInclusive<f64>|
          -> bool {
             let before = *value;
             ui.horizontal(|ui| {
@@ -224,8 +229,20 @@ impl DebugPanel for WeatherDebugPanel {
             });
             (*value - before).abs() > f32::EPSILON
         };
-        changed |= drag(ui, "Transition (s)", &mut self.config.transition_s, 1.0, 1.0..=600.0);
-        changed |= drag(ui, "Wind tau (s)", &mut self.config.wind_tau_s, 0.5, 0.5..=300.0);
+        changed |= drag(
+            ui,
+            "Transition (s)",
+            &mut self.config.transition_s,
+            1.0,
+            1.0..=600.0,
+        );
+        changed |= drag(
+            ui,
+            "Wind tau (s)",
+            &mut self.config.wind_tau_s,
+            0.5,
+            0.5..=300.0,
+        );
         changed |= drag(
             ui,
             "Sea build tau (s)",
@@ -240,7 +257,13 @@ impl DebugPanel for WeatherDebugPanel {
             1.0,
             1.0..=1800.0,
         );
-        changed |= drag(ui, "Storm amplitude", &mut self.config.amp_storm, 0.05, 0.5..=10.0);
+        changed |= drag(
+            ui,
+            "Storm amplitude",
+            &mut self.config.amp_storm,
+            0.05,
+            0.5..=10.0,
+        );
         changed |= drag(
             ui,
             "Rain rate max",
@@ -248,8 +271,20 @@ impl DebugPanel for WeatherDebugPanel {
             25.0,
             0.0..=10000.0,
         );
-        changed |= drag(ui, "Gust strength", &mut self.config.gust_strength, 0.005, 0.0..=1.0);
-        changed |= drag(ui, "Raft assist", &mut self.config.raft_assist, 0.02, 0.0..=3.0);
+        changed |= drag(
+            ui,
+            "Gust strength",
+            &mut self.config.gust_strength,
+            0.005,
+            0.0..=1.0,
+        );
+        changed |= drag(
+            ui,
+            "Raft assist",
+            &mut self.config.raft_assist,
+            0.02,
+            0.0..=3.0,
+        );
 
         if changed {
             self.dirty = true;

@@ -417,12 +417,11 @@ impl OceanPipeline {
                 ],
                 label: Some("Grab Blit Bind Group Layout"),
             });
-        let blit_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                bind_group_layouts: &[&blit_bind_group_layout],
-                push_constant_ranges: &[],
-                label: Some("Grab Blit Pipeline Layout"),
-            });
+        let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[&blit_bind_group_layout],
+            push_constant_ranges: &[],
+            label: Some("Grab Blit Pipeline Layout"),
+        });
         let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Grab Blit Pipeline"),
             layout: Some(&blit_pipeline_layout),

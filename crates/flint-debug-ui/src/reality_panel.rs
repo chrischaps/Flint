@@ -201,7 +201,11 @@ impl DebugPanel for RealityDebugPanel {
         let before_pinned = pinned;
         ui.checkbox(&mut pinned, "Pin mix");
         if pinned != before_pinned {
-            self.config.mix_override = if pinned { self.mix.clamp(0.0, 1.0) } else { -1.0 };
+            self.config.mix_override = if pinned {
+                self.mix.clamp(0.0, 1.0)
+            } else {
+                -1.0
+            };
             changed = true;
         }
         if pinned {
@@ -214,10 +218,10 @@ impl DebugPanel for RealityDebugPanel {
 
         ui.separator();
         let drag = |ui: &mut egui::Ui,
-                        label: &str,
-                        value: &mut f32,
-                        speed: f64,
-                        range: std::ops::RangeInclusive<f64>|
+                    label: &str,
+                    value: &mut f32,
+                    speed: f64,
+                    range: std::ops::RangeInclusive<f64>|
          -> bool {
             let before = *value;
             ui.horizontal(|ui| {
@@ -254,16 +258,58 @@ impl DebugPanel for RealityDebugPanel {
             1.0,
             2.0..=600.0,
         );
-        changed |= drag(ui, "Ease in (s)", &mut self.config.ease_in_s, 0.1, 0.1..=30.0);
-        changed |= drag(ui, "Ease out (s)", &mut self.config.ease_out_s, 0.1, 0.1..=30.0);
+        changed |= drag(
+            ui,
+            "Ease in (s)",
+            &mut self.config.ease_in_s,
+            0.1,
+            0.1..=30.0,
+        );
+        changed |= drag(
+            ui,
+            "Ease out (s)",
+            &mut self.config.ease_out_s,
+            0.1,
+            0.1..=30.0,
+        );
         ui.separator();
-        changed |= drag(ui, "Matrix weight", &mut self.config.w_matrix, 0.05, 0.0..=5.0);
-        changed |= drag(ui, "Blood weight", &mut self.config.w_blood, 0.05, 0.0..=5.0);
-        changed |= drag(ui, "Drunk weight", &mut self.config.w_drunk, 0.05, 0.0..=5.0);
+        changed |= drag(
+            ui,
+            "Matrix weight",
+            &mut self.config.w_matrix,
+            0.05,
+            0.0..=5.0,
+        );
+        changed |= drag(
+            ui,
+            "Blood weight",
+            &mut self.config.w_blood,
+            0.05,
+            0.0..=5.0,
+        );
+        changed |= drag(
+            ui,
+            "Drunk weight",
+            &mut self.config.w_drunk,
+            0.05,
+            0.0..=5.0,
+        );
         changed |= drag(ui, "Tron weight", &mut self.config.w_tron, 0.05, 0.0..=5.0);
         ui.separator();
-        changed |= drag(ui, "Mask scale", &mut self.config.mask_scale, 0.1, 0.2..=20.0);
-        changed |= drag(ui, "Mask style", &mut self.config.mask_style, 1.0, 0.0..=1.0);
+        changed |= drag(
+            ui,
+            "Mask scale",
+            &mut self.config.mask_scale,
+            0.1,
+            0.2..=20.0,
+        );
+        changed |= drag(
+            ui,
+            "Mask style",
+            &mut self.config.mask_style,
+            1.0,
+            0.0..=1.0,
+        );
 
         if changed {
             self.dirty = true;

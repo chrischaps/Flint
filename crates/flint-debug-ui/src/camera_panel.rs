@@ -20,10 +20,7 @@ pub struct CameraPanelConfig {
 impl CameraPanelConfig {
     pub fn from_component(value: &toml::Value) -> Self {
         Self {
-            fov_deg: value
-                .get("fov_deg")
-                .and_then(toml_f32)
-                .unwrap_or(65.0),
+            fov_deg: value.get("fov_deg").and_then(toml_f32).unwrap_or(65.0),
         }
     }
 

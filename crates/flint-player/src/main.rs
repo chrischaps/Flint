@@ -106,8 +106,10 @@ fn main() -> Result<()> {
     );
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
-    app.audio.set_bus_volume(flint_audio::Bus::Music, args.music_volume);
-    app.audio.set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
+    app.audio
+        .set_bus_volume(flint_audio::Bus::Music, args.music_volume);
+    app.audio
+        .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
 
     // Pass skybox path from scene environment settings
     if let Some(env) = &scene_file.environment {

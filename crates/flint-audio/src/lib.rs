@@ -82,7 +82,8 @@ impl AudioSystem {
                             tracing::warn!("{:?}", e);
                         }
                     } else if let Err(e) =
-                        self.engine.play_non_spatial(&sound, volume, 1.0, false, Bus::Sfx)
+                        self.engine
+                            .play_non_spatial(&sound, volume, 1.0, false, Bus::Sfx)
                     {
                         // One-shot non-spatial: handle not needed
                         tracing::warn!("{:?}", e);
