@@ -51,13 +51,17 @@ pub struct PostProcessConfig {
     pub kuwahara_sharpness: f32,
     pub kuwahara_hardness: f32,
     pub kuwahara_anisotropy: f32,
-    /// Stylized "reality tear" render mode: 0 = none, 1 = Matrix code,
-    /// 2 = blood ocean grade, 3 = drunk, 4 = Tron wireframe.
+    /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
+    /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
+    /// (submerged-eye moments; masks by a per-pixel waterline, not the
+    /// tear mask).
     pub render_mode: u32,
     /// Blend strength for the active render mode (0 = normal view).
     pub mode_mix: f32,
-    /// Per-mode tuning: x = bleed-mask scale, y = mask style (0 fbm / 1 iris),
-    /// z = per-mode rate, w = spare.
+    /// Per-mode tuning. Tears (1-4): x = bleed-mask scale, y = mask style
+    /// (0 fbm / 1 iris), z = per-mode rate, w = spare. Underwater (5):
+    /// x = signed eye depth in meters (+ = submerged; waterline Y =
+    /// camera Y + x), y = sea energy 0..1, z = daylight 0..1, w = biolum 0..1.
     pub mode_params: [f32; 4],
 }
 

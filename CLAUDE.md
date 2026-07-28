@@ -41,8 +41,10 @@ Flint uses an **edit -> validate -> play** loop:
    #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
    #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
-   #     (reality-tear modes: 1=matrix 2=blood 3=drunk 4=tron; params =
-   #      mask scale, mask style 0 fbm/1 iris, rate, spare)
+   #     (modes: 1=matrix 2=blood 3=drunk 4=tron [reality tears; params =
+   #      mask scale, mask style 0 fbm/1 iris, rate, spare] 5=underwater
+   #      [params = signed eye depth m, sea energy 0-1, daylight 0-1,
+   #      biolum 0-1; masks by per-pixel waterline, not the tear mask])
    ```
 
 2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:

@@ -401,14 +401,25 @@ fn cel_band(value: f32, steps: f32, p: vec2<f32>) -> f32 {
 // ── Fragment ────────────────────────────────────────────────────────────
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput,
+           @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let nj = gerstner_normal_jacobian(in.param_xz, in.fade);
     let N = nj.xyz;
     let jacobian = nj.w;
 
     let V = normalize(transform.camera_pos - in.world_pos);
     let view_depth = length(transform.camera_pos - in.world_pos);
-    let ndv = max(dot(N, V), 0.0);
+    // Cull is None, so back faces are the surface seen FROM BELOW (a swell
+    // burying the camera). The gerstner normal always points up: without
+    // the flip, ndv clamps to 0 from below, fresnel pins to 1, and the
+    // ceiling renders as an opaque sky mirror — the no-clip look. Use the
+    // underside normal for every view-dependent term instead; sky
+    // reflection and the sun glint are killed outright below (front_f).
+    var ndv = max(dot(N, V), 0.0);
+    if (!front) {
+        ndv = max(dot(-N, V), 0.0);
+    }
+    let front_f = select(0.0, 1.0, front);
     // Schlick fresnel, F0 = 0.02 for water: ALL reflections — the sun's
     // specular included — are ~2% looking straight down and only get strong
     // at grazing angles. Skipping this on the specular painted a big
@@ -452,6 +463,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Viscosity: fewer, wider bands with a raggedier ink line.
         ramp_steps = mix(ramp_steps, 2.0, m);
         band_wobble = band_wobble + 0.15 * m;
+    }
+
+    // ── Underwater, mode 5 (back faces only): the surface as a ceiling ──
+    // The composite pass owns the murk/waterline; here the underside just
+    // has to AGREE with it — murk-matched blues, luminous flat-white foam
+    // patches (crests read as glowing panes from below), fewer bands. Top
+    // faces are untouched: looking down through the line stays the normal
+    // sea.
+    if (ocean.mode == 5u && ocean.mode_mix > 0.001 && !front) {
+        let m = ocean.mode_mix;
+        deep_rgb = mix(deep_rgb, vec3<f32>(0.02, 0.12, 0.26), m);
+        shallow_rgb = mix(shallow_rgb, vec3<f32>(0.07, 0.30, 0.46), m);
+        sss_rgb = mix(sss_rgb, vec3<f32>(0.10, 0.45, 0.55), m);
+        foam_rgb = mix(foam_rgb, vec3<f32>(0.94, 0.98, 1.0), m);
+        ramp_steps = mix(ramp_steps, 2.0, m);
     }
 
     // Primary light (the sun). Fall back to top-down white if scene has none.
@@ -601,7 +627,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             // neighborhood so a ring can cross its cell border without
             // clipping (rings drawn only inside their own cell tile into
             // visible squares). ~9 ring evaluations, hash-only ALU.
-            let cell_size = 0.7;
+            let cell_size = 0.4;
             let home = floor(in.param_xz / cell_size);
             for (var gy = -1; gy <= 1; gy++) {
                 for (var gx = -1; gx <= 1; gx++) {
@@ -612,7 +638,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     let cycle = floor(t_raw);
                     // Density follows the rain: most cycles a cell stays
                     // silent, so rings read as scattered impacts, not tiling.
-                    let gate = step(1.0 - ocean.rain_ripple * 0.35,
+                    let gate = step(1.0 - ocean.rain_ripple * 0.45,
                                     hash2(cell + vec2<f32>(cycle * 0.61, 5.0)));
                     if (gate < 0.5) {
                         continue;
@@ -622,8 +648,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                                       hash2(cell + vec2<f32>(2.0, cycle))) - 0.5;
                     let center = (cell + 0.5 + j * 0.8) * cell_size;
                     let r = length(in.param_xz - center);
-                    let radius = ph * 0.13;
-                    let band_w = 0.012 + 0.018 * ph + clamp(fwidth(r) * 1.5, 0.0, 0.06);
+                    let radius = ph * 0.045;
+                    let band_w = 0.005 + 0.007 * ph + clamp(fwidth(r) * 1.5, 0.0, 0.04);
                     let ring = (1.0 - smoothstep(0.0, band_w, abs(r - radius)))
                         * (1.0 - ph) * (1.0 - ph);
                     rain_rings = max(rain_rings, ring);
@@ -633,11 +659,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // ── Cel specular glint (sun path sparkle) ───────────────────────────
+    // ── Cel specular glint (sun path sparkle; front faces only — there is
+    // no sun path on the underside of the surface) ──────────────────────
     let H = normalize(V + L);
     let spec_raw = pow(max(dot(N, H), 0.0), 220.0) * ocean.specular_strength;
     let spec_aa = clamp(fwidth(spec_raw) * 1.5, 1e-4, 0.4);
-    let spec = smoothstep(0.30 - spec_aa, 0.30 + spec_aa, spec_raw);
+    let spec = smoothstep(0.30 - spec_aa, 0.30 + spec_aa, spec_raw) * front_f;
 
     // ── Shadows (raft silhouette on the water) ──────────────────────────
     let sf = shadow_factor(in.world_pos, view_depth);
@@ -717,7 +744,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ── Analytic sky reflection (Schlick fresnel, F0 = 0.02 for water) ──
     // Our sky is a function, not a cubemap: evaluate its gradient with the
     // reflected ray. Strongest at grazing angles, suppressed by foam.
-    if (ocean.sky_reflection_strength > 0.001) {
+    if (ocean.sky_reflection_strength > 0.001 && front) {
         let R = reflect(-V, N);
         let r_up = pow(clamp(R.y, 0.0, 1.0), 0.62);
         var sky_ref = mix(sky_hor_rgb, sky_zen_rgb, r_up);

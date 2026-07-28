@@ -1284,10 +1284,10 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
-    // set_render_mode(mode, mix) — reality-tear render mode (0 = none,
-    // 1 = Matrix, 2 = blood, 3 = drunk, 4 = Tron) with blend strength 0..1.
-    // Transient: call every frame while a tear is active; the player zeroes
-    // the mode the frame the calls stop.
+    // set_render_mode(mode, mix) — stylized render mode (0 = none,
+    // 1 = Matrix, 2 = blood, 3 = drunk, 4 = Tron, 5 = underwater) with
+    // blend strength 0..1. Transient: call every frame while active; the
+    // player zeroes the mode the frame the calls stop.
     {
         let ctx = ctx.clone();
         engine.register_fn("set_render_mode", move |mode: i64, mix: f64| {
@@ -1297,8 +1297,10 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
-    // set_render_mode_params(x, y, z, w) — per-mode tuning: x = bleed-mask
-    // scale, y = mask style (0 fbm patches / 1 iris), z = rate, w = spare.
+    // set_render_mode_params(x, y, z, w) — per-mode tuning. Tears (1-4):
+    // x = bleed-mask scale, y = mask style (0 fbm patches / 1 iris),
+    // z = rate, w = spare. Underwater (5): x = signed eye depth in meters
+    // (+ = submerged), y = sea energy 0..1, z = daylight 0..1, w = biolum.
     {
         let ctx = ctx.clone();
         engine.register_fn(

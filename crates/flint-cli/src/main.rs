@@ -438,7 +438,8 @@ enum Commands {
         #[arg(long)]
         kuwahara_anisotropy: Option<f32>,
 
-        /// Reality-tear render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron)
+        /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
+        /// 5=underwater)
         #[arg(long)]
         render_mode: Option<u32>,
 
@@ -446,7 +447,8 @@ enum Commands {
         #[arg(long)]
         mode_mix: Option<f32>,
 
-        /// Render mode params as X,Y,Z,W (mask scale, mask style, rate, spare)
+        /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale, mask style,
+        /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
         #[arg(long, value_parser = parse_vec4)]
         mode_params: Option<[f32; 4]>,
     },

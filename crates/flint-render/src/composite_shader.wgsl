@@ -30,12 +30,16 @@ struct PostProcessUniforms {
     fog_height_enabled: f32,
     dither_intensity: f32,
     inv_view_proj: mat4x4<f32>,
-    // Reality-tear render mode: 0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron
+    // Render mode: 0 none, 1 Matrix, 2 blood, 3 drunk, 4 Tron (reality
+    // tears), 5 underwater (submerged-eye moments; not a tear — no mask).
     render_mode: u32,
     mode_mix: f32,
     mode_time: f32,
     _pad_mode: f32,
-    // x = bleed-mask scale, y = mask style (0 fbm / 1 iris), z = rate, w = spare
+    // Per-mode meaning. Tears (1-4): x = bleed-mask scale, y = mask style
+    // (0 fbm / 1 iris), z = rate, w = spare. Underwater (5): x = signed eye
+    // depth in meters (+ = submerged; waterline Y = camera_pos.y + x),
+    // y = sea energy/turbidity 0..1, z = daylight 0..1, w = biolum 0..1.
     mode_params: vec4<f32>,
 };
 
@@ -333,18 +337,112 @@ fn tron_view(mapped: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     return out_col;
 }
 
+// Mode 5 — underwater: the sub-second moments when a swell buries the eye.
+// NOT a reality tear, so no tear_mask — the mask here is the WATERLINE,
+// tested per pixel against the flat plane y = camera_pos.y + mode_params.x
+// (the signed eye depth the driving script publishes). Cel grammar
+// throughout: banded absorption instead of an exponential gradient,
+// two-hard-step light shafts, and a flat white foam lip on the line.
+fn underwater_view(mapped: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    let mix_amt = params.mode_mix;
+    let eye_depth = params.mode_params.x; // + = submerged
+    let churn = clamp(params.mode_params.y, 0.0, 1.0);
+    let daylight = clamp(params.mode_params.z, 0.0, 1.0);
+    let biolum = clamp(params.mode_params.w, 0.0, 1.0);
+    let aspect = params.texel_size.y / params.texel_size.x;
+
+    // ── Waterline: near-plane world point vs the wobbled water plane. The
+    // near plane is only ~0.15 m tall in world units, so wobble amplitudes
+    // are millimeters — enough to break the ruler-straight edge.
+    let nearw = world_pos_from_depth(uv, 0.0);
+    let wobble = (value_noise(vec2<f32>(
+        uv.x * aspect * 9.0 + params.mode_time * 1.3,
+        params.mode_time * 0.7)) - 0.5) * (0.006 + 0.010 * churn);
+    let delta = (params.camera_pos.y + eye_depth + wobble) - nearw.y;
+    let under = smoothstep(-0.0015, 0.0015, delta);
+    if (under <= 0.0) {
+        return mapped;
+    }
+
+    // ── Water column length behind this pixel. Sky depth only survives the
+    // ocean grid's far fade, so treat it as a full column of water.
+    let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
+    var dist = 60.0;
+    if (depth < 0.9999) {
+        dist = length(world_pos_from_depth(uv, depth) - params.camera_pos);
+    }
+
+    // ── Banded absorption: 3 hard cel steps toward flat murk. Turbidity
+    // (churn) and depth pull the bands closer; night kills the value.
+    let absorb = 0.22 + 0.45 * churn + 0.15 * clamp(eye_depth, 0.0, 1.0);
+    let t = 1.0 - exp(-dist * absorb);
+    let ts = t * 3.0;
+    let tq = clamp((floor(ts) + smoothstep(0.88, 0.97, fract(ts))) / 3.0, 0.0, 1.0);
+
+    let light = 0.12 + 0.88 * daylight;
+    let murk_near = mix(vec3<f32>(0.07, 0.30, 0.46), vec3<f32>(0.08, 0.30, 0.30), churn);
+    let murk_far = mix(vec3<f32>(0.015, 0.10, 0.24), vec3<f32>(0.02, 0.10, 0.14), churn);
+
+    let tint = mapped * vec3<f32>(0.45, 0.82, 1.05);
+    var wcol = mix(tint, mix(murk_near, murk_far, tq) * light, tq);
+
+    // ── Snell window: the hard-rimmed bright circle straight overhead.
+    let vdir = normalize(nearw - params.camera_pos);
+    let snell = smoothstep(0.62, 0.68, vdir.y);
+    wcol += snell * daylight * vec3<f32>(0.18, 0.28, 0.30);
+
+    // ── Light shafts: 1D noise over a slanted screen coordinate, quantized
+    // to two hard steps, drifting slowly. Fade down-screen, drown in churn.
+    let sc = uv.x * aspect * 2.2 - uv.y * 0.8 + params.mode_time * 0.06;
+    let sn = value_noise(vec2<f32>(sc * 7.0, params.mode_time * 0.11));
+    let shaft = (step(0.68, sn) * 0.5 + step(0.80, sn) * 0.5)
+        * (1.0 - uv.y * 0.75) * daylight * (1.0 - 0.7 * churn);
+    wcol += shaft * tq * vec3<f32>(0.05, 0.11, 0.13);
+
+    // ── Bioluminescent specks (night foam glow carried underwater).
+    if (biolum > 0.001) {
+        let sp = uv * vec2<f32>(aspect, 1.0) * 42.0
+            + vec2<f32>(params.mode_time * 0.15, params.mode_time * 0.35);
+        let h = hash2(floor(sp));
+        let dotd = length(fract(sp) - 0.5);
+        let tw = 0.5 + 0.5 * sin(params.mode_time * 3.0 + h * 40.0);
+        wcol += step(0.965, h) * smoothstep(0.22, 0.06, dotd) * tw
+            * biolum * vec3<f32>(0.15, 0.9, 0.8) * 0.8;
+    }
+
+    // ── Soft edge darkening, kept local to the mode (the sticky vignette
+    // knob belongs to reality mode 1 — never write it from here).
+    let vd = length((uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(aspect, 1.0));
+    wcol *= 1.0 - 0.4 * smoothstep(0.45, 0.95, vd);
+
+    // ── Hard white foam lip riding the line itself.
+    let lip = under * (1.0 - smoothstep(0.005, 0.009, delta));
+    var outc = mix(mapped, clamp(wcol, vec3<f32>(0.0), vec3<f32>(1.5)), under * mix_amt);
+    outc = mix(outc, vec3<f32>(0.94, 0.98, 1.0), lip * mix_amt);
+    return clamp(outc, vec3<f32>(0.0), vec3<f32>(4.0));
+}
+
 @fragment
 fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     var uv = in.uv;
 
-    // ── Reality tear, hook A: drunk sway warps the UV every downstream
-    // sample uses, so the whole frame (blur, CA, fog, bloom) moves together.
-    if (params.render_mode == 3u && params.mode_mix > 0.001) {
+    // ── Hook A: drunk sway (mode 3) and underwater refraction sway (mode 5)
+    // warp the UV every downstream sample uses, so the whole frame (blur,
+    // CA, fog, bloom) moves together.
+    if ((params.render_mode == 3u || params.render_mode == 5u)
+        && params.mode_mix > 0.001) {
         let t = params.mode_time;
+        var amp = 0.006 * params.mode_mix;
+        if (params.render_mode == 5u) {
+            // Only sway once genuinely submerged: a straddle frame keeps
+            // its above-water half rock steady.
+            amp = 0.004 * params.mode_mix
+                * smoothstep(0.1, 0.3, params.mode_params.x);
+        }
         uv += vec2<f32>(
             sin(t * 0.7 + uv.y * 3.0),
             cos(t * 0.9 + uv.x * 2.5) * 0.6
-        ) * 0.006 * params.mode_mix;
+        ) * amp;
     }
 
     let center = vec2<f32>(0.5, 0.5);
@@ -411,10 +509,13 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     color = color * params.exposure;
     var mapped = aces_filmic(color);
 
-    // ── Reality tear, hook B: stylization owns the display-referred color.
-    // After ACES so phosphor greens / duotones aren't compressed; before
-    // vignette + dither so those still apply on top (CRT cohesion).
-    if (params.render_mode != 0u && params.mode_mix > 0.001) {
+    // ── Hook B: stylization owns the display-referred color. After ACES so
+    // phosphor greens / duotones aren't compressed; before vignette + dither
+    // so those still apply on top (CRT cohesion). Underwater (5) is not a
+    // tear — it masks by the per-pixel waterline, never tear_mask.
+    if (params.render_mode == 5u && params.mode_mix > 0.001) {
+        mapped = underwater_view(mapped, uv);
+    } else if (params.render_mode != 0u && params.mode_mix > 0.001) {
         let mask = tear_mask(uv);
         if (params.render_mode == 1u) {
             mapped = mix(mapped, matrix_code(in.position.xy), mask);
