@@ -31,6 +31,11 @@ pub struct TimeOfDayPanelConfig {
     pub day_length_sec: f32,
     pub auto_advance: bool,
     pub sun_path_tilt_deg: f32,
+    /// Optional per-day multipliers on `day_length_sec`, indexed by day
+    /// number; the last entry repeats for every later day. Games that
+    /// compress their opening days declare the same curve their time script
+    /// applies, so the panel can report the real length. Empty = flat rate.
+    pub day_length_ramp: Vec<f32>,
 }
 
 impl TimeOfDayPanelConfig {
@@ -44,6 +49,11 @@ impl TimeOfDayPanelConfig {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true),
             sun_path_tilt_deg: f("sun_path_tilt_deg", 28.0),
+            day_length_ramp: value
+                .get("day_length_ramp")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(toml_f32).collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -132,16 +142,17 @@ fn format_clock(hours: f32) -> String {
     format!("{h:02}:{m:02}")
 }
 
-/// First-days day-length ramp fraction — mirrors scripts/time_of_day.rhai
-/// (day 0 is the compressed title day; day 4+ runs at the full rate).
-fn ramp_fraction(day: f32) -> f32 {
-    match day {
-        d if d < 0.5 => 0.1,
-        d if d < 1.5 => 0.2,
-        d if d < 2.5 => 0.4,
-        d if d < 3.5 => 0.7,
-        _ => 1.0,
+/// Day-length multiplier for `day` under a game-declared ramp.
+///
+/// `ramp` is indexed by day number and its last entry repeats forever, so a
+/// game that compresses its opening days declares e.g. `[0.1, 0.2, 0.4, 1.0]`
+/// on its `time_of_day` component. An empty ramp means a flat rate.
+fn ramp_fraction(day: f32, ramp: &[f32]) -> f32 {
+    if ramp.is_empty() {
+        return 1.0;
     }
+    let idx = (day.round().max(0.0) as usize).min(ramp.len() - 1);
+    ramp[idx]
 }
 
 fn label_for(hours: f32) -> &'static str {
@@ -222,9 +233,6 @@ impl DebugPanel for TimeOfDayDebugPanel {
                 if ui.small_button("+1").clicked() {
                     self.pending_day = Some((d + 1) as f32);
                 }
-                if day < 0.5 {
-                    ui.weak("title day (loops)");
-                }
             });
         }
 
@@ -238,14 +246,19 @@ impl DebugPanel for TimeOfDayDebugPanel {
             );
             changed |= (self.config.day_length_sec - before).abs() > f32::EPSILON;
         });
-        // Effective length under the first-days ramp (ramped scenes only).
+        // Effective length under a game-declared ramp (ramped scenes only).
         if let Some(day) = self.day {
-            let frac = ramp_fraction(self.pending_day.unwrap_or(day));
-            let eff = self.config.day_length_sec * frac;
-            ui.weak(format!(
-                "effective {eff:.0} s this day (ramp x{frac:.1}) · {:.1} s / game hour",
-                eff / 24.0
-            ));
+            if !self.config.day_length_ramp.is_empty() {
+                let frac = ramp_fraction(
+                    self.pending_day.unwrap_or(day),
+                    &self.config.day_length_ramp,
+                );
+                let eff = self.config.day_length_sec * frac;
+                ui.weak(format!(
+                    "effective {eff:.0} s this day (ramp x{frac:.1}) · {:.1} s / game hour",
+                    eff / 24.0
+                ));
+            }
         }
 
         ui.horizontal(|ui| {
@@ -295,5 +308,49 @@ impl DebugPanel for TimeOfDayDebugPanel {
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod ramp_tests {
+    use super::{ramp_fraction, TimeOfDayPanelConfig};
+
+    #[test]
+    fn empty_ramp_is_flat() {
+        assert_eq!(ramp_fraction(0.0, &[]), 1.0);
+        assert_eq!(ramp_fraction(99.0, &[]), 1.0);
+    }
+
+    #[test]
+    fn ramp_indexes_by_day_and_holds_the_last_entry() {
+        let ramp = [0.1, 0.2, 0.4, 0.7, 1.0];
+        assert_eq!(ramp_fraction(0.0, &ramp), 0.1);
+        assert_eq!(ramp_fraction(1.0, &ramp), 0.2);
+        assert_eq!(ramp_fraction(3.0, &ramp), 0.7);
+        assert_eq!(ramp_fraction(4.0, &ramp), 1.0);
+        // Past the end the last entry repeats forever.
+        assert_eq!(ramp_fraction(400.0, &ramp), 1.0);
+    }
+
+    #[test]
+    fn negative_day_clamps_to_the_first_entry() {
+        assert_eq!(ramp_fraction(-3.0, &[0.1, 1.0]), 0.1);
+    }
+
+    #[test]
+    fn absent_ramp_field_parses_as_empty() {
+        let v: toml::Value = toml::from_str("time_hours = 6.0").unwrap();
+        assert!(TimeOfDayPanelConfig::from_component(&v)
+            .day_length_ramp
+            .is_empty());
+    }
+
+    #[test]
+    fn ramp_field_parses_from_the_component() {
+        let v: toml::Value = toml::from_str("day_length_ramp = [0.1, 0.5, 1.0]").unwrap();
+        assert_eq!(
+            TimeOfDayPanelConfig::from_component(&v).day_length_ramp,
+            vec![0.1, 0.5, 1.0]
+        );
     }
 }

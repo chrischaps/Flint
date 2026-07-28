@@ -42,7 +42,12 @@ pub trait DebugPanel {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
-/// Estimated content height (in widget rows) per panel name; used for column balancing.
+/// Estimated content height (in widget rows) per panel name; used for column
+/// balancing.
+///
+/// A heuristic keyed on the panels the engine ships, so the tall ones do not
+/// all land in one column. Unknown names — including every game-supplied
+/// panel — take the default, which only costs a slightly uneven layout.
 fn panel_weight(name: &str) -> u32 {
     match name {
         "Ocean Debug" => 46,
@@ -50,7 +55,7 @@ fn panel_weight(name: &str) -> u32 {
         "Reality" => 20,
         "Weather" => 15,
         "Day / Time" => 10,
-        _ => 6, // Camera, Dead Calm, Visitor, future panels
+        _ => 6,
     }
 }
 
@@ -100,7 +105,8 @@ mod column_tests {
 
     #[test]
     fn full_roster_balances_three_columns() {
-        // Float's creation order (no grass): mod.rs create_* sequence.
+        // A representative full roster in creation order, mixing engine
+        // panels with game-supplied ones (which take the default weight).
         let names = [
             "Ocean Debug",
             "Day / Time",
