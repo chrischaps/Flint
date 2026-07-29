@@ -137,6 +137,54 @@ blend_duration = 0.3       # Over 0.3 seconds
 
 Blending uses slerp for rotation quaternions and lerp for translation/scale, producing smooth pose interpolation.
 
+**The engine clears `blend_target` when the crossfade completes.** It is a
+request, not a state — once the fade lands, the field is retired and the clip
+you faded into becomes the plain `clip`. Scripts must not treat a non-empty
+`blend_target` as "currently blending to X" beyond the fade, and must not
+re-assert it every frame: a target that never retires re-arms its own crossfade
+forever, and the clip plays only its first `blend_duration` seconds on loop.
+
+Calling `blend_to` with the clip that is **already playing** is a deliberate
+restart, not a no-op. That is what lets a held key chain discrete steps —
+each press re-triggers the same clip from the top.
+
+> `flint edit <model.glb>` plays clips directly and never goes through the
+> blend path, so a clip that previews correctly can still be broken in play.
+> Verify crossfades in `flint play`.
+
+### Additive Layers
+
+An additive layer runs a second clip on its own clock and composes it *onto*
+the base pose, as a delta from rest, on keyed joints only:
+
+```toml
+[entities.character.animator]
+clip = "idle"
+layer_clip = "breathe"     # loops independently
+layer_weight = 1.0         # live dial: 0 = off
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `layer_clip` | string | "" | Additive layer clip |
+| `layer_weight` | f32 | 1.0 | Layer strength (0 = off) |
+
+Because the layer only touches joints it actually keys, a breathing or
+weight-shift layer authored on the spine leaves the legs entirely to the base
+clip. And because it is composed after blending, **the layer survives base
+crossfades** — the character keeps breathing through the transition from idle
+to walk rather than holding its breath for 0.3 seconds.
+
+`layer_weight` is a live dial, so fading a layer in and out is a single field
+write.
+
+### Rest Poses
+
+Pose buffers are seeded from the glTF **bind-local TRS**, not from identity.
+This matters for sparse clips: a clip that keys only an arm would otherwise
+collapse every un-keyed limb onto its parent, and your character would fold up
+the moment it played.
+
 ### Skeleton Schema
 
 The `skeleton` component references a glTF skin:
@@ -159,8 +207,10 @@ The `animator` component controls playback for both tiers:
 | `autoplay` | bool | false | Start playing on scene load |
 | `loop` | bool | true | Loop when the clip ends |
 | `speed` | f32 | 1.0 | Playback speed (-10.0 to 10.0) |
-| `blend_target` | string | "" | Clip to crossfade into |
+| `blend_target` | string | "" | Clip to crossfade into (cleared by the engine when the fade completes) |
 | `blend_duration` | f32 | 0.3 | Crossfade duration in seconds |
+| `layer_clip` | string | "" | Additive layer clip |
+| `layer_weight` | f32 | 1.0 | Additive layer strength (0 = off) |
 
 ## Architecture
 

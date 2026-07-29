@@ -45,6 +45,11 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
 | `--fullscreen` | Launch in fullscreen mode |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
+| `--music-volume <f32>` | Initial gain for the `music` mixer bus |
+| `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
+
+`--music-volume 0` is the quickest way to audition a scene's sound design
+without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
 ### Player Controls (Defaults)
 
@@ -161,7 +166,17 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--fog-density <f32>` | `0.02` | Fog density (0 = disabled) |
 | `--fog-color <r,g,b>` | `0.7,0.75,0.82` | Fog color |
 | `--fog-height-falloff <f32>` | `0.1` | Fog height falloff |
+| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater |
+| `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
+| `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
 | `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+
+> **`flint render` runs no scripts.** Anything your game drives from a script —
+> a render mode, a time of day, a floating hull, an animated character — will
+> not happen. The render-mode flags exist precisely so a stylized frame can be
+> captured without one. For script-driven world state, bake a fixture scene
+> with the values you want; for animation, note that skinned meshes render at
+> **bind pose** headlessly.
 
 ## The `edit` Command
 
