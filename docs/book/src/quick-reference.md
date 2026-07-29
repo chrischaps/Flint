@@ -38,6 +38,7 @@ A scannable cheat sheet for daily Flint development.
 | R | Reload |
 | 1 / 2 | Weapon slots |
 | F1 | Cycle debug mode (PBR → Wireframe → Normals → Depth → UV → Unlit → Metal/Rough) |
+| F3 | Toggle debug panels (ocean, day/time, camera, grass — only those the scene uses) |
 | F4 | Toggle shadows |
 | F5 | Toggle bloom |
 | F6 | Toggle post-processing pipeline |
