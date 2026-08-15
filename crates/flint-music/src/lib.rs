@@ -13,6 +13,7 @@
 
 pub mod analysis;
 pub mod chart;
+pub mod clock_bridge;
 pub mod conductor;
 pub mod event_script;
 pub mod manifest;
@@ -26,6 +27,7 @@ pub mod tempo;
 pub mod validate;
 
 pub use chart::Chart;
+pub use clock_bridge::{BridgeStats, ClockBridge};
 pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use event_script::EventScript;
 pub use manifest::SuiteManifest;
