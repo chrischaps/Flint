@@ -13,6 +13,7 @@
 
 pub mod analysis;
 pub mod chart;
+pub mod chart_eval;
 pub mod clock_bridge;
 pub mod conductor;
 pub mod event_script;
@@ -28,6 +29,7 @@ pub mod tempo;
 pub mod validate;
 
 pub use chart::Chart;
+pub use chart_eval::{ChannelValue, ChartEval, PulseWindow};
 pub use clock_bridge::{BridgeStats, ClockBridge};
 pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use event_script::EventScript;
