@@ -1,9 +1,11 @@
-//! Milestone 0 command: validate a suite manifest, play its stems
-//! sample-locked from one clock, print a musical-time readout, and report the
-//! measured output latency from the latency harness logs.
+//! Play a suite live: validate the manifest, start every bus sample-locked on
+//! the session's sample-tick clock, and print the Conductor's musical-time
+//! readout (latency-compensated using the newest measurement in
+//! `logs/latency/`).
 
 use anyhow::{bail, Context, Result};
-use flint_music::playback::SuitePlayer;
+use flint_music::session::RealtimePlayer;
+use flint_music::status::status_line;
 use flint_music::{validate_manifest, validate_manifest_assets, SuiteManifest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -33,70 +35,65 @@ pub fn run(args: PlaySuiteArgs) -> Result<()> {
     }
 
     // --- latency report ------------------------------------------------------
-    match latest_latency_ms(&base_dir) {
-        Some((file, ms)) => println!(
-            "measured output latency: {ms:.1} ms (compensation seed; from {file})"
-        ),
-        None => println!(
-            "measured output latency: NONE ON RECORD — run spikes/latency_harness \
-             and commit its log to logs/latency/"
-        ),
-    }
+    let latency_ms = match latest_latency_ms(&base_dir) {
+        Some((file, ms)) => {
+            println!("measured output latency: {ms:.1} ms (compensating; from {file})");
+            Some(ms)
+        }
+        None => {
+            println!(
+                "measured output latency: NONE ON RECORD — run spikes/latency_harness \
+                 and commit its log to logs/latency/"
+            );
+            None
+        }
+    };
 
     // --- play -----------------------------------------------------------------
     let anchor = &manifest.tempo[0];
-    let beats_per_bar = anchor.beats_per_bar as f64;
     println!(
-        "suite '{}': {} playable buses, {} BPM {}/{}, {} sections",
+        "suite '{}': {} playable buses, {} BPM {}/{} at anchor 0 ({} tempo anchors), {} sections",
         manifest.id,
         manifest.buses.values().filter(|b| b.file.is_some()).count(),
         anchor.bpm,
         anchor.beats_per_bar,
         anchor.beat_unit,
+        manifest.tempo.len(),
         manifest.sections.len()
     );
 
-    let player = SuitePlayer::start(&manifest, &base_dir)
+    let mut player = RealtimePlayer::start(&manifest, &base_dir, latency_ms)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let spb = manifest.sample_rate as f64 * 60.0 / anchor.bpm;
-    let total_beats = args
+    let end_sample = args
         .bars
-        .map(|b| (b as f64) * beats_per_bar)
-        .unwrap_or(f64::MAX);
+        .map(|b| player.session.conductor.sample_at_bar(b as i64, 0.0))
+        .unwrap_or(i64::MAX);
 
     let mut max_skew = 0.0f64;
-    let mut last_bar = 0i64;
+    let mut last_bar = i64::MIN;
     loop {
         std::thread::sleep(Duration::from_millis(100));
-        let beats = player.beats();
-        if beats < 0.0 {
+        player.session.pump();
+        let pos = player.session.now();
+        if pos.sample < 0 {
             continue; // pre-roll
         }
-        if beats >= total_beats {
+        if pos.sample >= end_sample {
             break;
         }
-        max_skew = max_skew.max(player.max_stem_skew());
+        max_skew = max_skew.max(player.session.mixer.max_stem_skew());
 
-        let bar = (beats / beats_per_bar) as i64 + 1;
-        if bar != last_bar {
-            last_bar = bar;
-            let sample = (beats * spb) as i64;
-            let section = manifest
-                .sections
-                .iter()
-                .rev()
-                .find(|s| s.start_sample <= sample)
-                .map(|s| s.name.as_str())
-                .unwrap_or("?");
-            let beat_in_bar = (beats % beats_per_bar) as i64 + 1;
+        if pos.bar != last_bar {
+            last_bar = pos.bar;
+            let section = player.session.conductor.section_at_sample(pos.sample);
             println!(
-                "bar {bar:>3} beat {beat_in_bar} | section {section:<10} | sample {sample:>9} | max stem skew {:.3} ms",
+                "{} | max stem skew {:.3} ms",
+                status_line(&pos, section, &player.session.mixer),
                 max_skew * 1000.0
             );
         }
 
-        // stop when every stem has finished
-        if player.all_stopped() {
+        if player.session.mixer.all_stopped() {
             break;
         }
     }
@@ -111,7 +108,7 @@ pub fn run(args: PlaySuiteArgs) -> Result<()> {
 /// Newest measurement in `<base_dir>/logs/latency/` (files are named
 /// `latency-<date>-<epoch>.toml`, so lexicographic max = newest). Returns the
 /// loopback mean, falling back to the driver-reported mean.
-fn latest_latency_ms(base_dir: &Path) -> Option<(String, f64)> {
+pub fn latest_latency_ms(base_dir: &Path) -> Option<(String, f64)> {
     let dir = base_dir.join("logs/latency");
     let mut names: Vec<String> = std::fs::read_dir(&dir)
         .ok()?

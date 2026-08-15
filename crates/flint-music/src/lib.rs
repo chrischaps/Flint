@@ -14,14 +14,20 @@
 pub mod chart;
 pub mod conductor;
 pub mod manifest;
-pub mod playback;
+pub mod mixer;
 pub mod probe;
+pub mod scheduler;
+pub mod session;
+pub mod status;
 pub mod tempo;
 pub mod validate;
 
 pub use chart::Chart;
 pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use manifest::SuiteManifest;
+pub use mixer::{BusMixer, BusState, StemBus};
+pub use scheduler::{BusAction, EventTime, FiredEvent, ScheduledEvent, Scheduler};
+pub use session::{RealtimePlayer, StemResolver, SuiteSession};
 pub use tempo::TempoMap;
 pub use validate::{validate_chart, validate_manifest, validate_manifest_assets, Issue};
 
