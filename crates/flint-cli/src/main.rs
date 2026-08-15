@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, edit_router, entity, gen, gen_preview, init, play, prefab, preview, query, render,
-    scene, schema, spline_edit, terrain_edit, tex_edit, validate, validate_suite,
+    play_suite, scene, schema, spline_edit, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -208,6 +208,20 @@ enum Commands {
         /// Directory the manifest's file paths are relative to (default: cwd)
         #[arg(long)]
         base_dir: Option<String>,
+    },
+
+    /// Play a validated suite manifest's stems sample-locked (Milestone 0)
+    PlaySuite {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Stop after this many bars (default: play to the end)
+        #[arg(long)]
+        bars: Option<u64>,
     },
 
     /// Prefab operations
@@ -531,6 +545,15 @@ fn main() -> Result<()> {
             chart,
             no_assets,
             base_dir,
+        }),
+        Commands::PlaySuite {
+            manifest,
+            base_dir,
+            bars,
+        } => play_suite::run(play_suite::PlaySuiteArgs {
+            manifest,
+            base_dir,
+            bars,
         }),
         Commands::Play {
             scene,

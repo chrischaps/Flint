@@ -1720,6 +1720,7 @@ name = "flint-music"
 version = "0.1.0"
 dependencies = [
  "flint-core",
+ "kira",
  "symphonia",
  "toml",
  "tracing",

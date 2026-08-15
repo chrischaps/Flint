@@ -13,6 +13,7 @@
 
 pub mod chart;
 pub mod manifest;
+pub mod playback;
 pub mod probe;
 pub mod tempo;
 pub mod validate;
