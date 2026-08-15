@@ -40,7 +40,7 @@ pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use event_script::EventScript;
 pub use input_stream::{InputEvent, LeanSample, PulseEvent};
 pub use judgment::{Judge, JudgmentConfig, JudgmentRecord};
-pub use ladder::{Ladder, LadderConfig, LadderParams};
+pub use ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
 pub use manifest::SuiteManifest;
 pub use mixer::{BusMixer, BusState, StemBus};
 pub use offline::{render_offline, render_offline_with, write_wav, OfflineRenderConfig};

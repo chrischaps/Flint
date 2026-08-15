@@ -22,11 +22,14 @@
 //! bus, foundation included — filtering the whole world is the woozy intent;
 //! silencing its pulse is not.
 
-use crate::mixer::LPF_OPEN_HZ;
+use crate::mixer::{BusMixer, LPF_OPEN_HZ};
+use crate::MOTIF_BUSES;
 use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
+use kira::Tween;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 /// Gain trim used for a dropped bus (effectively silence).
 pub const DROP_DB: f32 = -80.0;
@@ -518,6 +521,118 @@ impl Ladder {
         match self.cfg.rungs.last() {
             None => LadderParams::clean(),
             Some(r) => LadderParams::from_rung(self.cfg.rungs.len(), r),
+        }
+    }
+}
+
+/// Applies [`LadderParams`] to the mixer as tweens, idempotently: a command
+/// is issued only when a bus's target actually changes, so calling `apply`
+/// every tick is free while the world holds still. The warble is a slow
+/// symmetric LFO evaluated from suite time (deterministic — same time in,
+/// same detune out) and smoothed by short tweens.
+///
+/// `gain_offset_db` is the reintegration sequencer's channel: per-bus entry
+/// gains (lead solo, others ramping in) that compose additively with the
+/// ladder's trims. Empty in normal play (offset 0 = full level).
+pub struct LadderDriver {
+    last_lpf: BTreeMap<String, f64>,
+    last_gain: BTreeMap<String, f32>,
+    last_detune: BTreeMap<String, f64>,
+    pub gain_offset_db: BTreeMap<String, f32>,
+}
+
+/// Smoothing tween for per-tick warble updates (the LFO is the shape; this
+/// just bridges between tick evaluations without zipper noise).
+const WARBLE_SMOOTH_MS: f64 = 50.0;
+/// Gain/detune changes smaller than this don't re-issue commands.
+const GAIN_EPS: f32 = 0.01;
+const DETUNE_EPS: f64 = 0.001;
+
+impl Default for LadderDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LadderDriver {
+    pub fn new() -> Self {
+        Self {
+            last_lpf: BTreeMap::new(),
+            last_gain: BTreeMap::new(),
+            last_detune: BTreeMap::new(),
+            gain_offset_db: BTreeMap::new(),
+        }
+    }
+
+    /// Forget everything previously issued, so the next `apply` restates the
+    /// full target state. Call after a seam: re-played stems reset detune,
+    /// and entry gains change out from under the shadow bookkeeping.
+    pub fn reset(&mut self) {
+        self.last_lpf.clear();
+        self.last_gain.clear();
+        self.last_detune.clear();
+    }
+
+    /// Drive the mixer toward `params`. `now_seconds` is suite time (for the
+    /// warble LFO phase); `ramp_ms` is the tween length for gain/LPF moves —
+    /// normally `params.ramp_ms`, but reassembly passes tick-scale ramps
+    /// while it lerps params itself.
+    pub fn apply(
+        &mut self,
+        params: &LadderParams,
+        now_seconds: f64,
+        ramp_ms: f64,
+        mixer: &mut BusMixer,
+    ) {
+        let tween = |ms: f64| Tween {
+            duration: Duration::from_secs_f64(ms.max(0.0) / 1000.0),
+            ..Default::default()
+        };
+        let warble = if params.warble_depth_semitones > 0.0 && params.warble_rate_hz > 0.0 {
+            params.warble_depth_semitones
+                * (std::f64::consts::TAU * params.warble_rate_hz * now_seconds).sin()
+        } else {
+            0.0
+        };
+        for name in crate::BUSES {
+            let is_motif = MOTIF_BUSES.contains(&name);
+            let is_degradable = DEGRADABLE_BUSES.contains(&name);
+            let Some(bus) = mixer.bus_mut(name) else {
+                continue;
+            };
+
+            // LPF: every non-motif bus follows the rung cutoff.
+            if !is_motif {
+                let target = params.lpf_hz;
+                if self.last_lpf.get(name) != Some(&target) {
+                    bus.set_lpf(target, tween(ramp_ms));
+                    self.last_lpf.insert(name.into(), target);
+                }
+            }
+
+            // Gain: sequencer entry offset + ladder trim (trim is 0 on
+            // protected buses by construction — the validator enforces it).
+            let target = self.gain_offset_db.get(name).copied().unwrap_or(0.0)
+                + params.gain_trim_db.get(name).copied().unwrap_or(0.0);
+            if (self.last_gain.get(name).copied().unwrap_or(0.0) - target).abs() > GAIN_EPS
+                || !self.last_gain.contains_key(name)
+            {
+                bus.set_gain(target, tween(ramp_ms));
+                self.last_gain.insert(name.into(), target);
+            }
+
+            // Warble: degradable buses only. Detuning the foundation would
+            // un-anchor the pulse, and motif lines stay in tune — the world
+            // warbles around them. (Nonzero detune breaks sample-lock while
+            // active — mixer docs; the seam re-play re-locks.)
+            if is_degradable && bus.state.playing {
+                let target = if warble != 0.0 { warble } else { 0.0 };
+                let last = self.last_detune.get(name).copied().unwrap_or(0.0);
+                if (last - target).abs() > DETUNE_EPS {
+                    bus.set_detune(target, tween(WARBLE_SMOOTH_MS.min(ramp_ms.max(1.0))));
+                    self.last_detune.insert(name.into(), target);
+                }
+            }
         }
     }
 }
