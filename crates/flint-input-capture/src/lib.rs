@@ -108,6 +108,19 @@ pub fn spawn(
     ))
 }
 
+/// Names of gamepads the backend can currently see. Empty means events will
+/// never arrive — on Windows this usually indicates a backend/device mismatch
+/// (XInput backend + DirectInput-only pad), worth surfacing before a session.
+pub fn connected_gamepads() -> flint_core::Result<Vec<String>> {
+    let gilrs = Gilrs::new().map_err(|e| {
+        flint_core::FlintError::InputError(format!("gamepad backend unavailable: {e}"))
+    })?;
+    Ok(gilrs
+        .gamepads()
+        .map(|(_, g)| format!("{} ({:?})", g.name(), g.power_info()))
+        .collect())
+}
+
 fn capture_loop(
     bridge: ClockBridge,
     cfg: CaptureConfig,
@@ -121,6 +134,15 @@ fn capture_loop(
             return;
         }
     };
+    let pads: Vec<_> = gilrs.gamepads().map(|(_, g)| g.name().to_string()).collect();
+    if pads.is_empty() {
+        tracing::warn!(
+            "no gamepads visible to the input backend — capture will be silent \
+             (on Windows the XInput backend only sees XInput-class devices)"
+        );
+    } else {
+        tracing::info!("capturing from: {}", pads.join(", "));
+    }
     let period = Duration::from_secs_f64(1.0 / cfg.poll_hz.max(1) as f64);
     let (mut raw_x, mut raw_y) = (0.0f64, 0.0f64);
     let mut warned_cold = false;

@@ -344,6 +344,16 @@ fn spawn_stdin_reader() -> std::sync::mpsc::Receiver<StdinCommand> {
 }
 
 fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
+    let pads = flint_input_capture::connected_gamepads().map_err(|e| anyhow::anyhow!("{e}"))?;
+    if pads.is_empty() {
+        eprintln!(
+            "WARNING: the input backend sees NO gamepads — the spike will record zero \
+             events.\nOn Windows this build uses the XInput backend; DirectInput-only \
+             pads (e.g. DualShock/DualSense without a mapper) are invisible to it."
+        );
+    } else {
+        println!("gamepad(s) visible: {}", pads.join(", "));
+    }
     println!("input-granularity spike: wiggle the stick for {secs} s...");
     let report =
         flint_input_capture::measure_granularity(Duration::from_secs(secs), 1000)
