@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use flint_music::chart_eval::ChartEval;
 use flint_music::clock_bridge::ClockBridge;
+use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
 use flint_music::input_stream::InputEvent;
 use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter};
@@ -23,6 +24,9 @@ pub struct PlayChartArgs {
     pub chart: String,
     pub base_dir: Option<String>,
     pub bars: Option<u64>,
+    /// Coherence config path (default: `<base_dir>/config/coherence.toml`
+    /// when present, else built-in defaults).
+    pub config: Option<String>,
     /// Run the input-granularity spike for this many seconds and exit
     /// (wiggle the stick; no audio involved).
     pub spike_input_secs: Option<u64>,
@@ -93,6 +97,27 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
     let judgment_cfg = JudgmentConfig::default();
     let mut judge = Judge::new(eval, judge_conductor, judgment_cfg);
 
+    // Coherence config: explicit path must load; the default path is
+    // optional. Enter reloads it mid-session, `q` + Enter quits.
+    let config_explicit = args.config.is_some();
+    let config_path = args
+        .config
+        .map(PathBuf::from)
+        .unwrap_or_else(|| base_dir.join("config/coherence.toml"));
+    let config_required = config_explicit || config_path.exists();
+    let coherence_cfg = if config_required {
+        let cfg = CoherenceConfig::load(&config_path)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .with_context(|| format!("loading {}", config_path.display()))?;
+        println!("coherence config: {} (Enter = reload, q = quit)", config_path.display());
+        cfg
+    } else {
+        println!("coherence config: built-in defaults (no {})", config_path.display());
+        CoherenceConfig::default()
+    };
+    let mut coherence = Coherence::new(coherence_cfg);
+    let stdin_rx = spawn_stdin_reader();
+
     let epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -103,6 +128,7 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
         "suite": manifest.id, "chart": args.chart,
         "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": calibration_ms,
         "grid_beats": judgment_cfg.grid_beats,
+        "coherence_config": coherence_cfg.to_json(),
         "epoch_s": epoch,
     });
     let mut log = JsonlWriter::create(&log_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -158,6 +184,20 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
         if pos.sample >= 0 {
             judge.advance_to(pos.sample, &mut records);
         }
+        if !records.is_empty() {
+            let beats_per_bar = player
+                .session
+                .conductor
+                .tempo()
+                .anchor_at(pos.sample.max(0))
+                .map(|a| a.beats_per_bar as f64)
+                .unwrap_or(4.0);
+            let value = coherence.step(&records, judgment_cfg.grid_beats, beats_per_bar);
+            log.write_value(&serde_json::json!({
+                "t": "coherence", "sample": pos.sample, "value": value,
+            }))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
         for rec in records.drain(..) {
             match &rec {
                 JudgmentRecord::Pulse { err_ms, .. } => {
@@ -172,6 +212,26 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
             log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
 
+        match stdin_rx.try_recv() {
+            Ok(StdinCommand::Quit) => {
+                println!("quit requested");
+                break;
+            }
+            Ok(StdinCommand::Reload) => match CoherenceConfig::load(&config_path) {
+                Ok(cfg) => {
+                    coherence.reconfigure(cfg);
+                    println!("coherence config reloaded (value carries over)");
+                    log.write_value(&serde_json::json!({
+                        "t": "config_reload", "sample": pos.sample,
+                        "coherence_config": cfg.to_json(),
+                    }))
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+                Err(e) => println!("reload failed, keeping current config: {e}"),
+            },
+            Err(_) => {}
+        }
+
         if pos.sample < 0 {
             continue; // pre-roll
         }
@@ -183,10 +243,11 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
             last_bar = pos.bar;
             let section = player.session.conductor.section_at_sample(pos.sample);
             println!(
-                "{} | lean ({:+.2},{:+.2})",
+                "{} | lean ({:+.2},{:+.2}) | coherence {:.3}",
                 status_line(&pos, section, &player.session.mixer),
                 lean[0],
-                lean[1]
+                lean[1],
+                coherence.value()
             );
             log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
         }
@@ -214,6 +275,40 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
     );
     println!("judgment log: {}", log_path.display());
     Ok(())
+}
+
+enum StdinCommand {
+    Reload,
+    Quit,
+}
+
+/// Line-buffered stdin on its own thread: Enter alone reloads the coherence
+/// config, `q` + Enter quits. Line-buffered beats raw mode here — no extra
+/// deps, no terminal-state cleanup, and a dev harness doesn't need better.
+fn spawn_stdin_reader() -> std::sync::mpsc::Receiver<StdinCommand> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("play-chart-stdin".into())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            loop {
+                line.clear();
+                use std::io::BufRead;
+                if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {
+                    return; // EOF (piped/headless): no interactive control
+                }
+                let cmd = match line.trim() {
+                    "q" | "quit" => StdinCommand::Quit,
+                    _ => StdinCommand::Reload,
+                };
+                if tx.send(cmd).is_err() {
+                    return;
+                }
+            }
+        })
+        .ok();
+    rx
 }
 
 fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {

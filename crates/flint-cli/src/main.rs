@@ -256,6 +256,10 @@ enum Commands {
         #[arg(long)]
         bars: Option<u64>,
 
+        /// Coherence config TOML (default: config/coherence.toml if present)
+        #[arg(long)]
+        config: Option<String>,
+
         /// Run the input-granularity spike for N seconds and exit (no audio)
         #[arg(long)]
         spike_input_secs: Option<u64>,
@@ -640,12 +644,14 @@ fn main() -> Result<()> {
             chart,
             base_dir,
             bars,
+            config,
             spike_input_secs,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
             base_dir,
             bars,
+            config,
             spike_input_secs,
         }),
         Commands::RenderSuite {
