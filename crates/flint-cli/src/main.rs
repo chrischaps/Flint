@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, prefab,
     preview, query, render, play_suite, render_suite, scene, schema, spline_edit, terrain_edit,
-    tex_edit, validate, validate_suite,
+    replay_chart, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -263,6 +263,44 @@ enum Commands {
         /// Run the input-granularity spike for N seconds and exit (no audio)
         #[arg(long)]
         spike_input_secs: Option<u64>,
+
+        /// Record the input session to logs/sessions/<NAME>.session.jsonl
+        #[arg(long)]
+        record: Option<String>,
+    },
+
+    /// Replay a recorded or synthetic session through judgment, fully headless
+    ReplayChart {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Beatmap chart (.chart.toml) for the suite
+        #[arg(long)]
+        chart: String,
+
+        /// Session file to replay (.session.jsonl)
+        #[arg(long, conflicts_with = "synthetic")]
+        session: Option<String>,
+
+        /// Synthetic profile: perfect | late:<ms> | neglect
+        #[arg(long)]
+        synthetic: Option<String>,
+
+        /// Coherence config TOML (default: the session's recorded snapshot)
+        #[arg(long)]
+        config: Option<String>,
+
+        /// Judgment log output path (default: logs/judgment/replay.jsonl)
+        #[arg(long)]
+        out: Option<String>,
+
+        /// Also render the suite audio over the replayed span to this WAV
+        #[arg(long)]
+        render: Option<String>,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
     },
 
     /// Render a scripted suite session to WAV, offline and deterministic
@@ -646,6 +684,7 @@ fn main() -> Result<()> {
             bars,
             config,
             spike_input_secs,
+            record,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
@@ -653,6 +692,26 @@ fn main() -> Result<()> {
             bars,
             config,
             spike_input_secs,
+            record,
+        }),
+        Commands::ReplayChart {
+            manifest,
+            chart,
+            session,
+            synthetic,
+            config,
+            out,
+            render,
+            base_dir,
+        } => replay_chart::run(replay_chart::ReplayChartArgs {
+            manifest,
+            chart,
+            session,
+            synthetic,
+            config,
+            out,
+            render,
+            base_dir,
         }),
         Commands::RenderSuite {
             manifest,

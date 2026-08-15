@@ -27,6 +27,8 @@ pub struct PlayChartArgs {
     /// Coherence config path (default: `<base_dir>/config/coherence.toml`
     /// when present, else built-in defaults).
     pub config: Option<String>,
+    /// Record the input session to `logs/sessions/<name>.session.jsonl`.
+    pub record: Option<String>,
     /// Run the input-granularity spike for this many seconds and exit
     /// (wiggle the stick; no audio involved).
     pub spike_input_secs: Option<u64>,
@@ -134,6 +136,29 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
     let mut log = JsonlWriter::create(&log_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("judgment log: {}", log_path.display());
 
+    let mut session_writer = match &args.record {
+        Some(name) => {
+            let path = base_dir.join(format!("logs/sessions/{name}.session.jsonl"));
+            let session_header = flint_music::replay::SessionHeader {
+                schema: 0,
+                suite: manifest.id.clone(),
+                chart: args.chart.clone(),
+                sample_rate: manifest.sample_rate,
+                latency_ms: latency_ms.unwrap_or(0.0),
+                calibration_ms,
+                coherence_config: Some(coherence_cfg.to_json()),
+                capture: Some(serde_json::json!({
+                    "poll_hz": 1000, "deadzone": 0.12,
+                })),
+            };
+            let w = flint_music::replay::SessionWriter::create(&path, &session_header)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("recording session: {}", path.display());
+            Some((w, path))
+        }
+        None => None,
+    };
+
     let bridge = ClockBridge::new(manifest.sample_rate);
     let capture = flint_input_capture::spawn(
         bridge.clone(),
@@ -177,6 +202,10 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
                     lean = [l.x, l.y];
                 }
                 if ev.sample() >= 0 {
+                    if let Some((w, _)) = &mut session_writer {
+                        w.write(&ev, manifest.sample_rate)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    }
                     judge.ingest(&ev, &mut records);
                 }
             }
@@ -273,6 +302,10 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
         "done. pulses hit {hits} (mean |err| {mean_ms:.1} ms), missed {misses}, spurious {spurious}"
     );
     println!("judgment log: {}", log_path.display());
+    if let Some((mut w, path)) = session_writer {
+        w.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!("session recorded: {} ({} event(s))", path.display(), w.written());
+    }
     Ok(())
 }
 

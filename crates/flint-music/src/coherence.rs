@@ -121,6 +121,31 @@ impl CoherenceConfig {
 }
 
 impl CoherenceConfig {
+    /// Rebuild from a header snapshot (inverse of [`Self::to_json`]);
+    /// absent keys keep defaults, so old snapshots stay readable.
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        let d = Self::default();
+        let f = |table: &str, key: &str, default: f64| {
+            v.get(table)
+                .and_then(|t| t.get(key))
+                .and_then(|x| x.as_f64())
+                .unwrap_or(default)
+        };
+        Self {
+            w_lean: f("weights", "lean", d.w_lean),
+            w_pulse: f("weights", "pulse", d.w_pulse),
+            track_err_full: f("tracking", "err_full", d.track_err_full),
+            track_curve: f("tracking", "curve", d.track_curve),
+            pulse_err_full_ms: f("pulse", "err_full_ms", d.pulse_err_full_ms),
+            miss_penalty: f("pulse", "miss_penalty", d.miss_penalty),
+            spurious_penalty: f("pulse", "spurious_penalty", d.spurious_penalty),
+            impulse_gain: f("pulse", "impulse_gain", d.impulse_gain),
+            initial: f("smoothing", "initial", d.initial),
+            rise_bars: f("smoothing", "rise_bars", d.rise_bars),
+            fall_bars: f("smoothing", "fall_bars", d.fall_bars),
+        }
+    }
+
     /// Snapshot for log headers and reload records — reproducibility of a
     /// session depends on knowing exactly which knobs were live.
     pub fn to_json(&self) -> serde_json::Value {
