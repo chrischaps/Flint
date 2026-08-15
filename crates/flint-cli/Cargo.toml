@@ -28,6 +28,7 @@ flint-terrain = { workspace = true }
 flint-procgen = { workspace = true }
 flint-viewer = { workspace = true }
 flint-music = { workspace = true }
+flint-input-capture = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

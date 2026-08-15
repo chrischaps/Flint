@@ -25,6 +25,12 @@ const MAX_PAIRS: usize = 64;
 const MIN_PAIR_SPACING: f64 = 0.03;
 /// Minimum pairs before the bridge answers queries.
 const WARMUP_PAIRS: usize = 8;
+/// Minimum time span the ring must cover before fitting — slope from a
+/// shorter baseline is dominated by chunk-quantization noise.
+const MIN_FIT_SPAN: f64 = 0.5;
+/// A clock that reports the same sample for longer than this is not running
+/// yet (device warm-up), not merely chunk-quantized; restart the ring.
+const STALL_SECONDS: f64 = 0.1;
 /// Refit the line every this many observations.
 const REFIT_EVERY: usize = 16;
 /// Allowed slope deviation from the nominal sample rate (drift tolerance).
@@ -80,9 +86,15 @@ impl ClockBridge {
     pub fn observe(&self, at: Instant, clock_sample: i64) {
         let mut inner = self.inner.lock().unwrap();
         let t = at.duration_since(inner.epoch).as_secs_f64();
-        if let Some(&(last_t, _)) = inner.pairs.back() {
+        if let Some(&(last_t, last_s)) = inner.pairs.back() {
             if t - last_t < MIN_PAIR_SPACING {
                 return;
+            }
+            // Startup stall: the device hasn't begun consuming yet, so the
+            // frozen pairs would poison the first fit. Start over from here.
+            if clock_sample == last_s && t - last_t > STALL_SECONDS {
+                inner.pairs.clear();
+                inner.model = None;
             }
         }
         if inner.pairs.len() == MAX_PAIRS {
@@ -91,7 +103,13 @@ impl ClockBridge {
         inner.pairs.push_back((t, clock_sample));
         inner.since_fit += 1;
         let due = inner.model.is_none() || inner.since_fit >= REFIT_EVERY;
-        if due && inner.pairs.len() >= WARMUP_PAIRS {
+        let span = inner
+            .pairs
+            .back()
+            .zip(inner.pairs.front())
+            .map(|((tb, _), (tf, _))| tb - tf)
+            .unwrap_or(0.0);
+        if due && inner.pairs.len() >= WARMUP_PAIRS && span >= MIN_FIT_SPAN {
             inner.refit();
             inner.since_fit = 0;
         }
@@ -197,7 +215,7 @@ mod tests {
         let bridge = ClockBridge::new(48_000);
         let base = Instant::now();
         for i in 0..WARMUP_PAIRS {
-            let t = i as f64 * 0.04;
+            let t = i as f64 * 0.08; // 8 pairs span 0.56 s >= MIN_FIT_SPAN
             assert!(bridge.sample_at(base).is_none() || i + 1 >= WARMUP_PAIRS);
             bridge.observe(base + Duration::from_secs_f64(t), (t * RATE) as i64);
         }

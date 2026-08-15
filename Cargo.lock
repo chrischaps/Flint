@@ -1631,6 +1631,7 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-import",
+ "flint-input-capture",
  "flint-music",
  "flint-physics",
  "flint-player",

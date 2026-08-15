@@ -5,8 +5,8 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, edit_router, entity, gen, gen_preview, init, play, prefab, preview, query, render,
-    play_suite, render_suite, scene, schema, spline_edit, terrain_edit, tex_edit, validate,
+    asset, edit_router, entity, gen, gen_preview, init, play, play_chart, prefab, preview, query,
+    render, play_suite, render_suite, scene, schema, spline_edit, terrain_edit, tex_edit, validate,
     validate_suite,
 };
 
@@ -223,6 +223,28 @@ enum Commands {
         /// Stop after this many bars (default: play to the end)
         #[arg(long)]
         bars: Option<u64>,
+    },
+
+    /// Play a suite against its beatmap chart with live gamepad capture (Phase 2 dev harness)
+    PlayChart {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Beatmap chart (.chart.toml) for the suite
+        #[arg(long)]
+        chart: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Stop after this many bars (default: play to the end)
+        #[arg(long)]
+        bars: Option<u64>,
+
+        /// Run the input-granularity spike for N seconds and exit (no audio)
+        #[arg(long)]
+        spike_input_secs: Option<u64>,
     },
 
     /// Render a scripted suite session to WAV, offline and deterministic
@@ -589,6 +611,19 @@ fn main() -> Result<()> {
             manifest,
             base_dir,
             bars,
+        }),
+        Commands::PlayChart {
+            manifest,
+            chart,
+            base_dir,
+            bars,
+            spike_input_secs,
+        } => play_chart::run(play_chart::PlayChartArgs {
+            manifest,
+            chart,
+            base_dir,
+            bars,
+            spike_input_secs,
         }),
         Commands::RenderSuite {
             manifest,
