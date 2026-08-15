@@ -89,10 +89,19 @@ impl SuiteSession {
             .map_err(|e| FlintError::AudioError(format!("failed to create clock: {e}")))?;
         let start_at = StartTime::ClockTime(ClockTime::from_ticks_u64(&clock, preroll_samples));
 
+        // Canonical BUSES order (not the BTreeMap's alphabetical order), with
+        // any non-standard names the validator would have flagged appended.
+        let mut names: Vec<&String> = manifest.buses.keys().collect();
+        names.sort_by_key(|n| {
+            crate::BUSES
+                .iter()
+                .position(|b| b == n)
+                .unwrap_or(crate::BUSES.len())
+        });
         let mut loaded = Vec::new();
         let mut playable = 0usize;
-        for (name, decl) in &manifest.buses {
-            let data = stems.load(name, decl)?;
+        for name in names {
+            let data = stems.load(name, &manifest.buses[name])?;
             playable += data.is_some() as usize;
             loaded.push((name.clone(), data));
         }

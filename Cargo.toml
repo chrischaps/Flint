@@ -99,6 +99,7 @@ rapier3d = { version = "0.22", features = ["default"] }
 
 # Audio
 kira = { version = "0.11", features = ["cpal", "ogg", "flac"] }
+hound = "3.5"
 glam = { version = "0.30", features = ["mint"] }
 
 # Scripting

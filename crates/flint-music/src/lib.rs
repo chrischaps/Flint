@@ -13,8 +13,10 @@
 
 pub mod chart;
 pub mod conductor;
+pub mod event_script;
 pub mod manifest;
 pub mod mixer;
+pub mod offline;
 pub mod probe;
 pub mod scheduler;
 pub mod session;
@@ -24,6 +26,8 @@ pub mod validate;
 
 pub use chart::Chart;
 pub use conductor::{Conductor, Grid, MusicalPosition};
+pub use event_script::EventScript;
+pub use offline::{render_offline, write_wav, OfflineRenderConfig};
 pub use manifest::SuiteManifest;
 pub use mixer::{BusMixer, BusState, StemBus};
 pub use scheduler::{BusAction, EventTime, FiredEvent, ScheduledEvent, Scheduler};

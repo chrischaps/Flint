@@ -6,7 +6,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, edit_router, entity, gen, gen_preview, init, play, prefab, preview, query, render,
-    play_suite, scene, schema, spline_edit, terrain_edit, tex_edit, validate, validate_suite,
+    play_suite, render_suite, scene, schema, spline_edit, terrain_edit, tex_edit, validate,
+    validate_suite,
 };
 
 #[derive(Parser)]
@@ -222,6 +223,40 @@ enum Commands {
         /// Stop after this many bars (default: play to the end)
         #[arg(long)]
         bars: Option<u64>,
+    },
+
+    /// Render a scripted suite session to WAV, offline and deterministic
+    RenderSuite {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Event script (.events.toml) of scheduled bus changes and markers
+        #[arg(long)]
+        script: Option<String>,
+
+        /// Output WAV path (32-bit float stereo)
+        #[arg(long, short)]
+        output: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Render this many bars (default: length of the longest stem)
+        #[arg(long, conflicts_with = "duration_seconds")]
+        duration_bars: Option<i64>,
+
+        /// Render this many seconds
+        #[arg(long)]
+        duration_seconds: Option<f64>,
+
+        /// Status line cadence: bar (default) or beat
+        #[arg(long)]
+        status_every: Option<String>,
+
+        /// Processing chunk size in frames (= scheduling granularity)
+        #[arg(long, default_value_t = 128)]
+        chunk_frames: usize,
     },
 
     /// Prefab operations
@@ -554,6 +589,25 @@ fn main() -> Result<()> {
             manifest,
             base_dir,
             bars,
+        }),
+        Commands::RenderSuite {
+            manifest,
+            script,
+            output,
+            base_dir,
+            duration_bars,
+            duration_seconds,
+            status_every,
+            chunk_frames,
+        } => render_suite::run(render_suite::RenderSuiteArgs {
+            manifest,
+            script,
+            output,
+            base_dir,
+            duration_bars,
+            duration_seconds,
+            status_every,
+            chunk_frames,
         }),
         Commands::Play {
             scene,

@@ -11,3 +11,4 @@ toml = { workspace = true }
 tracing = { workspace = true }
 symphonia = { workspace = true }
 kira = { workspace = true }
+hound = { workspace = true }
