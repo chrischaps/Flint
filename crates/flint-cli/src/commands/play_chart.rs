@@ -15,7 +15,7 @@ use flint_music::clock_bridge::ClockBridge;
 use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
 use flint_music::input_stream::InputEvent;
-use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter};
+use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter, LeanMode};
 use flint_music::session::RealtimePlayer;
 use flint_music::status::status_line_with_coherence;
 use flint_music::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
@@ -39,6 +39,25 @@ pub struct PlayChartArgs {
     pub spike_input_secs: Option<u64>,
     /// Open a bare graphical window instead of running console-only.
     pub window: bool,
+    /// Lean judgment mode: "arrival" (beat-anchored targets, the current
+    /// feel direction) or "track" (continuous curve-following).
+    pub lean_mode: String,
+}
+
+/// Shared by play-chart and replay-chart so live and offline judge alike.
+pub fn parse_lean_mode(s: &str) -> Result<LeanMode> {
+    match s {
+        "arrival" => Ok(LeanMode::Arrival),
+        "track" => Ok(LeanMode::Track),
+        other => bail!("unknown --lean-mode `{other}` (expected `arrival` or `track`)"),
+    }
+}
+
+pub fn lean_mode_name(mode: LeanMode) -> &'static str {
+    match mode {
+        LeanMode::Arrival => "arrival",
+        LeanMode::Track => "track",
+    }
 }
 
 pub fn run(args: PlayChartArgs) -> Result<()> {
@@ -70,6 +89,8 @@ pub struct ChartSession {
     judge: Judge,
     coherence: Coherence,
     judgment_cfg: JudgmentConfig,
+    /// Musical time per lean record, precomputed for coherence's integrator.
+    lean_step_beats: f64,
     log: JsonlWriter,
     session_writer: Option<(flint_music::replay::SessionWriter, PathBuf)>,
     bridge: ClockBridge,
@@ -167,8 +188,13 @@ impl ChartSession {
         let visual_eval =
             ChartEval::new(&chart, &judge_conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
         let eval = ChartEval::new(&chart, &judge_conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let judgment_cfg = JudgmentConfig::default();
+        let judgment_cfg = JudgmentConfig {
+            lean_mode: parse_lean_mode(&args.lean_mode)?,
+            ..Default::default()
+        };
+        println!("lean mode: {}", lean_mode_name(judgment_cfg.lean_mode));
         let judge = Judge::new(eval, judge_conductor, judgment_cfg);
+        let lean_step_beats = judge.lean_step_beats();
 
         // Coherence config: explicit path must load; the default path is
         // optional. `r`+Enter (or `r` in the window) reloads it mid-session.
@@ -204,6 +230,8 @@ impl ChartSession {
             "suite": manifest.id, "chart": args.chart,
             "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": calibration_ms,
             "grid_beats": judgment_cfg.grid_beats,
+            "lean_mode": lean_mode_name(judgment_cfg.lean_mode),
+            "arrival_half_beats": judgment_cfg.arrival_half_beats,
             "coherence_config": coherence_cfg.to_json(),
             "epoch_s": epoch,
         });
@@ -263,6 +291,7 @@ impl ChartSession {
             judge,
             coherence,
             judgment_cfg,
+            lean_step_beats,
             log,
             session_writer,
             bridge,
@@ -317,7 +346,7 @@ impl ChartSession {
             let beats_per_bar = self.beats_per_bar(pos.sample.max(0));
             let value =
                 self.coherence
-                    .step(&self.records, self.judgment_cfg.grid_beats, beats_per_bar);
+                    .step(&self.records, self.lean_step_beats, beats_per_bar);
             self.log
                 .write_value(&serde_json::json!({
                     "t": "coherence", "sample": pos.sample, "value": value,

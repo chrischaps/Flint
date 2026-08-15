@@ -192,6 +192,26 @@ impl ChartEval {
     pub fn last_key_beat(&self, channel: &str) -> Option<f64> {
         self.channels.get(channel)?.last().map(|(b, _, _)| *b)
     }
+
+    /// The channel's authored keys as `(beat, value)` pairs, sorted by beat.
+    /// Arrival-style judgment treats these as its targets; the interpolation
+    /// between them stays a visual/curve concern.
+    pub fn channel_keys(&self, channel: &str) -> Vec<(f64, ChannelValue)> {
+        self.channels
+            .get(channel)
+            .map(|keys| {
+                keys.iter()
+                    .map(|(b, v, _)| {
+                        let value = match v.len() {
+                            1 => ChannelValue::Scalar(v[0]),
+                            _ => ChannelValue::Vec2([v[0], v[1]]),
+                        };
+                        (*b, value)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 fn bad(msg: String) -> FlintError {

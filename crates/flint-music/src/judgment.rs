@@ -2,11 +2,19 @@
 //!
 //! Two signals, per the TDD, and only two — no grades, no combos, no
 //! per-note pass/fail anywhere:
-//! - **tracking error**: at each step of a fixed musical grid (default 1/8
-//!   beat), the Euclidean distance between the actual lean (zero-order-hold
-//!   latch of the newest sample at or before the grid step) and the chart's
-//!   target lean. Target and actual are both logged raw so any alternative
-//!   model can be evaluated offline from the logs alone.
+//! - **lean error**, in one of two modes ([`LeanMode`]):
+//!   - `Track` (continuous): at each step of a fixed musical grid (default
+//!     1/8 beat), the Euclidean distance between the actual lean
+//!     (zero-order-hold latch of the newest sample at or before the grid
+//!     step) and the chart's interpolated target.
+//!   - `Arrival` (beat-anchored, the Milestone 2 [H] iteration): each lean
+//!     *key* is a target to arrive at; within a window around the key's
+//!     beat, the best (minimum) distance observed counts — rolling through
+//!     the target on time is as good as parking on it, and motion between
+//!     keys is free. Emits one `Track` record per key (same shape, same
+//!     logs), sample-stamped at the key's beat.
+//!   Target and actual are both logged raw so any alternative model can be
+//!   evaluated offline from the logs alone.
 //! - **pulse timing error**: signed milliseconds from the matched window's
 //!   center (negative = early). A pulse matches the nearest-center
 //!   unconsumed window of its kind containing it; each window is consumable
@@ -26,15 +34,34 @@ use crate::input_stream::InputEvent;
 /// verb; per-channel expansion is config work, not schema work.
 pub const TRACKED_CHANNEL: &str = "lean";
 
+/// How lean is judged. `Track` is the original continuous model and remains
+/// the config default (the Milestone 2 automated evidence pins it);
+/// `Arrival` is the beat-anchored model from Chris's first feel check —
+/// continuous micro-tracking at small radius was too delicate to sustain
+/// flow, so lean became "be at the target on its beat, roll freely between".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeanMode {
+    Track,
+    Arrival,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct JudgmentConfig {
-    /// Tracking grid step in beats (default 1/8 beat).
+    /// Tracking grid step in beats (default 1/8 beat). `Track` mode only.
     pub grid_beats: f64,
+    pub lean_mode: LeanMode,
+    /// Arrival window half-width in beats around each lean key (`Arrival`
+    /// mode only). Deliberately wide: arrival is gross motion, not aim.
+    pub arrival_half_beats: f64,
 }
 
 impl Default for JudgmentConfig {
     fn default() -> Self {
-        Self { grid_beats: 0.125 }
+        Self {
+            grid_beats: 0.125,
+            lean_mode: LeanMode::Track,
+            arrival_half_beats: 0.3,
+        }
     }
 }
 
@@ -111,6 +138,19 @@ impl JudgmentRecord {
     }
 }
 
+/// One beat-anchored lean target (`Arrival` mode): the best distance seen
+/// inside the window counts when the window closes.
+struct Arrival {
+    beat: f64,
+    center_sample: i64,
+    open: i64,
+    close: i64,
+    target: [f64; 2],
+    best_err: f64,
+    best_actual: [f64; 2],
+    done: bool,
+}
+
 /// Per-run judgment state. Owns its evaluator and conductor so live and
 /// replay paths construct it identically.
 pub struct Judge {
@@ -118,8 +158,11 @@ pub struct Judge {
     conductor: Conductor,
     cfg: JudgmentConfig,
     consumed: Vec<bool>,
-    /// Next tracking-grid step, in beats.
+    /// Next tracking-grid step, in beats (`Track` mode).
     next_grid_beat: f64,
+    /// Lean-key arrival windows, sorted by beat (`Arrival` mode; empty in
+    /// `Track` mode).
+    arrivals: Vec<Arrival>,
     /// Grid steps stop after the chart's authored content ends.
     end_sample: i64,
     /// ZOH latch of the newest lean at or before the advance point.
@@ -131,10 +174,33 @@ pub struct Judge {
 impl Judge {
     pub fn new(eval: ChartEval, conductor: Conductor, cfg: JudgmentConfig) -> Self {
         let consumed = vec![false; eval.pulse_windows().len()];
+        let arrivals: Vec<Arrival> = match cfg.lean_mode {
+            LeanMode::Track => Vec::new(),
+            LeanMode::Arrival => eval
+                .channel_keys(TRACKED_CHANNEL)
+                .into_iter()
+                .filter_map(|(beat, value)| {
+                    let target = value.as_vec2()?;
+                    Some(Arrival {
+                        beat,
+                        center_sample: conductor.sample_at_beat(beat),
+                        open: conductor.sample_at_beat(beat - cfg.arrival_half_beats),
+                        close: conductor.sample_at_beat(beat + cfg.arrival_half_beats),
+                        target,
+                        best_err: f64::INFINITY,
+                        best_actual: [0.0, 0.0],
+                        done: false,
+                    })
+                })
+                .collect(),
+        };
         let last_window_close = eval.pulse_windows().iter().map(|w| w.close()).max();
-        let last_curve_sample = eval
-            .last_key_beat(TRACKED_CHANNEL)
-            .map(|b| conductor.sample_at_beat(b));
+        let last_curve_sample = match cfg.lean_mode {
+            LeanMode::Track => eval
+                .last_key_beat(TRACKED_CHANNEL)
+                .map(|b| conductor.sample_at_beat(b)),
+            LeanMode::Arrival => arrivals.iter().map(|a| a.close).max(),
+        };
         let end_sample = last_window_close
             .into_iter()
             .chain(last_curve_sample)
@@ -146,9 +212,27 @@ impl Judge {
             cfg,
             consumed,
             next_grid_beat: 0.0,
+            arrivals,
             end_sample,
             lean: [0.0, 0.0],
             advanced_to: i64::MIN,
+        }
+    }
+
+    /// The musical time one lean record represents, for coherence's
+    /// integrator: the grid step in `Track` mode, the mean key spacing in
+    /// `Arrival` mode.
+    pub fn lean_step_beats(&self) -> f64 {
+        match self.cfg.lean_mode {
+            LeanMode::Track => self.cfg.grid_beats,
+            LeanMode::Arrival => {
+                let n = self.arrivals.len();
+                if n >= 2 {
+                    (self.arrivals[n - 1].beat - self.arrivals[0].beat) / (n - 1) as f64
+                } else {
+                    1.0
+                }
+            }
         }
     }
 
@@ -157,7 +241,26 @@ impl Judge {
     pub fn ingest(&mut self, ev: &InputEvent, out: &mut Vec<JudgmentRecord>) {
         self.advance_internal(ev.sample(), out);
         match ev {
-            InputEvent::Lean(l) => self.lean = [l.x, l.y],
+            InputEvent::Lean(l) => {
+                self.lean = [l.x, l.y];
+                // Arrival windows containing this instant see the new lean.
+                let s = l.sample;
+                for a in self.arrivals.iter_mut() {
+                    if a.done || s < a.open {
+                        continue;
+                    }
+                    if s > a.close {
+                        continue;
+                    }
+                    let dx = l.x - a.target[0];
+                    let dy = l.y - a.target[1];
+                    let err = (dx * dx + dy * dy).sqrt();
+                    if err < a.best_err {
+                        a.best_err = err;
+                        a.best_actual = [l.x, l.y];
+                    }
+                }
+            }
             InputEvent::Pulse(p) => {
                 let s = p.sample;
                 let beat = self.conductor.position_at_sample(s).beat;
@@ -209,26 +312,53 @@ impl Judge {
             return;
         }
 
-        // Grid steps due at or before `sample`, stopping at content end.
-        loop {
-            let grid_sample = self.conductor.sample_at_beat(self.next_grid_beat);
-            if grid_sample > sample || grid_sample > self.end_sample {
-                break;
+        // Grid steps due at or before `sample`, stopping at content end
+        // (`Track` mode; `Arrival` mode has no grid).
+        if self.cfg.lean_mode == LeanMode::Track {
+            loop {
+                let grid_sample = self.conductor.sample_at_beat(self.next_grid_beat);
+                if grid_sample > sample || grid_sample > self.end_sample {
+                    break;
+                }
+                if let Some(ChannelValue::Vec2(target)) =
+                    self.eval.sample_channel(TRACKED_CHANNEL, self.next_grid_beat)
+                {
+                    let dx = self.lean[0] - target[0];
+                    let dy = self.lean[1] - target[1];
+                    out.push(JudgmentRecord::Track {
+                        sample: grid_sample,
+                        beat: self.next_grid_beat,
+                        target,
+                        actual: self.lean,
+                        err: (dx * dx + dy * dy).sqrt(),
+                    });
+                }
+                self.next_grid_beat += self.cfg.grid_beats;
             }
-            if let Some(ChannelValue::Vec2(target)) =
-                self.eval.sample_channel(TRACKED_CHANNEL, self.next_grid_beat)
-            {
-                let dx = self.lean[0] - target[0];
-                let dy = self.lean[1] - target[1];
-                out.push(JudgmentRecord::Track {
-                    sample: grid_sample,
-                    beat: self.next_grid_beat,
-                    target,
-                    actual: self.lean,
-                    err: (dx * dx + dy * dy).sqrt(),
-                });
+        }
+
+        // Arrival windows whose close has passed settle now. The ZOH latch
+        // gets a say too: a player parked on the target the whole window
+        // never sends an event inside it, and still errs ~0.
+        for a in self.arrivals.iter_mut() {
+            if a.done || a.close >= sample {
+                continue;
             }
-            self.next_grid_beat += self.cfg.grid_beats;
+            let dx = self.lean[0] - a.target[0];
+            let dy = self.lean[1] - a.target[1];
+            let latch_err = (dx * dx + dy * dy).sqrt();
+            if latch_err < a.best_err {
+                a.best_err = latch_err;
+                a.best_actual = self.lean;
+            }
+            out.push(JudgmentRecord::Track {
+                sample: a.center_sample,
+                beat: a.beat,
+                target: a.target,
+                actual: a.best_actual,
+                err: a.best_err,
+            });
+            a.done = true;
         }
 
         // Windows whose close has passed unconsumed are misses.
@@ -497,6 +627,84 @@ interp = "hold"
                 assert!(err.abs() < 1e-12, "beat {beat}: {err}");
             }
         }
+    }
+
+    fn arrival_judge(chart_toml: &str) -> Judge {
+        let chart = Chart::parse(chart_toml).unwrap();
+        let conductor = conductor();
+        let eval = ChartEval::new(&chart, &conductor).unwrap();
+        Judge::new(
+            eval,
+            conductor,
+            JudgmentConfig {
+                lean_mode: LeanMode::Arrival,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Two keys, beats 2 and 4. Beat = 24_000 samples; half-window 0.3 beat
+    /// = 7_200 samples, so key 0 spans 40_800..=55_200.
+    const ARRIVAL_CHART: &str = r#"schema_version = 0
+suite = "t"
+[[curves]]
+channel = "lean"
+beat = 2.0
+value = [1.0, 0.0]
+interp = "smooth"
+[[curves]]
+channel = "lean"
+beat = 4.0
+value = [-1.0, 0.0]
+interp = "smooth"
+"#;
+
+    fn lean(sample: i64, x: f64, y: f64) -> InputEvent {
+        InputEvent::Lean(LeanSample { sample, x, y })
+    }
+
+    fn arrival_errs(out: &[JudgmentRecord]) -> Vec<(f64, f64)> {
+        out.iter()
+            .filter_map(|r| match r {
+                JudgmentRecord::Track { beat, err, .. } => Some((*beat, *err)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn arrival_rolling_through_on_time_counts() {
+        let mut j = arrival_judge(ARRIVAL_CHART);
+        let mut out = Vec::new();
+        // Roll through the target inside the window, then well past it —
+        // the excursion after the pass-through must not hurt.
+        j.ingest(&lean(47_000, 1.0, 0.0), &mut out);
+        j.ingest(&lean(52_000, 0.2, 0.6), &mut out);
+        j.finish(&mut out);
+        let errs = arrival_errs(&out);
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(errs[0].0 == 2.0 && errs[0].1.abs() < 1e-12, "{errs:?}");
+    }
+
+    #[test]
+    fn arrival_neutral_stick_errs_target_magnitude_via_latch() {
+        let mut j = arrival_judge(ARRIVAL_CHART);
+        let mut out = Vec::new();
+        j.finish(&mut out); // no input at all
+        let errs = arrival_errs(&out);
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        for (_, err) in errs {
+            assert!((err - 1.0).abs() < 1e-12, "{err}");
+        }
+    }
+
+    #[test]
+    fn arrival_emits_no_grid_records() {
+        let mut j = arrival_judge(ARRIVAL_CHART);
+        let mut out = Vec::new();
+        j.advance_to(200_000, &mut out);
+        // Exactly one record per key, none from any 1/8-beat grid.
+        assert_eq!(arrival_errs(&out).len(), 2);
     }
 
     #[test]

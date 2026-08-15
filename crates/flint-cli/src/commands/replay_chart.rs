@@ -32,6 +32,9 @@ pub struct ReplayChartArgs {
     pub save_session: Option<String>,
     pub render: Option<String>,
     pub base_dir: Option<String>,
+    /// Lean judgment mode ("arrival" or "track") — must match the live run
+    /// being reproduced; the judgment-log header records which was used.
+    pub lean_mode: String,
 }
 
 pub fn run(args: ReplayChartArgs) -> Result<()> {
@@ -154,7 +157,14 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     };
 
     // --- run the pipeline ----------------------------------------------------
-    let judgment_cfg = JudgmentConfig::default();
+    let judgment_cfg = JudgmentConfig {
+        lean_mode: super::play_chart::parse_lean_mode(&args.lean_mode)?,
+        ..Default::default()
+    };
+    println!(
+        "lean mode: {}",
+        super::play_chart::lean_mode_name(judgment_cfg.lean_mode)
+    );
     let eval_for_judge =
         ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut judge = Judge::new(
@@ -162,6 +172,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         Conductor::new(&manifest, None),
         judgment_cfg,
     );
+    let lean_step_beats = judge.lean_step_beats();
     let mut coherence = Coherence::new(coherence_cfg);
 
     let out_path = args
@@ -175,6 +186,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         "latency_ms": session_header.as_ref().map(|h| h.latency_ms).unwrap_or(0.0),
         "calibration_ms": session_header.as_ref().map(|h| h.calibration_ms).unwrap_or(0.0),
         "grid_beats": judgment_cfg.grid_beats,
+        "lean_mode": super::play_chart::lean_mode_name(judgment_cfg.lean_mode),
+        "arrival_half_beats": judgment_cfg.arrival_half_beats,
         "coherence_config": coherence_cfg.to_json(),
     });
     let mut log = JsonlWriter::create(&out_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -197,7 +210,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
                 .anchor_at(at_sample.max(0))
                 .map(|a| a.beats_per_bar as f64)
                 .unwrap_or(4.0);
-            let value = coherence.step(records, judgment_cfg.grid_beats, beats_per_bar);
+            let value = coherence.step(records, lean_step_beats, beats_per_bar);
             log.write_value(&serde_json::json!({
                 "t": "coherence", "sample": at_sample, "value": value,
             }))

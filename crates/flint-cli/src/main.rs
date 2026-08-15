@@ -272,6 +272,11 @@ enum Commands {
         /// wordless cues). Console output continues underneath.
         #[arg(long)]
         window: bool,
+
+        /// Lean judgment: "arrival" (be at each target on its beat, roll
+        /// freely between) or "track" (follow the curve continuously)
+        #[arg(long, default_value = "arrival")]
+        lean_mode: String,
     },
 
     /// Replay a recorded or synthetic session through judgment, fully headless
@@ -306,6 +311,11 @@ enum Commands {
         /// Also render the suite audio over the replayed span to this WAV
         #[arg(long)]
         render: Option<String>,
+
+        /// Lean judgment: "arrival" or "track" (must match the run being
+        /// reproduced; judgment-log headers record it)
+        #[arg(long, default_value = "arrival")]
+        lean_mode: String,
 
         /// Directory the manifest's file paths are relative to (default: cwd)
         #[arg(long)]
@@ -695,6 +705,7 @@ fn main() -> Result<()> {
             spike_input_secs,
             record,
             window,
+            lean_mode,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
@@ -704,6 +715,7 @@ fn main() -> Result<()> {
             spike_input_secs,
             record,
             window,
+            lean_mode,
         }),
         Commands::ReplayChart {
             manifest,
@@ -715,6 +727,7 @@ fn main() -> Result<()> {
             save_session,
             render,
             base_dir,
+            lean_mode,
         } => replay_chart::run(replay_chart::ReplayChartArgs {
             manifest,
             chart,
@@ -725,6 +738,7 @@ fn main() -> Result<()> {
             save_session,
             render,
             base_dir,
+            lean_mode,
         }),
         Commands::RenderSuite {
             manifest,
