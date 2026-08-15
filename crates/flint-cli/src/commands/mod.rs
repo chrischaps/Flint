@@ -20,6 +20,7 @@ pub mod spline_edit;
 pub mod calibrate;
 pub mod latency_files;
 pub mod play_chart;
+pub mod play_chart_window;
 pub mod play_suite;
 pub mod render_suite;
 pub mod replay_chart;

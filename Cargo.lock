@@ -1619,6 +1619,7 @@ name = "flint-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "clap",
  "egui",
  "egui-snarl",

@@ -3,6 +3,11 @@
 //! sample-locked, spawns the 1 kHz capture thread, and shows the shared
 //! status readout. Judgment, coherence, and session recording hang off this
 //! loop as they land. Dev-only surface — never part of a player-facing build.
+//!
+//! Two front ends share one [`ChartSession`]: the console loop below, and
+//! the `--window` mode in `play_chart_window` (a focused window keeps
+//! gamepad-to-keyboard mappers from typing into the terminal, and carries
+//! the wordless visual cues).
 
 use anyhow::{bail, Context, Result};
 use flint_music::chart_eval::ChartEval;
@@ -32,11 +37,14 @@ pub struct PlayChartArgs {
     /// Run the input-granularity spike for this many seconds and exit
     /// (wiggle the stick; no audio involved).
     pub spike_input_secs: Option<u64>,
+    /// Open a bare graphical window instead of running console-only.
+    pub window: bool,
 }
 
 pub fn run(args: PlayChartArgs) -> Result<()> {
     let base_dir = args
         .base_dir
+        .clone()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
@@ -44,268 +52,454 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
         return run_spike(&base_dir, secs);
     }
 
-    // --- validate both files first ------------------------------------------
-    let manifest = SuiteManifest::load(Path::new(&args.manifest))
-        .with_context(|| format!("loading {}", args.manifest))?;
-    let chart = Chart::load(Path::new(&args.chart))
-        .with_context(|| format!("loading {}", args.chart))?;
-    let mut issues = validate_manifest(&manifest);
-    issues.extend(validate_manifest_assets(&manifest, &base_dir));
-    issues.extend(validate_chart(&chart, &manifest));
-    if !issues.is_empty() {
-        for i in &issues {
-            eprintln!("{i}");
+    let session = ChartSession::open(&args, &base_dir)?;
+    if args.window {
+        super::play_chart_window::run_windowed(session)
+    } else {
+        run_cli(session)
+    }
+}
+
+/// Everything one play-through owns, front-end agnostic. A front end calls
+/// [`ChartSession::tick`] at its own cadence (the audio clock is the master
+/// clock — ticking merely drains queues and advances judgment), plus
+/// [`ChartSession::reload_config`] / [`ChartSession::finish`] on its own
+/// input gestures.
+pub struct ChartSession {
+    player: RealtimePlayer,
+    judge: Judge,
+    coherence: Coherence,
+    judgment_cfg: JudgmentConfig,
+    log: JsonlWriter,
+    session_writer: Option<(flint_music::replay::SessionWriter, PathBuf)>,
+    bridge: ClockBridge,
+    capture_handle: Option<flint_input_capture::CaptureHandle>,
+    input_rx: Option<std::sync::mpsc::Receiver<InputEvent>>,
+    config_path: PathBuf,
+    end_sample: i64,
+    sample_rate: u32,
+    /// Second evaluator instance, kept out of the judge for visual lookups.
+    visual_eval: ChartEval,
+    last_bar: i64,
+    lean: [f64; 2],
+    records: Vec<JudgmentRecord>,
+    hits: u64,
+    misses: u64,
+    spurious: u64,
+    abs_err_sum_ms: f64,
+    last_pulse_at: Option<Instant>,
+}
+
+#[derive(PartialEq)]
+pub enum Tick {
+    Running,
+    Finished,
+}
+
+/// Snapshot the window shader draws from. No numbers reach the screen —
+/// these drive glows and breathing, not meters.
+pub struct VisualFrame {
+    /// 0..1 within the current beat / bar (0 at the boundary).
+    pub beat_phase: f32,
+    pub bar_phase: f32,
+    /// Player lean (deadzoned) and the chart's lean target, both in [-1,1]².
+    pub lean: [f32; 2],
+    pub target: [f32; 2],
+    pub coherence: f32,
+    /// Seconds since the player's most recent pulse press (large if none).
+    pub pulse_age_s: f32,
+    pub preroll: bool,
+}
+
+impl ChartSession {
+    pub fn open(args: &PlayChartArgs, base_dir: &Path) -> Result<Self> {
+        // --- validate both files first --------------------------------------
+        let manifest = SuiteManifest::load(Path::new(&args.manifest))
+            .with_context(|| format!("loading {}", args.manifest))?;
+        let chart = Chart::load(Path::new(&args.chart))
+            .with_context(|| format!("loading {}", args.chart))?;
+        let mut issues = validate_manifest(&manifest);
+        issues.extend(validate_manifest_assets(&manifest, base_dir));
+        issues.extend(validate_chart(&chart, &manifest));
+        if !issues.is_empty() {
+            for i in &issues {
+                eprintln!("{i}");
+            }
+            bail!("validation failed ({} issue(s)); not playing", issues.len());
         }
-        bail!("validation failed ({} issue(s)); not playing", issues.len());
+
+        // --- offsets ---------------------------------------------------------
+        let latency_ms = match latest_latency_ms(base_dir) {
+            Some((file, ms)) => {
+                println!("measured output latency: {ms:.1} ms (compensating; from {file})");
+                Some(ms)
+            }
+            None => {
+                println!(
+                    "measured output latency: NONE ON RECORD — run spikes/latency_harness \
+                     and commit its log to logs/latency/"
+                );
+                None
+            }
+        };
+        let calibration_ms = match latest_calibration_ms(base_dir) {
+            Some((file, ms)) => {
+                println!("tap calibration: {ms:+.1} ms (from {file})");
+                ms
+            }
+            None => {
+                println!("tap calibration: none on record (run `flint calibrate`)");
+                0.0
+            }
+        };
+        // Total judgment offset: what the ear hears, adjusted by the player's
+        // own measured tap tendency.
+        let offset_samples = ((latency_ms.unwrap_or(0.0) + calibration_ms) / 1000.0
+            * manifest.sample_rate as f64)
+            .round() as i64;
+
+        // --- session + judgment ----------------------------------------------
+        let player = RealtimePlayer::start(&manifest, base_dir, latency_ms)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        // Judgment arithmetic is pure: event samples arrive already compensated
+        // (capture subtracts the offset), so its conductor carries none.
+        let judge_conductor = Conductor::new(&manifest, None);
+        let visual_eval =
+            ChartEval::new(&chart, &judge_conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let eval = ChartEval::new(&chart, &judge_conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let judgment_cfg = JudgmentConfig::default();
+        let judge = Judge::new(eval, judge_conductor, judgment_cfg);
+
+        // Coherence config: explicit path must load; the default path is
+        // optional. `r`+Enter (or `r` in the window) reloads it mid-session.
+        let config_explicit = args.config.is_some();
+        let config_path = args
+            .config
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| base_dir.join("config/coherence.toml"));
+        let config_required = config_explicit || config_path.exists();
+        let coherence_cfg = if config_required {
+            let cfg = CoherenceConfig::load(&config_path)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .with_context(|| format!("loading {}", config_path.display()))?;
+            println!(
+                "coherence config: {} (r+Enter = reload, q+Enter = quit)",
+                config_path.display()
+            );
+            cfg
+        } else {
+            println!("coherence config: built-in defaults (no {})", config_path.display());
+            CoherenceConfig::default()
+        };
+        let coherence = Coherence::new(coherence_cfg);
+
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let log_path = base_dir.join(format!("logs/judgment/judgment-{epoch}.jsonl"));
+        let header = serde_json::json!({
+            "t": "header", "schema": 0,
+            "suite": manifest.id, "chart": args.chart,
+            "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": calibration_ms,
+            "grid_beats": judgment_cfg.grid_beats,
+            "coherence_config": coherence_cfg.to_json(),
+            "epoch_s": epoch,
+        });
+        let log = JsonlWriter::create(&log_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!("judgment log: {}", log_path.display());
+
+        let session_writer = match &args.record {
+            Some(name) => {
+                let path = base_dir.join(format!("logs/sessions/{name}.session.jsonl"));
+                let session_header = flint_music::replay::SessionHeader {
+                    schema: 0,
+                    suite: manifest.id.clone(),
+                    chart: args.chart.clone(),
+                    sample_rate: manifest.sample_rate,
+                    latency_ms: latency_ms.unwrap_or(0.0),
+                    calibration_ms,
+                    coherence_config: Some(coherence_cfg.to_json()),
+                    capture: Some(serde_json::json!({
+                        "poll_hz": 1000, "deadzone": 0.12,
+                    })),
+                };
+                let w = flint_music::replay::SessionWriter::create(&path, &session_header)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                println!("recording session: {}", path.display());
+                Some((w, path))
+            }
+            None => None,
+        };
+
+        let bridge = ClockBridge::new(manifest.sample_rate);
+        let capture = flint_input_capture::spawn(
+            bridge.clone(),
+            flint_input_capture::CaptureConfig {
+                offset_samples,
+                ..Default::default()
+            },
+        );
+        let (capture_handle, input_rx) = match capture {
+            Ok(pair) => {
+                println!("gamepad capture running (left stick = lean, South/RT = pulse)");
+                (Some(pair.0), Some(pair.1))
+            }
+            Err(e) => {
+                println!("gamepad capture unavailable ({e}); playing without input");
+                (None, None)
+            }
+        };
+
+        let end_sample = args
+            .bars
+            .map(|b| player.session.conductor.sample_at_bar(b as i64, 0.0))
+            .unwrap_or(i64::MAX);
+        let sample_rate = manifest.sample_rate;
+
+        Ok(Self {
+            player,
+            judge,
+            coherence,
+            judgment_cfg,
+            log,
+            session_writer,
+            bridge,
+            capture_handle,
+            input_rx,
+            config_path,
+            end_sample,
+            sample_rate,
+            visual_eval,
+            last_bar: i64::MIN,
+            lean: [0.0; 2],
+            records: Vec::new(),
+            hits: 0,
+            misses: 0,
+            spurious: 0,
+            abs_err_sum_ms: 0.0,
+            last_pulse_at: None,
+        })
     }
 
-    // --- offsets -------------------------------------------------------------
-    let latency_ms = match latest_latency_ms(&base_dir) {
-        Some((file, ms)) => {
-            println!("measured output latency: {ms:.1} ms (compensating; from {file})");
-            Some(ms)
-        }
-        None => {
-            println!(
-                "measured output latency: NONE ON RECORD — run spikes/latency_harness \
-                 and commit its log to logs/latency/"
-            );
-            None
-        }
-    };
-    let calibration_ms = match latest_calibration_ms(&base_dir) {
-        Some((file, ms)) => {
-            println!("tap calibration: {ms:+.1} ms (from {file})");
-            ms
-        }
-        None => {
-            println!("tap calibration: none on record (run `flint calibrate`)");
-            0.0
-        }
-    };
-    // Total judgment offset: what the ear hears, adjusted by the player's
-    // own measured tap tendency.
-    let offset_samples = ((latency_ms.unwrap_or(0.0) + calibration_ms) / 1000.0
-        * manifest.sample_rate as f64)
-        .round() as i64;
+    /// One iteration: pump the scheduler, feed the clock bridge, drain input
+    /// into judgment, step coherence, log, and print the per-bar status line.
+    pub fn tick(&mut self) -> Result<Tick> {
+        self.player.session.pump();
+        self.bridge.observe(Instant::now(), self.player.session.clock_sample());
 
-    // --- session + judgment --------------------------------------------------
-    let mut player = RealtimePlayer::start(&manifest, &base_dir, latency_ms)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    // Judgment arithmetic is pure: event samples arrive already compensated
-    // (capture subtracts the offset), so its conductor carries none.
-    let judge_conductor = Conductor::new(&manifest, None);
-    let eval = ChartEval::new(&chart, &judge_conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let judgment_cfg = JudgmentConfig::default();
-    let mut judge = Judge::new(eval, judge_conductor, judgment_cfg);
+        let pos = self.player.session.now();
 
-    // Coherence config: explicit path must load; the default path is
-    // optional. Enter reloads it mid-session, `q` + Enter quits.
-    let config_explicit = args.config.is_some();
-    let config_path = args
-        .config
-        .map(PathBuf::from)
-        .unwrap_or_else(|| base_dir.join("config/coherence.toml"));
-    let config_required = config_explicit || config_path.exists();
-    let coherence_cfg = if config_required {
-        let cfg = CoherenceConfig::load(&config_path)
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .with_context(|| format!("loading {}", config_path.display()))?;
-        println!("coherence config: {} (r+Enter = reload, q+Enter = quit)", config_path.display());
-        cfg
-    } else {
-        println!("coherence config: built-in defaults (no {})", config_path.display());
-        CoherenceConfig::default()
-    };
-    let mut coherence = Coherence::new(coherence_cfg);
-    let stdin_rx = spawn_stdin_reader();
-
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let log_path = base_dir.join(format!("logs/judgment/judgment-{epoch}.jsonl"));
-    let header = serde_json::json!({
-        "t": "header", "schema": 0,
-        "suite": manifest.id, "chart": args.chart,
-        "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": calibration_ms,
-        "grid_beats": judgment_cfg.grid_beats,
-        "coherence_config": coherence_cfg.to_json(),
-        "epoch_s": epoch,
-    });
-    let mut log = JsonlWriter::create(&log_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!("judgment log: {}", log_path.display());
-
-    let mut session_writer = match &args.record {
-        Some(name) => {
-            let path = base_dir.join(format!("logs/sessions/{name}.session.jsonl"));
-            let session_header = flint_music::replay::SessionHeader {
-                schema: 0,
-                suite: manifest.id.clone(),
-                chart: args.chart.clone(),
-                sample_rate: manifest.sample_rate,
-                latency_ms: latency_ms.unwrap_or(0.0),
-                calibration_ms,
-                coherence_config: Some(coherence_cfg.to_json()),
-                capture: Some(serde_json::json!({
-                    "poll_hz": 1000, "deadzone": 0.12,
-                })),
-            };
-            let w = flint_music::replay::SessionWriter::create(&path, &session_header)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!("recording session: {}", path.display());
-            Some((w, path))
-        }
-        None => None,
-    };
-
-    let bridge = ClockBridge::new(manifest.sample_rate);
-    let capture = flint_input_capture::spawn(
-        bridge.clone(),
-        flint_input_capture::CaptureConfig {
-            offset_samples,
-            ..Default::default()
-        },
-    );
-    let (capture_handle, input_rx) = match capture {
-        Ok(pair) => {
-            println!("gamepad capture running (left stick = lean, South/RT = pulse)");
-            (Some(pair.0), Some(pair.1))
-        }
-        Err(e) => {
-            println!("gamepad capture unavailable ({e}); playing without input");
-            (None, None)
-        }
-    };
-
-    let end_sample = args
-        .bars
-        .map(|b| player.session.conductor.sample_at_bar(b as i64, 0.0))
-        .unwrap_or(i64::MAX);
-
-    // --- main loop -----------------------------------------------------------
-    let mut last_bar = i64::MIN;
-    let mut lean = [0.0f64; 2];
-    let mut records = Vec::new();
-    let (mut hits, mut misses, mut spurious) = (0u64, 0u64, 0u64);
-    let mut abs_err_sum_ms = 0.0f64;
-    loop {
-        std::thread::sleep(Duration::from_millis(2));
-        player.session.pump();
-        bridge.observe(Instant::now(), player.session.clock_sample());
-
-        let pos = player.session.now();
-
-        if let Some(rx) = &input_rx {
+        if let Some(rx) = &self.input_rx {
             while let Ok(ev) = rx.try_recv() {
-                if let InputEvent::Lean(l) = &ev {
-                    lean = [l.x, l.y];
+                match &ev {
+                    InputEvent::Lean(l) => {
+                        self.lean = [l.x, l.y];
+                    }
+                    InputEvent::Pulse(_) => {
+                        self.last_pulse_at = Some(Instant::now());
+                    }
                 }
                 if ev.sample() >= 0 {
-                    if let Some((w, _)) = &mut session_writer {
-                        w.write(&ev, manifest.sample_rate)
+                    if let Some((w, _)) = &mut self.session_writer {
+                        w.write(&ev, self.sample_rate)
                             .map_err(|e| anyhow::anyhow!("{e}"))?;
                     }
-                    judge.ingest(&ev, &mut records);
+                    self.judge.ingest(&ev, &mut self.records);
                 }
             }
         }
         if pos.sample >= 0 {
-            judge.advance_to(pos.sample, &mut records);
+            self.judge.advance_to(pos.sample, &mut self.records);
         }
-        if !records.is_empty() {
-            let beats_per_bar = player
-                .session
-                .conductor
-                .tempo()
-                .anchor_at(pos.sample.max(0))
-                .map(|a| a.beats_per_bar as f64)
-                .unwrap_or(4.0);
-            let value = coherence.step(&records, judgment_cfg.grid_beats, beats_per_bar);
-            log.write_value(&serde_json::json!({
-                "t": "coherence", "sample": pos.sample, "value": value,
-            }))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if !self.records.is_empty() {
+            let beats_per_bar = self.beats_per_bar(pos.sample.max(0));
+            let value =
+                self.coherence
+                    .step(&self.records, self.judgment_cfg.grid_beats, beats_per_bar);
+            self.log
+                .write_value(&serde_json::json!({
+                    "t": "coherence", "sample": pos.sample, "value": value,
+                }))
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
-        for rec in records.drain(..) {
+        for rec in self.records.drain(..) {
             match &rec {
                 JudgmentRecord::Pulse { err_ms, .. } => {
-                    hits += 1;
-                    abs_err_sum_ms += err_ms.abs();
+                    self.hits += 1;
+                    self.abs_err_sum_ms += err_ms.abs();
                     println!("  pulse {err_ms:+.1} ms");
                 }
-                JudgmentRecord::Miss { .. } => misses += 1,
-                JudgmentRecord::Spurious { .. } => spurious += 1,
+                JudgmentRecord::Miss { .. } => self.misses += 1,
+                JudgmentRecord::Spurious { .. } => self.spurious += 1,
                 JudgmentRecord::Track { .. } => {}
             }
-            log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
+            self.log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
 
+        if pos.sample < 0 {
+            return Ok(Tick::Running); // pre-roll
+        }
+        if pos.sample >= self.end_sample || self.player.session.mixer.all_stopped() {
+            return Ok(Tick::Finished);
+        }
+
+        if pos.bar != self.last_bar {
+            self.last_bar = pos.bar;
+            let section = self.player.session.conductor.section_at_sample(pos.sample);
+            println!(
+                "{} | lean ({:+.2},{:+.2})",
+                status_line_with_coherence(
+                    &pos,
+                    section,
+                    &self.player.session.mixer,
+                    self.coherence.value()
+                ),
+                self.lean[0],
+                self.lean[1],
+            );
+            self.log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        Ok(Tick::Running)
+    }
+
+    pub fn reload_config(&mut self) -> Result<()> {
+        match CoherenceConfig::load(&self.config_path) {
+            Ok(cfg) => {
+                self.coherence.reconfigure(cfg);
+                println!("coherence config reloaded (value carries over)");
+                let sample = self.player.session.now().sample;
+                self.log
+                    .write_value(&serde_json::json!({
+                        "t": "config_reload", "sample": sample,
+                        "coherence_config": cfg.to_json(),
+                    }))
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            Err(e) => println!("reload failed, keeping current config: {e}"),
+        }
+        Ok(())
+    }
+
+    /// What the shader needs this frame, straight from the conductor and the
+    /// chart evaluator — never from judgment records.
+    pub fn visual_frame(&self) -> VisualFrame {
+        let pos = self.player.session.now();
+        let preroll = pos.sample < 0;
+        let beats_per_bar = self.beats_per_bar(pos.sample.max(0));
+        let target = if preroll {
+            [0.0, 0.0]
+        } else {
+            self.visual_eval
+                .sample_channel("lean", pos.beat)
+                .and_then(|v| v.as_vec2())
+                .unwrap_or([0.0, 0.0])
+        };
+        VisualFrame {
+            beat_phase: (pos.beat.rem_euclid(1.0)) as f32,
+            bar_phase: (pos.beat_in_bar / beats_per_bar).clamp(0.0, 1.0) as f32,
+            lean: [self.lean[0] as f32, self.lean[1] as f32],
+            target: [target[0] as f32, target[1] as f32],
+            coherence: self.coherence.value() as f32,
+            pulse_age_s: self
+                .last_pulse_at
+                .map(|t| t.elapsed().as_secs_f32())
+                .unwrap_or(1e6),
+            preroll,
+        }
+    }
+
+    pub fn finish(mut self) -> Result<()> {
+        drop(self.capture_handle.take()); // stop capture before the audio manager
+        self.judge.finish(&mut self.records);
+        for rec in self.records.drain(..) {
+            match &rec {
+                JudgmentRecord::Miss { .. } => self.misses += 1,
+                JudgmentRecord::Spurious { .. } => self.spurious += 1,
+                _ => {}
+            }
+            self.log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        self.log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mean_ms = if self.hits > 0 {
+            self.abs_err_sum_ms / self.hits as f64
+        } else {
+            0.0
+        };
+        println!(
+            "done. pulses hit {} (mean |err| {mean_ms:.1} ms), missed {}, spurious {}",
+            self.hits, self.misses, self.spurious
+        );
+        if let Some((mut w, path)) = self.session_writer.take() {
+            w.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("session recorded: {} ({} event(s))", path.display(), w.written());
+        }
+        Ok(())
+    }
+
+    fn beats_per_bar(&self, sample: i64) -> f64 {
+        self.player
+            .session
+            .conductor
+            .tempo()
+            .anchor_at(sample)
+            .map(|a| a.beats_per_bar as f64)
+            .unwrap_or(4.0)
+    }
+}
+
+/// Console front end: 2 ms cadence, line-buffered stdin for control.
+fn run_cli(mut session: ChartSession) -> Result<()> {
+    let stdin_rx = spawn_stdin_reader();
+    loop {
+        std::thread::sleep(Duration::from_millis(2));
+        if session.tick()? == Tick::Finished {
+            break;
+        }
         match stdin_rx.try_recv() {
             Ok(StdinCommand::Quit) => {
                 println!("quit requested");
                 break;
             }
-            Ok(StdinCommand::Reload) => match CoherenceConfig::load(&config_path) {
-                Ok(cfg) => {
-                    coherence.reconfigure(cfg);
-                    println!("coherence config reloaded (value carries over)");
-                    log.write_value(&serde_json::json!({
-                        "t": "config_reload", "sample": pos.sample,
-                        "coherence_config": cfg.to_json(),
-                    }))
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                }
-                Err(e) => println!("reload failed, keeping current config: {e}"),
-            },
+            Ok(StdinCommand::Reload) => session.reload_config()?,
             Err(_) => {}
         }
-
-        if pos.sample < 0 {
-            continue; // pre-roll
-        }
-        if pos.sample >= end_sample || player.session.mixer.all_stopped() {
-            break;
-        }
-
-        if pos.bar != last_bar {
-            last_bar = pos.bar;
-            let section = player.session.conductor.section_at_sample(pos.sample);
-            println!(
-                "{} | lean ({:+.2},{:+.2})",
-                status_line_with_coherence(&pos, section, &player.session.mixer, coherence.value()),
-                lean[0],
-                lean[1],
-            );
-            log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
-        }
     }
+    session.finish()
+}
 
-    // --- wrap up -------------------------------------------------------------
-    drop(capture_handle); // stop the capture thread before the audio manager
-    judge.finish(&mut records);
-    for rec in records.drain(..) {
-        match &rec {
-            JudgmentRecord::Miss { .. } => misses += 1,
-            JudgmentRecord::Spurious { .. } => spurious += 1,
-            _ => {}
-        }
-        log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
-    }
-    log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mean_ms = if hits > 0 {
-        abs_err_sum_ms / hits as f64
+fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
+    let pads = flint_input_capture::connected_gamepads().map_err(|e| anyhow::anyhow!("{e}"))?;
+    if pads.is_empty() {
+        eprintln!(
+            "WARNING: the input backend sees NO gamepads — the spike will record zero \
+             events.\nOn Windows this build uses the XInput backend; DirectInput-only \
+             pads (e.g. DualShock/DualSense without a mapper) are invisible to it."
+        );
     } else {
-        0.0
-    };
-    println!(
-        "done. pulses hit {hits} (mean |err| {mean_ms:.1} ms), missed {misses}, spurious {spurious}"
-    );
-    println!("judgment log: {}", log_path.display());
-    if let Some((mut w, path)) = session_writer {
-        w.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
-        println!("session recorded: {} ({} event(s))", path.display(), w.written());
+        println!("gamepad(s) visible: {}", pads.join(", "));
     }
+    println!("input-granularity spike: wiggle the stick for {secs} s...");
+    let report =
+        flint_input_capture::measure_granularity(Duration::from_secs(secs), 1000)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!(
+        "{} events; receipt median {:.3} ms, driver median {:.3} ms",
+        report.events, report.receipt_median_ms, report.driver_median_ms
+    );
+    let dir = base_dir.join("logs/latency");
+    std::fs::create_dir_all(&dir).context("creating logs/latency")?;
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "host".into());
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("input-granularity-{host}-{epoch}.toml"));
+    std::fs::write(&path, report.to_toml()).with_context(|| format!("writing {path:?}"))?;
+    println!("wrote {}", path.display());
     Ok(())
 }
 
@@ -347,38 +541,4 @@ fn spawn_stdin_reader() -> std::sync::mpsc::Receiver<StdinCommand> {
         })
         .ok();
     rx
-}
-
-fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
-    let pads = flint_input_capture::connected_gamepads().map_err(|e| anyhow::anyhow!("{e}"))?;
-    if pads.is_empty() {
-        eprintln!(
-            "WARNING: the input backend sees NO gamepads — the spike will record zero \
-             events.\nOn Windows this build uses the XInput backend; DirectInput-only \
-             pads (e.g. DualShock/DualSense without a mapper) are invisible to it."
-        );
-    } else {
-        println!("gamepad(s) visible: {}", pads.join(", "));
-    }
-    println!("input-granularity spike: wiggle the stick for {secs} s...");
-    let report =
-        flint_input_capture::measure_granularity(Duration::from_secs(secs), 1000)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!(
-        "{} events; receipt median {:.3} ms, driver median {:.3} ms",
-        report.events, report.receipt_median_ms, report.driver_median_ms
-    );
-    let dir = base_dir.join("logs/latency");
-    std::fs::create_dir_all(&dir).context("creating logs/latency")?;
-    let host = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "host".into());
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("input-granularity-{host}-{epoch}.toml"));
-    std::fs::write(&path, report.to_toml()).with_context(|| format!("writing {path:?}"))?;
-    println!("wrote {}", path.display());
-    Ok(())
 }

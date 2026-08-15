@@ -267,6 +267,11 @@ enum Commands {
         /// Record the input session to logs/sessions/<NAME>.session.jsonl
         #[arg(long)]
         record: Option<String>,
+
+        /// Open a bare visual window (absorbs mapper keystrokes; shows
+        /// wordless cues). Console output continues underneath.
+        #[arg(long)]
+        window: bool,
     },
 
     /// Replay a recorded or synthetic session through judgment, fully headless
@@ -689,6 +694,7 @@ fn main() -> Result<()> {
             config,
             spike_input_secs,
             record,
+            window,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
@@ -697,6 +703,7 @@ fn main() -> Result<()> {
             config,
             spike_input_secs,
             record,
+            window,
         }),
         Commands::ReplayChart {
             manifest,
