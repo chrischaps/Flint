@@ -12,6 +12,7 @@
 //! `docs/schema/manifest-schema-v0.md` in the game repo.
 
 pub mod chart;
+pub mod conductor;
 pub mod manifest;
 pub mod playback;
 pub mod probe;
@@ -19,6 +20,7 @@ pub mod tempo;
 pub mod validate;
 
 pub use chart::Chart;
+pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use manifest::SuiteManifest;
 pub use tempo::TempoMap;
 pub use validate::{validate_chart, validate_manifest, validate_manifest_assets, Issue};
