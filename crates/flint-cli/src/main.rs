@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, edit_router, entity, gen, gen_preview, init, play, prefab, preview, query, render,
-    scene, schema, spline_edit, terrain_edit, tex_edit, validate,
+    scene, schema, spline_edit, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -190,6 +190,24 @@ enum Commands {
         /// Output format (json or toml)
         #[arg(long, default_value = "text")]
         format: String,
+    },
+
+    /// Validate a musical suite manifest (and optional beatmap chart)
+    ValidateSuite {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Beatmap chart (.chart.toml) to cross-check against the manifest
+        #[arg(long)]
+        chart: Option<String>,
+
+        /// Skip the asset pass (stem file existence/sample-rate/duration)
+        #[arg(long)]
+        no_assets: bool,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
     },
 
     /// Prefab operations
@@ -502,6 +520,17 @@ fn main() -> Result<()> {
             output_diff,
             schemas,
             format,
+        }),
+        Commands::ValidateSuite {
+            manifest,
+            chart,
+            no_assets,
+            base_dir,
+        } => validate_suite::run(validate_suite::ValidateSuiteArgs {
+            manifest,
+            chart,
+            no_assets,
+            base_dir,
         }),
         Commands::Play {
             scene,

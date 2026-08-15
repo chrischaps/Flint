@@ -16,6 +16,7 @@ members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-music",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -45,6 +46,7 @@ default-members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-music",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -126,6 +128,9 @@ noise = "0.9"
 rand = "0.9"
 rand_chacha = "0.9"
 
+# Audio probing (validator)
+symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "flac"] }
+
 # glTF
 gltf = "1.4"
 
@@ -152,6 +157,7 @@ flint-viewer = { path = "crates/flint-viewer" }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
+flint-music = { path = "crates/flint-music" }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }

@@ -1631,6 +1631,7 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-import",
+ "flint-music",
  "flint-physics",
  "flint-player",
  "flint-procgen",
@@ -1712,6 +1713,16 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "toml",
+]
+
+[[package]]
+name = "flint-music"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "symphonia",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

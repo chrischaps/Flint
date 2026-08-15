@@ -18,3 +18,4 @@ pub mod scene;
 pub mod schema;
 pub mod spline_edit;
 pub mod validate;
+pub mod validate_suite;

@@ -1,0 +1,54 @@
+//! Musical suite manifests, beatmap charts, tempo maps, and validation.
+//!
+//! This crate is the data-contract layer for rhythm-driven Flint games
+//! ("linear composition, adaptive playback"): a per-suite TOML manifest
+//! (tempo map, sections, re-entry points, fixed six-bus stem inventory) and a
+//! per-suite beatmap chart (continuous input curves, discrete pulses, scene
+//! cues), plus the validator that cross-checks both against each other and
+//! against the stem files on disk.
+//!
+//! The schema is pinned by golden fixtures in the game repository; when this
+//! code and those fixtures disagree, the fixtures are correct. Schema doc:
+//! `docs/schema/manifest-schema-v0.md` in the game repo.
+
+pub mod chart;
+pub mod manifest;
+pub mod probe;
+pub mod tempo;
+pub mod validate;
+
+pub use chart::Chart;
+pub use manifest::SuiteManifest;
+pub use tempo::TempoMap;
+pub use validate::{validate_chart, validate_manifest, validate_manifest_assets, Issue};
+
+/// The one schema version this build understands.
+pub const SCHEMA_VERSION: i64 = 0;
+
+/// The fixed bus layout. Order matters for display; the set is the contract.
+pub const BUSES: [&str; 6] = [
+    "foundation",
+    "harmony",
+    "world_voice",
+    "home_theme",
+    "child_motif",
+    "texture",
+];
+
+/// Buses that must stay isolated (never share a file with any other bus).
+pub const MOTIF_BUSES: [&str; 2] = ["home_theme", "child_motif"];
+
+/// Continuous chart channels: (name, value arity). Vec2 channels range [-1,1],
+/// scalar channels range [0,1].
+pub const CHANNELS: [(&str, usize); 4] = [
+    ("lean", 2),
+    ("sway", 2),
+    ("pressure_l", 1),
+    ("pressure_r", 1),
+];
+
+/// Discrete pulse kinds.
+pub const PULSE_KINDS: [&str; 3] = ["pulse", "press", "flick"];
+
+/// Curve interpolation modes.
+pub const INTERPS: [&str; 3] = ["linear", "hold", "smooth"];

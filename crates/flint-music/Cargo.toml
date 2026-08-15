@@ -1,0 +1,12 @@
+[package]
+name = "flint-music"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Musical suite manifests, beatmap charts, tempo maps, and validation for rhythm-driven Flint games"
+
+[dependencies]
+flint-core = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+symphonia = { workspace = true }
