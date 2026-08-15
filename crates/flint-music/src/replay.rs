@@ -187,8 +187,23 @@ impl SessionWriter {
     }
 }
 
-/// Load a session file: header plus events, monotonicity re-checked.
+/// Load a session file keeping the raw timeline: each event as
+/// `(raw_sample, suite-stamped event)`, with `timeline_jump` records applied
+/// so the event stamps are the suite samples judgment consumed live.
+/// Pre-Phase-3 sessions have no jump records, so raw == suite throughout.
+pub fn read_session_raw(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEvent)>)> {
+    let (header, pairs) = read_session_inner(path)?;
+    Ok((header, pairs))
+}
+
+/// Load a session file: header plus suite-stamped events (the plain view;
+/// timeline jumps applied, raw timeline discarded).
 pub fn read_session(path: &Path) -> Result<(SessionHeader, Vec<InputEvent>)> {
+    let (header, pairs) = read_session_inner(path)?;
+    Ok((header, pairs.into_iter().map(|(_, ev)| ev).collect()))
+}
+
+fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEvent)>)> {
     let file = std::fs::File::open(path)?;
     let mut lines = std::io::BufReader::new(file).lines();
     let header_line = lines
@@ -206,6 +221,9 @@ pub fn read_session(path: &Path) -> Result<(SessionHeader, Vec<InputEvent>)> {
 
     let mut events = Vec::new();
     let mut last = i64::MIN;
+    // Samples in the file are raw clock samples (monotonic); suite stamps
+    // are reconstructed from timeline_jump records (identity when none).
+    let mut offset = 0i64;
     for (i, line) in lines.enumerate() {
         let line = line?;
         if line.trim().is_empty() {
@@ -224,16 +242,17 @@ pub fn read_session(path: &Path) -> Result<(SessionHeader, Vec<InputEvent>)> {
         }
         last = sample;
         let ev = match v.get("t").and_then(|t| t.as_str()) {
-            // Reintegration jump records ride along for the reactive replay
-            // path (E6); the plain event reader skips them.
-            Some("timeline_jump") => continue,
+            Some("timeline_jump") => {
+                offset = v.get("offset").and_then(|x| x.as_i64()).ok_or_else(|| bad("offset"))?;
+                continue;
+            }
             Some("lean") => InputEvent::Lean(LeanSample {
-                sample,
+                sample: sample - offset,
                 x: v.get("x").and_then(|x| x.as_f64()).ok_or_else(|| bad("x"))?,
                 y: v.get("y").and_then(|x| x.as_f64()).ok_or_else(|| bad("y"))?,
             }),
             Some("pulse") => InputEvent::Pulse(PulseEvent {
-                sample,
+                sample: sample - offset,
                 kind: v
                     .get("kind")
                     .and_then(|x| x.as_str())
@@ -245,7 +264,7 @@ pub fn read_session(path: &Path) -> Result<(SessionHeader, Vec<InputEvent>)> {
                 i + 2
             ))),
         };
-        events.push(ev);
+        events.push((sample, ev));
     }
     Ok((header, events))
 }

@@ -261,6 +261,8 @@ impl ChartSession {
             LadderConfig::default()
         };
         let ladder = Ladder::new(ladder_cfg);
+        let mut reintegrator = Reintegrator::new(manifest.reintegration.clone());
+        reintegrator.fade_ms = ladder.config().seam_fade_ms;
 
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -345,7 +347,7 @@ impl ChartSession {
             ladder_driver: LadderDriver::new(),
             ladder_path,
             ladder_params: LadderParams::clean(),
-            reintegrator: Reintegrator::new(manifest.reintegration.clone()),
+            reintegrator,
             reassembly: 1.0,
             seq_events: Vec::new(),
             end_sample,
@@ -545,6 +547,7 @@ impl ChartSession {
             match LadderConfig::load(&self.ladder_path) {
                 Ok(cfg) => {
                     self.ladder.reconfigure(cfg);
+                    self.reintegrator.fade_ms = self.ladder.config().seam_fade_ms;
                     println!("ladder config reloaded (level carries over)");
                     let sample = self.player.session.now().sample;
                     self.log

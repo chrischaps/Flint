@@ -321,6 +321,12 @@ enum Commands {
         #[arg(long, default_value = "arrival")]
         lean_mode: String,
 
+        /// Disintegration ladder TOML; with --render this makes the render
+        /// reactive (full fall-and-reintegration loop). Default:
+        /// config/ladder.toml if present.
+        #[arg(long)]
+        ladder: Option<String>,
+
         /// Directory the manifest's file paths are relative to (default: cwd)
         #[arg(long)]
         base_dir: Option<String>,
@@ -734,6 +740,7 @@ fn main() -> Result<()> {
             render,
             base_dir,
             lean_mode,
+            ladder,
         } => replay_chart::run(replay_chart::ReplayChartArgs {
             manifest,
             chart,
@@ -745,6 +752,7 @@ fn main() -> Result<()> {
             render,
             base_dir,
             lean_mode,
+            ladder,
         }),
         Commands::RenderSuite {
             manifest,

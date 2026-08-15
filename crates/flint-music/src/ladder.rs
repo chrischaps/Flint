@@ -105,6 +105,9 @@ pub struct FullFail {
 pub struct LadderConfig {
     pub rungs: Vec<Rung>,
     pub full_fail: FullFail,
+    /// Authored seam envelope (ms): the fade that carries the world out of
+    /// the old timeline at reintegration. An envelope, not a cut.
+    pub seam_fade_ms: f64,
 }
 
 impl Default for LadderConfig {
@@ -164,8 +167,8 @@ impl Default for LadderConfig {
                 ),
                 rung(
                     "dropout",
-                    0.64,
-                    0.71,
+                    0.68,
+                    0.74,
                     RungAudio {
                         lpf_hz: 900.0,
                         thin_db: BTreeMap::from([
@@ -190,11 +193,17 @@ impl Default for LadderConfig {
             // curves keep tracking error, and thus the fit floor, mild).
             // The whole band therefore sits high; the TOML is the tuning
             // surface if the chart's difficulty changes the anatomy.
+            // exit_above sits high on purpose: between misses the tracking
+            // integrator can climb well past 0.70 (especially in slower
+            // meters), and those sawtooth peaks must not cancel the hold —
+            // once the thread frays to enter_below, only a firm climb back
+            // (real re-engagement) saves the world.
             full_fail: FullFail {
-                enter_below: 0.62,
-                exit_above: 0.70,
+                enter_below: 0.66,
+                exit_above: 0.80,
                 hold_ms: 1_500.0,
             },
+            seam_fade_ms: 30.0,
         }
     }
 }
@@ -305,7 +314,16 @@ impl LadderConfig {
         if rungs.is_empty() {
             rungs = Self::default().rungs;
         }
-        let cfg = Self { rungs, full_fail };
+        let seam_fade_ms = root
+            .get("seam")
+            .and_then(|t| t.get("fade_ms"))
+            .and_then(toml_f64)
+            .unwrap_or_else(|| Self::default().seam_fade_ms);
+        let cfg = Self {
+            rungs,
+            full_fail,
+            seam_fade_ms,
+        };
         cfg.validate()?;
         Ok(cfg)
     }
@@ -363,6 +381,12 @@ impl LadderConfig {
         if !self.full_fail.hold_ms.is_finite() || self.full_fail.hold_ms < 0.0 {
             return err(format!("full_fail.hold_ms {}", self.full_fail.hold_ms));
         }
+        if !(5.0..=200.0).contains(&self.seam_fade_ms) {
+            return err(format!(
+                "seam.fade_ms {} out of range (5..200)",
+                self.seam_fade_ms
+            ));
+        }
         Ok(())
     }
 
@@ -375,6 +399,7 @@ impl LadderConfig {
                 "exit_above": self.full_fail.exit_above,
                 "hold_ms": self.full_fail.hold_ms,
             },
+            "seam": { "fade_ms": self.seam_fade_ms },
             "rungs": self.rungs.iter().map(|r| serde_json::json!({
                 "name": r.name,
                 "enter_below": r.enter_below,
@@ -703,8 +728,8 @@ mod tests {
         assert_eq!(l.observe(0.89), 0, "above exit (0.88) leaves");
         // A single big drop crosses several rungs at once.
         assert_eq!(l.observe(0.30), 3);
-        // 0.73 clears dropout's exit (0.71) but not warble's (0.79).
-        assert_eq!(l.observe(0.73), 2);
+        // 0.75 clears dropout's exit (0.74) but not warble's (0.79).
+        assert_eq!(l.observe(0.75), 2);
         assert_eq!(l.observe(0.95), 0, "full recovery walks all the way up");
     }
 

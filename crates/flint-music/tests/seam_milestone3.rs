@@ -149,6 +149,12 @@ struct M3Run {
 }
 
 fn run() -> M3Run {
+    run_model(FALL1_RAW, DURATION)
+}
+
+/// The reactive loop with a configurable first-fall time and render length —
+/// the E7 continuity sweep re-runs it at several fail timings.
+fn run_model(fall1_raw: i64, duration: i64) -> M3Run {
     let manifest = manifest();
     let chart = chart();
     let cfg = JudgmentConfig::default();
@@ -173,7 +179,7 @@ fn run() -> M3Run {
         events: vec![],
     };
     let render_cfg = OfflineRenderConfig {
-        duration_samples: DURATION,
+        duration_samples: duration,
         chunk_frames: CHUNK,
     };
 
@@ -209,7 +215,7 @@ fn run() -> M3Run {
         }
 
         // Attention transitions on raw time.
-        if attentive && raw >= FALL1_RAW && out.fails.is_empty() {
+        if attentive && raw >= fall1_raw && out.fails.is_empty() {
             attentive = false;
         }
         if let Some(f2) = fall2_raw {
@@ -379,12 +385,14 @@ fn milestone3_fall_seam_reassembly_twice_with_no_clicks() {
     );
     assert_eq!(*seen.last().unwrap(), 3, "the fall reaches the deepest rung");
 
-    // Each engagement happens at (or just past) its configured threshold.
+    // Each engagement happens at (or just past) its configured threshold. A
+    // miss impulse can legitimately cross two narrow rungs in one step, so
+    // look for the first trace entry at or past each level.
     for (i, rung) in ladder_cfg.rungs.iter().enumerate() {
         let at = r
             .level_trace
             .iter()
-            .find(|(raw, l)| (FALL1_RAW..seam1).contains(raw) && *l == i + 1)
+            .find(|(raw, l)| (FALL1_RAW..seam1).contains(raw) && *l >= i + 1)
             .map(|(raw, _)| *raw)
             .expect("rung engaged");
         let coh = r
@@ -483,6 +491,55 @@ fn milestone3_fall_seam_reassembly_twice_with_no_clicks() {
         "pulses during reassembly must be judged (got {})",
         r.reassembly_hits
     );
+}
+
+/// E7 continuity sweep: the seam stays click-free and lands the lead-bus
+/// tone wherever the fail happens — early, mid, and late in the content
+/// (the late fall crosses suite sample 960_000, so its checkpoint is the
+/// SECOND re-entry section, exercising the other manifest path).
+#[test]
+fn seam_sweep_fail_timings_stay_click_free() {
+    for fall1 in [2 * BAR_A + BAR_A / 2, 4 * BAR_A, 7 * BAR_A] {
+        let r = run_model(fall1, 20 * BAR_A);
+        for bar in 0..20 {
+            let raw = bar * BAR_A;
+            if let Some((_, v)) = r.coherence_trace.iter().find(|(s, _)| *s >= raw) {
+                eprintln!("  fall1={} raw bar {bar:2}: coherence {v:.3}", fall1 / BAR_A);
+            }
+        }
+        assert!(
+            !r.fails.is_empty(),
+            "fall at raw {fall1} never full-failed (min coherence {:?})",
+            r.coherence_trace
+                .iter()
+                .map(|(_, v)| *v)
+                .fold(f64::INFINITY, f64::min)
+        );
+        let f = &r.fails[0];
+        let expected_re_entry = if f.at_suite < 960_000 { 0 } else { 960_000 };
+        assert_eq!(f.re_entry, expected_re_entry, "checkpoint for fall at {fall1}");
+
+        let step = max_step(&r.audio);
+        assert!(step < 0.25, "fall at raw {fall1}: max step {step}");
+
+        let env = tone_envelope(&r.audio, SR, 880.0, WINDOW);
+        let transitions = find_tone_transitions(&env, WINDOW);
+        let tol = (2 * WINDOW + CHUNK) as i64 + 2_000;
+        assert!(
+            transitions
+                .iter()
+                .any(|(s, k)| *k == TransitionKind::Rise && (s - f.seam_raw).abs() <= tol),
+            "fall at raw {fall1}: no lead rise near seam {} ({transitions:?})",
+            f.seam_raw
+        );
+        eprintln!(
+            "sweep fall1={} bars: fail at suite {}, re-entry {}, seam raw {}, max step {step:.3}",
+            fall1 / BAR_A,
+            f.at_suite,
+            f.re_entry,
+            f.seam_raw
+        );
+    }
 }
 
 #[test]
