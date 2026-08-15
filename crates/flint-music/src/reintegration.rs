@@ -133,6 +133,10 @@ impl Reintegrator {
                 let params = ladder.params();
                 driver.apply(&params, now_seconds, params.ramp_ms, &mut session.mixer);
 
+                // The hold starts below `enter_below` and cancels only above
+                // `exit_above`: under neglect the value saw-tooths (miss
+                // impulses down, tracking integrator back up), and a peak
+                // poking over the enter threshold must not save the world.
                 let ff = ladder.config().full_fail;
                 if ladder.armed() && coherence < ff.enter_below {
                     let since = *self.below_since.get_or_insert(raw);
@@ -145,7 +149,7 @@ impl Reintegrator {
                             reassembly: 1.0,
                         });
                     }
-                } else {
+                } else if coherence > ff.exit_above {
                     self.below_since = None;
                 }
                 Ok(SeqTick {

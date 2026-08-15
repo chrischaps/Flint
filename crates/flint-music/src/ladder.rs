@@ -88,11 +88,16 @@ pub struct Rung {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FullFail {
-    /// Coherence below this (held for `hold_ms`) triggers reintegration.
-    /// Must sit below the deepest rung's `enter_below`; per ADR 0010 only
-    /// sustained pulse misses reach values under ~0.4, so this belongs there.
+    /// Coherence below this starts (or continues) the full-fail hold. Must
+    /// sit below the deepest rung's `enter_below`; per ADR 0010 only
+    /// sustained pulse misses reach values down there. Under sustained
+    /// neglect the value saw-tooths (miss impulses down, the tracking
+    /// integrator back up), so the hold has its own hysteresis:
     pub enter_below: f64,
-    /// Debounce: how long coherence must stay below `enter_below`.
+    /// The hold cancels only when coherence rises above this (> enter_below)
+    /// — a sawtooth peak poking over `enter_below` does not save the world.
+    pub exit_above: f64,
+    /// Debounce: how long the hold must run before reintegration fires.
     pub hold_ms: f64,
 }
 
@@ -124,8 +129,8 @@ impl Default for LadderConfig {
             rungs: vec![
                 rung(
                     "haze",
-                    0.72,
-                    0.80,
+                    0.82,
+                    0.88,
                     RungAudio {
                         lpf_hz: 2_400.0,
                         thin_db: BTreeMap::from([("texture".into(), -6.0)]),
@@ -139,8 +144,8 @@ impl Default for LadderConfig {
                 ),
                 rung(
                     "warble",
-                    0.52,
-                    0.61,
+                    0.72,
+                    0.79,
                     RungAudio {
                         lpf_hz: 1_400.0,
                         thin_db: BTreeMap::from([
@@ -159,8 +164,8 @@ impl Default for LadderConfig {
                 ),
                 rung(
                     "dropout",
-                    0.34,
-                    0.44,
+                    0.64,
+                    0.71,
                     RungAudio {
                         lpf_hz: 900.0,
                         thin_db: BTreeMap::from([
@@ -178,8 +183,16 @@ impl Default for LadderConfig {
                     },
                 ),
             ],
+            // Thresholds live where the signal lives. Measured on the
+            // Milestone-2-pinned coherence config over prototype-density
+            // charts: perfect play ≈ 1.0; sustained neglect equilibrates
+            // near 0.65 with miss-sawtooth dips to ≈ 0.60 (the gentle lean
+            // curves keep tracking error, and thus the fit floor, mild).
+            // The whole band therefore sits high; the TOML is the tuning
+            // surface if the chart's difficulty changes the anatomy.
             full_fail: FullFail {
-                enter_below: 0.18,
+                enter_below: 0.62,
+                exit_above: 0.70,
                 hold_ms: 1_500.0,
             },
         }
@@ -205,20 +218,16 @@ impl LadderConfig {
                 "ladder config: unknown schema_version {version}"
             )));
         }
-        let d = FullFail {
-            enter_below: 0.18,
-            hold_ms: 1_500.0,
-        };
+        let d = Self::default().full_fail;
         let ff = root.get("full_fail");
+        let ff_f = |key: &str, default: f64| {
+            ff.and_then(|t| t.get(key)).and_then(toml_f64).unwrap_or(default)
+        };
+        let enter_below = ff_f("enter_below", d.enter_below);
         let full_fail = FullFail {
-            enter_below: ff
-                .and_then(|t| t.get("enter_below"))
-                .and_then(toml_f64)
-                .unwrap_or(d.enter_below),
-            hold_ms: ff
-                .and_then(|t| t.get("hold_ms"))
-                .and_then(toml_f64)
-                .unwrap_or(d.hold_ms),
+            enter_below,
+            exit_above: ff_f("exit_above", (enter_below + 0.10).min(1.0)),
+            hold_ms: ff_f("hold_ms", d.hold_ms),
         };
 
         let mut rungs = Vec::new();
@@ -345,6 +354,12 @@ impl LadderConfig {
                 self.full_fail.enter_below
             ));
         }
+        if self.full_fail.exit_above <= self.full_fail.enter_below {
+            return err(format!(
+                "full_fail needs hysteresis: exit_above {} <= enter_below {}",
+                self.full_fail.exit_above, self.full_fail.enter_below
+            ));
+        }
         if !self.full_fail.hold_ms.is_finite() || self.full_fail.hold_ms < 0.0 {
             return err(format!("full_fail.hold_ms {}", self.full_fail.hold_ms));
         }
@@ -357,6 +372,7 @@ impl LadderConfig {
         serde_json::json!({
             "full_fail": {
                 "enter_below": self.full_fail.enter_below,
+                "exit_above": self.full_fail.exit_above,
                 "hold_ms": self.full_fail.hold_ms,
             },
             "rungs": self.rungs.iter().map(|r| serde_json::json!({
@@ -672,23 +688,23 @@ mod tests {
         assert_eq!(l.observe(0.5), 0);
         assert!(!l.armed());
         assert_eq!(l.observe(0.2), 0, "still unarmed, still clean");
-        l.observe(0.85); // clears the top rung's exit_above
+        l.observe(0.9); // clears the top rung's exit_above (0.88)
         assert!(l.armed());
-        assert_eq!(l.observe(0.5), 2, "armed: now the ladder engages");
+        assert_eq!(l.observe(0.5), 3, "armed: now the ladder engages");
     }
 
     #[test]
     fn descend_and_ascend_with_hysteresis() {
         let mut l = Ladder::new(LadderConfig::default());
         assert_eq!(l.observe(0.95), 0);
-        assert_eq!(l.observe(0.70), 1, "below rung 1 enter (0.72)");
+        assert_eq!(l.observe(0.80), 1, "below rung 1 enter (0.82)");
         // Noise around the boundary must not flicker: above enter, below exit.
-        assert_eq!(l.observe(0.75), 1, "inside hysteresis band stays");
-        assert_eq!(l.observe(0.81), 0, "above exit (0.80) leaves");
+        assert_eq!(l.observe(0.85), 1, "inside hysteresis band stays");
+        assert_eq!(l.observe(0.89), 0, "above exit (0.88) leaves");
         // A single big drop crosses several rungs at once.
         assert_eq!(l.observe(0.30), 3);
-        // 0.50 clears dropout's exit (0.44) but not warble's (0.61).
-        assert_eq!(l.observe(0.50), 2);
+        // 0.73 clears dropout's exit (0.71) but not warble's (0.79).
+        assert_eq!(l.observe(0.73), 2);
         assert_eq!(l.observe(0.95), 0, "full recovery walks all the way up");
     }
 
@@ -713,7 +729,7 @@ mod tests {
         assert_eq!(l.level(), 3);
         let mut cfg = LadderConfig::default();
         cfg.rungs.truncate(2);
-        cfg.full_fail.enter_below = 0.18; // still below rung 2's 0.52
+        cfg.full_fail.enter_below = 0.18; // still below rung 2's enter
         l.reconfigure(cfg);
         assert_eq!(l.level(), 2, "level clamps to the new rung count");
     }
