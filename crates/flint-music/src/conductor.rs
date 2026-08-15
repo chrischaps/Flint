@@ -136,6 +136,33 @@ impl Conductor {
             .take_while(|s| s.start_sample <= sample)
             .last()
     }
+
+    pub fn section_by_name(&self, name: &str) -> Option<&Section> {
+        self.sections.iter().find(|s| s.name == name)
+    }
+
+    /// The reintegration checkpoint for a full-fail at `sample`: the latest
+    /// manifest re-entry section starting at or before it, falling back to
+    /// the earliest re-entry section when the fail lands before any (the
+    /// validator guarantees `re_entry_sections` is non-empty and resolvable).
+    pub fn previous_re_entry(
+        &self,
+        sample: i64,
+        reintegration: &crate::manifest::Reintegration,
+    ) -> Option<&Section> {
+        let mut entries: Vec<&Section> = reintegration
+            .re_entry_sections
+            .iter()
+            .filter_map(|name| self.section_by_name(name))
+            .collect();
+        entries.sort_by_key(|s| s.start_sample);
+        entries
+            .iter()
+            .rev()
+            .find(|s| s.start_sample <= sample)
+            .or(entries.first())
+            .copied()
+    }
 }
 
 #[cfg(test)]

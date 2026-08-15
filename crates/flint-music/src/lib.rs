@@ -41,7 +41,7 @@ pub use input_stream::{InputEvent, LeanSample, PulseEvent};
 pub use judgment::{Judge, JudgmentConfig, JudgmentRecord};
 pub use manifest::SuiteManifest;
 pub use mixer::{BusMixer, BusState, StemBus};
-pub use offline::{render_offline, write_wav, OfflineRenderConfig};
+pub use offline::{render_offline, render_offline_with, write_wav, OfflineRenderConfig};
 pub use replay::{read_session, synthesize, SessionHeader, SessionWriter, SyntheticProfile};
 pub use scheduler::{BusAction, EventTime, FiredEvent, ScheduledEvent, Scheduler};
 pub use session::{RealtimePlayer, StemResolver, SuiteSession};

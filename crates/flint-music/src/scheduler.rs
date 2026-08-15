@@ -132,14 +132,29 @@ impl Scheduler {
         self.pending.len()
     }
 
+    /// Drop every event not yet handed to kira. Reintegration calls this at
+    /// full-fail: pending events were resolved against the old timeline and
+    /// would land at wrong musical positions after the seam. Returns how many
+    /// were discarded. Events already inside the horizon are kira's — they
+    /// cannot be withdrawn, which is one reason ladder moves don't use the
+    /// scheduler.
+    pub fn flush(&mut self) -> usize {
+        let n = self.pending.len();
+        self.pending.clear();
+        n
+    }
+
     /// Issue every pending event within `now_sample + horizon` as a
     /// clock-timed kira command (or immediately, with a warning, if its time
     /// has already passed). Returns what was issued, in order.
+    /// `tick_base` maps suite samples to clock ticks (`tick = sample +
+    /// tick_base`): the pre-roll length, plus the session's timeline offset
+    /// once reintegration seams exist.
     pub fn pump(
         &mut self,
         now_sample: i64,
         clock: &ClockHandle,
-        preroll_samples: u64,
+        tick_base: i64,
         mixer: &mut BusMixer,
     ) -> Vec<FiredEvent> {
         let mut fired = Vec::new();
@@ -150,7 +165,7 @@ impl Scheduler {
             let Reverse((key, EventKeyed(ev))) = self.pending.pop().expect("peeked");
             // Also immediate if the target tick would precede clock start
             // (an event scheduled before the pre-roll window can reach).
-            let late = key.sample < now_sample || key.sample + (preroll_samples as i64) < 0;
+            let late = key.sample < now_sample || key.sample + tick_base < 0;
             let start_time = if late {
                 tracing::warn!(
                     "event at sample {} issued late (play head at {}); firing immediately",
@@ -159,11 +174,11 @@ impl Scheduler {
                 );
                 StartTime::Immediate
             } else {
-                // Suite sample -> clock tick (the clock counts samples and
-                // started `preroll_samples` before suite sample 0).
+                // Suite sample -> clock tick via the caller's base (pre-roll
+                // plus any reintegration timeline offset).
                 StartTime::ClockTime(ClockTime::from_ticks_u64(
                     clock,
-                    (key.sample + preroll_samples as i64) as u64,
+                    (key.sample + tick_base) as u64,
                 ))
             };
             let tween = |ramp_ms: f64| Tween {

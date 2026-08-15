@@ -13,6 +13,7 @@ use flint_core::{FlintError, Result};
 use kira::backend::Backend;
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
+use kira::sound::PlaybackPosition;
 use kira::track::{TrackBuilder, TrackHandle};
 use kira::{AudioManager, Decibels, PlaybackRate, StartTime, Tween};
 
@@ -45,6 +46,9 @@ pub struct StemBus {
     track: TrackHandle,
     filter: FilterHandle,
     sound: Option<StaticSoundHandle>,
+    /// The stem's sound data, retained so reintegration can re-play it at a
+    /// new position (Arc-backed; the clone is cheap). `None` for silent buses.
+    data: Option<StaticSoundData>,
     pub state: BusState,
 }
 
@@ -85,6 +89,38 @@ impl StemBus {
     pub fn sound(&self) -> Option<&StaticSoundHandle> {
         self.sound.as_ref()
     }
+
+    /// Fade this bus's playing sound to silence and stop it. The tween's
+    /// `start_time`/`duration` are the authored seam envelope — this is how
+    /// reintegration leaves the old timeline without a hard cut.
+    pub fn stop(&mut self, fade: Tween) {
+        if let Some(sound) = &mut self.sound {
+            sound.stop(fade);
+            self.state.playing = false;
+        }
+    }
+
+    /// Play this bus's retained stem again from `start_position_samples`
+    /// (a position within the stem = a suite sample, since stems start at
+    /// suite sample 0), scheduled at `start_at`. Replaces the old handle;
+    /// detune resets to 0, which re-establishes sample-lock. Track-level
+    /// gain and LPF carry over untouched. No-op on silent buses.
+    pub fn replay_at(&mut self, start_position_samples: u64, start_at: StartTime) -> Result<()> {
+        let Some(data) = &self.data else {
+            return Ok(());
+        };
+        let handle = self
+            .track
+            .play(
+                data.start_position(PlaybackPosition::Samples(start_position_samples as usize))
+                    .start_time(start_at),
+            )
+            .map_err(|e| FlintError::AudioError(format!("bus '{}' replay: {e}", self.name)))?;
+        self.sound = Some(handle);
+        self.state.playing = true;
+        self.state.detune_semitones = 0.0;
+        Ok(())
+    }
 }
 
 /// All six buses, in canonical [`crate::BUSES`] order.
@@ -112,7 +148,7 @@ impl BusMixer {
             let mut track = manager
                 .add_sub_track(builder)
                 .map_err(|e| FlintError::AudioError(format!("bus '{name}': {e}")))?;
-            let sound = match data {
+            let sound = match &data {
                 Some(data) => Some(
                     track
                         .play(data.start_time(start_at))
@@ -129,6 +165,7 @@ impl BusMixer {
                 track,
                 filter,
                 sound,
+                data,
                 state,
             });
         }
@@ -153,6 +190,27 @@ impl BusMixer {
             .iter()
             .filter_map(|b| b.sound.as_ref())
             .all(|s| s.state() == kira::sound::PlaybackState::Stopped)
+    }
+
+    /// Fade every playing stem to silence and stop it (see [`StemBus::stop`]).
+    pub fn stop_all(&mut self, fade: Tween) {
+        for bus in &mut self.buses {
+            bus.stop(fade);
+        }
+    }
+
+    /// Re-play every non-silent stem from `start_position_samples`, all
+    /// scheduled at the same `start_at` — one shared clock time is what makes
+    /// the re-entry sample-locked, exactly like the initial start.
+    pub fn replay_all_at(
+        &mut self,
+        start_position_samples: u64,
+        start_at: StartTime,
+    ) -> Result<()> {
+        for bus in &mut self.buses {
+            bus.replay_at(start_position_samples, start_at)?;
+        }
+        Ok(())
     }
 
     /// Max pairwise stem position disagreement, in seconds. Positions are

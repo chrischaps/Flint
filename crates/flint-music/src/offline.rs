@@ -95,6 +95,26 @@ pub fn render_offline(
     cfg: &OfflineRenderConfig,
     mut observer: impl FnMut(&MusicalPosition, &BusMixer),
 ) -> Result<RenderResult> {
+    render_offline_with(manifest, stems, script, cfg, |pos, session| {
+        observer(pos, &session.mixer)
+    })
+}
+
+/// [`render_offline`] with a *director* instead of a read-only observer: the
+/// per-chunk callback gets the mutable session, so a coherence-reactive
+/// ladder or a reintegration sequencer can drive the mix mid-render — the
+/// same reactive loop the realtime harness runs, made deterministic. The
+/// director runs after the scheduler pump and before the chunk's audio.
+/// Output index 0 = suite sample 0; the render length is fixed in frames, so
+/// a seam that jumps the suite timeline backwards still renders the same
+/// number of samples.
+pub fn render_offline_with(
+    manifest: &SuiteManifest,
+    stems: &dyn StemResolver,
+    script: &EventScript,
+    cfg: &OfflineRenderConfig,
+    mut director: impl FnMut(&MusicalPosition, &mut SuiteSession),
+) -> Result<RenderResult> {
     if cfg.duration_samples <= 0 {
         return Err(FlintError::AudioError(
             "offline render: duration_samples must be positive".into(),
@@ -125,10 +145,11 @@ pub fn render_offline(
     let mut rendered = 0usize;
     while rendered < total_frames {
         fired.extend(session.pump());
+        let raw = rendered as i64 - preroll;
         let pos = session
             .conductor
-            .position_at_sample(rendered as i64 - preroll);
-        observer(&pos, &session.mixer);
+            .position_at_sample(session.suite_sample_for_raw(raw));
+        director(&pos, &mut session);
 
         let frames = cfg.chunk_frames.min(total_frames - rendered);
         let slice = &mut chunk[..frames * 2];

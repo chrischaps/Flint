@@ -65,6 +65,15 @@ pub struct SuiteSession {
     pub conductor: Conductor,
     pub scheduler: Scheduler,
     preroll_samples: u64,
+    /// Reintegration timeline map: `suite_sample = raw_clock_sample -
+    /// timeline_offset`. The clock never rewinds; a seam that returns the
+    /// suite to an earlier section adjusts this offset instead. 0 until the
+    /// first seam.
+    timeline_offset: i64,
+    /// A seam whose audio is already scheduled but whose musical-time jump
+    /// hasn't been reached yet: `(raw_sample_of_seam, new_offset)`. Committed
+    /// by `pump` when the clock arrives.
+    pending_jump: Option<(i64, i64)>,
 }
 
 impl SuiteSession {
@@ -119,14 +128,63 @@ impl SuiteSession {
             conductor: Conductor::new(manifest, latency_ms),
             scheduler: Scheduler::new(Scheduler::default_horizon(manifest.sample_rate)),
             preroll_samples,
+            timeline_offset: 0,
+            pending_jump: None,
         })
     }
 
-    /// Suite sample position implied by the clock (negative during pre-roll).
-    /// The clock ticks once per sample, so this is exact, tempo-independent.
-    pub fn clock_sample(&self) -> i64 {
+    /// Monotonic clock position in samples past pre-roll (negative during
+    /// pre-roll). Never rewinds; seam bookkeeping lives on this timeline.
+    pub fn raw_clock_sample(&self) -> i64 {
         let t = self.clock.time();
         (t.ticks as f64 + t.fraction - self.preroll_samples as f64).floor() as i64
+    }
+
+    /// Suite sample position implied by the clock: the raw clock position
+    /// mapped through the reintegration timeline offset. This is the sample
+    /// every musical consumer (conductor, judge, chart eval, replay) sees;
+    /// it jumps backwards exactly once per seam.
+    pub fn clock_sample(&self) -> i64 {
+        self.raw_clock_sample() - self.timeline_offset
+    }
+
+    /// Map a raw clock sample to a suite sample under the current offset.
+    pub fn suite_sample_for_raw(&self, raw: i64) -> i64 {
+        raw - self.timeline_offset
+    }
+
+    pub fn timeline_offset(&self) -> i64 {
+        self.timeline_offset
+    }
+
+    /// Schedule a reintegration seam: fade out the current timeline with
+    /// `fade` (starting now), re-play every stem from `re_entry_sample` at
+    /// seam time `seam_suite_sample` (a sample on the *current* suite
+    /// timeline, far enough ahead for the fade), and queue the musical-time
+    /// jump, which `pump` commits when the clock reaches the seam. The
+    /// caller flushes the scheduler and sets per-bus entry gains around this
+    /// call; this method owns only sample-accurate mechanics.
+    pub fn schedule_seam(
+        &mut self,
+        re_entry_sample: i64,
+        seam_suite_sample: i64,
+        fade: kira::Tween,
+    ) -> Result<()> {
+        let seam_raw = seam_suite_sample + self.timeline_offset;
+        let seam_tick = seam_raw + self.preroll_samples as i64;
+        if seam_tick < 0 || re_entry_sample < 0 {
+            return Err(FlintError::AudioError(format!(
+                "seam before timeline start (seam tick {seam_tick}, re-entry {re_entry_sample})"
+            )));
+        }
+        let start_at = StartTime::ClockTime(kira::clock::ClockTime::from_ticks_u64(
+            &self.clock,
+            seam_tick as u64,
+        ));
+        self.mixer.stop_all(fade);
+        self.mixer.replay_all_at(re_entry_sample as u64, start_at)?;
+        self.pending_jump = Some((seam_raw, seam_raw - re_entry_sample));
+        Ok(())
     }
 
     /// Latency-compensated musical position ("what the ear hears now").
@@ -143,12 +201,20 @@ impl SuiteSession {
         self.preroll_samples
     }
 
-    /// Issue scheduled events entering the lookahead horizon. Call regularly
-    /// (each poll tick live; each chunk offline).
+    /// Issue scheduled events entering the lookahead horizon, committing any
+    /// pending seam jump the clock has reached. Call regularly (each poll
+    /// tick live; each chunk offline).
     pub fn pump(&mut self) -> Vec<FiredEvent> {
+        if let Some((seam_raw, offset)) = self.pending_jump {
+            if self.raw_clock_sample() >= seam_raw {
+                self.timeline_offset = offset;
+                self.pending_jump = None;
+            }
+        }
         let now = self.clock_sample();
+        let tick_base = self.preroll_samples as i64 + self.timeline_offset;
         self.scheduler
-            .pump(now, &self.clock, self.preroll_samples, &mut self.mixer)
+            .pump(now, &self.clock, tick_base, &mut self.mixer)
     }
 }
 
