@@ -88,7 +88,9 @@ impl SuiteManifest {
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| bad(&format!("tempo[{i}].time_signature")))?;
             if sig.len() != 2 {
-                return Err(bad(&format!("tempo[{i}].time_signature (need [beats, unit])")));
+                return Err(bad(&format!(
+                    "tempo[{i}].time_signature (need [beats, unit])"
+                )));
             }
             tempo.push(TempoAnchor {
                 sample: int_in(t, "sample")?,
@@ -132,9 +134,7 @@ impl SuiteManifest {
 
         let mut buses = BTreeMap::new();
         for (name, v) in table(&root, "buses")?.iter() {
-            let t = v
-                .as_table()
-                .ok_or_else(|| bad(&format!("buses.{name}")))?;
+            let t = v.as_table().ok_or_else(|| bad(&format!("buses.{name}")))?;
             buses.insert(
                 name.clone(),
                 BusDecl {
@@ -180,19 +180,27 @@ fn bad(what: &str) -> FlintError {
 }
 
 fn table<'a>(v: &'a toml::Value, key: &str) -> Result<&'a toml::value::Table> {
-    v.get(key).and_then(|v| v.as_table()).ok_or_else(|| bad(key))
+    v.get(key)
+        .and_then(|v| v.as_table())
+        .ok_or_else(|| bad(key))
 }
 
 fn array<'a>(v: &'a toml::Value, key: &str) -> Result<&'a Vec<toml::Value>> {
-    v.get(key).and_then(|v| v.as_array()).ok_or_else(|| bad(key))
+    v.get(key)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| bad(key))
 }
 
 fn int(v: &toml::Value, key: &str) -> Result<i64> {
-    v.get(key).and_then(|v| v.as_integer()).ok_or_else(|| bad(key))
+    v.get(key)
+        .and_then(|v| v.as_integer())
+        .ok_or_else(|| bad(key))
 }
 
 fn int_in(t: &toml::value::Table, key: &str) -> Result<i64> {
-    t.get(key).and_then(|v| v.as_integer()).ok_or_else(|| bad(key))
+    t.get(key)
+        .and_then(|v| v.as_integer())
+        .ok_or_else(|| bad(key))
 }
 
 fn float_in(t: &toml::value::Table, key: &str) -> Result<f64> {

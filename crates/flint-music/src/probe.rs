@@ -51,7 +51,8 @@ pub fn probe_audio(path: &Path) -> Result<AudioInfo, String> {
         .sample_rate
         .ok_or_else(|| "no sample rate reported".to_string())?;
 
-    let priming = params.padding.map(u64::from).unwrap_or(0) + params.delay.map(u64::from).unwrap_or(0);
+    let priming =
+        params.padding.map(u64::from).unwrap_or(0) + params.delay.map(u64::from).unwrap_or(0);
     if let Some(frames) = params.n_frames {
         return Ok(AudioInfo {
             sample_rate,

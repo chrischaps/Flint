@@ -11,6 +11,7 @@
 //! code and those fixtures disagree, the fixtures are correct. Schema doc:
 //! `docs/schema/manifest-schema-v0.md` in the game repo.
 
+pub mod analysis;
 pub mod chart;
 pub mod conductor;
 pub mod event_script;
@@ -27,9 +28,9 @@ pub mod validate;
 pub use chart::Chart;
 pub use conductor::{Conductor, Grid, MusicalPosition};
 pub use event_script::EventScript;
-pub use offline::{render_offline, write_wav, OfflineRenderConfig};
 pub use manifest::SuiteManifest;
 pub use mixer::{BusMixer, BusState, StemBus};
+pub use offline::{render_offline, write_wav, OfflineRenderConfig};
 pub use scheduler::{BusAction, EventTime, FiredEvent, ScheduledEvent, Scheduler};
 pub use session::{RealtimePlayer, StemResolver, SuiteSession};
 pub use tempo::TempoMap;

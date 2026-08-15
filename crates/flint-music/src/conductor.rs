@@ -76,8 +76,8 @@ impl Conductor {
     pub fn position_at_sample(&self, sample: i64) -> MusicalPosition {
         let beat = self.tempo.beats_at_sample(sample).unwrap_or(0.0);
         let (bar, beat_in_bar) = self.tempo.bar_beat_at_sample(sample).unwrap_or((0, 0.0));
-        let tick = (beat_in_bar.rem_euclid(1.0) * TICKS_PER_BEAT as f64).round() as i64
-            % TICKS_PER_BEAT;
+        let tick =
+            (beat_in_bar.rem_euclid(1.0) * TICKS_PER_BEAT as f64).round() as i64 % TICKS_PER_BEAT;
         MusicalPosition {
             sample,
             seconds: sample as f64 / self.tempo.sample_rate() as f64,

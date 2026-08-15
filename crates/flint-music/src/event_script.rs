@@ -55,9 +55,7 @@ impl EventScript {
         let mut events = Vec::new();
         if let Some(arr) = root.get("events").and_then(|v| v.as_array()) {
             for (i, v) in arr.iter().enumerate() {
-                let t = v
-                    .as_table()
-                    .ok_or_else(|| bad(&format!("events[{i}]")))?;
+                let t = v.as_table().ok_or_else(|| bad(&format!("events[{i}]")))?;
                 events.push(parse_event(t, i)?);
             }
         }
@@ -73,8 +71,7 @@ fn parse_event(t: &toml::value::Table, i: usize) -> Result<ScheduledEvent> {
         .get("at")
         .and_then(|v| v.as_str())
         .ok_or_else(|| bad(&format!("events[{i}].at")))?;
-    let at = parse_time(at_str)
-        .ok_or_else(|| bad(&format!("events[{i}].at ('{at_str}')")))?;
+    let at = parse_time(at_str).ok_or_else(|| bad(&format!("events[{i}].at ('{at_str}')")))?;
 
     let action_str = t
         .get("action")
@@ -191,14 +188,8 @@ label = "checkpoint"
         )
         .unwrap();
         assert_eq!(s.events.len(), 4);
-        assert_eq!(
-            s.events[0].at,
-            EventTime::BarBeat { bar: 8, beat: 0.0 }
-        );
-        assert_eq!(
-            s.events[1].at,
-            EventTime::BarBeat { bar: 12, beat: 1.5 }
-        );
+        assert_eq!(s.events[0].at, EventTime::BarBeat { bar: 8, beat: 0.0 });
+        assert_eq!(s.events[1].at, EventTime::BarBeat { bar: 12, beat: 1.5 });
         // Integer TOML value for a float field must coerce (toml_util rule).
         assert!(matches!(
             s.events[1].action,

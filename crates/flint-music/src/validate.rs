@@ -53,7 +53,10 @@ pub fn validate_manifest(m: &SuiteManifest) -> Vec<Issue> {
         None => issues.push(Issue::new("TempoMapMissingOrigin", "tempo map is empty")),
         Some(first) if first.sample != 0 => issues.push(Issue::new(
             "TempoMapMissingOrigin",
-            format!("first tempo anchor is at sample {}, must be 0", first.sample),
+            format!(
+                "first tempo anchor is at sample {}, must be 0",
+                first.sample
+            ),
         )),
         _ => {}
     }
@@ -135,7 +138,9 @@ pub fn validate_manifest(m: &SuiteManifest) -> Vec<Issue> {
                 if decl.file.is_some() == decl.silent {
                     issues.push(Issue::new(
                         "BusFileConflict",
-                        format!("bus '{bus}' must declare exactly one of `file` or `silent = true`"),
+                        format!(
+                            "bus '{bus}' must declare exactly one of `file` or `silent = true`"
+                        ),
                     ));
                 }
             }
@@ -209,7 +214,10 @@ pub fn validate_manifest(m: &SuiteManifest) -> Vec<Issue> {
         if !ok_bus {
             issues.push(Issue::new(
                 "DegradedAlternateInvalid",
-                format!("degraded alternate references missing or silent bus '{}'", d.bus),
+                format!(
+                    "degraded alternate references missing or silent bus '{}'",
+                    d.bus
+                ),
             ));
         }
         if d.from_sample < 0 || d.to_sample <= d.from_sample {
@@ -242,7 +250,10 @@ pub fn validate_chart(c: &Chart, m: &SuiteManifest) -> Vec<Issue> {
     if c.suite != m.id {
         issues.push(Issue::new(
             "SuiteIdMismatch",
-            format!("chart is for suite '{}' but manifest is '{}'", c.suite, m.id),
+            format!(
+                "chart is for suite '{}' but manifest is '{}'",
+                c.suite, m.id
+            ),
         ));
     }
 
@@ -328,7 +339,10 @@ pub fn validate_chart(c: &Chart, m: &SuiteManifest) -> Vec<Issue> {
                 )),
                 Some(s) if !(s > 0.0 && s <= 1.0) => issues.push(Issue::new(
                     "StrengthOutOfRange",
-                    format!("press at beat {} has strength {s}, must be in (0, 1]", p.beat),
+                    format!(
+                        "press at beat {} has strength {s}, must be in (0, 1]",
+                        p.beat
+                    ),
                 )),
                 _ => {}
             },
@@ -337,12 +351,10 @@ pub fn validate_chart(c: &Chart, m: &SuiteManifest) -> Vec<Issue> {
                     "FlickMissingDirection",
                     format!("flick at beat {} has no direction", p.beat),
                 )),
-                Some(d) if d.len() != 2 || d.iter().all(|v| *v == 0.0) => {
-                    issues.push(Issue::new(
-                        "FlickDirectionInvalid",
-                        format!("flick at beat {} needs a non-zero vec2 direction", p.beat),
-                    ))
-                }
+                Some(d) if d.len() != 2 || d.iter().all(|v| *v == 0.0) => issues.push(Issue::new(
+                    "FlickDirectionInvalid",
+                    format!("flick at beat {} needs a non-zero vec2 direction", p.beat),
+                )),
                 _ => {}
             },
             _ => {
@@ -380,7 +392,10 @@ pub fn validate_chart(c: &Chart, m: &SuiteManifest) -> Vec<Issue> {
         if cue.beat < 0.0 {
             issues.push(Issue::new(
                 "CueOutOfRange",
-                format!("cue '{}' at beat {} is before the suite start", cue.cue, cue.beat),
+                format!(
+                    "cue '{}' at beat {} is before the suite start",
+                    cue.cue, cue.beat
+                ),
             ));
         }
     }
@@ -409,7 +424,10 @@ pub fn validate_manifest_assets(m: &SuiteManifest, base_dir: &Path) -> Vec<Issue
         if !path.exists() {
             issues.push(Issue::new(
                 "MissingStemFile",
-                format!("bus '{bus}': file '{file}' not found under {}", base_dir.display()),
+                format!(
+                    "bus '{bus}': file '{file}' not found under {}",
+                    base_dir.display()
+                ),
             ));
             continue;
         }

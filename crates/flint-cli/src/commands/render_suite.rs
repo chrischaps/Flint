@@ -90,7 +90,7 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
     };
     let mut last_line = (i64::MIN, i64::MIN); // (bar, whole beat)
     let stems = FileStems::new(&base_dir);
-    let buffer = render_offline(&manifest, &stems, &script, &cfg, |pos, mixer| {
+    let result = render_offline(&manifest, &stems, &script, &cfg, |pos, mixer| {
         if pos.sample < 0 {
             return;
         }
@@ -103,13 +103,23 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+    for f in &result.fired {
+        println!(
+            "fired @ sample {:>9}{}: {:?} {:?}",
+            f.sample,
+            if f.late { " (LATE)" } else { "" },
+            f.bus.as_deref().unwrap_or("-"),
+            f.action
+        );
+    }
     let out_path = Path::new(&args.output);
-    write_wav(out_path, &buffer, manifest.sample_rate).map_err(|e| anyhow::anyhow!("{e}"))?;
+    write_wav(out_path, &result.samples, manifest.sample_rate)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!(
         "wrote {} ({} frames, {:.1} s)",
         out_path.display(),
-        buffer.len() / 2,
-        (buffer.len() / 2) as f64 / manifest.sample_rate as f64
+        result.samples.len() / 2,
+        (result.samples.len() / 2) as f64 / manifest.sample_rate as f64
     );
     Ok(())
 }

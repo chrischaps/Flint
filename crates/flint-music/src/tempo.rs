@@ -146,10 +146,7 @@ impl TempoMap {
                 return Some((bars_before + bar_in_seg as i64, beat_in_bar));
             }
             let end = seg_end.expect("in_segment is false only with a next anchor");
-            let seg_bars = snap(
-                (end - a.sample) as f64 / (spb * bpb),
-                0.5 / (spb * bpb),
-            );
+            let seg_bars = snap((end - a.sample) as f64 / (spb * bpb), 0.5 / (spb * bpb));
             bars_before += seg_bars.ceil() as i64;
         }
         None

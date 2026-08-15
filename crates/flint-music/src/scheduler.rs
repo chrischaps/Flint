@@ -26,9 +26,18 @@ pub enum EventTime {
 /// What lands.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BusAction {
-    SetGain { db: f32, ramp_ms: f64 },
-    SetLpf { hz: f64, ramp_ms: f64 },
-    SetDetune { semitones: f64, ramp_ms: f64 },
+    SetGain {
+        db: f32,
+        ramp_ms: f64,
+    },
+    SetLpf {
+        hz: f64,
+        ramp_ms: f64,
+    },
+    SetDetune {
+        semitones: f64,
+        ramp_ms: f64,
+    },
     /// No audio effect; returned from `pump` for logging / section hooks.
     Marker(String),
 }

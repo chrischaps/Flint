@@ -82,5 +82,8 @@ fn invalid_fixtures_produce_their_pinned_error() {
         );
         checked += 1;
     }
-    assert!(checked >= 8, "suspiciously few invalid fixtures ({checked})");
+    assert!(
+        checked >= 8,
+        "suspiciously few invalid fixtures ({checked})"
+    );
 }

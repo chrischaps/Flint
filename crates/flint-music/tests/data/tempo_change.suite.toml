@@ -1,0 +1,56 @@
+# Synthetic Milestone 1 manifest: a tempo AND meter change mid-suite
+# (120 BPM 4/4 -> 90 BPM 3/4 at sample 960000 = bar 11 displayed).
+# Stems are synthesized by the test's StemResolver; the file names here are
+# labels, never opened. Lives in tests/data (crate-local), NOT fixtures/ —
+# the pinned fixtures are the validator contract and stay untouched.
+schema_version = 0
+
+[suite]
+id = "tempo-change-test"
+title = "Tempo Change Test Suite"
+
+[audio]
+sample_rate = 48000
+
+[[tempo]]
+sample = 0
+bpm = 120.0
+time_signature = [4, 4]
+
+[[tempo]]
+sample = 960000
+bpm = 90.0
+time_signature = [3, 4]
+
+[[sections]]
+name = "before"
+start_sample = 0
+pulse_window_ms = 100
+
+[[sections]]
+name = "after"
+start_sample = 960000
+pulse_window_ms = 100
+
+[reintegration]
+re_entry_sections = ["before", "after"]
+lead_bus = "home_theme"
+reassembly_bars = 2
+
+[buses.foundation]
+file = "synth/foundation-220hz.flac"
+
+[buses.harmony]
+silent = true
+
+[buses.world_voice]
+silent = true
+
+[buses.home_theme]
+file = "synth/home-theme-880hz.flac"
+
+[buses.child_motif]
+silent = true
+
+[buses.texture]
+file = "synth/texture-8000hz.flac"

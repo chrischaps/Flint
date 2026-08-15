@@ -77,6 +77,13 @@ impl Default for OfflineRenderConfig {
     }
 }
 
+/// A completed offline render: interleaved stereo audio (index 0 = suite
+/// sample 0) plus every event the scheduler issued, in order.
+pub struct RenderResult {
+    pub samples: Vec<f32>,
+    pub fired: Vec<crate::scheduler::FiredEvent>,
+}
+
 /// Render a scripted session to interleaved stereo f32, deterministic and
 /// faster than realtime. The observer runs once per chunk (after the
 /// scheduler pump, before the audio for that chunk) — use it for status
@@ -87,7 +94,7 @@ pub fn render_offline(
     script: &EventScript,
     cfg: &OfflineRenderConfig,
     mut observer: impl FnMut(&MusicalPosition, &BusMixer),
-) -> Result<Vec<f32>> {
+) -> Result<RenderResult> {
     if cfg.duration_samples <= 0 {
         return Err(FlintError::AudioError(
             "offline render: duration_samples must be positive".into(),
@@ -114,9 +121,10 @@ pub fn render_offline(
     let mut out = Vec::with_capacity(total_frames * 2);
     let mut chunk = vec![0.0f32; cfg.chunk_frames * 2];
 
+    let mut fired = Vec::new();
     let mut rendered = 0usize;
     while rendered < total_frames {
-        session.pump();
+        fired.extend(session.pump());
         let pos = session
             .conductor
             .position_at_sample(rendered as i64 - preroll);
@@ -131,7 +139,10 @@ pub fn render_offline(
 
     // Drop the pre-roll so output index 0 = suite sample 0.
     out.drain(..preroll as usize * 2);
-    Ok(out)
+    Ok(RenderResult {
+        samples: out,
+        fired,
+    })
 }
 
 /// Write interleaved stereo f32 to a 32-bit float WAV.

@@ -146,6 +146,10 @@ fn float(t: &toml::value::Table, ctx: &str, key: &str) -> Result<f64> {
 
 fn floats(v: Option<&toml::Value>, ctx: &str) -> Result<Vec<f64>> {
     v.and_then(|v| v.as_array())
-        .map(|arr| arr.iter().map(|e| toml_f64(e).ok_or_else(|| bad(ctx))).collect())
+        .map(|arr| {
+            arr.iter()
+                .map(|e| toml_f64(e).ok_or_else(|| bad(ctx)))
+                .collect()
+        })
         .unwrap_or_else(|| Err(bad(ctx)))
 }
