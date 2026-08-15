@@ -1716,6 +1716,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flint-input-capture"
+version = "0.1.0"
+dependencies = [
+ "flint-core",
+ "flint-music",
+ "gilrs",
+ "tracing",
+]
+
+[[package]]
 name = "flint-music"
 version = "0.1.0"
 dependencies = [

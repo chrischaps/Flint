@@ -17,6 +17,7 @@ members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-music",
+    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -47,6 +48,7 @@ default-members = [
     "crates/flint-player",
     "crates/flint-audio",
     "crates/flint-music",
+    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -159,6 +161,7 @@ flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
 flint-music = { path = "crates/flint-music" }
+flint-input-capture = { path = "crates/flint-input-capture" }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }
