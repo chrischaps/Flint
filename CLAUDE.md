@@ -133,6 +133,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - Particles: no depth write; storage buffer (not uniform); skip draw for 0 alive; `bytemuck::cast_slice` for zero-copy
 - `flint-terrain` does NOT depend on `flint-render`; uses standard `Vertex` format so reuses shadow pipeline
 - `flint-android` excluded from `default-members` -- use `cargo ndk -p flint-android`; min API 26
+- Windows links a 1 MB main-thread stack; debug builds of flint-cli's clap parser overflow it -- `.cargo/config.toml` links with `/STACK:8388608`. Don't remove it, and don't grow `Commands` assuming stack is free.
 - Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
 - `flint_core::toml_util` -- use `toml_f64`/`toml_f32`/`toml_vec3`/etc. instead of inline coercion patterns
 - Never use `archetype = "furniture"` on non-visual entities -- furniture includes `bounds`, renders teal boxes
