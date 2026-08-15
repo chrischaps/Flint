@@ -111,7 +111,7 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
         let cfg = CoherenceConfig::load(&config_path)
             .map_err(|e| anyhow::anyhow!("{e}"))
             .with_context(|| format!("loading {}", config_path.display()))?;
-        println!("coherence config: {} (Enter = reload, q = quit)", config_path.display());
+        println!("coherence config: {} (r+Enter = reload, q+Enter = quit)", config_path.display());
         cfg
     } else {
         println!("coherence config: built-in defaults (no {})", config_path.display());
@@ -314,9 +314,12 @@ enum StdinCommand {
     Quit,
 }
 
-/// Line-buffered stdin on its own thread: Enter alone reloads the coherence
-/// config, `q` + Enter quits. Line-buffered beats raw mode here — no extra
-/// deps, no terminal-state cleanup, and a dev harness doesn't need better.
+/// Line-buffered stdin on its own thread: `r` + Enter reloads the coherence
+/// config, `q` + Enter quits, anything else (including bare Enter) is ignored
+/// — gamepad-to-keyboard mappers (Steam's desktop layout maps A → Enter) spam
+/// stray keystrokes into the console during play, so every command needs a
+/// deliberate letter. Line-buffered beats raw mode here — no extra deps, no
+/// terminal-state cleanup, and a dev harness doesn't need better.
 fn spawn_stdin_reader() -> std::sync::mpsc::Receiver<StdinCommand> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
@@ -331,11 +334,14 @@ fn spawn_stdin_reader() -> std::sync::mpsc::Receiver<StdinCommand> {
                     return; // EOF (piped/headless): no interactive control
                 }
                 let cmd = match line.trim() {
-                    "q" | "quit" => StdinCommand::Quit,
-                    _ => StdinCommand::Reload,
+                    "q" | "quit" => Some(StdinCommand::Quit),
+                    "r" | "reload" => Some(StdinCommand::Reload),
+                    _ => None, // stray input (gamepad mappers, accidental Enter)
                 };
-                if tx.send(cmd).is_err() {
-                    return;
+                if let Some(cmd) = cmd {
+                    if tx.send(cmd).is_err() {
+                        return;
+                    }
                 }
             }
         })
