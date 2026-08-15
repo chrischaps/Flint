@@ -16,6 +16,7 @@ use flint_music::coherence::{Coherence, CoherenceConfig};
 use flint_music::conductor::Conductor;
 use flint_music::input_stream::InputEvent;
 use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter, LeanMode};
+use flint_music::ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
 use flint_music::session::RealtimePlayer;
 use flint_music::status::status_line_with_coherence;
 use flint_music::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
@@ -42,6 +43,9 @@ pub struct PlayChartArgs {
     /// Lean judgment mode: "arrival" (beat-anchored targets, the current
     /// feel direction) or "track" (continuous curve-following).
     pub lean_mode: String,
+    /// Disintegration ladder config path (default: `<base_dir>/config/
+    /// ladder.toml` when present, else built-in defaults).
+    pub ladder: Option<String>,
 }
 
 /// Shared by play-chart and replay-chart so live and offline judge alike.
@@ -97,6 +101,11 @@ pub struct ChartSession {
     capture_handle: Option<flint_input_capture::CaptureHandle>,
     input_rx: Option<std::sync::mpsc::Receiver<InputEvent>>,
     config_path: PathBuf,
+    ladder: Ladder,
+    ladder_driver: LadderDriver,
+    ladder_path: PathBuf,
+    /// Params currently applied — the visual half feeds `visual_frame`.
+    ladder_params: LadderParams,
     end_sample: i64,
     sample_rate: u32,
     /// Second evaluator instance, kept out of the judge for visual lookups.
@@ -130,6 +139,14 @@ pub struct VisualFrame {
     /// Seconds since the player's most recent pulse press (large if none).
     pub pulse_age_s: f32,
     pub preroll: bool,
+    /// Ladder visual params (0 = clean). Mirrors the audio rungs exactly —
+    /// one param source, so the world comes apart as one thing.
+    pub desaturate: f32,
+    pub blur: f32,
+    pub chromatic: f32,
+    /// Reassembly progress: 1 = normal play; during reintegration it runs
+    /// 0 → 1 as the world re-gathers (the visual chain in reverse).
+    pub reassembly: f32,
 }
 
 impl ChartSession {
@@ -220,6 +237,26 @@ impl ChartSession {
         };
         let coherence = Coherence::new(coherence_cfg);
 
+        // Ladder config: same contract as the coherence config — explicit
+        // path must load, default path is optional, reloads with `r`.
+        let ladder_explicit = args.ladder.is_some();
+        let ladder_path = args
+            .ladder
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| base_dir.join("config/ladder.toml"));
+        let ladder_cfg = if ladder_explicit || ladder_path.exists() {
+            let cfg = LadderConfig::load(&ladder_path)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .with_context(|| format!("loading {}", ladder_path.display()))?;
+            println!("ladder config: {} ({} rung(s))", ladder_path.display(), cfg.rungs.len());
+            cfg
+        } else {
+            println!("ladder config: built-in defaults (no {})", ladder_path.display());
+            LadderConfig::default()
+        };
+        let ladder = Ladder::new(ladder_cfg);
+
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -233,6 +270,7 @@ impl ChartSession {
             "lean_mode": lean_mode_name(judgment_cfg.lean_mode),
             "arrival_half_beats": judgment_cfg.arrival_half_beats,
             "coherence_config": coherence_cfg.to_json(),
+            "ladder_config": ladder.config().to_json(),
             "epoch_s": epoch,
         });
         let log = JsonlWriter::create(&log_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -298,6 +336,10 @@ impl ChartSession {
             capture_handle,
             input_rx,
             config_path,
+            ladder,
+            ladder_driver: LadderDriver::new(),
+            ladder_path,
+            ladder_params: LadderParams::clean(),
             end_sample,
             sample_rate,
             visual_eval,
@@ -370,6 +412,19 @@ impl ChartSession {
         if pos.sample < 0 {
             return Ok(Tick::Running); // pre-roll
         }
+
+        // Disintegration ladder: coherence in, mixer tweens + visual params
+        // out. `observe` is armed/hysteretic, so this is idle most ticks.
+        self.ladder.observe(self.coherence.value());
+        let params = self.ladder.params();
+        self.ladder_driver.apply(
+            &params,
+            pos.seconds,
+            params.ramp_ms,
+            &mut self.player.session.mixer,
+        );
+        self.ladder_params = params;
+
         if pos.sample >= self.end_sample || self.player.session.mixer.all_stopped() {
             return Ok(Tick::Finished);
         }
@@ -377,8 +432,12 @@ impl ChartSession {
         if pos.bar != self.last_bar {
             self.last_bar = pos.bar;
             let section = self.player.session.conductor.section_at_sample(pos.sample);
+            let rung = match self.ladder.rung() {
+                Some(r) => format!(" | rung {} ({})", self.ladder.level(), r.name),
+                None => String::new(),
+            };
             println!(
-                "{} | lean ({:+.2},{:+.2})",
+                "{} | lean ({:+.2},{:+.2}){rung}",
                 status_line_with_coherence(
                     &pos,
                     section,
@@ -408,6 +467,22 @@ impl ChartSession {
             }
             Err(e) => println!("reload failed, keeping current config: {e}"),
         }
+        if self.ladder_path.exists() {
+            match LadderConfig::load(&self.ladder_path) {
+                Ok(cfg) => {
+                    self.ladder.reconfigure(cfg);
+                    println!("ladder config reloaded (level carries over)");
+                    let sample = self.player.session.now().sample;
+                    self.log
+                        .write_value(&serde_json::json!({
+                            "t": "ladder_reload", "sample": sample,
+                            "ladder_config": self.ladder.config().to_json(),
+                        }))
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+                Err(e) => println!("ladder reload failed, keeping current config: {e}"),
+            }
+        }
         Ok(())
     }
 
@@ -436,6 +511,10 @@ impl ChartSession {
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(1e6),
             preroll,
+            desaturate: self.ladder_params.visual.desaturate,
+            blur: self.ladder_params.visual.blur,
+            chromatic: self.ladder_params.visual.chromatic,
+            reassembly: 1.0,
         }
     }
 

@@ -1645,6 +1645,7 @@ dependencies = [
  "flint-terrain",
  "flint-viewer",
  "image",
+ "naga",
  "notify",
  "notify-debouncer-mini",
  "pollster",

@@ -277,6 +277,10 @@ enum Commands {
         /// freely between) or "track" (follow the curve continuously)
         #[arg(long, default_value = "arrival")]
         lean_mode: String,
+
+        /// Disintegration ladder TOML (default: config/ladder.toml if present)
+        #[arg(long)]
+        ladder: Option<String>,
     },
 
     /// Replay a recorded or synthetic session through judgment, fully headless
@@ -706,6 +710,7 @@ fn main() -> Result<()> {
             record,
             window,
             lean_mode,
+            ladder,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
@@ -716,6 +721,7 @@ fn main() -> Result<()> {
             record,
             window,
             lean_mode,
+            ladder,
         }),
         Commands::ReplayChart {
             manifest,

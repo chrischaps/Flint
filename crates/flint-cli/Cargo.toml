@@ -48,3 +48,6 @@ egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rfd = { workspace = true }
+
+[dev-dependencies]
+naga = { version = "23", features = ["wgsl-in"] }

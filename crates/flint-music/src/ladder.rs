@@ -468,11 +468,16 @@ impl LadderParams {
 pub struct Ladder {
     cfg: LadderConfig,
     level: usize,
+    armed: bool,
 }
 
 impl Ladder {
     pub fn new(cfg: LadderConfig) -> Self {
-        Self { cfg, level: 0 }
+        Self {
+            cfg,
+            level: 0,
+            armed: false,
+        }
     }
 
     pub fn config(&self) -> &LadderConfig {
@@ -495,8 +500,25 @@ impl Ladder {
         (self.level > 0).then(|| &self.cfg.rungs[self.level - 1])
     }
 
+    /// Whether the ladder has armed: sessions open at a neutral coherence
+    /// (0.5 by default, inside rung territory), so the world would boot
+    /// mid-disintegration without this. The ladder stays clean until
+    /// coherence first clears the top rung's `exit_above` — the world can
+    /// only come apart after it has first cohered.
+    pub fn armed(&self) -> bool {
+        self.armed
+    }
+
     /// Update the level from the current coherence value. Returns the level.
     pub fn observe(&mut self, coherence: f64) -> usize {
+        if !self.armed {
+            let arm_at = self.cfg.rungs.first().map(|r| r.exit_above).unwrap_or(0.0);
+            if coherence >= arm_at {
+                self.armed = true;
+            } else {
+                return 0;
+            }
+        }
         while self.level < self.cfg.rungs.len()
             && coherence < self.cfg.rungs[self.level].enter_below
         {
@@ -647,6 +669,18 @@ mod tests {
     }
 
     #[test]
+    fn unarmed_ladder_stays_clean_at_session_start() {
+        let mut l = Ladder::new(LadderConfig::default());
+        // Sessions open at neutral coherence — no boot-into-broken-world.
+        assert_eq!(l.observe(0.5), 0);
+        assert!(!l.armed());
+        assert_eq!(l.observe(0.2), 0, "still unarmed, still clean");
+        l.observe(0.85); // clears the top rung's exit_above
+        assert!(l.armed());
+        assert_eq!(l.observe(0.5), 2, "armed: now the ladder engages");
+    }
+
+    #[test]
     fn descend_and_ascend_with_hysteresis() {
         let mut l = Ladder::new(LadderConfig::default());
         assert_eq!(l.observe(0.95), 0);
@@ -665,6 +699,7 @@ mod tests {
     fn params_resolve_drop_and_clean() {
         let mut l = Ladder::new(LadderConfig::default());
         assert_eq!(l.params(), LadderParams::clean());
+        l.observe(0.95); // arm
         l.observe(0.10);
         let p = l.params();
         assert_eq!(p.level, 3);
@@ -676,6 +711,7 @@ mod tests {
     #[test]
     fn reconfigure_carries_level() {
         let mut l = Ladder::new(LadderConfig::default());
+        l.observe(0.95); // arm
         l.observe(0.10);
         assert_eq!(l.level(), 3);
         let mut cfg = LadderConfig::default();
