@@ -186,6 +186,12 @@ impl ChartEval {
     pub fn pulse_windows(&self) -> &[PulseWindow] {
         &self.windows
     }
+
+    /// The channel's last key beat, if it has any keys — the end of its
+    /// authored content (values clamp beyond it).
+    pub fn last_key_beat(&self, channel: &str) -> Option<f64> {
+        self.channels.get(channel)?.last().map(|(b, _, _)| *b)
+    }
 }
 
 fn bad(msg: String) -> FlintError {

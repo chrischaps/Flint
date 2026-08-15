@@ -1733,6 +1733,7 @@ dependencies = [
  "flint-core",
  "hound",
  "kira",
+ "serde_json",
  "symphonia",
  "toml",
  "tracing",

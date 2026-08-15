@@ -7,7 +7,9 @@
 use anyhow::{bail, Context, Result};
 use flint_music::chart_eval::ChartEval;
 use flint_music::clock_bridge::ClockBridge;
+use flint_music::conductor::Conductor;
 use flint_music::input_stream::InputEvent;
+use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter};
 use flint_music::session::RealtimePlayer;
 use flint_music::status::status_line;
 use flint_music::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
@@ -68,11 +70,30 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
     let offset_samples = (latency_ms.unwrap_or(0.0) / 1000.0 * manifest.sample_rate as f64)
         .round() as i64;
 
-    // --- session + capture ---------------------------------------------------
+    // --- session + judgment --------------------------------------------------
     let mut player = RealtimePlayer::start(&manifest, &base_dir, latency_ms)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let _eval = ChartEval::new(&chart, &player.session.conductor)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Judgment arithmetic is pure: event samples arrive already compensated
+    // (capture subtracts the offset), so its conductor carries none.
+    let judge_conductor = Conductor::new(&manifest, None);
+    let eval = ChartEval::new(&chart, &judge_conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let judgment_cfg = JudgmentConfig::default();
+    let mut judge = Judge::new(eval, judge_conductor, judgment_cfg);
+
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let log_path = base_dir.join(format!("logs/judgment/judgment-{epoch}.jsonl"));
+    let header = serde_json::json!({
+        "t": "header", "schema": 0,
+        "suite": manifest.id, "chart": args.chart,
+        "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": 0.0,
+        "grid_beats": judgment_cfg.grid_beats,
+        "epoch_s": epoch,
+    });
+    let mut log = JsonlWriter::create(&log_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("judgment log: {}", log_path.display());
 
     let bridge = ClockBridge::new(manifest.sample_rate);
     let capture = flint_input_capture::spawn(
@@ -101,29 +122,43 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
     // --- main loop -----------------------------------------------------------
     let mut last_bar = i64::MIN;
     let mut lean = [0.0f64; 2];
-    let mut pulse_count = 0u64;
+    let mut records = Vec::new();
+    let (mut hits, mut misses, mut spurious) = (0u64, 0u64, 0u64);
+    let mut abs_err_sum_ms = 0.0f64;
     loop {
         std::thread::sleep(Duration::from_millis(2));
         player.session.pump();
         bridge.observe(Instant::now(), player.session.clock_sample());
 
+        let pos = player.session.now();
+
         if let Some(rx) = &input_rx {
             while let Ok(ev) = rx.try_recv() {
-                match ev {
-                    InputEvent::Lean(l) => lean = [l.x, l.y],
-                    InputEvent::Pulse(p) => {
-                        pulse_count += 1;
-                        let pos = player.session.conductor.position_at_sample(p.sample);
-                        println!(
-                            "  pulse #{pulse_count} at bar {} beat {:.2}",
-                            pos.bar, pos.beat_in_bar
-                        );
-                    }
+                if let InputEvent::Lean(l) = &ev {
+                    lean = [l.x, l.y];
+                }
+                if ev.sample() >= 0 {
+                    judge.ingest(&ev, &mut records);
                 }
             }
         }
+        if pos.sample >= 0 {
+            judge.advance_to(pos.sample, &mut records);
+        }
+        for rec in records.drain(..) {
+            match &rec {
+                JudgmentRecord::Pulse { err_ms, .. } => {
+                    hits += 1;
+                    abs_err_sum_ms += err_ms.abs();
+                    println!("  pulse {err_ms:+.1} ms");
+                }
+                JudgmentRecord::Miss { .. } => misses += 1,
+                JudgmentRecord::Spurious { .. } => spurious += 1,
+                JudgmentRecord::Track { .. } => {}
+            }
+            log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
 
-        let pos = player.session.now();
         if pos.sample < 0 {
             continue; // pre-roll
         }
@@ -140,11 +175,31 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
                 lean[0],
                 lean[1]
             );
+            log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
         }
     }
 
+    // --- wrap up -------------------------------------------------------------
     drop(capture_handle); // stop the capture thread before the audio manager
-    println!("done. {pulse_count} pulse(s) captured.");
+    judge.finish(&mut records);
+    for rec in records.drain(..) {
+        match &rec {
+            JudgmentRecord::Miss { .. } => misses += 1,
+            JudgmentRecord::Spurious { .. } => spurious += 1,
+            _ => {}
+        }
+        log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mean_ms = if hits > 0 {
+        abs_err_sum_ms / hits as f64
+    } else {
+        0.0
+    };
+    println!(
+        "done. pulses hit {hits} (mean |err| {mean_ms:.1} ms), missed {misses}, spurious {spurious}"
+    );
+    println!("judgment log: {}", log_path.display());
     Ok(())
 }
 
