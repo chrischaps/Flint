@@ -116,6 +116,10 @@ pub struct ChartSession {
     /// Second evaluator instance, kept out of the judge for visual lookups.
     visual_eval: ChartEval,
     last_bar: i64,
+    /// Total input events received; a live capture that delivers nothing is
+    /// the failure mode worth shouting about (ADR 0011).
+    input_events: u64,
+    warned_no_input: bool,
     lean: [f64; 2],
     records: Vec<JudgmentRecord>,
     hits: u64,
@@ -152,6 +156,9 @@ pub struct VisualFrame {
     /// Reassembly progress: 1 = normal play; during reintegration it runs
     /// 0 → 1 as the world re-gathers (the visual chain in reverse).
     pub reassembly: f32,
+    /// Debug cue: capture is running but has never delivered an event —
+    /// the ADR 0011 silent failure, surfaced in the harness window.
+    pub no_input: bool,
 }
 
 impl ChartSession {
@@ -317,6 +324,20 @@ impl ChartSession {
         let (capture_handle, input_rx) = match capture {
             Ok(pair) => {
                 println!("gamepad capture running (left stick = lean, South/RT = pulse)");
+                // The backend can be alive with zero devices (ADR 0011's
+                // silent failure — e.g. a mapper presenting the pad as
+                // keyboard/mouse). Make that loud BEFORE the session.
+                match flint_input_capture::connected_gamepads() {
+                    Ok(pads) if pads.is_empty() => {
+                        println!(
+                            "  *** WARNING: NO GAMEPADS VISIBLE — the session will receive no \
+                             input.\n  *** On Windows only XInput-class devices are seen; check \
+                             the controller/mapper mode (e.g. Legion Space)."
+                        );
+                    }
+                    Ok(pads) => println!("  gamepad(s): {}", pads.join(", ")),
+                    Err(_) => {}
+                }
                 (Some(pair.0), Some(pair.1))
             }
             Err(e) => {
@@ -354,6 +375,8 @@ impl ChartSession {
             sample_rate,
             visual_eval,
             last_bar: i64::MIN,
+            input_events: 0,
+            warned_no_input: false,
             lean: [0.0; 2],
             records: Vec::new(),
             hits: 0,
@@ -380,6 +403,7 @@ impl ChartSession {
         let timeline_offset = self.player.session.timeline_offset();
         if let Some(rx) = &self.input_rx {
             while let Ok(ev) = rx.try_recv() {
+                self.input_events += 1;
                 match &ev {
                     InputEvent::Lean(l) => {
                         self.lean = [l.x, l.y];
@@ -507,13 +531,33 @@ impl ChartSession {
 
         if pos.bar != self.last_bar {
             self.last_bar = pos.bar;
+            // A capture thread that delivers nothing is silent by nature —
+            // shout once, early, while the session is still salvageable.
+            if !self.warned_no_input
+                && self.input_rx.is_some()
+                && self.input_events == 0
+                && pos.bar >= 2
+            {
+                self.warned_no_input = true;
+                println!(
+                    "  *** NO INPUT RECEIVED after {} bars — capture is running but the \
+                     controller is delivering nothing.\n  *** Check the controller/mapper \
+                     mode (XInput), then restart the session.",
+                    pos.bar
+                );
+            }
             let section = self.player.session.conductor.section_at_sample(pos.sample);
+            let no_input = if self.input_rx.is_some() && self.input_events == 0 {
+                " | NO INPUT"
+            } else {
+                ""
+            };
             let rung = match self.ladder.rung() {
                 Some(r) => format!(" | rung {} ({})", self.ladder.level(), r.name),
                 None => String::new(),
             };
             println!(
-                "{} | lean ({:+.2},{:+.2}){rung}",
+                "{} | lean ({:+.2},{:+.2}){rung}{no_input}",
                 status_line_with_coherence(
                     &pos,
                     section,
@@ -592,6 +636,7 @@ impl ChartSession {
             blur: self.ladder_params.visual.blur,
             chromatic: self.ladder_params.visual.chromatic,
             reassembly: self.reassembly as f32,
+            no_input: self.input_rx.is_some() && self.input_events == 0 && !preroll,
         }
     }
 

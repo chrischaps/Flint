@@ -108,6 +108,11 @@ pub struct LadderConfig {
     /// Authored seam envelope (ms): the fade that carries the world out of
     /// the old timeline at reintegration. An envelope, not a cut.
     pub seam_fade_ms: f64,
+    /// The ladder arms when coherence first reaches this (sessions open at a
+    /// neutral value inside rung territory; the world can only come apart
+    /// after it has first cohered). Measured on real engaged play: coherence
+    /// reaches 0.80 within a learning session's first half-minute.
+    pub arm_above: f64,
 }
 
 impl Default for LadderConfig {
@@ -204,6 +209,7 @@ impl Default for LadderConfig {
                 hold_ms: 1_500.0,
             },
             seam_fade_ms: 30.0,
+            arm_above: 0.80,
         }
     }
 }
@@ -319,10 +325,15 @@ impl LadderConfig {
             .and_then(|t| t.get("fade_ms"))
             .and_then(toml_f64)
             .unwrap_or_else(|| Self::default().seam_fade_ms);
+        let arm_above = root
+            .get("arm_above")
+            .and_then(toml_f64)
+            .unwrap_or_else(|| Self::default().arm_above);
         let cfg = Self {
             rungs,
             full_fail,
             seam_fade_ms,
+            arm_above,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -387,6 +398,14 @@ impl LadderConfig {
                 self.seam_fade_ms
             ));
         }
+        if !(0.0..=1.0).contains(&self.arm_above)
+            || self.arm_above <= self.full_fail.enter_below
+        {
+            return err(format!(
+                "arm_above {} must be in 0..1 and above full_fail.enter_below {}",
+                self.arm_above, self.full_fail.enter_below
+            ));
+        }
         Ok(())
     }
 
@@ -400,6 +419,7 @@ impl LadderConfig {
                 "hold_ms": self.full_fail.hold_ms,
             },
             "seam": { "fade_ms": self.seam_fade_ms },
+            "arm_above": self.arm_above,
             "rungs": self.rungs.iter().map(|r| serde_json::json!({
                 "name": r.name,
                 "enter_below": r.enter_below,
@@ -553,8 +573,7 @@ impl Ladder {
     /// Update the level from the current coherence value. Returns the level.
     pub fn observe(&mut self, coherence: f64) -> usize {
         if !self.armed {
-            let arm_at = self.cfg.rungs.first().map(|r| r.exit_above).unwrap_or(0.0);
-            if coherence >= arm_at {
+            if coherence >= self.cfg.arm_above {
                 self.armed = true;
             } else {
                 return 0;
@@ -713,7 +732,9 @@ mod tests {
         assert_eq!(l.observe(0.5), 0);
         assert!(!l.armed());
         assert_eq!(l.observe(0.2), 0, "still unarmed, still clean");
-        l.observe(0.9); // clears the top rung's exit_above (0.88)
+        assert_eq!(l.observe(0.79), 0, "just under arm_above stays unarmed");
+        assert!(!l.armed());
+        l.observe(0.81); // clears arm_above (0.80)
         assert!(l.armed());
         assert_eq!(l.observe(0.5), 3, "armed: now the ladder engages");
     }

@@ -256,7 +256,7 @@ impl Gfx {
             frame.blur,
             frame.chromatic,
             frame.reassembly,
-            0.0,
+            if frame.no_input { 1.0 } else { 0.0 },
         ];
         self.ctx
             .queue
@@ -312,7 +312,7 @@ struct Uni {
     misc0: vec4<f32>,
     // aspect, preroll, time_s, desaturate
     misc1: vec4<f32>,
-    // blur, chromatic, reassembly, _pad
+    // blur, chromatic, reassembly, no_input
     misc2: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: Uni;
@@ -429,6 +429,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Pre-roll: lights low until the suite begins.
     col *= mix(1.0, 0.35, preroll);
+
+    // Debug cue (harness only): capture alive but silent — the controller
+    // is delivering nothing. A slow red breath at the frame edge, impossible
+    // to mistake for a mood.
+    let no_input = u.misc2.w;
+    if (no_input > 0.5) {
+        let edge = smoothstep(0.75, 1.0, max(abs(in.p.x), abs(in.p.y)));
+        col = mix(col, vec3(0.55, 0.08, 0.06), edge * (0.55 + 0.35 * sin(t * 2.2)));
+    }
 
     return vec4(col, 1.0);
 }
