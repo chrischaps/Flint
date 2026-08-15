@@ -12,7 +12,7 @@ use flint_music::conductor::Conductor;
 use flint_music::input_stream::InputEvent;
 use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter};
 use flint_music::session::RealtimePlayer;
-use flint_music::status::status_line;
+use flint_music::status::status_line_with_coherence;
 use flint_music::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -243,11 +243,10 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
             last_bar = pos.bar;
             let section = player.session.conductor.section_at_sample(pos.sample);
             println!(
-                "{} | lean ({:+.2},{:+.2}) | coherence {:.3}",
-                status_line(&pos, section, &player.session.mixer),
+                "{} | lean ({:+.2},{:+.2})",
+                status_line_with_coherence(&pos, section, &player.session.mixer, coherence.value()),
                 lean[0],
                 lean[1],
-                coherence.value()
             );
             log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
         }
