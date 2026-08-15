@@ -10,7 +10,14 @@ use symphonia::core::probe::Hint;
 
 pub struct AudioInfo {
     pub sample_rate: u32,
+    /// Authored frame count (container-reported total minus encoder priming).
     pub frames: u64,
+    /// Encoder priming/padding frames the decoder will emit but that are not
+    /// part of the authored audio. Measured fact (2026-08-15): symphonia
+    /// decodes OGG/vorbis *without* trimming these, and the amount differs per
+    /// file — so any nonzero value breaks sample-locked playback on the
+    /// current kira/symphonia stack.
+    pub priming: u64,
 }
 
 /// Probe an audio file's sample rate and exact frame count. Falls back to a
@@ -44,10 +51,12 @@ pub fn probe_audio(path: &Path) -> Result<AudioInfo, String> {
         .sample_rate
         .ok_or_else(|| "no sample rate reported".to_string())?;
 
+    let priming = params.padding.map(u64::from).unwrap_or(0) + params.delay.map(u64::from).unwrap_or(0);
     if let Some(frames) = params.n_frames {
         return Ok(AudioInfo {
             sample_rate,
-            frames,
+            frames: frames.saturating_sub(priming),
+            priming,
         });
     }
 
@@ -78,6 +87,7 @@ pub fn probe_audio(path: &Path) -> Result<AudioInfo, String> {
     }
     Ok(AudioInfo {
         sample_rate,
-        frames,
+        frames: frames.saturating_sub(priming),
+        priming,
     })
 }

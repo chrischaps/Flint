@@ -98,7 +98,7 @@ image = "0.25"
 rapier3d = { version = "0.22", features = ["default"] }
 
 # Audio
-kira = { version = "0.11", features = ["cpal", "ogg"] }
+kira = { version = "0.11", features = ["cpal", "ogg", "flac"] }
 glam = { version = "0.30", features = ["mint"] }
 
 # Scripting

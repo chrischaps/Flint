@@ -419,6 +419,17 @@ pub fn validate_manifest_assets(m: &SuiteManifest, base_dir: &Path) -> Vec<Issue
                 format!("bus '{bus}': {file}: {e}"),
             )),
             Ok(info) => {
+                if info.priming > 0 {
+                    issues.push(Issue::new(
+                        "StemPrimingUnsafe",
+                        format!(
+                            "bus '{bus}': {file} carries {} frames of encoder priming, which the \
+                             playback stack does not trim — re-export lossless (FLAC/WAV) for \
+                             sample-locked stems",
+                            info.priming
+                        ),
+                    ));
+                }
                 if info.sample_rate != m.sample_rate {
                     issues.push(Issue::new(
                         "SampleRateMismatch",
