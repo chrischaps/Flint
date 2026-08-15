@@ -56,6 +56,12 @@ impl StemBus {
         self.state.gain_db = db;
     }
 
+    /// Immediate gain set with the default tween — for callers (CLI
+    /// harnesses) that shouldn't need kira types for a plain fade.
+    pub fn set_gain_now(&mut self, db: f32) {
+        self.set_gain(db, Tween::default());
+    }
+
     /// Set the low-pass cutoff in Hz ([`LPF_OPEN_HZ`] = effectively open).
     pub fn set_lpf(&mut self, hz: f64, tween: Tween) {
         self.filter.set_cutoff(hz, tween);

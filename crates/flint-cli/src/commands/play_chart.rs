@@ -16,7 +16,7 @@ use flint_music::{validate_chart, validate_manifest, validate_manifest_assets, C
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::play_suite::latest_latency_ms;
+use super::latency_files::{latest_calibration_ms, latest_latency_ms};
 
 pub struct PlayChartArgs {
     pub manifest: String,
@@ -67,7 +67,20 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
             None
         }
     };
-    let offset_samples = (latency_ms.unwrap_or(0.0) / 1000.0 * manifest.sample_rate as f64)
+    let calibration_ms = match latest_calibration_ms(&base_dir) {
+        Some((file, ms)) => {
+            println!("tap calibration: {ms:+.1} ms (from {file})");
+            ms
+        }
+        None => {
+            println!("tap calibration: none on record (run `flint calibrate`)");
+            0.0
+        }
+    };
+    // Total judgment offset: what the ear hears, adjusted by the player's
+    // own measured tap tendency.
+    let offset_samples = ((latency_ms.unwrap_or(0.0) + calibration_ms) / 1000.0
+        * manifest.sample_rate as f64)
         .round() as i64;
 
     // --- session + judgment --------------------------------------------------
@@ -88,7 +101,7 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
     let header = serde_json::json!({
         "t": "header", "schema": 0,
         "suite": manifest.id, "chart": args.chart,
-        "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": 0.0,
+        "latency_ms": latency_ms.unwrap_or(0.0), "calibration_ms": calibration_ms,
         "grid_beats": judgment_cfg.grid_beats,
         "epoch_s": epoch,
     });

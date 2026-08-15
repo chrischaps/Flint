@@ -10,6 +10,8 @@ use flint_music::{validate_manifest, validate_manifest_assets, SuiteManifest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::latency_files::latest_latency_ms;
+
 pub struct PlaySuiteArgs {
     pub manifest: String,
     pub base_dir: Option<String>,
@@ -103,29 +105,4 @@ pub fn run(args: PlaySuiteArgs) -> Result<()> {
         max_skew * 1000.0
     );
     Ok(())
-}
-
-/// Newest measurement in `<base_dir>/logs/latency/` (files are named
-/// `latency-<date>-<epoch>.toml`, so lexicographic max = newest). Returns the
-/// loopback mean, falling back to the driver-reported mean.
-pub fn latest_latency_ms(base_dir: &Path) -> Option<(String, f64)> {
-    let dir = base_dir.join("logs/latency");
-    let mut names: Vec<String> = std::fs::read_dir(&dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.starts_with("latency-") && n.ends_with(".toml"))
-        .collect();
-    names.sort();
-    let name = names.pop()?;
-    let value: toml::Value = std::fs::read_to_string(dir.join(&name)).ok()?.parse().ok()?;
-    let mean = |table: &str| {
-        value
-            .get(table)
-            .and_then(|t| t.get("mean"))
-            .and_then(flint_core::toml_util::toml_f64)
-            .filter(|m| m.is_finite())
-    };
-    let ms = mean("loopback_ms").or_else(|| mean("driver_reported_ms"))?;
-    Some((name, ms))
 }

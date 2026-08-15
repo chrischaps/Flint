@@ -27,7 +27,7 @@ const MIN_PAIR_SPACING: f64 = 0.03;
 const WARMUP_PAIRS: usize = 8;
 /// Minimum time span the ring must cover before fitting — slope from a
 /// shorter baseline is dominated by chunk-quantization noise.
-const MIN_FIT_SPAN: f64 = 0.5;
+const MIN_FIT_SPAN: f64 = 1.0;
 /// A clock that reports the same sample for longer than this is not running
 /// yet (device warm-up), not merely chunk-quantized; restart the ring.
 const STALL_SECONDS: f64 = 0.1;
@@ -175,11 +175,17 @@ impl BridgeInner {
             self.sample_rate * (1.0 + SLOPE_TOLERANCE),
         );
         if !(lo..=hi).contains(&slope) {
-            tracing::warn!(
-                slope,
-                nominal = self.sample_rate,
-                "clock bridge slope outside tolerance; clamping"
-            );
+            // Early fits over a window still containing device spin-up are
+            // expected to be off; only a full ring makes this worth a warn.
+            if self.pairs.len() == MAX_PAIRS {
+                tracing::warn!(
+                    slope,
+                    nominal = self.sample_rate,
+                    "clock bridge slope outside tolerance; clamping"
+                );
+            } else {
+                tracing::debug!(slope, "early clock-bridge fit clamped (spin-up)");
+            }
             slope = slope.clamp(lo, hi);
         }
         // Intercept re-derived from the means so a clamped slope still
@@ -215,7 +221,7 @@ mod tests {
         let bridge = ClockBridge::new(48_000);
         let base = Instant::now();
         for i in 0..WARMUP_PAIRS {
-            let t = i as f64 * 0.08; // 8 pairs span 0.56 s >= MIN_FIT_SPAN
+            let t = i as f64 * 0.15; // 8 pairs span 1.05 s >= MIN_FIT_SPAN
             assert!(bridge.sample_at(base).is_none() || i + 1 >= WARMUP_PAIRS);
             bridge.observe(base + Duration::from_secs_f64(t), (t * RATE) as i64);
         }

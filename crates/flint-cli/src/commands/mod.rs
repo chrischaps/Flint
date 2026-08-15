@@ -17,6 +17,8 @@ pub mod render;
 pub mod scene;
 pub mod schema;
 pub mod spline_edit;
+pub mod calibrate;
+pub mod latency_files;
 pub mod play_chart;
 pub mod play_suite;
 pub mod render_suite;

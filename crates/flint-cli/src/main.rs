@@ -5,9 +5,9 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, edit_router, entity, gen, gen_preview, init, play, play_chart, prefab, preview, query,
-    render, play_suite, render_suite, scene, schema, spline_edit, terrain_edit, tex_edit, validate,
-    validate_suite,
+    asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, prefab,
+    preview, query, render, play_suite, render_suite, scene, schema, spline_edit, terrain_edit,
+    tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -223,6 +223,20 @@ enum Commands {
         /// Stop after this many bars (default: play to the end)
         #[arg(long)]
         bars: Option<u64>,
+    },
+
+    /// Tap-to-beat calibration: write the player's median offset to logs/latency/
+    Calibrate {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Number of taps to collect
+        #[arg(long, default_value_t = 16)]
+        taps: u32,
     },
 
     /// Play a suite against its beatmap chart with live gamepad capture (Phase 2 dev harness)
@@ -611,6 +625,15 @@ fn main() -> Result<()> {
             manifest,
             base_dir,
             bars,
+        }),
+        Commands::Calibrate {
+            manifest,
+            base_dir,
+            taps,
+        } => calibrate::run(calibrate::CalibrateArgs {
+            manifest,
+            base_dir,
+            taps,
         }),
         Commands::PlayChart {
             manifest,
