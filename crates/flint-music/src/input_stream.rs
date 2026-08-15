@@ -41,4 +41,16 @@ impl InputEvent {
             InputEvent::Pulse(p) => p.sample,
         }
     }
+
+    /// The same event re-stamped (used to map raw clock samples to suite
+    /// samples across a reintegration seam).
+    pub fn with_sample(&self, sample: i64) -> InputEvent {
+        match self {
+            InputEvent::Lean(l) => InputEvent::Lean(LeanSample { sample, ..*l }),
+            InputEvent::Pulse(p) => InputEvent::Pulse(PulseEvent {
+                sample,
+                kind: p.kind.clone(),
+            }),
+        }
+    }
 }

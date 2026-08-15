@@ -17,6 +17,7 @@ use flint_music::conductor::Conductor;
 use flint_music::input_stream::InputEvent;
 use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter, LeanMode};
 use flint_music::ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
+use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
 use flint_music::session::RealtimePlayer;
 use flint_music::status::status_line_with_coherence;
 use flint_music::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
@@ -106,6 +107,10 @@ pub struct ChartSession {
     ladder_path: PathBuf,
     /// Params currently applied — the visual half feeds `visual_frame`.
     ladder_params: LadderParams,
+    reintegrator: Reintegrator,
+    /// Reassembly progress for visuals (1.0 in normal play).
+    reassembly: f64,
+    seq_events: Vec<ReintegrationEvent>,
     end_sample: i64,
     sample_rate: u32,
     /// Second evaluator instance, kept out of the judge for visual lookups.
@@ -340,6 +345,9 @@ impl ChartSession {
             ladder_driver: LadderDriver::new(),
             ladder_path,
             ladder_params: LadderParams::clean(),
+            reintegrator: Reintegrator::new(manifest.reintegration.clone()),
+            reassembly: 1.0,
+            seq_events: Vec::new(),
             end_sample,
             sample_rate,
             visual_eval,
@@ -358,10 +366,16 @@ impl ChartSession {
     /// into judgment, step coherence, log, and print the per-bar status line.
     pub fn tick(&mut self) -> Result<Tick> {
         self.player.session.pump();
-        self.bridge.observe(Instant::now(), self.player.session.clock_sample());
+        // The bridge fits a line through clock observations — it must see the
+        // monotonic RAW clock; a seam's backwards jump would poison the fit.
+        // Events therefore arrive stamped in raw samples and are re-mapped to
+        // suite time at ingest.
+        self.bridge
+            .observe(Instant::now(), self.player.session.raw_clock_sample());
 
         let pos = self.player.session.now();
 
+        let timeline_offset = self.player.session.timeline_offset();
         if let Some(rx) = &self.input_rx {
             while let Ok(ev) = rx.try_recv() {
                 match &ev {
@@ -372,12 +386,21 @@ impl ChartSession {
                         self.last_pulse_at = Some(Instant::now());
                     }
                 }
+                // Session files record raw samples (monotonic across seams;
+                // jump records reconstruct suite time — ADR 0009/0014).
                 if ev.sample() >= 0 {
                     if let Some((w, _)) = &mut self.session_writer {
                         w.write(&ev, self.sample_rate)
                             .map_err(|e| anyhow::anyhow!("{e}"))?;
                     }
-                    self.judge.ingest(&ev, &mut self.records);
+                }
+                let suite_ev = if timeline_offset != 0 {
+                    ev.with_sample(ev.sample() - timeline_offset)
+                } else {
+                    ev
+                };
+                if suite_ev.sample() >= 0 {
+                    self.judge.ingest(&suite_ev, &mut self.records);
                 }
             }
         }
@@ -413,17 +436,68 @@ impl ChartSession {
             return Ok(Tick::Running); // pre-roll
         }
 
-        // Disintegration ladder: coherence in, mixer tweens + visual params
-        // out. `observe` is armed/hysteretic, so this is idle most ticks.
-        self.ladder.observe(self.coherence.value());
-        let params = self.ladder.params();
-        self.ladder_driver.apply(
-            &params,
-            pos.seconds,
-            params.ramp_ms,
-            &mut self.player.session.mixer,
-        );
-        self.ladder_params = params;
+        // Disintegration ladder + reintegration sequencer: coherence in,
+        // mixer tweens + visual params out. Idle most ticks (hysteresis).
+        let seq = self
+            .reintegrator
+            .tick(
+                self.coherence.value(),
+                &mut self.ladder,
+                &mut self.ladder_driver,
+                &mut self.player.session,
+                &mut self.seq_events,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        self.ladder_params = seq.params;
+        self.reassembly = seq.reassembly;
+        for ev in std::mem::take(&mut self.seq_events) {
+            match &ev {
+                ReintegrationEvent::FullFail {
+                    at_suite_sample,
+                    re_entry_sample,
+                    seam_suite_sample,
+                } => {
+                    println!(
+                        "  FULL FAIL at sample {at_suite_sample}: reintegrating to sample \
+                         {re_entry_sample} (seam at {seam_suite_sample})"
+                    );
+                    self.log
+                        .write_value(&serde_json::json!({
+                            "t": "full_fail", "sample": at_suite_sample,
+                            "re_entry_sample": re_entry_sample,
+                            "seam_suite_sample": seam_suite_sample,
+                        }))
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+                ReintegrationEvent::Seam {
+                    raw_sample,
+                    timeline_offset,
+                    re_entry_sample,
+                } => {
+                    println!("  seam: world re-gathering from sample {re_entry_sample}");
+                    self.judge.rewind_to(*re_entry_sample);
+                    if let Some((w, _)) = &mut self.session_writer {
+                        w.write_timeline_jump(*raw_sample, *timeline_offset)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    }
+                    self.log
+                        .write_value(&serde_json::json!({
+                            "t": "seam", "raw_sample": raw_sample,
+                            "timeline_offset": timeline_offset,
+                            "re_entry_sample": re_entry_sample,
+                        }))
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+                ReintegrationEvent::ReassemblyComplete { at_suite_sample } => {
+                    println!("  reassembly complete");
+                    self.log
+                        .write_value(&serde_json::json!({
+                            "t": "reassembly_complete", "sample": at_suite_sample,
+                        }))
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+            }
+        }
 
         if pos.sample >= self.end_sample || self.player.session.mixer.all_stopped() {
             return Ok(Tick::Finished);
@@ -514,7 +588,7 @@ impl ChartSession {
             desaturate: self.ladder_params.visual.desaturate,
             blur: self.ladder_params.visual.blur,
             chromatic: self.ladder_params.visual.chromatic,
-            reassembly: 1.0,
+            reassembly: self.reassembly as f32,
         }
     }
 

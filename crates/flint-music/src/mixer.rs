@@ -102,10 +102,17 @@ impl StemBus {
 
     /// Play this bus's retained stem again from `start_position_samples`
     /// (a position within the stem = a suite sample, since stems start at
-    /// suite sample 0), scheduled at `start_at`. Replaces the old handle;
-    /// detune resets to 0, which re-establishes sample-lock. Track-level
-    /// gain and LPF carry over untouched. No-op on silent buses.
-    pub fn replay_at(&mut self, start_position_samples: u64, start_at: StartTime) -> Result<()> {
+    /// suite sample 0), scheduled at `start_at`, with an initial per-sound
+    /// volume of `entry_db` (the reintegration entry level — 0 for the lead
+    /// bus, deep negative for buses that ramp back in). Replaces the old
+    /// handle; detune resets to 0, which re-establishes sample-lock.
+    /// Track-level gain and LPF carry over untouched. No-op on silent buses.
+    pub fn replay_at(
+        &mut self,
+        start_position_samples: u64,
+        start_at: StartTime,
+        entry_db: f32,
+    ) -> Result<()> {
         let Some(data) = &self.data else {
             return Ok(());
         };
@@ -113,13 +120,24 @@ impl StemBus {
             .track
             .play(
                 data.start_position(PlaybackPosition::Samples(start_position_samples as usize))
-                    .start_time(start_at),
+                    .start_time(start_at)
+                    .volume(Decibels(entry_db)),
             )
             .map_err(|e| FlintError::AudioError(format!("bus '{}' replay: {e}", self.name)))?;
         self.sound = Some(handle);
         self.state.playing = true;
         self.state.detune_semitones = 0.0;
         Ok(())
+    }
+
+    /// Set the *per-sound* volume (independent of the track gain the ladder
+    /// drives). The reintegration reassembly ramp lives here: one clock-timed
+    /// tween per bus from its entry level to full, so entry envelopes never
+    /// fight ladder trims. No-op on silent buses.
+    pub fn set_sound_volume(&mut self, db: f32, tween: Tween) {
+        if let Some(sound) = &mut self.sound {
+            sound.set_volume(Decibels(db), tween);
+        }
     }
 }
 
@@ -202,13 +220,16 @@ impl BusMixer {
     /// Re-play every non-silent stem from `start_position_samples`, all
     /// scheduled at the same `start_at` — one shared clock time is what makes
     /// the re-entry sample-locked, exactly like the initial start.
+    /// `entry_db` gives each bus its entry level by name.
     pub fn replay_all_at(
         &mut self,
         start_position_samples: u64,
         start_at: StartTime,
+        entry_db: &dyn Fn(&str) -> f32,
     ) -> Result<()> {
         for bus in &mut self.buses {
-            bus.replay_at(start_position_samples, start_at)?;
+            let db = entry_db(&bus.name);
+            bus.replay_at(start_position_samples, start_at, db)?;
         }
         Ok(())
     }

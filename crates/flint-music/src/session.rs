@@ -157,18 +157,28 @@ impl SuiteSession {
         self.timeline_offset
     }
 
-    /// Schedule a reintegration seam: fade out the current timeline with
-    /// `fade` (starting now), re-play every stem from `re_entry_sample` at
-    /// seam time `seam_suite_sample` (a sample on the *current* suite
-    /// timeline, far enough ahead for the fade), and queue the musical-time
-    /// jump, which `pump` commits when the clock reaches the seam. The
-    /// caller flushes the scheduler and sets per-bus entry gains around this
-    /// call; this method owns only sample-accurate mechanics.
+    /// The kira clock time at a raw clock sample (raw = ticks − pre-roll).
+    pub fn clock_time_at_raw(&self, raw: i64) -> kira::clock::ClockTime {
+        kira::clock::ClockTime::from_ticks_u64(
+            &self.clock,
+            (raw + self.preroll_samples as i64).max(0) as u64,
+        )
+    }
+
+    /// Schedule a reintegration seam: fade the current timeline to silence
+    /// over `fade_ms` ending exactly at seam time `seam_suite_sample` (a
+    /// sample on the *current* suite timeline, far enough ahead for the
+    /// fade), re-play every stem from `re_entry_sample` at that same clock
+    /// tick with per-bus entry levels, and queue the musical-time jump,
+    /// which `pump` commits when the clock reaches the seam. The caller
+    /// flushes the scheduler and owns the reassembly ramps; this method owns
+    /// only sample-accurate mechanics.
     pub fn schedule_seam(
         &mut self,
         re_entry_sample: i64,
         seam_suite_sample: i64,
-        fade: kira::Tween,
+        fade_ms: f64,
+        entry_db: &dyn Fn(&str) -> f32,
     ) -> Result<()> {
         let seam_raw = seam_suite_sample + self.timeline_offset;
         let seam_tick = seam_raw + self.preroll_samples as i64;
@@ -177,12 +187,19 @@ impl SuiteSession {
                 "seam before timeline start (seam tick {seam_tick}, re-entry {re_entry_sample})"
             )));
         }
+        let sample_rate = self.conductor.tempo().sample_rate() as f64;
+        let fade_samples = (fade_ms.max(0.0) / 1000.0 * sample_rate).round() as i64;
+        let fade = kira::Tween {
+            start_time: StartTime::ClockTime(self.clock_time_at_raw(seam_raw - fade_samples)),
+            duration: std::time::Duration::from_secs_f64(fade_ms.max(0.0) / 1000.0),
+            ..Default::default()
+        };
         let start_at = StartTime::ClockTime(kira::clock::ClockTime::from_ticks_u64(
             &self.clock,
             seam_tick as u64,
         ));
         self.mixer.stop_all(fade);
-        self.mixer.replay_all_at(re_entry_sample as u64, start_at)?;
+        self.mixer.replay_all_at(re_entry_sample as u64, start_at, entry_db)?;
         self.pending_jump = Some((seam_raw, seam_raw - re_entry_sample));
         Ok(())
     }

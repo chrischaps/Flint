@@ -156,6 +156,27 @@ impl SessionWriter {
         Ok(())
     }
 
+    /// Record a reintegration timeline jump (ADR 0009 amendment, ADR 0014).
+    /// Events in a session file are stamped in **raw clock samples** (which
+    /// never rewind, keeping the file monotonic); replay reconstructs suite
+    /// time as `suite = raw - offset` using the most recent jump record.
+    pub fn write_timeline_jump(&mut self, raw_sample: i64, offset: i64) -> Result<()> {
+        if raw_sample < self.last_sample {
+            return Err(FlintError::ValidationError(format!(
+                "timeline jump out of order: {raw_sample} after {}",
+                self.last_sample
+            )));
+        }
+        self.last_sample = raw_sample;
+        writeln!(
+            self.out,
+            "{}",
+            serde_json::json!({"t": "timeline_jump", "sample": raw_sample, "offset": offset})
+        )?;
+        self.written += 1;
+        Ok(())
+    }
+
     pub fn written(&self) -> u64 {
         self.written
     }
@@ -203,6 +224,9 @@ pub fn read_session(path: &Path) -> Result<(SessionHeader, Vec<InputEvent>)> {
         }
         last = sample;
         let ev = match v.get("t").and_then(|t| t.as_str()) {
+            // Reintegration jump records ride along for the reactive replay
+            // path (E6); the plain event reader skips them.
+            Some("timeline_jump") => continue,
             Some("lean") => InputEvent::Lean(LeanSample {
                 sample,
                 x: v.get("x").and_then(|x| x.as_f64()).ok_or_else(|| bad("x"))?,

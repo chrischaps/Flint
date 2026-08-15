@@ -553,14 +553,13 @@ impl Ladder {
 /// symmetric LFO evaluated from suite time (deterministic — same time in,
 /// same detune out) and smoothed by short tweens.
 ///
-/// `gain_offset_db` is the reintegration sequencer's channel: per-bus entry
-/// gains (lead solo, others ramping in) that compose additively with the
-/// ladder's trims. Empty in normal play (offset 0 = full level).
+/// The driver owns *track* gain (ladder trims). Reintegration entry
+/// envelopes live on *per-sound* volume (`StemBus::set_sound_volume`), so
+/// the two never fight.
 pub struct LadderDriver {
     last_lpf: BTreeMap<String, f64>,
     last_gain: BTreeMap<String, f32>,
     last_detune: BTreeMap<String, f64>,
-    pub gain_offset_db: BTreeMap<String, f32>,
 }
 
 /// Smoothing tween for per-tick warble updates (the LFO is the shape; this
@@ -582,7 +581,6 @@ impl LadderDriver {
             last_lpf: BTreeMap::new(),
             last_gain: BTreeMap::new(),
             last_detune: BTreeMap::new(),
-            gain_offset_db: BTreeMap::new(),
         }
     }
 
@@ -632,10 +630,9 @@ impl LadderDriver {
                 }
             }
 
-            // Gain: sequencer entry offset + ladder trim (trim is 0 on
-            // protected buses by construction — the validator enforces it).
-            let target = self.gain_offset_db.get(name).copied().unwrap_or(0.0)
-                + params.gain_trim_db.get(name).copied().unwrap_or(0.0);
+            // Track gain = ladder trim (0 on protected buses by
+            // construction — the validator enforces it).
+            let target = params.gain_trim_db.get(name).copied().unwrap_or(0.0);
             if (self.last_gain.get(name).copied().unwrap_or(0.0) - target).abs() > GAIN_EPS
                 || !self.last_gain.contains_key(name)
             {

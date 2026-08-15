@@ -380,6 +380,34 @@ impl Judge {
     pub fn windows(&self) -> &[PulseWindow] {
         self.eval.pulse_windows()
     }
+
+    /// Reintegration rewind: judged time returns to `sample` (a re-entry
+    /// point on the suite timeline). Content at or after it becomes
+    /// judgeable again — windows un-consume, arrivals reset — while
+    /// everything earlier stays consumed, so no misses fire for the past
+    /// the seam skipped. The lean latch survives (the stick is where it
+    /// is). Input stays live through reintegration by construction.
+    pub fn rewind_to(&mut self, sample: i64) {
+        self.advanced_to = sample;
+        let eval = &self.eval;
+        let consumed = &mut self.consumed;
+        for w in eval.pulse_windows() {
+            if w.close() >= sample {
+                consumed[w.index] = false;
+            }
+        }
+        for a in self.arrivals.iter_mut() {
+            if a.close >= sample {
+                a.done = false;
+                a.best_err = f64::INFINITY;
+                a.best_actual = [0.0, 0.0];
+            }
+        }
+        if self.cfg.lean_mode == LeanMode::Track {
+            let beat = self.conductor.position_at_sample(sample).beat;
+            self.next_grid_beat = (beat / self.cfg.grid_beats).ceil() * self.cfg.grid_beats;
+        }
+    }
 }
 
 /// Buffered JSONL writer: one header line, then one record per line. The

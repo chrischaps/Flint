@@ -16,10 +16,9 @@ use flint_music::offline::{render_offline_with, OfflineRenderConfig, RenderResul
 use flint_music::session::StemResolver;
 use flint_music::{MusicalPosition, SuiteManifest};
 use kira::sound::static_sound::StaticSoundData;
-use kira::{Frame, Tween};
+use kira::Frame;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 const SR: u32 = 48_000;
 const CHUNK: usize = 128;
@@ -99,14 +98,7 @@ fn render() -> Rendered {
         if !triggered && pos.sample >= TRIGGER_AT {
             triggered = true;
             session
-                .schedule_seam(
-                    0,
-                    SEAM_AT,
-                    Tween {
-                        duration: Duration::from_secs_f64(FADE_MS / 1000.0),
-                        ..Default::default()
-                    },
-                )
+                .schedule_seam(0, SEAM_AT, FADE_MS, &|_| 0.0)
                 .expect("schedule seam");
         }
         if session.timeline_offset() != 0 {
