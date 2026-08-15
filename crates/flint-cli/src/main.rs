@@ -294,6 +294,10 @@ enum Commands {
         #[arg(long)]
         out: Option<String>,
 
+        /// Also save the replayed event stream as a session file
+        #[arg(long)]
+        save_session: Option<String>,
+
         /// Also render the suite audio over the replayed span to this WAV
         #[arg(long)]
         render: Option<String>,
@@ -701,6 +705,7 @@ fn main() -> Result<()> {
             synthetic,
             config,
             out,
+            save_session,
             render,
             base_dir,
         } => replay_chart::run(replay_chart::ReplayChartArgs {
@@ -710,6 +715,7 @@ fn main() -> Result<()> {
             synthetic,
             config,
             out,
+            save_session,
             render,
             base_dir,
         }),

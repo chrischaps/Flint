@@ -27,6 +27,9 @@ pub struct ReplayChartArgs {
     pub synthetic: Option<String>,
     pub config: Option<String>,
     pub out: Option<String>,
+    /// Materialize the replayed (usually synthetic) event stream as a
+    /// session file — for committing evidence or sharing a repro.
+    pub save_session: Option<String>,
     pub render: Option<String>,
     pub base_dir: Option<String>,
 }
@@ -88,6 +91,35 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         }
         _ => bail!("exactly one of --session or --synthetic is required"),
     };
+
+    if let Some(path) = &args.save_session {
+        let header = flint_music::replay::SessionHeader {
+            schema: 0,
+            suite: manifest.id.clone(),
+            chart: args.chart.clone(),
+            sample_rate: manifest.sample_rate,
+            latency_ms: session_header.as_ref().map(|h| h.latency_ms).unwrap_or(0.0),
+            calibration_ms: session_header
+                .as_ref()
+                .map(|h| h.calibration_ms)
+                .unwrap_or(0.0),
+            coherence_config: session_header
+                .as_ref()
+                .and_then(|h| h.coherence_config.clone()),
+            capture: args
+                .synthetic
+                .as_ref()
+                .map(|p| serde_json::json!({ "synthetic": p })),
+        };
+        let mut w = flint_music::replay::SessionWriter::create(Path::new(path), &header)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for ev in &events {
+            w.write(ev, manifest.sample_rate)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        w.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!("session saved: {path} ({} event(s))", w.written());
+    }
 
     // --- coherence config: explicit flag > session header snapshot >
     // repo default file > built-in defaults ----------------------------------
