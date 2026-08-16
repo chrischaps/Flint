@@ -14,6 +14,7 @@
 pub mod analysis;
 pub mod chart;
 pub mod chart_eval;
+pub mod chart_session;
 pub mod clock_bridge;
 pub mod coherence;
 pub mod conductor;
@@ -35,6 +36,11 @@ pub mod validate;
 
 pub use chart::Chart;
 pub use chart_eval::{ChannelValue, ChartEval, PulseWindow};
+pub use chart_session::{
+    latest_calibration_ms, latest_latency_ms, lean_mode_name, parse_lean_mode,
+    resolve_coherence_config, ChartCore, ChartSession, ChartSessionConfig, CoherenceSource,
+    FinishSummary, Tick, TickOutcome, VisualFrame,
+};
 pub use clock_bridge::{BridgeStats, ClockBridge};
 pub use coherence::{Coherence, CoherenceConfig};
 pub use conductor::{Conductor, Grid, MusicalPosition};

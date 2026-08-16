@@ -30,7 +30,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use super::play_chart::{ChartSession, Tick};
+use flint_music::chart_session::{ChartSession, Tick};
 
 pub fn run_windowed(session: ChartSession) -> Result<()> {
     let event_loop = EventLoop::new().context("creating event loop")?;
@@ -46,7 +46,12 @@ pub fn run_windowed(session: ChartSession) -> Result<()> {
         return Err(err);
     }
     match app.session.take() {
-        Some(session) => session.finish(),
+        Some(session) => {
+            for n in session.finish().map_err(|e| anyhow::anyhow!("{e}"))? {
+                println!("{n}");
+            }
+            Ok(())
+        }
         None => Ok(()),
     }
 }
@@ -65,10 +70,16 @@ impl App {
             return;
         };
         match session.tick() {
-            Ok(Tick::Running) => {}
-            Ok(Tick::Finished) => event_loop.exit(),
+            Ok(out) => {
+                for n in &out.notices {
+                    println!("{n}");
+                }
+                if out.state == Tick::Finished {
+                    event_loop.exit();
+                }
+            }
             Err(e) => {
-                self.error = Some(e);
+                self.error = Some(anyhow::anyhow!("{e}"));
                 event_loop.exit();
             }
         }
@@ -119,9 +130,16 @@ impl ApplicationHandler for App {
                     }
                     PhysicalKey::Code(KeyCode::KeyR) => {
                         if let Some(session) = &mut self.session {
-                            if let Err(e) = session.reload_config() {
-                                self.error = Some(e);
-                                event_loop.exit();
+                            match session.reload_config() {
+                                Ok(notices) => {
+                                    for n in notices {
+                                        println!("{n}");
+                                    }
+                                }
+                                Err(e) => {
+                                    self.error = Some(anyhow::anyhow!("{e}"));
+                                    event_loop.exit();
+                                }
                             }
                         }
                     }
@@ -238,7 +256,7 @@ impl Gfx {
         }
     }
 
-    fn render(&mut self, frame: &super::play_chart::VisualFrame, time_s: f32) -> Result<()> {
+    fn render(&mut self, frame: &flint_music::chart_session::VisualFrame, time_s: f32) -> Result<()> {
         let aspect = self.ctx.aspect_ratio();
         let data: [f32; 20] = [
             frame.lean[0],

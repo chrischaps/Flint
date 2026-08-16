@@ -12,7 +12,7 @@ use flint_music::{validate_manifest, validate_manifest_assets, SuiteManifest};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::latency_files::latest_latency_ms;
+use flint_music::chart_session::latest_latency_ms;
 
 pub struct CalibrateArgs {
     pub manifest: String,

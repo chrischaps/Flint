@@ -5,12 +5,20 @@
 //! runs the offline audio render over the same span, so listening evidence
 //! and the coherence trace come from one invocation (coherence→mixer
 //! coupling is Phase 3; the render here is the plain suite).
+//!
+//! The loop body is [`flint_music::ChartCore`] — the same code the live
+//! harness runs (ADR 0016); this command is the offline front end.
 
 use anyhow::{bail, Context, Result};
 use flint_music::chart_eval::ChartEval;
-use flint_music::coherence::{Coherence, CoherenceConfig};
+use flint_music::chart_session::{
+    lean_mode_name, parse_lean_mode, resolve_coherence_config, ChartCore, CoherenceSource,
+};
+use flint_music::coherence::Coherence;
 use flint_music::conductor::Conductor;
-use flint_music::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter};
+use flint_music::judgment::{Judge, JudgmentConfig, JsonlWriter};
+use flint_music::ladder::{Ladder, LadderConfig};
+use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
 use flint_music::replay::{synthesize, SyntheticProfile};
 use flint_music::session::FileStems;
 use flint_music::status::coherence_meter;
@@ -139,54 +147,54 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
 
     // --- coherence config: explicit flag > session header snapshot >
     // repo default file > built-in defaults ----------------------------------
-    let coherence_cfg = if let Some(path) = &args.config {
-        let cfg = CoherenceConfig::load(Path::new(path))
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .with_context(|| format!("loading {path}"))?;
-        println!("coherence config: {path}");
-        if session_header
+    let (coherence_cfg, coherence_source) = resolve_coherence_config(
+        args.config.as_deref().map(Path::new),
+        session_header
             .as_ref()
-            .and_then(|h| h.coherence_config.as_ref())
-            .is_some_and(|snap| *snap != cfg.to_json())
-        {
-            println!("  (differs from the session's recorded config — offline retune)");
+            .and_then(|h| h.coherence_config.as_ref()),
+        &base_dir,
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let config_path = match &coherence_source {
+        CoherenceSource::Explicit(p) => {
+            println!("coherence config: {}", p.display());
+            if session_header
+                .as_ref()
+                .and_then(|h| h.coherence_config.as_ref())
+                .is_some_and(|snap| *snap != coherence_cfg.to_json())
+            {
+                println!("  (differs from the session's recorded config — offline retune)");
+            }
+            p.clone()
         }
-        cfg
-    } else if let Some(snap) = session_header
-        .as_ref()
-        .and_then(|h| h.coherence_config.as_ref())
-    {
-        println!("coherence config: session header snapshot");
-        CoherenceConfig::from_json(snap)
-    } else {
-        let default_path = base_dir.join("config/coherence.toml");
-        if default_path.exists() {
-            println!("coherence config: {}", default_path.display());
-            CoherenceConfig::load(&default_path).map_err(|e| anyhow::anyhow!("{e}"))?
-        } else {
+        CoherenceSource::Snapshot => {
+            println!("coherence config: session header snapshot");
+            base_dir.join("config/coherence.toml")
+        }
+        CoherenceSource::DefaultFile(p) => {
+            println!("coherence config: {}", p.display());
+            p.clone()
+        }
+        CoherenceSource::Builtin(p) => {
             println!("coherence config: built-in defaults");
-            CoherenceConfig::default()
+            p.clone()
         }
     };
 
     // --- run the pipeline ----------------------------------------------------
     let judgment_cfg = JudgmentConfig {
-        lean_mode: super::play_chart::parse_lean_mode(&args.lean_mode)?,
+        lean_mode: parse_lean_mode(&args.lean_mode).map_err(|e| anyhow::anyhow!("{e}"))?,
         ..Default::default()
     };
-    println!(
-        "lean mode: {}",
-        super::play_chart::lean_mode_name(judgment_cfg.lean_mode)
-    );
+    println!("lean mode: {}", lean_mode_name(judgment_cfg.lean_mode));
     let eval_for_judge =
         ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut judge = Judge::new(
+    let judge = Judge::new(
         eval_for_judge,
         Conductor::new(&manifest, None),
         judgment_cfg,
     );
-    let lean_step_beats = judge.lean_step_beats();
-    let mut coherence = Coherence::new(coherence_cfg);
+    let coherence = Coherence::new(coherence_cfg);
 
     let out_path = args
         .out
@@ -199,113 +207,93 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         "latency_ms": session_header.as_ref().map(|h| h.latency_ms).unwrap_or(0.0),
         "calibration_ms": session_header.as_ref().map(|h| h.calibration_ms).unwrap_or(0.0),
         "grid_beats": judgment_cfg.grid_beats,
-        "lean_mode": super::play_chart::lean_mode_name(judgment_cfg.lean_mode),
+        "lean_mode": lean_mode_name(judgment_cfg.lean_mode),
         "arrival_half_beats": judgment_cfg.arrival_half_beats,
         "coherence_config": coherence_cfg.to_json(),
     });
-    let mut log = JsonlWriter::create(&out_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let log = JsonlWriter::create(&out_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // --- ladder: with --render, its presence switches to the reactive loop ----
-    let ladder_cfg = if let Some(path) = &args.ladder {
-        let cfg = flint_music::ladder::LadderConfig::load(Path::new(path))
+    let default_ladder_path = base_dir.join("config/ladder.toml");
+    let (ladder_cfg, ladder_path) = if let Some(path) = &args.ladder {
+        let cfg = LadderConfig::load(Path::new(path))
             .map_err(|e| anyhow::anyhow!("{e}"))
             .with_context(|| format!("loading {path}"))?;
         println!("ladder config: {path}");
-        Some(cfg)
-    } else {
-        let default_path = base_dir.join("config/ladder.toml");
-        if default_path.exists() {
-            println!("ladder config: {}", default_path.display());
+        (Some(cfg), PathBuf::from(path))
+    } else if default_ladder_path.exists() {
+        println!("ladder config: {}", default_ladder_path.display());
+        (
             Some(
-                flint_music::ladder::LadderConfig::load(&default_path)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?,
-            )
-        } else {
-            None
-        }
+                LadderConfig::load(&default_ladder_path).map_err(|e| anyhow::anyhow!("{e}"))?,
+            ),
+            default_ladder_path,
+        )
+    } else {
+        (None, default_ladder_path)
     };
-    match (&args.render, ladder_cfg) {
-        (Some(wav), Some(lcfg)) => {
-            return run_reactive(
-                &manifest,
-                &base_dir,
-                wav,
-                lcfg,
-                &pairs,
-                synthetic_stamps,
-                judge,
-                coherence,
-                lean_step_beats,
-                log,
-                &out_path,
-            );
-        }
-        (None, Some(_)) => {
-            println!("(ladder inactive without --render; judgment replay is Milestone-2 semantics)")
-        }
-        _ => {}
+
+    let mut ladder_cfg = ladder_cfg;
+    let reactive = args.render.is_some() && ladder_cfg.is_some();
+    if args.render.is_none() && ladder_cfg.is_some() {
+        println!("(ladder inactive without --render; judgment replay is Milestone-2 semantics)");
+    }
+    let core_ladder = if reactive {
+        ladder_cfg.take().unwrap()
+    } else {
+        LadderConfig::default()
+    };
+    let mut core = ChartCore::new(
+        judge,
+        coherence,
+        log,
+        Ladder::new(core_ladder),
+        Reintegrator::new(manifest.reintegration.clone()),
+        Conductor::new(&manifest, None),
+        config_path,
+        ladder_path,
+    );
+    core.sync_seam_params();
+    if reactive {
+        let wav = args.render.as_ref().unwrap();
+        return run_reactive(
+            &manifest,
+            &base_dir,
+            wav,
+            core,
+            &pairs,
+            synthetic_stamps,
+            &out_path,
+        );
     }
 
-    let (mut hits, mut misses, mut spurious) = (0u64, 0u64, 0u64);
-    let mut abs_err_sum_ms = 0.0f64;
-    let mut records = Vec::new();
     let mut last_bar = i64::MIN;
-    let mut process =
-        |records: &mut Vec<JudgmentRecord>,
-         at_sample: i64,
-         coherence: &mut Coherence,
-         log: &mut JsonlWriter|
-         -> Result<()> {
-            if records.is_empty() {
-                return Ok(());
-            }
-            let beats_per_bar = conductor
-                .tempo()
-                .anchor_at(at_sample.max(0))
-                .map(|a| a.beats_per_bar as f64)
-                .unwrap_or(4.0);
-            let value = coherence.step(records, lean_step_beats, beats_per_bar);
-            log.write_value(&serde_json::json!({
-                "t": "coherence", "sample": at_sample, "value": value,
-            }))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-            for rec in records.drain(..) {
-                match &rec {
-                    JudgmentRecord::Pulse { err_ms, .. } => {
-                        hits += 1;
-                        abs_err_sum_ms += err_ms.abs();
-                    }
-                    JudgmentRecord::Miss { .. } => misses += 1,
-                    JudgmentRecord::Spurious { .. } => spurious += 1,
-                    JudgmentRecord::Track { .. } => {}
-                }
-                log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
-            }
-            Ok(())
-        };
-
     for ev in &events {
-        judge.ingest(ev, &mut records);
-        process(&mut records, ev.sample(), &mut coherence, &mut log)?;
+        core.ingest(ev);
+        core.process(ev.sample()).map_err(|e| anyhow::anyhow!("{e}"))?;
         let bar = conductor.position_at_sample(ev.sample()).bar;
         if bar != last_bar {
             last_bar = bar;
-            println!("bar {:>3} | {}", bar + 1, coherence_meter(coherence.value()));
+            println!(
+                "bar {:>3} | {}",
+                bar + 1,
+                coherence_meter(core.coherence().value())
+            );
         }
     }
     let final_sample = events.last().map(|e| e.sample()).unwrap_or(0);
-    judge.finish(&mut records);
-    process(&mut records, final_sample, &mut coherence, &mut log)?;
-    log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+    core.judge_finish();
+    core.process(final_sample).map_err(|e| anyhow::anyhow!("{e}"))?;
+    core.flush_log().map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let mean_ms = if hits > 0 {
-        abs_err_sum_ms / hits as f64
-    } else {
-        0.0
-    };
+    let s = core.summary();
     println!(
-        "done. pulses hit {hits} (mean |err| {mean_ms:.1} ms), missed {misses}, spurious {spurious} | final {}",
-        coherence_meter(coherence.value())
+        "done. pulses hit {} (mean |err| {:.1} ms), missed {}, spurious {} | final {}",
+        s.hits,
+        s.mean_abs_err_ms,
+        s.misses,
+        s.spurious,
+        coherence_meter(core.coherence().value())
     );
     println!("judgment log: {}", out_path.display());
 
@@ -340,26 +328,19 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
 }
 
 /// The reactive render: the same judge → coherence → ladder → reintegration
-/// sequencer → mixer loop the live harness runs, inside the deterministic
-/// offline renderer (ADR 0006/0014). A recorded or synthetic fall renders
-/// its full-fail seams and reassemblies to WAV, bit-identically.
-#[allow(clippy::too_many_arguments)]
+/// sequencer → mixer loop the live harness runs — [`ChartCore`], literally —
+/// inside the deterministic offline renderer (ADR 0006/0014). A recorded or
+/// synthetic fall renders its full-fail seams and reassemblies to WAV,
+/// bit-identically.
 fn run_reactive(
     manifest: &SuiteManifest,
     base_dir: &Path,
     wav: &str,
-    ladder_cfg: flint_music::ladder::LadderConfig,
+    mut core: ChartCore,
     pairs: &[(i64, flint_music::input_stream::InputEvent)],
     synthetic_stamps: bool,
-    mut judge: Judge,
-    mut coherence: Coherence,
-    lean_step_beats: f64,
-    mut log: JsonlWriter,
     out_path: &Path,
 ) -> Result<()> {
-    use flint_music::ladder::{Ladder, LadderDriver};
-    use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
-
     let sample_rate = manifest.sample_rate;
     let last_raw = pairs.last().map(|(r, _)| *r).unwrap_or(0);
     // Generous trailing margin: a fall that begins at the last event still
@@ -369,23 +350,12 @@ fn run_reactive(
         duration_samples: last_raw.max(1) + 30 * sample_rate as i64,
         ..Default::default()
     };
-    let mut ladder = Ladder::new(ladder_cfg);
-    let mut driver = LadderDriver::new();
-    let mut reintegrator = Reintegrator::new(manifest.reintegration.clone());
-    reintegrator.fade_ms = ladder.config().seam_fade_ms;
-    reintegrator.rewind_beats = ladder.config().seam_rewind_beats;
-    reintegrator.rewind_drop_st = ladder.config().seam_rewind_drop_st;
-    reintegrator.pickup_beats = ladder.config().seam_pickup_beats;
     let script = EventScript {
         schema_version: 0,
         events: vec![],
     };
 
-    let (mut hits, mut misses, mut spurious) = (0u64, 0u64, 0u64);
-    let mut abs_err_sum_ms = 0.0f64;
     let mut fails = 0u64;
-    let mut records: Vec<JudgmentRecord> = Vec::new();
-    let mut seq_events: Vec<ReintegrationEvent> = Vec::new();
     let mut cursor = 0usize;
     let mut last_bar = i64::MIN;
     let mut failure: Option<anyhow::Error> = None;
@@ -414,98 +384,40 @@ fn run_reactive(
                         ev.clone()
                     };
                     if suite_ev.sample() >= 0 {
-                        judge.ingest(&suite_ev, &mut records);
+                        core.ingest(&suite_ev);
                     }
                 }
                 let now_suite = session.clock_sample();
-                judge.advance_to(now_suite, &mut records);
+                core.advance_to(now_suite);
+                core.process(now_suite).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                if !records.is_empty() {
-                    let beats_per_bar = session
-                        .conductor
-                        .tempo()
-                        .anchor_at(now_suite.max(0))
-                        .map(|a| a.beats_per_bar as f64)
-                        .unwrap_or(4.0);
-                    let value = coherence.step(&records, lean_step_beats, beats_per_bar);
-                    log.write_value(&serde_json::json!({
-                        "t": "coherence", "sample": now_suite, "value": value,
-                    }))
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    for rec in records.drain(..) {
-                        match &rec {
-                            JudgmentRecord::Pulse { err_ms, .. } => {
-                                hits += 1;
-                                abs_err_sum_ms += err_ms.abs();
-                            }
-                            JudgmentRecord::Miss { .. } => misses += 1,
-                            JudgmentRecord::Spurious { .. } => spurious += 1,
-                            JudgmentRecord::Track { .. } => {}
-                        }
-                        log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    }
-                }
-
-                reintegrator
-                    .tick(
-                        coherence.value(),
-                        &mut ladder,
-                        &mut driver,
-                        session,
-                        &mut seq_events,
-                    )
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                for ev in seq_events.drain(..) {
-                    match &ev {
-                        ReintegrationEvent::FullFail {
-                            at_suite_sample,
-                            re_entry_sample,
-                            seam_suite_sample,
-                        } => {
-                            fails += 1;
-                            println!(
-                                "FULL FAIL at sample {at_suite_sample}: reintegrating to \
-                                 {re_entry_sample} (seam at {seam_suite_sample})"
-                            );
-                            log.write_value(&serde_json::json!({
-                                "t": "full_fail", "sample": at_suite_sample,
-                                "re_entry_sample": re_entry_sample,
-                                "seam_suite_sample": seam_suite_sample,
-                            }))
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
-                        }
-                        ReintegrationEvent::Seam {
-                            raw_sample,
-                            timeline_offset,
-                            re_entry_sample,
-                        } => {
-                            judge.rewind_to(*re_entry_sample);
-                            log.write_value(&serde_json::json!({
-                                "t": "seam", "raw_sample": raw_sample,
-                                "timeline_offset": timeline_offset,
-                                "re_entry_sample": re_entry_sample,
-                            }))
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
-                        }
-                        ReintegrationEvent::ReassemblyComplete { at_suite_sample } => {
-                            log.write_value(&serde_json::json!({
-                                "t": "reassembly_complete", "sample": at_suite_sample,
-                            }))
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
-                        }
+                let (_seq, seq_events) =
+                    core.step_seq(session).map_err(|e| anyhow::anyhow!("{e}"))?;
+                for ev in &seq_events {
+                    if let ReintegrationEvent::FullFail {
+                        at_suite_sample,
+                        re_entry_sample,
+                        seam_suite_sample,
+                    } = ev
+                    {
+                        fails += 1;
+                        println!(
+                            "FULL FAIL at sample {at_suite_sample}: reintegrating to \
+                             {re_entry_sample} (seam at {seam_suite_sample})"
+                        );
                     }
                 }
 
                 if pos.bar != last_bar && pos.sample >= 0 {
                     last_bar = pos.bar;
-                    let rung = match ladder.rung() {
-                        Some(r) => format!(" | rung {} ({})", ladder.level(), r.name),
+                    let rung = match core.ladder().rung() {
+                        Some(r) => format!(" | rung {} ({})", core.ladder().level(), r.name),
                         None => String::new(),
                     };
                     println!(
                         "bar {:>3} | {}{rung}",
                         pos.bar + 1,
-                        coherence_meter(coherence.value())
+                        coherence_meter(core.coherence().value())
                     );
                 }
                 Ok(())
@@ -520,26 +432,15 @@ fn run_reactive(
         return Err(e);
     }
 
-    judge.finish(&mut records);
-    for rec in records.drain(..) {
-        match &rec {
-            JudgmentRecord::Miss { .. } => misses += 1,
-            JudgmentRecord::Spurious { .. } => spurious += 1,
-            _ => {}
-        }
-        log.write(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
-    }
-    log.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let mean_ms = if hits > 0 {
-        abs_err_sum_ms / hits as f64
-    } else {
-        0.0
-    };
+    let s = core.finish().map_err(|e| anyhow::anyhow!("{e}"))?;
     println!(
-        "done. pulses hit {hits} (mean |err| {mean_ms:.1} ms), missed {misses}, spurious \
-         {spurious} | {fails} full-fail(s) | final {}",
-        coherence_meter(coherence.value())
+        "done. pulses hit {} (mean |err| {:.1} ms), missed {}, spurious \
+         {} | {fails} full-fail(s) | final {}",
+        s.hits,
+        s.mean_abs_err_ms,
+        s.misses,
+        s.spurious,
+        coherence_meter(core.coherence().value())
     );
     println!("judgment log: {}", out_path.display());
 
