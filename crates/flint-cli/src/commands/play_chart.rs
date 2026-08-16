@@ -275,7 +275,7 @@ impl ChartSession {
         let ladder = Ladder::new(ladder_cfg);
         let mut reintegrator = Reintegrator::new(manifest.reintegration.clone());
         reintegrator.fade_ms = ladder.config().seam_fade_ms;
-        reintegrator.rewind_bars = ladder.config().seam_rewind_bars;
+        reintegrator.rewind_beats = ladder.config().seam_rewind_beats;
         reintegrator.rewind_drop_st = ladder.config().seam_rewind_drop_st;
         reintegrator.pickup_beats = ladder.config().seam_pickup_beats;
 
@@ -602,7 +602,7 @@ impl ChartSession {
                 Ok(cfg) => {
                     self.ladder.reconfigure(cfg);
                     self.reintegrator.fade_ms = self.ladder.config().seam_fade_ms;
-                    self.reintegrator.rewind_bars = self.ladder.config().seam_rewind_bars;
+                    self.reintegrator.rewind_beats = self.ladder.config().seam_rewind_beats;
                     self.reintegrator.rewind_drop_st = self.ladder.config().seam_rewind_drop_st;
                     self.reintegrator.pickup_beats = self.ladder.config().seam_pickup_beats;
                     println!("ladder config reloaded (level carries over)");

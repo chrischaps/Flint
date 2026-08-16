@@ -76,7 +76,9 @@ pub struct SeqTick {
 enum Phase {
     Playing,
     Failing {
-        fail_raw: i64,
+        /// Raw sample where the audible rewind gesture begins (== seam_raw
+        /// when there is no gesture).
+        gesture_start_raw: i64,
         seam_raw: i64,
         re_entry: i64,
         span: i64,
@@ -90,9 +92,10 @@ enum Phase {
 pub struct Reintegrator {
     decl: Reintegration,
     pub fade_ms: f64,
-    /// Rewind interlude: bars between fail and seam, during which every stem
-    /// spins down like a record played backwards. 0 = immediate seam.
-    pub rewind_bars: i64,
+    /// Rewind gesture length in beats (at the tempo where the fail happens):
+    /// every stem spins down like a record played backwards for exactly this
+    /// long, ending at the seam. 0 = no spin-down.
+    pub rewind_beats: f64,
     /// Playback-rate landing point of the spin-down, in semitones (< 0).
     pub rewind_drop_st: f64,
     /// Pickup spin-up: beats (at the re-entry tempo) of lead-bus cue winding
@@ -109,7 +112,7 @@ impl Reintegrator {
         Self {
             decl,
             fade_ms: DEFAULT_SEAM_FADE_MS,
-            rewind_bars: 1,
+            rewind_beats: 2.0,
             rewind_drop_st: -30.0,
             pickup_beats: 2.0,
             phase: Phase::Playing,
@@ -176,18 +179,20 @@ impl Reintegrator {
             }
 
             Phase::Failing {
-                fail_raw,
+                gesture_start_raw,
                 seam_raw,
                 re_entry,
                 span,
             } => {
                 // The record spins backwards toward the seam (the rate ramp
                 // is already queued in kira); the world holds at its most
-                // disintegrated. Nothing new is commanded here.
-                let rewind = if seam_raw > fail_raw {
-                    ((raw - fail_raw) as f64 / (seam_raw - fail_raw) as f64).clamp(0.0, 1.0)
+                // disintegrated. Nothing new is commanded here. Visual
+                // rewind progress tracks the audible gesture window only.
+                let rewind = if seam_raw > gesture_start_raw {
+                    ((raw - gesture_start_raw) as f64 / (seam_raw - gesture_start_raw) as f64)
+                        .clamp(0.0, 1.0)
                 } else {
-                    1.0
+                    0.0
                 };
                 if raw >= seam_raw {
                     events.push(ReintegrationEvent::Seam {
@@ -246,37 +251,42 @@ impl Reintegrator {
             .map(|s| s.start_sample)
             .unwrap_or(0);
 
-        // Seam on a bar line with enough lead for fade + command delivery,
-        // pushed out by the rewind interlude: grid continuity comes free —
-        // section starts sit on bar lines, so beat phase is continuous
-        // across the jump.
+        // Seam on a bar line with enough lead for fade + command delivery
+        // plus the rewind gesture: grid continuity comes free — section
+        // starts sit on bar lines, so beat phase is continuous across the
+        // jump. The gesture is measured in beats at the CURRENT tempo and
+        // ends at the seam, so (for whole-beat lengths) it starts on a beat.
         let lead_samples =
             ((self.fade_ms + MIN_LEAD_MS) / 1000.0 * sample_rate).round() as i64;
-        let seam0 = session
+        let now_beat = session.conductor.position_at_sample(now_suite).beat;
+        let beat_samples = (session.conductor.sample_at_beat(now_beat + 1.0)
+            - session.conductor.sample_at_beat(now_beat))
+        .max(1);
+        let rewind_span = (self.rewind_beats.max(0.0) * beat_samples as f64).round() as i64;
+        let seam_suite = session
             .conductor
-            .next_grid_sample(now_suite + lead_samples, Grid::Bar);
-        let seam_suite = if self.rewind_bars > 0 {
-            let bar = session.conductor.position_at_sample(seam0).bar;
-            session
-                .conductor
-                .sample_at_bar(bar + self.rewind_bars, 0.0)
-        } else {
-            seam0
-        };
+            .next_grid_sample(now_suite + lead_samples + rewind_span, Grid::Bar);
 
-        // The rewind: every playing stem's rate ramps down together over the
-        // whole interlude — a record spun backwards, not an effect on one
-        // instrument. Commanded on the OLD sounds, before `schedule_seam`
-        // swaps the handles; sample-lock breaks during the ramp, which is
-        // fine — everything re-plays locked at the seam.
-        if self.rewind_bars > 0 {
-            let dur = Duration::from_secs_f64((seam_suite - now_suite) as f64 / sample_rate);
+        // The rewind: every playing stem's rate ramps down together — a
+        // record spun backwards, not an effect on one instrument — for
+        // exactly `rewind_beats`, ending at the seam (clock-timed start;
+        // the music simply continues until the gesture begins). Commanded on
+        // the OLD sounds, before `schedule_seam` swaps the handles;
+        // sample-lock breaks during the ramp, which is fine — everything
+        // re-plays locked at the seam.
+        let gesture_start_suite = seam_suite - rewind_span;
+        if rewind_span > 0 {
+            let start_time = kira::StartTime::ClockTime(session.clock_time_at_raw(
+                gesture_start_suite + session.timeline_offset(),
+            ));
+            let dur = Duration::from_secs_f64(rewind_span as f64 / sample_rate);
             for name in crate::BUSES {
                 if let Some(bus) = session.mixer.bus_mut(name) {
                     if bus.state.playing {
                         bus.set_detune(
                             self.rewind_drop_st,
                             Tween {
+                                start_time,
                                 duration: dur,
                                 ..Default::default()
                             },
@@ -383,7 +393,7 @@ impl Reintegrator {
             seam_suite_sample: seam_suite,
         });
         self.phase = Phase::Failing {
-            fail_raw: seam_raw - (seam_suite - now_suite),
+            gesture_start_raw: seam_raw - rewind_span,
             seam_raw,
             re_entry,
             span,

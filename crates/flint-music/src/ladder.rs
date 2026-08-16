@@ -108,11 +108,12 @@ pub struct LadderConfig {
     /// Authored seam envelope (ms): the fade that carries the world out of
     /// the old timeline at reintegration. An envelope, not a cut.
     pub seam_fade_ms: f64,
-    /// Rewind interlude: bars between full-fail and the seam, during which
+    /// Rewind gesture length in beats (at the tempo where the fail happens):
     /// the whole world spins down like a record played backwards (a
-    /// playback-rate ramp on every stem, mirrored visually), giving the
-    /// player a breath to get ready for the re-entry. 0 = immediate seam.
-    pub seam_rewind_bars: i64,
+    /// playback-rate ramp on every stem, mirrored visually) for exactly this
+    /// long, ending at the seam — which still lands on a bar line, so the
+    /// gesture starts on a beat. 0 = no spin-down.
+    pub seam_rewind_beats: f64,
     /// Where the spin-down lands, in semitones (negative; −30 ≈ 18% speed —
     /// audibly "stopped" by the time the seam fade takes the tail).
     pub seam_rewind_drop_st: f64,
@@ -223,7 +224,7 @@ impl Default for LadderConfig {
                 hold_ms: 1_500.0,
             },
             seam_fade_ms: 30.0,
-            seam_rewind_bars: 1,
+            seam_rewind_beats: 2.0,
             seam_rewind_drop_st: -30.0,
             seam_pickup_beats: 2.0,
             arm_above: 0.80,
@@ -343,10 +344,10 @@ impl LadderConfig {
             .and_then(|t| t.get("fade_ms"))
             .and_then(toml_f64)
             .unwrap_or(d_all.seam_fade_ms);
-        let seam_rewind_bars = seam_t
-            .and_then(|t| t.get("rewind_bars"))
-            .and_then(|v| v.as_integer())
-            .unwrap_or(d_all.seam_rewind_bars);
+        let seam_rewind_beats = seam_t
+            .and_then(|t| t.get("rewind_beats"))
+            .and_then(toml_f64)
+            .unwrap_or(d_all.seam_rewind_beats);
         let seam_rewind_drop_st = seam_t
             .and_then(|t| t.get("rewind_drop_semitones"))
             .and_then(toml_f64)
@@ -363,7 +364,7 @@ impl LadderConfig {
             rungs,
             full_fail,
             seam_fade_ms,
-            seam_rewind_bars,
+            seam_rewind_beats,
             seam_rewind_drop_st,
             seam_pickup_beats,
             arm_above,
@@ -431,10 +432,10 @@ impl LadderConfig {
                 self.seam_fade_ms
             ));
         }
-        if !(0..=4).contains(&self.seam_rewind_bars) {
+        if !(0.0..=16.0).contains(&self.seam_rewind_beats) {
             return err(format!(
-                "seam.rewind_bars {} out of range (0..4)",
-                self.seam_rewind_bars
+                "seam.rewind_beats {} out of range (0..16)",
+                self.seam_rewind_beats
             ));
         }
         if !(-60.0..=0.0).contains(&self.seam_rewind_drop_st) {
@@ -471,7 +472,7 @@ impl LadderConfig {
             },
             "seam": {
                 "fade_ms": self.seam_fade_ms,
-                "rewind_bars": self.seam_rewind_bars,
+                "rewind_beats": self.seam_rewind_beats,
                 "rewind_drop_semitones": self.seam_rewind_drop_st,
                 "pickup_beats": self.seam_pickup_beats,
             },
