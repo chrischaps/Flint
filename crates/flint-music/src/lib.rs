@@ -39,7 +39,8 @@ pub use chart_eval::{ChannelValue, ChartEval, PulseWindow};
 pub use chart_session::{
     judgment_offset_samples, latest_calibration_ms, latest_latency_ms, lean_mode_name,
     parse_lean_mode, resolve_coherence_config, ChartCore, ChartSession, ChartSessionConfig,
-    CoherenceSource, FinishSummary, Tick, TickOutcome, VisualFrame,
+    CoherenceSource, ConductedFrame, ConductedPulse, FinishSummary, PulseKind, Tick, TickOutcome,
+    VisualFrame,
 };
 pub use clock_bridge::{BridgeStats, ClockBridge};
 pub use coherence::{Coherence, CoherenceConfig};

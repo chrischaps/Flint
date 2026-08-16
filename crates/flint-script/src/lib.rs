@@ -16,6 +16,7 @@ pub mod ui;
 
 pub use context::DrawCommand;
 pub use context::StateScope;
+pub use context::{ConductedPulse, ConductedSnapshot};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
@@ -144,6 +145,15 @@ impl ScriptSystem {
     pub fn set_loaded_chunk_ids(&mut self, ids: std::collections::HashSet<String>) {
         let mut c = self.engine.ctx.lock().unwrap();
         c.loaded_chunk_ids = ids;
+    }
+
+    /// Set the conducted-parameters snapshot for this frame (ADR 0020).
+    /// Persistent, not take(): the host re-sets it every frame, passing
+    /// `ConductedSnapshot::default()` (the neutral, settled-world state)
+    /// when no music session is active.
+    pub fn set_conducted(&mut self, conducted: ConductedSnapshot) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.conducted = conducted;
     }
 
     /// Load a script file for a specific entity (for chunk loading).

@@ -243,6 +243,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     } else {
         LadderConfig::default()
     };
+    let visual_eval = ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut core = ChartCore::new(
         judge,
         coherence,
@@ -252,6 +253,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         Conductor::new(&manifest, None),
         config_path,
         ladder_path,
+        visual_eval,
     );
     core.sync_seam_params();
     if reactive {

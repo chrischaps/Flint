@@ -1070,6 +1070,16 @@ impl PlayerApp {
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
         self.script.set_loaded_chunk_ids(chunk_ids);
 
+        // Conducted parameters (F4, ADR 0020): the music session's per-frame
+        // state for scene bindings; neutral defaults when no session (also
+        // resets the frame after a session ends).
+        self.script.set_conducted(
+            self.music_session
+                .as_ref()
+                .map(|ms| ms.conducted_snapshot())
+                .unwrap_or_default(),
+        );
+
         // Only run on_update when scripts are not paused
         if config.scripts == SystemPolicy::Run {
             self.script

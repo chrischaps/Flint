@@ -189,6 +189,20 @@ pub struct ChartCore {
     misses: u64,
     spurious: u64,
     abs_err_sum_ms: f64,
+    /// Second evaluator instance, kept out of the judge for conducted-frame
+    /// target lookups (never from judgment records).
+    visual_eval: ChartEval,
+    /// Latest observed lean / pulse, suite-stamped ([`ChartCore::observe_input`]).
+    lean: [f64; 2],
+    last_pulse_sample: Option<i64>,
+    /// Latest [`SeqTick`] state, cached in [`ChartCore::step_seq`] so the
+    /// conducted frame reads one source live and offline.
+    ladder_params: LadderParams,
+    reassembly: f64,
+    rewind: f64,
+    /// Pulses judged by the most recent [`ChartCore::process`] call —
+    /// cleared at its top, so one frame's worth (ADR 0020).
+    frame_pulses: Vec<(i64, f64, PulseKind)>,
 }
 
 impl ChartCore {
@@ -202,6 +216,7 @@ impl ChartCore {
         conductor: Conductor,
         config_path: PathBuf,
         ladder_path: PathBuf,
+        visual_eval: ChartEval,
     ) -> Self {
         let lean_step_beats = judge.lean_step_beats();
         Self {
@@ -221,6 +236,13 @@ impl ChartCore {
             misses: 0,
             spurious: 0,
             abs_err_sum_ms: 0.0,
+            visual_eval,
+            lean: [0.0; 2],
+            last_pulse_sample: None,
+            ladder_params: LadderParams::clean(),
+            reassembly: 1.0,
+            rewind: 0.0,
+            frame_pulses: Vec::new(),
         }
     }
 
@@ -239,6 +261,21 @@ impl ChartCore {
         self.judge.ingest(ev, &mut self.records);
     }
 
+    /// Track lean and last-pulse state from a drained, suite-stamped event.
+    /// Call for EVERY event, before any `sample >= 0` ingest gate — preroll
+    /// leans still move the world (ADR 0020).
+    pub fn observe_input(&mut self, ev: &InputEvent) {
+        match ev {
+            InputEvent::Lean(l) => self.lean = [l.x, l.y],
+            InputEvent::Pulse(p) => self.last_pulse_sample = Some(p.sample),
+        }
+    }
+
+    /// The latest observed lean (deadzoned, [-1,1]²).
+    pub fn lean(&self) -> [f64; 2] {
+        self.lean
+    }
+
     /// Expire due windows up to `now_suite`.
     pub fn advance_to(&mut self, now_suite: i64) {
         self.judge.advance_to(now_suite, &mut self.records);
@@ -248,6 +285,9 @@ impl ChartCore {
     /// judgment log. Returns the pulse errors judged this step (the live
     /// front end echoes each; offline stays quiet).
     pub fn process(&mut self, at_sample: i64) -> Result<Vec<f64>> {
+        // One frame's worth of conducted pulses: cleared before the empty-
+        // records early return so a quiet frame reports no pulses.
+        self.frame_pulses.clear();
         let mut pulse_errs = Vec::new();
         if self.records.is_empty() {
             return Ok(pulse_errs);
@@ -261,13 +301,20 @@ impl ChartCore {
         }))?;
         for rec in self.records.drain(..) {
             match &rec {
-                JudgmentRecord::Pulse { err_ms, .. } => {
+                JudgmentRecord::Pulse { sample, err_ms, .. } => {
                     self.hits += 1;
                     self.abs_err_sum_ms += err_ms.abs();
                     pulse_errs.push(*err_ms);
+                    self.frame_pulses.push((*sample, *err_ms, PulseKind::Hit));
                 }
-                JudgmentRecord::Miss { .. } => self.misses += 1,
-                JudgmentRecord::Spurious { .. } => self.spurious += 1,
+                JudgmentRecord::Miss { sample, .. } => {
+                    self.misses += 1;
+                    self.frame_pulses.push((*sample, 0.0, PulseKind::Miss));
+                }
+                JudgmentRecord::Spurious { sample, .. } => {
+                    self.spurious += 1;
+                    self.frame_pulses.push((*sample, 0.0, PulseKind::Spurious));
+                }
                 JudgmentRecord::Track { .. } => {}
             }
             self.log.write(&rec)?;
@@ -291,6 +338,11 @@ impl ChartCore {
             session,
             &mut self.seq_events,
         )?;
+        // Cache the tick's visual state so `conducted_frame` reads one
+        // source on both the live and offline paths (ADR 0020).
+        self.ladder_params = seq.params.clone();
+        self.reassembly = seq.reassembly;
+        self.rewind = seq.rewind;
         let events = std::mem::take(&mut self.seq_events);
         for ev in &events {
             match ev {
@@ -423,6 +475,67 @@ impl ChartCore {
         &self.ladder
     }
 
+    /// The conducted snapshot for this frame (ADR 0020) — from the conductor,
+    /// the chart evaluator, and the cached ladder/sequencer state; never from
+    /// judgment records except the per-frame pulse buffer. Read-only: safe to
+    /// call more than once per tick. All ages are suite-sample arithmetic
+    /// (deterministic; they jump across a reintegration seam by design).
+    /// `no_input` is live-session context the caller supplies (offline: false).
+    pub fn conducted_frame(
+        &self,
+        pos: crate::conductor::MusicalPosition,
+        no_input: bool,
+    ) -> ConductedFrame {
+        let preroll = pos.sample < 0;
+        let beats_per_bar = self.beats_per_bar(pos.sample.max(0));
+        let target = if preroll {
+            [0.0, 0.0]
+        } else {
+            self.visual_eval
+                .sample_channel("lean", pos.beat)
+                .and_then(|v| v.as_vec2())
+                .unwrap_or([0.0, 0.0])
+        };
+        let rate = self.conductor.tempo().sample_rate() as f64;
+        let age_s = |sample: i64| ((pos.sample - sample).max(0)) as f64 / rate;
+        let section = self
+            .conductor
+            .section_at_sample(pos.sample.max(0))
+            .map(|s| s.name.clone())
+            .unwrap_or_default();
+        ConductedFrame {
+            beat_phase: (pos.beat.rem_euclid(1.0)) as f32,
+            bar_phase: (pos.beat_in_bar / beats_per_bar).clamp(0.0, 1.0) as f32,
+            lean: [self.lean[0] as f32, self.lean[1] as f32],
+            target: [target[0] as f32, target[1] as f32],
+            coherence: self.coherence.value() as f32,
+            pulse_age_s: self
+                .last_pulse_sample
+                .map(|s| age_s(s) as f32)
+                .unwrap_or(1e6),
+            preroll,
+            desaturate: self.ladder_params.visual.desaturate,
+            blur: self.ladder_params.visual.blur,
+            chromatic: self.ladder_params.visual.chromatic,
+            reassembly: self.reassembly as f32,
+            no_input,
+            rewind: self.rewind as f32,
+            bar: pos.bar,
+            beat: pos.beat,
+            section,
+            pulses: self
+                .frame_pulses
+                .iter()
+                .map(|&(sample, err_ms, kind)| ConductedPulse {
+                    sample,
+                    age_s: age_s(sample),
+                    err_ms,
+                    kind,
+                })
+                .collect(),
+        }
+    }
+
     fn beats_per_bar(&self, sample: i64) -> f64 {
         self.conductor
             .tempo()
@@ -473,9 +586,42 @@ pub struct TickOutcome {
     pub notices: Vec<String>,
 }
 
-/// Snapshot the window shader draws from. No numbers reach the screen —
-/// these drive glows and breathing, not meters.
-pub struct VisualFrame {
+/// How one judged pulse resolved, for scene bindings. Distinct from the
+/// chart's verb-space `kind` (which stays "pulse" for now).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PulseKind {
+    Hit,
+    Miss,
+    Spurious,
+}
+
+impl PulseKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PulseKind::Hit => "hit",
+            PulseKind::Miss => "miss",
+            PulseKind::Spurious => "spurious",
+        }
+    }
+}
+
+/// One pulse judged this frame (ADR 0020). `sample` is the suite sample the
+/// judgment record carries (hit/spurious: the press; miss: the window close);
+/// `age_s` is seconds between that sample and the frame's position.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConductedPulse {
+    pub sample: i64,
+    pub age_s: f64,
+    /// Timing error in ms (hits only; 0.0 for miss/spurious).
+    pub err_ms: f64,
+    pub kind: PulseKind,
+}
+
+/// The per-frame conducted-parameters snapshot (ADR 0020): what scene
+/// bindings and the harness window draw from. No numbers reach the player's
+/// screen — these drive glows, breathing, and world motion, not meters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConductedFrame {
     /// 0..1 within the current beat / bar (0 at the boundary).
     pub beat_phase: f32,
     pub bar_phase: f32,
@@ -484,6 +630,7 @@ pub struct VisualFrame {
     pub target: [f32; 2],
     pub coherence: f32,
     /// Seconds since the player's most recent pulse press (large if none).
+    /// Suite-sample arithmetic — jumps across a reintegration seam by design.
     pub pulse_age_s: f32,
     pub preroll: bool,
     /// Ladder visual params (0 = clean). Mirrors the audio rungs exactly —
@@ -500,7 +647,43 @@ pub struct VisualFrame {
     /// Rewind interlude progress: 0 = not rewinding; 0→1 while the record
     /// spins backwards toward the seam.
     pub rewind: f32,
+    /// Musical position: bar (1-based past preroll), suite beats from zero.
+    pub bar: i64,
+    pub beat: f64,
+    /// Current section name; "" when the manifest has none here.
+    pub section: String,
+    /// Pulses judged this frame (empty most frames).
+    pub pulses: Vec<ConductedPulse>,
 }
+
+impl Default for ConductedFrame {
+    /// The neutral no-session state: a clean, settled world (coherence and
+    /// reassembly at 1.0) so bindings mapping `1 - coherence` show nothing.
+    fn default() -> Self {
+        Self {
+            beat_phase: 0.0,
+            bar_phase: 0.0,
+            lean: [0.0; 2],
+            target: [0.0; 2],
+            coherence: 1.0,
+            pulse_age_s: 1e6,
+            preroll: false,
+            desaturate: 0.0,
+            blur: 0.0,
+            chromatic: 0.0,
+            reassembly: 1.0,
+            no_input: false,
+            rewind: 0.0,
+            bar: 0,
+            beat: 0.0,
+            section: String::new(),
+            pulses: Vec::new(),
+        }
+    }
+}
+
+/// The pre-ADR-0020 name, kept so existing front ends read naturally.
+pub type VisualFrame = ConductedFrame;
 
 /// Everything one live play-through owns, front-end agnostic. A front end
 /// calls [`ChartSession::tick`] at its own cadence (the audio clock is the
@@ -520,23 +703,13 @@ pub struct ChartSession {
     /// and before `own_manager` so declaration-order drop runs producer →
     /// handles → device (ADR 0017).
     session: SuiteSession,
-    /// Params currently applied — the visual half feeds `visual_frame`.
-    ladder_params: LadderParams,
-    /// Reassembly progress for visuals (1.0 in normal play).
-    reassembly: f64,
-    /// Rewind interlude progress for visuals (0 outside the interlude).
-    rewind: f64,
     end_sample: i64,
     sample_rate: u32,
-    /// Second evaluator instance, kept out of the judge for visual lookups.
-    visual_eval: ChartEval,
     last_bar: i64,
     /// Total input events received; a live capture that delivers nothing is
     /// the failure mode worth shouting about (ADR 0011).
     input_events: u64,
     warned_no_input: bool,
-    lean: [f64; 2],
-    last_pulse_at: Option<Instant>,
     /// The audio manager when this session owns one (the CLI path). `None`
     /// on the shared-manager path, where the host's manager outlives us.
     /// Last field: everything above (session included) drops before it.
@@ -735,6 +908,7 @@ impl ChartSession {
             Conductor::new(manifest, None),
             config_path,
             ladder_path,
+            visual_eval,
         );
         core.sync_seam_params();
 
@@ -746,17 +920,11 @@ impl ChartSession {
                 bridge,
                 input_guard: None,
                 input_rx: None,
-                ladder_params: LadderParams::clean(),
-                reassembly: 1.0,
-                rewind: 0.0,
                 end_sample,
                 sample_rate,
-                visual_eval,
                 last_bar: i64::MIN,
                 input_events: 0,
                 warned_no_input: false,
-                lean: [0.0; 2],
-                last_pulse_at: None,
                 _own_manager: own_manager,
             },
             notices,
@@ -811,14 +979,6 @@ impl ChartSession {
             while let Ok(ev) = rx.try_recv() {
                 self.input_events += 1;
                 on_event(&ev);
-                match &ev {
-                    InputEvent::Lean(l) => {
-                        self.lean = [l.x, l.y];
-                    }
-                    InputEvent::Pulse(_) => {
-                        self.last_pulse_at = Some(Instant::now());
-                    }
-                }
                 // Session files record raw samples (monotonic across seams;
                 // jump records reconstruct suite time — ADR 0009/0014).
                 if ev.sample() >= 0 {
@@ -831,6 +991,9 @@ impl ChartSession {
                 } else {
                     ev
                 };
+                // Suite-stamped so conducted pulse ages are suite-time
+                // arithmetic; before the gate so preroll leans still move.
+                self.core.observe_input(&suite_ev);
                 if suite_ev.sample() >= 0 {
                     self.core.ingest(&suite_ev);
                 }
@@ -852,10 +1015,8 @@ impl ChartSession {
 
         // Disintegration ladder + reintegration sequencer: coherence in,
         // mixer tweens + visual params out. Idle most ticks (hysteresis).
-        let (seq, seq_events) = self.core.step_seq(&mut self.session)?;
-        self.ladder_params = seq.params;
-        self.reassembly = seq.reassembly;
-        self.rewind = seq.rewind;
+        // The core caches the SeqTick state for `conducted_frame`.
+        let (_seq, seq_events) = self.core.step_seq(&mut self.session)?;
         for ev in seq_events {
             match &ev {
                 ReintegrationEvent::FullFail {
@@ -928,8 +1089,8 @@ impl ChartSession {
                     &self.session.mixer,
                     self.core.coherence().value()
                 ),
-                self.lean[0],
-                self.lean[1],
+                self.core.lean()[0],
+                self.core.lean()[1],
             ));
             self.core.flush_log()?;
         }
@@ -961,38 +1122,13 @@ impl ChartSession {
         self.session.mixer.max_stem_skew()
     }
 
-    /// What the shader needs this frame, straight from the conductor and the
-    /// chart evaluator — never from judgment records.
-    pub fn visual_frame(&self) -> VisualFrame {
+    /// What the shader and scene bindings need this frame, straight from the
+    /// conductor and the chart evaluator — never from judgment records
+    /// (except the per-frame pulse buffer, ADR 0020).
+    pub fn visual_frame(&self) -> ConductedFrame {
         let pos = self.session.now();
-        let preroll = pos.sample < 0;
-        let beats_per_bar = self.core.beats_per_bar(pos.sample.max(0));
-        let target = if preroll {
-            [0.0, 0.0]
-        } else {
-            self.visual_eval
-                .sample_channel("lean", pos.beat)
-                .and_then(|v| v.as_vec2())
-                .unwrap_or([0.0, 0.0])
-        };
-        VisualFrame {
-            beat_phase: (pos.beat.rem_euclid(1.0)) as f32,
-            bar_phase: (pos.beat_in_bar / beats_per_bar).clamp(0.0, 1.0) as f32,
-            lean: [self.lean[0] as f32, self.lean[1] as f32],
-            target: [target[0] as f32, target[1] as f32],
-            coherence: self.core.coherence().value() as f32,
-            pulse_age_s: self
-                .last_pulse_at
-                .map(|t| t.elapsed().as_secs_f32())
-                .unwrap_or(1e6),
-            preroll,
-            desaturate: self.ladder_params.visual.desaturate,
-            blur: self.ladder_params.visual.blur,
-            chromatic: self.ladder_params.visual.chromatic,
-            reassembly: self.reassembly as f32,
-            no_input: self.input_rx.is_some() && self.input_events == 0 && !preroll,
-            rewind: self.rewind as f32,
-        }
+        let no_input = self.input_rx.is_some() && self.input_events == 0 && pos.sample >= 0;
+        self.core.conducted_frame(pos, no_input)
     }
 
     /// Tear down in order: input producer first, then judgment bookkeeping,

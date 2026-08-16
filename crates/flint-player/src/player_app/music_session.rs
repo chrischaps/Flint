@@ -86,13 +86,27 @@ impl MusicSession {
             .ok_or_else(|| anyhow!("music_session component: `manifest` is required"))?;
         let chart = comp_str(comp, "chart")
             .ok_or_else(|| anyhow!("music_session component: `chart` is required"))?;
-        // Declared-for-later fields (F4/F6/F7): parsed so a populated field
-        // is never a silent lie, but the F3 lifecycle does not read them.
+        // Declared-for-later field (F7): parsed so a populated field is
+        // never a silent lie, but this lifecycle does not read it yet.
         if let Some(t) = comp_str(comp, "tuning_config") {
             tracing::debug!("music_session: tuning_config `{t}` declared; not read until F7");
         }
+        // `bindings` is declarative (ADR 0020): scripts load through the one
+        // script-discovery owner — a `script` component on a scene entity —
+        // never through this field. Validate it so a typo is loud.
         if let Some(b) = comp_str(comp, "bindings") {
-            tracing::debug!("music_session: bindings `{b}` declared; not read until F4");
+            let path = base_dir.join(&b);
+            if path.exists() {
+                tracing::info!(
+                    "music_session: bindings `{b}` present (load it via a `script` component)"
+                );
+            } else {
+                tracing::warn!(
+                    "music_session: bindings `{b}` does not exist at {} — this field is \
+                     declarative; the script loads via a `script` component on a scene entity",
+                    path.display()
+                );
+            }
         }
         let lean_mode = comp_str(comp, "lean_mode").unwrap_or_else(|| "arrival".to_string());
         let lean_mode =
@@ -260,6 +274,39 @@ impl MusicSession {
     /// Ladder/reintegration visuals for the post-override merge.
     pub fn visual_frame(&self) -> VisualFrame {
         self.session.visual_frame()
+    }
+
+    /// The frame → script-POD conversion (ADR 0020): the only place
+    /// flint-music types meet flint-script types — flint-script never
+    /// depends on flint-music.
+    pub fn conducted_snapshot(&self) -> flint_script::ConductedSnapshot {
+        let vf = self.session.visual_frame();
+        flint_script::ConductedSnapshot {
+            lean: [vf.lean[0] as f64, vf.lean[1] as f64],
+            target: [vf.target[0] as f64, vf.target[1] as f64],
+            coherence: vf.coherence as f64,
+            beat_phase: vf.beat_phase as f64,
+            bar_phase: vf.bar_phase as f64,
+            bar: vf.bar,
+            beat: vf.beat,
+            section: vf.section,
+            pulses: vf
+                .pulses
+                .iter()
+                .map(|p| flint_script::ConductedPulse {
+                    age: p.age_s,
+                    err_ms: p.err_ms,
+                    kind: p.kind.as_str().to_string(),
+                })
+                .collect(),
+            desaturate: vf.desaturate as f64,
+            blur: vf.blur as f64,
+            chromatic: vf.chromatic as f64,
+            reassembly: vf.reassembly as f64,
+            rewind: vf.rewind as f64,
+            no_input: vf.no_input,
+            preroll: vf.preroll,
+        }
     }
 
     /// Teardown: stop the stems with a fade FIRST — on the shared manager,

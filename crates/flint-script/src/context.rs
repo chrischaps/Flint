@@ -67,6 +67,74 @@ pub struct InputSnapshot {
     pub touch_swipes: Vec<(String, f64, f64)>,
 }
 
+/// One judged pulse event from the music session, for scripts. A plain POD
+/// mirror — flint-script never depends on flint-music (ADR 0020).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConductedPulse {
+    /// Seconds before "now" the event was stamped (suite-time arithmetic).
+    pub age: f64,
+    /// Timing error in ms (hits only; 0.0 for miss/spurious).
+    pub err_ms: f64,
+    /// "hit" | "miss" | "spurious".
+    pub kind: String,
+}
+
+/// Per-frame conducted-parameters snapshot (Phase 4 decision 4 / ADR 0020).
+/// Filled by the host (flint-player) from the music session every frame;
+/// neutral defaults when no session so scripts never branch on existence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConductedSnapshot {
+    /// Player lean and the chart's lean target, both in [-1,1]².
+    pub lean: [f64; 2],
+    pub target: [f64; 2],
+    pub coherence: f64,
+    /// 0..1 within the current beat / bar (0 at the boundary).
+    pub beat_phase: f64,
+    pub bar_phase: f64,
+    pub bar: i64,
+    /// Suite beats from zero, accumulated across tempo changes.
+    pub beat: f64,
+    /// Current section name; "" when none.
+    pub section: String,
+    /// Pulses judged this frame (empty most frames).
+    pub pulses: Vec<ConductedPulse>,
+    /// Ladder visual params (0 = clean).
+    pub desaturate: f64,
+    pub blur: f64,
+    pub chromatic: f64,
+    /// Reassembly progress: 1 = normal play, 0→1 while re-gathering.
+    pub reassembly: f64,
+    /// Rewind interlude progress: 0 = not rewinding.
+    pub rewind: f64,
+    pub no_input: bool,
+    pub preroll: bool,
+}
+
+impl Default for ConductedSnapshot {
+    /// The neutral no-session state: a clean, settled world (coherence and
+    /// reassembly at 1.0) so bindings mapping `1 - coherence` show nothing.
+    fn default() -> Self {
+        Self {
+            lean: [0.0; 2],
+            target: [0.0; 2],
+            coherence: 1.0,
+            beat_phase: 0.0,
+            bar_phase: 0.0,
+            bar: 0,
+            beat: 0.0,
+            section: String::new(),
+            pulses: Vec::new(),
+            desaturate: 0.0,
+            blur: 0.0,
+            chromatic: 0.0,
+            reassembly: 1.0,
+            rewind: 0.0,
+            no_input: false,
+            preroll: false,
+        }
+    }
+}
+
 /// Log severity levels
 #[derive(Debug, Clone)]
 pub enum LogLevel {
@@ -277,6 +345,9 @@ pub struct ScriptCallContext {
     pub shake: ShakeState,
     /// Set of currently loaded chunk IDs (synced from PlayerApp before scripts run)
     pub loaded_chunk_ids: HashSet<String>,
+    /// Conducted-parameters snapshot for this frame (set by the host before
+    /// scripts run; neutral defaults when no music session — ADR 0020)
+    pub conducted: ConductedSnapshot,
 }
 
 // SAFETY: ScriptCallContext is only accessed from the main thread within
@@ -328,6 +399,7 @@ impl ScriptCallContext {
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),
             loaded_chunk_ids: HashSet::new(),
+            conducted: ConductedSnapshot::default(),
         }
     }
 

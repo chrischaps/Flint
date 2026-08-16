@@ -843,6 +843,283 @@ mod tests {
         assert!((acc - 0.048).abs() < 1e-10);
     }
 
+    // ─── Conducted-parameters API (ADR 0020) ──────────────────
+
+    fn probe_component(world: &mut FlintWorld, id: flint_core::EntityId) {
+        world
+            .set_component(
+                id,
+                "probe",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    for f in [
+                        "coh", "lx", "ty", "npulses", "kind_ok", "sec_ok", "age", "err",
+                        "reassembly", "preroll",
+                    ] {
+                        m.insert(f.into(), toml::Value::Float(-1.0));
+                    }
+                    m.insert("bar".into(), toml::Value::Integer(-1));
+                    m
+                }),
+            )
+            .unwrap();
+    }
+
+    fn probe_float(world: &FlintWorld, id: flint_core::EntityId, field: &str) -> f64 {
+        world
+            .get_components(id)
+            .unwrap()
+            .get_field("probe", field)
+            .unwrap()
+            .as_float()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_conducted_getters_round_trip() {
+        use crate::context::{ConductedPulse, ConductedSnapshot};
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("binder").unwrap();
+        probe_component(&mut world, id);
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_update() {
+                let me = self_entity();
+                set_field(me, "probe", "coh", conducted_coherence());
+                set_field(me, "probe", "lx", conducted_lean().x);
+                set_field(me, "probe", "ty", conducted_target().y);
+                set_field(me, "probe", "bar", conducted_bar());
+                let pulses = conducted_pulses();
+                set_field(me, "probe", "npulses", pulses.len().to_float());
+                if pulses.len() >= 2 {
+                    set_field(me, "probe", "kind_ok",
+                        if pulses[0].kind == "hit" && pulses[1].kind == "miss" { 1.0 } else { 0.0 });
+                    set_field(me, "probe", "age", pulses[0].age);
+                    set_field(me, "probe", "err", pulses[0].err_ms);
+                }
+                set_field(me, "probe", "sec_ok",
+                    if conducted_section() == "verse" { 1.0 } else { 0.0 });
+                set_field(me, "probe", "reassembly", conducted_reassembly());
+                set_field(me, "probe", "preroll",
+                    if conducted_preroll() { 1.0 } else { 0.0 });
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "binder.rhai".into());
+
+        {
+            let mut c = engine.ctx.lock().unwrap();
+            c.conducted = ConductedSnapshot {
+                lean: [0.25, -0.5],
+                target: [0.1, 0.75],
+                coherence: 0.625,
+                beat_phase: 0.5,
+                bar_phase: 0.125,
+                bar: 7,
+                beat: 30.5,
+                section: "verse".into(),
+                pulses: vec![
+                    ConductedPulse {
+                        age: 0.031,
+                        err_ms: -12.5,
+                        kind: "hit".into(),
+                    },
+                    ConductedPulse {
+                        age: 0.002,
+                        err_ms: 0.0,
+                        kind: "miss".into(),
+                    },
+                ],
+                desaturate: 0.3,
+                blur: 0.2,
+                chromatic: 0.1,
+                reassembly: 0.4,
+                rewind: 0.0,
+                no_input: false,
+                preroll: false,
+            };
+        }
+        engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+        engine.call_updates(&mut world);
+
+        assert_eq!(probe_float(&world, id, "coh"), 0.625);
+        assert_eq!(probe_float(&world, id, "lx"), 0.25);
+        assert_eq!(probe_float(&world, id, "ty"), 0.75);
+        let bar = world
+            .get_components(id)
+            .unwrap()
+            .get_field("probe", "bar")
+            .unwrap()
+            .as_integer()
+            .unwrap();
+        assert_eq!(bar, 7);
+        assert_eq!(probe_float(&world, id, "npulses"), 2.0);
+        assert_eq!(probe_float(&world, id, "kind_ok"), 1.0);
+        assert_eq!(probe_float(&world, id, "age"), 0.031);
+        assert_eq!(probe_float(&world, id, "err"), -12.5);
+        assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
+        assert_eq!(probe_float(&world, id, "reassembly"), 0.4);
+        assert_eq!(probe_float(&world, id, "preroll"), 0.0);
+    }
+
+    #[test]
+    fn test_conducted_neutral_defaults() {
+        // Never call set_conducted: getters must read as a clean, settled
+        // world so bindings never branch on session existence.
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("binder").unwrap();
+        probe_component(&mut world, id);
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_update() {
+                let me = self_entity();
+                set_field(me, "probe", "coh", conducted_coherence());
+                set_field(me, "probe", "reassembly", conducted_reassembly());
+                set_field(me, "probe", "lx", conducted_lean().x);
+                set_field(me, "probe", "npulses", conducted_pulses().len().to_float());
+                set_field(me, "probe", "sec_ok",
+                    if conducted_section() == "" { 1.0 } else { 0.0 });
+                set_field(me, "probe", "preroll",
+                    if conducted_preroll() || conducted_no_input() { 1.0 } else { 0.0 });
+                set_field(me, "probe", "err", conducted_desaturate() + conducted_blur()
+                    + conducted_chromatic() + conducted_rewind() + conducted_beat_phase());
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "binder.rhai".into());
+        engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+        engine.call_updates(&mut world);
+
+        assert_eq!(probe_float(&world, id, "coh"), 1.0);
+        assert_eq!(probe_float(&world, id, "reassembly"), 1.0);
+        assert_eq!(probe_float(&world, id, "lx"), 0.0);
+        assert_eq!(probe_float(&world, id, "npulses"), 0.0);
+        assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
+        assert_eq!(probe_float(&world, id, "preroll"), 0.0);
+        assert_eq!(probe_float(&world, id, "err"), 0.0);
+    }
+
+    #[test]
+    fn test_conducted_bad_script_continues() {
+        // A binding that throws every frame must not stop other scripts from
+        // reading conducted values (log-and-continue, verified not assumed).
+        use crate::context::ConductedSnapshot;
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let bad = world.spawn("bad").unwrap();
+        let good = world.spawn("good").unwrap();
+        probe_component(&mut world, good);
+
+        let bad_ast = engine
+            .compile("fn on_update() { this_function_does_not_exist(); }")
+            .unwrap();
+        engine.add_script(bad, bad_ast, "bad.rhai".into());
+        let good_ast = engine
+            .compile(
+                r#"
+            fn on_update() {
+                let me = self_entity();
+                let acc = get_field(me, "probe", "coh");
+                set_field(me, "probe", "coh", acc + conducted_coherence());
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(good, good_ast, "good.rhai".into());
+
+        engine.ctx.lock().unwrap().conducted = ConductedSnapshot {
+            coherence: 0.5,
+            ..Default::default()
+        };
+        engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+        // Two frames: the good script must accumulate across both even
+        // though the bad one errors every time.
+        engine.call_updates(&mut world);
+        engine.call_updates(&mut world);
+        assert_eq!(probe_float(&world, good, "coh"), -1.0 + 0.5 + 0.5);
+    }
+
+    #[test]
+    fn test_conducted_hot_reload_and_bad_edit() {
+        // Hot-reload picks up a binding edit; a syntax error keeps the old
+        // AST running (the compile-error branch in check_hot_reload).
+        use crate::sync::ScriptSync;
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("binder").unwrap();
+        probe_component(&mut world, id);
+
+        let dir = std::env::temp_dir().join(format!(
+            "flint-conducted-reload-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("binder.rhai");
+        let v1 = r#"fn on_update() {
+            set_field(self_entity(), "probe", "coh", conducted_coherence());
+        }"#;
+        std::fs::write(&path, v1).unwrap();
+
+        let mut sync = ScriptSync::new();
+        sync.set_scripts_dir(dir.clone());
+        let ast = engine.compile_file(&path).unwrap();
+        engine.add_script(id, ast, "binder.rhai".into());
+        sync.check_hot_reload(&mut engine); // records the initial timestamp
+
+        engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+        engine.call_updates(&mut world);
+        assert_eq!(probe_float(&world, id, "coh"), 1.0);
+
+        // v2 writes a different field; bump mtime explicitly (Windows mtime
+        // granularity would otherwise swallow a fast rewrite).
+        let v2 = r#"fn on_update() {
+            set_field(self_entity(), "probe", "lx", conducted_lean().x + 2.0);
+        }"#;
+        std::fs::write(&path, v2).unwrap();
+        let f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+            .unwrap();
+        drop(f);
+        sync.check_hot_reload(&mut engine);
+        engine.call_updates(&mut world);
+        assert_eq!(probe_float(&world, id, "lx"), 2.0, "v2 must be live");
+
+        // A broken edit: the old (v2) AST keeps running, no panic.
+        std::fs::write(&path, "fn on_update( {").unwrap();
+        let f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(10))
+            .unwrap();
+        drop(f);
+        sync.check_hot_reload(&mut engine);
+        world
+            .set_component(
+                id,
+                "probe",
+                toml::Value::Table({
+                    let mut m = toml::map::Map::new();
+                    m.insert("lx".into(), toml::Value::Float(0.0));
+                    m
+                }),
+            )
+            .unwrap();
+        engine.call_updates(&mut world);
+        assert_eq!(
+            probe_float(&world, id, "lx"),
+            2.0,
+            "old AST must keep running after a bad edit"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn test_input_api() {
         let mut engine = ScriptEngine::new();
