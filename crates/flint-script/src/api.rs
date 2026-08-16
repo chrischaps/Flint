@@ -1269,6 +1269,15 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // set_desaturation(amount) — override desaturation (0 = full color, 1 = ash-grey)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_desaturation", move |amount: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_desaturation_override = Some(amount as f32);
+        });
+    }
+
     // set_audio_lowpass(cutoff_hz) — override audio low-pass filter cutoff from scripts
     {
         let ctx = ctx.clone();

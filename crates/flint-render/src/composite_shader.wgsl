@@ -15,7 +15,8 @@ struct PostProcessUniforms {
     texel_size: vec2<f32>,
     chromatic_aberration: f32,
     radial_blur: f32,
-    _pad: vec2<f32>,
+    desaturate: f32,
+    _pad: f32,
     // Fog parameters
     fog_color: vec3<f32>,
     fog_density: f32,
@@ -207,6 +208,14 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // Output stays LINEAR — the sRGB render target applies gamma encoding.
     color = color * params.exposure;
     var mapped = aces_filmic(color);
+
+    // ── Desaturation (mix toward darkened ash-grey, never neutral) ──
+    // Rec.601 luma and the 0.62 grey target match the ladder stage of the
+    // play-chart window harness so the disintegration language reads the same.
+    if (params.desaturate > 0.0) {
+        let luma = dot(mapped, vec3<f32>(0.299, 0.587, 0.114));
+        mapped = mix(mapped, vec3<f32>(luma * 0.62), clamp(params.desaturate, 0.0, 1.0));
+    }
 
     // ── Vignette (linear-space attenuation) ──
     if (params.vignette_intensity > 0.0) {

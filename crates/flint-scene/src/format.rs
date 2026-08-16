@@ -98,6 +98,12 @@ pub struct PostProcessDef {
     #[serde(default = "default_volumetric_decay")]
     pub volumetric_decay: f32,
     #[serde(default)]
+    pub chromatic_aberration: f32,
+    #[serde(default)]
+    pub radial_blur: f32,
+    #[serde(default)]
+    pub desaturate: f32,
+    #[serde(default)]
     pub kuwahara_enabled: bool,
     #[serde(default = "default_kuwahara_radius")]
     pub kuwahara_radius: u32,

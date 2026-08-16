@@ -36,12 +36,72 @@ const PULSE_BUTTON: &str = "South";
 /// the world simply lets go.
 const STOP_FADE_MS: f64 = 50.0;
 
-/// Ladder visuals → engine post params (F3 interim mapping; F5 adds real
-/// desaturation, F4/F6 move authorship into scripts via conducted params).
-/// Provisional scales, owned by F5's [H] look-check: the ladder's `blur`
-/// becomes zoom-style radial blur (world-losing-focus), `chromatic` maps 1:1.
+/// Ladder visuals → engine post params (ADR 0021; F4/F6 move authorship into
+/// scripts via conducted params, superseding this direct path script-wins).
+/// The scales are provisional, owned by the Phase 4 [H] look-check: the
+/// ladder's `blur` becomes zoom-style radial blur (world-losing-focus),
+/// `chromatic` and `desaturate` map 1:1 (rung values are authored 0..1 and
+/// the composite shader's ash-grey formula does its own darkening).
 pub const MUSIC_BLUR_SCALE: f32 = 0.6;
 pub const MUSIC_CHROMATIC_SCALE: f32 = 1.0;
+pub const MUSIC_DESATURATE_SCALE: f32 = 1.0;
+
+/// The scene's authored values for the three ladder-driven post params,
+/// captured at session start. The merge writes `base + rung × scale` every
+/// frame (not only when a rung is active) so a ladder that recovers to clean
+/// actually restores the authored look — the renderer config is sticky, and
+/// an only-when-degraded write would leave the last degraded values applied
+/// forever (ADR 0021).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LadderPostBase {
+    pub radial_blur: f32,
+    pub chromatic_aberration: f32,
+    pub desaturate: f32,
+}
+
+/// Merge the ladder visuals into this frame's post overrides. Script
+/// overrides win (only `None` slots are filled); preroll leaves the world
+/// untouched.
+pub fn merge_ladder_postprocess(
+    radial_blur: &mut Option<f32>,
+    chromatic_aberration: &mut Option<f32>,
+    desaturation: &mut Option<f32>,
+    vf: &VisualFrame,
+    base: LadderPostBase,
+) {
+    if vf.preroll {
+        return;
+    }
+    if radial_blur.is_none() {
+        *radial_blur = Some(base.radial_blur + vf.blur * MUSIC_BLUR_SCALE);
+    }
+    if chromatic_aberration.is_none() {
+        *chromatic_aberration =
+            Some(base.chromatic_aberration + vf.chromatic * MUSIC_CHROMATIC_SCALE);
+    }
+    if desaturation.is_none() {
+        *desaturation = Some((base.desaturate + vf.desaturate * MUSIC_DESATURATE_SCALE).min(1.0));
+    }
+}
+
+/// One-shot restore of the authored values after session teardown, so the
+/// config does not end stuck mid-ladder. Script overrides still win.
+pub fn restore_ladder_postprocess(
+    radial_blur: &mut Option<f32>,
+    chromatic_aberration: &mut Option<f32>,
+    desaturation: &mut Option<f32>,
+    base: LadderPostBase,
+) {
+    if radial_blur.is_none() {
+        *radial_blur = Some(base.radial_blur);
+    }
+    if chromatic_aberration.is_none() {
+        *chromatic_aberration = Some(base.chromatic_aberration);
+    }
+    if desaturation.is_none() {
+        *desaturation = Some(base.desaturate);
+    }
+}
 
 /// One scene's music session: the reactive loop on the shared manager plus
 /// the InputState down-sampling state and permanent, near-free evidence
@@ -329,5 +389,117 @@ impl MusicSession {
             Err(e) => tracing::warn!("music session finish failed: {e}"),
         }
         println!("{evidence}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(desaturate: f32, blur: f32, chromatic: f32, preroll: bool) -> VisualFrame {
+        VisualFrame {
+            desaturate,
+            blur,
+            chromatic,
+            preroll,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_fills_all_three_from_rung_values() {
+        // Rung 3 of the built-in ladder at base 0.
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.8, 0.35, false),
+            LadderPostBase::default(),
+        );
+        assert!((rb.unwrap() - 0.8 * MUSIC_BLUR_SCALE).abs() < 1e-6);
+        assert!((ca.unwrap() - 0.35).abs() < 1e-6);
+        assert!((de.unwrap() - 0.85).abs() < 1e-6);
+    }
+
+    #[test]
+    fn merge_script_override_wins() {
+        let (mut rb, mut ca, mut de) = (Some(0.1), None, Some(0.2));
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.8, 0.35, false),
+            LadderPostBase::default(),
+        );
+        assert_eq!(rb, Some(0.1));
+        assert_eq!(de, Some(0.2));
+        assert!(ca.is_some());
+    }
+
+    #[test]
+    fn merge_preroll_leaves_overrides_untouched() {
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.8, 0.35, true),
+            LadderPostBase::default(),
+        );
+        assert_eq!((rb, ca, de), (None, None, None));
+    }
+
+    #[test]
+    fn merge_clean_ladder_writes_back_the_base() {
+        // The stickiness fix (ADR 0021): recovery to a clean ladder must
+        // actively restore the authored values, not stop writing.
+        let base = LadderPostBase {
+            radial_blur: 0.05,
+            chromatic_aberration: 0.1,
+            desaturate: 0.0,
+        };
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.0, 0.0, 0.0, false),
+            base,
+        );
+        assert_eq!(rb, Some(0.05));
+        assert_eq!(ca, Some(0.1));
+        assert_eq!(de, Some(0.0));
+    }
+
+    #[test]
+    fn merge_desaturate_clamps_to_one() {
+        let base = LadderPostBase {
+            desaturate: 0.5,
+            ..Default::default()
+        };
+        let (mut rb, mut ca, mut de) = (None, None, None);
+        merge_ladder_postprocess(
+            &mut rb,
+            &mut ca,
+            &mut de,
+            &frame(0.85, 0.0, 0.0, false),
+            base,
+        );
+        assert_eq!(de, Some(1.0));
+    }
+
+    #[test]
+    fn restore_writes_base_where_scripts_are_silent() {
+        let base = LadderPostBase {
+            radial_blur: 0.05,
+            chromatic_aberration: 0.1,
+            desaturate: 0.0,
+        };
+        let (mut rb, mut ca, mut de) = (None, Some(0.9), None);
+        restore_ladder_postprocess(&mut rb, &mut ca, &mut de, base);
+        assert_eq!(rb, Some(0.05));
+        assert_eq!(ca, Some(0.9));
+        assert_eq!(de, Some(0.0));
     }
 }

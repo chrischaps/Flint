@@ -24,6 +24,20 @@ use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, InputState, RuntimeSystem};
 use sync::ScriptSync;
 
+/// Post-processing overrides set by scripts this frame; each field is `Some`
+/// only if the corresponding `set_*` API was called since the last drain.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PostProcessOverrides {
+    pub vignette: Option<f32>,
+    pub bloom: Option<f32>,
+    pub exposure: Option<f32>,
+    pub chromatic_aberration: Option<f32>,
+    pub radial_blur: Option<f32>,
+    pub ssao_intensity: Option<f32>,
+    pub fog_density: Option<f32>,
+    pub desaturation: Option<f32>,
+}
+
 /// Top-level scripting system integrating engine, sync, and the game loop
 pub struct ScriptSystem {
     pub(crate) engine: ScriptEngine,
@@ -175,10 +189,7 @@ impl ScriptSystem {
                 self.sync.discovered.insert(entity_id);
             }
             Err(e) => {
-                tracing::warn!(
-                    "Compile error for chunk entity {:?}: {}",
-                    entity_id, e
-                );
+                tracing::warn!("Compile error for chunk entity {:?}: {}", entity_id, e);
             }
         }
     }
@@ -253,34 +264,18 @@ impl ScriptSystem {
     }
 
     /// Take post-processing overrides set by scripts this frame (clears them)
-    pub fn take_postprocess_overrides(
-        &mut self,
-    ) -> (
-        Option<f32>,
-        Option<f32>,
-        Option<f32>,
-        Option<f32>,
-        Option<f32>,
-        Option<f32>,
-        Option<f32>,
-    ) {
+    pub fn take_postprocess_overrides(&mut self) -> PostProcessOverrides {
         let mut c = self.engine.ctx.lock().unwrap();
-        let vignette = c.postprocess_vignette_override.take();
-        let bloom = c.postprocess_bloom_override.take();
-        let exposure = c.postprocess_exposure_override.take();
-        let chromatic_aberration = c.postprocess_chromatic_aberration_override.take();
-        let radial_blur = c.postprocess_radial_blur_override.take();
-        let ssao_intensity = c.postprocess_ssao_intensity_override.take();
-        let fog_density = c.postprocess_fog_density_override.take();
-        (
-            vignette,
-            bloom,
-            exposure,
-            chromatic_aberration,
-            radial_blur,
-            ssao_intensity,
-            fog_density,
-        )
+        PostProcessOverrides {
+            vignette: c.postprocess_vignette_override.take(),
+            bloom: c.postprocess_bloom_override.take(),
+            exposure: c.postprocess_exposure_override.take(),
+            chromatic_aberration: c.postprocess_chromatic_aberration_override.take(),
+            radial_blur: c.postprocess_radial_blur_override.take(),
+            ssao_intensity: c.postprocess_ssao_intensity_override.take(),
+            fog_density: c.postprocess_fog_density_override.take(),
+            desaturation: c.postprocess_desaturation_override.take(),
+        }
     }
 
     /// Take audio low-pass filter override set by scripts this frame (clears it)
@@ -423,5 +418,19 @@ mod tests {
         let system = ScriptSystem::new();
         let commands = system.engine.drain_commands();
         assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn test_desaturation_override_round_trip() {
+        let mut system = ScriptSystem::new();
+        {
+            let mut c = system.engine.ctx.lock().unwrap();
+            c.postprocess_desaturation_override = Some(0.85);
+        }
+        let overrides = system.take_postprocess_overrides();
+        assert_eq!(overrides.desaturation, Some(0.85));
+        // Drain clears: a second take returns all-None
+        let overrides = system.take_postprocess_overrides();
+        assert_eq!(overrides, PostProcessOverrides::default());
     }
 }

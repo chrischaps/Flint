@@ -5,9 +5,9 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, prefab,
-    preview, query, render, play_suite, render_suite, scene, schema, spline_edit, terrain_edit,
-    replay_chart, tex_edit, validate, validate_suite,
+    asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
+    prefab, preview, query, render, render_suite, replay_chart, scene, schema, spline_edit,
+    terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -583,6 +583,10 @@ enum Commands {
         #[arg(long)]
         dither_intensity: Option<f32>,
 
+        /// Desaturation toward ash-grey (0 = full color, 1 = fully drained)
+        #[arg(long)]
+        desaturate: Option<f32>,
+
         /// Volumetric light density (enables god rays; default: 1.0)
         #[arg(long)]
         volumetric_density: Option<f32>,
@@ -907,6 +911,7 @@ fn main() -> Result<()> {
             fog_color,
             fog_height_falloff,
             dither_intensity,
+            desaturate,
             volumetric_density,
             volumetric_samples,
             kuwahara_radius,
@@ -941,6 +946,7 @@ fn main() -> Result<()> {
             fog_color,
             fog_height_falloff,
             dither_intensity,
+            desaturate,
             volumetric_density,
             volumetric_samples,
             kuwahara_radius,

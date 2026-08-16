@@ -159,6 +159,12 @@ pub struct PlayerApp {
     pp_radial_blur_override: Option<f32>,
     pp_ssao_intensity_override: Option<f32>,
     pp_fog_density_override: Option<f32>,
+    pp_desaturation_override: Option<f32>,
+
+    // Ladder-driven post params: the scene's authored base, captured at
+    // session start and written back after teardown (ADR 0021).
+    music_pp_base: Option<music_session::LadderPostBase>,
+    music_pp_restore: Option<music_session::LadderPostBase>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -248,6 +254,9 @@ impl PlayerApp {
             pp_radial_blur_override: None,
             pp_ssao_intensity_override: None,
             pp_fog_density_override: None,
+            pp_desaturation_override: None,
+            music_pp_base: None,
+            music_pp_restore: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -395,13 +404,19 @@ impl PlayerApp {
 
         // Discover procgen specs and resolve unresolved assets before model loading
         {
-            let scene_dir = Path::new(&self.scene_path).parent().unwrap_or(Path::new("."));
+            let scene_dir = Path::new(&self.scene_path)
+                .parent()
+                .unwrap_or(Path::new("."));
             let mut spec_dirs = vec![scene_dir.join("specs")];
             if let Some(parent) = scene_dir.parent() {
                 spec_dirs.push(parent.join("specs"));
             }
             spec_dirs.push(scene_dir.join("models"));
-            let dir_refs: Vec<&Path> = spec_dirs.iter().filter(|d| d.is_dir()).map(|d| d.as_path()).collect();
+            let dir_refs: Vec<&Path> = spec_dirs
+                .iter()
+                .filter(|d| d.is_dir())
+                .map(|d| d.as_path())
+                .collect();
             self.procgen_resolver.discover_and_index(&dir_refs);
 
             resolve_procgen_assets(
@@ -511,8 +526,7 @@ impl PlayerApp {
         if let Some(pp_def) = &self.scene_post_process {
             scene_renderer
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
-            scene_renderer
-                .ensure_kuwahara_resources(&render_context.device, &render_context.queue);
+            scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
         }
 
         self.render_context = Some(render_context);
@@ -901,6 +915,7 @@ impl PlayerApp {
             || self.pp_radial_blur_override.is_some()
             || self.pp_ssao_intensity_override.is_some()
             || self.pp_fog_density_override.is_some()
+            || self.pp_desaturation_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -924,6 +939,9 @@ impl PlayerApp {
             }
             if let Some(fd) = self.pp_fog_density_override {
                 config.fog_density = fd;
+            }
+            if let Some(d) = self.pp_desaturation_override {
+                config.desaturate = d;
             }
             renderer.set_post_process_config(config);
         }
@@ -1239,33 +1257,38 @@ impl PlayerApp {
         }
 
         // Drain script post-processing overrides for this frame
-        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao, pp_fog) =
-            self.script.take_postprocess_overrides();
-        self.pp_vignette_override = pp_vig;
-        self.pp_bloom_override = pp_bloom;
-        self.pp_exposure_override = pp_exp;
-        self.pp_chromatic_aberration_override = pp_ca;
-        self.pp_radial_blur_override = pp_rb;
-        self.pp_ssao_intensity_override = pp_ssao;
-        self.pp_fog_density_override = pp_fog;
+        let pp = self.script.take_postprocess_overrides();
+        self.pp_vignette_override = pp.vignette;
+        self.pp_bloom_override = pp.bloom;
+        self.pp_exposure_override = pp.exposure;
+        self.pp_chromatic_aberration_override = pp.chromatic_aberration;
+        self.pp_radial_blur_override = pp.radial_blur;
+        self.pp_ssao_intensity_override = pp.ssao_intensity;
+        self.pp_fog_density_override = pp.fog_density;
+        self.pp_desaturation_override = pp.desaturation;
 
-        // Music-session ladder/reintegration visuals (F3 interim mapping;
-        // ADR 0019). Script overrides win — when F4/F6 move rung-visual
-        // authorship into scene scripts, they supersede this direct path
-        // with no code change and no double application. The non-zero guard
-        // keeps a clean ladder from stomping a scene's authored post config.
+        // Music-session ladder/reintegration visuals (ADR 0021). Script
+        // overrides win — F4/F6 script-authored rung visuals supersede this
+        // direct path with no code change and no double application. The
+        // merge writes base + rung every frame so a recovered ladder actively
+        // restores the scene's authored post config (the renderer config is
+        // sticky); after teardown a one-shot restore does the same.
         if let Some(ms) = &self.music_session {
             let vf = ms.visual_frame();
-            if !vf.preroll {
-                if self.pp_radial_blur_override.is_none() && vf.blur > 0.0 {
-                    self.pp_radial_blur_override =
-                        Some(vf.blur * music_session::MUSIC_BLUR_SCALE);
-                }
-                if self.pp_chromatic_aberration_override.is_none() && vf.chromatic > 0.0 {
-                    self.pp_chromatic_aberration_override =
-                        Some(vf.chromatic * music_session::MUSIC_CHROMATIC_SCALE);
-                }
-            }
+            music_session::merge_ladder_postprocess(
+                &mut self.pp_radial_blur_override,
+                &mut self.pp_chromatic_aberration_override,
+                &mut self.pp_desaturation_override,
+                &vf,
+                self.music_pp_base.unwrap_or_default(),
+            );
+        } else if let Some(base) = self.music_pp_restore.take() {
+            music_session::restore_ladder_postprocess(
+                &mut self.pp_radial_blur_override,
+                &mut self.pp_chromatic_aberration_override,
+                &mut self.pp_desaturation_override,
+                base,
+            );
         }
 
         // Apply audio low-pass filter override from scripts
@@ -1446,8 +1469,7 @@ impl PlayerApp {
                         }
                         continue;
                     }
-                    self.physics
-                        .push_event(GameEvent::Custom { name, data });
+                    self.physics.push_event(GameEvent::Custom { name, data });
                 }
                 ScriptCommand::Log { level, message } => match level {
                     LogLevel::Info => tracing::info!(target: "script", "{}", message),
@@ -1759,6 +1781,18 @@ impl PlayerApp {
         match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
             Ok(Some(session)) => {
                 self.music_session = Some(session);
+                // The scene's authored post values are the ladder merge's
+                // base and the post-teardown restore target (ADR 0021).
+                let authored = self
+                    .scene_post_process
+                    .as_ref()
+                    .map(scene_loading::post_process_config_from_def)
+                    .unwrap_or_default();
+                self.music_pp_base = Some(music_session::LadderPostBase {
+                    radial_blur: authored.radial_blur,
+                    chromatic_aberration: authored.chromatic_aberration,
+                    desaturate: authored.desaturate,
+                });
                 self.gilrs = None;
                 println!(
                     "[music] gamepad handed to capture thread \
@@ -1776,6 +1810,9 @@ impl PlayerApp {
     fn stop_music_session(&mut self) {
         if let Some(session) = self.music_session.take() {
             session.stop();
+            // Queue the one-shot authored-values restore for the next merge
+            // pass (setting overrides here would be wiped by the drain).
+            self.music_pp_restore = self.music_pp_base.take();
             self.gilrs = Gilrs::new().ok();
             println!("[music] session ended — gamepad returned to player polling");
         }
@@ -1869,10 +1906,7 @@ impl PlayerApp {
                 self.scene_input_config = scene_file.scene.input_config.clone();
             }
             Err(e) => {
-                tracing::error!(
-                    "Failed to load scene '{}': {:?}",
-                    new_scene_path, e
-                );
+                tracing::error!("Failed to load scene '{}': {:?}", new_scene_path, e);
                 return;
             }
         }
@@ -1898,13 +1932,19 @@ impl PlayerApp {
 
             // Discover procgen specs and resolve unresolved assets before model loading
             {
-                let scene_dir = Path::new(&self.scene_path).parent().unwrap_or(Path::new("."));
+                let scene_dir = Path::new(&self.scene_path)
+                    .parent()
+                    .unwrap_or(Path::new("."));
                 let mut spec_dirs = vec![scene_dir.join("specs")];
                 if let Some(parent) = scene_dir.parent() {
                     spec_dirs.push(parent.join("specs"));
                 }
                 spec_dirs.push(scene_dir.join("models"));
-                let dir_refs: Vec<&Path> = spec_dirs.iter().filter(|d| d.is_dir()).map(|d| d.as_path()).collect();
+                let dir_refs: Vec<&Path> = spec_dirs
+                    .iter()
+                    .filter(|d| d.is_dir())
+                    .map(|d| d.as_path())
+                    .collect();
                 self.procgen_resolver.discover_and_index(&dir_refs);
 
                 resolve_procgen_assets(
@@ -2173,7 +2213,8 @@ impl ApplicationHandler for PlayerApp {
                                     self.show_stats = !self.show_stats;
                                 }
                                 KeyCode::F3 => {
-                                    let has_grass_panel = self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
+                                    let has_grass_panel =
+                                        self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
                                     if has_grass_panel {
                                         // Toggle the panel, then adjust cursor outside the borrow
                                         let mut opened = false;
@@ -2258,12 +2299,11 @@ impl ApplicationHandler for PlayerApp {
                                         config.kuwahara_enabled = !config.kuwahara_enabled;
                                         let enabled = config.kuwahara_enabled;
                                         renderer.set_post_process_config(config);
-                                        renderer.ensure_kuwahara_resources(
-                                            &ctx.device,
-                                            &ctx.queue,
+                                        renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
+                                        eprintln!(
+                                            "Kuwahara filter: {}",
+                                            if enabled { "ON" } else { "OFF" }
                                         );
-                                        eprintln!("Kuwahara filter: {}",
-                                            if enabled { "ON" } else { "OFF" });
                                     }
                                 }
                                 _ => {}
@@ -2542,8 +2582,7 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
                 .rounding(egui::Rounding::same(4.0))
                 .inner_margin(egui::Margin::same(10.0))
                 .show(ui, |ui| {
-                    ui.style_mut().override_font_id =
-                        Some(egui::FontId::monospace(11.0));
+                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
                     ui.set_min_width(180.0);
 
                     // Header

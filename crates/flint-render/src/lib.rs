@@ -13,7 +13,6 @@ mod context;
 mod debug;
 pub mod frustum;
 mod gpu_mesh;
-pub mod render_stats;
 pub mod grass_pipeline;
 mod headless;
 pub mod model_loader;
@@ -22,6 +21,7 @@ pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;
 mod primitives;
+pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
 pub mod skinned_pipeline;
@@ -37,7 +37,6 @@ pub use camera::{Camera, CameraMode};
 pub use context::{RenderContext, RenderError};
 pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
-pub use render_stats::{RenderStats, format_count};
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use grass_pipeline::{
     GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
@@ -57,6 +56,7 @@ pub use primitives::{
     create_box_mesh, create_plane_mesh, generate_normal_arrows, generate_skeleton_lines,
     triangles_to_wireframe_indices, Mesh, SkinnedMesh, SkinnedVertex, Vertex,
 };
+pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use skinned_pipeline::SkinnedPipeline;
 pub use skybox_pipeline::SkyboxPipeline;
@@ -117,9 +117,30 @@ mod tests {
     }
 
     #[test]
-    fn composite_shader_wgsl_parses() {
+    fn composite_shader_wgsl_parses_and_validates() {
         let source = include_str!("composite_shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("composite_shader.wgsl failed to parse");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("composite_shader.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("composite_shader.wgsl failed validation");
+    }
+
+    #[test]
+    fn post_process_uniforms_layout() {
+        // The desaturate field reuses a pre-existing pad slot: the struct must
+        // stay 16-byte aligned and must not have grown past its original size.
+        let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
+        assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
+        assert_eq!(size, 176, "PostProcessUniforms size changed");
+    }
+
+    #[test]
+    fn post_process_config_default_desaturate_is_zero() {
+        assert_eq!(crate::PostProcessConfig::default().desaturate, 0.0);
     }
 
     #[test]
