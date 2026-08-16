@@ -9,8 +9,11 @@
 //!   the offline reactive render: it owns judgment, coherence, the ladder and
 //!   reintegration sequencer, and the judgment log, and steps them against any
 //!   [`SuiteSession`] — a realtime one or the offline renderer's.
-//! - [`ChartSession`] is a live play-through: `ChartCore` plus a
-//!   [`RealtimePlayer`], the clock bridge, and the input-event receiver.
+//! - [`ChartSession`] is a live play-through: `ChartCore` plus a running
+//!   [`SuiteSession`], the clock bridge, and the input-event receiver. The
+//!   audio manager is either owned (the CLI path, [`ChartSession::open`]) or
+//!   borrowed from a host for the duration of `start` (the player path,
+//!   [`ChartSession::open_shared`] — ADR 0017's one-manager rule).
 //!   Input arrives as a plain channel of [`InputEvent`]s; this crate never
 //!   touches the gamepad backend (the capture thread lives upstream and its
 //!   handle is parked here only as an opaque guard so teardown order holds).
@@ -27,10 +30,12 @@ use crate::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter, LeanMo
 use crate::ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
 use crate::reintegration::{ReintegrationEvent, Reintegrator, SeqTick};
 use crate::replay::{SessionHeader, SessionWriter};
-use crate::session::{RealtimePlayer, SuiteSession};
+use crate::session::{FileStems, SuiteSession};
 use crate::status::status_line_with_coherence;
 use crate::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
 use flint_core::{FlintError, Result};
+use kira::backend::Backend;
+use kira::{AudioManager, AudioManagerSettings, DefaultBackend};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -80,6 +85,17 @@ fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
     let name = names.pop()?;
     let value: toml::Value = std::fs::read_to_string(dir.join(&name)).ok()?.parse().ok()?;
     Some((name, value))
+}
+
+/// Total judgment offset (measured output latency + tap calibration) in
+/// samples — the number the input capture subtracts at the stamp. One
+/// definition so the CLI harness and the player app can never disagree.
+pub fn judgment_offset_samples(
+    latency_ms: Option<f64>,
+    calibration_ms: f64,
+    sample_rate: u32,
+) -> i64 {
+    ((latency_ms.unwrap_or(0.0) + calibration_ms) / 1000.0 * sample_rate as f64).round() as i64
 }
 
 // --- lean mode --------------------------------------------------------------
@@ -493,14 +509,17 @@ pub struct VisualFrame {
 /// input gestures.
 pub struct ChartSession {
     core: ChartCore,
-    player: RealtimePlayer,
     session_writer: Option<(SessionWriter, PathBuf)>,
     bridge: ClockBridge,
     /// Opaque guard for the input producer (the capture thread's handle).
-    /// Dropped in [`ChartSession::finish`] before the audio player so the
-    /// producer stops before the device stream tears down.
+    /// Declared before `session` so the producer stops before the audio
+    /// handles on any drop path, not just [`ChartSession::finish`].
     input_guard: Option<Box<dyn std::any::Any + Send>>,
     input_rx: Option<std::sync::mpsc::Receiver<InputEvent>>,
+    /// The running suite (kira handles only). Declared after the input guard
+    /// and before `own_manager` so declaration-order drop runs producer →
+    /// handles → device (ADR 0017).
+    session: SuiteSession,
     /// Params currently applied — the visual half feeds `visual_frame`.
     ladder_params: LadderParams,
     /// Reassembly progress for visuals (1.0 in normal play).
@@ -518,16 +537,51 @@ pub struct ChartSession {
     warned_no_input: bool,
     lean: [f64; 2],
     last_pulse_at: Option<Instant>,
+    /// The audio manager when this session owns one (the CLI path). `None`
+    /// on the shared-manager path, where the host's manager outlives us.
+    /// Last field: everything above (session included) drops before it.
+    _own_manager: Option<AudioManager<DefaultBackend>>,
 }
 
 impl ChartSession {
-    /// Validate, start audio, and assemble the whole reactive loop. Returns
-    /// the session plus startup notice lines. The session has no input until
-    /// the caller attaches a receiver via [`ChartSession::set_input`].
+    /// Validate, start audio on a manager of our own, and assemble the whole
+    /// reactive loop — the CLI path. Returns the session plus startup notice
+    /// lines. The session has no input until the caller attaches a receiver
+    /// via [`ChartSession::set_input`].
     pub fn open(cfg: &ChartSessionConfig) -> Result<(Self, Vec<String>)> {
-        let mut notices = Vec::new();
+        let (manifest, chart) = Self::validate(cfg)?;
+        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
+            .map_err(|e| FlintError::AudioError(format!("no audio device: {e}")))?;
+        let session = SuiteSession::start(
+            &manifest,
+            &mut manager,
+            &FileStems::new(&cfg.base_dir),
+            cfg.latency_ms,
+        )?;
+        Self::open_with(cfg, &manifest, &chart, session, Some(manager))
+    }
 
-        // --- validate both files first --------------------------------------
+    /// Same as [`ChartSession::open`] but the suite starts on a caller-owned
+    /// manager (the player app's device stream, ADR 0017). The borrow ends
+    /// at start — the session keeps only kira handles, and the caller must
+    /// keep the manager alive longer than the returned session.
+    pub fn open_shared<B: Backend>(
+        cfg: &ChartSessionConfig,
+        manager: &mut AudioManager<B>,
+    ) -> Result<(Self, Vec<String>)> {
+        let (manifest, chart) = Self::validate(cfg)?;
+        let session = SuiteSession::start(
+            &manifest,
+            manager,
+            &FileStems::new(&cfg.base_dir),
+            cfg.latency_ms,
+        )?;
+        Self::open_with(cfg, &manifest, &chart, session, None)
+    }
+
+    /// Load and validate the manifest + chart before any audio is touched,
+    /// so the failure path is identical on both open fronts.
+    fn validate(cfg: &ChartSessionConfig) -> Result<(SuiteManifest, Chart)> {
         let manifest = SuiteManifest::load(&cfg.manifest)
             .map_err(|e| FlintError::ValidationError(format!("loading {}: {e}", cfg.manifest.display())))?;
         let chart = Chart::load(&cfg.chart)
@@ -546,14 +600,24 @@ impl ChartSession {
             ));
             return Err(FlintError::ValidationError(msg));
         }
+        Ok((manifest, chart))
+    }
 
-        // --- session + judgment ----------------------------------------------
-        let player = RealtimePlayer::start(&manifest, &cfg.base_dir, cfg.latency_ms)?;
+    /// Everything downstream of audio start: judgment, coherence, ladder,
+    /// logs, bookkeeping. Shared by both open fronts.
+    fn open_with(
+        cfg: &ChartSessionConfig,
+        manifest: &SuiteManifest,
+        chart: &Chart,
+        session: SuiteSession,
+        own_manager: Option<AudioManager<DefaultBackend>>,
+    ) -> Result<(Self, Vec<String>)> {
+        let mut notices = Vec::new();
         // Judgment arithmetic is pure: event samples arrive already compensated
         // (capture subtracts the offset), so its conductor carries none.
-        let judge_conductor = Conductor::new(&manifest, None);
-        let visual_eval = ChartEval::new(&chart, &judge_conductor)?;
-        let eval = ChartEval::new(&chart, &judge_conductor)?;
+        let judge_conductor = Conductor::new(manifest, None);
+        let visual_eval = ChartEval::new(chart, &judge_conductor)?;
+        let eval = ChartEval::new(chart, &judge_conductor)?;
         let judgment_cfg = JudgmentConfig {
             lean_mode: cfg.lean_mode,
             ..Default::default()
@@ -658,7 +722,7 @@ impl ChartSession {
 
         let end_sample = cfg
             .bars
-            .map(|b| player.session.conductor.sample_at_bar(b as i64, 0.0))
+            .map(|b| session.conductor.sample_at_bar(b as i64, 0.0))
             .unwrap_or(i64::MAX);
         let sample_rate = manifest.sample_rate;
 
@@ -668,7 +732,7 @@ impl ChartSession {
             log,
             ladder,
             reintegrator,
-            Conductor::new(&manifest, None),
+            Conductor::new(manifest, None),
             config_path,
             ladder_path,
         );
@@ -677,7 +741,7 @@ impl ChartSession {
         Ok((
             Self {
                 core,
-                player,
+                session,
                 session_writer,
                 bridge,
                 input_guard: None,
@@ -693,6 +757,7 @@ impl ChartSession {
                 warned_no_input: false,
                 lean: [0.0; 2],
                 last_pulse_at: None,
+                _own_manager: own_manager,
             },
             notices,
         ))
@@ -722,21 +787,30 @@ impl ChartSession {
     /// One iteration: pump the scheduler, feed the clock bridge, drain input
     /// into judgment, step coherence, log, and emit the per-bar status line.
     pub fn tick(&mut self) -> Result<TickOutcome> {
+        self.tick_with(|_| {})
+    }
+
+    /// [`ChartSession::tick`] with a per-event tap: `on_event` sees every
+    /// drained input event, raw-stamped, before the timeline-offset remap.
+    /// The player app down-samples this into its frame-quantized `InputState`
+    /// (ADR 0018); the judge consumes the same events at full precision.
+    pub fn tick_with(&mut self, mut on_event: impl FnMut(&InputEvent)) -> Result<TickOutcome> {
         let mut notices = Vec::new();
-        self.player.session.pump();
+        self.session.pump();
         // The bridge fits a line through clock observations — it must see the
         // monotonic RAW clock; a seam's backwards jump would poison the fit.
         // Events therefore arrive stamped in raw samples and are re-mapped to
         // suite time at ingest.
         self.bridge
-            .observe(Instant::now(), self.player.session.raw_clock_sample());
+            .observe(Instant::now(), self.session.raw_clock_sample());
 
-        let pos = self.player.session.now();
+        let pos = self.session.now();
 
-        let timeline_offset = self.player.session.timeline_offset();
+        let timeline_offset = self.session.timeline_offset();
         if let Some(rx) = &self.input_rx {
             while let Ok(ev) = rx.try_recv() {
                 self.input_events += 1;
+                on_event(&ev);
                 match &ev {
                     InputEvent::Lean(l) => {
                         self.lean = [l.x, l.y];
@@ -778,7 +852,7 @@ impl ChartSession {
 
         // Disintegration ladder + reintegration sequencer: coherence in,
         // mixer tweens + visual params out. Idle most ticks (hysteresis).
-        let (seq, seq_events) = self.core.step_seq(&mut self.player.session)?;
+        let (seq, seq_events) = self.core.step_seq(&mut self.session)?;
         self.ladder_params = seq.params;
         self.reassembly = seq.reassembly;
         self.rewind = seq.rewind;
@@ -812,7 +886,7 @@ impl ChartSession {
             }
         }
 
-        if pos.sample >= self.end_sample || self.player.session.mixer.all_stopped() {
+        if pos.sample >= self.end_sample || self.session.mixer.all_stopped() {
             return Ok(TickOutcome {
                 state: Tick::Finished,
                 notices,
@@ -836,7 +910,7 @@ impl ChartSession {
                     pos.bar
                 ));
             }
-            let section = self.player.session.conductor.section_at_sample(pos.sample);
+            let section = self.session.conductor.section_at_sample(pos.sample);
             let no_input = if self.input_rx.is_some() && self.input_events == 0 {
                 " | NO INPUT"
             } else {
@@ -851,7 +925,7 @@ impl ChartSession {
                 status_line_with_coherence(
                     &pos,
                     section,
-                    &self.player.session.mixer,
+                    &self.session.mixer,
                     self.core.coherence().value()
                 ),
                 self.lean[0],
@@ -866,14 +940,31 @@ impl ChartSession {
     }
 
     pub fn reload_config(&mut self) -> Result<Vec<String>> {
-        let sample = self.player.session.now().sample;
+        let sample = self.session.now().sample;
         self.core.reload_config(sample)
+    }
+
+    /// Stop every stem with an authored fade. Mandatory before dropping a
+    /// shared-manager session: dropping kira handles does NOT stop sounds —
+    /// the CLI path is only saved by its own manager dying with it.
+    pub fn stop_audio(&mut self, fade_ms: f64) {
+        self.session.mixer.stop_all(kira::Tween {
+            duration: std::time::Duration::from_secs_f64(fade_ms.max(0.0) / 1000.0),
+            ..Default::default()
+        });
+    }
+
+    /// Max pairwise stem skew in seconds, straight from the mixer. Frame-
+    /// cadence polling must expect the one-callback-buffer reporting
+    /// transient (ADR 0017): re-read before believing a spike.
+    pub fn max_stem_skew(&self) -> f64 {
+        self.session.mixer.max_stem_skew()
     }
 
     /// What the shader needs this frame, straight from the conductor and the
     /// chart evaluator — never from judgment records.
     pub fn visual_frame(&self) -> VisualFrame {
-        let pos = self.player.session.now();
+        let pos = self.session.now();
         let preroll = pos.sample < 0;
         let beats_per_bar = self.core.beats_per_bar(pos.sample.max(0));
         let target = if preroll {
@@ -905,7 +996,9 @@ impl ChartSession {
     }
 
     /// Tear down in order: input producer first, then judgment bookkeeping,
-    /// then (by drop) the audio player. Returns the summary notice lines.
+    /// then (by drop) the audio handles and any owned manager. On a shared
+    /// manager, call [`ChartSession::stop_audio`] first — handles dropping
+    /// does not stop sounds. Returns the summary notice lines.
     pub fn finish(mut self) -> Result<Vec<String>> {
         drop(self.input_guard.take()); // stop capture before the audio manager
         let mut notices = Vec::new();

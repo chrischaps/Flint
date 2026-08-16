@@ -4,7 +4,7 @@
 
 mod hud_render;
 mod input_config;
-mod music_spike;
+mod music_session;
 pub(crate) mod scene_loading;
 
 use anyhow::{Context, Result};
@@ -107,10 +107,10 @@ pub struct PlayerApp {
     pub clock: GameClock,
     pub input: InputState,
     pub physics: PhysicsSystem,
-    // F2 spike (THROWAWAY — delete with F3): declared before `audio` so the
-    // suite's kira handles drop before the shared AudioManager (ADR 0017).
-    music_spike: Option<music_spike::MusicSpike>,
-    pub music_spike_base: Option<PathBuf>,
+    // Scene-declared music session (F3, ADR 0019): declared before `audio`
+    // so the suite's kira handles drop before the shared AudioManager
+    // (ADR 0017 drop-order rule).
+    music_session: Option<music_session::MusicSession>,
     pub audio: AudioSystem,
     pub animation: AnimationSystem,
     pub particles: ParticleSystem,
@@ -219,8 +219,7 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
-            music_spike: None,
-            music_spike_base: None,
+            music_session: None,
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
@@ -529,6 +528,10 @@ impl PlayerApp {
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
+
+        // Scene-declared music session (F3): started before script init so a
+        // conducted context exists from the scripts' first frame (F4).
+        self.start_music_session();
 
         // Initialize animation
         load_animations_from_world(&self.scene_path, &mut self.animation);
@@ -953,36 +956,18 @@ impl PlayerApp {
     }
 
     fn tick(&mut self) {
-        // F2 spike (THROWAWAY — delete with F3): start the suite on the
-        // shared manager once the scene is up, then hand the gamepad to the
-        // capture thread for the run (decision 2: the player's own gilrs is
-        // dropped; the capture drain feeds both the Judge and InputState).
-        if self.music_spike.is_none() {
-            if let Some(base) = self.music_spike_base.take() {
-                match music_spike::MusicSpike::start(&base, &mut self.audio.engine) {
-                    Ok(Some(spike)) => {
-                        self.music_spike = Some(spike);
-                        self.gilrs = None;
-                        println!(
-                            "[music-spike] gamepad handed to capture thread \
-                             (player polling suspended for the run)"
-                        );
-                    }
-                    Ok(None) => {}
-                    Err(e) => eprintln!("[music-spike] failed to start: {e:#}"),
-                }
-            }
-        }
-        let spike_finished = if let Some(spike) = &mut self.music_spike {
-            spike.tick(&mut self.input, &mut self.audio.engine)
+        // Music session (F3, ADR 0018): while a session is active the capture
+        // thread owns the pad — its drain replaces the player's own polling,
+        // feeding the Judge at full precision and InputState down-sampled.
+        let session_finished = if let Some(ms) = &mut self.music_session {
+            ms.tick(&mut self.input)
         } else {
             self.poll_gamepad_events();
             false
         };
-        if spike_finished {
-            self.music_spike = None;
-            self.gilrs = Gilrs::new().ok();
-            println!("[music-spike] finished — gamepad returned to player polling");
+        if session_finished {
+            // Natural mid-scene finish: gilrs back, the scene keeps running.
+            self.stop_music_session();
         }
 
         // Advance game clock
@@ -1253,6 +1238,25 @@ impl PlayerApp {
         self.pp_radial_blur_override = pp_rb;
         self.pp_ssao_intensity_override = pp_ssao;
         self.pp_fog_density_override = pp_fog;
+
+        // Music-session ladder/reintegration visuals (F3 interim mapping;
+        // ADR 0019). Script overrides win — when F4/F6 move rung-visual
+        // authorship into scene scripts, they supersede this direct path
+        // with no code change and no double application. The non-zero guard
+        // keeps a clean ladder from stomping a scene's authored post config.
+        if let Some(ms) = &self.music_session {
+            let vf = ms.visual_frame();
+            if !vf.preroll {
+                if self.pp_radial_blur_override.is_none() && vf.blur > 0.0 {
+                    self.pp_radial_blur_override =
+                        Some(vf.blur * music_session::MUSIC_BLUR_SCALE);
+                }
+                if self.pp_chromatic_aberration_override.is_none() && vf.chromatic > 0.0 {
+                    self.pp_chromatic_aberration_override =
+                        Some(vf.chromatic * music_session::MUSIC_CHROMATIC_SCALE);
+                }
+            }
+        }
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
@@ -1705,6 +1709,68 @@ impl PlayerApp {
         }
     }
 
+    /// Start the scene-declared music session, if any (F3, ADR 0019): find
+    /// the first `music_session` component, resolve its repo-root-relative
+    /// paths against the scene's base dir (scene file's parent's parent —
+    /// `scenes/` sits at the repo root), start the suite on the shared
+    /// manager, and hand the gamepad to the capture thread (ADR 0018).
+    /// Headless or component-less scenes: no session, nothing changes.
+    fn start_music_session(&mut self) {
+        let mut found = None;
+        for entity in self.world.all_entities() {
+            let comp = self
+                .world
+                .get_components(entity.id)
+                .and_then(|c| c.get(music_session::MUSIC_SESSION).cloned());
+            if let Some(comp) = comp {
+                if found.is_some() {
+                    tracing::warn!(
+                        "multiple music_session components in scene; using the first \
+                         (extra on entity {})",
+                        entity.id
+                    );
+                } else {
+                    found = Some(comp);
+                }
+            }
+        }
+        let Some(comp) = found else { return };
+        let Some(base_dir) = Path::new(&self.scene_path)
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+        else {
+            tracing::warn!(
+                "music_session: cannot derive base dir from scene path `{}`",
+                self.scene_path
+            );
+            return;
+        };
+        match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
+            Ok(Some(session)) => {
+                self.music_session = Some(session);
+                self.gilrs = None;
+                println!(
+                    "[music] gamepad handed to capture thread \
+                     (player polling suspended for the session)"
+                );
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("[music] session failed to start: {e:#}"),
+        }
+    }
+
+    /// Tear the music session down (stems stopped with a fade, capture guard
+    /// dropped first inside) and give the gamepad back to player polling.
+    /// Must run before `audio.clear()` in a scene transition (ADR 0017).
+    fn stop_music_session(&mut self) {
+        if let Some(session) = self.music_session.take() {
+            session.stop();
+            self.gilrs = Gilrs::new().ok();
+            println!("[music] session ended — gamepad returned to player polling");
+        }
+    }
+
     /// Unload the current scene and load a new one.
     fn execute_scene_transition(&mut self, target_scene: &str) {
         println!("[transition] Unloading current scene...");
@@ -1718,6 +1784,10 @@ impl PlayerApp {
             );
             self.script.call_scene_exits(&mut self.world);
         }
+
+        // Music session first: capture guard drops and stems stop BEFORE the
+        // audio system clears (ADR 0017 producer→handles→device order).
+        self.stop_music_session();
 
         // Clear all systems
         self.script.clear();
@@ -1925,6 +1995,12 @@ impl PlayerApp {
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
+
+        // Scene-declared music session on the freshly initialized audio
+        // (before scripts, so a conducted context exists from their first
+        // frame — F4). Music→music transitions: the fresh gilrs above is
+        // simply dropped again by the new session's handoff.
+        self.start_music_session();
 
         load_animations_from_world(&self.scene_path, &mut self.animation);
         load_sprite_animations_from_world(&self.scene_path, &mut self.animation);

@@ -11,8 +11,8 @@
 
 use anyhow::{Context, Result};
 use flint_music::chart_session::{
-    latest_calibration_ms, latest_latency_ms, parse_lean_mode, ChartSession, ChartSessionConfig,
-    Tick,
+    judgment_offset_samples, latest_calibration_ms, latest_latency_ms, parse_lean_mode,
+    ChartSession, ChartSessionConfig, Tick,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -106,9 +106,8 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
 
     // Total judgment offset: what the ear hears, adjusted by the player's
     // own measured tap tendency. The capture thread applies it at the stamp.
-    let offset_samples = ((latency_ms.unwrap_or(0.0) + calibration_ms) / 1000.0
-        * session.sample_rate() as f64)
-        .round() as i64;
+    let offset_samples =
+        judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
     let capture = flint_input_capture::spawn(
         session.bridge(),
         flint_input_capture::CaptureConfig {

@@ -31,11 +31,6 @@ struct Args {
     /// Optional input config overlay path
     #[arg(long)]
     input_config: Option<String>,
-
-    /// F2 spike: start the prototype suite+chart on the player's shared
-    /// AudioManager, with 1 kHz input capture. Value = music base dir (repo root).
-    #[arg(long, value_name = "BASE_DIR")]
-    music_spike: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -101,9 +96,6 @@ fn main() -> Result<()> {
         args.input_config,
         scene_file.scene.input_config.clone(),
     );
-
-    // F2 spike: music base dir (throwaway — delete when F3's music_session lands)
-    app.music_spike_base = args.music_spike.map(std::path::PathBuf::from);
 
     // Pass skybox path from scene environment settings
     if let Some(env) = &scene_file.environment {
