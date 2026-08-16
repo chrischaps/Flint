@@ -373,6 +373,8 @@ fn run_reactive(
     let mut driver = LadderDriver::new();
     let mut reintegrator = Reintegrator::new(manifest.reintegration.clone());
     reintegrator.fade_ms = ladder.config().seam_fade_ms;
+    reintegrator.rewind_bars = ladder.config().seam_rewind_bars;
+    reintegrator.rewind_drop_st = ladder.config().seam_rewind_drop_st;
     let script = EventScript {
         schema_version: 0,
         events: vec![],

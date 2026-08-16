@@ -108,6 +108,14 @@ pub struct LadderConfig {
     /// Authored seam envelope (ms): the fade that carries the world out of
     /// the old timeline at reintegration. An envelope, not a cut.
     pub seam_fade_ms: f64,
+    /// Rewind interlude: bars between full-fail and the seam, during which
+    /// the whole world spins down like a record played backwards (a
+    /// playback-rate ramp on every stem, mirrored visually), giving the
+    /// player a breath to get ready for the re-entry. 0 = immediate seam.
+    pub seam_rewind_bars: i64,
+    /// Where the spin-down lands, in semitones (negative; −30 ≈ 18% speed —
+    /// audibly "stopped" by the time the seam fade takes the tail).
+    pub seam_rewind_drop_st: f64,
     /// The ladder arms when coherence first reaches this (sessions open at a
     /// neutral value inside rung territory; the world can only come apart
     /// after it has first cohered). Measured on real engaged play: coherence
@@ -209,6 +217,8 @@ impl Default for LadderConfig {
                 hold_ms: 1_500.0,
             },
             seam_fade_ms: 30.0,
+            seam_rewind_bars: 1,
+            seam_rewind_drop_st: -30.0,
             arm_above: 0.80,
         }
     }
@@ -320,11 +330,20 @@ impl LadderConfig {
         if rungs.is_empty() {
             rungs = Self::default().rungs;
         }
-        let seam_fade_ms = root
-            .get("seam")
+        let d_all = Self::default();
+        let seam_t = root.get("seam");
+        let seam_fade_ms = seam_t
             .and_then(|t| t.get("fade_ms"))
             .and_then(toml_f64)
-            .unwrap_or_else(|| Self::default().seam_fade_ms);
+            .unwrap_or(d_all.seam_fade_ms);
+        let seam_rewind_bars = seam_t
+            .and_then(|t| t.get("rewind_bars"))
+            .and_then(|v| v.as_integer())
+            .unwrap_or(d_all.seam_rewind_bars);
+        let seam_rewind_drop_st = seam_t
+            .and_then(|t| t.get("rewind_drop_semitones"))
+            .and_then(toml_f64)
+            .unwrap_or(d_all.seam_rewind_drop_st);
         let arm_above = root
             .get("arm_above")
             .and_then(toml_f64)
@@ -333,6 +352,8 @@ impl LadderConfig {
             rungs,
             full_fail,
             seam_fade_ms,
+            seam_rewind_bars,
+            seam_rewind_drop_st,
             arm_above,
         };
         cfg.validate()?;
@@ -398,6 +419,18 @@ impl LadderConfig {
                 self.seam_fade_ms
             ));
         }
+        if !(0..=4).contains(&self.seam_rewind_bars) {
+            return err(format!(
+                "seam.rewind_bars {} out of range (0..4)",
+                self.seam_rewind_bars
+            ));
+        }
+        if !(-60.0..=0.0).contains(&self.seam_rewind_drop_st) {
+            return err(format!(
+                "seam.rewind_drop_semitones {} out of range (-60..0)",
+                self.seam_rewind_drop_st
+            ));
+        }
         if !(0.0..=1.0).contains(&self.arm_above)
             || self.arm_above <= self.full_fail.enter_below
         {
@@ -418,7 +451,11 @@ impl LadderConfig {
                 "exit_above": self.full_fail.exit_above,
                 "hold_ms": self.full_fail.hold_ms,
             },
-            "seam": { "fade_ms": self.seam_fade_ms },
+            "seam": {
+                "fade_ms": self.seam_fade_ms,
+                "rewind_bars": self.seam_rewind_bars,
+                "rewind_drop_semitones": self.seam_rewind_drop_st,
+            },
             "arm_above": self.arm_above,
             "rungs": self.rungs.iter().map(|r| serde_json::json!({
                 "name": r.name,

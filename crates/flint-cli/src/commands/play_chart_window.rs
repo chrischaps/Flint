@@ -154,8 +154,8 @@ impl ApplicationHandler for App {
     }
 }
 
-/// 16 f32s, matching `Uni` in the WGSL below (four 16-byte rows).
-const UNIFORM_SIZE: u64 = 64;
+/// 20 f32s, matching `Uni` in the WGSL below (five 16-byte rows).
+const UNIFORM_SIZE: u64 = 80;
 
 struct Gfx {
     window: Arc<Window>,
@@ -240,7 +240,7 @@ impl Gfx {
 
     fn render(&mut self, frame: &super::play_chart::VisualFrame, time_s: f32) -> Result<()> {
         let aspect = self.ctx.aspect_ratio();
-        let data: [f32; 16] = [
+        let data: [f32; 20] = [
             frame.lean[0],
             frame.lean[1],
             frame.target[0],
@@ -257,6 +257,10 @@ impl Gfx {
             frame.chromatic,
             frame.reassembly,
             if frame.no_input { 1.0 } else { 0.0 },
+            frame.rewind,
+            0.0,
+            0.0,
+            0.0,
         ];
         self.ctx
             .queue
@@ -314,6 +318,8 @@ struct Uni {
     misc1: vec4<f32>,
     // blur, chromatic, reassembly, no_input
     misc2: vec4<f32>,
+    // rewind, _pad, _pad, _pad
+    misc3: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: Uni;
 
@@ -389,7 +395,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let chroma = u.misc2.y;
     let reassembly = u.misc2.z;
 
-    let p = vec2(in.p.x * aspect, in.p.y);
+    var p = vec2(in.p.x * aspect, in.p.y);
+
+    // Rewind interlude: the whole field winds backwards — an accelerating
+    // counter-rotation with a gentle inward pull, the visual half of the
+    // record spinning back to the re-entry point.
+    let rewind = u.misc3.x;
+    if (rewind > 0.0) {
+        let spin = -rewind * rewind * 2.4;
+        let c = cos(spin);
+        let s = sin(spin);
+        p = vec2(p.x * c - p.y * s, p.x * s + p.y * c) * (1.0 + 0.18 * rewind);
+    }
+
     // Woozy: the whole field swims a little, always — more as focus goes.
     let wob = vec2(
         sin(t * 0.31 + p.y * 1.7),
@@ -425,6 +443,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (reassembly < 1.0) {
         let gather = 1.0 - reassembly;
         col += vec3(0.30, 0.20, 0.10) * gather * (0.55 + 0.15 * sin(t * 1.7));
+    }
+
+    // During the rewind the world also dims and cools toward the seam —
+    // breath out before the breath in.
+    if (rewind > 0.0) {
+        col *= 1.0 - 0.45 * rewind;
+        col += vec3(0.04, 0.05, 0.10) * rewind;
     }
 
     // Pre-roll: lights low until the suite begins.

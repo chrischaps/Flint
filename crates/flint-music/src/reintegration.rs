@@ -64,16 +64,19 @@ pub enum ReintegrationEvent {
 }
 
 /// What one sequencer tick resolved: the params the world should show this
-/// tick (already applied to the mixer) and the reassembly progress for
-/// visuals (1.0 in normal play, 0→1 while re-gathering).
+/// tick (already applied to the mixer), the reassembly progress for visuals
+/// (1.0 in normal play, 0→1 while re-gathering), and the rewind progress
+/// (0 = not rewinding, else 0→1 through the pre-seam spin-down).
 pub struct SeqTick {
     pub params: LadderParams,
     pub reassembly: f64,
+    pub rewind: f64,
 }
 
 enum Phase {
     Playing,
     Failing {
+        fail_raw: i64,
         seam_raw: i64,
         re_entry: i64,
         span: i64,
@@ -87,6 +90,11 @@ enum Phase {
 pub struct Reintegrator {
     decl: Reintegration,
     pub fade_ms: f64,
+    /// Rewind interlude: bars between fail and seam, during which every stem
+    /// spins down like a record played backwards. 0 = immediate seam.
+    pub rewind_bars: i64,
+    /// Playback-rate landing point of the spin-down, in semitones (< 0).
+    pub rewind_drop_st: f64,
     phase: Phase,
     /// Raw sample when coherence first went below the full-fail threshold.
     below_since: Option<i64>,
@@ -97,6 +105,8 @@ impl Reintegrator {
         Self {
             decl,
             fade_ms: DEFAULT_SEAM_FADE_MS,
+            rewind_bars: 1,
+            rewind_drop_st: -30.0,
             phase: Phase::Playing,
             below_since: None,
         }
@@ -147,6 +157,7 @@ impl Reintegrator {
                         return Ok(SeqTick {
                             params: ladder.full_fail_params(),
                             reassembly: 1.0,
+                            rewind: 0.0,
                         });
                     }
                 } else if coherence > ff.exit_above {
@@ -155,17 +166,24 @@ impl Reintegrator {
                 Ok(SeqTick {
                     params,
                     reassembly: 1.0,
+                    rewind: 0.0,
                 })
             }
 
             Phase::Failing {
+                fail_raw,
                 seam_raw,
                 re_entry,
                 span,
             } => {
-                // The world holds at its most disintegrated while the old
-                // timeline fades; nothing new is commanded (the fade and the
-                // re-entry are already queued, sample-accurate, in kira).
+                // The record spins backwards toward the seam (the rate ramp
+                // is already queued in kira); the world holds at its most
+                // disintegrated. Nothing new is commanded here.
+                let rewind = if seam_raw > fail_raw {
+                    ((raw - fail_raw) as f64 / (seam_raw - fail_raw) as f64).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
                 if raw >= seam_raw {
                     events.push(ReintegrationEvent::Seam {
                         raw_sample: raw,
@@ -179,6 +197,7 @@ impl Reintegrator {
                 Ok(SeqTick {
                     params: ladder.full_fail_params(),
                     reassembly: 1.0,
+                    rewind,
                 })
             }
 
@@ -199,6 +218,7 @@ impl Reintegrator {
                 Ok(SeqTick {
                     params,
                     reassembly: t,
+                    rewind: 0.0,
                 })
             }
         }
@@ -221,14 +241,45 @@ impl Reintegrator {
             .map(|s| s.start_sample)
             .unwrap_or(0);
 
-        // Seam on the next bar line with enough lead for fade + command
-        // delivery: grid continuity comes free — section starts sit on bar
-        // lines, so beat phase is continuous across the jump.
+        // Seam on a bar line with enough lead for fade + command delivery,
+        // pushed out by the rewind interlude: grid continuity comes free —
+        // section starts sit on bar lines, so beat phase is continuous
+        // across the jump.
         let lead_samples =
             ((self.fade_ms + MIN_LEAD_MS) / 1000.0 * sample_rate).round() as i64;
-        let seam_suite = session
+        let seam0 = session
             .conductor
             .next_grid_sample(now_suite + lead_samples, Grid::Bar);
+        let seam_suite = if self.rewind_bars > 0 {
+            let bar = session.conductor.position_at_sample(seam0).bar;
+            session
+                .conductor
+                .sample_at_bar(bar + self.rewind_bars, 0.0)
+        } else {
+            seam0
+        };
+
+        // The rewind: every playing stem's rate ramps down together over the
+        // whole interlude — a record spun backwards, not an effect on one
+        // instrument. Commanded on the OLD sounds, before `schedule_seam`
+        // swaps the handles; sample-lock breaks during the ramp, which is
+        // fine — everything re-plays locked at the seam.
+        if self.rewind_bars > 0 {
+            let dur = Duration::from_secs_f64((seam_suite - now_suite) as f64 / sample_rate);
+            for name in crate::BUSES {
+                if let Some(bus) = session.mixer.bus_mut(name) {
+                    if bus.state.playing {
+                        bus.set_detune(
+                            self.rewind_drop_st,
+                            Tween {
+                                duration: dur,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+            }
+        }
 
         // Reassembly span, measured on the post-seam timeline.
         let entry_bar = session.conductor.position_at_sample(re_entry).bar;
@@ -276,6 +327,7 @@ impl Reintegrator {
             seam_suite_sample: seam_suite,
         });
         self.phase = Phase::Failing {
+            fail_raw: seam_raw - (seam_suite - now_suite),
             seam_raw,
             re_entry,
             span,

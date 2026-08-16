@@ -110,6 +110,8 @@ pub struct ChartSession {
     reintegrator: Reintegrator,
     /// Reassembly progress for visuals (1.0 in normal play).
     reassembly: f64,
+    /// Rewind interlude progress for visuals (0 outside the interlude).
+    rewind: f64,
     seq_events: Vec<ReintegrationEvent>,
     end_sample: i64,
     sample_rate: u32,
@@ -159,6 +161,9 @@ pub struct VisualFrame {
     /// Debug cue: capture is running but has never delivered an event —
     /// the ADR 0011 silent failure, surfaced in the harness window.
     pub no_input: bool,
+    /// Rewind interlude progress: 0 = not rewinding; 0→1 while the record
+    /// spins backwards toward the seam.
+    pub rewind: f32,
 }
 
 impl ChartSession {
@@ -270,6 +275,8 @@ impl ChartSession {
         let ladder = Ladder::new(ladder_cfg);
         let mut reintegrator = Reintegrator::new(manifest.reintegration.clone());
         reintegrator.fade_ms = ladder.config().seam_fade_ms;
+        reintegrator.rewind_bars = ladder.config().seam_rewind_bars;
+        reintegrator.rewind_drop_st = ladder.config().seam_rewind_drop_st;
 
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -370,6 +377,7 @@ impl ChartSession {
             ladder_params: LadderParams::clean(),
             reintegrator,
             reassembly: 1.0,
+            rewind: 0.0,
             seq_events: Vec::new(),
             end_sample,
             sample_rate,
@@ -476,6 +484,7 @@ impl ChartSession {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         self.ladder_params = seq.params;
         self.reassembly = seq.reassembly;
+        self.rewind = seq.rewind;
         for ev in std::mem::take(&mut self.seq_events) {
             match &ev {
                 ReintegrationEvent::FullFail {
@@ -592,6 +601,8 @@ impl ChartSession {
                 Ok(cfg) => {
                     self.ladder.reconfigure(cfg);
                     self.reintegrator.fade_ms = self.ladder.config().seam_fade_ms;
+                    self.reintegrator.rewind_bars = self.ladder.config().seam_rewind_bars;
+                    self.reintegrator.rewind_drop_st = self.ladder.config().seam_rewind_drop_st;
                     println!("ladder config reloaded (level carries over)");
                     let sample = self.player.session.now().sample;
                     self.log
@@ -637,6 +648,7 @@ impl ChartSession {
             chromatic: self.ladder_params.visual.chromatic,
             reassembly: self.reassembly as f32,
             no_input: self.input_rx.is_some() && self.input_events == 0 && !preroll,
+            rewind: self.rewind as f32,
         }
     }
 
