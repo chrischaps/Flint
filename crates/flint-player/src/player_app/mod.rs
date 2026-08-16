@@ -4,6 +4,7 @@
 
 mod hud_render;
 mod input_config;
+mod music_spike;
 pub(crate) mod scene_loading;
 
 use anyhow::{Context, Result};
@@ -106,6 +107,10 @@ pub struct PlayerApp {
     pub clock: GameClock,
     pub input: InputState,
     pub physics: PhysicsSystem,
+    // F2 spike (THROWAWAY — delete with F3): declared before `audio` so the
+    // suite's kira handles drop before the shared AudioManager (ADR 0017).
+    music_spike: Option<music_spike::MusicSpike>,
+    pub music_spike_base: Option<PathBuf>,
     pub audio: AudioSystem,
     pub animation: AnimationSystem,
     pub particles: ParticleSystem,
@@ -214,6 +219,8 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
+            music_spike: None,
+            music_spike_base: None,
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
@@ -946,7 +953,37 @@ impl PlayerApp {
     }
 
     fn tick(&mut self) {
-        self.poll_gamepad_events();
+        // F2 spike (THROWAWAY — delete with F3): start the suite on the
+        // shared manager once the scene is up, then hand the gamepad to the
+        // capture thread for the run (decision 2: the player's own gilrs is
+        // dropped; the capture drain feeds both the Judge and InputState).
+        if self.music_spike.is_none() {
+            if let Some(base) = self.music_spike_base.take() {
+                match music_spike::MusicSpike::start(&base, &mut self.audio.engine) {
+                    Ok(Some(spike)) => {
+                        self.music_spike = Some(spike);
+                        self.gilrs = None;
+                        println!(
+                            "[music-spike] gamepad handed to capture thread \
+                             (player polling suspended for the run)"
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("[music-spike] failed to start: {e:#}"),
+                }
+            }
+        }
+        let spike_finished = if let Some(spike) = &mut self.music_spike {
+            spike.tick(&mut self.input, &mut self.audio.engine)
+        } else {
+            self.poll_gamepad_events();
+            false
+        };
+        if spike_finished {
+            self.music_spike = None;
+            self.gilrs = Gilrs::new().ok();
+            println!("[music-spike] finished — gamepad returned to player polling");
+        }
 
         // Advance game clock
         self.clock.tick();

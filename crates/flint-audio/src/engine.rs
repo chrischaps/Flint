@@ -60,6 +60,13 @@ impl AudioEngine {
         self.manager.is_some()
     }
 
+    /// Mutable access to the underlying kira manager, for hosts that start
+    /// additional clocked content (the music suite) on the same device stream.
+    /// Handles created on it must drop before this engine (ADR 0017).
+    pub fn manager_mut(&mut self) -> Option<&mut AudioManager<DefaultBackend>> {
+        self.manager.as_mut()
+    }
+
     /// Load a sound file into the cache
     pub fn load_sound(&mut self, name: &str, path: &Path) -> Result<()> {
         if self.sound_cache.contains_key(name) {
