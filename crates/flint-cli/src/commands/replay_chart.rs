@@ -375,6 +375,7 @@ fn run_reactive(
     reintegrator.fade_ms = ladder.config().seam_fade_ms;
     reintegrator.rewind_bars = ladder.config().seam_rewind_bars;
     reintegrator.rewind_drop_st = ladder.config().seam_rewind_drop_st;
+    reintegrator.pickup_beats = ladder.config().seam_pickup_beats;
     let script = EventScript {
         schema_version: 0,
         events: vec![],

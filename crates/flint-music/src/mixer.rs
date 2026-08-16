@@ -139,6 +139,33 @@ impl StemBus {
             sound.set_volume(Decibels(db), tween);
         }
     }
+
+    /// Play an extra one-shot of this bus's retained stem as a *cue* — a
+    /// gesture outside the sample-locked timeline (the reintegration pickup
+    /// spin-up). The caller owns the returned handle and commands its
+    /// tweens/stop; the bus's own `sound` slot is untouched. `Ok(None)` on
+    /// silent buses.
+    pub fn play_cue(
+        &mut self,
+        start_position_samples: u64,
+        start_at: StartTime,
+        volume_db: f32,
+        rate_semitones: f64,
+    ) -> Result<Option<StaticSoundHandle>> {
+        let Some(data) = &self.data else {
+            return Ok(None);
+        };
+        let handle = self
+            .track
+            .play(
+                data.start_position(PlaybackPosition::Samples(start_position_samples as usize))
+                    .start_time(start_at)
+                    .volume(Decibels(volume_db))
+                    .playback_rate(PlaybackRate(2f64.powf(rate_semitones / 12.0))),
+            )
+            .map_err(|e| FlintError::AudioError(format!("bus '{}' cue: {e}", self.name)))?;
+        Ok(Some(handle))
+    }
 }
 
 /// All six buses, in canonical [`crate::BUSES`] order.

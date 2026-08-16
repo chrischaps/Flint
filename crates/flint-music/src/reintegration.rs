@@ -95,6 +95,10 @@ pub struct Reintegrator {
     pub rewind_bars: i64,
     /// Playback-rate landing point of the spin-down, in semitones (< 0).
     pub rewind_drop_st: f64,
+    /// Pickup spin-up: beats (at the re-entry tempo) of lead-bus cue winding
+    /// up from `rewind_drop_st` to full speed, arriving on the re-entry
+    /// downbeat. 0 disables.
+    pub pickup_beats: f64,
     phase: Phase,
     /// Raw sample when coherence first went below the full-fail threshold.
     below_since: Option<i64>,
@@ -107,6 +111,7 @@ impl Reintegrator {
             fade_ms: DEFAULT_SEAM_FADE_MS,
             rewind_bars: 1,
             rewind_drop_st: -30.0,
+            pickup_beats: 2.0,
             phase: Phase::Playing,
             below_since: None,
         }
@@ -317,6 +322,57 @@ impl Reintegrator {
             }
             if let Some(bus) = session.mixer.bus_mut(name) {
                 bus.set_sound_volume(0.0, ramp);
+            }
+        }
+
+        // The pickup: in the last beats before the seam, the lead bus plays
+        // the re-entry material as a cue spinning up from the rewind's
+        // landing rate to full speed, arriving on the downbeat — "…and-a-
+        // ONE". A gesture outside the locked timeline: whatever position
+        // error the rate ramp accrues, the real ensemble still enters
+        // sample-pure at the seam while the cue stops under the seam fade.
+        if self.pickup_beats > 0.0 {
+            // One beat's samples at the re-entry tempo (robust at suite
+            // sample 0, where there are no beats before the entry).
+            let entry_beat = session.conductor.position_at_sample(re_entry).beat;
+            let beat_samples =
+                (session.conductor.sample_at_beat(entry_beat + 1.0) - re_entry).max(1);
+            let mut span = (self.pickup_beats * beat_samples as f64).round() as i64;
+            // The cue must start inside the interlude, after commands land.
+            let available = seam_suite - now_suite - lead_samples;
+            span = span.min(available);
+            if span > beat_samples / 4 {
+                let seam_raw_pre = seam_suite + session.timeline_offset();
+                let cue_start = kira::StartTime::ClockTime(
+                    session.clock_time_at_raw(seam_raw_pre - span),
+                );
+                let ramp = Tween {
+                    start_time: cue_start,
+                    duration: Duration::from_secs_f64(span as f64 / sample_rate),
+                    ..Default::default()
+                };
+                // Fade completes AT the seam so the cue never doubles the
+                // ensemble's sample-pure downbeat entry.
+                let fade_samples =
+                    (self.fade_ms / 1000.0 * sample_rate).round() as i64;
+                let stop_at_seam = Tween {
+                    start_time: kira::StartTime::ClockTime(
+                        session.clock_time_at_raw(seam_raw_pre - fade_samples),
+                    ),
+                    duration: Duration::from_secs_f64(self.fade_ms / 1000.0),
+                    ..Default::default()
+                };
+                if let Some(bus) = session.mixer.bus_mut(&self.decl.lead_bus) {
+                    match bus.play_cue(re_entry as u64, cue_start, -18.0, self.rewind_drop_st) {
+                        Ok(Some(mut cue)) => {
+                            cue.set_playback_rate(kira::PlaybackRate(1.0), ramp);
+                            cue.set_volume(kira::Decibels(0.0), ramp);
+                            cue.stop(stop_at_seam);
+                        }
+                        Ok(None) => {}
+                        Err(e) => tracing::warn!("pickup cue failed: {e}"),
+                    }
+                }
             }
         }
 

@@ -446,10 +446,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     // During the rewind the world also dims and cools toward the seam —
-    // breath out before the breath in.
+    // breath out before the breath in. In the final stretch (the pickup),
+    // a warm glow gathers at the target: anticipation of the downbeat.
     if (rewind > 0.0) {
         col *= 1.0 - 0.45 * rewind;
         col += vec3(0.04, 0.05, 0.10) * rewind;
+        let pickup = smoothstep(0.55, 1.0, rewind);
+        let dt2 = distance(q, u.tgt * 0.6);
+        col += vec3(0.85, 0.60, 0.36) * 0.4 * pickup * exp(-dt2 * dt2 / 0.12);
     }
 
     // Pre-roll: lights low until the suite begins.

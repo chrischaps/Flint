@@ -429,7 +429,11 @@ fn milestone3_fall_seam_reassembly_twice_with_no_clicks() {
 
     // --- (3) re-entry lands at the checkpoint ------------------------------
     // The lead bus's tone is gated to each section's first two bars, so a
-    // Rise must land within tolerance of each seam.
+    // Rise must land near each seam. With the pickup cue the lead's energy
+    // legitimately begins up to `pickup_beats` early (the spin-up sweeping
+    // into the tone's band), so the window opens that far back — but never
+    // earlier.
+    let conductor = Conductor::new(&manifest(), None);
     let env = tone_envelope(audio, SR, 880.0, WINDOW);
     let transitions = find_tone_transitions(&env, WINDOW);
     let tol = (2 * WINDOW + CHUNK) as i64 + 2_000;
@@ -439,12 +443,16 @@ fn milestone3_fall_seam_reassembly_twice_with_no_clicks() {
             if f.at_suite < 960_000 { 0 } else { 960_000 },
             "checkpoint is the latest re-entry section at the fail"
         );
-        let rise = transitions
-            .iter()
-            .find(|(s, k)| *k == TransitionKind::Rise && (s - f.seam_raw).abs() <= tol);
+        let entry_beat = conductor.position_at_sample(f.re_entry).beat;
+        let beat_samples = conductor.sample_at_beat(entry_beat + 1.0) - f.re_entry;
+        let pickup = (ladder_cfg.seam_pickup_beats * beat_samples as f64) as i64;
+        let rise = transitions.iter().find(|(s, k)| {
+            *k == TransitionKind::Rise
+                && (f.seam_raw - pickup - tol..=f.seam_raw + tol).contains(s)
+        });
         assert!(
             rise.is_some(),
-            "no lead-bus rise near seam raw {} (transitions {transitions:?})",
+            "no lead-bus rise in the pickup window of seam raw {} (transitions {transitions:?})",
             f.seam_raw
         );
     }
@@ -525,11 +533,15 @@ fn seam_sweep_fail_timings_stay_click_free() {
         let env = tone_envelope(&r.audio, SR, 880.0, WINDOW);
         let transitions = find_tone_transitions(&env, WINDOW);
         let tol = (2 * WINDOW + CHUNK) as i64 + 2_000;
+        let conductor = Conductor::new(&manifest(), None);
+        let entry_beat = conductor.position_at_sample(f.re_entry).beat;
+        let beat_samples = conductor.sample_at_beat(entry_beat + 1.0) - f.re_entry;
+        let pickup =
+            (LadderConfig::default().seam_pickup_beats * beat_samples as f64) as i64;
         assert!(
-            transitions
-                .iter()
-                .any(|(s, k)| *k == TransitionKind::Rise && (s - f.seam_raw).abs() <= tol),
-            "fall at raw {fall1}: no lead rise near seam {} ({transitions:?})",
+            transitions.iter().any(|(s, k)| *k == TransitionKind::Rise
+                && (f.seam_raw - pickup - tol..=f.seam_raw + tol).contains(s)),
+            "fall at raw {fall1}: no lead rise in the pickup window of seam {} ({transitions:?})",
             f.seam_raw
         );
         eprintln!(

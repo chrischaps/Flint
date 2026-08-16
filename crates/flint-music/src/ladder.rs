@@ -116,6 +116,12 @@ pub struct LadderConfig {
     /// Where the spin-down lands, in semitones (negative; −30 ≈ 18% speed —
     /// audibly "stopped" by the time the seam fade takes the tail).
     pub seam_rewind_drop_st: f64,
+    /// Pickup spin-up: in the last beats before the seam, the lead bus plays
+    /// the re-entry material as a cue winding up from the spin-down's rate
+    /// to full speed, arriving exactly on the re-entry downbeat — a musical
+    /// pickup that telegraphs when to come back in. Beats are measured at
+    /// the re-entry tempo. 0 disables.
+    pub seam_pickup_beats: f64,
     /// The ladder arms when coherence first reaches this (sessions open at a
     /// neutral value inside rung territory; the world can only come apart
     /// after it has first cohered). Measured on real engaged play: coherence
@@ -219,6 +225,7 @@ impl Default for LadderConfig {
             seam_fade_ms: 30.0,
             seam_rewind_bars: 1,
             seam_rewind_drop_st: -30.0,
+            seam_pickup_beats: 2.0,
             arm_above: 0.80,
         }
     }
@@ -344,6 +351,10 @@ impl LadderConfig {
             .and_then(|t| t.get("rewind_drop_semitones"))
             .and_then(toml_f64)
             .unwrap_or(d_all.seam_rewind_drop_st);
+        let seam_pickup_beats = seam_t
+            .and_then(|t| t.get("pickup_beats"))
+            .and_then(toml_f64)
+            .unwrap_or(d_all.seam_pickup_beats);
         let arm_above = root
             .get("arm_above")
             .and_then(toml_f64)
@@ -354,6 +365,7 @@ impl LadderConfig {
             seam_fade_ms,
             seam_rewind_bars,
             seam_rewind_drop_st,
+            seam_pickup_beats,
             arm_above,
         };
         cfg.validate()?;
@@ -431,6 +443,12 @@ impl LadderConfig {
                 self.seam_rewind_drop_st
             ));
         }
+        if !(0.0..=8.0).contains(&self.seam_pickup_beats) {
+            return err(format!(
+                "seam.pickup_beats {} out of range (0..8)",
+                self.seam_pickup_beats
+            ));
+        }
         if !(0.0..=1.0).contains(&self.arm_above)
             || self.arm_above <= self.full_fail.enter_below
         {
@@ -455,6 +473,7 @@ impl LadderConfig {
                 "fade_ms": self.seam_fade_ms,
                 "rewind_bars": self.seam_rewind_bars,
                 "rewind_drop_semitones": self.seam_rewind_drop_st,
+                "pickup_beats": self.seam_pickup_beats,
             },
             "arm_above": self.arm_above,
             "rungs": self.rungs.iter().map(|r| serde_json::json!({
