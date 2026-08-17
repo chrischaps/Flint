@@ -343,6 +343,9 @@ fog_density = 0.05
 chromatic_aberration = 0.2
 radial_blur = 0.4
 desaturate = 0.85
+dof_strength = 0.5
+dof_focus_distance = 22.0
+dof_focus_range = 3.5
 "#;
 
         let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
@@ -356,6 +359,9 @@ desaturate = 0.85
         assert!((pp.chromatic_aberration - 0.2).abs() < 0.001);
         assert!((pp.radial_blur - 0.4).abs() < 0.001);
         assert!((pp.desaturate - 0.85).abs() < 0.001);
+        assert!((pp.dof_strength - 0.5).abs() < 0.001);
+        assert!((pp.dof_focus_distance - 22.0).abs() < 0.001);
+        assert!((pp.dof_focus_range - 3.5).abs() < 0.001);
     }
 
     #[test]
@@ -376,6 +382,7 @@ bloom_enabled = false
         assert_eq!(pp.chromatic_aberration, 0.0);
         assert_eq!(pp.radial_blur, 0.0);
         assert_eq!(pp.desaturate, 0.0);
+        assert_eq!(pp.dof_strength, 0.0);
     }
 
     #[test]

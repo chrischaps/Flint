@@ -22,6 +22,7 @@
 //! bus, foundation included — filtering the whole world is the woozy intent;
 //! silencing its pulse is not.
 
+use crate::gradient::GradientOffsets;
 use crate::mixer::{BusMixer, LPF_OPEN_HZ};
 use crate::MOTIF_BUSES;
 use flint_core::toml_util::toml_f64;
@@ -710,13 +711,18 @@ impl LadderDriver {
         self.last_detune.clear();
     }
 
-    /// Drive the mixer toward `params`. `now_seconds` is suite time (for the
-    /// warble LFO phase); `ramp_ms` is the tween length for gain/LPF moves —
-    /// normally `params.ramp_ms`, but reassembly passes tick-scale ramps
-    /// while it lerps params itself.
+    /// Drive the mixer toward `params` plus the gradient's additive
+    /// `offsets` (ADR 0024 — summed into the targets before the epsilon
+    /// diff, so this stays the mixer's one writer and a recovered gradient
+    /// re-asserts clean values instead of fighting shadow state; pass
+    /// `GradientOffsets::default()` when no gradient is in play).
+    /// `now_seconds` is suite time (for the warble LFO phase); `ramp_ms` is
+    /// the tween length for gain/LPF moves — normally `params.ramp_ms`, but
+    /// reassembly passes tick-scale ramps while it lerps params itself.
     pub fn apply(
         &mut self,
         params: &LadderParams,
+        offsets: &GradientOffsets,
         now_seconds: f64,
         ramp_ms: f64,
         mixer: &mut BusMixer,
@@ -747,9 +753,10 @@ impl LadderDriver {
                 }
             }
 
-            // Track gain = ladder trim (0 on protected buses by
-            // construction — the validator enforces it).
-            let target = params.gain_trim_db.get(name).copied().unwrap_or(0.0);
+            // Track gain = ladder trim + gradient offset (0 on protected
+            // buses by construction — both validators enforce it).
+            let target = params.gain_trim_db.get(name).copied().unwrap_or(0.0)
+                + offsets.gain_db.get(name).copied().unwrap_or(0.0);
             if (self.last_gain.get(name).copied().unwrap_or(0.0) - target).abs() > GAIN_EPS
                 || !self.last_gain.contains_key(name)
             {
@@ -762,7 +769,7 @@ impl LadderDriver {
             // warbles around them. (Nonzero detune breaks sample-lock while
             // active — mixer docs; the seam re-play re-locks.)
             if is_degradable && bus.state.playing {
-                let target = if warble != 0.0 { warble } else { 0.0 };
+                let target = warble + offsets.detune.get(name).copied().unwrap_or(0.0);
                 let last = self.last_detune.get(name).copied().unwrap_or(0.0);
                 if (last - target).abs() > DETUNE_EPS {
                     bus.set_detune(target, tween(WARBLE_SMOOTH_MS.min(ramp_ms.max(1.0))));

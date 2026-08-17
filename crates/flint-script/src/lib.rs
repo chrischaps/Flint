@@ -36,6 +36,23 @@ pub struct PostProcessOverrides {
     pub ssao_intensity: Option<f32>,
     pub fog_density: Option<f32>,
     pub desaturation: Option<f32>,
+    pub dof_strength: Option<f32>,
+    pub dof_focus_distance: Option<f32>,
+    pub dof_focus_range: Option<f32>,
+}
+
+/// Camera overrides set by scripts this frame; each field is `Some` only if
+/// the corresponding `set_camera_*` API was called since the last drain.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CameraOverrides {
+    pub position: Option<[f32; 3]>,
+    pub target: Option<[f32; 3]>,
+    pub fov: Option<f32>,
+    pub orthographic: Option<bool>,
+    pub ortho_height: Option<f32>,
+    /// Roll about the view axis, radians. `None` means "no roll this frame" —
+    /// the host resets the camera up vector to world up.
+    pub roll: Option<f32>,
 }
 
 /// Top-level scripting system integrating engine, sync, and the game loop
@@ -245,22 +262,16 @@ impl ScriptSystem {
     }
 
     /// Take camera overrides set by scripts this frame (clears them)
-    pub fn take_camera_overrides(
-        &mut self,
-    ) -> (
-        Option<[f32; 3]>,
-        Option<[f32; 3]>,
-        Option<f32>,
-        Option<bool>,
-        Option<f32>,
-    ) {
+    pub fn take_camera_overrides(&mut self) -> CameraOverrides {
         let mut c = self.engine.ctx.lock().unwrap();
-        let pos = c.camera_position_override.take();
-        let target = c.camera_target_override.take();
-        let fov = c.camera_fov_override.take();
-        let orthographic = c.camera_orthographic_override.take();
-        let ortho_height = c.camera_ortho_height_override.take();
-        (pos, target, fov, orthographic, ortho_height)
+        CameraOverrides {
+            position: c.camera_position_override.take(),
+            target: c.camera_target_override.take(),
+            fov: c.camera_fov_override.take(),
+            orthographic: c.camera_orthographic_override.take(),
+            ortho_height: c.camera_ortho_height_override.take(),
+            roll: c.camera_roll_override.take(),
+        }
     }
 
     /// Take post-processing overrides set by scripts this frame (clears them)
@@ -275,6 +286,9 @@ impl ScriptSystem {
             ssao_intensity: c.postprocess_ssao_intensity_override.take(),
             fog_density: c.postprocess_fog_density_override.take(),
             desaturation: c.postprocess_desaturation_override.take(),
+            dof_strength: c.postprocess_dof_strength_override.take(),
+            dof_focus_distance: c.postprocess_dof_focus_distance_override.take(),
+            dof_focus_range: c.postprocess_dof_focus_range_override.take(),
         }
     }
 

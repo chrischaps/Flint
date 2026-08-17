@@ -1725,6 +1725,7 @@ dependencies = [
  "flint-core",
  "flint-music",
  "gilrs",
+ "gilrs-core",
  "tracing",
 ]
 

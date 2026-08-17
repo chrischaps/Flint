@@ -160,6 +160,9 @@ pub struct PlayerApp {
     pp_ssao_intensity_override: Option<f32>,
     pp_fog_density_override: Option<f32>,
     pp_desaturation_override: Option<f32>,
+    pp_dof_strength_override: Option<f32>,
+    pp_dof_focus_distance_override: Option<f32>,
+    pp_dof_focus_range_override: Option<f32>,
 
     // Ladder-driven post params: the scene's authored base, captured at
     // session start and written back after teardown (ADR 0021).
@@ -255,6 +258,9 @@ impl PlayerApp {
             pp_ssao_intensity_override: None,
             pp_fog_density_override: None,
             pp_desaturation_override: None,
+            pp_dof_strength_override: None,
+            pp_dof_focus_distance_override: None,
+            pp_dof_focus_range_override: None,
             music_pp_base: None,
             music_pp_restore: None,
             input_config_override,
@@ -916,6 +922,9 @@ impl PlayerApp {
             || self.pp_ssao_intensity_override.is_some()
             || self.pp_fog_density_override.is_some()
             || self.pp_desaturation_override.is_some()
+            || self.pp_dof_strength_override.is_some()
+            || self.pp_dof_focus_distance_override.is_some()
+            || self.pp_dof_focus_range_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -942,6 +951,15 @@ impl PlayerApp {
             }
             if let Some(d) = self.pp_desaturation_override {
                 config.desaturate = d;
+            }
+            if let Some(s) = self.pp_dof_strength_override {
+                config.dof_strength = s;
+            }
+            if let Some(fd) = self.pp_dof_focus_distance_override {
+                config.dof_focus_distance = fd;
+            }
+            if let Some(fr) = self.pp_dof_focus_range_override {
+                config.dof_focus_range = fr;
             }
             renderer.set_post_process_config(config);
         }
@@ -1106,31 +1124,59 @@ impl PlayerApp {
         }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let (
-            cam_pos_override,
-            cam_target_override,
-            cam_fov_override,
-            cam_ortho_override,
-            cam_ortho_height_override,
-        ) = self.script.take_camera_overrides();
-        if let Some(pos) = cam_pos_override {
+        let cam = self.script.take_camera_overrides();
+        if let Some(pos) = cam.position {
             self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
         }
-        if let Some(target) = cam_target_override {
+        if let Some(target) = cam.target {
             self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
         }
-        if let Some(fov) = cam_fov_override {
+        if let Some(fov) = cam.fov {
             self.camera.fov = fov;
         }
-        if let Some(ortho) = cam_ortho_override {
+        if let Some(ortho) = cam.orthographic {
             self.camera.orthographic = ortho;
         }
-        if let Some(height) = cam_ortho_height_override {
+        if let Some(height) = cam.ortho_height {
             self.camera.ortho_height = height;
+        }
+        // Roll rebuilds the up vector from the view basis each frame it is set;
+        // when absent the up vector must reset to world up (overrides are
+        // one-frame take()s — without the reset, roll would stick after a
+        // script stops setting it, e.g. hot-reload into a compile error).
+        match cam.roll {
+            Some(roll) => {
+                let forward = flint_core::Vec3::new(
+                    self.camera.target.x - self.camera.position.x,
+                    self.camera.target.y - self.camera.position.y,
+                    self.camera.target.z - self.camera.position.z,
+                )
+                .normalized();
+                let right = forward.cross(&flint_core::Vec3::UP);
+                let right_len = (right.dot(&right)).sqrt();
+                if right_len > 1e-4 {
+                    let right = FlintVec3::new(
+                        right.x / right_len,
+                        right.y / right_len,
+                        right.z / right_len,
+                    );
+                    let base_up = right.cross(&forward);
+                    let (sin_r, cos_r) = roll.sin_cos();
+                    self.camera.up = FlintVec3::new(
+                        base_up.x * cos_r + right.x * sin_r,
+                        base_up.y * cos_r + right.y * sin_r,
+                        base_up.z * cos_r + right.z * sin_r,
+                    );
+                }
+                // Degenerate (looking straight up/down): keep the previous up.
+            }
+            None => {
+                self.camera.up = flint_core::Vec3::UP;
+            }
         }
 
         // Update audio listener for script-driven cameras (chase cam, etc.)
-        if !has_fps_player && cam_pos_override.is_some() {
+        if !has_fps_player && cam.position.is_some() {
             let cam_pos = self.camera.position;
             let dir = flint_core::Vec3::new(
                 self.camera.target.x - cam_pos.x,
@@ -1266,6 +1312,12 @@ impl PlayerApp {
         self.pp_ssao_intensity_override = pp.ssao_intensity;
         self.pp_fog_density_override = pp.fog_density;
         self.pp_desaturation_override = pp.desaturation;
+        // DoF is script-owned (ADR 0027) — never touched by the ladder merge
+        // below; there is no restore machinery because owning scripts write it
+        // every frame and scene loads reset the sticky config from the def.
+        self.pp_dof_strength_override = pp.dof_strength;
+        self.pp_dof_focus_distance_override = pp.dof_focus_distance;
+        self.pp_dof_focus_range_override = pp.dof_focus_range;
 
         // Music-session ladder/reintegration visuals (ADR 0021). Script
         // overrides win — F4/F6 script-authored rung visuals supersede this

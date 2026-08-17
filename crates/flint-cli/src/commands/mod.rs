@@ -22,6 +22,7 @@ pub mod play_chart;
 pub mod play_chart_window;
 pub mod play_suite;
 pub mod render_suite;
+pub mod spike_rumble;
 pub mod replay_chart;
 pub mod validate;
 pub mod validate_suite;

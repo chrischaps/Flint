@@ -40,6 +40,9 @@ pub struct RenderArgs {
     pub fog_height_falloff: Option<f32>,
     pub dither_intensity: Option<f32>,
     pub desaturate: Option<f32>,
+    pub dof: Option<f32>,
+    pub dof_focus: Option<f32>,
+    pub dof_range: Option<f32>,
     pub volumetric_density: Option<f32>,
     pub volumetric_samples: Option<u32>,
     pub kuwahara_radius: Option<u32>,
@@ -244,6 +247,15 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
         if let Some(desaturate) = args.desaturate {
             pp_config.desaturate = desaturate;
+        }
+        if let Some(strength) = args.dof {
+            pp_config.dof_strength = strength;
+        }
+        if let Some(distance) = args.dof_focus {
+            pp_config.dof_focus_distance = distance;
+        }
+        if let Some(range) = args.dof_range {
+            pp_config.dof_focus_range = range;
         }
         if let Some(density) = args.volumetric_density {
             pp_config.volumetric_density = density;

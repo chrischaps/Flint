@@ -16,6 +16,7 @@ use flint_music::chart_session::{
 };
 use flint_music::coherence::Coherence;
 use flint_music::conductor::Conductor;
+use flint_music::gradient::{GradientConfig, GradientDriver};
 use flint_music::judgment::{Judge, JudgmentConfig, JsonlWriter};
 use flint_music::ladder::{Ladder, LadderConfig};
 use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
@@ -49,6 +50,11 @@ pub struct ReplayChartArgs {
     /// so a fall-and-reintegration renders to WAV. Without `--render` the
     /// ladder is inactive (Milestone-2 judgment semantics preserved).
     pub ladder: Option<String>,
+    /// Error-gradient config (ADR 0024). Explicit path must load; default is
+    /// `config/gradient.toml` when present, else inert built-ins. Only the
+    /// reactive render (`--render` + ladder) ever applies it; it does not
+    /// gate reactive mode.
+    pub gradient: Option<String>,
 }
 
 pub fn run(args: ReplayChartArgs) -> Result<()> {
@@ -243,6 +249,29 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     } else {
         LadderConfig::default()
     };
+    // Gradient config (ADR 0024): explicit path must load, the default file
+    // is optional, absent = inert built-ins (byte-identical to pre-gradient
+    // renders). Applied only inside the reactive loop.
+    let default_gradient_path = base_dir.join("config/gradient.toml");
+    let (gradient_cfg, gradient_path) = if let Some(path) = &args.gradient {
+        let cfg = GradientConfig::load(Path::new(path))
+            .map_err(|e| anyhow::anyhow!("{e}"))
+            .with_context(|| format!("loading {path}"))?;
+        println!("gradient config: {path} (tune bus: {})", cfg.tune.bus);
+        (cfg, PathBuf::from(path))
+    } else if default_gradient_path.exists() {
+        let cfg = GradientConfig::load(&default_gradient_path)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!(
+            "gradient config: {} (tune bus: {})",
+            default_gradient_path.display(),
+            cfg.tune.bus
+        );
+        (cfg, default_gradient_path)
+    } else {
+        (GradientConfig::default(), default_gradient_path)
+    };
+
     let visual_eval = ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut core = ChartCore::new(
         judge,
@@ -253,6 +282,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         Conductor::new(&manifest, None),
         config_path,
         ladder_path,
+        GradientDriver::new(gradient_cfg),
+        gradient_path,
         visual_eval,
     );
     core.sync_seam_params();
@@ -394,7 +425,7 @@ fn run_reactive(
                 core.process(now_suite).map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 let (_seq, seq_events) =
-                    core.step_seq(session).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    core.step_seq(session, pos).map_err(|e| anyhow::anyhow!("{e}"))?;
                 for ev in &seq_events {
                     if let ReintegrationEvent::FullFail {
                         at_suite_sample,

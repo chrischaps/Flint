@@ -891,6 +891,10 @@ mod tests {
                 set_field(me, "probe", "coh", conducted_coherence());
                 set_field(me, "probe", "lx", conducted_lean().x);
                 set_field(me, "probe", "ty", conducted_target().y);
+                let nt = conducted_next_target();
+                set_field(me, "probe", "ntx", nt.x);
+                set_field(me, "probe", "nty", nt.y);
+                set_field(me, "probe", "ntb", nt.beats);
                 set_field(me, "probe", "bar", conducted_bar());
                 let pulses = conducted_pulses();
                 set_field(me, "probe", "npulses", pulses.len().to_float());
@@ -916,6 +920,8 @@ mod tests {
             c.conducted = ConductedSnapshot {
                 lean: [0.25, -0.5],
                 target: [0.1, 0.75],
+                next_target: [0.3, -0.4],
+                next_target_beats: 2.5,
                 coherence: 0.625,
                 beat_phase: 0.5,
                 bar_phase: 0.125,
@@ -949,6 +955,9 @@ mod tests {
         assert_eq!(probe_float(&world, id, "coh"), 0.625);
         assert_eq!(probe_float(&world, id, "lx"), 0.25);
         assert_eq!(probe_float(&world, id, "ty"), 0.75);
+        assert_eq!(probe_float(&world, id, "ntx"), 0.3);
+        assert_eq!(probe_float(&world, id, "nty"), -0.4);
+        assert_eq!(probe_float(&world, id, "ntb"), 2.5);
         let bar = world
             .get_components(id)
             .unwrap()
@@ -983,6 +992,9 @@ mod tests {
                 set_field(me, "probe", "coh", conducted_coherence());
                 set_field(me, "probe", "reassembly", conducted_reassembly());
                 set_field(me, "probe", "lx", conducted_lean().x);
+                let nt = conducted_next_target();
+                set_field(me, "probe", "ntx", nt.x + nt.y);
+                set_field(me, "probe", "ntb", nt.beats);
                 set_field(me, "probe", "npulses", conducted_pulses().len().to_float());
                 set_field(me, "probe", "sec_ok",
                     if conducted_section() == "" { 1.0 } else { 0.0 });
@@ -1001,6 +1013,8 @@ mod tests {
         assert_eq!(probe_float(&world, id, "coh"), 1.0);
         assert_eq!(probe_float(&world, id, "reassembly"), 1.0);
         assert_eq!(probe_float(&world, id, "lx"), 0.0);
+        assert_eq!(probe_float(&world, id, "ntx"), 0.0);
+        assert_eq!(probe_float(&world, id, "ntb"), 1e6, "sentinel: nothing inbound");
         assert_eq!(probe_float(&world, id, "npulses"), 0.0);
         assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "preroll"), 0.0);
@@ -1045,6 +1059,32 @@ mod tests {
         engine.call_updates(&mut world);
         engine.call_updates(&mut world);
         assert_eq!(probe_float(&world, good, "coh"), -1.0 + 0.5 + 0.5);
+    }
+
+    // ─── Camera roll override (ADR 0022) ──────────────────────
+
+    #[test]
+    fn test_camera_roll_override_round_trip() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("roller").unwrap();
+
+        // Not set until a script calls the API.
+        assert_eq!(engine.ctx.lock().unwrap().camera_roll_override, None);
+
+        let ast = engine
+            .compile("fn on_update() { set_camera_roll(0.25); }")
+            .unwrap();
+        engine.add_script(id, ast, "roller.rhai".into());
+        engine.provide_context(InputSnapshot::default(), 0.016, 0.0);
+        engine.call_updates(&mut world);
+
+        // Set after the frame, and take() clears it (one-frame override).
+        assert_eq!(
+            engine.ctx.lock().unwrap().camera_roll_override.take(),
+            Some(0.25)
+        );
+        assert_eq!(engine.ctx.lock().unwrap().camera_roll_override, None);
     }
 
     #[test]

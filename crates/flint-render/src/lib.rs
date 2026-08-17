@@ -131,16 +131,25 @@ mod tests {
 
     #[test]
     fn post_process_uniforms_layout() {
-        // The desaturate field reuses a pre-existing pad slot: the struct must
-        // stay 16-byte aligned and must not have grown past its original size.
+        // Desaturate reused a pre-existing pad slot (176 bytes); the DoF row
+        // (strength/focus/range/_pad2) was appended after inv_view_proj,
+        // growing the struct to exactly one extra 16-byte row. Any other size
+        // means the Rust struct and the WGSL mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 176, "PostProcessUniforms size changed");
+        assert_eq!(size, 192, "PostProcessUniforms size changed");
     }
 
     #[test]
     fn post_process_config_default_desaturate_is_zero() {
         assert_eq!(crate::PostProcessConfig::default().desaturate, 0.0);
+    }
+
+    #[test]
+    fn post_process_config_default_dof_is_off() {
+        let config = crate::PostProcessConfig::default();
+        assert_eq!(config.dof_strength, 0.0, "DoF must default off");
+        assert!(config.dof_focus_range > 0.0);
     }
 
     #[test]

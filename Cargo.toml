@@ -113,6 +113,10 @@ instant = "0.1"
 # input to the process owning the foreground window — console apps (play-chart,
 # the input spike) get nothing. XInput polls regardless of focus. See ADR 0011.
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
+# Direct motor access for the haptics rumble path: gilrs's high-level ff
+# server quantizes commands to a 50 ms tick; gilrs-core's FfDevice is a
+# synchronous XInputSetState. Same crate gilrs already depends on.
+gilrs-core = { version = "0.6", default-features = false, features = ["xinput"] }
 
 # Android
 android-activity = { version = "0.6", features = ["game-activity"] }

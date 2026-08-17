@@ -44,6 +44,9 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
     config.chromatic_aberration = pp_def.chromatic_aberration;
     config.radial_blur = pp_def.radial_blur;
     config.desaturate = pp_def.desaturate;
+    config.dof_strength = pp_def.dof_strength;
+    config.dof_focus_distance = pp_def.dof_focus_distance;
+    config.dof_focus_range = pp_def.dof_focus_range;
     config.dither_enabled = pp_def.dither_enabled;
     config.dither_intensity = pp_def.dither_intensity;
     config.volumetric_enabled = pp_def.volumetric_enabled;

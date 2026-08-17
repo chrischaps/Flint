@@ -38,6 +38,12 @@ pub struct PlayChartArgs {
     /// Disintegration ladder config path (default: `<base_dir>/config/
     /// ladder.toml` when present, else built-in defaults).
     pub ladder: Option<String>,
+    /// Error-gradient config path (ADR 0024; default: `<base_dir>/config/
+    /// gradient.toml` when present, else inert built-ins).
+    pub gradient: Option<String>,
+    /// Haptics config path (ADR 0026; default: `<base_dir>/config/
+    /// haptics.toml` when present, else inert built-ins — no rumble).
+    pub haptics: Option<String>,
 }
 
 pub fn run(args: PlayChartArgs) -> Result<()> {
@@ -93,6 +99,8 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
         base_dir: base_dir.to_path_buf(),
         coherence_config: args.config.clone().map(PathBuf::from),
         ladder_config: args.ladder.clone().map(PathBuf::from),
+        gradient_config: args.gradient.clone().map(PathBuf::from),
+        haptics_config: args.haptics.clone().map(PathBuf::from),
         record: args.record.clone(),
         bars: args.bars,
         lean_mode: parse_lean_mode(&args.lean_mode).map_err(|e| anyhow::anyhow!("{e}"))?,
@@ -108,7 +116,7 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
     // own measured tap tendency. The capture thread applies it at the stamp.
     let offset_samples =
         judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
-    let capture = flint_input_capture::spawn(
+    let capture = flint_input_capture::spawn_with_rumble(
         session.bridge(),
         flint_input_capture::CaptureConfig {
             offset_samples,
@@ -116,7 +124,7 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
         },
     );
     match capture {
-        Ok((handle, rx)) => {
+        Ok((handle, rx, rumble_tx)) => {
             println!("gamepad capture running (left stick = lean, South/RT = pulse)");
             // The backend can be alive with zero devices (ADR 0011's
             // silent failure — e.g. a mapper presenting the pad as
@@ -133,6 +141,13 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
                 Err(_) => {}
             }
             session.set_input(rx, Box::new(handle));
+            // Haptics (ADR 0026): the session's decision layer feeds the
+            // capture thread's rumble engine through this sink. Inert
+            // config = no sink, no driver evaluation, no motor writes.
+            if session.haptics_active() {
+                println!("haptics: rumble armed (entrainment tick/thump; r+Enter reloads)");
+                session.set_haptic_sink(flint_input_capture::rumble::haptic_sink(rumble_tx));
+            }
         }
         Err(e) => {
             println!("gamepad capture unavailable ({e}); playing without input");

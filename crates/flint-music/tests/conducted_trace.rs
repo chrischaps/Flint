@@ -111,13 +111,16 @@ fn encode_frame(raw: i64, f: &ConductedFrame, out: &mut String) {
     use std::fmt::Write;
     write!(
         out,
-        "{raw};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{}",
+        "{raw};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{};{}",
         f.beat_phase.to_bits(),
         f.bar_phase.to_bits(),
         f.lean[0].to_bits(),
         f.lean[1].to_bits(),
         f.target[0].to_bits(),
         f.target[1].to_bits(),
+        f.next_target[0].to_bits(),
+        f.next_target[1].to_bits(),
+        f.next_target_beats.to_bits(),
         f.coherence.to_bits(),
         f.pulse_age_s.to_bits(),
         f.preroll,
@@ -181,6 +184,8 @@ fn run(log_tag: &str) -> TraceRun {
         Conductor::new(&manifest, None),
         PathBuf::from("unused-coherence.toml"),
         PathBuf::from("unused-ladder.toml"),
+        flint_music::GradientDriver::new(flint_music::GradientConfig::default()),
+        PathBuf::from("unused-gradient.toml"),
         visual_eval,
     );
     core.sync_seam_params();
@@ -246,7 +251,7 @@ fn run(log_tag: &str) -> TraceRun {
                     err = Some(e);
                     return;
                 }
-                match core.step_seq(session) {
+                match core.step_seq(session, pos) {
                     Ok((_seq, seq_events)) => {
                         for ev in seq_events {
                             if let ReintegrationEvent::Seam {
@@ -350,6 +355,63 @@ fn conducted_trace_reflects_session_shape() {
             .iter()
             .any(|(_, f)| f.target[0].abs() > 0.1 || f.target[1].abs() > 0.1),
         "lean target must move mid-chart"
+    );
+
+    // Target lookahead (ADR 0023): every frame's next_target/beats must
+    // match a reference derived from the authored key list — the first key
+    // strictly after the frame's beat (so a frame exactly on an anchor sees
+    // the following key), the current target + 1e6 sentinel past the last.
+    // Pure suite-beat arithmetic, so this holds across the tempo change and
+    // the seams' rewound frames alike.
+    let keys: [(f64, [f32; 2]); 9] = [
+        (0.0, [0.0, 0.0]),
+        (8.0, [0.5, -0.2]),
+        (16.0, [-0.4, 0.3]),
+        (24.0, [0.3, 0.4]),
+        (32.0, [-0.2, -0.4]),
+        (40.0, [0.4, 0.1]),
+        (48.0, [-0.3, -0.3]),
+        (56.0, [0.2, 0.3]),
+        (60.0, [0.0, 0.0]),
+    ];
+    for (raw, f) in &r.frames {
+        match keys.iter().find(|(b, _)| *b > f.beat) {
+            Some((b, v)) => {
+                assert_eq!(
+                    f.next_target, *v,
+                    "next_target must be the authored key at beat {b} (raw {raw}, beat {})",
+                    f.beat
+                );
+                assert_eq!(
+                    f.next_target_beats,
+                    b - f.beat,
+                    "beats-until-anchor mismatch at raw {raw}"
+                );
+                assert!(f.next_target_beats > 0.0);
+            }
+            None => {
+                assert_eq!(f.next_target, f.target, "past the last key: falls back");
+                assert_eq!(f.next_target_beats, 1e6, "past the last key: sentinel");
+            }
+        }
+    }
+    // The lookahead is live during preroll (target itself is zeroed there)
+    // and counts down toward the first anchor.
+    let preroll_beats: Vec<f64> = r.frames[..first_live]
+        .iter()
+        .map(|(_, f)| f.next_target_beats)
+        .collect();
+    assert!(
+        preroll_beats.windows(2).all(|w| w[1] < w[0]),
+        "preroll countdown must strictly decrease"
+    );
+    // And mid-content it looks past the interpolated target: some frame's
+    // next_target differs from its current target.
+    assert!(
+        r.frames
+            .iter()
+            .any(|(_, f)| !f.preroll && f.next_target != f.target),
+        "lookahead must diverge from the interpolated target mid-chart"
     );
 
     // The fail loop shows in the conducted ramps: reassembly leaves 1.0 and

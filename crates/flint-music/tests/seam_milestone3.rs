@@ -271,7 +271,14 @@ fn run_model(fall1_raw: i64, duration: i64) -> M3Run {
 
         // Sequencer.
         let seq = reintegrator
-            .tick(value, &mut ladder, &mut driver, session, &mut seq_events)
+            .tick(
+                value,
+                &flint_music::GradientOffsets::default(),
+                &mut ladder,
+                &mut driver,
+                session,
+                &mut seq_events,
+            )
             .expect("sequencer tick");
         out.level_trace.push((raw, seq.params.level));
         for ev in seq_events.drain(..) {

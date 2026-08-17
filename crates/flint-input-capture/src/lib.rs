@@ -18,6 +18,8 @@
 //! this thread exists and why [`measure_granularity`] reports the real
 //! numbers instead of trusting the driver.
 
+pub mod rumble;
+
 use flint_music::clock_bridge::ClockBridge;
 use flint_music::input_stream::{InputEvent, LeanSample, PulseEvent};
 use gilrs::{Axis, Button, EventType, Gilrs};
@@ -84,6 +86,23 @@ pub fn spawn(
     bridge: ClockBridge,
     cfg: CaptureConfig,
 ) -> flint_core::Result<(CaptureHandle, mpsc::Receiver<InputEvent>)> {
+    let (handle, rx, _rumble) = spawn_with_rumble(bridge, cfg)?;
+    Ok((handle, rx))
+}
+
+/// [`spawn`], plus a command channel into the thread's rumble engine
+/// (ADR 0026): scheduled motor bursts fire at bridged-clock samples with
+/// ~1 ms resolution, directly via XInput (ADR 0025 — the gilrs ff server's
+/// 50 ms tick is bypassed). With no ff-capable pad the channel accepts
+/// commands and warns once; input capture is unaffected.
+pub fn spawn_with_rumble(
+    bridge: ClockBridge,
+    cfg: CaptureConfig,
+) -> flint_core::Result<(
+    CaptureHandle,
+    mpsc::Receiver<InputEvent>,
+    mpsc::Sender<rumble::RumbleCommand>,
+)> {
     // Probe for a backend on the caller's thread so failure is synchronous;
     // the thread creates its own instance (Gilrs is not Send on all
     // platforms and must live where it is polled).
@@ -93,10 +112,11 @@ pub fn spawn(
 
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
+    let (rumble_tx, rumble_rx) = mpsc::channel();
     let thread_stop = stop.clone();
     let join = std::thread::Builder::new()
         .name("flint-input-capture".into())
-        .spawn(move || capture_loop(bridge, cfg, thread_stop, tx))
+        .spawn(move || capture_loop(bridge, cfg, thread_stop, tx, rumble_rx))
         .map_err(|e| flint_core::FlintError::InputError(format!("spawn capture thread: {e}")))?;
 
     Ok((
@@ -105,6 +125,7 @@ pub fn spawn(
             join: Some(join),
         },
         rx,
+        rumble_tx,
     ))
 }
 
@@ -126,6 +147,7 @@ fn capture_loop(
     cfg: CaptureConfig,
     stop: Arc<AtomicBool>,
     tx: mpsc::Sender<InputEvent>,
+    rumble_rx: mpsc::Receiver<rumble::RumbleCommand>,
 ) {
     let mut gilrs = match Gilrs::new() {
         Ok(g) => g,
@@ -134,6 +156,20 @@ fn capture_loop(
             return;
         }
     };
+    // The motors are driven from this thread too (ADR 0025: direct XInput
+    // writes, ~11 µs median — nowhere near the 1 ms poll budget). Absent
+    // hardware degrades to a warning; input capture never depends on it.
+    let mut ff = rumble::ff_device_or_warn();
+    let mut engine = rumble::RumbleEngine::new();
+    // Every exit path below must leave the motors silent: XInput holds the
+    // last written state until someone overwrites it.
+    let quiet =
+        |engine: &mut rumble::RumbleEngine, ff: &mut Option<gilrs_core::FfDevice>| {
+            let (s, w) = engine.silence();
+            if let Some(dev) = ff {
+                dev.set_ff_state(s, w, Duration::ZERO);
+            }
+        };
     let pads: Vec<_> = gilrs.gamepads().map(|(_, g)| g.name().to_string()).collect();
     if pads.is_empty() {
         tracing::warn!(
@@ -149,6 +185,19 @@ fn capture_loop(
     let mut last_sample = i64::MIN;
 
     while !stop.load(Ordering::Relaxed) {
+        // Rumble first: commands drain and fire at this loop's 1 kHz cadence
+        // against the same bridged clock the input stamps use.
+        while let Ok(cmd) = rumble_rx.try_recv() {
+            engine.push(cmd);
+        }
+        if let Some(now) = bridge.sample_at(Instant::now()) {
+            if let Some((s, w)) = engine.tick(now) {
+                if let Some(dev) = ff.as_mut() {
+                    dev.set_ff_state(s, w, Duration::ZERO);
+                }
+            }
+        }
+
         let mut lean_dirty = false;
         let mut pulses = 0u32;
         while let Some(ev) = gilrs.next_event() {
@@ -178,6 +227,7 @@ fn capture_loop(
                     if lean_dirty {
                         let (x, y) = apply_deadzone(raw_x, raw_y, cfg.deadzone);
                         if tx.send(InputEvent::Lean(LeanSample { sample, x, y })).is_err() {
+                            quiet(&mut engine, &mut ff);
                             return; // receiver gone; session over
                         }
                     }
@@ -187,6 +237,7 @@ fn capture_loop(
                             kind: "pulse".into(),
                         };
                         if tx.send(InputEvent::Pulse(pulse)).is_err() {
+                            quiet(&mut engine, &mut ff);
                             return;
                         }
                     }
@@ -204,6 +255,19 @@ fn capture_loop(
 
         std::thread::sleep(period);
     }
+    // Stop-flag exit (CaptureHandle::stop / drop): motors off before join()
+    // returns, so teardown order (input guard first, audio after) never
+    // leaves a buzzing pad behind.
+    let s = engine.stats();
+    tracing::info!(
+        "rumble evidence: {} command(s) in, {} burst(s) fired, {} dropped late, {} motor write(s), device {}",
+        s.commands,
+        s.fired,
+        s.dropped_late,
+        s.writes,
+        if ff.is_some() { "present" } else { "ABSENT" }
+    );
+    quiet(&mut engine, &mut ff);
 }
 
 /// Radial deadzone with rescaling: below `dz` is neutral; above, magnitude

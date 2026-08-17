@@ -109,15 +109,34 @@ impl Conductor {
 
     /// The first grid sample strictly after `from`. Anchors count as grid
     /// points for every grid (they start a new bar).
+    ///
+    /// Strictly-after is load-bearing (callers step the grid by feeding each
+    /// result back in — a non-advancing return would loop them forever), and
+    /// fractional grids can violate it naively: at e.g. 84 BPM / 48 kHz a
+    /// beat is 34285.71 samples, and when the ideal next-grid point rounds
+    /// *down* onto `from`, `bar_beat_at_sample(from)` reads fractionally
+    /// below the grid index (a half-sample beats `next_in_bar`'s 1e-9 beat
+    /// epsilon) and re-derives the same point. One re-probe from `from + 1`
+    /// lands cleanly past it. Degenerate maps (no tempo data) still return
+    /// `from` — callers advancing a cursor must treat `<= from` as "grid
+    /// exhausted", never as a point.
     pub fn next_grid_sample(&self, from: i64, grid: Grid) -> i64 {
-        let (bar, beat_in_bar) = self.tempo.bar_beat_at_sample(from).unwrap_or((0, 0.0));
-        let next = match grid {
-            Grid::Bar => self.tempo.sample_at_bar(bar + 1, 0.0),
-            Grid::Beat => self.next_in_bar(bar, beat_in_bar, 1.0),
-            Grid::Beats(n) if n > 0.0 => self.next_in_bar(bar, beat_in_bar, n),
-            Grid::Beats(_) => None,
-        };
-        next.map(|s| s.round() as i64).unwrap_or(from)
+        let mut probe = from;
+        for _ in 0..2 {
+            let (bar, beat_in_bar) = self.tempo.bar_beat_at_sample(probe).unwrap_or((0, 0.0));
+            let next = match grid {
+                Grid::Bar => self.tempo.sample_at_bar(bar + 1, 0.0),
+                Grid::Beat => self.next_in_bar(bar, beat_in_bar, 1.0),
+                Grid::Beats(n) if n > 0.0 => self.next_in_bar(bar, beat_in_bar, n),
+                Grid::Beats(_) => None,
+            };
+            match next.map(|s| s.round() as i64) {
+                Some(s) if s > from => return s,
+                Some(_) => probe = from + 1,
+                None => return from,
+            }
+        }
+        from
     }
 
     /// Next multiple of `step` beats within the bar, or the next bar line if
@@ -251,6 +270,34 @@ mod tests {
         // Bar grid: from mid-bar 9 the next bar is the anchor itself.
         let from = c.sample_at_bar(9, 2.0);
         assert_eq!(c.next_grid_sample(from, Grid::Bar), 960_000);
+    }
+
+    #[test]
+    fn next_grid_advances_on_fractional_beat_lengths() {
+        // 84 BPM at 48 kHz: 34285.714… samples per beat — the prototype
+        // track's real tempo. Rounding can land the ideal grid point back on
+        // `from` (a half-sample beats next_in_bar's 1e-9 beat epsilon),
+        // which must never stall the strictly-after contract: haptics (ADR
+        // 0026) steps this grid by feeding results back in, and a stall
+        // there was an unbounded allocation before the re-probe fix.
+        let mut m = manifest();
+        m.tempo = vec![TempoAnchor {
+            sample: 0,
+            bpm: 84.0,
+            beats_per_bar: 4,
+            beat_unit: 4,
+        }];
+        let c = Conductor::new(&m, None);
+        let mut s = 0;
+        for _ in 0..2000 {
+            let n = c.next_grid_sample(s, Grid::Beat);
+            assert!(n > s, "fractional grid must still advance: {s} -> {n}");
+            assert!(
+                n - s <= 34_287,
+                "advance must stay one beat, not skip: {s} -> {n}"
+            );
+            s = n;
+        }
     }
 
     #[test]

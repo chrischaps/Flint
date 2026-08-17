@@ -23,6 +23,8 @@ fn prototype_cfg(root: &Path) -> ChartSessionConfig {
         base_dir: root.to_path_buf(),
         coherence_config: None,
         ladder_config: None,
+        gradient_config: None,
+        haptics_config: None,
         record: None,
         bars: Some(4),
         lean_mode: LeanMode::Arrival,

@@ -6,7 +6,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
     asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
-    prefab, preview, query, render, render_suite, replay_chart, scene, schema, spline_edit,
+    prefab, preview, query, render, render_suite, replay_chart, scene, schema, spike_rumble,
+    spline_edit,
     terrain_edit, tex_edit, validate, validate_suite,
 };
 
@@ -281,6 +282,28 @@ enum Commands {
         /// Disintegration ladder TOML (default: config/ladder.toml if present)
         #[arg(long)]
         ladder: Option<String>,
+
+        /// Error-gradient TOML (default: config/gradient.toml if present,
+        /// else inert)
+        #[arg(long)]
+        gradient: Option<String>,
+
+        /// Haptics TOML (default: config/haptics.toml if present, else
+        /// inert — no rumble)
+        #[arg(long)]
+        haptics: Option<String>,
+    },
+
+    /// Rumble spike (ADR 0025): fire the ff motors, time the command paths,
+    /// log to logs/latency/
+    SpikeRumble {
+        /// Directory whose logs/latency/ receives the report (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Skip the operator-felt tick/thump/grind demo (timing only)
+        #[arg(long)]
+        no_feel: bool,
     },
 
     /// Replay a recorded or synthetic session through judgment, fully headless
@@ -326,6 +349,11 @@ enum Commands {
         /// config/ladder.toml if present.
         #[arg(long)]
         ladder: Option<String>,
+
+        /// Error-gradient TOML, applied inside the reactive render only
+        /// (default: config/gradient.toml if present, else inert)
+        #[arg(long)]
+        gradient: Option<String>,
 
         /// Directory the manifest's file paths are relative to (default: cwd)
         #[arg(long)]
@@ -587,6 +615,18 @@ enum Commands {
         #[arg(long)]
         desaturate: Option<f32>,
 
+        /// Depth-of-field strength (0 = off/sharp, 1 = full defocus)
+        #[arg(long)]
+        dof: Option<f32>,
+
+        /// Depth-of-field focus plane distance in world units (default: 10.0)
+        #[arg(long)]
+        dof_focus: Option<f32>,
+
+        /// Depth-of-field focus half-width in world units (default: 5.0)
+        #[arg(long)]
+        dof_range: Option<f32>,
+
         /// Volumetric light density (enables god rays; default: 1.0)
         #[arg(long)]
         volumetric_density: Option<f32>,
@@ -721,6 +761,8 @@ fn main() -> Result<()> {
             window,
             lean_mode,
             ladder,
+            gradient,
+            haptics,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
@@ -732,7 +774,12 @@ fn main() -> Result<()> {
             window,
             lean_mode,
             ladder,
+            gradient,
+            haptics,
         }),
+        Commands::SpikeRumble { base_dir, no_feel } => {
+            spike_rumble::run(spike_rumble::SpikeRumbleArgs { base_dir, no_feel })
+        }
         Commands::ReplayChart {
             manifest,
             chart,
@@ -745,6 +792,7 @@ fn main() -> Result<()> {
             base_dir,
             lean_mode,
             ladder,
+            gradient,
         } => replay_chart::run(replay_chart::ReplayChartArgs {
             manifest,
             chart,
@@ -757,6 +805,7 @@ fn main() -> Result<()> {
             base_dir,
             lean_mode,
             ladder,
+            gradient,
         }),
         Commands::RenderSuite {
             manifest,
@@ -912,6 +961,9 @@ fn main() -> Result<()> {
             fog_height_falloff,
             dither_intensity,
             desaturate,
+            dof,
+            dof_focus,
+            dof_range,
             volumetric_density,
             volumetric_samples,
             kuwahara_radius,
@@ -947,6 +999,9 @@ fn main() -> Result<()> {
             fog_height_falloff,
             dither_intensity,
             desaturate,
+            dof,
+            dof_focus,
+            dof_range,
             volumetric_density,
             volumetric_samples,
             kuwahara_radius,

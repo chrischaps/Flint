@@ -17,6 +17,7 @@
 //! the designed loop; only the debounce restarts.
 
 use crate::conductor::Grid;
+use crate::gradient::GradientOffsets;
 use crate::ladder::{Ladder, LadderDriver, LadderParams};
 use crate::manifest::Reintegration;
 use crate::session::SuiteSession;
@@ -131,10 +132,15 @@ impl Reintegrator {
     /// One tick of the coherence-consumer side: observe the ladder, drive
     /// the mixer (directly or through the reassembly lerp), detect full-fail,
     /// and step the seam state machine. Call every tick once past pre-roll,
-    /// after `session.pump()`.
+    /// after `session.pump()`. `offsets` is the error-gradient's additive
+    /// contribution (ADR 0024) — honored only while `Playing`: `Failing`
+    /// commands nothing (the rewind's rate ramp is already queued and must
+    /// not be fought) and `Reassembling` re-gathers clean, the gradient
+    /// easing back in via its own attack once play resumes.
     pub fn tick(
         &mut self,
         coherence: f64,
+        offsets: &GradientOffsets,
         ladder: &mut Ladder,
         driver: &mut LadderDriver,
         session: &mut SuiteSession,
@@ -149,7 +155,7 @@ impl Reintegrator {
             Phase::Playing => {
                 ladder.observe(coherence);
                 let params = ladder.params();
-                driver.apply(&params, now_seconds, params.ramp_ms, &mut session.mixer);
+                driver.apply(&params, offsets, now_seconds, params.ramp_ms, &mut session.mixer);
 
                 // The hold starts below `enter_below` and cancels only above
                 // `exit_above`: under neglect the value saw-tooths (miss
@@ -214,7 +220,13 @@ impl Reintegrator {
             Phase::Reassembling { seam_raw, span } => {
                 let t = ((raw - seam_raw) as f64 / span.max(1) as f64).clamp(0.0, 1.0);
                 let params = ladder.full_fail_params().lerp(&LadderParams::clean(), t);
-                driver.apply(&params, now_seconds, REASSEMBLY_RAMP_MS, &mut session.mixer);
+                driver.apply(
+                    &params,
+                    &GradientOffsets::default(),
+                    now_seconds,
+                    REASSEMBLY_RAMP_MS,
+                    &mut session.mixer,
+                );
                 if raw >= seam_raw + span {
                     events.push(ReintegrationEvent::ReassemblyComplete {
                         at_suite_sample: now_suite,

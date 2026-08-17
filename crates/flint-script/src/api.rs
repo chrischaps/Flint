@@ -69,6 +69,21 @@ fn register_conducted_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
         });
     }
 
+    // conducted_next_target() -> Map #{x, y, beats}: the next authored lean
+    // key and suite beats until its anchor (ADR 0023). beats = 1e6 (and
+    // x/y = the current target) when nothing is upcoming.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_next_target", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.next_target[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.next_target[1]));
+            map.insert("beats".into(), Dynamic::from(c.conducted.next_target_beats));
+            map
+        });
+    }
+
     // Scalar getters, all f64 (Rhai has no implicit numeric coercion).
     macro_rules! scalar_getter {
         ($name:literal, $field:ident) => {{
@@ -1206,6 +1221,15 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // set_camera_roll(radians) — roll the camera about its view axis
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_roll", move |radians: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_roll_override = Some(radians as f32);
+        });
+    }
+
     // set_vignette(intensity) — override vignette intensity from scripts
     {
         let ctx = ctx.clone();
@@ -1275,6 +1299,25 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("set_desaturation", move |amount: f64| {
             let mut c = ctx.lock().unwrap();
             c.postprocess_desaturation_override = Some(amount as f32);
+        });
+    }
+
+    // set_dof(strength) — depth-of-field defocus strength (0 = off / sharp, 1 = full blur)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_dof", move |strength: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_dof_strength_override = Some(strength as f32);
+        });
+    }
+
+    // set_dof_focus(distance, range) — focus plane depth and half-width, world units
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_dof_focus", move |distance: f64, range: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_dof_focus_distance_override = Some(distance as f32);
+            c.postprocess_dof_focus_range_override = Some(range as f32);
         });
     }
 

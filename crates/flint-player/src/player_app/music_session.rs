@@ -206,6 +206,8 @@ impl MusicSession {
             base_dir: base_dir.to_path_buf(),
             coherence_config: comp_str(comp, "coherence_config").map(|p| base_dir.join(p)),
             ladder_config: comp_str(comp, "ladder_config").map(|p| base_dir.join(p)),
+            gradient_config: comp_str(comp, "gradient_config").map(|p| base_dir.join(p)),
+            haptics_config: comp_str(comp, "haptics_config").map(|p| base_dir.join(p)),
             record: None,
             bars,
             lean_mode,
@@ -230,14 +232,14 @@ impl MusicSession {
         // (and the bar-2 NO INPUT notice will not fire: no receiver attached).
         let offset_samples =
             judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
-        match flint_input_capture::spawn(
+        match flint_input_capture::spawn_with_rumble(
             session.bridge(),
             CaptureConfig {
                 offset_samples,
                 ..Default::default()
             },
         ) {
-            Ok((handle, rx)) => {
+            Ok((handle, rx, rumble_tx)) => {
                 println!("[music] gamepad capture running (left stick = lean, South/RT = pulse)");
                 match flint_input_capture::connected_gamepads() {
                     Ok(pads) if pads.is_empty() => println!(
@@ -249,6 +251,13 @@ impl MusicSession {
                     Err(_) => {}
                 }
                 session.set_input(rx, Box::new(handle));
+                // Haptics (ADR 0026): decision layer in the session, motor
+                // writes on the capture thread. Inert config = fully off.
+                if session.haptics_active() {
+                    println!("[music] haptics: rumble armed (entrainment tick/thump)");
+                    session
+                        .set_haptic_sink(flint_input_capture::rumble::haptic_sink(rumble_tx));
+                }
             }
             Err(e) => {
                 eprintln!("[music] gamepad capture unavailable ({e}) — playing without input");
@@ -344,6 +353,8 @@ impl MusicSession {
         flint_script::ConductedSnapshot {
             lean: [vf.lean[0] as f64, vf.lean[1] as f64],
             target: [vf.target[0] as f64, vf.target[1] as f64],
+            next_target: [vf.next_target[0] as f64, vf.next_target[1] as f64],
+            next_target_beats: vf.next_target_beats,
             coherence: vf.coherence as f64,
             beat_phase: vf.beat_phase as f64,
             bar_phase: vf.bar_phase as f64,

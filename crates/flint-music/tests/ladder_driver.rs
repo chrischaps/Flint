@@ -94,7 +94,13 @@ fn render() -> Observed {
     let result = render_offline_with(&manifest, &SynthStems, &script, &cfg, |pos, session| {
         ladder.observe(scripted_coherence(pos.sample));
         let params = ladder.params();
-        driver.apply(&params, pos.seconds, params.ramp_ms, &mut session.mixer);
+        driver.apply(
+            &params,
+            &flint_music::GradientOffsets::default(),
+            pos.seconds,
+            params.ramp_ms,
+            &mut session.mixer,
+        );
         let get = |name: &str| {
             session
                 .mixer

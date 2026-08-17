@@ -24,7 +24,8 @@
 use crate::chart_eval::ChartEval;
 use crate::clock_bridge::ClockBridge;
 use crate::coherence::{Coherence, CoherenceConfig};
-use crate::conductor::Conductor;
+use crate::conductor::{Conductor, MusicalPosition};
+use crate::gradient::{GradientConfig, GradientDriver};
 use crate::input_stream::InputEvent;
 use crate::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter, LeanMode};
 use crate::ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
@@ -183,6 +184,10 @@ pub struct ChartCore {
     conductor: Conductor,
     config_path: PathBuf,
     ladder_path: PathBuf,
+    /// The error-driven audio gradient (ADR 0024): lean error → wobble depth
+    /// + trims, evaluated per tick and summed into the ladder driver's apply.
+    gradient: GradientDriver,
+    gradient_path: PathBuf,
     records: Vec<JudgmentRecord>,
     seq_events: Vec<ReintegrationEvent>,
     hits: u64,
@@ -216,6 +221,8 @@ impl ChartCore {
         conductor: Conductor,
         config_path: PathBuf,
         ladder_path: PathBuf,
+        gradient: GradientDriver,
+        gradient_path: PathBuf,
         visual_eval: ChartEval,
     ) -> Self {
         let lean_step_beats = judge.lean_step_beats();
@@ -230,6 +237,8 @@ impl ChartCore {
             conductor,
             config_path,
             ladder_path,
+            gradient,
+            gradient_path,
             records: Vec::new(),
             seq_events: Vec::new(),
             hits: 0,
@@ -326,13 +335,40 @@ impl ChartCore {
     /// coherence in, mixer tweens + visual params out. Handles the judge
     /// rewind and log records for every sequencer event, then hands the
     /// events back for front-end formatting (and session-file jump records).
-    /// Call only past pre-roll, after `session.pump()`.
+    /// Call only past pre-roll, after `session.pump()`. `pos` is the frame's
+    /// musical position (the caller already has it) — the error gradient
+    /// samples the chart's lean target at `pos.beat` (ADR 0024).
     pub fn step_seq(
         &mut self,
         session: &mut SuiteSession,
+        pos: &MusicalPosition,
     ) -> Result<(SeqTick, Vec<ReintegrationEvent>)> {
+        // The gradient's two inputs, recomputed exactly as the scene binding
+        // computes its visual gradient (one param source, one world): the
+        // Euclidean distance from the player's lean to the chart's
+        // interpolated target, and the lean magnitude for the neutral sink.
+        let target = self
+            .visual_eval
+            .sample_channel("lean", pos.beat)
+            .and_then(|v| v.as_vec2())
+            .unwrap_or([0.0, 0.0]);
+        let err = ((self.lean[0] - target[0]).powi(2) + (self.lean[1] - target[1]).powi(2)).sqrt();
+        let lean_mag = (self.lean[0].powi(2) + self.lean[1].powi(2)).sqrt();
+        let now_seconds =
+            pos.sample.max(0) as f64 / self.conductor.tempo().sample_rate() as f64;
+        // Evaluate only while Playing: the seam resets the gradient, and
+        // holding the slew still through Failing/Reassembling means play
+        // resumes with the gradient easing in from silence, not jumping to
+        // a level it accrued while inaudible.
+        let offsets = if self.reintegrator.phase() == crate::reintegration::SeqPhase::Playing {
+            self.gradient.evaluate(err, lean_mag, now_seconds)
+        } else {
+            crate::gradient::GradientOffsets::default()
+        };
+
         let seq = self.reintegrator.tick(
             self.coherence.value(),
+            &offsets,
             &mut self.ladder,
             &mut self.ladder_driver,
             session,
@@ -363,6 +399,9 @@ impl ChartCore {
                     re_entry_sample,
                 } => {
                     self.judge.rewind_to(*re_entry_sample);
+                    // The world re-enters clean; the gradient eases back in
+                    // from silence via its own attack (mirrors driver.reset).
+                    self.gradient.reset();
                     self.log.write_value(&serde_json::json!({
                         "t": "seam", "raw_sample": raw_sample,
                         "timeline_offset": timeline_offset,
@@ -407,6 +446,21 @@ impl ChartCore {
                     }))?;
                 }
                 Err(e) => notices.push(format!("ladder reload failed, keeping current config: {e}")),
+            }
+        }
+        if self.gradient_path.exists() {
+            match GradientConfig::load(&self.gradient_path) {
+                Ok(cfg) => {
+                    self.gradient.reconfigure(cfg);
+                    notices.push("gradient config reloaded (slew state carries over)".to_string());
+                    self.log.write_value(&serde_json::json!({
+                        "t": "gradient_reload", "sample": sample,
+                        "gradient_config": self.gradient.config().to_json(),
+                    }))?;
+                }
+                Err(e) => {
+                    notices.push(format!("gradient reload failed, keeping current config: {e}"))
+                }
             }
         }
         Ok(notices)
@@ -496,6 +550,17 @@ impl ChartCore {
                 .and_then(|v| v.as_vec2())
                 .unwrap_or([0.0, 0.0])
         };
+        let target = [target[0] as f32, target[1] as f32];
+        // Lookahead stays live during preroll (ADR 0023): pos.beat is
+        // negative there, so the countdown to the first key telegraphs it.
+        let (next_target, next_target_beats) = self
+            .visual_eval
+            .next_key("lean", pos.beat)
+            .and_then(|(b, v)| {
+                v.as_vec2()
+                    .map(|t| ([t[0] as f32, t[1] as f32], b - pos.beat))
+            })
+            .unwrap_or((target, 1e6));
         let rate = self.conductor.tempo().sample_rate() as f64;
         let age_s = |sample: i64| ((pos.sample - sample).max(0)) as f64 / rate;
         let section = self
@@ -507,7 +572,9 @@ impl ChartCore {
             beat_phase: (pos.beat.rem_euclid(1.0)) as f32,
             bar_phase: (pos.beat_in_bar / beats_per_bar).clamp(0.0, 1.0) as f32,
             lean: [self.lean[0] as f32, self.lean[1] as f32],
-            target: [target[0] as f32, target[1] as f32],
+            target,
+            next_target,
+            next_target_beats,
             coherence: self.coherence.value() as f32,
             pulse_age_s: self
                 .last_pulse_sample
@@ -560,6 +627,14 @@ pub struct ChartSessionConfig {
     pub coherence_config: Option<PathBuf>,
     /// Explicit ladder-config path (same contract as the coherence config).
     pub ladder_config: Option<PathBuf>,
+    /// Explicit gradient-config path (ADR 0024; same contract — explicit
+    /// must load, default `<base_dir>/config/gradient.toml` is optional,
+    /// absent = inert built-ins).
+    pub gradient_config: Option<PathBuf>,
+    /// Explicit haptics-config path (ADR 0026; same contract — explicit
+    /// must load, default `<base_dir>/config/haptics.toml` is optional,
+    /// absent = inert built-ins that never emit an event).
+    pub haptics_config: Option<PathBuf>,
     /// Record the input session to `logs/sessions/<name>.session.jsonl`.
     pub record: Option<String>,
     /// Stop after this many bars (default: play the suite out).
@@ -628,6 +703,13 @@ pub struct ConductedFrame {
     /// Player lean (deadzoned) and the chart's lean target, both in [-1,1]².
     pub lean: [f32; 2],
     pub target: [f32; 2],
+    /// The next authored lean key's value (ADR 0023) — where the chart bends
+    /// next. Falls back to `target` when nothing is upcoming.
+    pub next_target: [f32; 2],
+    /// Suite beats until that key's anchor (large — 1e6 — when none). Live
+    /// during preroll: a shrinking countdown to the first key. Flips to the
+    /// following key exactly at each anchor.
+    pub next_target_beats: f64,
     pub coherence: f32,
     /// Seconds since the player's most recent pulse press (large if none).
     /// Suite-sample arithmetic — jumps across a reintegration seam by design.
@@ -665,6 +747,8 @@ impl Default for ConductedFrame {
             bar_phase: 0.0,
             lean: [0.0; 2],
             target: [0.0; 2],
+            next_target: [0.0; 2],
+            next_target_beats: 1e6,
             coherence: 1.0,
             pulse_age_s: 1e6,
             preroll: false,
@@ -710,6 +794,18 @@ pub struct ChartSession {
     /// the failure mode worth shouting about (ADR 0011).
     input_events: u64,
     warned_no_input: bool,
+    /// The haptic decision layer (ADR 0026): pure, event-shaped, live
+    /// sessions only — replay and offline renders never construct a
+    /// `ChartSession`, so haptics is absent from every deterministic path
+    /// by construction.
+    haptics: crate::haptics::HapticsDriver,
+    haptics_path: PathBuf,
+    /// Where haptic events go: the front end's adapter onto the capture
+    /// thread's rumble channel. `None` (no rumble hardware, no front-end
+    /// wiring) silently drops them.
+    haptic_sink: Option<Box<dyn FnMut(crate::haptics::HapticEvent) + Send>>,
+    /// Events emitted before the sink attached (the session-start Config).
+    haptic_pending: Vec<crate::haptics::HapticEvent>,
     /// The audio manager when this session owns one (the CLI path). `None`
     /// on the shared-manager path, where the host's manager outlives us.
     /// Last field: everything above (session included) drops before it.
@@ -848,6 +944,79 @@ impl ChartSession {
         let ladder = Ladder::new(ladder_cfg);
         let reintegrator = Reintegrator::new(manifest.reintegration.clone());
 
+        // Gradient config (ADR 0024): same contract again — explicit path
+        // must load, the default file is optional, absent = inert built-ins
+        // (so a gradient-free repo renders byte-identically).
+        let gradient_explicit = cfg.gradient_config.is_some();
+        let gradient_path = cfg
+            .gradient_config
+            .clone()
+            .unwrap_or_else(|| cfg.base_dir.join("config/gradient.toml"));
+        let gradient_cfg = if gradient_explicit || gradient_path.exists() {
+            let gcfg = GradientConfig::load(&gradient_path).map_err(|e| {
+                FlintError::ValidationError(format!("loading {}: {e}", gradient_path.display()))
+            })?;
+            notices.push(format!(
+                "gradient config: {} (tune bus: {})",
+                gradient_path.display(),
+                gcfg.tune.bus
+            ));
+            gcfg
+        } else {
+            notices.push(format!(
+                "gradient config: inert built-ins (no {})",
+                gradient_path.display()
+            ));
+            GradientConfig::default()
+        };
+        let gradient = GradientDriver::new(gradient_cfg);
+        // A silent tune bus makes the wobble a no-op — true of the current
+        // placeholder track's world_voice (per-friend stems are queued music
+        // work). Loud, not silent: the ADR 0011 lesson.
+        if gradient.config().is_active() {
+            let tune_bus = &gradient.config().tune.bus;
+            let playing = session
+                .mixer
+                .buses()
+                .find(|b| b.name == *tune_bus)
+                .is_some_and(|b| b.state.playing);
+            if !playing {
+                notices.push(format!(
+                    "  *** gradient tune bus '{tune_bus}' is SILENT in this manifest — \
+                     the wobble is inaudible here (sink trims still apply)"
+                ));
+            }
+        }
+
+        // Haptics config (ADR 0026): the same contract one more time —
+        // explicit path must load, the default file is optional, absent =
+        // inert built-ins (no events, ever; motors need no protecting the
+        // way buses do, but silence-by-default keeps the feature opt-in).
+        let haptics_explicit = cfg.haptics_config.is_some();
+        let haptics_path = cfg
+            .haptics_config
+            .clone()
+            .unwrap_or_else(|| cfg.base_dir.join("config/haptics.toml"));
+        let haptics_cfg = if haptics_explicit || haptics_path.exists() {
+            let hcfg = crate::haptics::HapticsConfig::load(&haptics_path).map_err(|e| {
+                FlintError::ValidationError(format!("loading {}: {e}", haptics_path.display()))
+            })?;
+            notices.push(format!(
+                "haptics config: {} (tick grid: {}, lead {:.0} ms)",
+                haptics_path.display(),
+                hcfg.tick_grid.as_str(),
+                hcfg.lead_ms
+            ));
+            hcfg
+        } else {
+            notices.push(format!(
+                "haptics config: inert built-ins (no {})",
+                haptics_path.display()
+            ));
+            crate::haptics::HapticsConfig::default()
+        };
+        let haptics = crate::haptics::HapticsDriver::new(haptics_cfg);
+
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -862,6 +1031,8 @@ impl ChartSession {
             "arrival_half_beats": judgment_cfg.arrival_half_beats,
             "coherence_config": coherence_cfg.to_json(),
             "ladder_config": ladder.config().to_json(),
+            "gradient_config": gradient.config().to_json(),
+            "haptics_config": haptics.config().to_json(),
             "epoch_s": epoch,
         });
         let log = JsonlWriter::create(&log_path, &header)?;
@@ -908,9 +1079,19 @@ impl ChartSession {
             Conductor::new(manifest, None),
             config_path,
             ladder_path,
+            gradient,
+            gradient_path,
             visual_eval,
         );
         core.sync_seam_params();
+
+        // The session-start engine settings ride the pending queue until a
+        // front end attaches a sink; an inert config never emits at all.
+        let haptic_pending = if haptics.config().is_active() {
+            vec![haptics.config_event(sample_rate)]
+        } else {
+            Vec::new()
+        };
 
         Ok((
             Self {
@@ -925,6 +1106,10 @@ impl ChartSession {
                 last_bar: i64::MIN,
                 input_events: 0,
                 warned_no_input: false,
+                haptics,
+                haptics_path,
+                haptic_sink: None,
+                haptic_pending,
                 _own_manager: own_manager,
             },
             notices,
@@ -950,6 +1135,23 @@ impl ChartSession {
     ) {
         self.input_rx = Some(rx);
         self.input_guard = Some(guard);
+    }
+
+    /// Attach the haptic-event sink (ADR 0026): the front end's adapter onto
+    /// the capture thread's rumble channel. Events arrive suite-addressed
+    /// converted to **raw clock samples** already — the sink forwards them
+    /// verbatim. Without a sink the driver never runs.
+    pub fn set_haptic_sink(
+        &mut self,
+        sink: Box<dyn FnMut(crate::haptics::HapticEvent) + Send>,
+    ) {
+        self.haptic_sink = Some(sink);
+    }
+
+    /// Whether the resolved haptics config can emit anything — front ends
+    /// use this to skip acquiring rumble hardware for inert sessions.
+    pub fn haptics_active(&self) -> bool {
+        self.haptics.config().is_active()
     }
 
     /// One iteration: pump the scheduler, feed the clock bridge, drain input
@@ -1016,7 +1218,50 @@ impl ChartSession {
         // Disintegration ladder + reintegration sequencer: coherence in,
         // mixer tweens + visual params out. Idle most ticks (hysteresis).
         // The core caches the SeqTick state for `conducted_frame`.
-        let (_seq, seq_events) = self.core.step_seq(&mut self.session)?;
+        let (seq, seq_events) = self.core.step_seq(&mut self.session, &pos)?;
+
+        // Haptics (ADR 0026): pure decision layer over this tick's events,
+        // forwarded through the front end's sink onto the rumble channel.
+        // Suite→raw conversion happens here — the capture thread speaks the
+        // bridge's raw clock and never learns about seams beyond Flush.
+        // Suite positions are latency-compensated EAR time (`session.now()`
+        // subtracts output latency), so the raw-clock moment the ear hears
+        // suite sample S is S + timeline_offset + latency_samples — both
+        // terms, or every burst lands ~latency early and an "immediate"
+        // burst reads ~latency LATE and is drop-gated into silence (the
+        // bug behind the first silent feel run).
+        if let Some(sink) = &mut self.haptic_sink {
+            let mut events = std::mem::take(&mut self.haptic_pending);
+            self.haptics.evaluate(
+                &self.session.conductor,
+                pos.sample,
+                self.core.reintegrator.phase(),
+                seq.rewind,
+                self.core.reintegrator.pickup_beats,
+                &self.core.frame_pulses,
+                &seq_events,
+                &mut events,
+            );
+            let offset =
+                self.session.timeline_offset() + self.session.conductor.latency_samples();
+            for ev in events {
+                sink(match ev {
+                    crate::haptics::HapticEvent::Burst {
+                        at_suite_sample,
+                        strong,
+                        weak,
+                        duration_samples,
+                    } => crate::haptics::HapticEvent::Burst {
+                        at_suite_sample: at_suite_sample + offset,
+                        strong,
+                        weak,
+                        duration_samples,
+                    },
+                    other => other,
+                });
+            }
+        }
+
         for ev in seq_events {
             match &ev {
                 ReintegrationEvent::FullFail {
@@ -1102,7 +1347,33 @@ impl ChartSession {
 
     pub fn reload_config(&mut self) -> Result<Vec<String>> {
         let sample = self.session.now().sample;
-        self.core.reload_config(sample)
+        let mut notices = self.core.reload_config(sample)?;
+        // Haptics reloads at the session level — the driver lives here, not
+        // in the core (replay/offline never carry one). Same contract:
+        // reload only when the file exists, failure keeps the current
+        // config, success re-sends the engine settings (lead changes must
+        // reach already-scheduled bursts).
+        if self.haptics_path.exists() {
+            match crate::haptics::HapticsConfig::load(&self.haptics_path) {
+                Ok(cfg) => {
+                    self.haptics.reconfigure(cfg);
+                    notices.push("haptics config reloaded".to_string());
+                    self.core.log.write_value(&serde_json::json!({
+                        "t": "haptics_reload", "sample": sample,
+                        "haptics_config": self.haptics.config().to_json(),
+                    }))?;
+                    let ev = self.haptics.config_event(self.sample_rate);
+                    match &mut self.haptic_sink {
+                        Some(sink) => sink(ev),
+                        None => self.haptic_pending.push(ev),
+                    }
+                }
+                Err(e) => {
+                    notices.push(format!("haptics reload failed, keeping current config: {e}"))
+                }
+            }
+        }
+        Ok(notices)
     }
 
     /// Stop every stem with an authored fade. Mandatory before dropping a

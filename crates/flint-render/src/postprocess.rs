@@ -28,6 +28,9 @@ pub struct PostProcessConfig {
     pub chromatic_aberration: f32,
     pub radial_blur: f32,
     pub desaturate: f32,
+    pub dof_strength: f32,
+    pub dof_focus_distance: f32,
+    pub dof_focus_range: f32,
     pub ssao_enabled: bool,
     pub ssao_radius: f32,
     pub ssao_intensity: f32,
@@ -69,6 +72,9 @@ impl Default for PostProcessConfig {
             chromatic_aberration: 0.0,
             radial_blur: 0.0,
             desaturate: 0.0,
+            dof_strength: 0.0,
+            dof_focus_distance: 10.0,
+            dof_focus_range: 5.0,
             ssao_enabled: true,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
@@ -126,6 +132,12 @@ pub struct PostProcessUniforms {
     pub fog_height_enabled: f32,
     pub dither_intensity: f32,
     pub inv_view_proj: [[f32; 4]; 4],
+    // Depth of field (trailing scalar row — appended after the mat4 so every
+    // pre-existing offset is untouched; WGSL mirror must match field-for-field)
+    pub dof_strength: f32,
+    pub dof_focus_distance: f32,
+    pub dof_focus_range: f32,
+    pub _pad2: f32,
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -2586,6 +2598,10 @@ impl PostProcessPipeline {
                 0.0
             },
             inv_view_proj: camera.inverse_view_projection_matrix(),
+            dof_strength: if effects_on { config.dof_strength } else { 0.0 },
+            dof_focus_distance: config.dof_focus_distance,
+            dof_focus_range: config.dof_focus_range.max(0.001),
+            _pad2: 0.0,
         };
 
         queue.write_buffer(

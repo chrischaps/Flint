@@ -9,4 +9,5 @@ description = "High-rate gamepad capture producing audio-clock-timestamped verb-
 flint-core = { workspace = true }
 flint-music = { workspace = true }
 gilrs = { workspace = true }
+gilrs-core = { workspace = true }
 tracing = { workspace = true }

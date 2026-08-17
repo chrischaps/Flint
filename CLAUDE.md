@@ -37,6 +37,7 @@ Flint uses an **edit -> validate -> play** loop:
    #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
    #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
    #   --dither-intensity 0.03   --desaturate 0.85
+   #   --dof 0.6  --dof-focus 10  --dof-range 5
    #   --volumetric-density 1.0  --volumetric-samples 32
    #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
    #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0

@@ -193,6 +193,21 @@ impl ChartEval {
         self.channels.get(channel)?.last().map(|(b, _, _)| *b)
     }
 
+    /// The first authored key strictly after `beat`, or `None` when the
+    /// channel has no keys past that point (or doesn't exist). A query
+    /// exactly on a key beat returns the *following* key.
+    pub fn next_key(&self, channel: &str, beat: f64) -> Option<(f64, ChannelValue)> {
+        let keys = self.channels.get(channel)?;
+        let idx = keys.partition_point(|(b, _, _)| *b <= beat);
+        keys.get(idx).map(|(b, v, _)| {
+            let value = match v.len() {
+                1 => ChannelValue::Scalar(v[0]),
+                _ => ChannelValue::Vec2([v[0], v[1]]),
+            };
+            (*b, value)
+        })
+    }
+
     /// The channel's authored keys as `(beat, value)` pairs, sorted by beat.
     /// Arrival-style judgment treats these as its targets; the interpolation
     /// between them stays a visual/curve concern.
