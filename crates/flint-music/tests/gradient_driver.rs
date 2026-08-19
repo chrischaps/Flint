@@ -13,30 +13,19 @@ use flint_music::analysis::max_step;
 use flint_music::event_script::EventScript;
 use flint_music::gradient::{GradientConfig, GradientDriver};
 use flint_music::ladder::{LadderDriver, LadderParams};
-use flint_music::manifest::BusDecl;
 use flint_music::mixer::LPF_OPEN_HZ;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
-use flint_music::session::StemResolver;
-use flint_music::{GradientOffsets, SuiteManifest};
-use kira::sound::static_sound::StaticSoundData;
-use kira::Frame;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use flint_music::GradientOffsets;
 
-const SR: u32 = 48_000;
-const CHUNK: usize = 128;
-/// 120 BPM 4/4: one bar = 96_000 samples. Render 9 bars, inside the
-/// synthetic manifest's first tempo region.
-const BAR: i64 = 96_000;
+mod common;
+use common::{tempo_change_manifest, SineStems, BAR, CHUNK};
+
+/// Render 9 bars, inside the synthetic manifest's first tempo region.
 const DURATION: i64 = 9 * BAR;
 /// Scripted lean trajectory: on-target for 3 bars, badly off-target for 3,
 /// then stick-neutral for 3.
 const OFF_AT: i64 = 3 * BAR;
 const NEUTRAL_AT: i64 = 6 * BAR;
-
-fn data_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
-}
 
 /// The synthetic manifest's only playing degradable bus is `texture`, so it
 /// plays the designated tune-bus role here (`world_voice` is silent — detune
@@ -63,34 +52,6 @@ release_ms = 450.0
     .expect("test gradient config")
 }
 
-struct SynthStems;
-
-impl StemResolver for SynthStems {
-    fn load(&self, bus: &str, decl: &BusDecl) -> flint_core::Result<Option<StaticSoundData>> {
-        if decl.file.is_none() {
-            return Ok(None);
-        }
-        let (freq, amp) = match bus {
-            "foundation" => (220.0, 0.20f32),
-            "home_theme" => (880.0, 0.25),
-            "texture" => (8_000.0, 0.10),
-            other => panic!("playable bus without a tone: {other}"),
-        };
-        let frames: Arc<[Frame]> = (0..(DURATION + SR as i64) as usize)
-            .map(|i| {
-                let t = i as f64 / SR as f64;
-                Frame::from_mono((std::f64::consts::TAU * freq * t).sin() as f32 * amp)
-            })
-            .collect();
-        Ok(Some(StaticSoundData {
-            sample_rate: SR,
-            frames,
-            settings: Default::default(),
-            slice: None,
-        }))
-    }
-}
-
 /// (lean error, |lean|) per suite sample.
 fn scripted_lean(sample: i64) -> (f64, f64) {
     if sample < OFF_AT {
@@ -110,8 +71,7 @@ struct Observed {
 }
 
 fn render() -> Observed {
-    let manifest = SuiteManifest::load(&data_dir().join("tempo_change.suite.toml"))
-        .expect("load synthetic manifest");
+    let manifest = tempo_change_manifest();
     let script = EventScript {
         schema_version: 0,
         events: vec![],
@@ -124,38 +84,48 @@ fn render() -> Observed {
     let mut driver = LadderDriver::new();
     let clean = LadderParams::clean();
     let mut states = Vec::new();
-    let result = render_offline_with(&manifest, &SynthStems, &script, &cfg, |pos, session| {
-        let (err, mag) = scripted_lean(pos.sample);
-        let offsets = gradient.evaluate(err, mag, pos.seconds);
-        driver.apply(
-            &clean,
-            &offsets,
-            pos.seconds,
-            clean.ramp_ms,
-            Some((pos.sample, 250.0)),
-            &mut session.mixer,
-        );
-        let get = |name: &str| {
-            session
-                .mixer
-                .buses()
-                .find(|b| b.name == name)
-                .map(|b| b.state)
-                .unwrap()
-        };
-        let (tex, har, home, found) =
-            (get("texture"), get("harmony"), get("home_theme"), get("foundation"));
-        states.push((
-            pos.sample,
-            tex.gain_db,
-            tex.detune_semitones,
-            har.gain_db,
-            home.gain_db,
-            home.detune_semitones,
-            home.lpf_hz,
-            found.gain_db,
-        ));
-    })
+    let result = render_offline_with(
+        &manifest,
+        &SineStems::plain(DURATION),
+        &script,
+        &cfg,
+        |pos, session| {
+            let (err, mag) = scripted_lean(pos.sample);
+            let offsets = gradient.evaluate(err, mag, pos.seconds);
+            driver.apply(
+                &clean,
+                &offsets,
+                pos.seconds,
+                clean.ramp_ms,
+                Some((pos.sample, 250.0)),
+                &mut session.mixer,
+            );
+            let get = |name: &str| {
+                session
+                    .mixer
+                    .buses()
+                    .find(|b| b.name == name)
+                    .map(|b| b.state)
+                    .unwrap()
+            };
+            let (tex, har, home, found) = (
+                get("texture"),
+                get("harmony"),
+                get("home_theme"),
+                get("foundation"),
+            );
+            states.push((
+                pos.sample,
+                tex.gain_db,
+                tex.detune_semitones,
+                har.gain_db,
+                home.gain_db,
+                home.detune_semitones,
+                home.lpf_hz,
+                found.gain_db,
+            ));
+        },
+    )
     .expect("offline render");
     Observed {
         audio: result.samples,
@@ -175,9 +145,18 @@ fn gradient_wobbles_off_lean_and_sinks_at_neutral() {
         .iter()
         .filter(|s| (BAR..OFF_AT).contains(&s.0))
         .collect();
-    assert!(settled_on.iter().all(|s| s.2.abs() < 0.01), "in tune on the lean");
-    assert!(settled_on.iter().all(|s| s.1.abs() < 0.05), "no dulling on the lean");
-    assert!(settled_on.iter().all(|s| s.3.abs() < 0.05), "no sink while engaged");
+    assert!(
+        settled_on.iter().all(|s| s.2.abs() < 0.01),
+        "in tune on the lean"
+    );
+    assert!(
+        settled_on.iter().all(|s| s.1.abs() < 0.05),
+        "no dulling on the lean"
+    );
+    assert!(
+        settled_on.iter().all(|s| s.3.abs() < 0.05),
+        "no sink while engaged"
+    );
 
     // Off the lean (settled): the tune bus wobbles — a zero-mean LFO
     // swinging both ways near full depth — and dulls toward the trim.
@@ -186,7 +165,10 @@ fn gradient_wobbles_off_lean_and_sinks_at_neutral() {
         .iter()
         .filter(|s| (OFF_AT + BAR..NEUTRAL_AT).contains(&s.0))
         .collect();
-    assert!(off.iter().all(|s| s.2.abs() <= depth + 1e-9), "wobble bounded by depth");
+    assert!(
+        off.iter().all(|s| s.2.abs() <= depth + 1e-9),
+        "wobble bounded by depth"
+    );
     assert!(
         off.iter().any(|s| s.2 > depth * 0.8) && off.iter().any(|s| s.2 < -depth * 0.8),
         "LFO must swing both ways"
@@ -195,7 +177,10 @@ fn gradient_wobbles_off_lean_and_sinks_at_neutral() {
         off.iter().all(|s| (s.1 - -2.5).abs() < 0.3),
         "tune bus dulled at full error"
     );
-    assert!(off.iter().all(|s| s.3.abs() < 0.05), "sink stays out while engaged");
+    assert!(
+        off.iter().all(|s| s.3.abs() < 0.05),
+        "sink stays out while engaged"
+    );
 
     // Stick-neutral (settled — release is 450 ms, give it a bar): the sink
     // thins harmony, and with the error gone the wobble releases.
@@ -209,7 +194,11 @@ fn gradient_wobbles_off_lean_and_sinks_at_neutral() {
         "harmony thinned at neutral"
     );
     let last = o.states.last().unwrap();
-    assert!(last.2.abs() < 0.02, "wobble settles once the error clears: {}", last.2);
+    assert!(
+        last.2.abs() < 0.02,
+        "wobble settles once the error clears: {}",
+        last.2
+    );
     assert!(last.1 > -0.2, "tune-bus dulling releases: {}", last.1);
 
     // Protected buses never move: motif and foundation gains stay at 0,
@@ -231,8 +220,7 @@ fn gradient_wobbles_off_lean_and_sinks_at_neutral() {
 fn inert_config_never_touches_the_mixer() {
     // The built-in default must leave the shadow state exactly at rest —
     // this is what keeps gradient-free repos byte-identical.
-    let manifest = SuiteManifest::load(&data_dir().join("tempo_change.suite.toml"))
-        .expect("load synthetic manifest");
+    let manifest = tempo_change_manifest();
     let script = EventScript {
         schema_version: 0,
         events: vec![],
@@ -243,13 +231,19 @@ fn inert_config_never_touches_the_mixer() {
     };
     let mut gradient = GradientDriver::new(GradientConfig::default());
     let mut all_default = true;
-    render_offline_with(&manifest, &SynthStems, &script, &cfg, |pos, _session| {
-        let (err, mag) = scripted_lean(pos.sample + OFF_AT); // worst case: full error
-        let offsets = gradient.evaluate(err, mag, pos.seconds);
-        if offsets != GradientOffsets::default() {
-            all_default = false;
-        }
-    })
+    render_offline_with(
+        &manifest,
+        &SineStems::plain(DURATION),
+        &script,
+        &cfg,
+        |pos, _session| {
+            let (err, mag) = scripted_lean(pos.sample + OFF_AT); // worst case: full error
+            let offsets = gradient.evaluate(err, mag, pos.seconds);
+            if offsets != GradientOffsets::default() {
+                all_default = false;
+            }
+        },
+    )
     .expect("offline render");
     assert!(all_default, "inert config must emit empty offsets forever");
 }

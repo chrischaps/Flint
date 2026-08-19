@@ -87,7 +87,7 @@ fn run(events: &[InputEvent]) -> RunResult {
         misses: 0,
         final_value: 0.0,
     };
-    let mut fold = |records: &mut Vec<JudgmentRecord>,
+    let fold = |records: &mut Vec<JudgmentRecord>,
                     at_sample: i64,
                     coherence: &mut Coherence,
                     result: &mut RunResult,

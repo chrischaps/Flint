@@ -16,20 +16,12 @@
 
 use flint_music::analysis::{find_tone_transitions, max_step, peak, tone_envelope, TransitionKind};
 use flint_music::event_script::EventScript;
-use flint_music::manifest::BusDecl;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig, RenderResult};
-use flint_music::session::StemResolver;
-use flint_music::{MusicalPosition, SuiteManifest};
-use kira::sound::static_sound::StaticSoundData;
-use kira::Frame;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use flint_music::MusicalPosition;
 
-const SR: u32 = 48_000;
-const CHUNK: usize = 128;
-const WINDOW: usize = 64;
-/// 120 BPM 4/4 (the manifest's first region): one bar = 96_000 samples.
-const BAR: i64 = 96_000;
+mod common;
+use common::{tempo_change_manifest, SineStems, BAR, CHUNK, SR, WINDOW};
+
 /// Render 8 bars of *clock* time.
 const DURATION: i64 = 8 * BAR;
 /// home_theme sounds for suite samples [0, 2 bars).
@@ -40,40 +32,10 @@ const TRIGGER_AT: i64 = 4 * BAR;
 const SEAM_AT: i64 = 5 * BAR;
 const FADE_MS: f64 = 20.0;
 
-fn data_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
-}
-
 /// foundation/texture: steady tones (lock + click material across the seam).
 /// home_theme: 880 Hz gated to the first two suite bars (position evidence).
-struct SeamStems;
-
-impl StemResolver for SeamStems {
-    fn load(&self, bus: &str, decl: &BusDecl) -> flint_core::Result<Option<StaticSoundData>> {
-        if decl.file.is_none() {
-            return Ok(None);
-        }
-        let (freq, amp) = match bus {
-            "foundation" => (220.0, 0.20f32),
-            "home_theme" => (880.0, 0.25),
-            "texture" => (8_000.0, 0.10),
-            other => panic!("playable bus without a tone: {other}"),
-        };
-        let frames: Arc<[Frame]> = (0..(DURATION + SR as i64) as usize)
-            .map(|i| {
-                let gate = bus != "home_theme" || (i as i64) < THEME_END;
-                let t = i as f64 / SR as f64;
-                let s = (std::f64::consts::TAU * freq * t).sin() as f32 * amp;
-                Frame::from_mono(if gate { s } else { 0.0 })
-            })
-            .collect();
-        Ok(Some(StaticSoundData {
-            sample_rate: SR,
-            frames,
-            settings: Default::default(),
-            slice: None,
-        }))
-    }
+fn seam_stems() -> SineStems {
+    SineStems::theme_gated(DURATION, vec![(0, THEME_END)])
 }
 
 struct Rendered {
@@ -85,8 +47,7 @@ struct Rendered {
 }
 
 fn render() -> Rendered {
-    let manifest = SuiteManifest::load(&data_dir().join("tempo_change.suite.toml"))
-        .expect("load synthetic manifest");
+    let manifest = tempo_change_manifest();
     let script = EventScript {
         schema_version: 0,
         events: vec![],
@@ -98,7 +59,7 @@ fn render() -> Rendered {
     let mut positions = Vec::new();
     let mut max_skew_after_seam = 0.0f64;
     let mut triggered = false;
-    let result = render_offline_with(&manifest, &SeamStems, &script, &cfg, |pos, session| {
+    let result = render_offline_with(&manifest, &seam_stems(), &script, &cfg, |pos, session| {
         positions.push(*pos);
         if !triggered && pos.sample >= TRIGGER_AT {
             triggered = true;
@@ -178,7 +139,11 @@ fn seam_jumps_suite_time_backwards_exactly_once() {
         .filter(|(_, w)| w[1].sample < w[0].sample)
         .map(|(i, _)| i + 1)
         .collect();
-    assert_eq!(jumps.len(), 1, "expected exactly one timeline jump: {jumps:?}");
+    assert_eq!(
+        jumps.len(),
+        1,
+        "expected exactly one timeline jump: {jumps:?}"
+    );
     let j = jumps[0];
     assert!(
         (0..=CHUNK as i64).contains(&pos[j].sample),

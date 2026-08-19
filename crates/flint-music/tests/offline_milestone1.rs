@@ -13,61 +13,15 @@ use flint_music::analysis::{
     find_tone_transitions, goertzel_power, max_step, peak, tone_envelope, TransitionKind,
 };
 use flint_music::event_script::EventScript;
-use flint_music::manifest::BusDecl;
 use flint_music::offline::{render_offline, OfflineRenderConfig, RenderResult};
 use flint_music::scheduler::BusAction;
-use flint_music::session::StemResolver;
 use flint_music::{validate_manifest, Conductor, MusicalPosition, SuiteManifest};
-use kira::sound::static_sound::StaticSoundData;
-use kira::Frame;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-const SR: u32 = 48_000;
-const CHUNK: usize = 128;
-const WINDOW: usize = 64;
+mod common;
+use common::{data_dir, repo_root, tempo_change_manifest, SineStems, CHUNK, SR, WINDOW};
+
 /// Total render: 16 internal bars (10 of 4/4 @ 120, 6 of 3/4 @ 90) = 32 s.
 const DURATION: i64 = 1_536_000;
-
-fn data_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
-}
-
-/// Synthesizes one steady sine per bus — frequencies far apart so Goertzel
-/// attribution is unambiguous. File paths in the manifest are labels only.
-struct SynthStems;
-
-fn bus_tone(bus: &str) -> Option<(f64, f32)> {
-    match bus {
-        "foundation" => Some((220.0, 0.20)),
-        "home_theme" => Some((880.0, 0.25)),
-        "texture" => Some((8_000.0, 0.10)),
-        _ => None,
-    }
-}
-
-impl StemResolver for SynthStems {
-    fn load(&self, bus: &str, decl: &BusDecl) -> flint_core::Result<Option<StaticSoundData>> {
-        if decl.file.is_none() {
-            return Ok(None);
-        }
-        let (freq, amp) = bus_tone(bus).expect("playable bus without a tone");
-        // One second past the render window so end-of-sound never reads as a
-        // level transition inside the analyzed buffer.
-        let frames: Arc<[Frame]> = (0..(DURATION + SR as i64) as usize)
-            .map(|i| {
-                let t = i as f64 / SR as f64;
-                Frame::from_mono((std::f64::consts::TAU * freq * t).sin() as f32 * amp)
-            })
-            .collect();
-        Ok(Some(StaticSoundData {
-            sample_rate: SR,
-            frames,
-            settings: Default::default(),
-            slice: None,
-        }))
-    }
-}
 
 struct Rendered {
     result: RenderResult,
@@ -76,8 +30,7 @@ struct Rendered {
 }
 
 fn render() -> Rendered {
-    let manifest = SuiteManifest::load(&data_dir().join("tempo_change.suite.toml"))
-        .expect("load synthetic manifest");
+    let manifest = tempo_change_manifest();
     let issues = validate_manifest(&manifest);
     assert!(
         issues.is_empty(),
@@ -91,9 +44,15 @@ fn render() -> Rendered {
         chunk_frames: CHUNK,
     };
     let mut positions = Vec::new();
-    let result = render_offline(&manifest, &SynthStems, &script, &cfg, |pos, _mixer| {
-        positions.push(*pos);
-    })
+    let result = render_offline(
+        &manifest,
+        &SineStems::plain(DURATION),
+        &script,
+        &cfg,
+        |pos, _mixer| {
+            positions.push(*pos);
+        },
+    )
     .expect("offline render");
     Rendered {
         result,
@@ -230,7 +189,7 @@ fn milestone1_render_is_deterministic() {
 /// skipped when the game repo's fixtures aren't present (engine CI).
 #[test]
 fn prototype_fixture_renders_offline() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repo_root = repo_root();
     let manifest_path = repo_root.join("assets/manifests/prototype.suite.toml");
     if !manifest_path.exists() {
         eprintln!("skipping: {} not present", manifest_path.display());

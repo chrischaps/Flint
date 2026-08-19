@@ -10,58 +10,18 @@
 use flint_music::analysis::{find_tone_transitions, max_step, tone_envelope, TransitionKind};
 use flint_music::event_script::EventScript;
 use flint_music::ladder::{Ladder, LadderConfig, LadderDriver, DROP_DB};
-use flint_music::manifest::BusDecl;
 use flint_music::mixer::LPF_OPEN_HZ;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
-use flint_music::session::StemResolver;
-use flint_music::SuiteManifest;
-use kira::sound::static_sound::StaticSoundData;
-use kira::Frame;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-const SR: u32 = 48_000;
-const CHUNK: usize = 128;
-const WINDOW: usize = 64;
-/// 120 BPM 4/4: one bar = 96_000 samples. Render 8 bars.
-const BAR: i64 = 96_000;
+mod common;
+use common::{tempo_change_manifest, SineStems, BAR, CHUNK, SR, WINDOW};
+
+/// Render 8 bars.
 const DURATION: i64 = 8 * BAR;
 /// Coherence trajectory: clean for 2 bars, then a value inside rung 3
 /// (dropout) for 4 bars, then clean recovery.
 const FALL_AT: i64 = 2 * BAR;
 const RECOVER_AT: i64 = 6 * BAR;
-
-fn data_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
-}
-
-struct SynthStems;
-
-impl StemResolver for SynthStems {
-    fn load(&self, bus: &str, decl: &BusDecl) -> flint_core::Result<Option<StaticSoundData>> {
-        if decl.file.is_none() {
-            return Ok(None);
-        }
-        let (freq, amp) = match bus {
-            "foundation" => (220.0, 0.20f32),
-            "home_theme" => (880.0, 0.25),
-            "texture" => (8_000.0, 0.10),
-            other => panic!("playable bus without a tone: {other}"),
-        };
-        let frames: Arc<[Frame]> = (0..(DURATION + SR as i64) as usize)
-            .map(|i| {
-                let t = i as f64 / SR as f64;
-                Frame::from_mono((std::f64::consts::TAU * freq * t).sin() as f32 * amp)
-            })
-            .collect();
-        Ok(Some(StaticSoundData {
-            sample_rate: SR,
-            frames,
-            settings: Default::default(),
-            slice: None,
-        }))
-    }
-}
 
 fn scripted_coherence(sample: i64) -> f64 {
     if (FALL_AT..RECOVER_AT).contains(&sample) {
@@ -78,8 +38,7 @@ struct Observed {
 }
 
 fn render() -> Observed {
-    let manifest = SuiteManifest::load(&data_dir().join("tempo_change.suite.toml"))
-        .expect("load synthetic manifest");
+    let manifest = tempo_change_manifest();
     let script = EventScript {
         schema_version: 0,
         events: vec![],
@@ -91,34 +50,40 @@ fn render() -> Observed {
     let mut ladder = Ladder::new(LadderConfig::default());
     let mut driver = LadderDriver::new();
     let mut states = Vec::new();
-    let result = render_offline_with(&manifest, &SynthStems, &script, &cfg, |pos, session| {
-        ladder.observe(scripted_coherence(pos.sample));
-        let params = ladder.params();
-        driver.apply(
-            &params,
-            &flint_music::GradientOffsets::default(),
-            pos.seconds,
-            params.ramp_ms,
-            Some((pos.sample, 250.0)),
-            &mut session.mixer,
-        );
-        let get = |name: &str| {
-            session
-                .mixer
-                .buses()
-                .find(|b| b.name == name)
-                .map(|b| b.state)
-                .unwrap()
-        };
-        states.push((
-            pos.sample,
-            ladder.level(),
-            get("texture").gain_db,
-            get("texture").detune_semitones,
-            get("home_theme").lpf_hz,
-            get("foundation").lpf_hz,
-        ));
-    })
+    let result = render_offline_with(
+        &manifest,
+        &SineStems::plain(DURATION),
+        &script,
+        &cfg,
+        |pos, session| {
+            ladder.observe(scripted_coherence(pos.sample));
+            let params = ladder.params();
+            driver.apply(
+                &params,
+                &flint_music::GradientOffsets::default(),
+                pos.seconds,
+                params.ramp_ms,
+                Some((pos.sample, 250.0)),
+                &mut session.mixer,
+            );
+            let get = |name: &str| {
+                session
+                    .mixer
+                    .buses()
+                    .find(|b| b.name == name)
+                    .map(|b| b.state)
+                    .unwrap()
+            };
+            states.push((
+                pos.sample,
+                ladder.level(),
+                get("texture").gain_db,
+                get("texture").detune_semitones,
+                get("home_theme").lpf_hz,
+                get("foundation").lpf_hz,
+            ));
+        },
+    )
     .expect("offline render");
     Observed {
         audio: result.samples,
@@ -145,13 +110,22 @@ fn dropout_rung_silences_texture_and_spares_motifs() {
     let at = |sample: i64| o.states.iter().find(|s| s.0 >= sample).unwrap();
     assert_eq!(at(FALL_AT + BAR).2, DROP_DB);
     assert!(at(RECOVER_AT + BAR).2.abs() < 0.01, "texture restored");
-    assert!(o.states.iter().all(|s| s.4 == LPF_OPEN_HZ), "motif LPF untouched");
+    assert!(
+        o.states.iter().all(|s| s.4 == LPF_OPEN_HZ),
+        "motif LPF untouched"
+    );
     assert!(at(FALL_AT + BAR).5 < 1_000.0, "foundation LPF engaged");
-    assert_eq!(at(RECOVER_AT + BAR).5, LPF_OPEN_HZ, "foundation LPF reopened");
+    assert_eq!(
+        at(RECOVER_AT + BAR).5,
+        LPF_OPEN_HZ,
+        "foundation LPF reopened"
+    );
 
     // Warble: texture detune oscillates within ±depth while the rung holds,
     // and returns to 0 after recovery (re-locking pitch).
-    let depth = LadderConfig::default().rungs[2].audio.warble_depth_semitones;
+    let depth = LadderConfig::default().rungs[2]
+        .audio
+        .warble_depth_semitones;
     let detunes: Vec<f64> = o
         .states
         .iter()

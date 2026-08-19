@@ -10,12 +10,10 @@
 //! - pulses at beats 4, 6 (120 ms override), 8, 10 (press), 12 (flick).
 
 use flint_music::{ChannelValue, Chart, ChartEval, Conductor, SuiteManifest};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-fn fixtures_dir() -> Option<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures");
-    dir.canonicalize().ok().filter(|d| d.join("valid").exists())
-}
+mod common;
+use common::fixtures_dir;
 
 fn load(fixtures: &Path) -> (ChartEval, Conductor) {
     let manifest =
@@ -62,7 +60,10 @@ fn lean_curve_matches_fixture_keys_and_interps() {
     assert!((m[0] - 0.1).abs() < 1e-12 && (m[1] - (-0.05)).abs() < 1e-12);
     let q = lean(&eval, 10.0);
     let smooth_q = 0.6 + (-0.4 - 0.6) * f;
-    assert!((q[0] - smooth_q).abs() < 1e-12, "8→16 must use key 8's smooth interp");
+    assert!(
+        (q[0] - smooth_q).abs() < 1e-12,
+        "8→16 must use key 8's smooth interp"
+    );
 
     // Clamp beyond the ends.
     assert_eq!(lean(&eval, -1.0), [0.0, 0.0]);
@@ -93,8 +94,8 @@ fn pulse_windows_resolve_from_sections_and_overrides() {
     let ms = |m: f64| (m / 1000.0 * 48_000.0).round() as i64;
 
     let expect = [
-        (4.0, "pulse", ms(90.0)),   // section half-width
-        (6.0, "pulse", ms(120.0)),  // per-pulse override
+        (4.0, "pulse", ms(90.0)),  // section half-width
+        (6.0, "pulse", ms(120.0)), // per-pulse override
         (8.0, "pulse", ms(90.0)),
         (10.0, "press", ms(90.0)),
         (12.0, "flick", ms(90.0)),

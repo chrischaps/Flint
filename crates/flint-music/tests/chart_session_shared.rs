@@ -10,11 +10,10 @@ use flint_music::judgment::LeanMode;
 use flint_music::offline::{OfflineBackend, OfflineBackendSettings};
 use flint_music::Tick;
 use kira::{AudioManager, AudioManagerSettings};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
+mod common;
+use common::repo_root;
 
 fn prototype_cfg(root: &Path) -> ChartSessionConfig {
     ChartSessionConfig {
@@ -119,8 +118,15 @@ fn open_shared_ticks_taps_and_finishes_on_offline_manager() {
     let map = session.timeline_map();
     assert_eq!(map.sample_rate, manifest.sample_rate);
     assert_eq!(
-        map.sections.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
-        manifest.sections.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+        map.sections
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>(),
+        manifest
+            .sections
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>(),
         "sections in manifest order"
     );
     for (ts, ms) in map.sections.iter().zip(&manifest.sections) {
@@ -138,8 +144,16 @@ fn open_shared_ticks_taps_and_finishes_on_offline_manager() {
             "each section runs to the next's start"
         );
     }
-    let last_section_start = manifest.sections.iter().map(|s| s.start_sample).max().unwrap();
-    assert!(map.end_sample >= last_section_start, "map spans every section");
+    let last_section_start = manifest
+        .sections
+        .iter()
+        .map(|s| s.start_sample)
+        .max()
+        .unwrap();
+    assert!(
+        map.end_sample >= last_section_start,
+        "map spans every section"
+    );
     assert_eq!(
         map.sections.last().unwrap().end_sample,
         map.end_sample,
@@ -162,7 +176,10 @@ fn open_shared_ticks_taps_and_finishes_on_offline_manager() {
     let tf = session.timeline_frame();
     assert!(tf.preroll && tf.playhead_sample < 0, "pre-roll playhead");
     assert_eq!(tf.timeline_offset, 0, "no seam has happened");
-    assert!(tf.seams.is_empty() && tf.pulses.is_empty(), "no history yet");
+    assert!(
+        tf.seams.is_empty() && tf.pulses.is_empty(),
+        "no history yet"
+    );
 
     // Attach input the way the player does: a plain channel and an opaque
     // guard. Events are pre-roll-stamped (clock sits before sample 0), so

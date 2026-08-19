@@ -21,32 +21,18 @@ use flint_music::conductor::Conductor;
 use flint_music::event_script::EventScript;
 use flint_music::judgment::{JsonlWriter, Judge, JudgmentConfig};
 use flint_music::ladder::{Ladder, LadderConfig};
-use flint_music::manifest::BusDecl;
 use flint_music::offline::{render_offline_with, OfflineRenderConfig};
 use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
 use flint_music::replay::{synthesize, SyntheticProfile};
-use flint_music::session::StemResolver;
-use flint_music::{Chart, ChartCore, ConductedFrame, PulseKind, SuiteManifest};
-use kira::sound::static_sound::StaticSoundData;
-use kira::Frame;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use flint_music::{Chart, ChartCore, ConductedFrame, PulseKind};
+use std::path::PathBuf;
 
-const SR: u32 = 48_000;
-const CHUNK: usize = 128;
-/// 120 BPM 4/4 until suite sample 960_000, then 90 BPM 3/4.
-const BAR_A: i64 = 96_000;
+mod common;
+use common::{tempo_change_manifest, SineStems, BAR as BAR_A, CHUNK, SR};
+
 const DURATION: i64 = 24 * BAR_A;
 /// Neglect begins at this raw sample; recovery starts at the seam.
 const FALL_RAW: i64 = 3 * BAR_A;
-
-fn data_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
-}
-
-fn manifest() -> SuiteManifest {
-    SuiteManifest::load(&data_dir().join("tempo_change.suite.toml")).expect("synthetic manifest")
-}
 
 /// The seam_milestone3 evidence chart: lean sways through both meters,
 /// pulses every 2 beats from beat 4 to 60. (Duplicated per the tests'
@@ -74,35 +60,6 @@ fn chart() -> Chart {
         beat += 2.0;
     }
     Chart::parse(&toml).expect("test chart")
-}
-
-/// Steady tones per bus (labels in the manifest are never opened).
-struct ToneStems;
-
-impl StemResolver for ToneStems {
-    fn load(&self, bus: &str, decl: &BusDecl) -> flint_core::Result<Option<StaticSoundData>> {
-        if decl.file.is_none() {
-            return Ok(None);
-        }
-        let (freq, amp) = match bus {
-            "foundation" => (220.0, 0.20f32),
-            "home_theme" => (880.0, 0.25),
-            "texture" => (8_000.0, 0.10),
-            other => panic!("playable bus without a tone: {other}"),
-        };
-        let frames: Arc<[Frame]> = (0..(DURATION + SR as i64) as usize)
-            .map(|i| {
-                let t = i as f64 / SR as f64;
-                Frame::from_mono((std::f64::consts::TAU * freq * t).sin() as f32 * amp)
-            })
-            .collect();
-        Ok(Some(StaticSoundData {
-            sample_rate: SR,
-            frames,
-            settings: Default::default(),
-            slice: None,
-        }))
-    }
 }
 
 /// Bit-exact serialization: `to_bits` for every float, ints and strings
@@ -156,7 +113,7 @@ struct TraceRun {
 }
 
 fn run(log_tag: &str) -> TraceRun {
-    let manifest = manifest();
+    let manifest = tempo_change_manifest();
     let chart = chart();
     let judgment_cfg = JudgmentConfig::default();
     let conductor = Conductor::new(&manifest, None);
@@ -214,7 +171,7 @@ fn run(log_tag: &str) -> TraceRun {
 
     render_offline_with(
         &manifest,
-        &ToneStems,
+        &SineStems::plain(DURATION),
         &script,
         &render_cfg,
         |pos, session| {

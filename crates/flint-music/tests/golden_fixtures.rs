@@ -9,12 +9,10 @@
 //!   the exact issue code the validator must emit.
 
 use flint_music::{validate_chart, validate_manifest, Chart, SuiteManifest};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-fn fixtures_dir() -> Option<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures");
-    dir.canonicalize().ok().filter(|d| d.join("valid").exists())
-}
+mod common;
+use common::fixtures_dir;
 
 fn expected_code(text: &str) -> Option<String> {
     text.lines().find_map(|l| {
@@ -56,10 +54,7 @@ fn valid_fixtures_produce_no_issues() {
                     .expect("fixture carries a params cue");
                 let params = cue.params.as_ref().expect("surge cue has params");
                 assert_eq!(params.get("depth").and_then(|v| v.as_float()), Some(0.7));
-                assert_eq!(
-                    params.get("mode").and_then(|v| v.as_str()),
-                    Some("bank")
-                );
+                assert_eq!(params.get("mode").and_then(|v| v.as_str()), Some("bank"));
                 assert_eq!(params.get("index").and_then(|v| v.as_integer()), Some(2));
             }
         }

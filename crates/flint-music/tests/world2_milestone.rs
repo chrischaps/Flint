@@ -22,12 +22,11 @@ use flint_music::replay::{synthesize, SyntheticProfile};
 use flint_music::session::StemResolver;
 use flint_music::{Chart, ChartCore, ConductedFrame, SuiteManifest};
 use kira::sound::static_sound::StaticSoundData;
-use kira::Frame;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-const SR: u32 = 48_000;
-const CHUNK: usize = 128;
+mod common;
+use common::{sine_sound, CHUNK, SR};
+
 /// Compressed world2 structure, integer-sample bars throughout:
 /// arrival 4×5/4@96 (150k/bar) → call 8×3/4@96 (90k) → trial 8×3/4@120
 /// (72k) → departure 4×4/4@72 (160k, last bar is tail).
@@ -170,7 +169,13 @@ fn chart() -> Chart {
     for beat in [10.0, 15.0, 47.0, 53.0, 59.0, 65.0, 68.0, 72.0, 76.0] {
         t.push_str(&format!("[[pulses]]\nbeat = {beat:.2}\n"));
     }
-    for (beat, strength) in [(24.0, 0.6), (26.0, 0.6), (36.0, 0.7), (44.0, 0.9), (56.0, 0.9)] {
+    for (beat, strength) in [
+        (24.0, 0.6),
+        (26.0, 0.6),
+        (36.0, 0.7),
+        (44.0, 0.9),
+        (56.0, 0.9),
+    ] {
         t.push_str(&format!(
             "[[pulses]]\nbeat = {beat:.2}\nkind = \"press\"\nstrength = {strength:.2}\n"
         ));
@@ -186,7 +191,9 @@ fn chart() -> Chart {
     t.push_str("[[cues]]\nbeat = 44.0\ncue = \"surge\"\nparams = { depth = 0.6 }\n");
     t.push_str("[[cues]]\nbeat = 56.0\ncue = \"surge\"\nparams = { depth = 1.0 }\n");
     t.push_str("[[cues]]\nbeat = 76.0\ncue = \"final_call\"\n");
-    t.push_str("[[intensity]]\nbeat = 0.0\nvalue = 0.25\n[[intensity]]\nbeat = 44.0\nvalue = 0.8\n");
+    t.push_str(
+        "[[intensity]]\nbeat = 0.0\nvalue = 0.25\n[[intensity]]\nbeat = 44.0\nvalue = 0.8\n",
+    );
     Chart::parse(&t).expect("test chart")
 }
 
@@ -194,18 +201,7 @@ struct ToneStems;
 
 impl ToneStems {
     fn tone(freq: f64, amp: f32) -> StaticSoundData {
-        let frames: Arc<[Frame]> = (0..(DURATION + SR as i64) as usize)
-            .map(|i| {
-                let t = i as f64 / SR as f64;
-                Frame::from_mono((std::f64::consts::TAU * freq * t).sin() as f32 * amp)
-            })
-            .collect();
-        StaticSoundData {
-            sample_rate: SR,
-            frames,
-            settings: Default::default(),
-            slice: None,
-        }
+        sine_sound(freq, amp, DURATION)
     }
 }
 
@@ -225,7 +221,11 @@ impl StemResolver for ToneStems {
         Ok(Some(Self::tone(freq, amp)))
     }
 
-    fn load_alternate(&self, bus: &str, _file: &str) -> flint_core::Result<Option<StaticSoundData>> {
+    fn load_alternate(
+        &self,
+        bus: &str,
+        _file: &str,
+    ) -> flint_core::Result<Option<StaticSoundData>> {
         // Distinct pitches so the crossfade is audibly (and analytically) a
         // different voice, quieter — the "authored thinning".
         let (freq, amp) = match bus {
@@ -546,78 +546,87 @@ chromatic = 0.35
     // PREROLL_BEATS at the first anchor: 2 beats at 96 BPM.
     let preroll = (2.0 * SR as f64 * 60.0 / 96.0).round() as i64;
 
-    render_offline_with(&manifest, &ToneStems, &script, &render_cfg, |pos, session| {
-        let raw = chunk_index * CHUNK as i64 - preroll;
-        chunk_index += 1;
-        if err.is_some() {
-            return;
-        }
-
-        if pos.sample >= 0 {
-            if attentive && raw >= FALL_RAW && out.seams.is_empty() {
-                attentive = false;
-            }
-            let now_suite = pos.sample;
-            if prev_suite == i64::MIN {
-                prev_suite = now_suite - 1;
-            }
-            while cursor < script_events.len() && script_events[cursor].sample() <= now_suite {
-                let ev = &script_events[cursor];
-                cursor += 1;
-                if ev.sample() <= prev_suite {
-                    continue;
-                }
-                if attentive {
-                    core.observe_input(ev);
-                    if ev.sample() >= 0 {
-                        core.ingest(ev);
-                    }
-                }
-            }
-            prev_suite = now_suite;
-            core.advance_to(now_suite);
-            if let Err(e) = core.process(now_suite) {
-                err = Some(e);
+    render_offline_with(
+        &manifest,
+        &ToneStems,
+        &script,
+        &render_cfg,
+        |pos, session| {
+            let raw = chunk_index * CHUNK as i64 - preroll;
+            chunk_index += 1;
+            if err.is_some() {
                 return;
             }
-            match core.step_seq(session, pos) {
-                Ok((_seq, seq_events)) => {
-                    for ev in seq_events {
-                        if let ReintegrationEvent::Seam { re_entry_sample, .. } = ev {
-                            out.seams.push(raw);
-                            just_seamed = true;
-                            cursor = script_events
-                                .partition_point(|e| e.sample() < re_entry_sample);
-                            prev_suite = re_entry_sample - 1;
-                            attentive = true;
+
+            if pos.sample >= 0 {
+                if attentive && raw >= FALL_RAW && out.seams.is_empty() {
+                    attentive = false;
+                }
+                let now_suite = pos.sample;
+                if prev_suite == i64::MIN {
+                    prev_suite = now_suite - 1;
+                }
+                while cursor < script_events.len() && script_events[cursor].sample() <= now_suite {
+                    let ev = &script_events[cursor];
+                    cursor += 1;
+                    if ev.sample() <= prev_suite {
+                        continue;
+                    }
+                    if attentive {
+                        core.observe_input(ev);
+                        if ev.sample() >= 0 {
+                            core.ingest(ev);
                         }
                     }
                 }
-                Err(e) => {
+                prev_suite = now_suite;
+                core.advance_to(now_suite);
+                if let Err(e) = core.process(now_suite) {
                     err = Some(e);
                     return;
                 }
+                match core.step_seq(session, pos) {
+                    Ok((_seq, seq_events)) => {
+                        for ev in seq_events {
+                            if let ReintegrationEvent::Seam {
+                                re_entry_sample, ..
+                            } = ev
+                            {
+                                out.seams.push(raw);
+                                just_seamed = true;
+                                cursor =
+                                    script_events.partition_point(|e| e.sample() < re_entry_sample);
+                                prev_suite = re_entry_sample - 1;
+                                attentive = true;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        err = Some(e);
+                        return;
+                    }
+                }
             }
-        }
 
-        // Mixer evidence: alternate crossfade engagement + post-seam reset.
-        for (name, state) in session.mixer.states() {
-            let entry = out.max_alt_mix.entry(name.to_string()).or_insert(0.0);
-            if state.alternate_mix > *entry {
-                *entry = state.alternate_mix;
+            // Mixer evidence: alternate crossfade engagement + post-seam reset.
+            for (name, state) in session.mixer.states() {
+                let entry = out.max_alt_mix.entry(name.to_string()).or_insert(0.0);
+                if state.alternate_mix > *entry {
+                    *entry = state.alternate_mix;
+                }
+                if just_seamed && name == "harmony" {
+                    out.post_seam_mix.push(state.alternate_mix);
+                }
             }
-            if just_seamed && name == "harmony" {
-                out.post_seam_mix.push(state.alternate_mix);
-            }
-        }
-        just_seamed = false;
+            just_seamed = false;
 
-        let frame = core.conducted_frame(*pos, false);
-        for c in &frame.cues {
-            out.cue_firings.push((raw, c.name.clone()));
-        }
-        encode_frame(raw, &frame, &mut out.trace);
-    })
+            let frame = core.conducted_frame(*pos, false);
+            for c in &frame.cues {
+                out.cue_firings.push((raw, c.name.clone()));
+            }
+            encode_frame(raw, &frame, &mut out.trace);
+        },
+    )
     .expect("offline render");
     if let Some(e) = err {
         panic!("core error during render: {e}");
