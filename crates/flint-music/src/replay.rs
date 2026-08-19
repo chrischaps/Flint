@@ -26,9 +26,20 @@ use flint_core::{FlintError, Result};
 use std::io::{BufRead, Write};
 use std::path::Path;
 
-/// Lean deltas below this within [`LEAN_MIN_INTERVAL_MS`] are not recorded.
-const LEAN_EPSILON: f64 = 1e-3;
-const LEAN_MIN_INTERVAL_MS: f64 = 4.0;
+/// Continuous-stream deltas below this within [`STREAM_MIN_INTERVAL_MS`] are
+/// not recorded. Applies to every change-compressed stream — lean, sway, and
+/// the pressure triggers alike (one decimation policy, [`decimate`]).
+const STREAM_EPSILON: f64 = 1e-3;
+const STREAM_MIN_INTERVAL_MS: f64 = 4.0;
+
+/// The change-compression test shared by the continuous streams: skip a
+/// record whose largest component delta is tiny AND which lands inside the
+/// minimum interval since the previous kept record.
+fn decimate(max_component_delta: f64, delta_samples: i64, sample_rate: u32) -> bool {
+    let small = max_component_delta < STREAM_EPSILON;
+    let soon = (delta_samples as f64) < STREAM_MIN_INTERVAL_MS / 1000.0 * sample_rate as f64;
+    small && soon
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionHeader {
@@ -141,11 +152,8 @@ impl SessionWriter {
         let line = match ev {
             InputEvent::Lean(l) => {
                 if let Some(prev) = &self.last_lean {
-                    let small = (l.x - prev.x).abs() < LEAN_EPSILON
-                        && (l.y - prev.y).abs() < LEAN_EPSILON;
-                    let soon = ((l.sample - prev.sample) as f64)
-                        < LEAN_MIN_INTERVAL_MS / 1000.0 * sample_rate as f64;
-                    if small && soon {
+                    let delta = (l.x - prev.x).abs().max((l.y - prev.y).abs());
+                    if decimate(delta, l.sample - prev.sample, sample_rate) {
                         return Ok(());
                     }
                 }
@@ -164,11 +172,8 @@ impl SessionWriter {
             }
             InputEvent::Sway(sw) => {
                 if let Some(prev) = &self.last_sway {
-                    let small = (sw.x - prev.x).abs() < LEAN_EPSILON
-                        && (sw.y - prev.y).abs() < LEAN_EPSILON;
-                    let soon = ((sw.sample - prev.sample) as f64)
-                        < LEAN_MIN_INTERVAL_MS / 1000.0 * sample_rate as f64;
-                    if small && soon {
+                    let delta = (sw.x - prev.x).abs().max((sw.y - prev.y).abs());
+                    if decimate(delta, sw.sample - prev.sample, sample_rate) {
                         return Ok(());
                     }
                 }
@@ -181,10 +186,7 @@ impl SessionWriter {
                     PressureSide::Right => 1,
                 };
                 if let Some(prev) = &self.last_pressure[slot] {
-                    let small = (p.value - prev.value).abs() < LEAN_EPSILON;
-                    let soon = ((p.sample - prev.sample) as f64)
-                        < LEAN_MIN_INTERVAL_MS / 1000.0 * sample_rate as f64;
-                    if small && soon {
+                    if decimate((p.value - prev.value).abs(), p.sample - prev.sample, sample_rate) {
                         return Ok(());
                     }
                 }

@@ -1,3 +1,8 @@
+//! Historical note (2026-08-19 hygiene pass): `seam_milestone3.rs` now
+//! exercises the full reactive loop on top of this mechanism, but this spike
+//! remains the *isolated* proof of the seam primitive (no judge, no ladder)
+//! and is cited from the Phase 3 status entry — kept, not superseded.
+//!
 //! E4 seam-mechanism spike (Phase 3): prove that stopping all stems with a
 //! short fade and re-playing them from an earlier position on one shared
 //! clock tick (a) lands the re-entry sample-accurately, (b) keeps the stems
