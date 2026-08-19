@@ -22,6 +22,7 @@
 //! actuator spin-up are unmeasurable in software — ADR 0025).
 
 use crate::config_toml::{self, VersionPolicy};
+use crate::tempo::ms_to_samples;
 use crate::conductor::{Conductor, Grid};
 use crate::reintegration::{ReintegrationEvent, SeqPhase};
 use flint_core::{FlintError, Result};
@@ -300,7 +301,7 @@ impl HapticsDriver {
     /// The engine-settings event for the current config (session start and
     /// after every reload — lead changes must reach already-scheduled ticks).
     pub fn config_event(&self, sample_rate: u32) -> HapticEvent {
-        let to_samples = |ms: f64| (ms / 1000.0 * sample_rate as f64).round() as i64;
+        let to_samples = |ms: f64| ms_to_samples(ms, sample_rate as f64);
         HapticEvent::Config {
             lead_samples: to_samples(self.cfg.lead_ms),
             late_drop_samples: to_samples(self.cfg.late_drop_ms),
@@ -327,7 +328,7 @@ impl HapticsDriver {
             return;
         }
         let sample_rate = conductor.tempo().sample_rate() as f64;
-        let to_samples = |ms: f64| (ms / 1000.0 * sample_rate).round() as i64;
+        let to_samples = |ms: f64| ms_to_samples(ms, sample_rate);
 
         // Sequencer transitions first: a seam flushes everything scheduled
         // (old-timeline bursts are wrong after the jump) and re-seeds the

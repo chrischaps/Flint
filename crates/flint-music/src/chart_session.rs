@@ -22,6 +22,7 @@
 //! structured events instead of writing to stdout.
 
 use crate::chart_eval::ChartEval;
+use crate::tempo::ms_to_samples;
 use crate::clock_bridge::ClockBridge;
 use crate::coherence::{Coherence, CoherenceConfig};
 use crate::conductor::{Conductor, MusicalPosition};
@@ -96,7 +97,7 @@ pub fn judgment_offset_samples(
     calibration_ms: f64,
     sample_rate: u32,
 ) -> i64 {
-    ((latency_ms.unwrap_or(0.0) + calibration_ms) / 1000.0 * sample_rate as f64).round() as i64
+    ms_to_samples(latency_ms.unwrap_or(0.0) + calibration_ms, sample_rate as f64)
 }
 
 // --- lean mode --------------------------------------------------------------

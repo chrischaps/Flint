@@ -16,6 +16,7 @@
 //!   enclosing section's value.
 
 use crate::chart::Chart;
+use crate::tempo::ms_to_samples;
 use crate::conductor::Conductor;
 use flint_core::{FlintError, Result};
 use std::collections::BTreeMap;
@@ -143,7 +144,7 @@ impl ChartEval {
                 kind: pulse.kind.clone(),
                 beat: pulse.beat,
                 center_sample,
-                half_width_samples: (half_width_ms / 1000.0 * sample_rate).round() as i64,
+                half_width_samples: ms_to_samples(half_width_ms, sample_rate),
                 strength: pulse.strength,
                 direction,
             });

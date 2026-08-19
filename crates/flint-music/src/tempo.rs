@@ -7,6 +7,13 @@
 
 use crate::manifest::TempoAnchor;
 
+/// Milliseconds → whole samples, rounded — the one spelling of the crate's
+/// most-repeated conversion. Callers pass `sample_rate as f64`; keep the
+/// argument order (ms, rate) everywhere.
+pub fn ms_to_samples(ms: f64, sample_rate: f64) -> i64 {
+    (ms / 1000.0 * sample_rate).round() as i64
+}
+
 /// Snap `x` to the nearest integer when within `tol`, else leave it alone.
 /// Bar/beat boundaries land on fractional samples, so every place that floors
 /// or ceils a bar count must first snap through the half-sample tolerance.

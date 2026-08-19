@@ -17,6 +17,7 @@
 //! the designed loop; only the debounce restarts.
 
 use crate::conductor::Grid;
+use crate::tempo::ms_to_samples;
 use crate::gradient::GradientOffsets;
 use crate::ladder::{Ladder, LadderDriver, LadderParams};
 use crate::manifest::Reintegration;
@@ -281,7 +282,7 @@ impl Reintegrator {
         // jump. The gesture is measured in beats at the CURRENT tempo and
         // ends at the seam, so (for whole-beat lengths) it starts on a beat.
         let lead_samples =
-            ((self.fade_ms + MIN_LEAD_MS) / 1000.0 * sample_rate).round() as i64;
+            ms_to_samples(self.fade_ms + MIN_LEAD_MS, sample_rate);
         let now_beat = session.conductor.position_at_sample(now_suite).beat;
         let beat_samples = (session.conductor.sample_at_beat(now_beat + 1.0)
             - session.conductor.sample_at_beat(now_beat))
@@ -388,7 +389,7 @@ impl Reintegrator {
                 // Fade completes AT the seam so the cue never doubles the
                 // ensemble's sample-pure downbeat entry.
                 let fade_samples =
-                    (self.fade_ms / 1000.0 * sample_rate).round() as i64;
+                    ms_to_samples(self.fade_ms, sample_rate);
                 let stop_at_seam = Tween {
                     start_time: kira::StartTime::ClockTime(
                         session.clock_time_at_raw(seam_raw_pre - fade_samples),

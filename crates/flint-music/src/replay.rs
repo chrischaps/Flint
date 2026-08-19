@@ -19,6 +19,7 @@
 //! a chart — the milestone evidence and `--synthetic` both use them.
 
 use crate::chart_eval::{ChannelValue, ChartEval};
+use crate::tempo::ms_to_samples;
 use crate::conductor::Conductor;
 use crate::input_stream::{InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample};
 use flint_core::{FlintError, Result};
@@ -445,7 +446,7 @@ pub fn synthesize(
 
     if !matches!(profile, SyntheticProfile::Neglect) {
         let offset = match profile {
-            SyntheticProfile::LateMs(ms) => (ms / 1000.0 * sample_rate).round() as i64,
+            SyntheticProfile::LateMs(ms) => ms_to_samples(ms, sample_rate),
             _ => 0,
         };
         for w in eval.pulse_windows() {

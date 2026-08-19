@@ -9,6 +9,7 @@
 //! the tempo map because it never speaks musical time at all.
 
 use crate::conductor::Conductor;
+use crate::tempo::ms_to_samples;
 use crate::manifest::{BusDecl, SuiteManifest};
 use crate::mixer::BusMixer;
 use crate::scheduler::{FiredEvent, Scheduler};
@@ -225,7 +226,7 @@ impl SuiteSession {
             )));
         }
         let sample_rate = self.conductor.tempo().sample_rate() as f64;
-        let fade_samples = (fade_ms.max(0.0) / 1000.0 * sample_rate).round() as i64;
+        let fade_samples = ms_to_samples(fade_ms.max(0.0), sample_rate);
         let fade = kira::Tween {
             start_time: StartTime::ClockTime(self.clock_time_at_raw(seam_raw - fade_samples)),
             duration: std::time::Duration::from_secs_f64(fade_ms.max(0.0) / 1000.0),

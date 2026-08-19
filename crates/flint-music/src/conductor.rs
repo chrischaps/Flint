@@ -12,6 +12,7 @@
 //! pure arithmetic here. One source of truth, no drift.
 
 use crate::manifest::{Section, SuiteManifest};
+use crate::tempo::ms_to_samples;
 use crate::TempoMap;
 
 /// Pulses per quarter note for the `tick` readout field.
@@ -55,7 +56,7 @@ impl Conductor {
     /// is exact for offline rendering.
     pub fn new(manifest: &SuiteManifest, latency_ms: Option<f64>) -> Self {
         let latency_samples = latency_ms
-            .map(|ms| (ms / 1000.0 * manifest.sample_rate as f64).round() as i64)
+            .map(|ms| ms_to_samples(ms, manifest.sample_rate as f64))
             .unwrap_or(0);
         Self {
             tempo: TempoMap::new(manifest.tempo.clone(), manifest.sample_rate),
