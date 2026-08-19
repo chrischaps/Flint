@@ -1946,6 +1946,31 @@ impl PlayerApp {
         }
     }
 
+    /// Toggle a named debug panel, adjusting cursor capture to match its new
+    /// state; logs `absent_msg` when no such panel is registered (no music
+    /// session running). One body for the Backquote/Backslash key handlers.
+    #[cfg(feature = "debug-hud")]
+    fn toggle_named_panel(&mut self, name: &str, absent_msg: &str) {
+        let mut opened = false;
+        let mut exists = false;
+        for panel in &mut self.debug_panels {
+            if panel.name() == name {
+                exists = true;
+                panel.toggle();
+                opened = panel.is_open();
+            }
+        }
+        if exists {
+            if opened {
+                self.release_cursor();
+            } else if self.physics.has_player_entity() {
+                self.capture_cursor();
+            }
+        } else {
+            tracing::info!("{absent_msg}");
+        }
+    }
+
     /// Tear the music session down (stems stopped with a fade, capture guard
     /// dropped first inside) and give the gamepad back to player polling.
     /// Must run before `audio.clear()` in a scene transition (ADR 0017).
@@ -2384,55 +2409,19 @@ impl ApplicationHandler for PlayerApp {
                                 // debug-surface key — all F-keys are taken.
                                 #[cfg(feature = "debug-hud")]
                                 KeyCode::Backquote => {
-                                    let mut opened = false;
-                                    let mut exists = false;
-                                    for panel in &mut self.debug_panels {
-                                        if panel.name()
-                                            == music_guide_panel::MUSIC_GUIDE_PANEL
-                                        {
-                                            exists = true;
-                                            panel.toggle();
-                                            opened = panel.is_open();
-                                        }
-                                    }
-                                    if exists {
-                                        if opened {
-                                            self.release_cursor();
-                                        } else if self.physics.has_player_entity() {
-                                            self.capture_cursor();
-                                        }
-                                    } else {
-                                        tracing::info!(
-                                            "no music session running — nothing to guide"
-                                        );
-                                    }
+                                    self.toggle_named_panel(
+                                        music_guide_panel::MUSIC_GUIDE_PANEL,
+                                        "no music session running — nothing to guide",
+                                    );
                                 }
                                 // Manifest Map timeline strip: Backslash
                                 // (unbound elsewhere; Backquote is the guide's).
                                 #[cfg(feature = "debug-hud")]
                                 KeyCode::Backslash => {
-                                    let mut opened = false;
-                                    let mut exists = false;
-                                    for panel in &mut self.debug_panels {
-                                        if panel.name()
-                                            == timeline_panel::MANIFEST_MAP_PANEL
-                                        {
-                                            exists = true;
-                                            panel.toggle();
-                                            opened = panel.is_open();
-                                        }
-                                    }
-                                    if exists {
-                                        if opened {
-                                            self.release_cursor();
-                                        } else if self.physics.has_player_entity() {
-                                            self.capture_cursor();
-                                        }
-                                    } else {
-                                        tracing::info!(
-                                            "no music session running — nothing to map"
-                                        );
-                                    }
+                                    self.toggle_named_panel(
+                                        timeline_panel::MANIFEST_MAP_PANEL,
+                                        "no music session running — nothing to map",
+                                    );
                                 }
                                 KeyCode::F4 => {
                                     if let Some(renderer) = &mut self.scene_renderer {

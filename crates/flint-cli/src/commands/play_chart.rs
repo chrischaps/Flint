@@ -11,8 +11,8 @@
 
 use anyhow::{Context, Result};
 use flint_music::chart_session::{
-    judgment_offset_samples, latest_calibration_ms, latest_latency_ms, parse_lean_mode,
-    ChartSession, ChartSessionConfig, Tick,
+    judgment_offset_samples, parse_lean_mode, resolve_timing_offsets, ChartSession,
+    ChartSessionConfig, Tick,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -89,32 +89,16 @@ pub fn run(args: PlayChartArgs) -> Result<()> {
 }
 
 /// Resolve offsets, open the library session, and attach live capture —
-/// printing every startup line exactly where it always printed.
+/// printing every startup line exactly where it always printed. The shared
+/// bring-up lives in `flint_music::chart_session::resolve_timing_offsets` +
+/// `flint_input_capture::attach_session_input` (one wording for the CLI and
+/// the player); this front end just prints the lines.
 fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
-    // --- offsets ---------------------------------------------------------
-    let latency_ms = match latest_latency_ms(base_dir) {
-        Some((file, ms)) => {
-            println!("measured output latency: {ms:.1} ms (compensating; from {file})");
-            Some(ms)
-        }
-        None => {
-            println!(
-                "measured output latency: NONE ON RECORD — run spikes/latency_harness \
-                 and commit its log to logs/latency/"
-            );
-            None
-        }
-    };
-    let calibration_ms = match latest_calibration_ms(base_dir) {
-        Some((file, ms)) => {
-            println!("tap calibration: {ms:+.1} ms (from {file})");
-            ms
-        }
-        None => {
-            println!("tap calibration: none on record (run `flint calibrate`)");
-            0.0
-        }
-    };
+    let offsets = resolve_timing_offsets(base_dir);
+    for n in &offsets.notices {
+        println!("{n}");
+    }
+    let (latency_ms, calibration_ms) = (offsets.latency_ms, offsets.calibration_ms);
 
     let cfg = ChartSessionConfig {
         manifest: PathBuf::from(&args.common.manifest),
@@ -143,51 +127,8 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
         judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
     let verb_map = flint_input_capture::VerbMap::parse(&args.input_map)
         .with_context(|| format!("parsing input map '{}'", args.input_map))?;
-    let capture = flint_input_capture::spawn_with_rumble(
-        session.bridge(),
-        flint_input_capture::CaptureConfig {
-            offset_samples,
-            verb_map,
-            ..Default::default()
-        },
-    );
-    match capture {
-        Ok((handle, rx, rumble_tx)) => {
-            match verb_map {
-                flint_input_capture::VerbMap::Prototype => println!(
-                    "gamepad capture running (left stick = lean, South/RT = pulse)"
-                ),
-                flint_input_capture::VerbMap::Full => println!(
-                    "gamepad capture running (full map: L-stick = lean, R-stick = sway/flick, \
-                     triggers = pressure/press, South = pulse)"
-                ),
-            }
-            // The backend can be alive with zero devices (ADR 0011's
-            // silent failure — e.g. a mapper presenting the pad as
-            // keyboard/mouse). Make that loud BEFORE the session.
-            match flint_input_capture::connected_gamepads() {
-                Ok(pads) if pads.is_empty() => {
-                    println!(
-                        "  *** WARNING: NO GAMEPADS VISIBLE — the session will receive no \
-                         input.\n  *** On Windows only XInput-class devices are seen; check \
-                         the controller/mapper mode (e.g. Legion Space)."
-                    );
-                }
-                Ok(pads) => println!("  gamepad(s): {}", pads.join(", ")),
-                Err(_) => {}
-            }
-            session.set_input(rx, Box::new(handle));
-            // Haptics (ADR 0026): the session's decision layer feeds the
-            // capture thread's rumble engine through this sink. Inert
-            // config = no sink, no driver evaluation, no motor writes.
-            if session.haptics_active() {
-                println!("haptics: rumble armed (entrainment tick/thump; r+Enter reloads)");
-                session.set_haptic_sink(flint_input_capture::rumble::haptic_sink(rumble_tx));
-            }
-        }
-        Err(e) => {
-            println!("gamepad capture unavailable ({e}); playing without input");
-        }
+    for n in flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples) {
+        println!("{n}");
     }
     Ok(session)
 }
@@ -242,17 +183,7 @@ fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
         "{} events; receipt median {:.3} ms, driver median {:.3} ms",
         report.events, report.receipt_median_ms, report.driver_median_ms
     );
-    let dir = base_dir.join("logs/latency");
-    std::fs::create_dir_all(&dir).context("creating logs/latency")?;
-    let host = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "host".into());
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("input-granularity-{host}-{epoch}.toml"));
-    std::fs::write(&path, report.to_toml()).with_context(|| format!("writing {path:?}"))?;
+    let path = super::write_latency_report(base_dir, "input-granularity", &report.to_toml())?;
     println!("wrote {}", path.display());
     Ok(())
 }

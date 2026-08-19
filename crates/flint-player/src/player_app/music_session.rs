@@ -15,9 +15,8 @@
 
 use anyhow::{anyhow, Result};
 use flint_audio::engine::AudioEngine;
-use flint_input_capture::CaptureConfig;
 use flint_music::chart_session::{
-    judgment_offset_samples, latest_calibration_ms, latest_latency_ms, parse_lean_mode,
+    judgment_offset_samples, parse_lean_mode,
     ChartSession, ChartSessionConfig,
 };
 use flint_music::{InputEvent, Tick, VisualFrame};
@@ -186,26 +185,15 @@ impl MusicSession {
             .unwrap_or(false);
 
         // Timing offsets from the committed logs in <base_dir>/logs/latency/.
-        let latency_ms = match latest_latency_ms(base_dir) {
-            Some((file, ms)) => {
-                println!("[music] measured output latency: {ms:.1} ms (from {file})");
-                Some(ms)
-            }
-            None => {
-                println!("[music] measured output latency: NONE ON RECORD");
-                None
-            }
-        };
-        let calibration_ms = match latest_calibration_ms(base_dir) {
-            Some((file, ms)) => {
-                println!("[music] tap calibration: {ms:+.1} ms (from {file})");
-                ms
-            }
-            None => {
-                println!("[music] tap calibration: none on record");
-                0.0
-            }
-        };
+        // Shared resolver (one wording with the CLI harness); operator-facing
+        // session diagnostics stay on println deliberately — tracing's
+        // default level filters info, and the Phase-3 double-failure lesson
+        // is that input/timing liveness must be LOUD.
+        let offsets = flint_music::chart_session::resolve_timing_offsets(base_dir);
+        for n in &offsets.notices {
+            println!("[music] {n}");
+        }
+        let (latency_ms, calibration_ms) = (offsets.latency_ms, offsets.calibration_ms);
 
         let cfg = ChartSessionConfig {
             manifest: base_dir.join(&manifest),
@@ -244,40 +232,9 @@ impl MusicSession {
                 .map_err(|e| anyhow!("music_session component: {e}"))?,
             None => flint_input_capture::VerbMap::default(),
         };
-        match flint_input_capture::spawn_with_rumble(
-            session.bridge(),
-            CaptureConfig {
-                offset_samples,
-                verb_map,
-                ..Default::default()
-            },
-        ) {
-            Ok((handle, rx, rumble_tx)) => {
-                println!(
-                    "[music] gamepad capture running ({} map)",
-                    verb_map.name()
-                );
-                match flint_input_capture::connected_gamepads() {
-                    Ok(pads) if pads.is_empty() => println!(
-                        "[music] *** WARNING: NO GAMEPADS VISIBLE — the session will receive \
-                         no input.\n[music] *** On Windows only XInput-class devices are seen; \
-                         check the controller/mapper mode."
-                    ),
-                    Ok(pads) => println!("[music] gamepad(s): {}", pads.join(", ")),
-                    Err(_) => {}
-                }
-                session.set_input(rx, Box::new(handle));
-                // Haptics (ADR 0026): decision layer in the session, motor
-                // writes on the capture thread. Inert config = fully off.
-                if session.haptics_active() {
-                    println!("[music] haptics: rumble armed (entrainment tick/thump)");
-                    session
-                        .set_haptic_sink(flint_input_capture::rumble::haptic_sink(rumble_tx));
-                }
-            }
-            Err(e) => {
-                eprintln!("[music] gamepad capture unavailable ({e}) — playing without input");
-            }
+        for n in flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples)
+        {
+            println!("[music] {n}");
         }
 
         Ok(Some(Self {
@@ -350,6 +307,12 @@ impl MusicSession {
             self.last_skew_check = Instant::now();
             let mut skew_ms = self.session.max_stem_skew() * 1000.0;
             if skew_ms > 0.5 {
+                // NOT a no-op: max_stem_skew() live-queries kira playback
+                // positions, so this second call is a genuine re-read taken
+                // one instant later. A reporting transient (exactly one
+                // audio-callback buffer of handle-position staleness, ADR
+                // 0017) collapses to ~0 on the re-read and the min() keeps
+                // the smaller value; real de-sync survives both reads.
                 skew_ms = skew_ms.min(self.session.max_stem_skew() * 1000.0);
                 if skew_ms > 0.5 {
                     tracing::warn!("stem skew {skew_ms:.3} ms survived a re-read");

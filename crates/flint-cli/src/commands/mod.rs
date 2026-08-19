@@ -27,3 +27,27 @@ pub mod spike_rumble;
 pub mod replay_chart;
 pub mod validate;
 pub mod validate_suite;
+
+/// Write a report into `<base_dir>/logs/latency/` as
+/// `<prefix>-<host>-<epoch>.toml` — the shared naming scheme the offset
+/// readers sort lexicographically (name embeds host + epoch, so max =
+/// newest). One writer for calibrate, spike-rumble, and the input spike.
+pub fn write_latency_report(
+    base_dir: &std::path::Path,
+    prefix: &str,
+    contents: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    use anyhow::Context;
+    let dir = base_dir.join("logs/latency");
+    std::fs::create_dir_all(&dir).context("creating logs/latency")?;
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "host".into());
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("{prefix}-{host}-{epoch}.toml"));
+    std::fs::write(&path, contents).with_context(|| format!("writing {path:?}"))?;
+    Ok(path)
+}

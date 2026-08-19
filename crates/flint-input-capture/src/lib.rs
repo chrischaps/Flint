@@ -68,6 +68,18 @@ impl VerbMap {
             Self::Full => "full",
         }
     }
+
+    /// Human-readable control summary for startup diagnostics (one wording
+    /// for every front end).
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Prototype => "left stick = lean, South/RT = pulse",
+            Self::Full => {
+                "full map: L-stick = lean, R-stick = sway/flick, \
+                 triggers = pressure/press, South = pulse"
+            }
+        }
+    }
 }
 
 /// Flick detector shape (Full map): the stick must sit quiet, then cross
@@ -184,6 +196,73 @@ pub fn spawn_with_rumble(
         rx,
         rumble_tx,
     ))
+}
+
+/// The live-session bring-up shared by every front end (CLI harness and
+/// player): spawn capture with rumble, announce the verb map, surface the
+/// zero-devices condition loudly (ADR 0011's silent-failure lesson — this
+/// warning exists because a dead pad once read as a design failure), attach
+/// the event stream, and wire the haptic sink when the session's config is
+/// active. Capture failure is non-fatal: the session plays without input.
+///
+/// Returns notice lines; the front end prints them through its own
+/// sink/prefix (CLI bare, player `[music] `-prefixed). Lines never embed
+/// newlines so prefixes apply cleanly.
+pub fn attach_session_input(
+    session: &mut flint_music::chart_session::ChartSession,
+    verb_map: VerbMap,
+    offset_samples: i64,
+) -> Vec<String> {
+    let mut notices = Vec::new();
+    match spawn_with_rumble(
+        session.bridge(),
+        CaptureConfig {
+            offset_samples,
+            verb_map,
+            ..Default::default()
+        },
+    ) {
+        Ok((handle, rx, rumble_tx)) => {
+            notices.push(format!(
+                "gamepad capture running ({})",
+                verb_map.description()
+            ));
+            // The backend can be alive with zero devices (ADR 0011's silent
+            // failure — e.g. a mapper presenting the pad as keyboard/mouse).
+            // Make that loud BEFORE the session.
+            match connected_gamepads() {
+                Ok(pads) if pads.is_empty() => {
+                    notices.push(
+                        "*** WARNING: NO GAMEPADS VISIBLE — the session will receive no input."
+                            .to_string(),
+                    );
+                    notices.push(
+                        "*** On Windows only XInput-class devices are seen; check the \
+                         controller/mapper mode (e.g. Legion Space)."
+                            .to_string(),
+                    );
+                }
+                Ok(pads) => notices.push(format!("gamepad(s): {}", pads.join(", "))),
+                Err(_) => {}
+            }
+            session.set_input(rx, Box::new(handle));
+            // Haptics (ADR 0026): the session's decision layer feeds the
+            // capture thread's rumble engine through this sink. Inert
+            // config = no sink, no driver evaluation, no motor writes.
+            if session.haptics_active() {
+                notices.push(
+                    "haptics: rumble armed (entrainment tick/thump; reload applies)".to_string(),
+                );
+                session.set_haptic_sink(rumble::haptic_sink(rumble_tx));
+            }
+        }
+        Err(e) => {
+            notices.push(format!(
+                "gamepad capture unavailable ({e}); playing without input"
+            ));
+        }
+    }
+    notices
 }
 
 /// Names of gamepads the backend can currently see. Empty means events will

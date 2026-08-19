@@ -75,6 +75,54 @@ pub fn latest_calibration_ms(base_dir: &Path) -> Option<(String, f64)> {
     Some((name, ms))
 }
 
+/// Resolved judgment-timing offsets plus the notice lines describing where
+/// they came from. One resolver for every live front end (CLI harness and
+/// player) so their startup diagnostics can never drift apart again; each
+/// front end prints the lines through its own sink/prefix.
+pub struct TimingOffsets {
+    pub latency_ms: Option<f64>,
+    pub calibration_ms: f64,
+    pub notices: Vec<String>,
+}
+
+/// Read the newest committed latency measurement and tap calibration from
+/// `<base_dir>/logs/latency/` (see [`latest_latency_ms`] /
+/// [`latest_calibration_ms`]) and describe the outcome.
+pub fn resolve_timing_offsets(base_dir: &Path) -> TimingOffsets {
+    let mut notices = Vec::new();
+    let latency_ms = match latest_latency_ms(base_dir) {
+        Some((file, ms)) => {
+            notices.push(format!(
+                "measured output latency: {ms:.1} ms (compensating; from {file})"
+            ));
+            Some(ms)
+        }
+        None => {
+            notices.push(
+                "measured output latency: NONE ON RECORD — run spikes/latency_harness \
+                 and commit its log to logs/latency/"
+                    .to_string(),
+            );
+            None
+        }
+    };
+    let calibration_ms = match latest_calibration_ms(base_dir) {
+        Some((file, ms)) => {
+            notices.push(format!("tap calibration: {ms:+.1} ms (from {file})"));
+            ms
+        }
+        None => {
+            notices.push("tap calibration: none on record (run `flint calibrate`)".to_string());
+            0.0
+        }
+    };
+    TimingOffsets {
+        latency_ms,
+        calibration_ms,
+        notices,
+    }
+}
+
 fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
     let dir = base_dir.join("logs/latency");
     let mut names: Vec<String> = std::fs::read_dir(&dir)

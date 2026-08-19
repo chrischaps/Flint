@@ -131,25 +131,12 @@ pub fn run(args: CalibrateArgs) -> Result<()> {
     };
     println!("calibration: median {median_ms:+.1} ms, MAD {mad_ms:.1} ms over {} taps", errors_ms.len());
 
-    let dir = base_dir.join("logs/latency");
-    std::fs::create_dir_all(&dir).context("creating logs/latency")?;
-    let host = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "host".into());
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("calibration-{host}-{epoch}.toml"));
     let latency_file = latency.map(|(f, _)| f).unwrap_or_else(|| "none".into());
-    std::fs::write(
-        &path,
-        format!(
-            "# Tap-to-beat calibration (flint calibrate)\n[calibration]\nmedian_ms = {median_ms:.3}\nmad_ms = {mad_ms:.3}\ntaps = {}\nlatency_file_used = \"{latency_file}\"\n",
-            errors_ms.len()
-        ),
-    )
-    .with_context(|| format!("writing {path:?}"))?;
+    let contents = format!(
+        "# Tap-to-beat calibration (flint calibrate)\n[calibration]\nmedian_ms = {median_ms:.3}\nmad_ms = {mad_ms:.3}\ntaps = {}\nlatency_file_used = \"{latency_file}\"\n",
+        errors_ms.len()
+    );
+    let path = super::write_latency_report(&base_dir, "calibration", &contents)?;
     println!("wrote {}", path.display());
     Ok(())
 }
