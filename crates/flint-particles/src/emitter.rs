@@ -38,6 +38,10 @@ pub struct EmitterConfig {
     pub color_start: [f32; 4],
     pub color_end: [f32; 4],
     pub texture: String,
+    /// Velocity-aligned billboard stretch (s): quad half-length grows by
+    /// |velocity| * stretch / 2 along the screen-projected velocity.
+    /// 0 disables (normal camera-facing quads). Rain streaks: ~0.03.
+    pub stretch: f32,
     pub frames_x: u32,
     pub frames_y: u32,
     pub animate_frames: bool,
@@ -69,6 +73,7 @@ impl Default for EmitterConfig {
             color_start: [1.0, 1.0, 1.0, 1.0],
             color_end: [1.0, 1.0, 1.0, 0.0],
             texture: String::new(),
+            stretch: 0.0,
             frames_x: 1,
             frames_y: 1,
             animate_frames: false,
@@ -138,6 +143,9 @@ impl EmitterConfig {
             if let Some(s) = v.as_str() {
                 config.texture = s.to_string();
             }
+        }
+        if let Some(v) = table.get("stretch") {
+            config.stretch = toml_f32(v).unwrap_or(config.stretch).max(0.0);
         }
         if let Some(v) = table.get("frames_x") {
             config.frames_x = v.as_integer().unwrap_or(1).max(1) as u32;

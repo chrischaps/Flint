@@ -418,6 +418,14 @@ enum Commands {
         /// Optional input config overlay path
         #[arg(long)]
         input_config: Option<String>,
+
+        /// Initial music bus volume (linear, 0.0 = muted, 1.0 = full)
+        #[arg(long, default_value_t = 1.0)]
+        music_volume: f64,
+
+        /// Initial SFX bus volume (linear, 0.0 = muted, 1.0 = full)
+        #[arg(long, default_value_t = 1.0)]
+        sfx_volume: f64,
     },
 
     /// Preview a 3D model file (GLB/glTF) with orbit camera
@@ -647,6 +655,20 @@ enum Commands {
         /// Kuwahara anisotropy strength (0=isotropic, 1=full; default: 1.0)
         #[arg(long)]
         kuwahara_anisotropy: Option<f32>,
+
+        /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
+        /// 5=underwater)
+        #[arg(long)]
+        render_mode: Option<u32>,
+
+        /// Render mode blend strength 0..1 (default: 0.0)
+        #[arg(long)]
+        mode_mix: Option<f32>,
+
+        /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale, mask style,
+        /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
+        #[arg(long, value_parser = parse_vec4)]
+        mode_params: Option<[f32; 4]>,
     },
 }
 
@@ -658,6 +680,24 @@ fn parse_debug_mode(s: &str) -> Result<String, String> {
             s
         )),
     }
+}
+
+fn parse_vec4(s: &str) -> Result<[f32; 4], String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 4 {
+        return Err(format!(
+            "expected 4 comma-separated values, got {}",
+            parts.len()
+        ));
+    }
+    let mut out = [0.0f32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        out[i] = p
+            .trim()
+            .parse::<f32>()
+            .map_err(|e| format!("invalid number '{}': {}", p, e))?;
+    }
+    Ok(out)
 }
 
 fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
@@ -831,11 +871,15 @@ fn main() -> Result<()> {
             schemas,
             fullscreen,
             input_config,
+            music_volume,
+            sfx_volume,
         } => play::run(play::PlayArgs {
             scene,
             schemas,
             fullscreen,
             input_config,
+            music_volume,
+            sfx_volume,
         }),
         Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),
@@ -970,6 +1014,9 @@ fn main() -> Result<()> {
             kuwahara_sharpness,
             kuwahara_hardness,
             kuwahara_anisotropy,
+            render_mode,
+            mode_mix,
+            mode_params,
         } => render::run(render::RenderArgs {
             scene,
             output,
@@ -1008,6 +1055,9 @@ fn main() -> Result<()> {
             kuwahara_sharpness,
             kuwahara_hardness,
             kuwahara_anisotropy,
+            render_mode,
+            mode_mix,
+            mode_params,
         }),
     }
 }

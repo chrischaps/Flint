@@ -49,6 +49,9 @@ pub struct RenderArgs {
     pub kuwahara_sharpness: Option<f32>,
     pub kuwahara_hardness: Option<f32>,
     pub kuwahara_anisotropy: Option<f32>,
+    pub render_mode: Option<u32>,
+    pub mode_mix: Option<f32>,
+    pub mode_params: Option<[f32; 4]>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -256,6 +259,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
         if let Some(range) = args.dof_range {
             pp_config.dof_focus_range = range;
+        }
+        if let Some(mode) = args.render_mode {
+            pp_config.render_mode = mode;
+            // A mode with no explicit mix defaults to fully torn through.
+            pp_config.mode_mix = args.mode_mix.unwrap_or(1.0);
+        }
+        if let Some(mix) = args.mode_mix {
+            pp_config.mode_mix = mix;
+        }
+        if let Some(params) = args.mode_params {
+            pp_config.mode_params = params;
         }
         if let Some(density) = args.volumetric_density {
             pp_config.volumetric_density = density;

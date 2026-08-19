@@ -116,6 +116,7 @@ impl ScriptSystem {
             actions_just_pressed: snapshot_actions(input, false),
             actions_just_released: snapshot_actions_released(input),
             action_values: snapshot_action_values(input),
+            any_just_pressed: input.any_just_pressed(),
             mouse_delta: input.raw_mouse_delta(),
             touches,
             touch_just_started,
@@ -296,6 +297,31 @@ impl ScriptSystem {
     pub fn take_audio_overrides(&mut self) -> Option<f32> {
         let mut c = self.engine.ctx.lock().unwrap();
         c.audio_lowpass_cutoff_override.take()
+    }
+
+    /// Take the cursor capture request set by scripts this frame (clears it)
+    pub fn take_cursor_capture_override(&mut self) -> Option<bool> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.cursor_captured_override.take()
+    }
+
+    /// Take the fog color override set by scripts this frame (clears it)
+    pub fn take_fog_color_override(&mut self) -> Option<[f32; 3]> {
+        let mut c = self.engine.ctx.lock().unwrap();
+        c.postprocess_fog_color_override.take()
+    }
+
+    /// Take the reality-tear render mode overrides set by scripts this
+    /// frame (clears them): ((mode, mix), mode_params).
+    #[allow(clippy::type_complexity)]
+    pub fn take_render_mode_overrides(
+        &mut self,
+    ) -> (Option<(u32, f32)>, Option<[f32; 4]>) {
+        let mut c = self.engine.ctx.lock().unwrap();
+        (
+            c.postprocess_render_mode_override.take(),
+            c.postprocess_mode_params_override.take(),
+        )
     }
 
     /// Set up the script system's scripts directory from the scene path

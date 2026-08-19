@@ -123,6 +123,7 @@ For periodic bursts (fountain, heartbeat), set `looping = true` with a `duration
 | `color_start` | vec4 | [1,1,1,1] | RGBA color at birth |
 | `color_end` | vec4 | [1,1,1,0] | RGBA color at death |
 | `texture` | string | "" | Sprite texture (empty = white dot) |
+| `stretch` | f32 | 0.0 | Velocity-aligned billboard stretch, in seconds |
 | `frames_x` | i32 | 1 | Sprite sheet columns |
 | `frames_y` | i32 | 1 | Sprite sheet rows |
 | `animate_frames` | bool | false | Auto-advance frames over lifetime |
@@ -230,6 +231,47 @@ color_end = [1.0, 1.0, 0.9, 0.0]
 shape = "box"
 shape_extents = [2.0, 1.0, 2.0]
 ```
+
+### Rain
+
+Rain is the case `stretch` exists for. A camera-facing quad makes rain look
+like falling confetti; a velocity-aligned one makes it look like rain.
+
+```toml
+emission_rate = 4000.0
+lifetime = 1.2
+gravity = [0.6, -14.0, 0.0]      # tilt X/Z to slant with the wind
+speed_min = 0.0
+speed_max = 0.5
+size_start = 0.012
+size_end = 0.012
+color_start = [0.72, 0.78, 0.86, 0.5]
+color_end = [0.72, 0.78, 0.86, 0.0]
+texture = "textures/rain_drop.png"
+stretch = 0.03                   # elongate along on-screen motion
+shape = "box"
+shape_extents = [14.0, 0.5, 14.0]
+world_space = true
+```
+
+`stretch` is in seconds: the quad elongates along its on-screen motion by
+`|velocity| * stretch`, so faster drops draw longer streaks with no extra
+authoring. Keep it small — 0.03 already reads as heavy rain, and large values
+smear particles into ribbons.
+
+Practical notes:
+
+- Attach the emitter to something that follows the camera and reposition it
+  each frame. Rain only needs to exist where it can be seen.
+- Budget properly: `emission_rate × lifetime` is roughly how many are alive.
+  The example is ~4800, under the 6000 cap.
+- Slant the fall by tilting the `gravity` vector rather than by giving
+  particles horizontal velocity — it stays coherent as gusts change.
+- Particles are **unlit**. Dim `color_start`/`color_end` to match your scene's
+  light, or night rain will glow.
+
+Particle textures are resolved against the scene directory first, then its
+parent, and are loaded at scene load.
 
 ## Further Reading
 

@@ -1,0 +1,8 @@
+[component.bone_probe]
+description = "Publishes a skeleton joint's model-local position into readable fields every frame (written by the player after the animation update). Scripts read x/y/z via get_field — e.g. a first-person camera following an 'eye' joint so pose motion is felt in the view. Requires skeleton + animator on the same entity."
+
+[component.bone_probe.fields]
+joint = { type = "string", description = "Name of the joint to probe", default = "" }
+x = { type = "float", description = "RUNTIME: model-local joint X", default = 0.0 }
+y = { type = "float", description = "RUNTIME: model-local joint Y", default = 0.0 }
+z = { type = "float", description = "RUNTIME: model-local joint Z", default = 0.0 }

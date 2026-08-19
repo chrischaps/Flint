@@ -12,6 +12,7 @@ mod error;
 pub mod events;
 mod hash;
 mod id;
+pub mod ocean;
 pub mod spline;
 pub mod toml_util;
 mod types;

@@ -38,6 +38,16 @@ pub const PARTICLE_EMITTER: &str = "particle_emitter";
 // --- Terrain ---
 pub const TERRAIN: &str = "terrain";
 
+// --- Ocean ---
+pub const OCEAN: &str = "ocean";
+pub const OCEAN_CONTACT: &str = "ocean_contact";
+
+// --- Skeletal probes ---
+pub const BONE_PROBE: &str = "bone_probe";
+
+// --- Procedural sky ---
+pub const SKY: &str = "sky";
+
 // --- Splines ---
 pub const SPLINE: &str = "spline";
 pub const SPLINE_DATA: &str = "spline_data";

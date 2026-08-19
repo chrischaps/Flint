@@ -210,6 +210,7 @@ impl ParticleSync {
                     p,
                     state.config.frames_x,
                     state.config.frames_y,
+                    state.config.stretch,
                 ));
             }
             self.instance_ranges.push((

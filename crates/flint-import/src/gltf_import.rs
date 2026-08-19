@@ -378,12 +378,16 @@ fn extract_skeletons(
             let parent = find_parent_joint(document, node.index(), &node_to_joint);
 
             let ibm = ibms.get(joint_idx).copied().unwrap_or_else(identity_4x4);
+            let (rest_translation, rest_rotation, rest_scale) = node.transform().decomposed();
 
             joints.push(ImportedJoint {
                 name: joint_name,
                 index: joint_idx,
                 parent,
                 inverse_bind_matrix: ibm,
+                rest_translation,
+                rest_rotation,
+                rest_scale,
             });
         }
 

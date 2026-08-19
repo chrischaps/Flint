@@ -29,6 +29,8 @@
 - [Constraints](concepts/constraints.md)
 - [Assets](concepts/assets.md)
 - [Rendering](concepts/rendering.md)
+- [Sky](concepts/sky.md)
+- [Ocean](concepts/ocean.md)
 - [Post-Processing](concepts/post-processing.md)
 - [Audio](concepts/audio.md)
 - [Animation](concepts/animation.md)

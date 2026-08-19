@@ -7,14 +7,16 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-/// GPU instance data for a single particle — matches WGSL struct layout.
-/// 48 bytes, 16-byte aligned (3 x vec4).
+/// GPU instance data for a single particle — matches WGSL struct layout
+/// AND flint-particles' `ParticleInstance` (the player casts between them).
+/// 64 bytes, 16-byte aligned (4 x vec4).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct ParticleInstanceGpu {
     pub pos_size: [f32; 4],       // xyz = position, w = size
     pub color: [f32; 4],          // rgba
     pub rotation_frame: [f32; 4], // x = rotation, y = frame, z = frames_x, w = frames_y
+    pub vel_stretch: [f32; 4],    // xyz = velocity * stretch, w > 0 = enabled
 }
 
 /// Data for one emitter's particle draw, provided by the particle system
