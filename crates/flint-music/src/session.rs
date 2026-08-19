@@ -106,6 +106,16 @@ impl SuiteSession {
             .tempo
             .first()
             .ok_or_else(|| FlintError::AudioError("manifest has no tempo anchors".into()))?;
+        // Defensive: the validator rejects bpm <= 0 (coded issue), but a
+        // caller can start an unvalidated manifest, and 0.0 here would
+        // saturate the float→u64 cast to u64::MAX preroll — an unbounded
+        // silent wait instead of an error.
+        if !(anchor.bpm.is_finite() && anchor.bpm > 0.0) {
+            return Err(FlintError::AudioError(format!(
+                "first tempo anchor bpm {} is not positive/finite (validate the manifest)",
+                anchor.bpm
+            )));
+        }
         let preroll_samples =
             (PREROLL_BEATS * manifest.sample_rate as f64 * 60.0 / anchor.bpm).round() as u64;
 

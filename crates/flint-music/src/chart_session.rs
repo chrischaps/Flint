@@ -125,16 +125,44 @@ pub fn resolve_timing_offsets(base_dir: &Path) -> TimingOffsets {
 
 fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
     let dir = base_dir.join("logs/latency");
-    let mut names: Vec<String> = std::fs::read_dir(&dir)
-        .ok()?
+    // A missing directory is the legitimate "nothing on record" case; any
+    // other failure must be LOUD — a corrupt calibration file silently
+    // reading as "no calibration" would run the session with a wrong 0 ms
+    // offset, corrupting judgment (and any [H] verdict on top of it).
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            tracing::warn!("cannot read {}: {err} — treating as no record", dir.display());
+            return None;
+        }
+    };
+    let mut names: Vec<String> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.starts_with(prefix) && n.ends_with(".toml"))
         .collect();
     names.sort();
-    let name = names.pop()?;
-    let value: toml::Value = std::fs::read_to_string(dir.join(&name)).ok()?.parse().ok()?;
-    Some((name, value))
+    // Newest first; an unreadable/unparseable file is warned about by name
+    // and skipped, falling back to the next-newest record rather than
+    // silently pretending nothing exists.
+    while let Some(name) = names.pop() {
+        let path = dir.join(&name);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(err) => {
+                tracing::warn!("cannot read {}: {err} — skipping, trying next-newest", path.display());
+                continue;
+            }
+        };
+        match text.parse::<toml::Value>() {
+            Ok(value) => return Some((name, value)),
+            Err(err) => {
+                tracing::warn!("cannot parse {}: {err} — skipping, trying next-newest", path.display());
+            }
+        }
+    }
+    None
 }
 
 /// Total judgment offset (measured output latency + tap calibration) in
@@ -1765,5 +1793,42 @@ impl ChartSession {
             ));
         }
         Ok(notices)
+    }
+}
+
+#[cfg(test)]
+mod newest_toml_tests {
+    use super::*;
+
+    /// A corrupt newest record must fall back to the next-newest, never
+    /// silently read as "no record" (WS3.1 — a silent 0 ms offset corrupts
+    /// judgment).
+    #[test]
+    fn corrupt_newest_falls_back_to_next() {
+        let dir = std::env::temp_dir().join(format!(
+            "flint-music-newest-toml-{}",
+            std::process::id()
+        ));
+        let latency = dir.join("logs/latency");
+        std::fs::create_dir_all(&latency).unwrap();
+        std::fs::write(
+            latency.join("calibration-a-1.toml"),
+            "[calibration]\nmedian_ms = -17.6\n",
+        )
+        .unwrap();
+        std::fs::write(latency.join("calibration-b-2.toml"), "not [valid toml").unwrap();
+
+        let got = latest_calibration_ms(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let (file, ms) = got.expect("must fall back to the readable record");
+        assert_eq!(file, "calibration-a-1.toml");
+        assert!((ms - (-17.6)).abs() < 1e-9);
+    }
+
+    /// No directory at all is the ordinary "nothing on record" case.
+    #[test]
+    fn missing_dir_is_none() {
+        let dir = std::env::temp_dir().join("flint-music-newest-toml-nonexistent");
+        assert!(latest_calibration_ms(&dir).is_none());
     }
 }

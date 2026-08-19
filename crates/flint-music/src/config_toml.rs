@@ -37,7 +37,18 @@ pub(crate) fn parse_versioned(
     let version = match policy {
         VersionPolicy::Required => version.ok_or_else(|| bad(name, "schema_version"))?,
         VersionPolicy::DefaultZeroStrict => {
-            let v = version.unwrap_or(0);
+            let v = match version {
+                Some(v) => v,
+                None => {
+                    // ADR 0040: absent still parses as 0 (backward compatible
+                    // with every committed config) but is no longer silent —
+                    // an unversioned or typo'd key used to be untraceable.
+                    tracing::warn!(
+                        "{name}: no `schema_version` key — assuming 0 (declare `schema_version = 0`)"
+                    );
+                    0
+                }
+            };
             if v != 0 {
                 return Err(FlintError::ValidationError(format!(
                     "{name}: unknown schema_version {v}"

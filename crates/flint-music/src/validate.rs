@@ -261,12 +261,14 @@ pub fn validate_chart(c: &Chart, m: &SuiteManifest) -> Vec<Issue> {
     let arity: HashMap<&str, usize> = CHANNELS.iter().copied().collect();
     let mut last_beat: HashMap<&str, f64> = HashMap::new();
     for k in &c.curves {
-        match arity.get(k.channel.as_str()) {
+        // get_key_value: the map key IS the 'static vocabulary name, so the
+        // later `last_beat` insert needs no second lookup (and no unwrap).
+        match arity.get_key_value(k.channel.as_str()) {
             None => issues.push(Issue::new(
                 "UnknownChannel",
                 format!("channel '{}' is not in the v0 vocabulary", k.channel),
             )),
-            Some(&n) => {
+            Some((&name, &n)) => {
                 if k.value.len() != n {
                     issues.push(Issue::new(
                         "ChannelArityMismatch",
@@ -299,12 +301,6 @@ pub fn validate_chart(c: &Chart, m: &SuiteManifest) -> Vec<Issue> {
                         ));
                     }
                 }
-                // borrow the 'static channel name from the vocabulary table
-                let name = CHANNELS
-                    .iter()
-                    .find(|(n, _)| *n == k.channel.as_str())
-                    .map(|(n, _)| *n)
-                    .unwrap();
                 last_beat.insert(name, k.beat);
             }
         }

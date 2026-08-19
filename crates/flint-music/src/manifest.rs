@@ -75,7 +75,10 @@ impl SuiteManifest {
         let title = string(suite, "title")?;
 
         let audio = table(&root, "audio")?;
-        let sample_rate = int_in(audio, "sample_rate")? as u32;
+        // Checked, not `as`: a negative or >u32::MAX value would silently
+        // wrap into a plausible-looking rate.
+        let sample_rate = u32::try_from(int_in(audio, "sample_rate")?)
+            .map_err(|_| bad("audio.sample_rate (out of range for u32)"))?;
 
         let mut tempo = Vec::new();
         for (i, v) in array(&root, "tempo")?.iter().enumerate() {

@@ -137,7 +137,15 @@ pub fn render_offline_with(
     }
 
     let preroll = session.preroll_samples() as i64;
-    let total_frames = (preroll + cfg.duration_samples) as usize;
+    // Checked width/sign moves: a negative duration or a preroll past
+    // usize would otherwise panic later at the drain range (or wrap the
+    // buffer size) instead of failing with a cause.
+    let total_frames = usize::try_from(preroll + cfg.duration_samples).map_err(|_| {
+        FlintError::AudioError(format!(
+            "render span out of range: preroll {preroll} + duration {}",
+            cfg.duration_samples
+        ))
+    })?;
     let mut out = Vec::with_capacity(total_frames * 2);
     let mut chunk = vec![0.0f32; cfg.chunk_frames * 2];
 
