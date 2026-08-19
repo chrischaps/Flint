@@ -67,6 +67,23 @@ pub struct ClockBridge {
     inner: Arc<Mutex<BridgeInner>>,
 }
 
+/// Lock the bridge state, recovering from poisoning (ADR 0039): the inner
+/// state is a self-repairing observation buffer (a bad fit refits within
+/// REFIT_EVERY ticks), so the last-written state is safe to reuse after a
+/// panicking writer — propagating would panic the 1 kHz capture thread and
+/// the per-frame session loop on every later call. Logs once per process.
+fn lock_or_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::error!(
+                "clock-bridge mutex poisoned; recovering with last state (ADR 0039)"
+            );
+        }
+        poisoned.into_inner()
+    })
+}
+
 impl ClockBridge {
     pub fn new(sample_rate: u32) -> Self {
         Self {
@@ -84,7 +101,7 @@ impl ClockBridge {
     /// session clock, once per loop tick, with `Instant::now()` taken as
     /// close to the `clock_sample()` read as possible.
     pub fn observe(&self, at: Instant, clock_sample: i64) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock_or_recover(&self.inner);
         let t = at.duration_since(inner.epoch).as_secs_f64();
         if let Some(&(last_t, last_s)) = inner.pairs.back() {
             if t - last_t < MIN_PAIR_SPACING {
@@ -118,14 +135,14 @@ impl ClockBridge {
     /// The suite clock sample at a wall-clock instant. `None` until warmed
     /// up. Extrapolates freely — input events arrive after the newest pair.
     pub fn sample_at(&self, at: Instant) -> Option<i64> {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock_or_recover(&self.inner);
         let model = inner.model?;
         let t = at.duration_since(inner.epoch).as_secs_f64();
         Some((model.slope * t + model.intercept).round() as i64)
     }
 
     pub fn stats(&self) -> BridgeStats {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock_or_recover(&self.inner);
         let (residual_rms_ms, slope_hz) = match inner.model {
             Some(m) => {
                 let n = inner.pairs.len() as f64;

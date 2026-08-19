@@ -193,7 +193,7 @@ impl ScriptEngine {
 
     /// Provide context for the current frame
     pub fn provide_context(&self, input: InputSnapshot, delta_time: f64, total_time: f64) {
-        let mut c = self.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.ctx);
         c.input = input;
         c.delta_time = delta_time;
         c.total_time = total_time;
@@ -208,7 +208,7 @@ impl ScriptEngine {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_init && !script.init_called {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
                 script.init_called = true;
@@ -230,7 +230,7 @@ impl ScriptEngine {
             if let Some(script) = self.scripts.get_mut(&entity_id) {
                 if script.has_on_init && !script.init_called {
                     {
-                        let mut c = self.ctx.lock().unwrap();
+                        let mut c = crate::lock_or_recover(&self.ctx);
                         c.current_entity = entity_id;
                     }
                     script.init_called = true;
@@ -254,7 +254,7 @@ impl ScriptEngine {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_update {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
                 if let Err(e) =
@@ -276,7 +276,7 @@ impl ScriptEngine {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_draw_ui {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
                 if let Err(e) =
@@ -291,7 +291,7 @@ impl ScriptEngine {
 
     /// Drain all accumulated draw commands
     pub fn drain_draw_commands(&self) -> Vec<DrawCommand> {
-        let mut c = self.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.ctx);
         std::mem::take(&mut c.draw_commands)
     }
 
@@ -331,7 +331,7 @@ impl ScriptEngine {
         if let Some(script) = self.scripts.get_mut(&entity) {
             if script.has_on_collision {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity;
                 }
                 let other_id = other.raw() as i64;
@@ -354,7 +354,7 @@ impl ScriptEngine {
         if let Some(script) = self.scripts.get_mut(&entity) {
             if script.has_on_collision_exit {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity;
                 }
                 let other_id = other.raw() as i64;
@@ -377,7 +377,7 @@ impl ScriptEngine {
         if let Some(script) = self.scripts.get_mut(&trigger) {
             if script.has_on_trigger_enter {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = trigger;
                 }
                 let entity_id = entity.raw() as i64;
@@ -400,7 +400,7 @@ impl ScriptEngine {
         if let Some(script) = self.scripts.get_mut(&trigger) {
             if script.has_on_trigger_exit {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = trigger;
                 }
                 let entity_id = entity.raw() as i64;
@@ -427,7 +427,7 @@ impl ScriptEngine {
             // on_action callback
             if script.has_on_action {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
                 let action_str = action.to_string();
@@ -451,7 +451,7 @@ impl ScriptEngine {
                 let close_enough = is_near_player(entity_id, world, range);
                 if close_enough {
                     {
-                        let mut c = self.ctx.lock().unwrap();
+                        let mut c = crate::lock_or_recover(&self.ctx);
                         c.current_entity = entity_id;
                     }
                     if let Err(e) = self.engine.call_fn::<()>(
@@ -469,14 +469,14 @@ impl ScriptEngine {
 
     /// Drain all accumulated script commands
     pub fn drain_commands(&self) -> Vec<ScriptCommand> {
-        let mut c = self.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.ctx);
         std::mem::take(&mut c.commands)
     }
 
     /// Clear all script instances. Preserves the Rhai Engine and registered API.
     pub fn clear(&mut self) {
         self.scripts.clear();
-        let mut c = self.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.ctx);
         c.commands.clear();
         c.draw_commands.clear();
         c.ui_system.clear();
@@ -491,7 +491,7 @@ impl ScriptEngine {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_scene_exit {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
                 if let Err(e) =
@@ -516,7 +516,7 @@ impl ScriptEngine {
             let script = self.scripts.get_mut(&entity_id).unwrap();
             if script.has_on_scene_enter {
                 {
-                    let mut c = self.ctx.lock().unwrap();
+                    let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
                 if let Err(e) = self.engine.call_fn::<()>(
@@ -550,7 +550,7 @@ impl ScriptEngine {
             if let Some(script) = self.scripts.get_mut(&event.entity_id) {
                 if script.has_on_animation_end {
                     {
-                        let mut c = self.ctx.lock().unwrap();
+                        let mut c = crate::lock_or_recover(&self.ctx);
                         c.current_entity = event.entity_id;
                     }
                     let clip_name = event.clip_name.clone();

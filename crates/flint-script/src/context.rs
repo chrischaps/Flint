@@ -505,7 +505,7 @@ pub struct WorldScope {
 impl WorldScope {
     pub fn new(ctx: &Arc<Mutex<ScriptCallContext>>, world: &mut FlintWorld) -> Self {
         {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.world = world as *mut FlintWorld;
         }
         Self { ctx: ctx.clone() }
@@ -514,7 +514,7 @@ impl WorldScope {
 
 impl Drop for WorldScope {
     fn drop(&mut self) {
-        let mut c = self.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.ctx);
         c.world = std::ptr::null_mut();
     }
 }
@@ -533,7 +533,7 @@ impl StateScope {
         physics: &PhysicsSystem,
     ) -> Self {
         {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.state_machine = state_machine as *mut GameStateMachine;
             c.persistent_store = persistent_store as *mut PersistentStore;
             c.physics = physics as *const PhysicsSystem;
@@ -544,7 +544,7 @@ impl StateScope {
 
 impl Drop for StateScope {
     fn drop(&mut self) {
-        let mut c = self.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.ctx);
         c.state_machine = std::ptr::null_mut();
         c.persistent_store = std::ptr::null_mut();
         c.physics = std::ptr::null();

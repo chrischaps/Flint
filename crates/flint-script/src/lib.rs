@@ -142,20 +142,20 @@ impl ScriptSystem {
 
     /// Set transition state for script access
     pub fn set_transition_state(&mut self, progress: f64, phase: &str) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.transition_progress = progress;
         c.transition_phase = phase.to_string();
     }
 
     /// Set the current scene path for script access
     pub fn set_current_scene(&mut self, path: &str) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.current_scene_path = path.to_string();
     }
 
     /// Set camera position and direction for weapon aiming
     pub fn set_camera(&mut self, position: [f32; 3], direction: [f32; 3]) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.camera_position = position;
         c.camera_direction = direction;
     }
@@ -167,14 +167,14 @@ impl ScriptSystem {
 
     /// Set screen dimensions for UI draw functions
     pub fn set_screen_size(&mut self, w: f32, h: f32) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.screen_width = w;
         c.screen_height = h;
     }
 
     /// Sync loaded chunk IDs so scripts can query `is_chunk_loaded`
     pub fn set_loaded_chunk_ids(&mut self, ids: std::collections::HashSet<String>) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.loaded_chunk_ids = ids;
     }
 
@@ -183,7 +183,7 @@ impl ScriptSystem {
     /// `ConductedSnapshot::default()` (the neutral, settled-world state)
     /// when no music session is active.
     pub fn set_conducted(&mut self, conducted: ConductedSnapshot) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.conducted = conducted;
     }
 
@@ -238,7 +238,7 @@ impl ScriptSystem {
 
     /// Generate draw commands from the data-driven UI system
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawCommand> {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.ui_system.generate_draw_commands(screen_w, screen_h)
     }
 
@@ -263,7 +263,7 @@ impl ScriptSystem {
 
     /// Take camera overrides set by scripts this frame (clears them)
     pub fn take_camera_overrides(&mut self) -> CameraOverrides {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         CameraOverrides {
             position: c.camera_position_override.take(),
             target: c.camera_target_override.take(),
@@ -276,7 +276,7 @@ impl ScriptSystem {
 
     /// Take post-processing overrides set by scripts this frame (clears them)
     pub fn take_postprocess_overrides(&mut self) -> PostProcessOverrides {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         PostProcessOverrides {
             vignette: c.postprocess_vignette_override.take(),
             bloom: c.postprocess_bloom_override.take(),
@@ -294,7 +294,7 @@ impl ScriptSystem {
 
     /// Take audio low-pass filter override set by scripts this frame (clears it)
     pub fn take_audio_overrides(&mut self) -> Option<f32> {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.audio_lowpass_cutoff_override.take()
     }
 
@@ -305,7 +305,7 @@ impl ScriptSystem {
 
     /// Set the terrain height sampling callback for scripts
     pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
-        let mut c = self.engine.ctx.lock().unwrap();
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.terrain_height_fn = f;
     }
 }
@@ -438,7 +438,7 @@ mod tests {
     fn test_desaturation_override_round_trip() {
         let mut system = ScriptSystem::new();
         {
-            let mut c = system.engine.ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&system.engine.ctx);
             c.postprocess_desaturation_override = Some(0.85);
         }
         let overrides = system.take_postprocess_overrides();
@@ -447,4 +447,22 @@ mod tests {
         let overrides = system.take_postprocess_overrides();
         assert_eq!(overrides, PostProcessOverrides::default());
     }
+}
+
+/// Lock a shared script-state mutex, recovering from poisoning instead of
+/// propagating the panic (ADR 0039). The guarded values are always-valid
+/// snapshots written whole each frame, so the last-written state is safe to
+/// read after a writer panicked; propagating would turn one panic into a
+/// panic on every later script call, contradicting the crate's
+/// log-and-continue policy. Logs once per process.
+pub(crate) fn lock_or_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::error!(
+                "script context mutex poisoned (a thread panicked holding it);                  recovering with the last-written snapshot (ADR 0039)"
+            );
+        }
+        poisoned.into_inner()
+    })
 }
