@@ -45,6 +45,12 @@ use winit::keyboard::NativeKeyCode;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+/// Panel name for the terrain grass debug overlay (F3) — the engine-side
+/// sibling of `music_guide_panel::MUSIC_GUIDE_PANEL` /
+/// `timeline_panel::MANIFEST_MAP_PANEL`.
+#[cfg(feature = "debug-hud")]
+const GRASS_DEBUG_PANEL: &str = "Grass Debug";
+
 /// Tracks Android device IDs that produce gamepad button keycodes,
 /// assigning each a stable u32 slot for InputState's gamepad API.
 #[cfg(target_os = "android")]
@@ -201,6 +207,7 @@ pub struct PlayerApp {
     terrain: Option<(flint_terrain::Terrain, flint_terrain::TerrainConfig)>,
 
     // Debug overlay panels (F3 toggle)
+    #[cfg(feature = "debug-hud")]
     debug_panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
 
     // Rendering stats overlay (F2 toggle)
@@ -287,6 +294,7 @@ impl PlayerApp {
             transition_phase: TransitionPhase::Idle,
             schema_paths: Vec::new(),
             terrain: None,
+            #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
             show_stats: false,
             stats_frame_times: std::collections::VecDeque::new(),
@@ -524,6 +532,7 @@ impl PlayerApp {
         }
 
         // Load terrain from world
+        #[cfg(feature = "debug-hud")]
         self.debug_panels.clear();
         self.load_terrain_from_world(
             &render_context.device,
@@ -632,6 +641,7 @@ impl PlayerApp {
         );
 
         // Create grass debug panel if grass was loaded
+        #[cfg(feature = "debug-hud")]
         if let Some(info) = grass_info {
             let panel = flint_debug_ui::GrassDebugPanel::new(
                 info.config,
@@ -640,6 +650,8 @@ impl PlayerApp {
             );
             self.debug_panels.push(Box::new(panel));
         }
+        #[cfg(not(feature = "debug-hud"))]
+        let _ = grass_info;
     }
 
     /// Update the terrain height callback on the script system.
@@ -974,17 +986,20 @@ impl PlayerApp {
         }
 
         // Push debug panel grass config changes to renderer
+        #[cfg(feature = "debug-hud")]
         for panel in &mut self.debug_panels {
-            if panel.name() == "Grass Debug" && panel.is_dirty() {
-                let grass_panel = panel
+            if panel.name() == GRASS_DEBUG_PANEL && panel.is_dirty() {
+                // A name collision must be a miss, not a panic.
+                if let Some(grass_panel) = panel
                     .as_any_mut()
                     .downcast_mut::<flint_debug_ui::GrassDebugPanel>()
-                    .unwrap();
-                if grass_panel.density_changed() {
-                    renderer.reload_grass_config(&context.device, grass_panel.config().clone());
-                    grass_panel.clear_density_changed();
-                } else {
-                    renderer.set_grass_config(grass_panel.config().clone());
+                {
+                    if grass_panel.density_changed() {
+                        renderer.reload_grass_config(&context.device, grass_panel.config().clone());
+                        grass_panel.clear_density_changed();
+                    } else {
+                        renderer.set_grass_config(grass_panel.config().clone());
+                    }
                 }
                 panel.clear_dirty();
             }
@@ -1416,6 +1431,7 @@ impl PlayerApp {
         let raw_input = egui_winit.take_egui_input(window);
 
         let draw_commands = std::mem::take(&mut self.draw_commands);
+        #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
         let ui_textures = &self.ui_textures;
 
@@ -1442,6 +1458,7 @@ impl PlayerApp {
         };
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            #[cfg(feature = "debug-hud")]
             for panel in debug_panels.iter_mut() {
                 if panel.is_open() {
                     let panel_name = panel.name().to_owned();
@@ -1474,7 +1491,10 @@ impl PlayerApp {
         });
 
         self.draw_commands = draw_commands;
-        self.debug_panels = debug_panels;
+        #[cfg(feature = "debug-hud")]
+        {
+            self.debug_panels = debug_panels;
+        }
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
@@ -2180,6 +2200,7 @@ impl PlayerApp {
         }
 
         // Reload terrain
+        #[cfg(feature = "debug-hud")]
         self.debug_panels.clear();
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             let mut grass_info = None;
@@ -2195,6 +2216,7 @@ impl PlayerApp {
             );
 
             // Create grass debug panel if grass was loaded
+            #[cfg(feature = "debug-hud")]
             if let Some(info) = grass_info {
                 let panel = flint_debug_ui::GrassDebugPanel::new(
                     info.config,
@@ -2203,6 +2225,8 @@ impl PlayerApp {
                 );
                 self.debug_panels.push(Box::new(panel));
             }
+            #[cfg(not(feature = "debug-hud"))]
+            let _ = grass_info;
         }
 
         // Update terrain height callback for scripts
@@ -2317,7 +2341,10 @@ impl ApplicationHandler for PlayerApp {
     ) {
         // Forward window events to egui when a debug panel is open
         // so interactive widgets (sliders, buttons) receive mouse input.
+        #[cfg(feature = "debug-hud")]
         let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
+        #[cfg(not(feature = "debug-hud"))]
+        let any_panel_open = false;
         if any_panel_open {
             if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
                 let response = egui_winit.on_window_event(window, &event);
@@ -2384,14 +2411,17 @@ impl ApplicationHandler for PlayerApp {
                                 KeyCode::F2 => {
                                     self.show_stats = !self.show_stats;
                                 }
+                                #[cfg(feature = "debug-hud")]
                                 KeyCode::F3 => {
-                                    let has_grass_panel =
-                                        self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
+                                    let has_grass_panel = self
+                                        .debug_panels
+                                        .iter()
+                                        .any(|p| p.name() == GRASS_DEBUG_PANEL);
                                     if has_grass_panel {
                                         // Toggle the panel, then adjust cursor outside the borrow
                                         let mut opened = false;
                                         for panel in &mut self.debug_panels {
-                                            if panel.name() == "Grass Debug" {
+                                            if panel.name() == GRASS_DEBUG_PANEL {
                                                 panel.toggle();
                                                 opened = panel.is_open();
                                             }
@@ -2562,7 +2592,11 @@ impl ApplicationHandler for PlayerApp {
             WindowEvent::MouseInput { state, button, .. } => {
                 if !self.cursor_captured {
                     if state == ElementState::Pressed && button == MouseButton::Left {
-                        if !self.debug_panels.iter().any(|p| p.is_open()) {
+                        #[cfg(feature = "debug-hud")]
+                        let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+                        #[cfg(not(feature = "debug-hud"))]
+                        let panel_open = false;
+                        if !panel_open {
                             self.capture_cursor();
                         }
                     }

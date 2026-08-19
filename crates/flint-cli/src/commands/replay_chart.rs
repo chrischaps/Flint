@@ -243,7 +243,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         .with_context(|| format!("creating judgment log {}", out_path.display()))?;
 
     // --- ladder: with --render, its presence switches to the reactive loop ----
-    let default_ladder_path = base_dir.join("config/ladder.toml");
+    let default_ladder_path =
+        base_dir.join(flint_music::chart_session::DEFAULT_LADDER_CONFIG);
     let (ladder_cfg, ladder_path) = if let Some(path) = &args.ladder {
         let cfg = LadderConfig::load(Path::new(path))
             .with_context(|| format!("loading ladder config {path}"))?;
@@ -267,14 +268,17 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         println!("(ladder inactive without --render; judgment replay is Milestone-2 semantics)");
     }
     let core_ladder = if reactive {
-        ladder_cfg.take().unwrap()
+        ladder_cfg
+            .take()
+            .expect("reactive is true only when ladder_cfg is Some (set just above)")
     } else {
         LadderConfig::default()
     };
     // Gradient config (ADR 0024): explicit path must load, the default file
     // is optional, absent = inert built-ins (byte-identical to pre-gradient
     // renders). Applied only inside the reactive loop.
-    let default_gradient_path = base_dir.join("config/gradient.toml");
+    let default_gradient_path =
+        base_dir.join(flint_music::chart_session::DEFAULT_GRADIENT_CONFIG);
     let (gradient_cfg, gradient_path) = if let Some(path) = &args.gradient {
         let cfg = GradientConfig::load(Path::new(path))
             .with_context(|| format!("loading gradient config {path}"))?;
@@ -315,7 +319,10 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         &Conductor::new(&manifest, None),
     ));
     if reactive {
-        let wav = args.render.as_ref().unwrap();
+        let wav = args
+        .render
+        .as_ref()
+        .expect("run_reactive is entered only with --render present");
         return run_reactive(
             &manifest,
             &base_dir,

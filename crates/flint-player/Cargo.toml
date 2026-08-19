@@ -17,7 +17,7 @@ path = "src/main.rs"
 default = ["debug-hud"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
 # zero debug surface and must still compile.
-debug-hud = []
+debug-hud = ["dep:flint-debug-ui"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -38,7 +38,7 @@ flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
 flint-procgen = { workspace = true }
-flint-debug-ui = { workspace = true }
+flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }

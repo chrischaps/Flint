@@ -64,6 +64,8 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
 
 /// Load terrain from world entities. Free function to avoid borrow conflicts.
 /// Info about loaded grass, returned from terrain loading for debug panel creation.
+/// The fields are only read by the `debug-hud` grass panel construction.
+#[cfg_attr(not(feature = "debug-hud"), allow(dead_code))]
 pub(super) struct LoadedGrassInfo {
     pub config: flint_terrain::GrassConfig,
     pub terrain_entity_name: String,
