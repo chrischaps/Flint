@@ -30,22 +30,69 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+#[derive(clap::Args)]
 pub struct PreviewArgs {
+    /// Path to model file (.glb or .gltf). If omitted, opens an empty window for drag-and-drop.
     pub model: Option<String>,
+
+    /// Render to a PNG file instead of opening a window
+    #[arg(long)]
     pub render: Option<String>,
+
+    /// Image width in pixels
+    #[arg(long, default_value = "1280")]
     pub width: u32,
+
+    /// Image height in pixels
+    #[arg(long, default_value = "720")]
     pub height: u32,
+
+    /// Camera orbit distance
+    #[arg(long)]
     pub distance: Option<f32>,
+
+    /// Camera horizontal angle in degrees
+    #[arg(long)]
     pub yaw: Option<f32>,
+
+    /// Camera vertical angle in degrees
+    #[arg(long)]
     pub pitch: Option<f32>,
+
+    /// Camera look-at point (comma-separated x,y,z)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub target: Option<[f32; 3]>,
+
+    /// Field of view in degrees
+    #[arg(long)]
     pub fov: Option<f32>,
+
+    /// Disable ground grid
+    #[arg(long)]
     pub no_grid: bool,
+
+    /// Watch model file for changes and auto-reload
+    #[arg(long)]
     pub watch: bool,
+
+    /// Disable animation playback (animations play by default when present)
+    #[arg(long)]
     pub no_animate: bool,
+
+    /// Start with a specific animation clip by name
+    #[arg(long)]
     pub clip: Option<String>,
+
+    /// Animation playback speed multiplier (default: 1.0)
+    #[arg(long, default_value = "1.0")]
     pub anim_speed: f32,
+
+    /// Sample animation at a specific time in seconds (headless --render mode only)
+    #[arg(long)]
     pub anim_time: Option<f32>,
+
+    /// Start with auto-orbit enabled
+    #[arg(long)]
     pub auto_orbit: bool,
 }
 

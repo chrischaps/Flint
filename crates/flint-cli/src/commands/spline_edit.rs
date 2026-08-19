@@ -7,8 +7,13 @@ use flint_schema::SchemaRegistry;
 use flint_viewer::spline_editor::{ControlPoint, SplineEditorConfig};
 use std::path::Path;
 
+#[derive(clap::Args)]
 pub struct EditArgs {
+    /// Path to scene file
     pub scene: String,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
 }
 

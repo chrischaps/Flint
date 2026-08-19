@@ -14,9 +14,17 @@ use std::time::{Duration, Instant};
 
 use flint_music::chart_session::latest_latency_ms;
 
+#[derive(clap::Args)]
 pub struct CalibrateArgs {
+    /// Path to the suite manifest (.suite.toml)
     pub manifest: String,
+
+    /// Directory the manifest's file paths are relative to (default: cwd)
+    #[arg(long)]
     pub base_dir: Option<String>,
+
+    /// Number of taps to collect
+    #[arg(long, default_value_t = 16)]
     pub taps: u32,
 }
 

@@ -1,6 +1,7 @@
 //! CLI command implementations
 
 pub mod asset;
+pub mod common_args;
 pub mod edit_router;
 pub mod entity;
 pub mod gen;

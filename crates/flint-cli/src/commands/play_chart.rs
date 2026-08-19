@@ -17,40 +17,60 @@ use flint_music::chart_session::{
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[derive(clap::Args)]
 pub struct PlayChartArgs {
-    pub manifest: String,
-    pub chart: String,
-    pub base_dir: Option<String>,
+    #[command(flatten)]
+    pub common: super::common_args::ChartCommonArgs,
+
+    /// Stop after this many bars (default: play to the end)
+    #[arg(long)]
     pub bars: Option<u64>,
-    /// Coherence config path (default: `<base_dir>/config/coherence.toml`
-    /// when present, else built-in defaults).
+
+    /// Coherence config TOML (default: config/coherence.toml if present)
+    #[arg(long)]
     pub config: Option<String>,
-    /// Record the input session to `logs/sessions/<name>.session.jsonl`.
-    pub record: Option<String>,
-    /// Run the input-granularity spike for this many seconds and exit
-    /// (wiggle the stick; no audio involved).
+
+    /// Run the input-granularity spike for N seconds and exit (no audio)
+    #[arg(long)]
     pub spike_input_secs: Option<u64>,
-    /// Open a bare graphical window instead of running console-only.
+
+    /// Record the input session to logs/sessions/<NAME>.session.jsonl
+    #[arg(long)]
+    pub record: Option<String>,
+
+    /// Open a bare visual window (absorbs mapper keystrokes; shows
+    /// wordless cues). Console output continues underneath.
+    #[arg(long)]
     pub window: bool,
-    /// Lean judgment mode: "arrival" (beat-anchored targets, the current
-    /// feel direction) or "track" (continuous curve-following).
+
+    /// Lean judgment: "arrival" (be at each target on its beat, roll
+    /// freely between) or "track" (follow the curve continuously)
+    #[arg(long, default_value = "arrival")]
     pub lean_mode: String,
-    /// Disintegration ladder config path (default: `<base_dir>/config/
-    /// ladder.toml` when present, else built-in defaults).
+
+    /// Disintegration ladder TOML (default: config/ladder.toml if present)
+    #[arg(long)]
     pub ladder: Option<String>,
-    /// Error-gradient config path (ADR 0024; default: `<base_dir>/config/
-    /// gradient.toml` when present, else inert built-ins).
+
+    /// Error-gradient TOML (default: config/gradient.toml if present,
+    /// else inert)
+    #[arg(long)]
     pub gradient: Option<String>,
-    /// Haptics config path (ADR 0026; default: `<base_dir>/config/
-    /// haptics.toml` when present, else inert built-ins — no rumble).
+
+    /// Haptics TOML (default: config/haptics.toml if present, else
+    /// inert — no rumble)
+    #[arg(long)]
     pub haptics: Option<String>,
+
     /// Physical→verb mapping: "prototype" (lean + pulse) or "full"
-    /// (adds sway, pressure, press, flick — ADR 0030).
+    /// (adds sway, pressure, press, flick — ADR 0030)
+    #[arg(long, default_value = "prototype")]
     pub input_map: String,
 }
 
 pub fn run(args: PlayChartArgs) -> Result<()> {
     let base_dir = args
+        .common
         .base_dir
         .clone()
         .map(PathBuf::from)
@@ -97,8 +117,8 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
     };
 
     let cfg = ChartSessionConfig {
-        manifest: PathBuf::from(&args.manifest),
-        chart: PathBuf::from(&args.chart),
+        manifest: PathBuf::from(&args.common.manifest),
+        chart: PathBuf::from(&args.common.chart),
         base_dir: base_dir.to_path_buf(),
         coherence_config: args.config.clone().map(PathBuf::from),
         ladder_config: args.ladder.clone().map(PathBuf::from),
@@ -106,11 +126,13 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
         haptics_config: args.haptics.clone().map(PathBuf::from),
         record: args.record.clone(),
         bars: args.bars,
-        lean_mode: parse_lean_mode(&args.lean_mode).map_err(|e| anyhow::anyhow!("{e}"))?,
+        lean_mode: parse_lean_mode(&args.lean_mode)
+            .with_context(|| format!("parsing lean mode '{}'", args.lean_mode))?,
         latency_ms,
         calibration_ms,
     };
-    let (mut session, notices) = ChartSession::open(&cfg).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (mut session, notices) = ChartSession::open(&cfg)
+        .with_context(|| format!("opening chart session ({})", args.common.manifest))?;
     for n in notices {
         println!("{n}");
     }
@@ -120,7 +142,7 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
     let offset_samples =
         judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
     let verb_map = flint_input_capture::VerbMap::parse(&args.input_map)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .with_context(|| format!("parsing input map '{}'", args.input_map))?;
     let capture = flint_input_capture::spawn_with_rumble(
         session.bridge(),
         flint_input_capture::CaptureConfig {
@@ -175,7 +197,7 @@ fn run_cli(mut session: ChartSession) -> Result<()> {
     let stdin_rx = spawn_stdin_reader();
     loop {
         std::thread::sleep(Duration::from_millis(2));
-        let out = session.tick().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let out = session.tick().context("ticking chart session")?;
         for n in &out.notices {
             println!("{n}");
         }
@@ -188,21 +210,22 @@ fn run_cli(mut session: ChartSession) -> Result<()> {
                 break;
             }
             Ok(StdinCommand::Reload) => {
-                for n in session.reload_config().map_err(|e| anyhow::anyhow!("{e}"))? {
+                for n in session.reload_config().context("reloading session configs")? {
                     println!("{n}");
                 }
             }
             Err(_) => {}
         }
     }
-    for n in session.finish().map_err(|e| anyhow::anyhow!("{e}"))? {
+    for n in session.finish().context("finishing chart session")? {
         println!("{n}");
     }
     Ok(())
 }
 
 fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
-    let pads = flint_input_capture::connected_gamepads().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pads =
+        flint_input_capture::connected_gamepads().context("listing connected gamepads")?;
     if pads.is_empty() {
         eprintln!(
             "WARNING: the input backend sees NO gamepads — the spike will record zero \
@@ -213,9 +236,8 @@ fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
         println!("gamepad(s) visible: {}", pads.join(", "));
     }
     println!("input-granularity spike: wiggle the stick for {secs} s...");
-    let report =
-        flint_input_capture::measure_granularity(Duration::from_secs(secs), 1000)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let report = flint_input_capture::measure_granularity(Duration::from_secs(secs), 1000)
+        .context("measuring input granularity")?;
     println!(
         "{} events; receipt median {:.3} ms, driver median {:.3} ms",
         report.events, report.receipt_median_ms, report.driver_median_ms

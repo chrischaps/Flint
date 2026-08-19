@@ -47,7 +47,7 @@ pub fn run_windowed(session: ChartSession) -> Result<()> {
     }
     match app.session.take() {
         Some(session) => {
-            for n in session.finish().map_err(|e| anyhow::anyhow!("{e}"))? {
+            for n in session.finish().context("finishing chart session")? {
                 println!("{n}");
             }
             Ok(())
@@ -79,7 +79,7 @@ impl App {
                 }
             }
             Err(e) => {
-                self.error = Some(anyhow::anyhow!("{e}"));
+                self.error = Some(anyhow::Error::new(e).context("ticking chart session"));
                 event_loop.exit();
             }
         }
@@ -137,7 +137,10 @@ impl ApplicationHandler for App {
                                     }
                                 }
                                 Err(e) => {
-                                    self.error = Some(anyhow::anyhow!("{e}"));
+                                    self.error = Some(
+                                        anyhow::Error::new(e)
+                                            .context("reloading session configs"),
+                                    );
                                     event_loop.exit();
                                 }
                             }

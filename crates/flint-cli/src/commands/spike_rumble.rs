@@ -6,10 +6,14 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
+#[derive(clap::Args)]
 pub struct SpikeRumbleArgs {
-    /// Directory whose `logs/latency/` receives the report (default: cwd).
+    /// Directory whose logs/latency/ receives the report (default: cwd)
+    #[arg(long)]
     pub base_dir: Option<String>,
-    /// Skip the operator-felt demo patterns (timing only).
+
+    /// Skip the operator-felt tick/thump/grind demo (timing only)
+    #[arg(long)]
     pub no_feel: bool,
 }
 

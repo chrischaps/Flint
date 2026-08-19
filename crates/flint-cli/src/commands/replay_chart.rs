@@ -29,45 +29,64 @@ use flint_music::{
 };
 use std::path::{Path, PathBuf};
 
+#[derive(clap::Args)]
 pub struct ReplayChartArgs {
-    pub manifest: String,
-    pub chart: String,
+    #[command(flatten)]
+    pub common: super::common_args::ChartCommonArgs,
+
+    /// Session file to replay (.session.jsonl)
+    #[arg(long, conflicts_with = "synthetic")]
     pub session: Option<String>,
+
+    /// Synthetic profile: perfect | late:<ms> | neglect
+    #[arg(long)]
     pub synthetic: Option<String>,
+
+    /// Coherence config TOML (default: the session's recorded snapshot)
+    #[arg(long)]
     pub config: Option<String>,
+
+    /// Judgment log output path (default: logs/judgment/replay.jsonl)
+    #[arg(long)]
     pub out: Option<String>,
-    /// Materialize the replayed (usually synthetic) event stream as a
-    /// session file — for committing evidence or sharing a repro.
+
+    /// Also save the replayed event stream as a session file
+    #[arg(long)]
     pub save_session: Option<String>,
+
+    /// Also render the suite audio over the replayed span to this WAV
+    #[arg(long)]
     pub render: Option<String>,
-    pub base_dir: Option<String>,
-    /// Lean judgment mode ("arrival" or "track") — must match the live run
-    /// being reproduced; the judgment-log header records which was used.
+
+    /// Lean judgment: "arrival" or "track" (must match the run being
+    /// reproduced; judgment-log headers record it)
+    #[arg(long, default_value = "arrival")]
     pub lean_mode: String,
-    /// Disintegration ladder config. With `--render`, its presence (explicit
-    /// or `config/ladder.toml`) switches the render to the full reactive
-    /// loop: judge → coherence → ladder → reintegration sequencer → mixer,
-    /// so a fall-and-reintegration renders to WAV. Without `--render` the
-    /// ladder is inactive (Milestone-2 judgment semantics preserved).
+
+    /// Disintegration ladder TOML; with --render this makes the render
+    /// reactive (full fall-and-reintegration loop). Default:
+    /// config/ladder.toml if present.
+    #[arg(long)]
     pub ladder: Option<String>,
-    /// Error-gradient config (ADR 0024). Explicit path must load; default is
-    /// `config/gradient.toml` when present, else inert built-ins. Only the
-    /// reactive render (`--render` + ladder) ever applies it; it does not
-    /// gate reactive mode.
+
+    /// Error-gradient TOML, applied inside the reactive render only
+    /// (default: config/gradient.toml if present, else inert)
+    #[arg(long)]
     pub gradient: Option<String>,
 }
 
 pub fn run(args: ReplayChartArgs) -> Result<()> {
     let base_dir = args
+        .common
         .base_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
     // --- validate ------------------------------------------------------------
-    let manifest = SuiteManifest::load(Path::new(&args.manifest))
-        .with_context(|| format!("loading {}", args.manifest))?;
-    let chart = Chart::load(Path::new(&args.chart))
-        .with_context(|| format!("loading {}", args.chart))?;
+    let manifest = SuiteManifest::load(Path::new(&args.common.manifest))
+        .with_context(|| format!("loading {}", args.common.manifest))?;
+    let chart = Chart::load(Path::new(&args.common.chart))
+        .with_context(|| format!("loading {}", args.common.chart))?;
     let mut issues = validate_manifest(&manifest);
     issues.extend(validate_chart(&chart, &manifest));
     if args.render.is_some() {
@@ -84,7 +103,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     // Offline is exact: no latency compensation anywhere (session samples
     // are already compensated by whoever recorded them).
     let conductor = Conductor::new(&manifest, None);
-    let eval = ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let eval = ChartEval::new(&chart, &conductor)
+        .with_context(|| format!("building chart evaluator for {}", args.common.chart))?;
 
     // `pairs` keeps each event's raw clock sample alongside its
     // suite-stamped event (identical until a session contains reintegration
@@ -93,8 +113,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     let (pairs, session_header, synthetic_stamps) = match (&args.session, &args.synthetic) {
         (Some(path), None) => {
             let (header, pairs) = flint_music::replay::read_session_raw(Path::new(path))
-                .map_err(|e| anyhow::anyhow!("{e}"))
-                .with_context(|| format!("reading {path}"))?;
+                .with_context(|| format!("reading session file {path}"))?;
             if header.suite != manifest.id {
                 bail!(
                     "session was recorded against suite '{}', manifest is '{}'",
@@ -111,7 +130,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
             (pairs, Some(header), false)
         }
         (None, Some(profile)) => {
-            let profile = SyntheticProfile::parse(profile).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let profile = SyntheticProfile::parse(profile)
+                .with_context(|| format!("parsing synthetic profile '{profile}'"))?;
             let events = synthesize(&eval, &conductor, profile);
             println!("synthetic session: {profile:?} ({} event(s))", events.len());
             let pairs = events.into_iter().map(|ev| (ev.sample(), ev)).collect();
@@ -126,7 +146,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         let header = flint_music::replay::SessionHeader {
             schema: 0,
             suite: manifest.id.clone(),
-            chart: args.chart.clone(),
+            chart: args.common.chart.clone(),
             sample_rate: manifest.sample_rate,
             latency_ms: session_header.as_ref().map(|h| h.latency_ms).unwrap_or(0.0),
             calibration_ms: session_header
@@ -142,12 +162,13 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
                 .map(|p| serde_json::json!({ "synthetic": p })),
         };
         let mut w = flint_music::replay::SessionWriter::create(Path::new(path), &header)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .with_context(|| format!("creating session file {path}"))?;
         for ev in &events {
             w.write(ev, manifest.sample_rate)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                .with_context(|| format!("writing session file {path}"))?;
         }
-        w.flush().map_err(|e| anyhow::anyhow!("{e}"))?;
+        w.flush()
+            .with_context(|| format!("flushing session file {path}"))?;
         println!("session saved: {path} ({} event(s))", w.written());
     }
 
@@ -160,7 +181,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
             .and_then(|h| h.coherence_config.as_ref()),
         &base_dir,
     )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    .context("resolving coherence config")?;
     let config_path = match &coherence_source {
         CoherenceSource::Explicit(p) => {
             println!("coherence config: {}", p.display());
@@ -189,12 +210,13 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
 
     // --- run the pipeline ----------------------------------------------------
     let judgment_cfg = JudgmentConfig {
-        lean_mode: parse_lean_mode(&args.lean_mode).map_err(|e| anyhow::anyhow!("{e}"))?,
+        lean_mode: parse_lean_mode(&args.lean_mode)
+            .with_context(|| format!("parsing lean mode '{}'", args.lean_mode))?,
         ..Default::default()
     };
     println!("lean mode: {}", lean_mode_name(judgment_cfg.lean_mode));
-    let eval_for_judge =
-        ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let eval_for_judge = ChartEval::new(&chart, &conductor)
+        .with_context(|| format!("building chart evaluator for {}", args.common.chart))?;
     let judge = Judge::new(
         eval_for_judge,
         Conductor::new(&manifest, None),
@@ -208,7 +230,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         .unwrap_or_else(|| base_dir.join("logs/judgment/replay.jsonl"));
     let header = serde_json::json!({
         "t": "header", "schema": 0,
-        "suite": manifest.id, "chart": args.chart,
+        "suite": manifest.id, "chart": args.common.chart,
         "session": args.session, "synthetic": args.synthetic,
         "latency_ms": session_header.as_ref().map(|h| h.latency_ms).unwrap_or(0.0),
         "calibration_ms": session_header.as_ref().map(|h| h.calibration_ms).unwrap_or(0.0),
@@ -217,22 +239,22 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         "arrival_half_beats": judgment_cfg.arrival_half_beats,
         "coherence_config": coherence_cfg.to_json(),
     });
-    let log = JsonlWriter::create(&out_path, &header).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let log = JsonlWriter::create(&out_path, &header)
+        .with_context(|| format!("creating judgment log {}", out_path.display()))?;
 
     // --- ladder: with --render, its presence switches to the reactive loop ----
     let default_ladder_path = base_dir.join("config/ladder.toml");
     let (ladder_cfg, ladder_path) = if let Some(path) = &args.ladder {
         let cfg = LadderConfig::load(Path::new(path))
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .with_context(|| format!("loading {path}"))?;
+            .with_context(|| format!("loading ladder config {path}"))?;
         println!("ladder config: {path}");
         (Some(cfg), PathBuf::from(path))
     } else if default_ladder_path.exists() {
         println!("ladder config: {}", default_ladder_path.display());
         (
-            Some(
-                LadderConfig::load(&default_ladder_path).map_err(|e| anyhow::anyhow!("{e}"))?,
-            ),
+            Some(LadderConfig::load(&default_ladder_path).with_context(|| {
+                format!("loading ladder config {}", default_ladder_path.display())
+            })?),
             default_ladder_path,
         )
     } else {
@@ -255,13 +277,13 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     let default_gradient_path = base_dir.join("config/gradient.toml");
     let (gradient_cfg, gradient_path) = if let Some(path) = &args.gradient {
         let cfg = GradientConfig::load(Path::new(path))
-            .map_err(|e| anyhow::anyhow!("{e}"))
-            .with_context(|| format!("loading {path}"))?;
+            .with_context(|| format!("loading gradient config {path}"))?;
         println!("gradient config: {path} (tune bus: {})", cfg.tune.bus);
         (cfg, PathBuf::from(path))
     } else if default_gradient_path.exists() {
-        let cfg = GradientConfig::load(&default_gradient_path)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let cfg = GradientConfig::load(&default_gradient_path).with_context(|| {
+            format!("loading gradient config {}", default_gradient_path.display())
+        })?;
         println!(
             "gradient config: {} (tune bus: {})",
             default_gradient_path.display(),
@@ -272,7 +294,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         (GradientConfig::default(), default_gradient_path)
     };
 
-    let visual_eval = ChartEval::new(&chart, &conductor).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let visual_eval = ChartEval::new(&chart, &conductor)
+        .with_context(|| format!("building chart evaluator for {}", args.common.chart))?;
     let mut core = ChartCore::new(
         judge,
         coherence,
@@ -307,7 +330,8 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     let mut last_bar = i64::MIN;
     for ev in &events {
         core.ingest(ev);
-        core.process(ev.sample()).map_err(|e| anyhow::anyhow!("{e}"))?;
+        core.process(ev.sample())
+            .context("processing judgment events")?;
         let bar = conductor.position_at_sample(ev.sample()).bar;
         if bar != last_bar {
             last_bar = bar;
@@ -320,8 +344,9 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     }
     let final_sample = events.last().map(|e| e.sample()).unwrap_or(0);
     core.judge_finish();
-    core.process(final_sample).map_err(|e| anyhow::anyhow!("{e}"))?;
-    core.flush_log().map_err(|e| anyhow::anyhow!("{e}"))?;
+    core.process(final_sample)
+        .context("processing final judgment events")?;
+    core.flush_log().context("flushing judgment log")?;
 
     let s = core.summary();
     println!(
@@ -352,9 +377,9 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
             &cfg,
             |_, _| {},
         )
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .context("rendering suite audio offline")?;
         flint_music::write_wav(Path::new(&wav), &result.samples, manifest.sample_rate)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .with_context(|| format!("writing WAV {wav}"))?;
         println!(
             "rendered {} ({:.1} s) alongside the coherence trace",
             wav,
@@ -426,10 +451,12 @@ fn run_reactive(
                 }
                 let now_suite = session.clock_sample();
                 core.advance_to(now_suite);
-                core.process(now_suite).map_err(|e| anyhow::anyhow!("{e}"))?;
+                core.process(now_suite)
+                    .context("processing judgment events")?;
 
-                let (_seq, seq_events) =
-                    core.step_seq(session, pos).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let (_seq, seq_events) = core
+                    .step_seq(session, pos)
+                    .context("stepping reintegration sequencer")?;
                 for ev in &seq_events {
                     if let ReintegrationEvent::FullFail {
                         at_suite_sample,
@@ -464,12 +491,12 @@ fn run_reactive(
             }
         },
     )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    .context("rendering reactive suite audio offline")?;
     if let Some(e) = failure {
         return Err(e);
     }
 
-    let s = core.finish().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let s = core.finish().context("finishing judgment core")?;
     println!(
         "done. pulses hit {} (mean |err| {:.1} ms), missed {}, spurious \
          {} | {fails} full-fail(s) | final {}",
@@ -482,7 +509,7 @@ fn run_reactive(
     println!("judgment log: {}", out_path.display());
 
     flint_music::write_wav(Path::new(wav), &result.samples, sample_rate)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .with_context(|| format!("writing WAV {wav}"))?;
     println!(
         "rendered {} ({:.1} s, reactive: ladder + reintegration live)",
         wav,

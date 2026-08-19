@@ -11,43 +11,153 @@ use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
 use std::path::Path;
 
+#[derive(clap::Args)]
 pub struct RenderArgs {
+    /// Path to scene file
     pub scene: String,
+
+    /// Output image path
+    #[arg(short, long, default_value = "render.png")]
     pub output: String,
+
+    /// Image width in pixels
+    #[arg(long, default_value = "1920")]
     pub width: u32,
+
+    /// Image height in pixels
+    #[arg(long, default_value = "1080")]
     pub height: u32,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+
+    /// Camera orbit distance
+    #[arg(long)]
     pub distance: Option<f32>,
+
+    /// Camera horizontal angle in degrees
+    #[arg(long)]
     pub yaw: Option<f32>,
+
+    /// Camera vertical angle in degrees
+    #[arg(long)]
     pub pitch: Option<f32>,
+
+    /// Camera look-at point (comma-separated x,y,z)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub target: Option<[f32; 3]>,
+
+    /// Field of view in degrees
+    #[arg(long)]
     pub fov: Option<f32>,
+
+    /// Disable ground grid
+    #[arg(long)]
     pub no_grid: bool,
+
+    /// Debug visualization mode
+    #[arg(long, value_parser = crate::commands::common_args::parse_debug_mode)]
     pub debug_mode: Option<String>,
+
+    /// Enable wireframe overlay on solid geometry
+    #[arg(long)]
     pub wireframe_overlay: bool,
+
+    /// Show face-normal direction arrows
+    #[arg(long)]
     pub show_normals: bool,
+
+    /// Disable tone mapping for raw linear output
+    #[arg(long)]
     pub no_tonemapping: bool,
+
+    /// Disable shadow mapping
+    #[arg(long)]
     pub no_shadows: bool,
+
+    /// Shadow map resolution per cascade (default: 1024)
+    #[arg(long, default_value = "1024")]
     pub shadow_resolution: u32,
+
+    /// Disable post-processing (bloom, vignette, tonemapping in composite pass)
+    #[arg(long)]
     pub no_postprocess: bool,
+
+    /// Bloom intensity (enables bloom; default: 0.04)
+    #[arg(long)]
     pub bloom_intensity: Option<f32>,
+
+    /// Bloom brightness threshold (default: 1.0)
+    #[arg(long)]
     pub bloom_threshold: Option<f32>,
+
+    /// Exposure multiplier (default: 1.0)
+    #[arg(long)]
     pub exposure: Option<f32>,
+
+    /// SSAO sample radius (default: 0.5)
+    #[arg(long)]
     pub ssao_radius: Option<f32>,
+
+    /// SSAO intensity multiplier (default: 1.0, 0 = disabled)
+    #[arg(long)]
     pub ssao_intensity: Option<f32>,
+
+    /// Fog density (enables fog; default: 0.02, 0 = disabled)
+    #[arg(long)]
     pub fog_density: Option<f32>,
+
+    /// Fog color as comma-separated R,G,B (default: 0.7,0.75,0.82)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub fog_color: Option<[f32; 3]>,
+
+    /// Fog height falloff (enables height fog; default: 0.1)
+    #[arg(long)]
     pub fog_height_falloff: Option<f32>,
+
+    /// Dither intensity (enables ordered dither; default: 0.03, 0 = disabled)
+    #[arg(long)]
     pub dither_intensity: Option<f32>,
+
+    /// Desaturation toward ash-grey (0 = full color, 1 = fully drained)
+    #[arg(long)]
     pub desaturate: Option<f32>,
+
+    /// Depth-of-field strength (0 = off/sharp, 1 = full defocus)
+    #[arg(long)]
     pub dof: Option<f32>,
+
+    /// Depth-of-field focus plane distance in world units (default: 10.0)
+    #[arg(long)]
     pub dof_focus: Option<f32>,
+
+    /// Depth-of-field focus half-width in world units (default: 5.0)
+    #[arg(long)]
     pub dof_range: Option<f32>,
+
+    /// Volumetric light density (enables god rays; default: 1.0)
+    #[arg(long)]
     pub volumetric_density: Option<f32>,
+
+    /// Volumetric ray-march sample count (default: 32)
+    #[arg(long)]
     pub volumetric_samples: Option<u32>,
+
+    /// Kuwahara filter radius (enables Kuwahara; default: 4)
+    #[arg(long)]
     pub kuwahara_radius: Option<u32>,
+
+    /// Kuwahara sector sharpness (default: 8.0)
+    #[arg(long)]
     pub kuwahara_sharpness: Option<f32>,
+
+    /// Kuwahara sector hardness (default: 8.0)
+    #[arg(long)]
     pub kuwahara_hardness: Option<f32>,
+
+    /// Kuwahara anisotropy strength (0=isotropic, 1=full; default: 1.0)
+    #[arg(long)]
     pub kuwahara_anisotropy: Option<f32>,
 }
 

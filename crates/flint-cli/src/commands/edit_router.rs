@@ -63,28 +63,80 @@ pub fn detect_file_kind(path: &Path) -> Result<FileKind> {
 }
 
 /// CLI arguments for the unified `flint edit` command.
+#[derive(clap::Args)]
 pub struct EditArgs {
+    /// Path to file (.scene.toml, .procgen.toml, .terrain.toml, .glb, .gltf)
     pub file: String,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+
+    /// Window width in pixels
+    #[arg(long)]
     pub width: Option<u32>,
+
+    /// Window height in pixels
+    #[arg(long)]
     pub height: Option<u32>,
+
+    /// Disable the ground grid
+    #[arg(long)]
     pub no_grid: bool,
+
+    /// Watch for file changes
+    #[arg(long)]
     pub watch: bool,
+
+    /// Override seed
+    #[arg(long)]
     pub seed: Option<u64>,
-    // scene-specific
+    /// Hide the egui inspector panels (scene only)
+    #[arg(long)]
     pub no_inspector: bool,
+
+    /// Open the spline/track editor (scene only)
+    #[arg(long)]
     pub spline: bool,
-    // preview / gen-preview
+
+    /// Start with auto-orbit enabled (model/procgen)
+    #[arg(long)]
     pub auto_orbit: bool,
-    // preview-specific
+
+    /// Camera orbit distance (model)
+    #[arg(long)]
     pub distance: Option<f32>,
+
+    /// Camera horizontal angle in degrees (model)
+    #[arg(long)]
     pub yaw: Option<f32>,
+
+    /// Camera vertical angle in degrees (model)
+    #[arg(long)]
     pub pitch: Option<f32>,
+
+    /// Camera look-at point as comma-separated x,y,z (model)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub target: Option<[f32; 3]>,
+
+    /// Field of view in degrees (model)
+    #[arg(long)]
     pub fov: Option<f32>,
+
+    /// Disable animation playback (model)
+    #[arg(long)]
     pub no_animate: bool,
+
+    /// Start with a specific animation clip by name (model)
+    #[arg(long)]
     pub clip: Option<String>,
+
+    /// Animation playback speed multiplier (model)
+    #[arg(long)]
     pub anim_speed: Option<f32>,
+
+    /// Render to a PNG file instead of opening a window (model)
+    #[arg(long)]
     pub render: Option<String>,
 }
 

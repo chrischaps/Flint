@@ -12,14 +12,37 @@ use flint_music::status::status_line;
 use flint_music::{validate_manifest, validate_manifest_assets, Conductor, SuiteManifest};
 use std::path::{Path, PathBuf};
 
+#[derive(clap::Args)]
 pub struct RenderSuiteArgs {
+    /// Path to the suite manifest (.suite.toml)
     pub manifest: String,
+
+    /// Event script (.events.toml) of scheduled bus changes and markers
+    #[arg(long)]
     pub script: Option<String>,
+
+    /// Output WAV path (32-bit float stereo)
+    #[arg(long, short)]
     pub output: String,
+
+    /// Directory the manifest's file paths are relative to (default: cwd)
+    #[arg(long)]
     pub base_dir: Option<String>,
+
+    /// Render this many bars (default: length of the longest stem)
+    #[arg(long, conflicts_with = "duration_seconds")]
     pub duration_bars: Option<i64>,
+
+    /// Render this many seconds
+    #[arg(long)]
     pub duration_seconds: Option<f64>,
+
+    /// Status line cadence: bar (default) or beat
+    #[arg(long)]
     pub status_every: Option<String>,
+
+    /// Processing chunk size in frames (= scheduling granularity)
+    #[arg(long, default_value_t = 128)]
     pub chunk_frames: usize,
 }
 

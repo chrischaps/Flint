@@ -10,10 +10,21 @@ use flint_music::{
 };
 use std::path::{Path, PathBuf};
 
+#[derive(clap::Args)]
 pub struct ValidateSuiteArgs {
+    /// Path to the suite manifest (.suite.toml)
     pub manifest: String,
+
+    /// Beatmap chart (.chart.toml) to cross-check against the manifest
+    #[arg(long)]
     pub chart: Option<String>,
+
+    /// Skip the asset pass (stem file existence/sample-rate/duration)
+    #[arg(long)]
     pub no_assets: bool,
+
+    /// Directory the manifest's file paths are relative to (default: cwd)
+    #[arg(long)]
     pub base_dir: Option<String>,
 }
 

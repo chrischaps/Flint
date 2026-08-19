@@ -6,10 +6,21 @@ use flint_schema::SchemaRegistry;
 use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
+#[derive(clap::Args)]
 pub struct PlayArgs {
+    /// Path to scene file
     pub scene: String,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+
+    /// Launch in fullscreen mode
+    #[arg(long)]
     pub fullscreen: bool,
+
+    /// Optional input config overlay path
+    #[arg(long)]
     pub input_config: Option<String>,
 }
 

@@ -7,12 +7,29 @@ use flint_constraint::{
 use flint_scene::{load_scene, save_scene_string};
 use flint_schema::SchemaRegistry;
 
+#[derive(clap::Args)]
 pub struct ValidateArgs {
+    /// Path to scene file
     pub scene: String,
+
+    /// Apply auto-fixes
+    #[arg(long)]
     pub fix: bool,
+
+    /// Preview fixes without applying
+    #[arg(long)]
     pub dry_run: bool,
+
+    /// Show diff of changes
+    #[arg(long)]
     pub output_diff: bool,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+
+    /// Output format (json or toml)
+    #[arg(long, default_value = "text")]
     pub format: String,
 }
 
