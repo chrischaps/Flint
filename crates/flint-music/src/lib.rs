@@ -35,6 +35,7 @@ pub mod scheduler;
 pub mod session;
 pub mod status;
 pub mod tempo;
+pub mod timeline;
 pub mod validate;
 
 pub use chart::Chart;
