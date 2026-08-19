@@ -13,6 +13,12 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
+[features]
+default = ["debug-hud"]
+# Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
+# zero debug surface and must still compile.
+debug-hud = []
+
 [dependencies]
 flint-core = { workspace = true }
 flint-asset = { workspace = true }

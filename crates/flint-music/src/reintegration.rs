@@ -155,7 +155,15 @@ impl Reintegrator {
             Phase::Playing => {
                 ladder.observe(coherence);
                 let params = ladder.params();
-                driver.apply(&params, offsets, now_seconds, params.ramp_ms, &mut session.mixer);
+                let xfade_ms = ladder.config().alternate_xfade_ms;
+                driver.apply(
+                    &params,
+                    offsets,
+                    now_seconds,
+                    params.ramp_ms,
+                    Some((now_suite, xfade_ms)),
+                    &mut session.mixer,
+                );
 
                 // The hold starts below `enter_below` and cancels only above
                 // `exit_above`: under neglect the value saw-tooths (miss
@@ -220,11 +228,15 @@ impl Reintegrator {
             Phase::Reassembling { seam_raw, span } => {
                 let t = ((raw - seam_raw) as f64 / span.max(1) as f64).clamp(0.0, 1.0);
                 let params = ladder.full_fail_params().lerp(&LadderParams::clean(), t);
+                // `None`: per-sound volume belongs to the entry envelopes
+                // during reassembly (ADR 0032); the seam re-play already
+                // reset every crossfade to bus-active.
                 driver.apply(
                     &params,
                     &GradientOffsets::default(),
                     now_seconds,
                     REASSEMBLY_RAMP_MS,
+                    None,
                     &mut session.mixer,
                 );
                 if raw >= seam_raw + span {

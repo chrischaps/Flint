@@ -79,6 +79,26 @@ pub struct ConductedPulse {
     pub kind: String,
 }
 
+/// One typed value from a chart cue's free-form `params` table (ADR 0033).
+/// A plain POD — flint-script never depends on flint-music or toml shapes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CueParam {
+    Number(f64),
+    Text(String),
+    Flag(bool),
+}
+
+/// One chart cue fired this frame (ADR 0033), for scene bindings.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConductedCue {
+    pub name: String,
+    /// Seconds since the cue's authored beat (suite-time arithmetic).
+    pub age: f64,
+    /// The chart's `params` table, flattened to primitives (nested tables
+    /// and arrays are dropped by the host — author flat params).
+    pub params: Vec<(String, CueParam)>,
+}
+
 /// Per-frame conducted-parameters snapshot (Phase 4 decision 4 / ADR 0020).
 /// Filled by the host (flint-player) from the music session every frame;
 /// neutral defaults when no session so scripts never branch on existence.
@@ -87,6 +107,13 @@ pub struct ConductedSnapshot {
     /// Player lean and the chart's lean target, both in [-1,1]².
     pub lean: [f64; 2],
     pub target: [f64; 2],
+    /// Player sway (right stick; zeros under the prototype input map).
+    pub sway: [f64; 2],
+    /// Trigger depths in [0,1] (zeros under the prototype input map).
+    pub pressure_l: f64,
+    pub pressure_r: f64,
+    /// Cues fired this frame (empty most frames — ADR 0033).
+    pub cues: Vec<ConductedCue>,
     /// The next authored lean key's value (ADR 0023); `target` when nothing
     /// is upcoming.
     pub next_target: [f64; 2],
@@ -122,6 +149,10 @@ impl Default for ConductedSnapshot {
         Self {
             lean: [0.0; 2],
             target: [0.0; 2],
+            sway: [0.0; 2],
+            pressure_l: 0.0,
+            pressure_r: 0.0,
+            cues: Vec::new(),
             next_target: [0.0; 2],
             next_target_beats: 1e6,
             coherence: 1.0,

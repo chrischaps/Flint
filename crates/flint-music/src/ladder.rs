@@ -50,6 +50,10 @@ pub struct RungAudio {
     pub warble_depth_semitones: f64,
     /// Warble LFO rate in Hz.
     pub warble_rate_hz: f64,
+    /// Buses whose composed degraded alternate takes over at this rung
+    /// (ADR 0032; degradable buses only, and only where the manifest
+    /// authored one — elsewhere it is a silent no-op).
+    pub alternates: Vec<String>,
 }
 
 impl Default for RungAudio {
@@ -60,6 +64,7 @@ impl Default for RungAudio {
             drop: Vec::new(),
             warble_depth_semitones: 0.0,
             warble_rate_hz: 0.0,
+            alternates: Vec::new(),
         }
     }
 }
@@ -129,6 +134,9 @@ pub struct LadderConfig {
     /// after it has first cohered). Measured on real engaged play: coherence
     /// reaches 0.80 within a learning session's first half-minute.
     pub arm_above: f64,
+    /// Crossfade length (ms) for bus↔alternate handovers (ADR 0032;
+    /// `[alternates] xfade_ms`).
+    pub alternate_xfade_ms: f64,
 }
 
 impl Default for LadderConfig {
@@ -199,6 +207,7 @@ impl Default for LadderConfig {
                         drop: vec!["texture".into()],
                         warble_depth_semitones: 0.45,
                         warble_rate_hz: 0.7,
+                        alternates: Vec::new(),
                     },
                     RungVisual {
                         desaturate: 0.85,
@@ -229,6 +238,7 @@ impl Default for LadderConfig {
             seam_rewind_drop_st: -30.0,
             seam_pickup_beats: 2.0,
             arm_above: 0.80,
+            alternate_xfade_ms: 250.0,
         }
     }
 }
@@ -305,6 +315,15 @@ impl LadderConfig {
                             .collect()
                     })
                     .unwrap_or_default();
+                let alternates: Vec<String> = audio_t
+                    .and_then(|t| t.get("alternates"))
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let visual_t = r.get("visual");
                 let vf = |key: &str| {
                     visual_t
@@ -327,6 +346,7 @@ impl LadderConfig {
                         drop,
                         warble_depth_semitones: af("warble_depth_semitones", 0.0),
                         warble_rate_hz: af("warble_rate_hz", 0.0),
+                        alternates,
                     },
                     visual: RungVisual {
                         desaturate: vf("desaturate"),
@@ -361,6 +381,11 @@ impl LadderConfig {
             .get("arm_above")
             .and_then(toml_f64)
             .unwrap_or_else(|| Self::default().arm_above);
+        let alternate_xfade_ms = root
+            .get("alternates")
+            .and_then(|t| t.get("xfade_ms"))
+            .and_then(toml_f64)
+            .unwrap_or(d_all.alternate_xfade_ms);
         let cfg = Self {
             rungs,
             full_fail,
@@ -369,6 +394,7 @@ impl LadderConfig {
             seam_rewind_drop_st,
             seam_pickup_beats,
             arm_above,
+            alternate_xfade_ms,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -397,7 +423,13 @@ impl LadderConfig {
             if !(1.0..=LPF_OPEN_HZ).contains(&r.audio.lpf_hz) {
                 return err(format!("rung {i} lpf_hz {} out of range", r.audio.lpf_hz));
             }
-            for bus in r.audio.thin_db.keys().chain(r.audio.drop.iter()) {
+            for bus in r
+                .audio
+                .thin_db
+                .keys()
+                .chain(r.audio.drop.iter())
+                .chain(r.audio.alternates.iter())
+            {
                 if !DEGRADABLE_BUSES.contains(&bus.as_str()) {
                     return err(format!(
                         "rung {i} touches protected bus '{bus}' (degradable: {DEGRADABLE_BUSES:?})"
@@ -459,13 +491,19 @@ impl LadderConfig {
                 self.arm_above, self.full_fail.enter_below
             ));
         }
+        if !(10.0..=4_000.0).contains(&self.alternate_xfade_ms) {
+            return err(format!(
+                "alternates.xfade_ms {} out of range (10..4000)",
+                self.alternate_xfade_ms
+            ));
+        }
         Ok(())
     }
 
     /// Snapshot for log headers — session reproducibility depends on knowing
     /// exactly which ladder was live.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut v = serde_json::json!({
             "full_fail": {
                 "enter_below": self.full_fail.enter_below,
                 "exit_above": self.full_fail.exit_above,
@@ -478,25 +516,39 @@ impl LadderConfig {
                 "pickup_beats": self.seam_pickup_beats,
             },
             "arm_above": self.arm_above,
-            "rungs": self.rungs.iter().map(|r| serde_json::json!({
-                "name": r.name,
-                "enter_below": r.enter_below,
-                "exit_above": r.exit_above,
-                "ramp_ms": r.ramp_ms,
-                "audio": {
-                    "lpf_hz": r.audio.lpf_hz,
-                    "thin_db": r.audio.thin_db,
-                    "drop": r.audio.drop,
-                    "warble_depth_semitones": r.audio.warble_depth_semitones,
-                    "warble_rate_hz": r.audio.warble_rate_hz,
-                },
-                "visual": {
-                    "desaturate": r.visual.desaturate,
-                    "blur": r.visual.blur,
-                    "chromatic": r.visual.chromatic,
-                },
-            })).collect::<Vec<_>>(),
-        })
+            "rungs": self.rungs.iter().map(|r| {
+                let mut rung = serde_json::json!({
+                    "name": r.name,
+                    "enter_below": r.enter_below,
+                    "exit_above": r.exit_above,
+                    "ramp_ms": r.ramp_ms,
+                    "audio": {
+                        "lpf_hz": r.audio.lpf_hz,
+                        "thin_db": r.audio.thin_db,
+                        "drop": r.audio.drop,
+                        "warble_depth_semitones": r.audio.warble_depth_semitones,
+                        "warble_rate_hz": r.audio.warble_rate_hz,
+                    },
+                    "visual": {
+                        "desaturate": r.visual.desaturate,
+                        "blur": r.visual.blur,
+                        "chromatic": r.visual.chromatic,
+                    },
+                });
+                // Emitted only when authored, so alternate-free configs keep
+                // byte-identical headers (the W2 additive-serialization rule).
+                if !r.audio.alternates.is_empty() {
+                    rung["audio"]["alternates"] = serde_json::json!(r.audio.alternates);
+                }
+                rung
+            }).collect::<Vec<_>>(),
+        });
+        if self.alternate_xfade_ms != Self::default().alternate_xfade_ms
+            || self.rungs.iter().any(|r| !r.audio.alternates.is_empty())
+        {
+            v["alternates"] = serde_json::json!({ "xfade_ms": self.alternate_xfade_ms });
+        }
+        v
     }
 }
 
@@ -512,6 +564,10 @@ pub struct LadderParams {
     pub warble_depth_semitones: f64,
     pub warble_rate_hz: f64,
     pub ramp_ms: f64,
+    /// Per-bus alternate crossfade weight (0 = bus, 1 = alternate; ADR 0032).
+    /// Absent bus = 0. Applied only while `SeqPhase::Playing` — per-sound
+    /// volume is the reintegration entry-envelope channel during reassembly.
+    pub alternate_mix: BTreeMap<String, f64>,
     pub visual: RungVisual,
 }
 
@@ -524,6 +580,7 @@ impl LadderParams {
             warble_depth_semitones: 0.0,
             warble_rate_hz: 0.0,
             ramp_ms: 350.0,
+            alternate_mix: BTreeMap::new(),
             visual: RungVisual::default(),
         }
     }
@@ -533,6 +590,12 @@ impl LadderParams {
         for bus in &r.audio.drop {
             gain_trim_db.insert(bus.clone(), DROP_DB);
         }
+        let alternate_mix = r
+            .audio
+            .alternates
+            .iter()
+            .map(|b| (b.clone(), 1.0))
+            .collect();
         Self {
             level,
             lpf_hz: r.audio.lpf_hz,
@@ -540,6 +603,7 @@ impl LadderParams {
             warble_depth_semitones: r.audio.warble_depth_semitones,
             warble_rate_hz: r.audio.warble_rate_hz,
             ramp_ms: r.ramp_ms,
+            alternate_mix,
             visual: r.visual,
         }
     }
@@ -558,6 +622,12 @@ impl LadderParams {
             let b = *other.gain_trim_db.get(bus).unwrap_or(&0.0);
             gain_trim_db.insert(bus.clone(), a + (b - a) * tf);
         }
+        let mut alternate_mix = BTreeMap::new();
+        for bus in self.alternate_mix.keys().chain(other.alternate_mix.keys()) {
+            let a = *self.alternate_mix.get(bus).unwrap_or(&0.0);
+            let b = *other.alternate_mix.get(bus).unwrap_or(&0.0);
+            alternate_mix.insert(bus.clone(), a + (b - a) * t);
+        }
         Self {
             level: if t < 1.0 { self.level } else { other.level },
             lpf_hz: (lerp_f(self.lpf_hz.ln(), other.lpf_hz.ln())).exp(),
@@ -572,6 +642,7 @@ impl LadderParams {
                 other.warble_rate_hz
             },
             ramp_ms: lerp_f(self.ramp_ms, other.ramp_ms),
+            alternate_mix,
             visual: RungVisual {
                 desaturate: self.visual.desaturate + (other.visual.desaturate - self.visual.desaturate) * tf,
                 blur: self.visual.blur + (other.visual.blur - self.visual.blur) * tf,
@@ -678,6 +749,9 @@ pub struct LadderDriver {
     last_lpf: BTreeMap<String, f64>,
     last_gain: BTreeMap<String, f32>,
     last_detune: BTreeMap<String, f64>,
+    /// Last commanded alternate crossfade weight per bus, including the span
+    /// gate (so crossing a span edge re-issues even at a held rung).
+    last_alt_mix: BTreeMap<String, f64>,
 }
 
 /// Smoothing tween for per-tick warble updates (the LFO is the shape; this
@@ -686,6 +760,7 @@ const WARBLE_SMOOTH_MS: f64 = 50.0;
 /// Gain/detune changes smaller than this don't re-issue commands.
 const GAIN_EPS: f32 = 0.01;
 const DETUNE_EPS: f64 = 0.001;
+const ALT_MIX_EPS: f64 = 0.005;
 
 impl Default for LadderDriver {
     fn default() -> Self {
@@ -699,6 +774,7 @@ impl LadderDriver {
             last_lpf: BTreeMap::new(),
             last_gain: BTreeMap::new(),
             last_detune: BTreeMap::new(),
+            last_alt_mix: BTreeMap::new(),
         }
     }
 
@@ -709,6 +785,7 @@ impl LadderDriver {
         self.last_lpf.clear();
         self.last_gain.clear();
         self.last_detune.clear();
+        self.last_alt_mix.clear();
     }
 
     /// Drive the mixer toward `params` plus the gradient's additive
@@ -719,12 +796,17 @@ impl LadderDriver {
     /// `now_seconds` is suite time (for the warble LFO phase); `ramp_ms` is
     /// the tween length for gain/LPF moves — normally `params.ramp_ms`, but
     /// reassembly passes tick-scale ramps while it lerps params itself.
+    /// `alternates`: `Some((now_sample, xfade_ms))` applies the rung's
+    /// bus↔alternate crossfades (span-gated at that sample); `None` skips
+    /// them entirely — reassembly must pass `None`, because per-sound volume
+    /// is the reintegration entry-envelope channel there (ADR 0032).
     pub fn apply(
         &mut self,
         params: &LadderParams,
         offsets: &GradientOffsets,
         now_seconds: f64,
         ramp_ms: f64,
+        alternates: Option<(i64, f64)>,
         mixer: &mut BusMixer,
     ) {
         let tween = |ms: f64| Tween {
@@ -774,6 +856,28 @@ impl LadderDriver {
                 if (last - target).abs() > DETUNE_EPS {
                     bus.set_detune(target, tween(WARBLE_SMOOTH_MS.min(ramp_ms.max(1.0))));
                     self.last_detune.insert(name.into(), target);
+                }
+            }
+
+            // Composed alternates (ADR 0032): crossfade toward the rung's
+            // authored replacement, span-gated — the *effective* mix is
+            // shadowed so crossing a span edge at a held rung re-issues
+            // (otherwise the bus would stay ducked against authored silence).
+            if let Some((now_sample, xfade_ms)) = alternates {
+                if let Some((from, to)) = bus.alternate_span() {
+                    let requested = params.alternate_mix.get(name).copied().unwrap_or(0.0);
+                    let effective = if (from..to).contains(&now_sample) {
+                        requested
+                    } else {
+                        0.0
+                    };
+                    let last = self.last_alt_mix.get(name).copied().unwrap_or(0.0);
+                    if (last - effective).abs() > ALT_MIX_EPS
+                        || !self.last_alt_mix.contains_key(name)
+                    {
+                        bus.set_alternate_mix(effective, now_sample, tween(xfade_ms));
+                        self.last_alt_mix.insert(name.into(), effective);
+                    }
                 }
             }
         }

@@ -25,6 +25,18 @@ pub struct CoherenceConfig {
     pub w_lean: f64,
     /// Blend weight of discrete pulse outcomes.
     pub w_pulse: f64,
+    /// Blend weights of the W2 continuous channels. **Default 0.0 = inert**:
+    /// a zero-weight non-lean Track record is skipped entirely (no fit, no
+    /// time advance), so an unmodified config produces bit-identical values
+    /// on any chart.
+    pub w_sway: f64,
+    pub w_pressure_l: f64,
+    pub w_pressure_r: f64,
+    /// Press depth error treated as fully wrong (quality factor on the hit
+    /// impulse; only press records carry one).
+    pub press_depth_err_full: f64,
+    /// Flick direction error (degrees) treated as fully wrong.
+    pub flick_dir_err_full_deg: f64,
     /// Tracking error treated as fully wrong (Euclidean, lean plane).
     pub track_err_full: f64,
     /// Exponent shaping the tracking penalty curve.
@@ -50,6 +62,11 @@ impl Default for CoherenceConfig {
         Self {
             w_lean: 0.6,
             w_pulse: 0.4,
+            w_sway: 0.0,
+            w_pressure_l: 0.0,
+            w_pressure_r: 0.0,
+            press_depth_err_full: 0.5,
+            flick_dir_err_full_deg: 90.0,
             track_err_full: 0.8,
             track_curve: 1.0,
             pulse_err_full_ms: 120.0,
@@ -92,6 +109,11 @@ impl CoherenceConfig {
         let cfg = Self {
             w_lean: f("weights", "lean", d.w_lean),
             w_pulse: f("weights", "pulse", d.w_pulse),
+            w_sway: f("weights", "sway", d.w_sway),
+            w_pressure_l: f("weights", "pressure_l", d.w_pressure_l),
+            w_pressure_r: f("weights", "pressure_r", d.w_pressure_r),
+            press_depth_err_full: f("press", "depth_err_full", d.press_depth_err_full),
+            flick_dir_err_full_deg: f("flick", "dir_err_full_deg", d.flick_dir_err_full_deg),
             track_err_full: f("tracking", "err_full", d.track_err_full),
             track_curve: f("tracking", "curve", d.track_curve),
             pulse_err_full_ms: f("pulse", "err_full_ms", d.pulse_err_full_ms),
@@ -105,6 +127,11 @@ impl CoherenceConfig {
         for (name, v, lo) in [
             ("weights.lean", cfg.w_lean, 0.0),
             ("weights.pulse", cfg.w_pulse, 0.0),
+            ("weights.sway", cfg.w_sway, 0.0),
+            ("weights.pressure_l", cfg.w_pressure_l, 0.0),
+            ("weights.pressure_r", cfg.w_pressure_r, 0.0),
+            ("press.depth_err_full", cfg.press_depth_err_full, f64::MIN_POSITIVE),
+            ("flick.dir_err_full_deg", cfg.flick_dir_err_full_deg, f64::MIN_POSITIVE),
             ("tracking.err_full", cfg.track_err_full, f64::MIN_POSITIVE),
             ("pulse.err_full_ms", cfg.pulse_err_full_ms, f64::MIN_POSITIVE),
             ("smoothing.rise_bars", cfg.rise_bars, f64::MIN_POSITIVE),
@@ -134,6 +161,11 @@ impl CoherenceConfig {
         Self {
             w_lean: f("weights", "lean", d.w_lean),
             w_pulse: f("weights", "pulse", d.w_pulse),
+            w_sway: f("weights", "sway", d.w_sway),
+            w_pressure_l: f("weights", "pressure_l", d.w_pressure_l),
+            w_pressure_r: f("weights", "pressure_r", d.w_pressure_r),
+            press_depth_err_full: f("press", "depth_err_full", d.press_depth_err_full),
+            flick_dir_err_full_deg: f("flick", "dir_err_full_deg", d.flick_dir_err_full_deg),
             track_err_full: f("tracking", "err_full", d.track_err_full),
             track_curve: f("tracking", "curve", d.track_curve),
             pulse_err_full_ms: f("pulse", "err_full_ms", d.pulse_err_full_ms),
@@ -147,9 +179,12 @@ impl CoherenceConfig {
     }
 
     /// Snapshot for log headers and reload records — reproducibility of a
-    /// session depends on knowing exactly which knobs were live.
+    /// session depends on knowing exactly which knobs were live. The W2
+    /// keys are emitted only when they differ from defaults, so pre-W2
+    /// sessions and lean-only configs produce byte-identical headers.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let d = Self::default();
+        let mut v = serde_json::json!({
             "weights": { "lean": self.w_lean, "pulse": self.w_pulse },
             "tracking": { "err_full": self.track_err_full, "curve": self.track_curve },
             "pulse": {
@@ -163,7 +198,23 @@ impl CoherenceConfig {
                 "rise_bars": self.rise_bars,
                 "fall_bars": self.fall_bars,
             },
-        })
+        });
+        if self.w_sway != d.w_sway {
+            v["weights"]["sway"] = serde_json::json!(self.w_sway);
+        }
+        if self.w_pressure_l != d.w_pressure_l {
+            v["weights"]["pressure_l"] = serde_json::json!(self.w_pressure_l);
+        }
+        if self.w_pressure_r != d.w_pressure_r {
+            v["weights"]["pressure_r"] = serde_json::json!(self.w_pressure_r);
+        }
+        if self.press_depth_err_full != d.press_depth_err_full {
+            v["press"] = serde_json::json!({ "depth_err_full": self.press_depth_err_full });
+        }
+        if self.flick_dir_err_full_deg != d.flick_dir_err_full_deg {
+            v["flick"] = serde_json::json!({ "dir_err_full_deg": self.flick_dir_err_full_deg });
+        }
+        v
     }
 }
 
@@ -203,9 +254,21 @@ impl Coherence {
         let c = &self.cfg;
         for rec in records {
             match rec {
-                JudgmentRecord::Track { err, .. } => {
+                JudgmentRecord::Track { channel, err, .. } => {
+                    // Lean keeps its historical semantics exactly; the W2
+                    // channels are skipped at weight 0 (inert by default —
+                    // fit=1 at w=0 would push the value *up*).
+                    let weight = match channel.as_str() {
+                        "sway" => c.w_sway,
+                        "pressure_l" => c.w_pressure_l,
+                        "pressure_r" => c.w_pressure_r,
+                        _ => c.w_lean,
+                    };
+                    if channel != "lean" && weight == 0.0 {
+                        continue;
+                    }
                     let pen = (err / c.track_err_full).clamp(0.0, 1.0).powf(c.track_curve);
-                    let fit = 1.0 - c.w_lean * pen;
+                    let fit = 1.0 - weight * pen;
                     let tau = if fit >= self.value {
                         c.rise_bars
                     } else {
@@ -215,9 +278,21 @@ impl Coherence {
                     let alpha = 1.0 - (-step_bars / tau).exp();
                     self.value += (fit - self.value) * alpha;
                 }
-                JudgmentRecord::Pulse { err_ms, .. } => {
+                JudgmentRecord::Pulse {
+                    err_ms,
+                    depth_err,
+                    dir_err,
+                    ..
+                } => {
                     let pen = (err_ms.abs() / c.pulse_err_full_ms).clamp(0.0, 1.0);
-                    self.value += c.w_pulse * c.impulse_gain * (1.0 - pen);
+                    let mut quality = 1.0 - pen;
+                    if let Some(d) = depth_err {
+                        quality *= 1.0 - (d / c.press_depth_err_full).clamp(0.0, 1.0);
+                    }
+                    if let Some(d) = dir_err {
+                        quality *= 1.0 - (d / c.flick_dir_err_full_deg).clamp(0.0, 1.0);
+                    }
+                    self.value += c.w_pulse * c.impulse_gain * quality;
                 }
                 JudgmentRecord::Miss { .. } => {
                     self.value -= c.w_pulse * c.impulse_gain * c.miss_penalty;
@@ -240,6 +315,7 @@ mod tests {
         JudgmentRecord::Track {
             sample: 0,
             beat: 0.0,
+            channel: "lean".into(),
             target: [0.0, 0.0],
             actual: [0.0, 0.0],
             err,
@@ -325,6 +401,8 @@ mod tests {
             window: 0,
             kind: "pulse".into(),
             err_ms: ms,
+            depth_err: None,
+            dir_err: None,
         };
         let mut a = Coherence::new(cfg);
         let mut b = Coherence::new(cfg);
@@ -343,6 +421,61 @@ mod tests {
         cfg.fall_bars = 4.0;
         c.reconfigure(cfg);
         assert_eq!(c.value(), v);
+    }
+
+    #[test]
+    fn w2_channels_parse_and_default_inert() {
+        // Parsing the W2 tables works…
+        let cfg = CoherenceConfig::parse(
+            "schema_version = 0\n[weights]\nsway = 0.3\npressure_r = 0.2\n[press]\ndepth_err_full = 0.4\n[flick]\ndir_err_full_deg = 60.0\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.w_sway, 0.3);
+        assert_eq!(cfg.w_pressure_r, 0.2);
+        assert_eq!(cfg.press_depth_err_full, 0.4);
+        assert_eq!(cfg.flick_dir_err_full_deg, 60.0);
+
+        // …and at the default weights a non-lean Track record is fully
+        // inert: no fit, no time advance (the inert-by-default contract).
+        let mut c = Coherence::new(CoherenceConfig::default());
+        let before = c.value();
+        c.step(
+            &[JudgmentRecord::Track {
+                sample: 0,
+                beat: 0.0,
+                channel: "sway".into(),
+                target: [1.0, 0.0],
+                actual: [0.0, 0.0],
+                err: 1.0,
+            }],
+            0.125,
+            4.0,
+        );
+        assert_eq!(c.value(), before);
+
+        // Default snapshots carry no W2 keys (header byte-stability).
+        let snap = CoherenceConfig::default().to_json();
+        assert!(snap["weights"].get("sway").is_none());
+        assert!(snap.get("press").is_none());
+        assert!(snap.get("flick").is_none());
+
+        // Quality factors shrink the hit impulse.
+        let mut cfg = CoherenceConfig::default();
+        cfg.w_sway = 0.0;
+        let hit = |depth_err: Option<f64>, dir_err: Option<f64>| JudgmentRecord::Pulse {
+            sample: 0,
+            beat: 0.0,
+            window: 0,
+            kind: "press".into(),
+            err_ms: 0.0,
+            depth_err,
+            dir_err,
+        };
+        let mut clean = Coherence::new(cfg);
+        let mut shallow = Coherence::new(cfg);
+        clean.step(&[hit(Some(0.0), None)], 0.125, 4.0);
+        shallow.step(&[hit(Some(0.4), None)], 0.125, 4.0);
+        assert!(clean.value() > shallow.value());
     }
 
     #[test]

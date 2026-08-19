@@ -142,6 +142,52 @@ fn register_conducted_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
         });
     }
 
+    // conducted_sway() -> Map #{x, y} (zeros under the prototype input map)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_sway", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.sway[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.sway[1]));
+            map
+        });
+    }
+
+    // conducted_pressure_l() / conducted_pressure_r() -> f64 in [0,1]
+    scalar_getter!("conducted_pressure_l", pressure_l);
+    scalar_getter!("conducted_pressure_r", pressure_r);
+
+    // conducted_cues() -> Array of Map #{name: string, age: f64, params: Map}
+    // Chart cues fired this frame (ADR 0033) — empty most frames. Params are
+    // the chart's free-form table, flattened to floats/strings/bools.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_cues", move || -> rhai::Array {
+            let c = ctx.lock().unwrap();
+            c.conducted
+                .cues
+                .iter()
+                .map(|cue| {
+                    let mut params = Map::new();
+                    for (k, v) in &cue.params {
+                        let d = match v {
+                            crate::context::CueParam::Number(n) => Dynamic::from(*n),
+                            crate::context::CueParam::Text(s) => Dynamic::from(s.clone()),
+                            crate::context::CueParam::Flag(b) => Dynamic::from(*b),
+                        };
+                        params.insert(k.as_str().into(), d);
+                    }
+                    let mut map = Map::new();
+                    map.insert("name".into(), Dynamic::from(cue.name.clone()));
+                    map.insert("age".into(), Dynamic::from(cue.age));
+                    map.insert("params".into(), Dynamic::from_map(params));
+                    Dynamic::from_map(map)
+                })
+                .collect()
+        });
+    }
+
     // conducted_no_input() / conducted_preroll() -> bool
     {
         let ctx = ctx.clone();

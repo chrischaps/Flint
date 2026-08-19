@@ -909,6 +909,19 @@ mod tests {
                 set_field(me, "probe", "reassembly", conducted_reassembly());
                 set_field(me, "probe", "preroll",
                     if conducted_preroll() { 1.0 } else { 0.0 });
+                let sw = conducted_sway();
+                set_field(me, "probe", "swx", sw.x);
+                set_field(me, "probe", "pl", conducted_pressure_l());
+                set_field(me, "probe", "pr", conducted_pressure_r());
+                let cues = conducted_cues();
+                set_field(me, "probe", "ncues", cues.len().to_float());
+                if cues.len() > 0 {
+                    set_field(me, "probe", "cue_ok",
+                        if cues[0].name == "surge" { 1.0 } else { 0.0 });
+                    set_field(me, "probe", "cdepth", cues[0].params.depth);
+                    set_field(me, "probe", "cmode_ok",
+                        if cues[0].params.mode == "bank" { 1.0 } else { 0.0 });
+                }
             }
         "#,
             )
@@ -919,6 +932,17 @@ mod tests {
             let mut c = engine.ctx.lock().unwrap();
             c.conducted = ConductedSnapshot {
                 lean: [0.25, -0.5],
+                sway: [0.6, -0.2],
+                pressure_l: 0.15,
+                pressure_r: 0.85,
+                cues: vec![crate::context::ConductedCue {
+                    name: "surge".into(),
+                    age: 0.004,
+                    params: vec![
+                        ("depth".into(), crate::context::CueParam::Number(0.7)),
+                        ("mode".into(), crate::context::CueParam::Text("bank".into())),
+                    ],
+                }],
                 target: [0.1, 0.75],
                 next_target: [0.3, -0.4],
                 next_target_beats: 2.5,
@@ -973,6 +997,13 @@ mod tests {
         assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "reassembly"), 0.4);
         assert_eq!(probe_float(&world, id, "preroll"), 0.0);
+        assert_eq!(probe_float(&world, id, "swx"), 0.6);
+        assert_eq!(probe_float(&world, id, "pl"), 0.15);
+        assert_eq!(probe_float(&world, id, "pr"), 0.85);
+        assert_eq!(probe_float(&world, id, "ncues"), 1.0);
+        assert_eq!(probe_float(&world, id, "cue_ok"), 1.0);
+        assert_eq!(probe_float(&world, id, "cdepth"), 0.7);
+        assert_eq!(probe_float(&world, id, "cmode_ok"), 1.0);
     }
 
     #[test]

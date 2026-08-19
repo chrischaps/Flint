@@ -66,12 +66,19 @@ impl Default for JudgmentConfig {
 }
 
 /// One raw judgment fact. Serialization order and shapes are the JSONL log
-/// contract (`logs/judgment/`).
+/// contract (`logs/judgment/`). W2 additions are strictly additive: the
+/// `channel` key is emitted only for non-lean records and `depth_err`/
+/// `dir_err` only when present, so pre-W2 logs and lean-only charts stay
+/// byte-identical.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JudgmentRecord {
     Track {
         sample: i64,
         beat: f64,
+        /// Which continuous channel this record judges ("lean", "sway",
+        /// "pressure_l", "pressure_r"). Scalar channels put their value in
+        /// `target[0]`/`actual[0]` with the second component 0.
+        channel: String,
         target: [f64; 2],
         actual: [f64; 2],
         err: f64,
@@ -83,6 +90,12 @@ pub enum JudgmentRecord {
         window: usize,
         kind: String,
         err_ms: f64,
+        /// Press only: `max(0, strength - peak pressure in window)` —
+        /// over-squeezing is free.
+        depth_err: Option<f64>,
+        /// Flick only: degrees between the gesture direction and the
+        /// authored direction (180 when the event carried none).
+        dir_err: Option<f64>,
     },
     Miss {
         /// The sample at which the window was declared dead (its close).
@@ -105,23 +118,41 @@ impl JudgmentRecord {
             JudgmentRecord::Track {
                 sample,
                 beat,
+                channel,
                 target,
                 actual,
                 err,
-            } => serde_json::json!({
-                "t": "track", "sample": sample, "beat": beat,
-                "target": target, "actual": actual, "err": err,
-            }),
+            } => {
+                let mut v = serde_json::json!({
+                    "t": "track", "sample": sample, "beat": beat,
+                    "target": target, "actual": actual, "err": err,
+                });
+                if channel != TRACKED_CHANNEL {
+                    v["channel"] = serde_json::json!(channel);
+                }
+                v
+            }
             JudgmentRecord::Pulse {
                 sample,
                 beat,
                 window,
                 kind,
                 err_ms,
-            } => serde_json::json!({
-                "t": "pulse", "sample": sample, "beat": beat,
-                "window": window, "kind": kind, "err_ms": err_ms,
-            }),
+                depth_err,
+                dir_err,
+            } => {
+                let mut v = serde_json::json!({
+                    "t": "pulse", "sample": sample, "beat": beat,
+                    "window": window, "kind": kind, "err_ms": err_ms,
+                });
+                if let Some(d) = depth_err {
+                    v["depth_err"] = serde_json::json!(d);
+                }
+                if let Some(d) = dir_err {
+                    v["dir_err"] = serde_json::json!(d);
+                }
+                v
+            }
             JudgmentRecord::Miss {
                 sample,
                 window,
@@ -138,9 +169,12 @@ impl JudgmentRecord {
     }
 }
 
-/// One beat-anchored lean target (`Arrival` mode): the best distance seen
-/// inside the window counts when the window closes.
+/// One beat-anchored continuous-channel target (`Arrival` mode): the best
+/// distance seen inside the window counts when the window closes. Scalar
+/// channels (pressure) live in the x component with y pinned to 0, so one
+/// Euclidean distance serves both arities.
 struct Arrival {
+    channel: &'static str,
     beat: f64,
     center_sample: i64,
     open: i64,
@@ -149,6 +183,17 @@ struct Arrival {
     best_err: f64,
     best_actual: [f64; 2],
     done: bool,
+}
+
+/// Degrees between two directions; 180 when either is (near) zero-length —
+/// a flick with no direction is fully wrong, never a divide-by-zero.
+fn direction_err_deg(a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (ma, mb) = ((a[0] * a[0] + a[1] * a[1]).sqrt(), (b[0] * b[0] + b[1] * b[1]).sqrt());
+    if ma < 1e-9 || mb < 1e-9 {
+        return 180.0;
+    }
+    let cos = ((a[0] * b[0] + a[1] * b[1]) / (ma * mb)).clamp(-1.0, 1.0);
+    cos.acos().to_degrees()
 }
 
 /// Per-run judgment state. Owns its evaluator and conductor so live and
@@ -160,13 +205,21 @@ pub struct Judge {
     consumed: Vec<bool>,
     /// Next tracking-grid step, in beats (`Track` mode).
     next_grid_beat: f64,
-    /// Lean-key arrival windows, sorted by beat (`Arrival` mode; empty in
-    /// `Track` mode).
+    /// Continuous-channel arrival windows, per channel in `crate::CHANNELS`
+    /// order then by beat (`Arrival` mode; empty in `Track` mode, which
+    /// stays lean-only — the Milestone 2 evidence pins it).
     arrivals: Vec<Arrival>,
     /// Grid steps stop after the chart's authored content ends.
     end_sample: i64,
     /// ZOH latch of the newest lean at or before the advance point.
     lean: [f64; 2],
+    /// ZOH latch of the newest sway.
+    sway: [f64; 2],
+    /// ZOH latches of trigger depth ([left, right]).
+    pressure: [f64; 2],
+    /// Peak pressure (either side) observed inside each press window while
+    /// open — the press-depth source (D3: depth never rides the event).
+    press_peaks: Vec<f64>,
     /// High-water mark of judged time.
     advanced_to: i64,
 }
@@ -174,14 +227,23 @@ pub struct Judge {
 impl Judge {
     pub fn new(eval: ChartEval, conductor: Conductor, cfg: JudgmentConfig) -> Self {
         let consumed = vec![false; eval.pulse_windows().len()];
+        let press_peaks = vec![0.0; eval.pulse_windows().len()];
         let arrivals: Vec<Arrival> = match cfg.lean_mode {
             LeanMode::Track => Vec::new(),
-            LeanMode::Arrival => eval
-                .channel_keys(TRACKED_CHANNEL)
-                .into_iter()
-                .filter_map(|(beat, value)| {
-                    let target = value.as_vec2()?;
-                    Some(Arrival {
+            LeanMode::Arrival => crate::CHANNELS
+                .iter()
+                .flat_map(|(channel, _)| {
+                    eval.channel_keys(channel)
+                        .into_iter()
+                        .map(move |(beat, value)| (*channel, beat, value))
+                })
+                .map(|(channel, beat, value)| {
+                    let target = match value {
+                        ChannelValue::Vec2(v) => v,
+                        ChannelValue::Scalar(v) => [v, 0.0],
+                    };
+                    Arrival {
+                        channel,
                         beat,
                         center_sample: conductor.sample_at_beat(beat),
                         open: conductor.sample_at_beat(beat - cfg.arrival_half_beats),
@@ -190,7 +252,7 @@ impl Judge {
                         best_err: f64::INFINITY,
                         best_actual: [0.0, 0.0],
                         done: false,
-                    })
+                    }
                 })
                 .collect(),
         };
@@ -215,8 +277,34 @@ impl Judge {
             arrivals,
             end_sample,
             lean: [0.0, 0.0],
+            sway: [0.0, 0.0],
+            pressure: [0.0, 0.0],
+            press_peaks,
             advanced_to: i64::MIN,
         }
+    }
+
+    /// Fold a continuous observation into the open arrival windows of its
+    /// channel (best-in-window judging: extra samples never hurt).
+    fn observe_arrivals(&mut self, channel: &str, sample: i64, actual: [f64; 2]) {
+        for a in self.arrivals.iter_mut() {
+            if a.done || a.channel != channel || sample < a.open || sample > a.close {
+                continue;
+            }
+            let dx = actual[0] - a.target[0];
+            let dy = actual[1] - a.target[1];
+            let err = (dx * dx + dy * dy).sqrt();
+            if err < a.best_err {
+                a.best_err = err;
+                a.best_actual = actual;
+            }
+        }
+    }
+
+    /// Sample where the chart's authored content ends (last window close /
+    /// grid stop) — the suite-extent input to the debug timeline map.
+    pub fn end_sample(&self) -> i64 {
+        self.end_sample
     }
 
     /// The musical time one lean record represents, for coherence's
@@ -226,9 +314,17 @@ impl Judge {
         match self.cfg.lean_mode {
             LeanMode::Track => self.cfg.grid_beats,
             LeanMode::Arrival => {
-                let n = self.arrivals.len();
+                // Mean spacing of the *lean* keys (the base verb paces the
+                // integrator; other channels ride the same step).
+                let lean: Vec<f64> = self
+                    .arrivals
+                    .iter()
+                    .filter(|a| a.channel == TRACKED_CHANNEL)
+                    .map(|a| a.beat)
+                    .collect();
+                let n = lean.len();
                 if n >= 2 {
-                    (self.arrivals[n - 1].beat - self.arrivals[0].beat) / (n - 1) as f64
+                    (lean[n - 1] - lean[0]) / (n - 1) as f64
                 } else {
                     1.0
                 }
@@ -243,21 +339,28 @@ impl Judge {
         match ev {
             InputEvent::Lean(l) => {
                 self.lean = [l.x, l.y];
-                // Arrival windows containing this instant see the new lean.
-                let s = l.sample;
-                for a in self.arrivals.iter_mut() {
-                    if a.done || s < a.open {
-                        continue;
-                    }
-                    if s > a.close {
-                        continue;
-                    }
-                    let dx = l.x - a.target[0];
-                    let dy = l.y - a.target[1];
-                    let err = (dx * dx + dy * dy).sqrt();
-                    if err < a.best_err {
-                        a.best_err = err;
-                        a.best_actual = [l.x, l.y];
+                self.observe_arrivals(TRACKED_CHANNEL, l.sample, [l.x, l.y]);
+            }
+            InputEvent::Sway(sw) => {
+                self.sway = [sw.x, sw.y];
+                self.observe_arrivals("sway", sw.sample, [sw.x, sw.y]);
+            }
+            InputEvent::Pressure(p) => {
+                let slot = match p.side {
+                    crate::input_stream::PressureSide::Left => 0,
+                    crate::input_stream::PressureSide::Right => 1,
+                };
+                self.pressure[slot] = p.value;
+                self.observe_arrivals(p.side.channel(), p.sample, [p.value, 0.0]);
+                // Press depth: peak of either trigger inside an open press
+                // window.
+                for w in self.eval.pulse_windows() {
+                    if !self.consumed[w.index]
+                        && w.kind == "press"
+                        && w.contains(p.sample)
+                        && p.value > self.press_peaks[w.index]
+                    {
+                        self.press_peaks[w.index] = p.value;
                     }
                 }
             }
@@ -278,12 +381,31 @@ impl Judge {
                         let err_ms = (s - w.center_sample) as f64
                             / self.conductor.tempo().sample_rate() as f64
                             * 1000.0;
+                        // Press: depth against authored strength, sourced
+                        // from the pressure stream (window peak, or the ZOH
+                        // latch of a trigger held steady through the window).
+                        let depth_err = match (w.kind.as_str(), w.strength) {
+                            ("press", Some(strength)) => {
+                                let peak = self.press_peaks[w.index]
+                                    .max(self.pressure[0])
+                                    .max(self.pressure[1]);
+                                Some((strength - peak).max(0.0))
+                            }
+                            _ => None,
+                        };
+                        // Flick: angular error against the authored line.
+                        let dir_err = w.direction.map(|wd| match p.direction {
+                            Some(pd) => direction_err_deg(pd, wd),
+                            None => 180.0,
+                        });
                         out.push(JudgmentRecord::Pulse {
                             sample: s,
                             beat,
                             window: w.index,
                             kind: p.kind.clone(),
                             err_ms,
+                            depth_err,
+                            dir_err,
                         });
                     }
                     None => out.push(JudgmentRecord::Spurious {
@@ -328,6 +450,7 @@ impl Judge {
                     out.push(JudgmentRecord::Track {
                         sample: grid_sample,
                         beat: self.next_grid_beat,
+                        channel: TRACKED_CHANNEL.to_string(),
                         target,
                         actual: self.lean,
                         err: (dx * dx + dy * dy).sqrt(),
@@ -337,23 +460,36 @@ impl Judge {
             }
         }
 
-        // Arrival windows whose close has passed settle now. The ZOH latch
-        // gets a say too: a player parked on the target the whole window
-        // never sends an event inside it, and still errs ~0.
+        // Arrival windows whose close has passed settle now. The channel's
+        // ZOH latch gets a say too: a player parked on the target the whole
+        // window never sends an event inside it, and still errs ~0.
+        let latches = [
+            self.lean,
+            self.sway,
+            [self.pressure[0], 0.0],
+            [self.pressure[1], 0.0],
+        ];
         for a in self.arrivals.iter_mut() {
             if a.done || a.close >= sample {
                 continue;
             }
-            let dx = self.lean[0] - a.target[0];
-            let dy = self.lean[1] - a.target[1];
+            let latch = match a.channel {
+                "sway" => latches[1],
+                "pressure_l" => latches[2],
+                "pressure_r" => latches[3],
+                _ => latches[0],
+            };
+            let dx = latch[0] - a.target[0];
+            let dy = latch[1] - a.target[1];
             let latch_err = (dx * dx + dy * dy).sqrt();
             if latch_err < a.best_err {
                 a.best_err = latch_err;
-                a.best_actual = self.lean;
+                a.best_actual = latch;
             }
             out.push(JudgmentRecord::Track {
                 sample: a.center_sample,
                 beat: a.beat,
+                channel: a.channel.to_string(),
                 target: a.target,
                 actual: a.best_actual,
                 err: a.best_err,
@@ -381,6 +517,14 @@ impl Judge {
         self.eval.pulse_windows()
     }
 
+    /// Whether the pulse window at `index` (into [`Judge::windows`]) has been
+    /// consumed by a hit. Debug-guide surface (ADR 0035): a consumed window
+    /// needs no further guidance. Un-consumes across a reintegration rewind
+    /// like everything else.
+    pub fn window_consumed(&self, index: usize) -> bool {
+        self.consumed.get(index).copied().unwrap_or(false)
+    }
+
     /// Reintegration rewind: judged time returns to `sample` (a re-entry
     /// point on the suite timeline). Content at or after it becomes
     /// judgeable again — windows un-consume, arrivals reset — while
@@ -394,6 +538,7 @@ impl Judge {
         for w in eval.pulse_windows() {
             if w.close() >= sample {
                 consumed[w.index] = false;
+                self.press_peaks[w.index] = 0.0;
             }
         }
         for a in self.arrivals.iter_mut() {
@@ -506,6 +651,7 @@ silent = true
         InputEvent::Pulse(PulseEvent {
             sample,
             kind: "pulse".into(),
+            direction: None,
         })
     }
 

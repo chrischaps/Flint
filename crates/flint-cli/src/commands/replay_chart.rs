@@ -287,6 +287,10 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         visual_eval,
     );
     core.sync_seam_params();
+    core.set_cues(flint_music::chart_session::resolve_cues(
+        &chart,
+        &Conductor::new(&manifest, None),
+    ));
     if reactive {
         let wav = args.render.as_ref().unwrap();
         return run_reactive(

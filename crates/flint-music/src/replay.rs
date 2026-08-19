@@ -20,7 +20,7 @@
 
 use crate::chart_eval::{ChannelValue, ChartEval};
 use crate::conductor::Conductor;
-use crate::input_stream::{InputEvent, LeanSample, PulseEvent};
+use crate::input_stream::{InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample};
 use flint_core::{FlintError, Result};
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -98,6 +98,9 @@ pub struct SessionWriter {
     out: std::io::BufWriter<std::fs::File>,
     last_sample: i64,
     last_lean: Option<LeanSample>,
+    last_sway: Option<SwaySample>,
+    /// Per-side pressure latch for change-compression ([left, right]).
+    last_pressure: [Option<PressureSample>; 2],
     written: u64,
 }
 
@@ -118,6 +121,8 @@ impl SessionWriter {
             out,
             last_sample: i64::MIN,
             last_lean: None,
+            last_sway: None,
+            last_pressure: [None, None],
             written: 0,
         })
     }
@@ -147,7 +152,47 @@ impl SessionWriter {
                 serde_json::json!({"t": "lean", "sample": l.sample, "x": l.x, "y": l.y})
             }
             InputEvent::Pulse(p) => {
-                serde_json::json!({"t": "pulse", "sample": p.sample, "kind": p.kind})
+                let mut v =
+                    serde_json::json!({"t": "pulse", "sample": p.sample, "kind": p.kind});
+                // Only flicks carry a direction; absent for everything else
+                // so pre-W2 streams stay byte-identical.
+                if let Some(d) = p.direction {
+                    v["direction"] = serde_json::json!(d);
+                }
+                v
+            }
+            InputEvent::Sway(sw) => {
+                if let Some(prev) = &self.last_sway {
+                    let small = (sw.x - prev.x).abs() < LEAN_EPSILON
+                        && (sw.y - prev.y).abs() < LEAN_EPSILON;
+                    let soon = ((sw.sample - prev.sample) as f64)
+                        < LEAN_MIN_INTERVAL_MS / 1000.0 * sample_rate as f64;
+                    if small && soon {
+                        return Ok(());
+                    }
+                }
+                self.last_sway = Some(*sw);
+                serde_json::json!({"t": "sway", "sample": sw.sample, "x": sw.x, "y": sw.y})
+            }
+            InputEvent::Pressure(p) => {
+                let slot = match p.side {
+                    PressureSide::Left => 0,
+                    PressureSide::Right => 1,
+                };
+                if let Some(prev) = &self.last_pressure[slot] {
+                    let small = (p.value - prev.value).abs() < LEAN_EPSILON;
+                    let soon = ((p.sample - prev.sample) as f64)
+                        < LEAN_MIN_INTERVAL_MS / 1000.0 * sample_rate as f64;
+                    if small && soon {
+                        return Ok(());
+                    }
+                }
+                self.last_pressure[slot] = Some(*p);
+                let side = match p.side {
+                    PressureSide::Left => "l",
+                    PressureSide::Right => "r",
+                };
+                serde_json::json!({"t": "pressure", "sample": p.sample, "side": side, "value": p.value})
             }
         };
         self.last_sample = s;
@@ -258,6 +303,30 @@ fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEven
                     .and_then(|x| x.as_str())
                     .unwrap_or("pulse")
                     .to_string(),
+                direction: v.get("direction").and_then(|d| {
+                    let arr = d.as_array()?;
+                    if arr.len() != 2 {
+                        return None;
+                    }
+                    Some([arr[0].as_f64()?, arr[1].as_f64()?])
+                }),
+            }),
+            Some("sway") => InputEvent::Sway(SwaySample {
+                sample: sample - offset,
+                x: v.get("x").and_then(|x| x.as_f64()).ok_or_else(|| bad("x"))?,
+                y: v.get("y").and_then(|x| x.as_f64()).ok_or_else(|| bad("y"))?,
+            }),
+            Some("pressure") => InputEvent::Pressure(PressureSample {
+                sample: sample - offset,
+                side: match v.get("side").and_then(|x| x.as_str()) {
+                    Some("l") => PressureSide::Left,
+                    Some("r") => PressureSide::Right,
+                    _ => return Err(bad("side")),
+                },
+                value: v
+                    .get("value")
+                    .and_then(|x| x.as_f64())
+                    .ok_or_else(|| bad("value"))?,
             }),
             other => return Err(FlintError::ParseError(format!(
                 "session line {}: unknown event type {other:?}",
@@ -307,7 +376,13 @@ fn bad_profile(text: &str) -> FlintError {
 const SYNTH_LEAN_HZ: f64 = 200.0;
 
 /// Deterministic event stream for a profile against a chart. Pulses take
-/// each window's kind, so press/flick windows are exercised too.
+/// each window's kind, so press/flick windows are exercised too: flick
+/// pulses carry the window's authored direction, and each press window gets
+/// a pressure sample at its center reaching the authored strength (the
+/// judge reads press depth from the pressure stream, so a perfect profile
+/// must put the depth there). Sway/pressure curves are tracked exactly when
+/// the chart authors them; lean-only charts produce the pre-W2 stream
+/// byte for byte.
 pub fn synthesize(
     eval: &ChartEval,
     conductor: &Conductor,
@@ -318,28 +393,53 @@ pub fn synthesize(
         .pulse_windows()
         .iter()
         .map(|w| w.close())
-        .chain(
-            eval.last_key_beat(crate::judgment::TRACKED_CHANNEL)
-                .map(|b| conductor.sample_at_beat(b)),
-        )
+        .chain(crate::CHANNELS.iter().filter_map(|(name, _)| {
+            eval.last_key_beat(name).map(|b| conductor.sample_at_beat(b))
+        }))
         .max()
         .unwrap_or(0);
+
+    let has_sway = eval.last_key_beat("sway").is_some();
+    let has_pressure = [
+        eval.last_key_beat("pressure_l").is_some(),
+        eval.last_key_beat("pressure_r").is_some(),
+    ];
 
     let mut events = Vec::new();
     let step = (sample_rate / SYNTH_LEAN_HZ).round() as i64;
     let mut s = 0;
     while s <= end_sample {
-        let (x, y) = match profile {
+        let beat = conductor.position_at_sample(s).beat;
+        let vec2_at = |channel: &str| match profile {
             SyntheticProfile::Neglect => (0.0, 0.0),
-            _ => {
-                let beat = conductor.position_at_sample(s).beat;
-                match eval.sample_channel(crate::judgment::TRACKED_CHANNEL, beat) {
-                    Some(ChannelValue::Vec2([x, y])) => (x, y),
-                    _ => (0.0, 0.0),
-                }
-            }
+            _ => match eval.sample_channel(channel, beat) {
+                Some(ChannelValue::Vec2([x, y])) => (x, y),
+                _ => (0.0, 0.0),
+            },
         };
+        let (x, y) = vec2_at(crate::judgment::TRACKED_CHANNEL);
         events.push(InputEvent::Lean(LeanSample { sample: s, x, y }));
+        if has_sway {
+            let (x, y) = vec2_at("sway");
+            events.push(InputEvent::Sway(SwaySample { sample: s, x, y }));
+        }
+        for (slot, side) in [(0, PressureSide::Left), (1, PressureSide::Right)] {
+            if !has_pressure[slot] {
+                continue;
+            }
+            let value = match profile {
+                SyntheticProfile::Neglect => 0.0,
+                _ => match eval.sample_channel(side.channel(), beat) {
+                    Some(ChannelValue::Scalar(v)) => v,
+                    _ => 0.0,
+                },
+            };
+            events.push(InputEvent::Pressure(PressureSample {
+                sample: s,
+                side,
+                value,
+            }));
+        }
         s += step;
     }
 
@@ -349,9 +449,22 @@ pub fn synthesize(
             _ => 0,
         };
         for w in eval.pulse_windows() {
+            // Press depth rides the pressure stream: a sample at the window
+            // center reaching the authored strength (extra samples can only
+            // improve best-in-window judging, never worsen it).
+            if w.kind == "press" {
+                if let Some(strength) = w.strength {
+                    events.push(InputEvent::Pressure(PressureSample {
+                        sample: w.center_sample,
+                        side: PressureSide::Right,
+                        value: strength,
+                    }));
+                }
+            }
             events.push(InputEvent::Pulse(PulseEvent {
                 sample: w.center_sample + offset,
                 kind: w.kind.clone(),
+                direction: w.direction,
             }));
         }
     }
@@ -456,6 +569,7 @@ silent = true
             &InputEvent::Pulse(PulseEvent {
                 sample: 100,
                 kind: "pulse".into(),
+                direction: None,
             }),
             48_000,
         )
@@ -464,6 +578,7 @@ silent = true
             &InputEvent::Pulse(PulseEvent {
                 sample: 50,
                 kind: "pulse".into(),
+                direction: None,
             }),
             48_000,
         );
@@ -520,6 +635,8 @@ silent = true
         assert!(neglect.iter().all(|e| match e {
             InputEvent::Pulse(_) => false,
             InputEvent::Lean(l) => l.x == 0.0 && l.y == 0.0,
+            InputEvent::Sway(s) => s.x == 0.0 && s.y == 0.0,
+            InputEvent::Pressure(p) => p.value == 0.0,
         }));
     }
 

@@ -29,6 +29,13 @@ pub const PREROLL_BEATS: f64 = 2.0;
 pub trait StemResolver {
     /// `Ok(None)` for silent buses.
     fn load(&self, bus: &str, decl: &BusDecl) -> Result<Option<StaticSoundData>>;
+
+    /// A degraded alternate's stem (ADR 0032). Default `Ok(None)`: resolvers
+    /// that don't provide alternates leave them silently absent (the session
+    /// warns), so test resolvers stay one-method.
+    fn load_alternate(&self, _bus: &str, _file: &str) -> Result<Option<StaticSoundData>> {
+        Ok(None)
+    }
 }
 
 /// Loads stems from disk relative to a base directory (the game repo root).
@@ -52,6 +59,14 @@ impl StemResolver for FileStems {
         StaticSoundData::from_file(self.base_dir.join(file))
             .map(Some)
             .map_err(|e| FlintError::AudioError(format!("bus '{bus}' ({file}): {e}")))
+    }
+
+    fn load_alternate(&self, bus: &str, file: &str) -> Result<Option<StaticSoundData>> {
+        StaticSoundData::from_file(self.base_dir.join(file))
+            .map(Some)
+            .map_err(|e| {
+                FlintError::AudioError(format!("alternate for bus '{bus}' ({file}): {e}"))
+            })
     }
 }
 
@@ -119,7 +134,29 @@ impl SuiteSession {
                 "manifest declares no playable buses".into(),
             ));
         }
-        let mixer = BusMixer::build(manager, loaded, start_at)?;
+        let mut mixer = BusMixer::build(manager, loaded, start_at)?;
+
+        // Composed degraded alternates (ADR 0032): full-length muted voices
+        // started at the same shared tick — sample-locked by construction.
+        for alt in &manifest.degraded_alternates {
+            match stems.load_alternate(&alt.bus, &alt.file)? {
+                Some(data) => {
+                    mixer.attach_alternate(
+                        &alt.bus,
+                        data,
+                        alt.from_sample,
+                        alt.to_sample,
+                        start_at,
+                    )?;
+                }
+                None => tracing::warn!(
+                    "degraded alternate for bus '{}' ({}) not provided by this resolver — \
+                     rung crossfades to it will be silent no-ops",
+                    alt.bus,
+                    alt.file
+                ),
+            }
+        }
 
         clock.start();
         Ok(Self {

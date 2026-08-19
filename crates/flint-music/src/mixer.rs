@@ -28,6 +28,9 @@ pub struct BusState {
     pub detune_semitones: f64,
     /// Whether this bus has a stem loaded (silent buses: false).
     pub playing: bool,
+    /// Last commanded bus↔alternate crossfade weight (0 = bus, 1 =
+    /// alternate; ADR 0032). Always 0 on buses without an alternate.
+    pub alternate_mix: f64,
 }
 
 impl Default for BusState {
@@ -37,8 +40,33 @@ impl Default for BusState {
             lpf_hz: LPF_OPEN_HZ,
             detune_semitones: 0.0,
             playing: false,
+            alternate_mix: 0.0,
         }
     }
+}
+
+/// Volume floor for the muted half of a bus↔alternate crossfade — matches
+/// the ladder's [`crate::ladder::DROP_DB`] silence convention.
+const ALT_MUTED_DB: f32 = -80.0;
+
+/// Linear crossfade weight → dB (floor at [`ALT_MUTED_DB`]).
+fn mix_db(weight: f64) -> f32 {
+    if weight <= 1e-4 {
+        ALT_MUTED_DB
+    } else {
+        (20.0 * weight.log10()).max(ALT_MUTED_DB as f64) as f32
+    }
+}
+
+/// A composed degraded alternate riding its bus's track (ADR 0032): a
+/// full-length stem, authored silent outside its manifest span, started at
+/// suite start muted — sample-locked by construction (the shared-tick
+/// start), crossfaded in per-sound volume when a ladder rung engages.
+struct AlternateVoice {
+    sound: StaticSoundHandle,
+    data: StaticSoundData,
+    from_sample: i64,
+    to_sample: i64,
 }
 
 pub struct StemBus {
@@ -49,6 +77,7 @@ pub struct StemBus {
     /// The stem's sound data, retained so reintegration can re-play it at a
     /// new position (Arc-backed; the clone is cheap). `None` for silent buses.
     data: Option<StaticSoundData>,
+    alternate: Option<AlternateVoice>,
     pub state: BusState,
 }
 
@@ -76,14 +105,52 @@ impl StemBus {
     /// per-track pitch; see ADR 0001). Warble only: any nonzero detune breaks
     /// sample-lock against the other stems while active, so offline alignment
     /// asserts only hold at detune 0. No-op with a warning on silent buses.
+    /// An alternate voice warbles identically — whichever half of the
+    /// crossfade is audible, the rung's wobble is on it.
     pub fn set_detune(&mut self, semitones: f64, tween: Tween) {
         match &mut self.sound {
             Some(sound) => {
-                sound.set_playback_rate(PlaybackRate(2f64.powf(semitones / 12.0)), tween);
+                let rate = PlaybackRate(2f64.powf(semitones / 12.0));
+                sound.set_playback_rate(rate, tween);
+                if let Some(alt) = &mut self.alternate {
+                    alt.sound.set_playback_rate(rate, tween);
+                }
                 self.state.detune_semitones = semitones;
             }
             None => tracing::warn!("set_detune on silent bus '{}' ignored", self.name),
         }
+    }
+
+    /// Crossfade between this bus's stem and its composed alternate
+    /// (0 = bus, 1 = alternate; ADR 0032), via per-sound volumes so the
+    /// track's ladder trim and LPF apply to both halves equally. Span-gated:
+    /// outside the alternate's authored span the mix is forced to 0 (the
+    /// alternate is silent there by authoring, and the bus must not duck
+    /// against nothing). No-op when the bus has no alternate.
+    ///
+    /// Per-sound volume is also the reintegration entry-envelope channel —
+    /// callers (the ladder driver) must not write it during reassembly.
+    pub fn set_alternate_mix(&mut self, mix: f64, now_sample: i64, tween: Tween) {
+        let Some(alt) = &mut self.alternate else {
+            return;
+        };
+        let in_span = (alt.from_sample..alt.to_sample).contains(&now_sample);
+        let m = if in_span { mix.clamp(0.0, 1.0) } else { 0.0 };
+        if let Some(sound) = &mut self.sound {
+            sound.set_volume(Decibels(mix_db(1.0 - m)), tween);
+        }
+        alt.sound.set_volume(Decibels(mix_db(m)), tween);
+        self.state.alternate_mix = m;
+    }
+
+    /// Whether this bus carries a composed alternate.
+    pub fn has_alternate(&self) -> bool {
+        self.alternate.is_some()
+    }
+
+    /// The alternate's authored span `[from, to)`, if one is attached.
+    pub fn alternate_span(&self) -> Option<(i64, i64)> {
+        self.alternate.as_ref().map(|a| (a.from_sample, a.to_sample))
     }
 
     pub fn sound(&self) -> Option<&StaticSoundHandle> {
@@ -97,6 +164,9 @@ impl StemBus {
         if let Some(sound) = &mut self.sound {
             sound.stop(fade);
             self.state.playing = false;
+        }
+        if let Some(alt) = &mut self.alternate {
+            alt.sound.stop(fade);
         }
     }
 
@@ -127,6 +197,23 @@ impl StemBus {
         self.sound = Some(handle);
         self.state.playing = true;
         self.state.detune_semitones = 0.0;
+        // The alternate re-plays from the same tick, muted — the crossfade
+        // state resets to bus-active; the world re-enters clean (ADR 0032).
+        if let Some(alt) = &mut self.alternate {
+            let handle = self
+                .track
+                .play(
+                    alt.data
+                        .start_position(PlaybackPosition::Samples(start_position_samples as usize))
+                        .start_time(start_at)
+                        .volume(Decibels(ALT_MUTED_DB)),
+                )
+                .map_err(|e| {
+                    FlintError::AudioError(format!("bus '{}' alternate replay: {e}", self.name))
+                })?;
+            alt.sound = handle;
+            self.state.alternate_mix = 0.0;
+        }
         Ok(())
     }
 
@@ -211,10 +298,48 @@ impl BusMixer {
                 filter,
                 sound,
                 data,
+                alternate: None,
                 state,
             });
         }
         Ok(Self { buses })
+    }
+
+    /// Attach a composed degraded alternate to a bus (ADR 0032): the
+    /// full-length stem starts muted at the same shared clock time as
+    /// everything else (sample-locked by construction), on the bus's own
+    /// track so ladder LPF/trim hit both crossfade halves. Call between
+    /// [`BusMixer::build`] and the clock start.
+    pub fn attach_alternate(
+        &mut self,
+        bus_name: &str,
+        data: StaticSoundData,
+        from_sample: i64,
+        to_sample: i64,
+        start_at: StartTime,
+    ) -> Result<()> {
+        let bus = self.bus_mut(bus_name).ok_or_else(|| {
+            FlintError::AudioError(format!("alternate for unknown bus '{bus_name}'"))
+        })?;
+        if bus.alternate.is_some() {
+            return Err(FlintError::AudioError(format!(
+                "bus '{bus_name}' already has an alternate (budget is one per bus)"
+            )));
+        }
+        let sound = bus
+            .track
+            .play(
+                data.start_time(start_at)
+                    .volume(Decibels(ALT_MUTED_DB)),
+            )
+            .map_err(|e| FlintError::AudioError(format!("bus '{bus_name}' alternate: {e}")))?;
+        bus.alternate = Some(AlternateVoice {
+            sound,
+            data,
+            from_sample,
+            to_sample,
+        });
+        Ok(())
     }
 
     pub fn bus_mut(&mut self, name: &str) -> Option<&mut StemBus> {
@@ -267,7 +392,11 @@ impl BusMixer {
         let positions: Vec<f64> = self
             .buses
             .iter()
-            .filter_map(|b| b.sound.as_ref())
+            .flat_map(|b| {
+                b.sound
+                    .iter()
+                    .chain(b.alternate.as_ref().map(|a| &a.sound))
+            })
             .map(|s| s.position())
             .collect();
         let mut max = 0.0f64;

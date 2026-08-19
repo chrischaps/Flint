@@ -9,9 +9,17 @@
 //! flint-music [`InputEvent`]s. Downstream code never touches gilrs; the
 //! replay path constructs the identical stream from a file.
 //!
-//! Verb mapping (prototype scope, physical → chart verb space):
-//! left stick → `lean` (radial deadzone, rescaled), South button or the
-//! right trigger (R2) → `pulse`. Charts never see buttons.
+//! Verb mapping (physical → chart verb space) is a [`VerbMap`] profile:
+//! - `Prototype` (default, byte-identical to the pre-W2 behavior): left
+//!   stick → `lean`, South button or the right trigger (R2) → `pulse`.
+//! - `Full` (the World II surface, ADR 0030): left stick → `lean`; South →
+//!   `pulse`; trigger analog depth → `pressure_l`/`pressure_r` streams with
+//!   a rising-onset `press` event (depth is judged from the stream, never
+//!   carried on the event); right stick → `sway`, plus a flick detector
+//!   (quiet → hard deflection within a beat-scale instant) emitting `flick`
+//!   with the gesture direction. R2 no longer emits plain `pulse` — dual
+//!   emission would put a spurious event on every squeeze.
+//! Charts never see buttons.
 //!
 //! On Windows gilrs sits on XInput, which is itself polled — event
 //! timestamps are only as fine as the poll cadence, which is exactly why
@@ -21,13 +29,59 @@
 pub mod rumble;
 
 use flint_music::clock_bridge::ClockBridge;
-use flint_music::input_stream::{InputEvent, LeanSample, PulseEvent};
+use flint_music::input_stream::{
+    InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample,
+};
 use gilrs::{Axis, Button, EventType, Gilrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
+
+/// Which physical→verb mapping the capture thread speaks (ADR 0030).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VerbMap {
+    /// Pre-W2 behavior, byte for byte: lean + plain pulse (South or R2).
+    #[default]
+    Prototype,
+    /// The full schema-v0 verb space: lean, sway, pressure streams,
+    /// press onsets, flick gestures; South is the only plain pulse.
+    Full,
+}
+
+impl VerbMap {
+    /// `prototype` | `full` (the `--input-map` / `input_map` vocabulary).
+    pub fn parse(text: &str) -> flint_core::Result<Self> {
+        match text {
+            "prototype" => Ok(Self::Prototype),
+            "full" => Ok(Self::Full),
+            other => Err(flint_core::FlintError::ValidationError(format!(
+                "unknown input map `{other}` (expected `prototype` or `full`)"
+            ))),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Prototype => "prototype",
+            Self::Full => "full",
+        }
+    }
+}
+
+/// Flick detector shape (Full map): the stick must sit quiet, then cross
+/// hard deflection within the gesture window; direction is the normalized
+/// stick at the crossing. Wall-clock here is capture-side hardware gesture
+/// detection, not gameplay state — replays carry the emitted events.
+const FLICK_ARM_MAG: f64 = 0.4;
+const FLICK_FIRE_MAG: f64 = 0.85;
+const FLICK_WINDOW_MS: f64 = 100.0;
+const FLICK_REFRACTORY_MS: f64 = 150.0;
+/// Press onset fires crossing this trigger depth rising; re-arms below the
+/// release level (hysteresis so a trembling trigger is one press).
+const PRESS_ONSET: f64 = 0.2;
+const PRESS_REARM: f64 = 0.1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CaptureConfig {
@@ -40,6 +94,8 @@ pub struct CaptureConfig {
     /// calibration), subtracted from every bridged timestamp so events carry
     /// the musical moment the player was responding to.
     pub offset_samples: i64,
+    /// Physical→verb mapping profile.
+    pub verb_map: VerbMap,
 }
 
 impl Default for CaptureConfig {
@@ -48,6 +104,7 @@ impl Default for CaptureConfig {
             poll_hz: 1000,
             deadzone: 0.12,
             offset_samples: 0,
+            verb_map: VerbMap::Prototype,
         }
     }
 }
@@ -183,6 +240,14 @@ fn capture_loop(
     let (mut raw_x, mut raw_y) = (0.0f64, 0.0f64);
     let mut warned_cold = false;
     let mut last_sample = i64::MIN;
+    // Full-map state (inert under Prototype).
+    let full = cfg.verb_map == VerbMap::Full;
+    let (mut sway_x, mut sway_y) = (0.0f64, 0.0f64);
+    let mut trig = [0.0f64; 2]; // [left, right]
+    let mut press_armed = [true; 2];
+    let mut flick_rise_at: Option<Instant> = None;
+    let mut flick_quiet = true;
+    let mut flick_last_fire: Option<Instant> = None;
 
     while !stop.load(Ordering::Relaxed) {
         // Rumble first: commands drain and fire at this loop's 1 kHz cadence
@@ -199,7 +264,10 @@ fn capture_loop(
         }
 
         let mut lean_dirty = false;
+        let mut sway_dirty = false;
+        let mut pressure_dirty = [false; 2];
         let mut pulses = 0u32;
+        let mut presses = 0u32;
         while let Some(ev) = gilrs.next_event() {
             match ev.event {
                 EventType::AxisChanged(Axis::LeftStickX, v, _) => {
@@ -210,36 +278,130 @@ fn capture_loop(
                     raw_y = v as f64;
                     lean_dirty = true;
                 }
-                EventType::ButtonPressed(Button::South | Button::RightTrigger2, _) => {
+                EventType::AxisChanged(Axis::RightStickX, v, _) if full => {
+                    sway_x = v as f64;
+                    sway_dirty = true;
+                }
+                EventType::AxisChanged(Axis::RightStickY, v, _) if full => {
+                    sway_y = v as f64;
+                    sway_dirty = true;
+                }
+                EventType::ButtonPressed(Button::South, _) => {
                     pulses += 1;
+                }
+                // R2's plain-pulse role is Prototype-only; under Full the
+                // triggers speak pressure + press (dual emission would make
+                // every squeeze spurious somewhere).
+                EventType::ButtonPressed(Button::RightTrigger2, _) if !full => {
+                    pulses += 1;
+                }
+                EventType::ButtonChanged(side @ (Button::LeftTrigger2 | Button::RightTrigger2), v, _)
+                    if full =>
+                {
+                    let slot = if side == Button::LeftTrigger2 { 0 } else { 1 };
+                    trig[slot] = (v as f64).clamp(0.0, 1.0);
+                    pressure_dirty[slot] = true;
+                    if press_armed[slot] && trig[slot] >= PRESS_ONSET {
+                        press_armed[slot] = false;
+                        presses += 1;
+                    } else if !press_armed[slot] && trig[slot] <= PRESS_REARM {
+                        press_armed[slot] = true;
+                    }
                 }
                 _ => {}
             }
         }
 
-        if lean_dirty || pulses > 0 {
+        // Flick detection on the drained right-stick state: quiet → hard
+        // deflection inside the gesture window, one shot per rise.
+        let mut flick_dir: Option<[f64; 2]> = None;
+        if full {
+            let mag = (sway_x * sway_x + sway_y * sway_y).sqrt();
+            if mag < FLICK_ARM_MAG {
+                flick_quiet = true;
+                flick_rise_at = None;
+            } else {
+                let now = Instant::now();
+                if flick_quiet {
+                    flick_quiet = false;
+                    flick_rise_at = Some(now);
+                }
+                if mag >= FLICK_FIRE_MAG {
+                    let in_window = flick_rise_at
+                        .map(|t0| now.duration_since(t0).as_secs_f64() * 1000.0 <= FLICK_WINDOW_MS)
+                        .unwrap_or(false);
+                    let refractory_ok = flick_last_fire
+                        .map(|t| now.duration_since(t).as_secs_f64() * 1000.0 >= FLICK_REFRACTORY_MS)
+                        .unwrap_or(true);
+                    if in_window && refractory_ok {
+                        flick_dir = Some([sway_x / mag, sway_y / mag]);
+                        flick_last_fire = Some(now);
+                    }
+                    flick_rise_at = None; // one shot per rise either way
+                }
+            }
+        }
+
+        let any_discrete = pulses > 0 || presses > 0 || flick_dir.is_some();
+        let any_continuous = lean_dirty || sway_dirty || pressure_dirty.iter().any(|d| *d);
+        if any_discrete || any_continuous {
             match bridge.sample_at(Instant::now()) {
                 Some(clock_sample) => {
                     // Monotonic guard: a bridge refit can step the mapping
                     // backwards by a hair; judgment requires nondecreasing.
                     let sample = (clock_sample - cfg.offset_samples).max(last_sample);
                     last_sample = sample;
+                    let send = |ev: InputEvent| tx.send(ev).is_ok();
+                    let mut alive = true;
                     if lean_dirty {
                         let (x, y) = apply_deadzone(raw_x, raw_y, cfg.deadzone);
-                        if tx.send(InputEvent::Lean(LeanSample { sample, x, y })).is_err() {
-                            quiet(&mut engine, &mut ff);
-                            return; // receiver gone; session over
+                        alive &= send(InputEvent::Lean(LeanSample { sample, x, y }));
+                    }
+                    if alive && sway_dirty {
+                        let (x, y) = apply_deadzone(sway_x, sway_y, cfg.deadzone);
+                        alive &= send(InputEvent::Sway(SwaySample { sample, x, y }));
+                    }
+                    for (slot, side) in [(0, PressureSide::Left), (1, PressureSide::Right)] {
+                        if alive && pressure_dirty[slot] {
+                            alive &= send(InputEvent::Pressure(PressureSample {
+                                sample,
+                                side,
+                                value: trig[slot],
+                            }));
+                        }
+                    }
+                    for _ in 0..presses {
+                        if !alive {
+                            break;
+                        }
+                        alive &= send(InputEvent::Pulse(PulseEvent {
+                            sample,
+                            kind: "press".into(),
+                            direction: None,
+                        }));
+                    }
+                    if alive {
+                        if let Some(direction) = flick_dir {
+                            alive &= send(InputEvent::Pulse(PulseEvent {
+                                sample,
+                                kind: "flick".into(),
+                                direction: Some(direction),
+                            }));
                         }
                     }
                     for _ in 0..pulses {
-                        let pulse = PulseEvent {
+                        if !alive {
+                            break;
+                        }
+                        alive &= send(InputEvent::Pulse(PulseEvent {
                             sample,
                             kind: "pulse".into(),
-                        };
-                        if tx.send(InputEvent::Pulse(pulse)).is_err() {
-                            quiet(&mut engine, &mut ff);
-                            return;
-                        }
+                            direction: None,
+                        }));
+                    }
+                    if !alive {
+                        quiet(&mut engine, &mut ff);
+                        return; // receiver gone; session over
                     }
                 }
                 None => {
@@ -321,7 +483,14 @@ pub fn measure_granularity(duration: Duration, poll_hz: u32) -> flint_core::Resu
 
     while start.elapsed() < duration {
         while let Some(ev) = gilrs.next_event() {
-            if !matches!(ev.event, EventType::AxisChanged(..) | EventType::ButtonPressed(..)) {
+            // `ButtonChanged` included since W2: the trigger analog stream's
+            // cadence is what press/pressure judging rides on.
+            if !matches!(
+                ev.event,
+                EventType::AxisChanged(..)
+                    | EventType::ButtonPressed(..)
+                    | EventType::ButtonChanged(..)
+            ) {
                 continue;
             }
             events += 1;

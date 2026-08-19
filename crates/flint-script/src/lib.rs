@@ -16,7 +16,7 @@ pub mod ui;
 
 pub use context::DrawCommand;
 pub use context::StateScope;
-pub use context::{ConductedPulse, ConductedSnapshot};
+pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;

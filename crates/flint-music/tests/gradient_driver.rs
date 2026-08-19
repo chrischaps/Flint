@@ -127,7 +127,14 @@ fn render() -> Observed {
     let result = render_offline_with(&manifest, &SynthStems, &script, &cfg, |pos, session| {
         let (err, mag) = scripted_lean(pos.sample);
         let offsets = gradient.evaluate(err, mag, pos.seconds);
-        driver.apply(&clean, &offsets, pos.seconds, clean.ramp_ms, &mut session.mixer);
+        driver.apply(
+            &clean,
+            &offsets,
+            pos.seconds,
+            clean.ramp_ms,
+            Some((pos.sample, 250.0)),
+            &mut session.mixer,
+        );
         let get = |name: &str| {
             session
                 .mixer

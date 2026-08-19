@@ -46,6 +46,22 @@ fn valid_fixtures_produce_no_issues() {
             let c = Chart::load(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
             let issues = validate_chart(&c, &manifest);
             assert!(issues.is_empty(), "{name} produced issues: {issues:?}");
+            // The params-carrying cue (ADR 0033) must round-trip: the pinned
+            // schema documents `params` as a free-form table.
+            if name == "prototype.chart.toml" {
+                let cue = c
+                    .cues
+                    .iter()
+                    .find(|cue| cue.cue == "surge")
+                    .expect("fixture carries a params cue");
+                let params = cue.params.as_ref().expect("surge cue has params");
+                assert_eq!(params.get("depth").and_then(|v| v.as_float()), Some(0.7));
+                assert_eq!(
+                    params.get("mode").and_then(|v| v.as_str()),
+                    Some("bank")
+                );
+                assert_eq!(params.get("index").and_then(|v| v.as_integer()), Some(2));
+            }
         }
     }
 }

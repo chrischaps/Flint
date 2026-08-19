@@ -44,6 +44,9 @@ pub struct PlayChartArgs {
     /// Haptics config path (ADR 0026; default: `<base_dir>/config/
     /// haptics.toml` when present, else inert built-ins — no rumble).
     pub haptics: Option<String>,
+    /// Physical→verb mapping: "prototype" (lean + pulse) or "full"
+    /// (adds sway, pressure, press, flick — ADR 0030).
+    pub input_map: String,
 }
 
 pub fn run(args: PlayChartArgs) -> Result<()> {
@@ -116,16 +119,27 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
     // own measured tap tendency. The capture thread applies it at the stamp.
     let offset_samples =
         judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
+    let verb_map = flint_input_capture::VerbMap::parse(&args.input_map)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let capture = flint_input_capture::spawn_with_rumble(
         session.bridge(),
         flint_input_capture::CaptureConfig {
             offset_samples,
+            verb_map,
             ..Default::default()
         },
     );
     match capture {
         Ok((handle, rx, rumble_tx)) => {
-            println!("gamepad capture running (left stick = lean, South/RT = pulse)");
+            match verb_map {
+                flint_input_capture::VerbMap::Prototype => println!(
+                    "gamepad capture running (left stick = lean, South/RT = pulse)"
+                ),
+                flint_input_capture::VerbMap::Full => println!(
+                    "gamepad capture running (full map: L-stick = lean, R-stick = sway/flick, \
+                     triggers = pressure/press, South = pulse)"
+                ),
+            }
             // The backend can be alive with zero devices (ADR 0011's
             // silent failure — e.g. a mapper presenting the pad as
             // keyboard/mouse). Make that loud BEFORE the session.

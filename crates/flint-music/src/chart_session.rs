@@ -200,6 +200,16 @@ pub struct ChartCore {
     /// Latest observed lean / pulse, suite-stamped ([`ChartCore::observe_input`]).
     lean: [f64; 2],
     last_pulse_sample: Option<i64>,
+    /// Latest observed sway / trigger depth ([left, right]) — the W2 verbs'
+    /// conducted state (ADR 0033).
+    sway: [f64; 2],
+    pressure: [f64; 2],
+    /// Chart cues resolved to samples (empty when the caller never set them).
+    cues: Vec<ResolvedCue>,
+    cue_fired: Vec<bool>,
+    /// Cues fired by the most recent [`ChartCore::process`] call (indices
+    /// into `cues`) — cleared at its top, the `frame_pulses` pattern.
+    frame_cues: Vec<usize>,
     /// Latest [`SeqTick`] state, cached in [`ChartCore::step_seq`] so the
     /// conducted frame reads one source live and offline.
     ladder_params: LadderParams,
@@ -208,6 +218,12 @@ pub struct ChartCore {
     /// Pulses judged by the most recent [`ChartCore::process`] call —
     /// cleared at its top, so one frame's worth (ADR 0020).
     frame_pulses: Vec<(i64, f64, PulseKind)>,
+    /// This-run histories for the debug timeline. Write-only from every
+    /// deterministic path (nothing on the judgment/render side reads them);
+    /// they accumulate regardless of panel state — a seam missed while the
+    /// overlay is closed would falsify the map.
+    seam_history: Vec<SeamMark>,
+    pulse_history: Vec<PulseMark>,
 }
 
 impl ChartCore {
@@ -248,11 +264,25 @@ impl ChartCore {
             visual_eval,
             lean: [0.0; 2],
             last_pulse_sample: None,
+            sway: [0.0; 2],
+            pressure: [0.0; 2],
+            cues: Vec::new(),
+            cue_fired: Vec::new(),
+            frame_cues: Vec::new(),
             ladder_params: LadderParams::clean(),
             reassembly: 1.0,
             rewind: 0.0,
             frame_pulses: Vec::new(),
+            seam_history: Vec::new(),
+            pulse_history: Vec::new(),
         }
+    }
+
+    /// Attach the chart's cues, resolved to samples (ADR 0033). Callers that
+    /// never set them get a cue-free frame — the pre-W2 behavior.
+    pub fn set_cues(&mut self, cues: Vec<ResolvedCue>) {
+        self.cue_fired = vec![false; cues.len()];
+        self.cues = cues;
     }
 
     /// Wire the seam parameters from the ladder config into the sequencer.
@@ -277,6 +307,14 @@ impl ChartCore {
         match ev {
             InputEvent::Lean(l) => self.lean = [l.x, l.y],
             InputEvent::Pulse(p) => self.last_pulse_sample = Some(p.sample),
+            InputEvent::Sway(s) => self.sway = [s.x, s.y],
+            InputEvent::Pressure(p) => {
+                let slot = match p.side {
+                    crate::input_stream::PressureSide::Left => 0,
+                    crate::input_stream::PressureSide::Right => 1,
+                };
+                self.pressure[slot] = p.value;
+            }
         }
     }
 
@@ -297,6 +335,20 @@ impl ChartCore {
         // One frame's worth of conducted pulses: cleared before the empty-
         // records early return so a quiet frame reports no pulses.
         self.frame_pulses.clear();
+        // Cues fire on sample crossing, before the early return — a quiet
+        // frame still crosses cues. During a rewind they are dropped, not
+        // deferred (the prologue glance rule): a cue firing into the record-
+        // spinning-backwards interlude would choreograph a world that is
+        // un-happening.
+        self.frame_cues.clear();
+        for i in 0..self.cues.len() {
+            if !self.cue_fired[i] && self.cues[i].sample <= at_sample {
+                self.cue_fired[i] = true;
+                if self.rewind == 0.0 {
+                    self.frame_cues.push(i);
+                }
+            }
+        }
         let mut pulse_errs = Vec::new();
         if self.records.is_empty() {
             return Ok(pulse_errs);
@@ -315,14 +367,29 @@ impl ChartCore {
                     self.abs_err_sum_ms += err_ms.abs();
                     pulse_errs.push(*err_ms);
                     self.frame_pulses.push((*sample, *err_ms, PulseKind::Hit));
+                    self.pulse_history.push(PulseMark {
+                        sample: *sample,
+                        err_ms: *err_ms,
+                        kind: PulseKind::Hit,
+                    });
                 }
                 JudgmentRecord::Miss { sample, .. } => {
                     self.misses += 1;
                     self.frame_pulses.push((*sample, 0.0, PulseKind::Miss));
+                    self.pulse_history.push(PulseMark {
+                        sample: *sample,
+                        err_ms: 0.0,
+                        kind: PulseKind::Miss,
+                    });
                 }
                 JudgmentRecord::Spurious { sample, .. } => {
                     self.spurious += 1;
                     self.frame_pulses.push((*sample, 0.0, PulseKind::Spurious));
+                    self.pulse_history.push(PulseMark {
+                        sample: *sample,
+                        err_ms: 0.0,
+                        kind: PulseKind::Spurious,
+                    });
                 }
                 JudgmentRecord::Track { .. } => {}
             }
@@ -387,6 +454,11 @@ impl ChartCore {
                     re_entry_sample,
                     seam_suite_sample,
                 } => {
+                    self.seam_history.push(SeamMark {
+                        kind: SeamMarkKind::FullFail,
+                        suite_sample: *at_suite_sample,
+                        re_entry_sample: *re_entry_sample,
+                    });
                     self.log.write_value(&serde_json::json!({
                         "t": "full_fail", "sample": at_suite_sample,
                         "re_entry_sample": re_entry_sample,
@@ -399,9 +471,23 @@ impl ChartCore {
                     re_entry_sample,
                 } => {
                     self.judge.rewind_to(*re_entry_sample);
+                    // Cues at or past the re-entry point become fireable
+                    // again — the world re-plays them like every stem.
+                    for (i, cue) in self.cues.iter().enumerate() {
+                        if cue.sample >= *re_entry_sample {
+                            self.cue_fired[i] = false;
+                        }
+                    }
                     // The world re-enters clean; the gradient eases back in
                     // from silence via its own attack (mirrors driver.reset).
                     self.gradient.reset();
+                    // Post-seam the jump target's suite position IS the
+                    // re-entry sample.
+                    self.seam_history.push(SeamMark {
+                        kind: SeamMarkKind::Seam,
+                        suite_sample: *re_entry_sample,
+                        re_entry_sample: *re_entry_sample,
+                    });
                     self.log.write_value(&serde_json::json!({
                         "t": "seam", "raw_sample": raw_sample,
                         "timeline_offset": timeline_offset,
@@ -409,6 +495,11 @@ impl ChartCore {
                     }))?;
                 }
                 ReintegrationEvent::ReassemblyComplete { at_suite_sample } => {
+                    self.seam_history.push(SeamMark {
+                        kind: SeamMarkKind::ReassemblyComplete,
+                        suite_sample: *at_suite_sample,
+                        re_entry_sample: *at_suite_sample,
+                    });
                     self.log.write_value(&serde_json::json!({
                         "t": "reassembly_complete", "sample": at_suite_sample,
                     }))?;
@@ -572,6 +663,21 @@ impl ChartCore {
             beat_phase: (pos.beat.rem_euclid(1.0)) as f32,
             bar_phase: (pos.beat_in_bar / beats_per_bar).clamp(0.0, 1.0) as f32,
             lean: [self.lean[0] as f32, self.lean[1] as f32],
+            sway: [self.sway[0] as f32, self.sway[1] as f32],
+            pressure_l: self.pressure[0] as f32,
+            pressure_r: self.pressure[1] as f32,
+            cues: self
+                .frame_cues
+                .iter()
+                .map(|&i| {
+                    let c = &self.cues[i];
+                    ConductedCue {
+                        name: c.name.clone(),
+                        age_s: age_s(c.sample),
+                        params: c.params.clone().unwrap_or_default(),
+                    }
+                })
+                .collect(),
             target,
             next_target,
             next_target_beats,
@@ -600,6 +706,48 @@ impl ChartCore {
                     kind,
                 })
                 .collect(),
+        }
+    }
+
+    /// Debug-guide data (ADR 0035): what input the chart expects around the
+    /// current position — the unconsumed judgment windows within
+    /// `horizon_beats`, plus the authored channel targets that
+    /// [`ConductedFrame`] does not carry. Dev surface only: front ends feed
+    /// this to summonable debug overlays, never to the player-facing world.
+    pub fn guide_frame(
+        &self,
+        pos: crate::conductor::MusicalPosition,
+        horizon_beats: f64,
+    ) -> GuideFrame {
+        let windows = self
+            .judge
+            .windows()
+            .iter()
+            .enumerate()
+            .filter(|(i, w)| !self.judge.window_consumed(*i) && w.close() >= pos.sample)
+            .filter(|(_, w)| w.beat <= pos.beat + horizon_beats)
+            .map(|(_, w)| GuideWindow {
+                kind: w.kind.clone(),
+                beat: w.beat,
+                beats_until: w.beat - pos.beat,
+                open_now: w.contains(pos.sample),
+                strength: w.strength,
+                direction: w.direction,
+            })
+            .collect();
+        use crate::chart_eval::ChannelValue;
+        let scalar = |ch: &str| match self.visual_eval.sample_channel(ch, pos.beat) {
+            Some(ChannelValue::Scalar(v)) => Some(v),
+            _ => None,
+        };
+        GuideFrame {
+            windows,
+            sway_target: self
+                .visual_eval
+                .sample_channel("sway", pos.beat)
+                .and_then(|v| v.as_vec2()),
+            pressure_l_target: scalar("pressure_l"),
+            pressure_r_target: scalar("pressure_r"),
         }
     }
 
@@ -692,6 +840,42 @@ pub struct ConductedPulse {
     pub kind: PulseKind,
 }
 
+/// A chart cue resolved to samples (ADR 0033), attached to the core via
+/// [`ChartCore::set_cues`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedCue {
+    pub sample: i64,
+    pub name: String,
+    pub params: Option<toml::value::Table>,
+}
+
+/// Resolve a chart's cues against the conductor, sorted by sample.
+pub fn resolve_cues(chart: &Chart, conductor: &Conductor) -> Vec<ResolvedCue> {
+    let mut cues: Vec<ResolvedCue> = chart
+        .cues
+        .iter()
+        .map(|c| ResolvedCue {
+            sample: conductor.sample_at_beat(c.beat),
+            name: c.cue.clone(),
+            params: c.params.clone(),
+        })
+        .collect();
+    cues.sort_by(|a, b| a.sample.cmp(&b.sample).then(a.name.cmp(&b.name)));
+    cues
+}
+
+/// One cue fired this frame (ADR 0033): the chart's free-form `params` table
+/// rides along for the Rhai binding. `age_s` is suite seconds since the
+/// cue's authored beat (normally < one frame; larger only when judgment
+/// catches up after a stall).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConductedCue {
+    pub name: String,
+    pub age_s: f64,
+    /// Empty table when the chart authored no params.
+    pub params: toml::value::Table,
+}
+
 /// The per-frame conducted-parameters snapshot (ADR 0020): what scene
 /// bindings and the harness window draw from. No numbers reach the player's
 /// screen — these drive glows, breathing, and world motion, not meters.
@@ -702,6 +886,13 @@ pub struct ConductedFrame {
     pub bar_phase: f32,
     /// Player lean (deadzoned) and the chart's lean target, both in [-1,1]².
     pub lean: [f32; 2],
+    /// Player sway (right stick, deadzoned; zeros under the prototype map).
+    pub sway: [f32; 2],
+    /// Trigger depths in [0,1] (zeros under the prototype map).
+    pub pressure_l: f32,
+    pub pressure_r: f32,
+    /// Cues fired this frame (empty most frames — ADR 0033).
+    pub cues: Vec<ConductedCue>,
     pub target: [f32; 2],
     /// The next authored lean key's value (ADR 0023) — where the chart bends
     /// next. Falls back to `target` when nothing is upcoming.
@@ -746,6 +937,10 @@ impl Default for ConductedFrame {
             beat_phase: 0.0,
             bar_phase: 0.0,
             lean: [0.0; 2],
+            sway: [0.0; 2],
+            pressure_l: 0.0,
+            pressure_r: 0.0,
+            cues: Vec::new(),
             target: [0.0; 2],
             next_target: [0.0; 2],
             next_target_beats: 1e6,
@@ -769,6 +964,192 @@ impl Default for ConductedFrame {
 /// The pre-ADR-0020 name, kept so existing front ends read naturally.
 pub type VisualFrame = ConductedFrame;
 
+/// One upcoming (or currently open) pulse window, for the debug guide
+/// (ADR 0035). This is judgment-shaped data by design — it exists so a dev
+/// can learn what the chart wants; it must never reach the player-facing
+/// world (the no-gamified-UI rule).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuideWindow {
+    /// Verb-space kind: "pulse" | "press" | "flick".
+    pub kind: String,
+    /// Authored beat (suite beats from zero).
+    pub beat: f64,
+    /// Suite beats until the authored center; negative once past it (the
+    /// window can still be open — see `open_now`).
+    pub beats_until: f64,
+    /// The judgment window brackets the current position right now.
+    pub open_now: bool,
+    /// Press only: required trigger depth.
+    pub strength: Option<f64>,
+    /// Flick only: authored direction.
+    pub direction: Option<[f64; 2]>,
+}
+
+/// Per-frame debug-guide snapshot (ADR 0035): the input the chart expects
+/// that [`ConductedFrame`] does not already carry.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GuideFrame {
+    /// Unconsumed windows whose close has not passed, within the horizon,
+    /// sorted by center (the judge's own order).
+    pub windows: Vec<GuideWindow>,
+    /// Authored channel targets at the current beat (`None` where the chart
+    /// has no keys for that channel).
+    pub sway_target: Option<[f64; 2]>,
+    pub pressure_l_target: Option<f64>,
+    pub pressure_r_target: Option<f64>,
+}
+
+/// The suite's static structure for the debug timeline map: everything the
+/// manifest pins that a strip-chart overlay wants to draw. Built once at
+/// session open ([`TimelineMap::build`]); dev surface only, never the
+/// player-facing world (the no-gamified-UI rule).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TimelineMap {
+    pub sample_rate: u32,
+    /// Suite-axis extent of the map: authored content end (last judgment
+    /// window close), rounded up to the next bar line.
+    pub end_sample: i64,
+    pub sections: Vec<TimelineSection>,
+    /// Every bar line within `end_sample`, precomputed so the overlay needs
+    /// no tempo math (correct across tempo/meter changes by construction).
+    pub bars: Vec<BarMark>,
+    /// The manifest's tempo anchors, verbatim (index 0 is the opening
+    /// tempo/meter, not a "change").
+    pub tempo_marks: Vec<TempoMark>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimelineSection {
+    pub name: String,
+    pub start_sample: i64,
+    /// The next section's start (the map's `end_sample` for the last one) —
+    /// sections carry no authored end.
+    pub end_sample: i64,
+    /// Listed in the manifest's `reintegration.re_entry_sections`.
+    pub re_entry: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BarMark {
+    /// Bar index, counted from 0 (the tempo map's convention).
+    pub bar: i64,
+    pub sample: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TempoMark {
+    pub sample: i64,
+    pub bpm: f64,
+    pub beats_per_bar: i64,
+    pub beat_unit: i64,
+}
+
+impl TimelineMap {
+    /// Snapshot the manifest's structure. `judge_end_sample` is the judge's
+    /// authored-content end ([`Judge::end_sample`]); the map extends to at
+    /// least the last section start, rounded up to a bar line.
+    pub fn build(manifest: &SuiteManifest, conductor: &Conductor, judge_end_sample: i64) -> Self {
+        let last_section_start = manifest
+            .sections
+            .iter()
+            .map(|s| s.start_sample)
+            .max()
+            .unwrap_or(0);
+        let raw_end = judge_end_sample.max(last_section_start).max(0);
+        // Round up to the next bar line so the strip ends on musical ground.
+        let end_bar = conductor.position_at_sample(raw_end).bar + 1;
+        let end_sample = conductor.sample_at_bar(end_bar, 0.0);
+
+        let mut sections: Vec<TimelineSection> = manifest
+            .sections
+            .iter()
+            .map(|s| TimelineSection {
+                name: s.name.clone(),
+                start_sample: s.start_sample,
+                end_sample, // patched below from the next section's start
+                re_entry: manifest.reintegration.re_entry_sections.contains(&s.name),
+            })
+            .collect();
+        for i in 0..sections.len().saturating_sub(1) {
+            sections[i].end_sample = sections[i + 1].start_sample;
+        }
+
+        let mut bars = Vec::new();
+        // Hard cap defends against a degenerate tempo map, not real content.
+        for bar in 0..10_000 {
+            let sample = conductor.sample_at_bar(bar, 0.0);
+            if sample > end_sample {
+                break;
+            }
+            bars.push(BarMark { bar, sample });
+        }
+
+        Self {
+            sample_rate: manifest.sample_rate,
+            end_sample,
+            sections,
+            bars,
+            tempo_marks: manifest
+                .tempo
+                .iter()
+                .map(|a| TempoMark {
+                    sample: a.sample,
+                    bpm: a.bpm,
+                    beats_per_bar: a.beats_per_bar,
+                    beat_unit: a.beat_unit,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A reintegration-sequencer event retained for the debug timeline (this-run
+/// history). Suite-sample addressed; pushed by [`ChartCore::step_seq`] as
+/// events fire, read only by [`ChartSession::timeline_frame`] — no
+/// deterministic path touches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeamMarkKind {
+    /// Full-fail latched: the rewind gesture begins here.
+    FullFail,
+    /// The seam committed: playback re-entered at `re_entry_sample`.
+    Seam,
+    /// Reassembly ramp finished.
+    ReassemblyComplete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeamMark {
+    pub kind: SeamMarkKind,
+    /// Where on the suite axis the event happened (for `Seam` this IS the
+    /// re-entry point — post-jump suite position).
+    pub suite_sample: i64,
+    pub re_entry_sample: i64,
+}
+
+/// One judged pulse retained for the debug timeline (this-run history).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PulseMark {
+    pub sample: i64,
+    /// Timing error in ms (hits only; 0.0 for miss/spurious).
+    pub err_ms: f64,
+    pub kind: PulseKind,
+}
+
+/// Per-frame debug-timeline snapshot: the playhead plus this-run history.
+/// Pairs with the static [`TimelineMap`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TimelineFrame {
+    /// Latency-compensated suite sample (negative during preroll).
+    pub playhead_sample: i64,
+    /// The monotonic raw clock (never rewinds).
+    pub raw_clock_sample: i64,
+    /// `raw − suite`; changes once per committed seam.
+    pub timeline_offset: i64,
+    pub preroll: bool,
+    pub seams: Vec<SeamMark>,
+    pub pulses: Vec<PulseMark>,
+}
+
 /// Everything one live play-through owns, front-end agnostic. A front end
 /// calls [`ChartSession::tick`] at its own cadence (the audio clock is the
 /// master clock — ticking merely drains queues and advances judgment), plus
@@ -789,6 +1170,9 @@ pub struct ChartSession {
     session: SuiteSession,
     end_sample: i64,
     sample_rate: u32,
+    /// Static suite structure for the debug timeline overlay, built once at
+    /// open. Dev surface only (the guide-frame contract).
+    timeline_map: TimelineMap,
     last_bar: i64,
     /// Total input events received; a live capture that delivers nothing is
     /// the failure mode worth shouting about (ADR 0011).
@@ -1064,6 +1448,10 @@ impl ChartSession {
 
         let bridge = ClockBridge::new(manifest.sample_rate);
 
+        // Timeline map for the debug overlay: pure tempo arithmetic, so the
+        // session's own conductor serves (latency shapes only `now()`).
+        let timeline_map = TimelineMap::build(manifest, &session.conductor, judge.end_sample());
+
         let end_sample = cfg
             .bars
             .map(|b| session.conductor.sample_at_bar(b as i64, 0.0))
@@ -1084,6 +1472,7 @@ impl ChartSession {
             visual_eval,
         );
         core.sync_seam_params();
+        core.set_cues(resolve_cues(chart, &Conductor::new(manifest, None)));
 
         // The session-start engine settings ride the pending queue until a
         // front end attaches a sink; an inert config never emits at all.
@@ -1103,6 +1492,7 @@ impl ChartSession {
                 input_rx: None,
                 end_sample,
                 sample_rate,
+                timeline_map,
                 last_bar: i64::MIN,
                 input_events: 0,
                 warned_no_input: false,
@@ -1400,6 +1790,33 @@ impl ChartSession {
         let pos = self.session.now();
         let no_input = self.input_rx.is_some() && self.input_events == 0 && pos.sample >= 0;
         self.core.conducted_frame(pos, no_input)
+    }
+
+    /// Debug-guide snapshot at the current position (ADR 0035) — dev
+    /// overlays only, never the player-facing world.
+    pub fn guide_frame(&self, horizon_beats: f64) -> GuideFrame {
+        self.core.guide_frame(self.session.now(), horizon_beats)
+    }
+
+    /// The static suite-structure map for the debug timeline overlay, built
+    /// once at open. Same dev-only contract as [`ChartSession::guide_frame`].
+    pub fn timeline_map(&self) -> &TimelineMap {
+        &self.timeline_map
+    }
+
+    /// Per-frame debug-timeline snapshot: playhead + this-run seam/pulse
+    /// history. Clones the histories — call only while an overlay is open
+    /// (the guide-frame cost model).
+    pub fn timeline_frame(&self) -> TimelineFrame {
+        let pos = self.session.now();
+        TimelineFrame {
+            playhead_sample: pos.sample,
+            raw_clock_sample: self.session.raw_clock_sample(),
+            timeline_offset: self.session.timeline_offset(),
+            preroll: pos.sample < 0,
+            seams: self.core.seam_history.clone(),
+            pulses: self.core.pulse_history.clone(),
+        }
     }
 
     /// Tear down in order: input producer first, then judgment bookkeeping,

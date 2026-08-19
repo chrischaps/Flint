@@ -292,6 +292,11 @@ enum Commands {
         /// inert — no rumble)
         #[arg(long)]
         haptics: Option<String>,
+
+        /// Physical→verb mapping: "prototype" (lean + pulse) or "full"
+        /// (adds sway, pressure, press, flick — ADR 0030)
+        #[arg(long, default_value = "prototype")]
+        input_map: String,
     },
 
     /// Rumble spike (ADR 0025): fire the ff motors, time the command paths,
@@ -763,6 +768,7 @@ fn main() -> Result<()> {
             ladder,
             gradient,
             haptics,
+            input_map,
         } => play_chart::run(play_chart::PlayChartArgs {
             manifest,
             chart,
@@ -776,6 +782,7 @@ fn main() -> Result<()> {
             ladder,
             gradient,
             haptics,
+            input_map,
         }),
         Commands::SpikeRumble { base_dir, no_feel } => {
             spike_rumble::run(spike_rumble::SpikeRumbleArgs { base_dir, no_feel })

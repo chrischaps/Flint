@@ -99,6 +99,7 @@ fn render() -> Observed {
             &flint_music::GradientOffsets::default(),
             pos.seconds,
             params.ramp_ms,
+            Some((pos.sample, 250.0)),
             &mut session.mixer,
         );
         let get = |name: &str| {

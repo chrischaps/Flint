@@ -122,6 +122,9 @@ pub struct MusicSession {
     /// (a one-callback-buffer reporting transient collapses on re-read).
     max_confirmed_skew_ms: f64,
     last_skew_check: Instant,
+    /// Component's `quit_on_finish`: when the session ends on its own the
+    /// player exits instead of idling in the post-session neutral world.
+    quit_on_finish: bool,
 }
 
 /// A string field of the component; empty/whitespace counts as absent.
@@ -177,6 +180,10 @@ impl MusicSession {
             .and_then(flint_core::toml_util::toml_f64)
             .map(|b| b.max(0.0).round() as u64)
             .filter(|&b| b > 0);
+        let quit_on_finish = comp
+            .get("quit_on_finish")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Timing offsets from the committed logs in <base_dir>/logs/latency/.
         let latency_ms = match latest_latency_ms(base_dir) {
@@ -232,15 +239,24 @@ impl MusicSession {
         // (and the bar-2 NO INPUT notice will not fire: no receiver attached).
         let offset_samples =
             judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
+        let verb_map = match comp_str(comp, "input_map") {
+            Some(m) => flint_input_capture::VerbMap::parse(&m)
+                .map_err(|e| anyhow!("music_session component: {e}"))?,
+            None => flint_input_capture::VerbMap::default(),
+        };
         match flint_input_capture::spawn_with_rumble(
             session.bridge(),
             CaptureConfig {
                 offset_samples,
+                verb_map,
                 ..Default::default()
             },
         ) {
             Ok((handle, rx, rumble_tx)) => {
-                println!("[music] gamepad capture running (left stick = lean, South/RT = pulse)");
+                println!(
+                    "[music] gamepad capture running ({} map)",
+                    verb_map.name()
+                );
                 match flint_input_capture::connected_gamepads() {
                     Ok(pads) if pads.is_empty() => println!(
                         "[music] *** WARNING: NO GAMEPADS VISIBLE — the session will receive \
@@ -272,6 +288,7 @@ impl MusicSession {
             last_event_sample: i64::MIN,
             max_confirmed_skew_ms: 0.0,
             last_skew_check: Instant::now(),
+            quit_on_finish,
         }))
     }
 
@@ -309,6 +326,10 @@ impl MusicSession {
                     input.process_gamepad_button_down(GAMEPAD_SLOT, PULSE_BUTTON);
                     *pulse_release_pending = true;
                 }
+                // The InputState down-sample carries the prototype verbs
+                // only; sway/pressure reach scripts via the conducted
+                // surface, not InputState (ADR 0018 scope).
+                InputEvent::Sway(_) | InputEvent::Pressure(_) => {}
             }
         });
         let outcome = match outcome {
@@ -340,9 +361,34 @@ impl MusicSession {
         outcome.state == Tick::Finished
     }
 
+    /// Whether the scene asked the player to exit when this session ends on
+    /// its own (`quit_on_finish` on the component).
+    pub fn quit_on_finish(&self) -> bool {
+        self.quit_on_finish
+    }
+
     /// Ladder/reintegration visuals for the post-override merge.
     pub fn visual_frame(&self) -> VisualFrame {
         self.session.visual_frame()
+    }
+
+    /// Debug-guide snapshot for the Music Guide panel (ADR 0035).
+    #[cfg(feature = "debug-hud")]
+    pub fn guide_frame(&self, horizon_beats: f64) -> flint_music::chart_session::GuideFrame {
+        self.session.guide_frame(horizon_beats)
+    }
+
+    /// Static suite structure for the Manifest Map panel (cloned once at
+    /// panel registration).
+    #[cfg(feature = "debug-hud")]
+    pub fn timeline_map(&self) -> flint_music::chart_session::TimelineMap {
+        self.session.timeline_map().clone()
+    }
+
+    /// Per-frame playhead + this-run history for the Manifest Map panel.
+    #[cfg(feature = "debug-hud")]
+    pub fn timeline_frame(&self) -> flint_music::chart_session::TimelineFrame {
+        self.session.timeline_frame()
     }
 
     /// The frame → script-POD conversion (ADR 0020): the only place
@@ -352,6 +398,37 @@ impl MusicSession {
         let vf = self.session.visual_frame();
         flint_script::ConductedSnapshot {
             lean: [vf.lean[0] as f64, vf.lean[1] as f64],
+            sway: [vf.sway[0] as f64, vf.sway[1] as f64],
+            pressure_l: vf.pressure_l as f64,
+            pressure_r: vf.pressure_r as f64,
+            cues: vf
+                .cues
+                .iter()
+                .map(|c| flint_script::ConductedCue {
+                    name: c.name.clone(),
+                    age: c.age_s,
+                    // Flatten to primitives; nested tables/arrays dropped
+                    // (author flat params — ADR 0033).
+                    params: c
+                        .params
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            let p = match v {
+                                toml::Value::Float(f) => flint_script::CueParam::Number(*f),
+                                toml::Value::Integer(i) => {
+                                    flint_script::CueParam::Number(*i as f64)
+                                }
+                                toml::Value::String(s) => {
+                                    flint_script::CueParam::Text(s.clone())
+                                }
+                                toml::Value::Boolean(b) => flint_script::CueParam::Flag(*b),
+                                _ => return None,
+                            };
+                            Some((k.clone(), p))
+                        })
+                        .collect(),
+                })
+                .collect(),
             target: [vf.target[0] as f64, vf.target[1] as f64],
             next_target: [vf.next_target[0] as f64, vf.next_target[1] as f64],
             next_target_beats: vf.next_target_beats,

@@ -4,7 +4,11 @@
 
 mod hud_render;
 mod input_config;
+#[cfg(feature = "debug-hud")]
+mod music_guide_panel;
 mod music_session;
+#[cfg(feature = "debug-hud")]
+mod timeline_panel;
 pub(crate) mod scene_loading;
 
 use anyhow::{Context, Result};
@@ -111,6 +115,10 @@ pub struct PlayerApp {
     // so the suite's kira handles drop before the shared AudioManager
     // (ADR 0017 drop-order rule).
     music_session: Option<music_session::MusicSession>,
+    /// Set when a session with `quit_on_finish` ends on its own; the event
+    /// loop exits at the end of that frame (checked in RedrawRequested,
+    /// where the ActiveEventLoop is in scope).
+    music_exit_requested: bool,
     pub audio: AudioSystem,
     pub animation: AnimationSystem,
     pub particles: ParticleSystem,
@@ -229,6 +237,7 @@ impl PlayerApp {
             input: InputState::new(),
             physics: PhysicsSystem::new(),
             music_session: None,
+            music_exit_requested: false,
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
@@ -1002,8 +1011,47 @@ impl PlayerApp {
             false
         };
         if session_finished {
-            // Natural mid-scene finish: gilrs back, the scene keeps running.
+            // Natural mid-scene finish: gilrs back, the scene keeps running —
+            // unless the component asked for `quit_on_finish`.
+            let quit = self
+                .music_session
+                .as_ref()
+                .is_some_and(music_session::MusicSession::quit_on_finish);
             self.stop_music_session();
+            if quit {
+                println!("[music] quit_on_finish — exiting player");
+                self.music_exit_requested = true;
+            }
+        }
+
+        // Feed the Music Guide + Manifest Map panels — only while summoned,
+        // so a closed panel costs nothing (history accumulates in the core
+        // regardless).
+        #[cfg(feature = "debug-hud")]
+        if let Some(ms) = &self.music_session {
+            for panel in &mut self.debug_panels {
+                if !panel.is_open() {
+                    continue;
+                }
+                if panel.name() == music_guide_panel::MUSIC_GUIDE_PANEL {
+                    if let Some(p) = panel
+                        .as_any_mut()
+                        .downcast_mut::<music_guide_panel::MusicGuidePanel>()
+                    {
+                        p.set_data(
+                            ms.visual_frame(),
+                            ms.guide_frame(music_guide_panel::GUIDE_HORIZON_BEATS),
+                        );
+                    }
+                } else if panel.name() == timeline_panel::MANIFEST_MAP_PANEL {
+                    if let Some(p) = panel
+                        .as_any_mut()
+                        .downcast_mut::<timeline_panel::ManifestMapPanel>()
+                    {
+                        p.set_frame(ms.timeline_frame());
+                    }
+                }
+            }
         }
 
         // Advance game clock
@@ -1397,13 +1445,26 @@ impl PlayerApp {
             for panel in debug_panels.iter_mut() {
                 if panel.is_open() {
                     let panel_name = panel.name().to_owned();
-                    egui::SidePanel::right(egui::Id::new(&panel_name))
-                        .default_width(280.0)
-                        .show(ctx, |ui| {
-                            ui.heading(&panel_name);
-                            ui.separator();
-                            panel.ui(ui);
-                        });
+                    match panel.layout() {
+                        flint_debug_ui::PanelLayout::SideRight => {
+                            egui::SidePanel::right(egui::Id::new(&panel_name))
+                                .default_width(280.0)
+                                .show(ctx, |ui| {
+                                    ui.heading(&panel_name);
+                                    ui.separator();
+                                    panel.ui(ui);
+                                });
+                        }
+                        // Full-width strip; the panel draws its own compact
+                        // labels (a heading would eat the vertical budget).
+                        flint_debug_ui::PanelLayout::Bottom => {
+                            egui::TopBottomPanel::bottom(egui::Id::new(&panel_name))
+                                .exact_height(112.0)
+                                .show(ctx, |ui| {
+                                    panel.ui(ui);
+                                });
+                        }
+                    }
                 }
             }
             render_draw_commands(ctx, &draw_commands, ui_textures);
@@ -1850,6 +1911,35 @@ impl PlayerApp {
                     "[music] gamepad handed to capture thread \
                      (player polling suspended for the session)"
                 );
+                // Music Guide debug panel (ADR 0035): registered closed;
+                // Backquote summons it. Lives only as long as a session
+                // could feed it.
+                #[cfg(feature = "debug-hud")]
+                {
+                    if !self
+                        .debug_panels
+                        .iter()
+                        .any(|p| p.name() == music_guide_panel::MUSIC_GUIDE_PANEL)
+                    {
+                        self.debug_panels
+                            .push(Box::new(music_guide_panel::MusicGuidePanel::new()));
+                        println!("[music] debug guide available — press ` (Backquote)");
+                    }
+                    // Manifest Map timeline strip: registered closed with the
+                    // suite's static map baked in; Backslash summons it.
+                    if !self
+                        .debug_panels
+                        .iter()
+                        .any(|p| p.name() == timeline_panel::MANIFEST_MAP_PANEL)
+                    {
+                        let mut panel = timeline_panel::ManifestMapPanel::new();
+                        if let Some(ms) = &self.music_session {
+                            panel.set_map(ms.timeline_map());
+                        }
+                        self.debug_panels.push(Box::new(panel));
+                        println!("[music] manifest map available — press \\ (Backslash)");
+                    }
+                }
             }
             Ok(None) => {}
             Err(e) => eprintln!("[music] session failed to start: {e:#}"),
@@ -1867,6 +1957,11 @@ impl PlayerApp {
             self.music_pp_restore = self.music_pp_base.take();
             self.gilrs = Gilrs::new().ok();
             println!("[music] session ended — gamepad returned to player polling");
+            #[cfg(feature = "debug-hud")]
+            self.debug_panels.retain(|p| {
+                p.name() != music_guide_panel::MUSIC_GUIDE_PANEL
+                    && p.name() != timeline_panel::MANIFEST_MAP_PANEL
+            });
         }
     }
 
@@ -2285,6 +2380,60 @@ impl ApplicationHandler for PlayerApp {
                                         tracing::info!("No terrain with grass in current scene");
                                     }
                                 }
+                                // Music Guide overlay (ADR 0035): the Phase 4
+                                // debug-surface key — all F-keys are taken.
+                                #[cfg(feature = "debug-hud")]
+                                KeyCode::Backquote => {
+                                    let mut opened = false;
+                                    let mut exists = false;
+                                    for panel in &mut self.debug_panels {
+                                        if panel.name()
+                                            == music_guide_panel::MUSIC_GUIDE_PANEL
+                                        {
+                                            exists = true;
+                                            panel.toggle();
+                                            opened = panel.is_open();
+                                        }
+                                    }
+                                    if exists {
+                                        if opened {
+                                            self.release_cursor();
+                                        } else if self.physics.has_player_entity() {
+                                            self.capture_cursor();
+                                        }
+                                    } else {
+                                        tracing::info!(
+                                            "no music session running — nothing to guide"
+                                        );
+                                    }
+                                }
+                                // Manifest Map timeline strip: Backslash
+                                // (unbound elsewhere; Backquote is the guide's).
+                                #[cfg(feature = "debug-hud")]
+                                KeyCode::Backslash => {
+                                    let mut opened = false;
+                                    let mut exists = false;
+                                    for panel in &mut self.debug_panels {
+                                        if panel.name()
+                                            == timeline_panel::MANIFEST_MAP_PANEL
+                                        {
+                                            exists = true;
+                                            panel.toggle();
+                                            opened = panel.is_open();
+                                        }
+                                    }
+                                    if exists {
+                                        if opened {
+                                            self.release_cursor();
+                                        } else if self.physics.has_player_entity() {
+                                            self.capture_cursor();
+                                        }
+                                    } else {
+                                        tracing::info!(
+                                            "no music session running — nothing to map"
+                                        );
+                                    }
+                                }
                                 KeyCode::F4 => {
                                     if let Some(renderer) = &mut self.scene_renderer {
                                         renderer.toggle_shadows();
@@ -2510,6 +2659,9 @@ impl ApplicationHandler for PlayerApp {
             WindowEvent::RedrawRequested => {
                 self.tick();
                 self.render();
+                if self.music_exit_requested {
+                    event_loop.exit();
+                }
             }
 
             _ => {}
