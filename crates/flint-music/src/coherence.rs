@@ -14,8 +14,8 @@
 //! goal of the feel prototype; the raw judgment logs exist precisely so
 //! alternatives can be evaluated offline.
 
+use crate::config_toml::{self, VersionPolicy};
 use crate::judgment::JudgmentRecord;
-use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
 use std::path::Path;
 
@@ -87,23 +87,10 @@ impl CoherenceConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("coherence config: {e}")))?;
-        let version = root
-            .get("schema_version")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(0);
-        if version != 0 {
-            return Err(FlintError::ValidationError(format!(
-                "coherence config: unknown schema_version {version}"
-            )));
-        }
+        let (root, _) =
+            config_toml::parse_versioned("coherence config", text, VersionPolicy::DefaultZeroStrict)?;
         let f = |table: &str, key: &str, default: f64| -> f64 {
-            root.get(table)
-                .and_then(|t| t.get(key))
-                .and_then(toml_f64)
-                .unwrap_or(default)
+            config_toml::section_f64(&root, table, key, default)
         };
         let d = Self::default();
         let cfg = Self {

@@ -18,6 +18,7 @@
 //! ramp_ms = 10.0        # marker: label
 //! ```
 
+use crate::config_toml::{self, VersionPolicy};
 use crate::scheduler::{BusAction, EventTime, ScheduledEvent};
 use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
@@ -38,14 +39,8 @@ impl EventScript {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("event script: {e}")))?;
-
-        let schema_version = root
-            .get("schema_version")
-            .and_then(|v| v.as_integer())
-            .ok_or_else(|| bad("schema_version"))?;
+        let (root, schema_version) =
+            config_toml::parse_versioned(NAME, text, VersionPolicy::Required)?;
         if schema_version != EVENT_SCHEMA_VERSION {
             return Err(FlintError::ParseError(format!(
                 "event script: schema_version {schema_version} not supported (want {EVENT_SCHEMA_VERSION})"
@@ -147,8 +142,10 @@ fn parse_time(s: &str) -> Option<EventTime> {
     }
 }
 
+const NAME: &str = "event script";
+
 fn bad(what: &str) -> FlintError {
-    FlintError::ParseError(format!("event script: missing or malformed `{what}`"))
+    config_toml::bad(NAME, what)
 }
 
 #[cfg(test)]

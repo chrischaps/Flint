@@ -1,6 +1,7 @@
 //! Beatmap chart parsing. Same shape-tolerant posture as the manifest parser:
 //! unknown channels/kinds parse fine and are reported by the validator.
 
+use crate::config_toml::{self, VersionPolicy};
 use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
 use std::path::Path;
@@ -52,14 +53,8 @@ impl Chart {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("chart: {e}")))?;
-
-        let schema_version = root
-            .get("schema_version")
-            .and_then(|v| v.as_integer())
-            .ok_or_else(|| bad("schema_version"))?;
+        let (root, schema_version) =
+            config_toml::parse_versioned(NAME, text, VersionPolicy::Required)?;
         let suite = root
             .get("suite")
             .and_then(|v| v.as_str())
@@ -122,34 +117,24 @@ impl Chart {
     }
 }
 
+const NAME: &str = "chart";
+
 fn bad(what: &str) -> FlintError {
-    FlintError::ParseError(format!("chart: missing or malformed `{what}`"))
+    config_toml::bad(NAME, what)
 }
 
 fn tables<'a>(root: &'a toml::Value, key: &str) -> Vec<&'a toml::value::Table> {
-    root.get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_table()).collect())
-        .unwrap_or_default()
+    config_toml::tables(root, key)
 }
 
 fn string(t: &toml::value::Table, ctx: &str, key: &str) -> Result<String> {
-    t.get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| bad(ctx))
+    config_toml::string_in(NAME, t, key, ctx)
 }
 
 fn float(t: &toml::value::Table, ctx: &str, key: &str) -> Result<f64> {
-    t.get(key).and_then(toml_f64).ok_or_else(|| bad(ctx))
+    config_toml::float_in(NAME, t, key, ctx)
 }
 
 fn floats(v: Option<&toml::Value>, ctx: &str) -> Result<Vec<f64>> {
-    v.and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|e| toml_f64(e).ok_or_else(|| bad(ctx)))
-                .collect()
-        })
-        .unwrap_or_else(|| Err(bad(ctx)))
+    config_toml::floats(NAME, v, ctx)
 }

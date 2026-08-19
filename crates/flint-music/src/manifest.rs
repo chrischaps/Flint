@@ -6,7 +6,7 @@
 //! errors. Only structurally unreadable input (missing tables, wrong types)
 //! fails the parse.
 
-use flint_core::toml_util::toml_f64;
+use crate::config_toml::{self, VersionPolicy};
 use flint_core::{FlintError, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -67,11 +67,8 @@ impl SuiteManifest {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("suite manifest: {e}")))?;
-
-        let schema_version = int(&root, "schema_version")?;
+        let (root, schema_version) =
+            config_toml::parse_versioned(NAME, text, VersionPolicy::Required)?;
 
         let suite = table(&root, "suite")?;
         let id = string(suite, "id")?;
@@ -175,41 +172,28 @@ impl SuiteManifest {
 
 // -- small extraction helpers (FlintError::ParseError on shape problems) ------
 
+const NAME: &str = "suite manifest";
+
 fn bad(what: &str) -> FlintError {
-    FlintError::ParseError(format!("suite manifest: missing or malformed `{what}`"))
+    config_toml::bad(NAME, what)
 }
 
 fn table<'a>(v: &'a toml::Value, key: &str) -> Result<&'a toml::value::Table> {
-    v.get(key)
-        .and_then(|v| v.as_table())
-        .ok_or_else(|| bad(key))
+    config_toml::table(NAME, v, key)
 }
 
 fn array<'a>(v: &'a toml::Value, key: &str) -> Result<&'a Vec<toml::Value>> {
-    v.get(key)
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| bad(key))
-}
-
-fn int(v: &toml::Value, key: &str) -> Result<i64> {
-    v.get(key)
-        .and_then(|v| v.as_integer())
-        .ok_or_else(|| bad(key))
+    config_toml::array(NAME, v, key)
 }
 
 fn int_in(t: &toml::value::Table, key: &str) -> Result<i64> {
-    t.get(key)
-        .and_then(|v| v.as_integer())
-        .ok_or_else(|| bad(key))
+    config_toml::int_in(NAME, t, key)
 }
 
 fn float_in(t: &toml::value::Table, key: &str) -> Result<f64> {
-    t.get(key).and_then(toml_f64).ok_or_else(|| bad(key))
+    config_toml::float_in(NAME, t, key, key)
 }
 
 fn string(t: &toml::value::Table, key: &str) -> Result<String> {
-    t.get(key)
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| bad(key))
+    config_toml::string_in(NAME, t, key, key)
 }

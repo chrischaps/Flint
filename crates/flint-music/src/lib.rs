@@ -17,6 +17,7 @@ pub mod chart_eval;
 pub mod chart_session;
 pub mod clock_bridge;
 pub mod coherence;
+pub(crate) mod config_toml;
 pub mod conductor;
 pub mod event_script;
 pub mod gradient;

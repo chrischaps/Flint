@@ -21,9 +21,9 @@
 //! which fires them early by the feel-tuned `lead_ms` (rumble transport and
 //! actuator spin-up are unmeasurable in software — ADR 0025).
 
+use crate::config_toml::{self, VersionPolicy};
 use crate::conductor::{Conductor, Grid};
 use crate::reintegration::{ReintegrationEvent, SeqPhase};
-use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
 use std::path::Path;
 
@@ -117,24 +117,11 @@ impl HapticsConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("haptics config: {e}")))?;
-        let version = root
-            .get("schema_version")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(0);
-        if version != 0 {
-            return Err(FlintError::ValidationError(format!(
-                "haptics config: unknown schema_version {version}"
-            )));
-        }
+        let (root, _) =
+            config_toml::parse_versioned("haptics config", text, VersionPolicy::DefaultZeroStrict)?;
         let d = Self::default();
         let f = |table: &str, key: &str, default: f64| {
-            root.get(table)
-                .and_then(|t| t.get(key))
-                .and_then(toml_f64)
-                .unwrap_or(default)
+            config_toml::section_f64(&root, table, key, default)
         };
         let burst = |table: &str, default: BurstCfg| BurstCfg {
             strong: f(table, "strong", default.strong),

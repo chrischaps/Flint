@@ -20,6 +20,7 @@
 //! ([`crate::ladder::LadderDriver::apply`]) — one shadow state, no sibling
 //! fights. Never through Rhai: scripts are read-only toward audio by design.
 
+use crate::config_toml::{self, VersionPolicy};
 use crate::ladder::DEGRADABLE_BUSES;
 use flint_core::toml_util::toml_f64;
 use flint_core::{FlintError, Result};
@@ -84,18 +85,8 @@ impl GradientConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("gradient config: {e}")))?;
-        let version = root
-            .get("schema_version")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(0);
-        if version != 0 {
-            return Err(FlintError::ValidationError(format!(
-                "gradient config: unknown schema_version {version}"
-            )));
-        }
+        let (root, _) =
+            config_toml::parse_versioned("gradient config", text, VersionPolicy::DefaultZeroStrict)?;
         let d = Self::default();
         let tune_t = root.get("tune");
         let tf = |key: &str, default: f64| {

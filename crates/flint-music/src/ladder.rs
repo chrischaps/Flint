@@ -22,6 +22,7 @@
 //! bus, foundation included — filtering the whole world is the woozy intent;
 //! silencing its pulse is not.
 
+use crate::config_toml::{self, VersionPolicy};
 use crate::gradient::GradientOffsets;
 use crate::mixer::{BusMixer, LPF_OPEN_HZ};
 use crate::MOTIF_BUSES;
@@ -250,18 +251,8 @@ impl LadderConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let root: toml::Value = text
-            .parse()
-            .map_err(|e| FlintError::TomlParseError(format!("ladder config: {e}")))?;
-        let version = root
-            .get("schema_version")
-            .and_then(|v| v.as_integer())
-            .unwrap_or(0);
-        if version != 0 {
-            return Err(FlintError::ValidationError(format!(
-                "ladder config: unknown schema_version {version}"
-            )));
-        }
+        let (root, _) =
+            config_toml::parse_versioned("ladder config", text, VersionPolicy::DefaultZeroStrict)?;
         let d = Self::default().full_fail;
         let ff = root.get("full_fail");
         let ff_f = |key: &str, default: f64| {
