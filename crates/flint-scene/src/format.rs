@@ -98,6 +98,18 @@ pub struct PostProcessDef {
     #[serde(default = "default_volumetric_decay")]
     pub volumetric_decay: f32,
     #[serde(default)]
+    pub chromatic_aberration: f32,
+    #[serde(default)]
+    pub radial_blur: f32,
+    #[serde(default)]
+    pub desaturate: f32,
+    #[serde(default)]
+    pub dof_strength: f32,
+    #[serde(default = "default_dof_focus_distance")]
+    pub dof_focus_distance: f32,
+    #[serde(default = "default_dof_focus_range")]
+    pub dof_focus_range: f32,
+    #[serde(default)]
     pub kuwahara_enabled: bool,
     #[serde(default = "default_kuwahara_radius")]
     pub kuwahara_radius: u32,
@@ -159,6 +171,14 @@ fn default_fog_end() -> f32 {
 
 fn default_fog_height_falloff() -> f32 {
     0.1
+}
+
+fn default_dof_focus_distance() -> f32 {
+    10.0
+}
+
+fn default_dof_focus_range() -> f32 {
+    5.0
 }
 
 fn default_dither_intensity() -> f32 {

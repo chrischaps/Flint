@@ -35,7 +35,128 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_camera_2d_api(engine, ctx.clone());
     register_chunk_api(engine, ctx.clone());
     register_screen_ui_api(engine, ctx.clone());
+    register_conducted_api(engine, ctx.clone());
     register_log_api(engine, ctx);
+}
+
+// ─── Conducted-parameters API (ADR 0020) ──────────────────
+//
+// The music session's per-frame state for scene bindings: lean, target,
+// coherence, musical position, judged pulses, and the ladder/reintegration
+// visual ramps. Neutral defaults when no session is active (a clean,
+// settled world), so scripts never branch on session existence.
+
+fn register_conducted_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // conducted_lean() / conducted_target() -> Map #{x, y}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_lean", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.lean[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.lean[1]));
+            map
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_target", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.target[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.target[1]));
+            map
+        });
+    }
+
+    // conducted_next_target() -> Map #{x, y, beats}: the next authored lean
+    // key and suite beats until its anchor (ADR 0023). beats = 1e6 (and
+    // x/y = the current target) when nothing is upcoming.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_next_target", move || -> Map {
+            let c = ctx.lock().unwrap();
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.next_target[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.next_target[1]));
+            map.insert("beats".into(), Dynamic::from(c.conducted.next_target_beats));
+            map
+        });
+    }
+
+    // Scalar getters, all f64 (Rhai has no implicit numeric coercion).
+    macro_rules! scalar_getter {
+        ($name:literal, $field:ident) => {{
+            let ctx = ctx.clone();
+            engine.register_fn($name, move || -> f64 {
+                let c = ctx.lock().unwrap();
+                c.conducted.$field
+            });
+        }};
+    }
+    scalar_getter!("conducted_coherence", coherence);
+    scalar_getter!("conducted_beat_phase", beat_phase);
+    scalar_getter!("conducted_bar_phase", bar_phase);
+    scalar_getter!("conducted_beat", beat);
+    scalar_getter!("conducted_desaturate", desaturate);
+    scalar_getter!("conducted_blur", blur);
+    scalar_getter!("conducted_chromatic", chromatic);
+    scalar_getter!("conducted_reassembly", reassembly);
+    scalar_getter!("conducted_rewind", rewind);
+
+    // conducted_bar() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_bar", move || -> i64 {
+            let c = ctx.lock().unwrap();
+            c.conducted.bar
+        });
+    }
+
+    // conducted_section() -> String ("" when none)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_section", move || -> String {
+            let c = ctx.lock().unwrap();
+            c.conducted.section.clone()
+        });
+    }
+
+    // conducted_pulses() -> Array of Map #{age: f64, err_ms: f64, kind: string}
+    // Pulses judged this frame — empty most frames.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_pulses", move || -> rhai::Array {
+            let c = ctx.lock().unwrap();
+            c.conducted
+                .pulses
+                .iter()
+                .map(|p| {
+                    let mut map = Map::new();
+                    map.insert("age".into(), Dynamic::from(p.age));
+                    map.insert("err_ms".into(), Dynamic::from(p.err_ms));
+                    map.insert("kind".into(), Dynamic::from(p.kind.clone()));
+                    Dynamic::from_map(map)
+                })
+                .collect()
+        });
+    }
+
+    // conducted_no_input() / conducted_preroll() -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_no_input", move || -> bool {
+            let c = ctx.lock().unwrap();
+            c.conducted.no_input
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_preroll", move || -> bool {
+            let c = ctx.lock().unwrap();
+            c.conducted.preroll
+        });
+    }
 }
 
 // ─── Entity API ──────────────────────────────────────────
@@ -1100,6 +1221,15 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // set_camera_roll(radians) — roll the camera about its view axis
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_roll", move |radians: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.camera_roll_override = Some(radians as f32);
+        });
+    }
+
     // set_vignette(intensity) — override vignette intensity from scripts
     {
         let ctx = ctx.clone();
@@ -1160,6 +1290,34 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("set_fog_density", move |density: f64| {
             let mut c = ctx.lock().unwrap();
             c.postprocess_fog_density_override = Some(density as f32);
+        });
+    }
+
+    // set_desaturation(amount) — override desaturation (0 = full color, 1 = ash-grey)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_desaturation", move |amount: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_desaturation_override = Some(amount as f32);
+        });
+    }
+
+    // set_dof(strength) — depth-of-field defocus strength (0 = off / sharp, 1 = full blur)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_dof", move |strength: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_dof_strength_override = Some(strength as f32);
+        });
+    }
+
+    // set_dof_focus(distance, range) — focus plane depth and half-width, world units
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_dof_focus", move |distance: f64, range: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_dof_focus_distance_override = Some(distance as f32);
+            c.postprocess_dof_focus_range_override = Some(range as f32);
         });
     }
 

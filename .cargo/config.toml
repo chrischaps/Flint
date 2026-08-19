@@ -1,0 +1,10 @@
+# Windows links binaries with a 1 MB main-thread stack. Debug (unoptimized)
+# builds of flint-cli overflow it inside clap's derived parser — the Commands
+# enum is large enough that `flint --help` alone hits STATUS_STACK_OVERFLOW.
+# Link with an 8 MB stack instead, matching the default on Linux/macOS shells.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:8388608"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]

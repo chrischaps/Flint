@@ -4,6 +4,7 @@
 
 mod hud_render;
 mod input_config;
+mod music_session;
 pub(crate) mod scene_loading;
 
 use anyhow::{Context, Result};
@@ -106,6 +107,10 @@ pub struct PlayerApp {
     pub clock: GameClock,
     pub input: InputState,
     pub physics: PhysicsSystem,
+    // Scene-declared music session (F3, ADR 0019): declared before `audio`
+    // so the suite's kira handles drop before the shared AudioManager
+    // (ADR 0017 drop-order rule).
+    music_session: Option<music_session::MusicSession>,
     pub audio: AudioSystem,
     pub animation: AnimationSystem,
     pub particles: ParticleSystem,
@@ -154,6 +159,15 @@ pub struct PlayerApp {
     pp_radial_blur_override: Option<f32>,
     pp_ssao_intensity_override: Option<f32>,
     pp_fog_density_override: Option<f32>,
+    pp_desaturation_override: Option<f32>,
+    pp_dof_strength_override: Option<f32>,
+    pp_dof_focus_distance_override: Option<f32>,
+    pp_dof_focus_range_override: Option<f32>,
+
+    // Ladder-driven post params: the scene's authored base, captured at
+    // session start and written back after teardown (ADR 0021).
+    music_pp_base: Option<music_session::LadderPostBase>,
+    music_pp_restore: Option<music_session::LadderPostBase>,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -214,6 +228,7 @@ impl PlayerApp {
             clock: GameClock::new(),
             input: InputState::new(),
             physics: PhysicsSystem::new(),
+            music_session: None,
             audio: AudioSystem::new(),
             animation: AnimationSystem::new(),
             particles: ParticleSystem::new(),
@@ -242,6 +257,12 @@ impl PlayerApp {
             pp_radial_blur_override: None,
             pp_ssao_intensity_override: None,
             pp_fog_density_override: None,
+            pp_desaturation_override: None,
+            pp_dof_strength_override: None,
+            pp_dof_focus_distance_override: None,
+            pp_dof_focus_range_override: None,
+            music_pp_base: None,
+            music_pp_restore: None,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -389,13 +410,19 @@ impl PlayerApp {
 
         // Discover procgen specs and resolve unresolved assets before model loading
         {
-            let scene_dir = Path::new(&self.scene_path).parent().unwrap_or(Path::new("."));
+            let scene_dir = Path::new(&self.scene_path)
+                .parent()
+                .unwrap_or(Path::new("."));
             let mut spec_dirs = vec![scene_dir.join("specs")];
             if let Some(parent) = scene_dir.parent() {
                 spec_dirs.push(parent.join("specs"));
             }
             spec_dirs.push(scene_dir.join("models"));
-            let dir_refs: Vec<&Path> = spec_dirs.iter().filter(|d| d.is_dir()).map(|d| d.as_path()).collect();
+            let dir_refs: Vec<&Path> = spec_dirs
+                .iter()
+                .filter(|d| d.is_dir())
+                .map(|d| d.as_path())
+                .collect();
             self.procgen_resolver.discover_and_index(&dir_refs);
 
             resolve_procgen_assets(
@@ -505,8 +532,7 @@ impl PlayerApp {
         if let Some(pp_def) = &self.scene_post_process {
             scene_renderer
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
-            scene_renderer
-                .ensure_kuwahara_resources(&render_context.device, &render_context.queue);
+            scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
         }
 
         self.render_context = Some(render_context);
@@ -522,6 +548,10 @@ impl PlayerApp {
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
+
+        // Scene-declared music session (F3): started before script init so a
+        // conducted context exists from the scripts' first frame (F4).
+        self.start_music_session();
 
         // Initialize animation
         load_animations_from_world(&self.scene_path, &mut self.animation);
@@ -891,6 +921,10 @@ impl PlayerApp {
             || self.pp_radial_blur_override.is_some()
             || self.pp_ssao_intensity_override.is_some()
             || self.pp_fog_density_override.is_some()
+            || self.pp_desaturation_override.is_some()
+            || self.pp_dof_strength_override.is_some()
+            || self.pp_dof_focus_distance_override.is_some()
+            || self.pp_dof_focus_range_override.is_some()
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -914,6 +948,18 @@ impl PlayerApp {
             }
             if let Some(fd) = self.pp_fog_density_override {
                 config.fog_density = fd;
+            }
+            if let Some(d) = self.pp_desaturation_override {
+                config.desaturate = d;
+            }
+            if let Some(s) = self.pp_dof_strength_override {
+                config.dof_strength = s;
+            }
+            if let Some(fd) = self.pp_dof_focus_distance_override {
+                config.dof_focus_distance = fd;
+            }
+            if let Some(fr) = self.pp_dof_focus_range_override {
+                config.dof_focus_range = fr;
             }
             renderer.set_post_process_config(config);
         }
@@ -946,7 +992,19 @@ impl PlayerApp {
     }
 
     fn tick(&mut self) {
-        self.poll_gamepad_events();
+        // Music session (F3, ADR 0018): while a session is active the capture
+        // thread owns the pad — its drain replaces the player's own polling,
+        // feeding the Judge at full precision and InputState down-sampled.
+        let session_finished = if let Some(ms) = &mut self.music_session {
+            ms.tick(&mut self.input)
+        } else {
+            self.poll_gamepad_events();
+            false
+        };
+        if session_finished {
+            // Natural mid-scene finish: gilrs back, the scene keeps running.
+            self.stop_music_session();
+        }
 
         // Advance game clock
         self.clock.tick();
@@ -1048,6 +1106,16 @@ impl PlayerApp {
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
         self.script.set_loaded_chunk_ids(chunk_ids);
 
+        // Conducted parameters (F4, ADR 0020): the music session's per-frame
+        // state for scene bindings; neutral defaults when no session (also
+        // resets the frame after a session ends).
+        self.script.set_conducted(
+            self.music_session
+                .as_ref()
+                .map(|ms| ms.conducted_snapshot())
+                .unwrap_or_default(),
+        );
+
         // Only run on_update when scripts are not paused
         if config.scripts == SystemPolicy::Run {
             self.script
@@ -1056,31 +1124,59 @@ impl PlayerApp {
         }
 
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
-        let (
-            cam_pos_override,
-            cam_target_override,
-            cam_fov_override,
-            cam_ortho_override,
-            cam_ortho_height_override,
-        ) = self.script.take_camera_overrides();
-        if let Some(pos) = cam_pos_override {
+        let cam = self.script.take_camera_overrides();
+        if let Some(pos) = cam.position {
             self.camera.position = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
         }
-        if let Some(target) = cam_target_override {
+        if let Some(target) = cam.target {
             self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
         }
-        if let Some(fov) = cam_fov_override {
+        if let Some(fov) = cam.fov {
             self.camera.fov = fov;
         }
-        if let Some(ortho) = cam_ortho_override {
+        if let Some(ortho) = cam.orthographic {
             self.camera.orthographic = ortho;
         }
-        if let Some(height) = cam_ortho_height_override {
+        if let Some(height) = cam.ortho_height {
             self.camera.ortho_height = height;
+        }
+        // Roll rebuilds the up vector from the view basis each frame it is set;
+        // when absent the up vector must reset to world up (overrides are
+        // one-frame take()s — without the reset, roll would stick after a
+        // script stops setting it, e.g. hot-reload into a compile error).
+        match cam.roll {
+            Some(roll) => {
+                let forward = flint_core::Vec3::new(
+                    self.camera.target.x - self.camera.position.x,
+                    self.camera.target.y - self.camera.position.y,
+                    self.camera.target.z - self.camera.position.z,
+                )
+                .normalized();
+                let right = forward.cross(&flint_core::Vec3::UP);
+                let right_len = (right.dot(&right)).sqrt();
+                if right_len > 1e-4 {
+                    let right = FlintVec3::new(
+                        right.x / right_len,
+                        right.y / right_len,
+                        right.z / right_len,
+                    );
+                    let base_up = right.cross(&forward);
+                    let (sin_r, cos_r) = roll.sin_cos();
+                    self.camera.up = FlintVec3::new(
+                        base_up.x * cos_r + right.x * sin_r,
+                        base_up.y * cos_r + right.y * sin_r,
+                        base_up.z * cos_r + right.z * sin_r,
+                    );
+                }
+                // Degenerate (looking straight up/down): keep the previous up.
+            }
+            None => {
+                self.camera.up = flint_core::Vec3::UP;
+            }
         }
 
         // Update audio listener for script-driven cameras (chase cam, etc.)
-        if !has_fps_player && cam_pos_override.is_some() {
+        if !has_fps_player && cam.position.is_some() {
             let cam_pos = self.camera.position;
             let dir = flint_core::Vec3::new(
                 self.camera.target.x - cam_pos.x,
@@ -1207,15 +1303,45 @@ impl PlayerApp {
         }
 
         // Drain script post-processing overrides for this frame
-        let (pp_vig, pp_bloom, pp_exp, pp_ca, pp_rb, pp_ssao, pp_fog) =
-            self.script.take_postprocess_overrides();
-        self.pp_vignette_override = pp_vig;
-        self.pp_bloom_override = pp_bloom;
-        self.pp_exposure_override = pp_exp;
-        self.pp_chromatic_aberration_override = pp_ca;
-        self.pp_radial_blur_override = pp_rb;
-        self.pp_ssao_intensity_override = pp_ssao;
-        self.pp_fog_density_override = pp_fog;
+        let pp = self.script.take_postprocess_overrides();
+        self.pp_vignette_override = pp.vignette;
+        self.pp_bloom_override = pp.bloom;
+        self.pp_exposure_override = pp.exposure;
+        self.pp_chromatic_aberration_override = pp.chromatic_aberration;
+        self.pp_radial_blur_override = pp.radial_blur;
+        self.pp_ssao_intensity_override = pp.ssao_intensity;
+        self.pp_fog_density_override = pp.fog_density;
+        self.pp_desaturation_override = pp.desaturation;
+        // DoF is script-owned (ADR 0027) — never touched by the ladder merge
+        // below; there is no restore machinery because owning scripts write it
+        // every frame and scene loads reset the sticky config from the def.
+        self.pp_dof_strength_override = pp.dof_strength;
+        self.pp_dof_focus_distance_override = pp.dof_focus_distance;
+        self.pp_dof_focus_range_override = pp.dof_focus_range;
+
+        // Music-session ladder/reintegration visuals (ADR 0021). Script
+        // overrides win — F4/F6 script-authored rung visuals supersede this
+        // direct path with no code change and no double application. The
+        // merge writes base + rung every frame so a recovered ladder actively
+        // restores the scene's authored post config (the renderer config is
+        // sticky); after teardown a one-shot restore does the same.
+        if let Some(ms) = &self.music_session {
+            let vf = ms.visual_frame();
+            music_session::merge_ladder_postprocess(
+                &mut self.pp_radial_blur_override,
+                &mut self.pp_chromatic_aberration_override,
+                &mut self.pp_desaturation_override,
+                &vf,
+                self.music_pp_base.unwrap_or_default(),
+            );
+        } else if let Some(base) = self.music_pp_restore.take() {
+            music_session::restore_ladder_postprocess(
+                &mut self.pp_radial_blur_override,
+                &mut self.pp_chromatic_aberration_override,
+                &mut self.pp_desaturation_override,
+                base,
+            );
+        }
 
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
@@ -1395,8 +1521,7 @@ impl PlayerApp {
                         }
                         continue;
                     }
-                    self.physics
-                        .push_event(GameEvent::Custom { name, data });
+                    self.physics.push_event(GameEvent::Custom { name, data });
                 }
                 ScriptCommand::Log { level, message } => match level {
                     LogLevel::Info => tracing::info!(target: "script", "{}", message),
@@ -1668,6 +1793,83 @@ impl PlayerApp {
         }
     }
 
+    /// Start the scene-declared music session, if any (F3, ADR 0019): find
+    /// the first `music_session` component, resolve its repo-root-relative
+    /// paths against the scene's base dir (scene file's parent's parent —
+    /// `scenes/` sits at the repo root), start the suite on the shared
+    /// manager, and hand the gamepad to the capture thread (ADR 0018).
+    /// Headless or component-less scenes: no session, nothing changes.
+    fn start_music_session(&mut self) {
+        let mut found = None;
+        for entity in self.world.all_entities() {
+            let comp = self
+                .world
+                .get_components(entity.id)
+                .and_then(|c| c.get(music_session::MUSIC_SESSION).cloned());
+            if let Some(comp) = comp {
+                if found.is_some() {
+                    tracing::warn!(
+                        "multiple music_session components in scene; using the first \
+                         (extra on entity {})",
+                        entity.id
+                    );
+                } else {
+                    found = Some(comp);
+                }
+            }
+        }
+        let Some(comp) = found else { return };
+        let Some(base_dir) = Path::new(&self.scene_path)
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+        else {
+            tracing::warn!(
+                "music_session: cannot derive base dir from scene path `{}`",
+                self.scene_path
+            );
+            return;
+        };
+        match music_session::MusicSession::start(&base_dir, &comp, &mut self.audio.engine) {
+            Ok(Some(session)) => {
+                self.music_session = Some(session);
+                // The scene's authored post values are the ladder merge's
+                // base and the post-teardown restore target (ADR 0021).
+                let authored = self
+                    .scene_post_process
+                    .as_ref()
+                    .map(scene_loading::post_process_config_from_def)
+                    .unwrap_or_default();
+                self.music_pp_base = Some(music_session::LadderPostBase {
+                    radial_blur: authored.radial_blur,
+                    chromatic_aberration: authored.chromatic_aberration,
+                    desaturate: authored.desaturate,
+                });
+                self.gilrs = None;
+                println!(
+                    "[music] gamepad handed to capture thread \
+                     (player polling suspended for the session)"
+                );
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("[music] session failed to start: {e:#}"),
+        }
+    }
+
+    /// Tear the music session down (stems stopped with a fade, capture guard
+    /// dropped first inside) and give the gamepad back to player polling.
+    /// Must run before `audio.clear()` in a scene transition (ADR 0017).
+    fn stop_music_session(&mut self) {
+        if let Some(session) = self.music_session.take() {
+            session.stop();
+            // Queue the one-shot authored-values restore for the next merge
+            // pass (setting overrides here would be wiped by the drain).
+            self.music_pp_restore = self.music_pp_base.take();
+            self.gilrs = Gilrs::new().ok();
+            println!("[music] session ended — gamepad returned to player polling");
+        }
+    }
+
     /// Unload the current scene and load a new one.
     fn execute_scene_transition(&mut self, target_scene: &str) {
         println!("[transition] Unloading current scene...");
@@ -1681,6 +1883,10 @@ impl PlayerApp {
             );
             self.script.call_scene_exits(&mut self.world);
         }
+
+        // Music session first: capture guard drops and stems stop BEFORE the
+        // audio system clears (ADR 0017 producer→handles→device order).
+        self.stop_music_session();
 
         // Clear all systems
         self.script.clear();
@@ -1752,10 +1958,7 @@ impl PlayerApp {
                 self.scene_input_config = scene_file.scene.input_config.clone();
             }
             Err(e) => {
-                tracing::error!(
-                    "Failed to load scene '{}': {:?}",
-                    new_scene_path, e
-                );
+                tracing::error!("Failed to load scene '{}': {:?}", new_scene_path, e);
                 return;
             }
         }
@@ -1781,13 +1984,19 @@ impl PlayerApp {
 
             // Discover procgen specs and resolve unresolved assets before model loading
             {
-                let scene_dir = Path::new(&self.scene_path).parent().unwrap_or(Path::new("."));
+                let scene_dir = Path::new(&self.scene_path)
+                    .parent()
+                    .unwrap_or(Path::new("."));
                 let mut spec_dirs = vec![scene_dir.join("specs")];
                 if let Some(parent) = scene_dir.parent() {
                     spec_dirs.push(parent.join("specs"));
                 }
                 spec_dirs.push(scene_dir.join("models"));
-                let dir_refs: Vec<&Path> = spec_dirs.iter().filter(|d| d.is_dir()).map(|d| d.as_path()).collect();
+                let dir_refs: Vec<&Path> = spec_dirs
+                    .iter()
+                    .filter(|d| d.is_dir())
+                    .map(|d| d.as_path())
+                    .collect();
                 self.procgen_resolver.discover_and_index(&dir_refs);
 
                 resolve_procgen_assets(
@@ -1888,6 +2097,12 @@ impl PlayerApp {
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
+
+        // Scene-declared music session on the freshly initialized audio
+        // (before scripts, so a conducted context exists from their first
+        // frame — F4). Music→music transitions: the fresh gilrs above is
+        // simply dropped again by the new session's handoff.
+        self.start_music_session();
 
         load_animations_from_world(&self.scene_path, &mut self.animation);
         load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
@@ -2050,7 +2265,8 @@ impl ApplicationHandler for PlayerApp {
                                     self.show_stats = !self.show_stats;
                                 }
                                 KeyCode::F3 => {
-                                    let has_grass_panel = self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
+                                    let has_grass_panel =
+                                        self.debug_panels.iter().any(|p| p.name() == "Grass Debug");
                                     if has_grass_panel {
                                         // Toggle the panel, then adjust cursor outside the borrow
                                         let mut opened = false;
@@ -2135,12 +2351,11 @@ impl ApplicationHandler for PlayerApp {
                                         config.kuwahara_enabled = !config.kuwahara_enabled;
                                         let enabled = config.kuwahara_enabled;
                                         renderer.set_post_process_config(config);
-                                        renderer.ensure_kuwahara_resources(
-                                            &ctx.device,
-                                            &ctx.queue,
+                                        renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
+                                        eprintln!(
+                                            "Kuwahara filter: {}",
+                                            if enabled { "ON" } else { "OFF" }
                                         );
-                                        eprintln!("Kuwahara filter: {}",
-                                            if enabled { "ON" } else { "OFF" });
                                     }
                                 }
                                 _ => {}
@@ -2423,8 +2638,7 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
                 .rounding(egui::Rounding::same(4.0))
                 .inner_margin(egui::Margin::same(10.0))
                 .show(ui, |ui| {
-                    ui.style_mut().override_font_id =
-                        Some(egui::FontId::monospace(11.0));
+                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
                     ui.set_min_width(180.0);
 
                     // Header

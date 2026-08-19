@@ -39,6 +39,10 @@ pub struct RenderArgs {
     pub fog_color: Option<[f32; 3]>,
     pub fog_height_falloff: Option<f32>,
     pub dither_intensity: Option<f32>,
+    pub desaturate: Option<f32>,
+    pub dof: Option<f32>,
+    pub dof_focus: Option<f32>,
+    pub dof_range: Option<f32>,
     pub volumetric_density: Option<f32>,
     pub volumetric_samples: Option<u32>,
     pub kuwahara_radius: Option<u32>,
@@ -241,6 +245,18 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.dither_intensity = intensity;
             pp_config.dither_enabled = intensity > 0.0;
         }
+        if let Some(desaturate) = args.desaturate {
+            pp_config.desaturate = desaturate;
+        }
+        if let Some(strength) = args.dof {
+            pp_config.dof_strength = strength;
+        }
+        if let Some(distance) = args.dof_focus {
+            pp_config.dof_focus_distance = distance;
+        }
+        if let Some(range) = args.dof_range {
+            pp_config.dof_focus_range = range;
+        }
         if let Some(density) = args.volumetric_density {
             pp_config.volumetric_density = density;
             pp_config.volumetric_enabled = density > 0.0;
@@ -431,14 +447,12 @@ fn load_terrain_for_render(
                     gc.fade_start = get_f32("grass.fade_start", gc.fade_start);
                     gc.blade_width = get_f32("grass.blade_width", gc.blade_width);
                     gc.blade_height = get_f32("grass.blade_height", gc.blade_height);
-                    gc.height_variation =
-                        get_f32("grass.height_variation", gc.height_variation);
+                    gc.height_variation = get_f32("grass.height_variation", gc.height_variation);
                     gc.wind_speed = get_f32("grass.wind_speed", gc.wind_speed);
                     gc.wind_strength = get_f32("grass.wind_strength", gc.wind_strength);
                     gc.bend_radius = get_f32("grass.bend_radius", gc.bend_radius);
                     gc.bend_strength = get_f32("grass.bend_strength", gc.bend_strength);
-                    gc.density_threshold =
-                        get_f32("grass.density_threshold", gc.density_threshold);
+                    gc.density_threshold = get_f32("grass.density_threshold", gc.density_threshold);
                     gc.density_layer =
                         get_i32("grass.density_layer", gc.density_layer as i32) as u32;
                     gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
@@ -452,9 +466,7 @@ fn load_terrain_for_render(
                     if let Some(v) = terrain_comp.get("grass.color_dry").and_then(toml_vec3) {
                         gc.color_dry = v;
                     }
-                    if let Some(v) =
-                        terrain_comp.get("grass.wind_direction").and_then(toml_vec3)
-                    {
+                    if let Some(v) = terrain_comp.get("grass.wind_direction").and_then(toml_vec3) {
                         gc.wind_direction = v;
                     }
                 }
@@ -511,10 +523,7 @@ fn load_terrain_for_render(
                     grass_config.density, grass_config.max_distance
                 );
             } else {
-                println!(
-                    "[grass] Warning: splat map not found at {:?}",
-                    splat_path
-                );
+                println!("[grass] Warning: splat map not found at {:?}", splat_path);
             }
         }
 

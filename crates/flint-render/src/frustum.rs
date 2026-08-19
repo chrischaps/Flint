@@ -24,29 +24,17 @@ impl Frustum {
         // Extract planes from VP matrix rows (Griggs/Hartmann method).
         // In column-major layout, row R = [c0[R], c1[R], c2[R], c3[R]].
         // Left  = row3 + row0
-        planes[0] = [
-            c0[3] + c0[0], c1[3] + c1[0], c2[3] + c2[0], c3[3] + c3[0],
-        ];
+        planes[0] = [c0[3] + c0[0], c1[3] + c1[0], c2[3] + c2[0], c3[3] + c3[0]];
         // Right = row3 - row0
-        planes[1] = [
-            c0[3] - c0[0], c1[3] - c1[0], c2[3] - c2[0], c3[3] - c3[0],
-        ];
+        planes[1] = [c0[3] - c0[0], c1[3] - c1[0], c2[3] - c2[0], c3[3] - c3[0]];
         // Bottom = row3 + row1
-        planes[2] = [
-            c0[3] + c0[1], c1[3] + c1[1], c2[3] + c2[1], c3[3] + c3[1],
-        ];
+        planes[2] = [c0[3] + c0[1], c1[3] + c1[1], c2[3] + c2[1], c3[3] + c3[1]];
         // Top = row3 - row1
-        planes[3] = [
-            c0[3] - c0[1], c1[3] - c1[1], c2[3] - c2[1], c3[3] - c3[1],
-        ];
+        planes[3] = [c0[3] - c0[1], c1[3] - c1[1], c2[3] - c2[1], c3[3] - c3[1]];
         // Near = row3 + row2
-        planes[4] = [
-            c0[3] + c0[2], c1[3] + c1[2], c2[3] + c2[2], c3[3] + c3[2],
-        ];
+        planes[4] = [c0[3] + c0[2], c1[3] + c1[2], c2[3] + c2[2], c3[3] + c3[2]];
         // Far = row3 - row2
-        planes[5] = [
-            c0[3] - c0[2], c1[3] - c1[2], c2[3] - c2[2], c3[3] - c3[2],
-        ];
+        planes[5] = [c0[3] - c0[2], c1[3] - c1[2], c2[3] - c2[2], c3[3] - c3[2]];
 
         // Normalize each plane
         for plane in &mut planes {
@@ -170,10 +158,7 @@ mod tests {
         let vp = test_perspective_vp();
         let frustum = Frustum::from_view_projection(&vp);
         // Huge box surrounding everything
-        assert!(frustum.aabb_visible(
-            [-1000.0, -1000.0, -1000.0],
-            [1000.0, 1000.0, 1000.0]
-        ));
+        assert!(frustum.aabb_visible([-1000.0, -1000.0, -1000.0], [1000.0, 1000.0, 1000.0]));
     }
 
     #[test]

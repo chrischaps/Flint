@@ -36,7 +36,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
    #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
    #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
-   #   --dither-intensity 0.03
+   #   --dither-intensity 0.03   --desaturate 0.85
+   #   --dof 0.6  --dof-focus 10  --dof-range 5
    #   --volumetric-density 1.0  --volumetric-samples 32
    #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
    #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
@@ -133,6 +134,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - Particles: no depth write; storage buffer (not uniform); skip draw for 0 alive; `bytemuck::cast_slice` for zero-copy
 - `flint-terrain` does NOT depend on `flint-render`; uses standard `Vertex` format so reuses shadow pipeline
 - `flint-android` excluded from `default-members` -- use `cargo ndk -p flint-android`; min API 26
+- Windows links a 1 MB main-thread stack; debug builds of flint-cli's clap parser overflow it -- `.cargo/config.toml` links with `/STACK:8388608`. Don't remove it, and don't grow `Commands` assuming stack is free.
 - Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
 - `flint_core::toml_util` -- use `toml_f64`/`toml_f32`/`toml_vec3`/etc. instead of inline coercion patterns
 - Never use `archetype = "furniture"` on non-visual entities -- furniture includes `bounds`, renders teal boxes

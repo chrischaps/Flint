@@ -590,7 +590,12 @@ pub fn load_textures_from_world(
                 }
                 if let Some(companion_path) = resolve_texture_path(config, &companion_name) {
                     loaded.insert(companion_name.clone());
-                    match renderer.load_texture_file(device, queue, &companion_name, &companion_path) {
+                    match renderer.load_texture_file(
+                        device,
+                        queue,
+                        &companion_name,
+                        &companion_path,
+                    ) {
                         Ok(true) => {
                             println!("Loaded texture: {}", companion_name);
                         }

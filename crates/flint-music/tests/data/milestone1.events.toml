@@ -1,0 +1,34 @@
+# Milestone 1 event script: drop and restore a bus exactly on beat, on both
+# sides of the tempo/meter change (bar 11 = the 120->90 BPM anchor), plus a
+# low-pass engagement on another bus. Bars here are 1-based (console numbers).
+schema_version = 0
+
+# Drop home_theme to silence at bar 9 (before the tempo change)...
+[[events]]
+at = "bar:9"
+bus = "home_theme"
+action = "set_gain"
+db = -80.0
+ramp_ms = 10.0
+
+# ...and restore it at bar 13 (after the change: two 3/4 bars past the anchor).
+[[events]]
+at = "bar:13"
+bus = "home_theme"
+action = "set_gain"
+db = 0.0
+ramp_ms = 10.0
+
+# Close the texture low-pass right at the anchor bar.
+[[events]]
+at = "bar:11"
+bus = "texture"
+action = "set_lpf"
+hz = 400.0
+ramp_ms = 100.0
+
+# A marker for the log, mid-suite.
+[[events]]
+at = "beat:40"
+action = "marker"
+label = "anchor"

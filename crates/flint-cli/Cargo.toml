@@ -27,6 +27,8 @@ flint-player = { workspace = true }
 flint-terrain = { workspace = true }
 flint-procgen = { workspace = true }
 flint-viewer = { workspace = true }
+flint-music = { workspace = true }
+flint-input-capture = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -41,7 +43,11 @@ image = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
+bytemuck = { workspace = true }
 egui-snarl = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rfd = { workspace = true }
+
+[dev-dependencies]
+naga = { version = "23", features = ["wgsl-in"] }

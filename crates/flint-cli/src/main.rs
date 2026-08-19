@@ -5,8 +5,10 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, edit_router, entity, gen, gen_preview, init, play, prefab, preview, query, render,
-    scene, schema, spline_edit, terrain_edit, tex_edit, validate,
+    asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
+    prefab, preview, query, render, render_suite, replay_chart, scene, schema, spike_rumble,
+    spline_edit,
+    terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]
@@ -190,6 +192,206 @@ enum Commands {
         /// Output format (json or toml)
         #[arg(long, default_value = "text")]
         format: String,
+    },
+
+    /// Validate a musical suite manifest (and optional beatmap chart)
+    ValidateSuite {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Beatmap chart (.chart.toml) to cross-check against the manifest
+        #[arg(long)]
+        chart: Option<String>,
+
+        /// Skip the asset pass (stem file existence/sample-rate/duration)
+        #[arg(long)]
+        no_assets: bool,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+    },
+
+    /// Play a validated suite manifest's stems sample-locked (Milestone 0)
+    PlaySuite {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Stop after this many bars (default: play to the end)
+        #[arg(long)]
+        bars: Option<u64>,
+    },
+
+    /// Tap-to-beat calibration: write the player's median offset to logs/latency/
+    Calibrate {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Number of taps to collect
+        #[arg(long, default_value_t = 16)]
+        taps: u32,
+    },
+
+    /// Play a suite against its beatmap chart with live gamepad capture (Phase 2 dev harness)
+    PlayChart {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Beatmap chart (.chart.toml) for the suite
+        #[arg(long)]
+        chart: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Stop after this many bars (default: play to the end)
+        #[arg(long)]
+        bars: Option<u64>,
+
+        /// Coherence config TOML (default: config/coherence.toml if present)
+        #[arg(long)]
+        config: Option<String>,
+
+        /// Run the input-granularity spike for N seconds and exit (no audio)
+        #[arg(long)]
+        spike_input_secs: Option<u64>,
+
+        /// Record the input session to logs/sessions/<NAME>.session.jsonl
+        #[arg(long)]
+        record: Option<String>,
+
+        /// Open a bare visual window (absorbs mapper keystrokes; shows
+        /// wordless cues). Console output continues underneath.
+        #[arg(long)]
+        window: bool,
+
+        /// Lean judgment: "arrival" (be at each target on its beat, roll
+        /// freely between) or "track" (follow the curve continuously)
+        #[arg(long, default_value = "arrival")]
+        lean_mode: String,
+
+        /// Disintegration ladder TOML (default: config/ladder.toml if present)
+        #[arg(long)]
+        ladder: Option<String>,
+
+        /// Error-gradient TOML (default: config/gradient.toml if present,
+        /// else inert)
+        #[arg(long)]
+        gradient: Option<String>,
+
+        /// Haptics TOML (default: config/haptics.toml if present, else
+        /// inert — no rumble)
+        #[arg(long)]
+        haptics: Option<String>,
+    },
+
+    /// Rumble spike (ADR 0025): fire the ff motors, time the command paths,
+    /// log to logs/latency/
+    SpikeRumble {
+        /// Directory whose logs/latency/ receives the report (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Skip the operator-felt tick/thump/grind demo (timing only)
+        #[arg(long)]
+        no_feel: bool,
+    },
+
+    /// Replay a recorded or synthetic session through judgment, fully headless
+    ReplayChart {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Beatmap chart (.chart.toml) for the suite
+        #[arg(long)]
+        chart: String,
+
+        /// Session file to replay (.session.jsonl)
+        #[arg(long, conflicts_with = "synthetic")]
+        session: Option<String>,
+
+        /// Synthetic profile: perfect | late:<ms> | neglect
+        #[arg(long)]
+        synthetic: Option<String>,
+
+        /// Coherence config TOML (default: the session's recorded snapshot)
+        #[arg(long)]
+        config: Option<String>,
+
+        /// Judgment log output path (default: logs/judgment/replay.jsonl)
+        #[arg(long)]
+        out: Option<String>,
+
+        /// Also save the replayed event stream as a session file
+        #[arg(long)]
+        save_session: Option<String>,
+
+        /// Also render the suite audio over the replayed span to this WAV
+        #[arg(long)]
+        render: Option<String>,
+
+        /// Lean judgment: "arrival" or "track" (must match the run being
+        /// reproduced; judgment-log headers record it)
+        #[arg(long, default_value = "arrival")]
+        lean_mode: String,
+
+        /// Disintegration ladder TOML; with --render this makes the render
+        /// reactive (full fall-and-reintegration loop). Default:
+        /// config/ladder.toml if present.
+        #[arg(long)]
+        ladder: Option<String>,
+
+        /// Error-gradient TOML, applied inside the reactive render only
+        /// (default: config/gradient.toml if present, else inert)
+        #[arg(long)]
+        gradient: Option<String>,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+    },
+
+    /// Render a scripted suite session to WAV, offline and deterministic
+    RenderSuite {
+        /// Path to the suite manifest (.suite.toml)
+        manifest: String,
+
+        /// Event script (.events.toml) of scheduled bus changes and markers
+        #[arg(long)]
+        script: Option<String>,
+
+        /// Output WAV path (32-bit float stereo)
+        #[arg(long, short)]
+        output: String,
+
+        /// Directory the manifest's file paths are relative to (default: cwd)
+        #[arg(long)]
+        base_dir: Option<String>,
+
+        /// Render this many bars (default: length of the longest stem)
+        #[arg(long, conflicts_with = "duration_seconds")]
+        duration_bars: Option<i64>,
+
+        /// Render this many seconds
+        #[arg(long)]
+        duration_seconds: Option<f64>,
+
+        /// Status line cadence: bar (default) or beat
+        #[arg(long)]
+        status_every: Option<String>,
+
+        /// Processing chunk size in frames (= scheduling granularity)
+        #[arg(long, default_value_t = 128)]
+        chunk_frames: usize,
     },
 
     /// Prefab operations
@@ -409,6 +611,22 @@ enum Commands {
         #[arg(long)]
         dither_intensity: Option<f32>,
 
+        /// Desaturation toward ash-grey (0 = full color, 1 = fully drained)
+        #[arg(long)]
+        desaturate: Option<f32>,
+
+        /// Depth-of-field strength (0 = off/sharp, 1 = full defocus)
+        #[arg(long)]
+        dof: Option<f32>,
+
+        /// Depth-of-field focus plane distance in world units (default: 10.0)
+        #[arg(long)]
+        dof_focus: Option<f32>,
+
+        /// Depth-of-field focus half-width in world units (default: 5.0)
+        #[arg(long)]
+        dof_range: Option<f32>,
+
         /// Volumetric light density (enables god rays; default: 1.0)
         #[arg(long)]
         volumetric_density: Option<f32>,
@@ -502,6 +720,111 @@ fn main() -> Result<()> {
             output_diff,
             schemas,
             format,
+        }),
+        Commands::ValidateSuite {
+            manifest,
+            chart,
+            no_assets,
+            base_dir,
+        } => validate_suite::run(validate_suite::ValidateSuiteArgs {
+            manifest,
+            chart,
+            no_assets,
+            base_dir,
+        }),
+        Commands::PlaySuite {
+            manifest,
+            base_dir,
+            bars,
+        } => play_suite::run(play_suite::PlaySuiteArgs {
+            manifest,
+            base_dir,
+            bars,
+        }),
+        Commands::Calibrate {
+            manifest,
+            base_dir,
+            taps,
+        } => calibrate::run(calibrate::CalibrateArgs {
+            manifest,
+            base_dir,
+            taps,
+        }),
+        Commands::PlayChart {
+            manifest,
+            chart,
+            base_dir,
+            bars,
+            config,
+            spike_input_secs,
+            record,
+            window,
+            lean_mode,
+            ladder,
+            gradient,
+            haptics,
+        } => play_chart::run(play_chart::PlayChartArgs {
+            manifest,
+            chart,
+            base_dir,
+            bars,
+            config,
+            spike_input_secs,
+            record,
+            window,
+            lean_mode,
+            ladder,
+            gradient,
+            haptics,
+        }),
+        Commands::SpikeRumble { base_dir, no_feel } => {
+            spike_rumble::run(spike_rumble::SpikeRumbleArgs { base_dir, no_feel })
+        }
+        Commands::ReplayChart {
+            manifest,
+            chart,
+            session,
+            synthetic,
+            config,
+            out,
+            save_session,
+            render,
+            base_dir,
+            lean_mode,
+            ladder,
+            gradient,
+        } => replay_chart::run(replay_chart::ReplayChartArgs {
+            manifest,
+            chart,
+            session,
+            synthetic,
+            config,
+            out,
+            save_session,
+            render,
+            base_dir,
+            lean_mode,
+            ladder,
+            gradient,
+        }),
+        Commands::RenderSuite {
+            manifest,
+            script,
+            output,
+            base_dir,
+            duration_bars,
+            duration_seconds,
+            status_every,
+            chunk_frames,
+        } => render_suite::run(render_suite::RenderSuiteArgs {
+            manifest,
+            script,
+            output,
+            base_dir,
+            duration_bars,
+            duration_seconds,
+            status_every,
+            chunk_frames,
         }),
         Commands::Play {
             scene,
@@ -637,6 +960,10 @@ fn main() -> Result<()> {
             fog_color,
             fog_height_falloff,
             dither_intensity,
+            desaturate,
+            dof,
+            dof_focus,
+            dof_range,
             volumetric_density,
             volumetric_samples,
             kuwahara_radius,
@@ -671,6 +998,10 @@ fn main() -> Result<()> {
             fog_color,
             fog_height_falloff,
             dither_intensity,
+            desaturate,
+            dof,
+            dof_focus,
+            dof_range,
             volumetric_density,
             volumetric_samples,
             kuwahara_radius,

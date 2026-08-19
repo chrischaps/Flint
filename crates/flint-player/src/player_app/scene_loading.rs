@@ -41,6 +41,12 @@ pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfi
     config.fog_height_enabled = pp_def.fog_height_enabled;
     config.fog_height_falloff = pp_def.fog_height_falloff;
     config.fog_height_origin = pp_def.fog_height_origin;
+    config.chromatic_aberration = pp_def.chromatic_aberration;
+    config.radial_blur = pp_def.radial_blur;
+    config.desaturate = pp_def.desaturate;
+    config.dof_strength = pp_def.dof_strength;
+    config.dof_focus_distance = pp_def.dof_focus_distance;
+    config.dof_focus_range = pp_def.dof_focus_range;
     config.dither_enabled = pp_def.dither_enabled;
     config.dither_intensity = pp_def.dither_intensity;
     config.volumetric_enabled = pp_def.volumetric_enabled;
@@ -201,13 +207,7 @@ pub(super) fn load_terrain_from_world_inner(
             .iter()
             .map(|v| [v[0] + offset[0], v[1] + offset[1], v[2] + offset[2]])
             .collect();
-        physics.register_static_trimesh(
-            entity.id,
-            offset_verts,
-            tris,
-            0.8,
-            0.1,
-        );
+        physics.register_static_trimesh(entity.id, offset_verts, tris, 0.8, 0.1);
 
         // Load grass if enabled
         let grass_config = {
@@ -220,14 +220,12 @@ pub(super) fn load_terrain_from_world_inner(
                     gc.fade_start = get_f32("grass.fade_start", gc.fade_start);
                     gc.blade_width = get_f32("grass.blade_width", gc.blade_width);
                     gc.blade_height = get_f32("grass.blade_height", gc.blade_height);
-                    gc.height_variation =
-                        get_f32("grass.height_variation", gc.height_variation);
+                    gc.height_variation = get_f32("grass.height_variation", gc.height_variation);
                     gc.wind_speed = get_f32("grass.wind_speed", gc.wind_speed);
                     gc.wind_strength = get_f32("grass.wind_strength", gc.wind_strength);
                     gc.bend_radius = get_f32("grass.bend_radius", gc.bend_radius);
                     gc.bend_strength = get_f32("grass.bend_strength", gc.bend_strength);
-                    gc.density_threshold =
-                        get_f32("grass.density_threshold", gc.density_threshold);
+                    gc.density_threshold = get_f32("grass.density_threshold", gc.density_threshold);
                     gc.density_layer =
                         get_i32("grass.density_layer", gc.density_layer as i32) as u32;
                     gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
@@ -242,9 +240,7 @@ pub(super) fn load_terrain_from_world_inner(
                     if let Some(v) = terrain_comp.get("grass.color_dry").and_then(toml_vec3) {
                         gc.color_dry = v;
                     }
-                    if let Some(v) =
-                        terrain_comp.get("grass.wind_direction").and_then(toml_vec3)
-                    {
+                    if let Some(v) = terrain_comp.get("grass.wind_direction").and_then(toml_vec3) {
                         gc.wind_direction = v;
                     }
                 }
@@ -303,10 +299,7 @@ pub(super) fn load_terrain_from_world_inner(
                     terrain_entity_name: entity.name.clone(),
                 });
             } else {
-                tracing::warn!(
-                    "Grass enabled but splat map not found at {:?}",
-                    splat_path
-                );
+                tracing::warn!("Grass enabled but splat map not found at {:?}", splat_path);
             }
         }
 
@@ -687,9 +680,7 @@ pub(super) fn resolve_procgen_assets(
             for comp_name in &[comp::MATERIAL, comp::SPRITE] {
                 if let Some(comp_data) = comps.get(*comp_name) {
                     if let Some(tex) = comp_data.get("texture").and_then(|v| v.as_str()) {
-                        if !config.overrides.contains_key(tex)
-                            && resolver.has_spec(tex)
-                        {
+                        if !config.overrides.contains_key(tex) && resolver.has_spec(tex) {
                             if !unresolved_textures.contains(&tex.to_string()) {
                                 unresolved_textures.push(tex.to_string());
                             }
@@ -706,38 +697,62 @@ pub(super) fn resolve_procgen_assets(
             Ok(output) => match output {
                 flint_procgen::GeneratorOutput::Mesh(mesh) => {
                     upload_procgen_mesh(name, &mesh, renderer, device);
-                    tracing::info!("Procgen resolved mesh '{}' ({} tris)", name, mesh.triangle_count());
+                    tracing::info!(
+                        "Procgen resolved mesh '{}' ({} tris)",
+                        name,
+                        mesh.triangle_count()
+                    );
                 }
                 flint_procgen::GeneratorOutput::MeshWithLods(lods) => {
                     if let Some(mesh) = lods.first() {
                         upload_procgen_mesh(name, mesh, renderer, device);
-                        tracing::info!("Procgen resolved mesh '{}' (LOD0, {} tris)", name, mesh.triangle_count());
+                        tracing::info!(
+                            "Procgen resolved mesh '{}' (LOD0, {} tris)",
+                            name,
+                            mesh.triangle_count()
+                        );
                     }
                 }
                 flint_procgen::GeneratorOutput::Image(img) => {
                     upload_procgen_image(name, &img, renderer, device, queue);
-                    tracing::info!("Procgen resolved image '{}' ({}x{})", name, img.width, img.height);
+                    tracing::info!(
+                        "Procgen resolved image '{}' ({}x{})",
+                        name,
+                        img.width,
+                        img.height
+                    );
                 }
                 flint_procgen::GeneratorOutput::ImageSet(images) => {
                     for (i, img) in images.iter().enumerate() {
                         let tex_name = if i == 0 {
                             name.clone()
                         } else {
-                            format!("{}_{}", name, match img.channel_semantics {
-                            flint_procgen::ChannelSemantics::Color => "color",
-                            flint_procgen::ChannelSemantics::Normal => "normal",
-                            flint_procgen::ChannelSemantics::Roughness => "roughness",
-                            flint_procgen::ChannelSemantics::Metallic => "metallic",
-                            flint_procgen::ChannelSemantics::Height => "height",
-                            flint_procgen::ChannelSemantics::Mask => "mask",
-                        })
+                            format!(
+                                "{}_{}",
+                                name,
+                                match img.channel_semantics {
+                                    flint_procgen::ChannelSemantics::Color => "color",
+                                    flint_procgen::ChannelSemantics::Normal => "normal",
+                                    flint_procgen::ChannelSemantics::Roughness => "roughness",
+                                    flint_procgen::ChannelSemantics::Metallic => "metallic",
+                                    flint_procgen::ChannelSemantics::Height => "height",
+                                    flint_procgen::ChannelSemantics::Mask => "mask",
+                                }
+                            )
                         };
                         upload_procgen_image(&tex_name, img, renderer, device, queue);
                     }
-                    tracing::info!("Procgen resolved image set '{}' ({} maps)", name, images.len());
+                    tracing::info!(
+                        "Procgen resolved image set '{}' ({} maps)",
+                        name,
+                        images.len()
+                    );
                 }
                 _ => {
-                    tracing::warn!("Procgen spec '{}' produced unsupported output type for model", name);
+                    tracing::warn!(
+                        "Procgen spec '{}' produced unsupported output type for model",
+                        name
+                    );
                 }
             },
             Err(e) => {
@@ -754,28 +769,44 @@ pub(super) fn resolve_procgen_assets(
             Ok(output) => match output {
                 flint_procgen::GeneratorOutput::Image(img) => {
                     upload_procgen_image(name, &img, renderer, device, queue);
-                    tracing::info!("Procgen resolved texture '{}' ({}x{})", name, img.width, img.height);
+                    tracing::info!(
+                        "Procgen resolved texture '{}' ({}x{})",
+                        name,
+                        img.width,
+                        img.height
+                    );
                 }
                 flint_procgen::GeneratorOutput::ImageSet(images) => {
                     for (i, img) in images.iter().enumerate() {
                         let tex_name = if i == 0 {
                             name.clone()
                         } else {
-                            format!("{}_{}", name, match img.channel_semantics {
-                            flint_procgen::ChannelSemantics::Color => "color",
-                            flint_procgen::ChannelSemantics::Normal => "normal",
-                            flint_procgen::ChannelSemantics::Roughness => "roughness",
-                            flint_procgen::ChannelSemantics::Metallic => "metallic",
-                            flint_procgen::ChannelSemantics::Height => "height",
-                            flint_procgen::ChannelSemantics::Mask => "mask",
-                        })
+                            format!(
+                                "{}_{}",
+                                name,
+                                match img.channel_semantics {
+                                    flint_procgen::ChannelSemantics::Color => "color",
+                                    flint_procgen::ChannelSemantics::Normal => "normal",
+                                    flint_procgen::ChannelSemantics::Roughness => "roughness",
+                                    flint_procgen::ChannelSemantics::Metallic => "metallic",
+                                    flint_procgen::ChannelSemantics::Height => "height",
+                                    flint_procgen::ChannelSemantics::Mask => "mask",
+                                }
+                            )
                         };
                         upload_procgen_image(&tex_name, img, renderer, device, queue);
                     }
-                    tracing::info!("Procgen resolved texture set '{}' ({} maps)", name, images.len());
+                    tracing::info!(
+                        "Procgen resolved texture set '{}' ({} maps)",
+                        name,
+                        images.len()
+                    );
                 }
                 _ => {
-                    tracing::warn!("Procgen spec '{}' produced non-image output for texture ref", name);
+                    tracing::warn!(
+                        "Procgen spec '{}' produced non-image output for texture ref",
+                        name
+                    );
                 }
             },
             Err(e) => {
@@ -853,8 +884,7 @@ fn upload_procgen_mesh(
             let min_idx = *sub_indices.iter().min().unwrap_or(&0) as usize;
             let max_idx = *sub_indices.iter().max().unwrap_or(&0) as usize;
 
-            let vertices: Vec<flint_render::Vertex> = mesh.vertices
-                [min_idx..=max_idx]
+            let vertices: Vec<flint_render::Vertex> = mesh.vertices[min_idx..=max_idx]
                 .iter()
                 .map(|v| flint_render::Vertex {
                     position: v.position,
@@ -906,7 +936,15 @@ fn upload_procgen_image(
         img.channel_semantics,
         flint_procgen::ChannelSemantics::Normal
     );
-    match renderer.load_texture_rgba(device, queue, name, img.width, img.height, &img.pixels, is_normal) {
+    match renderer.load_texture_rgba(
+        device,
+        queue,
+        name,
+        img.width,
+        img.height,
+        &img.pixels,
+        is_normal,
+    ) {
         Ok(true) => {}
         Ok(false) => {
             tracing::debug!("Procgen texture '{}' already cached", name);

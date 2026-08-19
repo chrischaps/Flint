@@ -16,6 +16,8 @@ members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-music",
+    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -25,6 +27,7 @@ members = [
     "crates/flint-procgen-ai",
     "crates/flint-cli",
     "crates/flint-android",
+    "tools/arch-analyzer",
 ]
 # flint-android depends on ndk-sys which only compiles for Android targets.
 # Exclude it from default `cargo build`; build with `cargo ndk -p flint-android`.
@@ -44,6 +47,8 @@ default-members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-music",
+    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
@@ -95,7 +100,8 @@ image = "0.25"
 rapier3d = { version = "0.22", features = ["default"] }
 
 # Audio
-kira = { version = "0.11", features = ["cpal", "ogg"] }
+kira = { version = "0.11", features = ["cpal", "ogg", "flac"] }
+hound = "3.5"
 glam = { version = "0.30", features = ["mint"] }
 
 # Scripting
@@ -103,7 +109,14 @@ rhai = { version = "1", features = ["sync"] }
 
 # Game loop
 instant = "0.1"
-gilrs = "0.11"
+# default-features off: gilrs's default Windows backend (WGI) only delivers
+# input to the process owning the foreground window — console apps (play-chart,
+# the input spike) get nothing. XInput polls regardless of focus. See ADR 0011.
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
+# Direct motor access for the haptics rumble path: gilrs's high-level ff
+# server quantizes commands to a 50 ms tick; gilrs-core's FfDevice is a
+# synchronous XInputSetState. Same crate gilrs already depends on.
+gilrs-core = { version = "0.6", default-features = false, features = ["xinput"] }
 
 # Android
 android-activity = { version = "0.6", features = ["game-activity"] }
@@ -124,6 +137,9 @@ dirs = "6"
 noise = "0.9"
 rand = "0.9"
 rand_chacha = "0.9"
+
+# Audio probing (validator)
+symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "flac"] }
 
 # glTF
 gltf = "1.4"
@@ -151,6 +167,8 @@ flint-viewer = { path = "crates/flint-viewer" }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
+flint-music = { path = "crates/flint-music" }
+flint-input-capture = { path = "crates/flint-input-capture" }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }

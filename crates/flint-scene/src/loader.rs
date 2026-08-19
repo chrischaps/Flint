@@ -204,7 +204,10 @@ position = [30, 0, 0]
 
         reload_scene_string(scene_b, &mut world, &registry).unwrap();
 
-        assert!(!world.contains_name("alpha"), "alpha should be gone after reload");
+        assert!(
+            !world.contains_name("alpha"),
+            "alpha should be gone after reload"
+        );
         assert!(world.contains_name("beta"), "beta should still exist");
         assert!(world.contains_name("gamma"), "gamma should be added");
         assert_eq!(world.entity_count(), 2);
@@ -319,7 +322,9 @@ skybox = "sky_sunset.hdr"
 "#;
 
         let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
-        let env = scene_file.environment.expect("environment should be present");
+        let env = scene_file
+            .environment
+            .expect("environment should be present");
         assert_eq!(env.skybox, Some("sky_sunset.hdr".into()));
     }
 
@@ -335,14 +340,49 @@ bloom_enabled = true
 bloom_intensity = 0.08
 fog_enabled = true
 fog_density = 0.05
+chromatic_aberration = 0.2
+radial_blur = 0.4
+desaturate = 0.85
+dof_strength = 0.5
+dof_focus_distance = 22.0
+dof_focus_range = 3.5
 "#;
 
         let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
-        let pp = scene_file.post_process.expect("post_process should be present");
+        let pp = scene_file
+            .post_process
+            .expect("post_process should be present");
         assert!(pp.bloom_enabled);
         assert!((pp.bloom_intensity - 0.08).abs() < 0.001);
         assert!(pp.fog_enabled);
         assert!((pp.fog_density - 0.05).abs() < 0.001);
+        assert!((pp.chromatic_aberration - 0.2).abs() < 0.001);
+        assert!((pp.radial_blur - 0.4).abs() < 0.001);
+        assert!((pp.desaturate - 0.85).abs() < 0.001);
+        assert!((pp.dof_strength - 0.5).abs() < 0.001);
+        assert!((pp.dof_focus_distance - 22.0).abs() < 0.001);
+        assert!((pp.dof_focus_range - 3.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_post_process_effect_fields_default_to_zero() {
+        let registry = SchemaRegistry::new();
+        let scene = r#"
+[scene]
+name = "PP Defaults"
+
+[post_process]
+bloom_enabled = false
+"#;
+
+        let (_, scene_file) = load_scene_string(scene, &registry).unwrap();
+        let pp = scene_file
+            .post_process
+            .expect("post_process should be present");
+        assert_eq!(pp.chromatic_aberration, 0.0);
+        assert_eq!(pp.radial_blur, 0.0);
+        assert_eq!(pp.desaturate, 0.0);
+        assert_eq!(pp.dof_strength, 0.0);
     }
 
     #[test]

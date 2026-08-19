@@ -1,9 +1,10 @@
 // Composite post-processing shader
 //
 // Fullscreen triangle that reads from the HDR scene buffer, applies
-// radial blur, chromatic aberration, bloom, fog, exposure, ACES tonemapping,
-// and vignette. Outputs LINEAR values — the sRGB render target handles
-// gamma encoding automatically via hardware conversion.
+// radial blur, depth of field, chromatic aberration, bloom, fog, exposure,
+// ACES tonemapping, desaturation, and vignette. Outputs LINEAR values — the
+// sRGB render target handles gamma encoding automatically via hardware
+// conversion.
 
 struct PostProcessUniforms {
     exposure: f32,
@@ -15,7 +16,8 @@ struct PostProcessUniforms {
     texel_size: vec2<f32>,
     chromatic_aberration: f32,
     radial_blur: f32,
-    _pad: vec2<f32>,
+    desaturate: f32,
+    _pad: f32,
     // Fog parameters
     fog_color: vec3<f32>,
     fog_density: f32,
@@ -30,6 +32,11 @@ struct PostProcessUniforms {
     fog_height_enabled: f32,
     dither_intensity: f32,
     inv_view_proj: mat4x4<f32>,
+    // Depth of field (trailing row appended after the mat4 — see PostProcessUniforms)
+    dof_strength: f32,
+    dof_focus_distance: f32,
+    dof_focus_range: f32,
+    _pad2: f32,
 };
 
 @group(0) @binding(0)
@@ -100,6 +107,25 @@ fn world_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     let clip_y_flip = vec4<f32>(clip.x, -clip.y, clip.z, 1.0);
     let world = params.inv_view_proj * clip_y_flip;
     return world.xyz / world.w;
+}
+
+// Linearize a [0,1] depth-buffer value to world-space view depth
+fn linear_depth(depth: f32) -> f32 {
+    return params.near * params.far / (params.far - depth * (params.far - params.near));
+}
+
+// Circle-of-confusion at a UV: 0 = in focus, 1 = fully defocused.
+// Sky (depth at/near the far plane) is treated as at the far plane so it
+// defocuses naturally when the focus plane is near. textureSampleLevel —
+// this is called from non-uniform control flow inside the DoF gather loop.
+fn coc_at(uv: vec2<f32>) -> f32 {
+    let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
+    var z = params.far;
+    if (depth < 0.9999) {
+        z = linear_depth(depth);
+    }
+    return clamp(abs(z - params.dof_focus_distance) / params.dof_focus_range, 0.0, 1.0)
+        * params.dof_strength;
 }
 
 // Compute fog factor from depth buffer
@@ -177,6 +203,28 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         color = textureSample(hdr_texture, hdr_sampler, uv).rgb;
     }
 
+    // ── Depth of Field (single-pass CoC-weighted disc gather) ──
+    // Gathers from the raw HDR source (same as radial blur) so the two blurs
+    // stay order-stable; taps are weighted by their own CoC as a cheap guard
+    // against in-focus foreground bleeding into defocused regions.
+    if (params.dof_strength > 0.001) {
+        let center_coc = coc_at(uv);
+        let radius_px = center_coc * 10.0;
+        if (radius_px > 0.5) {
+            var acc = textureSampleLevel(hdr_texture, hdr_sampler, uv, 0.0).rgb;
+            var wsum = 1.0;
+            for (var i = 0u; i < 12u; i = i + 1u) {
+                let ang = f32(i) * 2.39996323; // golden angle
+                let r = radius_px * sqrt((f32(i) + 0.5) / 12.0);
+                let tuv = uv + vec2<f32>(cos(ang), sin(ang)) * r * params.texel_size;
+                let w = coc_at(tuv);
+                acc = acc + textureSampleLevel(hdr_texture, hdr_sampler, tuv, 0.0).rgb * w;
+                wsum = wsum + w;
+            }
+            color = mix(color, acc / wsum, center_coc);
+        }
+    }
+
     // ── Chromatic Aberration (R/B offset radially, G stays) ──
     if (params.chromatic_aberration > 0.001) {
         let offset = dir_from_center * params.chromatic_aberration * 0.012;
@@ -207,6 +255,14 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     // Output stays LINEAR — the sRGB render target applies gamma encoding.
     color = color * params.exposure;
     var mapped = aces_filmic(color);
+
+    // ── Desaturation (mix toward darkened ash-grey, never neutral) ──
+    // Rec.601 luma and the 0.62 grey target match the ladder stage of the
+    // play-chart window harness so the disintegration language reads the same.
+    if (params.desaturate > 0.0) {
+        let luma = dot(mapped, vec3<f32>(0.299, 0.587, 0.114));
+        mapped = mix(mapped, vec3<f32>(luma * 0.62), clamp(params.desaturate, 0.0, 1.0));
+    }
 
     // ── Vignette (linear-space attenuation) ──
     if (params.vignette_intensity > 0.0) {
