@@ -119,6 +119,40 @@ pub fn lean_mode_name(mode: LeanMode) -> &'static str {
     }
 }
 
+// --- session-config resolution -----------------------------------------------
+
+/// Default config paths, relative to the session base dir — the one place
+/// they are spelled (open resolution and reload both go through the values
+/// resolved here).
+pub const DEFAULT_COHERENCE_CONFIG: &str = "config/coherence.toml";
+pub const DEFAULT_LADDER_CONFIG: &str = "config/ladder.toml";
+pub const DEFAULT_GRADIENT_CONFIG: &str = "config/gradient.toml";
+pub const DEFAULT_HAPTICS_CONFIG: &str = "config/haptics.toml";
+
+/// The one contract every session config follows: explicit path (must load)
+/// > `<base_dir>/<default_file>` when present > built-in defaults. Returns
+/// the config, the path it resolves to (the default path even when absent —
+/// reload watches it), and whether a file was actually loaded (the caller's
+/// notice wording branches on it).
+fn resolve_session_config<T: Default>(
+    explicit: Option<&Path>,
+    base_dir: &Path,
+    default_file: &str,
+    load: impl Fn(&Path) -> Result<T>,
+) -> Result<(T, PathBuf, bool)> {
+    let explicit_given = explicit.is_some();
+    let path = explicit
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| base_dir.join(default_file));
+    if explicit_given || path.exists() {
+        let cfg = load(&path)
+            .map_err(|e| FlintError::ValidationError(format!("loading {}: {e}", path.display())))?;
+        Ok((cfg, path, true))
+    } else {
+        Ok((T::default(), path, false))
+    }
+}
+
 // --- coherence-config resolution --------------------------------------------
 
 /// Where a resolved coherence config came from — the front end formats its
@@ -139,21 +173,21 @@ pub fn resolve_coherence_config(
     snapshot: Option<&serde_json::Value>,
     base_dir: &Path,
 ) -> Result<(CoherenceConfig, CoherenceSource)> {
-    if let Some(path) = explicit {
-        let cfg = CoherenceConfig::load(path)
-            .map_err(|e| FlintError::ValidationError(format!("loading {}: {e}", path.display())))?;
-        Ok((cfg, CoherenceSource::Explicit(path.to_path_buf())))
-    } else if let Some(snap) = snapshot {
-        Ok((CoherenceConfig::from_json(snap), CoherenceSource::Snapshot))
-    } else {
-        let default_path = base_dir.join("config/coherence.toml");
-        if default_path.exists() {
-            let cfg = CoherenceConfig::load(&default_path)?;
-            Ok((cfg, CoherenceSource::DefaultFile(default_path)))
-        } else {
-            Ok((CoherenceConfig::default(), CoherenceSource::Builtin(default_path)))
+    if explicit.is_none() {
+        if let Some(snap) = snapshot {
+            return Ok((CoherenceConfig::from_json(snap), CoherenceSource::Snapshot));
         }
     }
+    let (cfg, path, loaded) =
+        resolve_session_config(explicit, base_dir, DEFAULT_COHERENCE_CONFIG, |p| {
+            CoherenceConfig::load(p)
+        })?;
+    let source = match (explicit.is_some(), loaded) {
+        (true, _) => CoherenceSource::Explicit(path),
+        (false, true) => CoherenceSource::DefaultFile(path),
+        (false, false) => CoherenceSource::Builtin(path),
+    };
+    Ok((cfg, source))
 }
 
 // --- the player-free core ---------------------------------------------------
@@ -1303,56 +1337,47 @@ impl ChartSession {
 
         // Ladder config: same contract as the coherence config — explicit
         // path must load, default path is optional, reloads with `r`.
-        let ladder_explicit = cfg.ladder_config.is_some();
-        let ladder_path = cfg
-            .ladder_config
-            .clone()
-            .unwrap_or_else(|| cfg.base_dir.join("config/ladder.toml"));
-        let ladder_cfg = if ladder_explicit || ladder_path.exists() {
-            let lcfg = LadderConfig::load(&ladder_path).map_err(|e| {
-                FlintError::ValidationError(format!("loading {}: {e}", ladder_path.display()))
-            })?;
-            notices.push(format!(
+        let (ladder_cfg, ladder_path, ladder_loaded) = resolve_session_config(
+            cfg.ladder_config.as_deref(),
+            &cfg.base_dir,
+            DEFAULT_LADDER_CONFIG,
+            |p| LadderConfig::load(p),
+        )?;
+        notices.push(if ladder_loaded {
+            format!(
                 "ladder config: {} ({} rung(s))",
                 ladder_path.display(),
-                lcfg.rungs.len()
-            ));
-            lcfg
+                ladder_cfg.rungs.len()
+            )
         } else {
-            notices.push(format!(
+            format!(
                 "ladder config: built-in defaults (no {})",
                 ladder_path.display()
-            ));
-            LadderConfig::default()
-        };
+            )
+        });
         let ladder = Ladder::new(ladder_cfg);
         let reintegrator = Reintegrator::new(manifest.reintegration.clone());
 
-        // Gradient config (ADR 0024): same contract again — explicit path
-        // must load, the default file is optional, absent = inert built-ins
-        // (so a gradient-free repo renders byte-identically).
-        let gradient_explicit = cfg.gradient_config.is_some();
-        let gradient_path = cfg
-            .gradient_config
-            .clone()
-            .unwrap_or_else(|| cfg.base_dir.join("config/gradient.toml"));
-        let gradient_cfg = if gradient_explicit || gradient_path.exists() {
-            let gcfg = GradientConfig::load(&gradient_path).map_err(|e| {
-                FlintError::ValidationError(format!("loading {}: {e}", gradient_path.display()))
-            })?;
-            notices.push(format!(
+        // Gradient config (ADR 0024): same contract again; absent = inert
+        // built-ins (so a gradient-free repo renders byte-identically).
+        let (gradient_cfg, gradient_path, gradient_loaded) = resolve_session_config(
+            cfg.gradient_config.as_deref(),
+            &cfg.base_dir,
+            DEFAULT_GRADIENT_CONFIG,
+            |p| GradientConfig::load(p),
+        )?;
+        notices.push(if gradient_loaded {
+            format!(
                 "gradient config: {} (tune bus: {})",
                 gradient_path.display(),
-                gcfg.tune.bus
-            ));
-            gcfg
+                gradient_cfg.tune.bus
+            )
         } else {
-            notices.push(format!(
+            format!(
                 "gradient config: inert built-ins (no {})",
                 gradient_path.display()
-            ));
-            GradientConfig::default()
-        };
+            )
+        });
         let gradient = GradientDriver::new(gradient_cfg);
         // A silent tune bus makes the wobble a no-op — true of the current
         // placeholder track's world_voice (per-friend stems are queued music
@@ -1372,33 +1397,28 @@ impl ChartSession {
             }
         }
 
-        // Haptics config (ADR 0026): the same contract one more time —
-        // explicit path must load, the default file is optional, absent =
-        // inert built-ins (no events, ever; motors need no protecting the
+        // Haptics config (ADR 0026): the same contract one more time; absent
+        // = inert built-ins (no events, ever; motors need no protecting the
         // way buses do, but silence-by-default keeps the feature opt-in).
-        let haptics_explicit = cfg.haptics_config.is_some();
-        let haptics_path = cfg
-            .haptics_config
-            .clone()
-            .unwrap_or_else(|| cfg.base_dir.join("config/haptics.toml"));
-        let haptics_cfg = if haptics_explicit || haptics_path.exists() {
-            let hcfg = crate::haptics::HapticsConfig::load(&haptics_path).map_err(|e| {
-                FlintError::ValidationError(format!("loading {}: {e}", haptics_path.display()))
-            })?;
-            notices.push(format!(
+        let (haptics_cfg, haptics_path, haptics_loaded) = resolve_session_config(
+            cfg.haptics_config.as_deref(),
+            &cfg.base_dir,
+            DEFAULT_HAPTICS_CONFIG,
+            |p| crate::haptics::HapticsConfig::load(p),
+        )?;
+        notices.push(if haptics_loaded {
+            format!(
                 "haptics config: {} (tick grid: {}, lead {:.0} ms)",
                 haptics_path.display(),
-                hcfg.tick_grid.as_str(),
-                hcfg.lead_ms
-            ));
-            hcfg
+                haptics_cfg.tick_grid.as_str(),
+                haptics_cfg.lead_ms
+            )
         } else {
-            notices.push(format!(
+            format!(
                 "haptics config: inert built-ins (no {})",
                 haptics_path.display()
-            ));
-            crate::haptics::HapticsConfig::default()
-        };
+            )
+        });
         let haptics = crate::haptics::HapticsDriver::new(haptics_cfg);
 
         let epoch = std::time::SystemTime::now()
