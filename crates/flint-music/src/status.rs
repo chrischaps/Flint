@@ -56,5 +56,9 @@ pub fn status_line_with_coherence(
     mixer: &BusMixer,
     coherence: f64,
 ) -> String {
-    format!("{} | {}", status_line(pos, section, mixer), coherence_meter(coherence))
+    format!(
+        "{} | {}",
+        status_line(pos, section, mixer),
+        coherence_meter(coherence)
+    )
 }

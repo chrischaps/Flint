@@ -63,7 +63,11 @@ pub fn run(args: ValidateSuiteArgs) -> Result<()> {
             manifest.id,
             manifest.sections.len(),
             manifest.tempo.len(),
-            if args.chart.is_some() { ", chart valid" } else { "" }
+            if args.chart.is_some() {
+                ", chart valid"
+            } else {
+                ""
+            }
         );
         Ok(())
     } else {

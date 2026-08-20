@@ -15,7 +15,7 @@ use crate::algorithms::noise::{
     Fbm, MusgraveType, NoiseSource, PerlinNoise, SimplexNoise, ValueNoise, VoronoiFeature,
     VoronoiMetric, WorleyNoise,
 };
-use crate::rng::{rgb_to_hsv, hsv_to_rgb};
+use crate::rng::{hsv_to_rgb, rgb_to_hsv};
 use crate::SeededRng;
 
 use super::field::TextureField;
@@ -141,9 +141,7 @@ impl TextureOp for BrickGridOp {
 
         // Pre-compute row boundaries when row_height_variation > 0
         let row_boundaries: Vec<f32> = if self.row_height_variation > 0.0 {
-            let row_h_seed = seed
-                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                .wrapping_add(0);
+            let row_h_seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0);
             let mut row_rng = SeededRng::new(row_h_seed);
             let raw: Vec<f32> = (0..rows)
                 .map(|_| {
@@ -413,11 +411,7 @@ impl TextureOp for DomainWarpOp {
                 let v01 = sample(x0, y0 + 1);
                 let v11 = sample(x0 + 1, y0 + 1);
 
-                let result = lerp(
-                    lerp(v00, v10, fx),
-                    lerp(v01, v11, fx),
-                    fy,
-                );
+                let result = lerp(lerp(v00, v10, fx), lerp(v01, v11, fx), fy);
 
                 field.set(&self.output, x, y, result);
             }
@@ -543,8 +537,7 @@ impl TextureOp for CellBulgeOp {
         field.ensure_channel("height");
 
         // Pass 1: find max edge_dist per cell
-        let mut max_dist: std::collections::HashMap<u32, f32> =
-            std::collections::HashMap::new();
+        let mut max_dist: std::collections::HashMap<u32, f32> = std::collections::HashMap::new();
         for y in 0..h {
             for x in 0..w {
                 let cell_id = field.get("cell_id", x, y) as u32;
@@ -842,11 +835,19 @@ impl TextureOp for BlendOp {
                         lerp(dst, b, self.strength)
                     }
                     BlendMode::ColorDodge => {
-                        let b = if src >= 1.0 { 1.0 } else { (dst / (1.0 - src)).min(1.0) };
+                        let b = if src >= 1.0 {
+                            1.0
+                        } else {
+                            (dst / (1.0 - src)).min(1.0)
+                        };
                         lerp(dst, b, self.strength)
                     }
                     BlendMode::ColorBurn => {
-                        let b = if src <= 0.0 { 0.0 } else { (1.0 - (1.0 - dst) / src).max(0.0) };
+                        let b = if src <= 0.0 {
+                            0.0
+                        } else {
+                            (1.0 - (1.0 - dst) / src).max(0.0)
+                        };
                         lerp(dst, b, self.strength)
                     }
                     BlendMode::Subtract => {
@@ -953,12 +954,7 @@ impl TextureOp for CellColorOp {
 }
 
 /// Deterministic per-cell color using HSL-space variation.
-fn cell_color_hsl(
-    cell_id: u32,
-    base_color: [f32; 4],
-    variation: f32,
-    rng_seed: u64,
-) -> [f32; 4] {
+fn cell_color_hsl(cell_id: u32, base_color: [f32; 4], variation: f32, rng_seed: u64) -> [f32; 4] {
     if variation <= 0.0 {
         return base_color;
     }
@@ -1123,13 +1119,12 @@ impl TextureOp for CellRoughnessOp {
                 let surface_rough = (self.base + cell_shift).clamp(0.0, 1.0);
 
                 // Mortar blend
-                let roughness =
-                    if e < self.mortar_threshold && self.mortar_threshold > 0.0 {
-                        let t = e / self.mortar_threshold;
-                        self.mortar * (1.0 - t) + surface_rough * t
-                    } else {
-                        surface_rough
-                    };
+                let roughness = if e < self.mortar_threshold && self.mortar_threshold > 0.0 {
+                    let t = e / self.mortar_threshold;
+                    self.mortar * (1.0 - t) + surface_rough * t
+                } else {
+                    surface_rough
+                };
 
                 field.set("roughness", x, y, roughness);
             }
@@ -1283,7 +1278,11 @@ impl TextureOp for MathOp {
                     MathOperation::Subtract => a - b,
                     MathOperation::Multiply => a * b,
                     MathOperation::Divide => {
-                        if b.abs() < 1e-10 { 0.0 } else { a / b }
+                        if b.abs() < 1e-10 {
+                            0.0
+                        } else {
+                            a / b
+                        }
                     }
                     MathOperation::Power => a.powf(b),
                     MathOperation::Sqrt => a.max(0.0).sqrt(),
@@ -1292,17 +1291,43 @@ impl TextureOp for MathOp {
                     MathOperation::Max => a.max(b),
                     MathOperation::Fract => a.fract(),
                     MathOperation::Modulo => {
-                        if b.abs() < 1e-10 { 0.0 } else { a % b }
+                        if b.abs() < 1e-10 {
+                            0.0
+                        } else {
+                            a % b
+                        }
                     }
                     MathOperation::Snap => {
-                        if b.abs() < 1e-10 { a } else { (a / b).floor() * b }
+                        if b.abs() < 1e-10 {
+                            a
+                        } else {
+                            (a / b).floor() * b
+                        }
                     }
                     MathOperation::Sin => (a * std::f32::consts::TAU).sin(),
                     MathOperation::Cos => (a * std::f32::consts::TAU).cos(),
-                    MathOperation::LessThan => if a < b { 1.0 } else { 0.0 },
-                    MathOperation::GreaterThan => if a > b { 1.0 } else { 0.0 },
+                    MathOperation::LessThan => {
+                        if a < b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    MathOperation::GreaterThan => {
+                        if a > b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
                     MathOperation::Sign => {
-                        if a > 0.0 { 1.0 } else if a < 0.0 { -1.0 } else { 0.0 }
+                        if a > 0.0 {
+                            1.0
+                        } else if a < 0.0 {
+                            -1.0
+                        } else {
+                            0.0
+                        }
                     }
                     MathOperation::Floor => a.floor(),
                     MathOperation::Ceil => a.ceil(),
@@ -1312,12 +1337,20 @@ impl TextureOp for MathOp {
                             0.0
                         } else {
                             let t = (a / b).rem_euclid(2.0);
-                            if t <= 1.0 { t * b } else { (2.0 - t) * b }
+                            if t <= 1.0 {
+                                t * b
+                            } else {
+                                (2.0 - t) * b
+                            }
                         }
                     }
                     MathOperation::Wrap => {
                         // Wrap a into [0, b)
-                        if b.abs() < 1e-10 { 0.0 } else { a.rem_euclid(b) }
+                        if b.abs() < 1e-10 {
+                            0.0
+                        } else {
+                            a.rem_euclid(b)
+                        }
                     }
                     MathOperation::Negate => -a,
                 };
@@ -1402,7 +1435,9 @@ impl TextureOp for MapRangeOp {
 
                 let t = match self.interpolation {
                     MapRangeInterp::Linear => t,
-                    MapRangeInterp::Smoothstep => t.clamp(0.0, 1.0).powi(2) * (3.0 - 2.0 * t.clamp(0.0, 1.0)),
+                    MapRangeInterp::Smoothstep => {
+                        t.clamp(0.0, 1.0).powi(2) * (3.0 - 2.0 * t.clamp(0.0, 1.0))
+                    }
                     MapRangeInterp::Smootherstep => {
                         let tc = t.clamp(0.0, 1.0);
                         tc * tc * tc * (tc * (tc * 6.0 - 15.0) + 10.0)
@@ -1564,7 +1599,8 @@ impl TextureOp for CheckerTextureOp {
             for x in 0..w {
                 let u = x as f32 / w as f32;
                 let v = y as f32 / h as f32;
-                let check = ((u * self.scale_x).floor() as i32 + (v * self.scale_y).floor() as i32) % 2;
+                let check =
+                    ((u * self.scale_x).floor() as i32 + (v * self.scale_y).floor() as i32) % 2;
                 field.set(&self.output, x, y, check.abs() as f32);
             }
         }
@@ -1738,16 +1774,17 @@ impl TextureOp for WaveTextureOp {
         field.ensure_channel(&self.output);
 
         // Build optional distortion noise
-        let distortion_noise: Option<Box<dyn NoiseSource>> = if self.distortion > 0.0 && self.detail > 0 {
-            let noise_rng = rng.fork("wave_distortion");
-            Some(Box::new(
-                Fbm::new(PerlinNoise::new(noise_rng.seed()))
-                    .with_octaves(self.detail)
-                    .with_frequency(self.scale as f64),
-            ))
-        } else {
-            None
-        };
+        let distortion_noise: Option<Box<dyn NoiseSource>> =
+            if self.distortion > 0.0 && self.detail > 0 {
+                let noise_rng = rng.fork("wave_distortion");
+                Some(Box::new(
+                    Fbm::new(PerlinNoise::new(noise_rng.seed()))
+                        .with_octaves(self.detail)
+                        .with_frequency(self.scale as f64),
+                ))
+            } else {
+                None
+            };
 
         for y in 0..h {
             for x in 0..w {
@@ -1761,7 +1798,9 @@ impl TextureOp for WaveTextureOp {
                 };
 
                 let distorted = if let Some(ref noise) = distortion_noise {
-                    coord + noise.sample_2d(u * self.scale as f64, v * self.scale as f64) * self.distortion as f64
+                    coord
+                        + noise.sample_2d(u * self.scale as f64, v * self.scale as f64)
+                            * self.distortion as f64
                 } else {
                     coord
                 };
@@ -1772,7 +1811,11 @@ impl TextureOp for WaveTextureOp {
                     WaveType::Saw => phase.fract(),
                     WaveType::Triangle => {
                         let t = phase.fract();
-                        if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 }
+                        if t < 0.5 {
+                            t * 2.0
+                        } else {
+                            2.0 - t * 2.0
+                        }
                     }
                 };
                 field.set(&self.output, x, y, val as f32);
@@ -2300,7 +2343,12 @@ impl TextureOp for SharpenOp {
         for i in 0..len {
             let v = input[i];
             let result = v + (v - blurred[i]) * self.strength;
-            field.set(&self.output, i as u32 % w, i as u32 / w, result.clamp(0.0, 1.0));
+            field.set(
+                &self.output,
+                i as u32 % w,
+                i as u32 / w,
+                result.clamp(0.0, 1.0),
+            );
         }
     }
 }
@@ -2351,10 +2399,16 @@ impl TextureOp for EdgeDetectOp {
                 };
 
                 // Sobel kernels
-                let gx = -sample(ix - 1, iy - 1) - 2.0 * sample(ix - 1, iy) - sample(ix - 1, iy + 1)
-                    + sample(ix + 1, iy - 1) + 2.0 * sample(ix + 1, iy) + sample(ix + 1, iy + 1);
-                let gy = -sample(ix - 1, iy - 1) - 2.0 * sample(ix, iy - 1) - sample(ix + 1, iy - 1)
-                    + sample(ix - 1, iy + 1) + 2.0 * sample(ix, iy + 1) + sample(ix + 1, iy + 1);
+                let gx =
+                    -sample(ix - 1, iy - 1) - 2.0 * sample(ix - 1, iy) - sample(ix - 1, iy + 1)
+                        + sample(ix + 1, iy - 1)
+                        + 2.0 * sample(ix + 1, iy)
+                        + sample(ix + 1, iy + 1);
+                let gy =
+                    -sample(ix - 1, iy - 1) - 2.0 * sample(ix, iy - 1) - sample(ix + 1, iy - 1)
+                        + sample(ix - 1, iy + 1)
+                        + 2.0 * sample(ix, iy + 1)
+                        + sample(ix + 1, iy + 1);
 
                 let magnitude = (gx * gx + gy * gy).sqrt();
                 field.set(&self.output, x, y, magnitude.min(1.0));
@@ -2584,7 +2638,7 @@ mod tests {
         // Row 0 and row 1 should have different column offsets (additive stagger)
         let row0_mid = field.get("cell_id", 16, 8) as u32; // middle of first cell in row 0
         let row1_mid = field.get("cell_id", 16, 40) as u32; // same x, row 1
-        // They should be in different cells due to stagger
+                                                            // They should be in different cells due to stagger
         assert_ne!(
             row0_mid % 4,
             row1_mid % 4,
@@ -2609,7 +2663,10 @@ mod tests {
         for y in 0..32 {
             for x in 0..32 {
                 let h = field.get("height", x, y);
-                assert!(h >= 0.0 && h <= 1.0, "height out of range at ({x},{y}): {h}");
+                assert!(
+                    h >= 0.0 && h <= 1.0,
+                    "height out of range at ({x},{y}): {h}"
+                );
             }
         }
     }
@@ -2634,7 +2691,10 @@ mod tests {
 
         // Left edge (edge_dist ≈ 0) should have lowered height
         let h_edge = field.get("height", 0, 0);
-        assert!(h_edge < 0.5, "mortar groove should lower height at edge: {h_edge}");
+        assert!(
+            h_edge < 0.5,
+            "mortar groove should lower height at edge: {h_edge}"
+        );
 
         // Right side (edge_dist > width) should be unchanged
         let h_interior = field.get("height", 31, 0);
@@ -2877,25 +2937,44 @@ mod tests {
     #[test]
     fn blend_screen_mode() {
         let mut field = TextureField::new(4, 4);
-        for y in 0..4 { for x in 0..4 {
-            field.set("a", x, y, 0.5);
-            field.set("b", x, y, 0.5);
-        }}
+        for y in 0..4 {
+            for x in 0..4 {
+                field.set("a", x, y, 0.5);
+                field.set("b", x, y, 0.5);
+            }
+        }
         let mut rng = SeededRng::new(42);
-        let op = BlendOp { source: "b".into(), target: "a".into(), mode: BlendMode::Screen, strength: 1.0, mask: None };
+        let op = BlendOp {
+            source: "b".into(),
+            target: "a".into(),
+            mode: BlendMode::Screen,
+            strength: 1.0,
+            mask: None,
+        };
         op.apply(&mut field, &mut rng);
         let v = field.get("a", 0, 0);
-        assert!((v - 0.75).abs() < 0.01, "screen(0.5,0.5) should be ~0.75, got {v}");
+        assert!(
+            (v - 0.75).abs() < 0.01,
+            "screen(0.5,0.5) should be ~0.75, got {v}"
+        );
     }
 
     #[test]
     fn math_op_power() {
         let mut field = TextureField::new(4, 4);
-        for y in 0..4 { for x in 0..4 { field.set("input", x, y, 0.5); }}
+        for y in 0..4 {
+            for x in 0..4 {
+                field.set("input", x, y, 0.5);
+            }
+        }
         let mut rng = SeededRng::new(42);
         let op = MathOp {
-            operation: MathOperation::Power, input_a: "input".into(),
-            input_b: None, value_b: 2.0, output: "out".into(), clamp_output: false,
+            operation: MathOperation::Power,
+            input_a: "input".into(),
+            input_b: None,
+            value_b: 2.0,
+            output: "out".into(),
+            clamp_output: false,
         };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
@@ -2908,12 +2987,19 @@ mod tests {
         field.set("input", 0, 0, 0.25); // sin(0.25 * TAU) = sin(PI/2) = 1.0
         let mut rng = SeededRng::new(42);
         let op = MathOp {
-            operation: MathOperation::Sin, input_a: "input".into(),
-            input_b: None, value_b: 0.0, output: "out".into(), clamp_output: false,
+            operation: MathOperation::Sin,
+            input_a: "input".into(),
+            input_b: None,
+            value_b: 0.0,
+            output: "out".into(),
+            clamp_output: false,
         };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
-        assert!((v - 1.0).abs() < 0.01, "sin(0.25*TAU) should be ~1.0, got {v}");
+        assert!(
+            (v - 1.0).abs() < 0.01,
+            "sin(0.25*TAU) should be ~1.0, got {v}"
+        );
     }
 
     #[test]
@@ -2922,13 +3008,21 @@ mod tests {
         field.set("input", 0, 0, 0.5);
         let mut rng = SeededRng::new(42);
         let op = MapRangeOp {
-            input: "input".into(), output: "out".into(),
-            from_min: 0.3, from_max: 0.7, to_min: 0.0, to_max: 1.0,
-            interpolation: MapRangeInterp::Linear, clamp_output: true,
+            input: "input".into(),
+            output: "out".into(),
+            from_min: 0.3,
+            from_max: 0.7,
+            to_min: 0.0,
+            to_max: 1.0,
+            interpolation: MapRangeInterp::Linear,
+            clamp_output: true,
         };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
-        assert!((v - 0.5).abs() < 0.01, "map_range(0.5, 0.3..0.7 -> 0..1) = 0.5, got {v}");
+        assert!(
+            (v - 0.5).abs() < 0.01,
+            "map_range(0.5, 0.3..0.7 -> 0..1) = 0.5, got {v}"
+        );
     }
 
     #[test]
@@ -2940,20 +3034,33 @@ mod tests {
             input: "input".into(),
             interpolation: ColorRampInterp::Linear,
             stops: vec![
-                ColorStop { position: 0.0, color: [0.0, 0.0, 0.0] },
-                ColorStop { position: 1.0, color: [1.0, 1.0, 1.0] },
+                ColorStop {
+                    position: 0.0,
+                    color: [0.0, 0.0, 0.0],
+                },
+                ColorStop {
+                    position: 1.0,
+                    color: [1.0, 1.0, 1.0],
+                },
             ],
         };
         op.apply(&mut field, &mut rng);
         let r = field.get("r", 0, 0);
-        assert!((r - 0.5).abs() < 0.01, "color_ramp midpoint should be 0.5, got {r}");
+        assert!(
+            (r - 0.5).abs() < 0.01,
+            "color_ramp midpoint should be 0.5, got {r}"
+        );
     }
 
     #[test]
     fn checker_texture_pattern() {
         let mut field = TextureField::new(8, 8);
         let mut rng = SeededRng::new(42);
-        let op = CheckerTextureOp { output: "check".into(), scale_x: 2.0, scale_y: 2.0 };
+        let op = CheckerTextureOp {
+            output: "check".into(),
+            scale_x: 2.0,
+            scale_y: 2.0,
+        };
         op.apply(&mut field, &mut rng);
         let v00 = field.get("check", 0, 0); // top-left quadrant
         let v40 = field.get("check", 4, 0); // top-right quadrant
@@ -2966,11 +3073,17 @@ mod tests {
     fn gradient_texture_linear() {
         let mut field = TextureField::new(32, 32);
         let mut rng = SeededRng::new(42);
-        let op = GradientTextureOp { output: "grad".into(), gradient_type: GradientType::Linear };
+        let op = GradientTextureOp {
+            output: "grad".into(),
+            gradient_type: GradientType::Linear,
+        };
         op.apply(&mut field, &mut rng);
         let left = field.get("grad", 0, 16);
         let right = field.get("grad", 31, 16);
-        assert!(right > left, "linear gradient should increase left to right");
+        assert!(
+            right > left,
+            "linear gradient should increase left to right"
+        );
     }
 
     #[test]
@@ -2978,14 +3091,21 @@ mod tests {
         let mut field = TextureField::new(32, 32);
         let mut rng = SeededRng::new(42);
         let op = WaveTextureOp {
-            output: "wave".into(), wave_type: WaveType::Sine,
-            direction: WaveDirection::X, scale: 4.0, distortion: 0.0, detail: 0,
+            output: "wave".into(),
+            wave_type: WaveType::Sine,
+            direction: WaveDirection::X,
+            scale: 4.0,
+            distortion: 0.0,
+            detail: 0,
         };
         op.apply(&mut field, &mut rng);
         let mut has_variation = false;
         let first = field.get("wave", 0, 0);
         for x in 1..32 {
-            if (field.get("wave", x, 0) - first).abs() > 0.01 { has_variation = true; break; }
+            if (field.get("wave", x, 0) - first).abs() > 0.01 {
+                has_variation = true;
+                break;
+            }
         }
         assert!(has_variation, "wave should vary across x");
     }
@@ -2994,7 +3114,9 @@ mod tests {
     fn white_noise_variation() {
         let mut field = TextureField::new(32, 32);
         let mut rng = SeededRng::new(42);
-        let op = WhiteNoiseOp { output: "noise".into() };
+        let op = WhiteNoiseOp {
+            output: "noise".into(),
+        };
         op.apply(&mut field, &mut rng);
         let first = field.get("noise", 0, 0);
         let differs = (1..32).any(|x| (field.get("noise", x, 0) - first).abs() > 0.01);
@@ -3006,9 +3128,12 @@ mod tests {
         let mut field = TextureField::new(32, 32);
         let mut rng = SeededRng::new(42);
         let op = VoronoiTextureOp {
-            output: "vor".into(), cell_output: Some("cell".into()),
-            scale: 4.0, randomness: 1.0,
-            feature: VoronoiFeature::F1, metric: VoronoiMetric::Euclidean,
+            output: "vor".into(),
+            cell_output: Some("cell".into()),
+            scale: 4.0,
+            randomness: 1.0,
+            feature: VoronoiFeature::F1,
+            metric: VoronoiMetric::Euclidean,
         };
         op.apply(&mut field, &mut rng);
         assert!(field.has_channel("vor"));
@@ -3022,11 +3147,18 @@ mod tests {
         let mut field = TextureField::new(32, 32);
         let mut rng = SeededRng::new(42);
         let op = MusgraveTextureOp {
-            output: "mus".into(), noise_type: NoiseType::Perlin,
+            output: "mus".into(),
+            noise_type: NoiseType::Perlin,
             musgrave_type: MusgraveType::RidgedMultifractal,
-            frequency: 4.0, octaves: 4, lacunarity: 2.0,
-            dimension: 1.0, offset: 1.0, gain: 2.0,
-            scale_x: 1.0, scale_y: 1.0, cell_offset: false,
+            frequency: 4.0,
+            octaves: 4,
+            lacunarity: 2.0,
+            dimension: 1.0,
+            offset: 1.0,
+            gain: 2.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            cell_offset: false,
         };
         op.apply(&mut field, &mut rng);
         assert!(field.has_channel("mus"));
@@ -3041,7 +3173,11 @@ mod tests {
         let mut field = TextureField::new(4, 4);
         field.set("input", 0, 0, 0.3);
         let mut rng = SeededRng::new(42);
-        let op = InvertOp { input: "input".into(), output: "out".into(), factor: 1.0 };
+        let op = InvertOp {
+            input: "input".into(),
+            output: "out".into(),
+            factor: 1.0,
+        };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
         assert!((v - 0.7).abs() < 0.01, "invert(0.3) should be 0.7, got {v}");
@@ -3053,11 +3189,17 @@ mod tests {
         field.set("input", 0, 0, 0.5);
         let mut rng = SeededRng::new(42);
         let op = BrightnessContrastOp {
-            input: "input".into(), output: "out".into(), brightness: 0.1, contrast: 0.0,
+            input: "input".into(),
+            output: "out".into(),
+            brightness: 0.1,
+            contrast: 0.0,
         };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
-        assert!((v - 0.6).abs() < 0.01, "brightness +0.1 on 0.5 should be 0.6, got {v}");
+        assert!(
+            (v - 0.6).abs() < 0.01,
+            "brightness +0.1 on 0.5 should be 0.6, got {v}"
+        );
     }
 
     #[test]
@@ -3065,10 +3207,17 @@ mod tests {
         let mut field = TextureField::new(4, 4);
         field.set("input", 0, 0, 0.25);
         let mut rng = SeededRng::new(42);
-        let op = GammaOp { input: "input".into(), output: "out".into(), gamma: 0.5 };
+        let op = GammaOp {
+            input: "input".into(),
+            output: "out".into(),
+            gamma: 0.5,
+        };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
-        assert!((v - 0.5).abs() < 0.01, "gamma(0.25, 0.5) should be 0.5, got {v}");
+        assert!(
+            (v - 0.5).abs() < 0.01,
+            "gamma(0.25, 0.5) should be 0.5, got {v}"
+        );
     }
 
     #[test]
@@ -3076,22 +3225,36 @@ mod tests {
         let mut field = TextureField::new(4, 4);
         field.set("input", 0, 0, 0.8);
         let mut rng = SeededRng::new(42);
-        let op = ClampOp { input: "input".into(), output: "out".into(), min: 0.2, max: 0.6 };
+        let op = ClampOp {
+            input: "input".into(),
+            output: "out".into(),
+            min: 0.2,
+            max: 0.6,
+        };
         op.apply(&mut field, &mut rng);
         let v = field.get("out", 0, 0);
-        assert!((v - 0.6).abs() < 0.01, "clamp(0.8, 0.2, 0.6) should be 0.6, got {v}");
+        assert!(
+            (v - 0.6).abs() < 0.01,
+            "clamp(0.8, 0.2, 0.6) should be 0.6, got {v}"
+        );
     }
 
     #[test]
     fn hsv_adjust_op() {
         let mut field = TextureField::new(4, 4);
-        for y in 0..4 { for x in 0..4 {
-            field.set("r", x, y, 0.5);
-            field.set("g", x, y, 0.3);
-            field.set("b", x, y, 0.1);
-        }}
+        for y in 0..4 {
+            for x in 0..4 {
+                field.set("r", x, y, 0.5);
+                field.set("g", x, y, 0.3);
+                field.set("b", x, y, 0.1);
+            }
+        }
         let mut rng = SeededRng::new(42);
-        let op = HsvAdjustOp { hue_offset: 0.0, saturation_factor: 1.0, value_factor: 1.0 };
+        let op = HsvAdjustOp {
+            hue_offset: 0.0,
+            saturation_factor: 1.0,
+            value_factor: 1.0,
+        };
         op.apply(&mut field, &mut rng);
         // Identity transform should preserve values
         let r = field.get("r", 0, 0);
@@ -3108,11 +3271,18 @@ mod tests {
     fn blur_op_smooths() {
         let mut field = TextureField::new(16, 16);
         // Sharp edge
-        for y in 0..16 { for x in 0..16 {
-            field.set("input", x, y, if x < 8 { 0.0 } else { 1.0 });
-        }}
+        for y in 0..16 {
+            for x in 0..16 {
+                field.set("input", x, y, if x < 8 { 0.0 } else { 1.0 });
+            }
+        }
         let mut rng = SeededRng::new(42);
-        let op = BlurOp { input: "input".into(), output: "out".into(), radius: 2, sigma: 1.0 };
+        let op = BlurOp {
+            input: "input".into(),
+            output: "out".into(),
+            radius: 2,
+            sigma: 1.0,
+        };
         op.apply(&mut field, &mut rng);
         // Middle should now be between 0 and 1 (blurred)
         let v = field.get("out", 8, 8);
@@ -3122,25 +3292,44 @@ mod tests {
     #[test]
     fn edge_detect_on_flat() {
         let mut field = TextureField::new(16, 16);
-        for y in 0..16 { for x in 0..16 { field.set("input", x, y, 0.5); }}
+        for y in 0..16 {
+            for x in 0..16 {
+                field.set("input", x, y, 0.5);
+            }
+        }
         let mut rng = SeededRng::new(42);
-        let op = EdgeDetectOp { input: "input".into(), output: "out".into() };
+        let op = EdgeDetectOp {
+            input: "input".into(),
+            output: "out".into(),
+        };
         op.apply(&mut field, &mut rng);
         // Flat surface should have ~0 edges
-        for y in 0..16 { for x in 0..16 {
-            let v = field.get("out", x, y);
-            assert!(v < 0.01, "flat surface should have no edges at ({x},{y}): {v}");
-        }}
+        for y in 0..16 {
+            for x in 0..16 {
+                let v = field.get("out", x, y);
+                assert!(
+                    v < 0.01,
+                    "flat surface should have no edges at ({x},{y}): {v}"
+                );
+            }
+        }
     }
 
     #[test]
     fn sharpen_op_enhances() {
         let mut field = TextureField::new(16, 16);
-        for y in 0..16 { for x in 0..16 {
-            field.set("input", x, y, if x < 8 { 0.3 } else { 0.7 });
-        }}
+        for y in 0..16 {
+            for x in 0..16 {
+                field.set("input", x, y, if x < 8 { 0.3 } else { 0.7 });
+            }
+        }
         let mut rng = SeededRng::new(42);
-        let op = SharpenOp { input: "input".into(), output: "out".into(), strength: 1.0, radius: 1 };
+        let op = SharpenOp {
+            input: "input".into(),
+            output: "out".into(),
+            strength: 1.0,
+            radius: 1,
+        };
         op.apply(&mut field, &mut rng);
         // Interior values should be preserved or enhanced
         let left = field.get("out", 2, 8);
@@ -3152,7 +3341,11 @@ mod tests {
 
     #[test]
     fn bulge_falloff_boundary_conditions() {
-        for falloff in [BulgeFalloff::Linear, BulgeFalloff::Parabolic, BulgeFalloff::Cosine] {
+        for falloff in [
+            BulgeFalloff::Linear,
+            BulgeFalloff::Parabolic,
+            BulgeFalloff::Cosine,
+        ] {
             let at_zero = falloff.apply(0.0);
             let at_one = falloff.apply(1.0);
             assert!(
@@ -3263,9 +3456,11 @@ mod tests {
         let mut rng_on = SeededRng::new(99);
         let op_on = NoiseLayerOp {
             output: "n_on".into(),
-            frequency: 10.0, octaves: 4,
+            frequency: 10.0,
+            octaves: 4,
             noise_type: NoiseType::Perlin,
-            scale_x: 1.0, scale_y: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
             cell_offset: true,
         };
         op_on.apply(&mut field, &mut rng_on);
@@ -3274,9 +3469,11 @@ mod tests {
         let mut rng_off = SeededRng::new(99);
         let op_off = NoiseLayerOp {
             output: "n_off".into(),
-            frequency: 10.0, octaves: 4,
+            frequency: 10.0,
+            octaves: 4,
             noise_type: NoiseType::Perlin,
-            scale_x: 1.0, scale_y: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
             cell_offset: false,
         };
         op_off.apply(&mut field, &mut rng_off);
@@ -3310,9 +3507,11 @@ mod tests {
         let mut rng_on = SeededRng::new(55);
         let op_on = NoiseLayerOp {
             output: "sig".into(),
-            frequency: 8.0, octaves: 3,
+            frequency: 8.0,
+            octaves: 3,
             noise_type: NoiseType::Perlin,
-            scale_x: 1.0, scale_y: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
             cell_offset: true,
         };
         op_on.apply(&mut field_on, &mut rng_on);
@@ -3321,9 +3520,11 @@ mod tests {
         let mut rng_off = SeededRng::new(55);
         let op_off = NoiseLayerOp {
             output: "sig".into(),
-            frequency: 8.0, octaves: 3,
+            frequency: 8.0,
+            octaves: 3,
             noise_type: NoiseType::Perlin,
-            scale_x: 1.0, scale_y: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
             cell_offset: false,
         };
         op_off.apply(&mut field_off, &mut rng_off);
@@ -3357,9 +3558,14 @@ mod tests {
             output: "m_on".into(),
             noise_type: NoiseType::Perlin,
             musgrave_type: MusgraveType::HybridMultifractal,
-            frequency: 8.0, octaves: 4, lacunarity: 2.0,
-            dimension: 1.0, offset: 1.0, gain: 2.0,
-            scale_x: 1.0, scale_y: 1.0,
+            frequency: 8.0,
+            octaves: 4,
+            lacunarity: 2.0,
+            dimension: 1.0,
+            offset: 1.0,
+            gain: 2.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
             cell_offset: true,
         };
         op_on.apply(&mut field, &mut rng_on);
@@ -3369,9 +3575,14 @@ mod tests {
             output: "m_off".into(),
             noise_type: NoiseType::Perlin,
             musgrave_type: MusgraveType::HybridMultifractal,
-            frequency: 8.0, octaves: 4, lacunarity: 2.0,
-            dimension: 1.0, offset: 1.0, gain: 2.0,
-            scale_x: 1.0, scale_y: 1.0,
+            frequency: 8.0,
+            octaves: 4,
+            lacunarity: 2.0,
+            dimension: 1.0,
+            offset: 1.0,
+            gain: 2.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
             cell_offset: false,
         };
         op_off.apply(&mut field, &mut rng_off);
@@ -3404,11 +3615,17 @@ mod tests {
 
         // Different cell_ids → different offsets
         let (a3, b3) = cell_noise_offset(6, 12345);
-        assert!(a1 != a3 || b1 != b3, "different cell_ids should give different offsets");
+        assert!(
+            a1 != a3 || b1 != b3,
+            "different cell_ids should give different offsets"
+        );
 
         // Different seeds → different offsets
         let (a4, b4) = cell_noise_offset(5, 99999);
-        assert!(a1 != a4 || b1 != b4, "different seeds should give different offsets");
+        assert!(
+            a1 != a4 || b1 != b4,
+            "different seeds should give different offsets"
+        );
     }
 
     #[test]

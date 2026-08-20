@@ -1501,8 +1501,7 @@ impl ViewerApp {
                         // edits hot-reload like the rest of the scene.
                         if self.scene_post_enabled {
                             if let Some(def) = &state.scene_post {
-                                renderer
-                                    .set_post_process_config(post_process_config_from_def(def));
+                                renderer.set_post_process_config(post_process_config_from_def(def));
                             }
                         }
                     }
@@ -1860,8 +1859,12 @@ impl ApplicationHandler for ViewerApp {
                 // Track WASD/QE held state for keyboard orbit
                 if let PhysicalKey::Code(code) = event.physical_key {
                     match code {
-                        KeyCode::KeyW | KeyCode::KeyA | KeyCode::KeyS | KeyCode::KeyD
-                        | KeyCode::KeyQ | KeyCode::KeyE => {
+                        KeyCode::KeyW
+                        | KeyCode::KeyA
+                        | KeyCode::KeyS
+                        | KeyCode::KeyD
+                        | KeyCode::KeyQ
+                        | KeyCode::KeyE => {
                             if event.state == ElementState::Pressed {
                                 // W/E double as gizmo-mode shortcuts while an
                                 // entity is selected; keep key-repeat events
@@ -1932,7 +1935,10 @@ impl ApplicationHandler for ViewerApp {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let mut config = renderer.post_process_config().clone();
                                 config.bloom_enabled = !config.bloom_enabled;
-                                println!("Bloom: {}", if config.bloom_enabled { "ON" } else { "OFF" });
+                                println!(
+                                    "Bloom: {}",
+                                    if config.bloom_enabled { "ON" } else { "OFF" }
+                                );
                                 renderer.set_post_process_config(config);
                             }
                         }
@@ -1940,7 +1946,10 @@ impl ApplicationHandler for ViewerApp {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let mut config = renderer.post_process_config().clone();
                                 config.enabled = !config.enabled;
-                                println!("Post-processing: {}", if config.enabled { "ON" } else { "OFF" });
+                                println!(
+                                    "Post-processing: {}",
+                                    if config.enabled { "ON" } else { "OFF" }
+                                );
                                 renderer.set_post_process_config(config);
                             }
                         }
@@ -1948,7 +1957,10 @@ impl ApplicationHandler for ViewerApp {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let mut config = renderer.post_process_config().clone();
                                 config.ssao_enabled = !config.ssao_enabled;
-                                println!("SSAO: {}", if config.ssao_enabled { "ON" } else { "OFF" });
+                                println!(
+                                    "SSAO: {}",
+                                    if config.ssao_enabled { "ON" } else { "OFF" }
+                                );
                                 renderer.set_post_process_config(config);
                             }
                         }
@@ -1964,7 +1976,10 @@ impl ApplicationHandler for ViewerApp {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let mut config = renderer.post_process_config().clone();
                                 config.dither_enabled = !config.dither_enabled;
-                                println!("Dither: {}", if config.dither_enabled { "ON" } else { "OFF" });
+                                println!(
+                                    "Dither: {}",
+                                    if config.dither_enabled { "ON" } else { "OFF" }
+                                );
                                 renderer.set_post_process_config(config);
                             }
                         }
@@ -1972,14 +1987,20 @@ impl ApplicationHandler for ViewerApp {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let mut config = renderer.post_process_config().clone();
                                 config.volumetric_enabled = !config.volumetric_enabled;
-                                println!("Volumetric: {}", if config.volumetric_enabled { "ON" } else { "OFF" });
+                                println!(
+                                    "Volumetric: {}",
+                                    if config.volumetric_enabled {
+                                        "ON"
+                                    } else {
+                                        "OFF"
+                                    }
+                                );
                                 renderer.set_post_process_config(config);
                             }
                         }
                         PhysicalKey::Code(KeyCode::F11) => {
                             if let Some(renderer) = &mut self.scene_renderer {
-                                let scene_post =
-                                    self.state.lock().unwrap().scene_post.clone();
+                                let scene_post = self.state.lock().unwrap().scene_post.clone();
                                 match scene_post {
                                     None => println!(
                                         "Scene has no [post_process] block — nothing to toggle"
@@ -2150,8 +2171,7 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
                 .rounding(egui::Rounding::same(4.0))
                 .inner_margin(egui::Margin::same(10.0))
                 .show(ui, |ui| {
-                    ui.style_mut().override_font_id =
-                        Some(egui::FontId::monospace(11.0));
+                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
                     ui.set_min_width(180.0);
 
                     ui.colored_label(

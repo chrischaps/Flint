@@ -147,9 +147,7 @@ fn render_param_field_inner(
             let mut changed = false;
             ui.horizontal(|ui| {
                 ui.label(format!("{}:", display_name));
-                changed = ui
-                    .color_edit_button_srgba_unmultiplied(&mut rgba)
-                    .changed();
+                changed = ui.color_edit_button_srgba_unmultiplied(&mut rgba).changed();
                 ui.monospace(&current_hex);
             });
 
@@ -292,10 +290,7 @@ pub fn get_param_f64(
             _ => {}
         }
     }
-    default
-        .as_ref()
-        .and_then(|d| d.as_f64())
-        .unwrap_or(0.0)
+    default.as_ref().and_then(|d| d.as_f64()).unwrap_or(0.0)
 }
 
 pub fn get_param_i64(
@@ -310,10 +305,7 @@ pub fn get_param_i64(
             _ => {}
         }
     }
-    default
-        .as_ref()
-        .and_then(|d| d.as_i64())
-        .unwrap_or(0)
+    default.as_ref().and_then(|d| d.as_i64()).unwrap_or(0)
 }
 
 pub fn get_param_bool(
@@ -324,10 +316,7 @@ pub fn get_param_bool(
     if let Some(toml::Value::Boolean(b)) = params.get(key) {
         return *b;
     }
-    default
-        .as_ref()
-        .and_then(|d| d.as_bool())
-        .unwrap_or(false)
+    default.as_ref().and_then(|d| d.as_bool()).unwrap_or(false)
 }
 
 pub fn get_param_string(

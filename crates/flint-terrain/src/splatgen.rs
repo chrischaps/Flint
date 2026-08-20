@@ -60,8 +60,7 @@ pub fn generate_splat_map(
                 let h_weight = if h_range > 0.0 {
                     let edge = h_range * 0.1;
                     let low_fade = ((h_norm - rule.height_min) / edge.max(0.001)).clamp(0.0, 1.0);
-                    let high_fade =
-                        ((rule.height_max - h_norm) / edge.max(0.001)).clamp(0.0, 1.0);
+                    let high_fade = ((rule.height_max - h_norm) / edge.max(0.001)).clamp(0.0, 1.0);
                     low_fade.min(high_fade)
                 } else {
                     1.0
@@ -189,7 +188,9 @@ mod tests {
             },
         ];
 
-        let splat = generate_splat_map(&heights, res as u32, res as u32, &rules, 100.0, 100.0, 50.0, 42);
+        let splat = generate_splat_map(
+            &heights, res as u32, res as u32, &rules, 100.0, 100.0, 50.0, 42,
+        );
 
         // Row 2 (height ~0.065): should be layer 0 (R channel)
         let low_row = 2;
@@ -199,6 +200,9 @@ mod tests {
         // Row 30 (height ~0.97): should be layer 1 (G channel)
         let high_row = 30;
         let high_idx = (high_row * res) * 4;
-        assert!(splat[high_idx + 1] > 0, "High rows should have layer 1 weight");
+        assert!(
+            splat[high_idx + 1] > 0,
+            "High rows should have layer 1 weight"
+        );
     }
 }

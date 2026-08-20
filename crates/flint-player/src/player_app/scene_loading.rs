@@ -499,11 +499,9 @@ pub(super) fn load_particle_textures_from_world(
                     match renderer.load_texture_file(device, queue, &tex_name, &path) {
                         Ok(true) => println!("Loaded particle texture: {tex_name}"),
                         Ok(false) => {} // already cached
-                        Err(e) => tracing::warn!(
-                            "Failed to load particle texture '{}': {}",
-                            tex_name,
-                            e
-                        ),
+                        Err(e) => {
+                            tracing::warn!("Failed to load particle texture '{}': {}", tex_name, e)
+                        }
                     }
                     found = true;
                     break;

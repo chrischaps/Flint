@@ -258,10 +258,7 @@ struct GenPreviewApp {
 
 impl GenPreviewApp {
     fn initialize(&mut self, event_loop: &ActiveEventLoop) {
-        let title = format!(
-            "Flint Gen Preview \u{2014} {}",
-            self.spec.meta.name
-        );
+        let title = format!("Flint Gen Preview \u{2014} {}", self.spec.meta.name);
 
         let window = Arc::new(
             event_loop
@@ -437,9 +434,7 @@ impl GenPreviewApp {
             alpha_cutoff: 0.5,
         };
 
-        if let (Some(context), Some(renderer)) =
-            (&self.render_context, &mut self.scene_renderer)
-        {
+        if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.load_procedural_mesh(
                 &context.device,
                 "procgen_preview",
@@ -450,9 +445,7 @@ impl GenPreviewApp {
         }
 
         let world = build_mesh_world(1);
-        if let (Some(context), Some(renderer)) =
-            (&self.render_context, &mut self.scene_renderer)
-        {
+        if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.update_from_world(&world, &context.device);
         }
         self.last_world = Some(world);
@@ -523,9 +516,7 @@ impl GenPreviewApp {
         }
 
         let world = build_mesh_world(mesh.submeshes.len());
-        if let (Some(context), Some(renderer)) =
-            (&self.render_context, &mut self.scene_renderer)
-        {
+        if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.update_from_world(&world, &context.device);
         }
         self.last_world = Some(world);
@@ -539,8 +530,7 @@ impl GenPreviewApp {
         let bb = &mesh.bounding_box;
         let center = bb.center();
         let size = bb.size();
-        let diag =
-            (size.x * size.x + size.y * size.y + size.z * size.z).sqrt();
+        let diag = (size.x * size.x + size.y * size.y + size.z * size.z).sqrt();
 
         self.camera.target = Vec3::new(center.x, center.y, center.z);
         self.camera.distance = (diag * 1.2).max(2.0);
@@ -589,11 +579,9 @@ impl GenPreviewApp {
                 [img.width as usize, img.height as usize],
                 &img.pixels,
             );
-            let handle = self.egui_ctx.load_texture(
-                &label,
-                color_image,
-                egui::TextureOptions::LINEAR,
-            );
+            let handle =
+                self.egui_ctx
+                    .load_texture(&label, color_image, egui::TextureOptions::LINEAR);
             self.egui_textures.push((label, handle));
         }
     }
@@ -642,8 +630,7 @@ impl GenPreviewApp {
     }
 
     fn should_regenerate(&self) -> bool {
-        self.dirty
-            && self.last_change.elapsed() > Duration::from_millis(self.debounce_ms)
+        self.dirty && self.last_change.elapsed() > Duration::from_millis(self.debounce_ms)
     }
 
     // ─── Save spec ──────────────────────────────────────────────────────
@@ -662,8 +649,7 @@ impl GenPreviewApp {
                     self.set_status(&format!("Failed to save: {e}"));
                 } else {
                     // Pause watcher to avoid reload loop
-                    self.watcher_paused_until =
-                        Some(Instant::now() + Duration::from_millis(1000));
+                    self.watcher_paused_until = Some(Instant::now() + Duration::from_millis(1000));
                     self.set_status(&format!("Saved {}", self.spec_path.display()));
                 }
             }
@@ -766,28 +752,24 @@ impl GenPreviewApp {
 
         let result = self.registry.generate_from_spec(&self.spec);
         match result {
-            Ok(GeneratorOutput::Mesh(mesh)) => {
-                match export_glb::mesh_to_glb(&mesh) {
-                    Ok(glb) => match std::fs::write(path, &glb) {
-                        Ok(()) => self.set_status(&format!("Exported {}", path.display())),
-                        Err(e) => self.set_status(&format!("Write failed: {e}")),
-                    },
-                    Err(e) => self.set_status(&format!("GLB export failed: {e}")),
-                }
-            }
-            Ok(GeneratorOutput::MeshWithLods(lods)) => {
-                match export_glb::mesh_lods_to_glb(&lods) {
-                    Ok(glb) => match std::fs::write(path, &glb) {
-                        Ok(()) => self.set_status(&format!(
-                            "Exported {} ({} LODs)",
-                            path.display(),
-                            lods.len()
-                        )),
-                        Err(e) => self.set_status(&format!("Write failed: {e}")),
-                    },
-                    Err(e) => self.set_status(&format!("GLB export failed: {e}")),
-                }
-            }
+            Ok(GeneratorOutput::Mesh(mesh)) => match export_glb::mesh_to_glb(&mesh) {
+                Ok(glb) => match std::fs::write(path, &glb) {
+                    Ok(()) => self.set_status(&format!("Exported {}", path.display())),
+                    Err(e) => self.set_status(&format!("Write failed: {e}")),
+                },
+                Err(e) => self.set_status(&format!("GLB export failed: {e}")),
+            },
+            Ok(GeneratorOutput::MeshWithLods(lods)) => match export_glb::mesh_lods_to_glb(&lods) {
+                Ok(glb) => match std::fs::write(path, &glb) {
+                    Ok(()) => self.set_status(&format!(
+                        "Exported {} ({} LODs)",
+                        path.display(),
+                        lods.len()
+                    )),
+                    Err(e) => self.set_status(&format!("Write failed: {e}")),
+                },
+                Err(e) => self.set_status(&format!("GLB export failed: {e}")),
+            },
             Ok(GeneratorOutput::SkinnedMesh(mesh)) => {
                 match export_glb::skinned_mesh_to_glb(&mesh) {
                     Ok(glb) => match std::fs::write(path, &glb) {
@@ -917,7 +899,10 @@ impl GenPreviewApp {
                     ui.horizontal(|ui| {
                         ui.label("Seed:");
                         let mut seed_i64 = current_seed as i64;
-                        if ui.add(egui::DragValue::new(&mut seed_i64).speed(1)).changed() {
+                        if ui
+                            .add(egui::DragValue::new(&mut seed_i64).speed(1))
+                            .changed()
+                        {
                             current_seed = seed_i64.max(0) as u64;
                             dirty = true;
                         }
@@ -928,65 +913,68 @@ impl GenPreviewApp {
                     ui.separator();
 
                     // Bottom section (stats, buttons, status) — always visible
-                    egui::TopBottomPanel::bottom("param_panel_bottom")
-                        .show_inside(ui, |ui| {
-                            // LOD selector
-                            if lod_count > 1 {
-                                ui.horizontal(|ui| {
-                                    ui.label("LOD:");
-                                    for i in 0..lod_count {
-                                        if ui.selectable_label(selected_lod == i, format!("{}", i)).clicked() {
-                                            selected_lod = i;
-                                            dirty = true;
-                                        }
-                                    }
-                                });
-                                ui.separator();
-                            }
-
-                            // Stats
-                            if let Some(mesh) = last_mesh {
-                                ui.label(format!(
-                                    "Vertices: {}  Triangles: {}",
-                                    format_count(mesh.vertex_count() as u64),
-                                    format_count(mesh.triangle_count() as u64),
-                                ));
-                            }
-                            ui.label(format!("Gen time: {:.1} ms", gen_time_ms));
-
-                            ui.separator();
-
-                            // Action buttons
+                    egui::TopBottomPanel::bottom("param_panel_bottom").show_inside(ui, |ui| {
+                        // LOD selector
+                        if lod_count > 1 {
                             ui.horizontal(|ui| {
-                                if ui.button("Save").clicked() {
-                                    want_save = true;
-                                }
-                                if ui.button("Save As").clicked() {
-                                    want_save_as = true;
-                                }
-                                if ui.button("Export").clicked() {
-                                    want_export = true;
-                                }
-                                if ui.button("Reset").clicked() {
-                                    want_reset = true;
+                                ui.label("LOD:");
+                                for i in 0..lod_count {
+                                    if ui
+                                        .selectable_label(selected_lod == i, format!("{}", i))
+                                        .clicked()
+                                    {
+                                        selected_lod = i;
+                                        dirty = true;
+                                    }
                                 }
                             });
+                            ui.separator();
+                        }
 
-                            // Status message (auto-fades after 4 seconds)
-                            if let Some((msg, when)) = &status_msg {
-                                let age = when.elapsed().as_secs_f32();
-                                if age < 4.0 {
-                                    let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
-                                    ui.label(
-                                        egui::RichText::new(msg)
-                                            .small()
-                                            .color(egui::Color32::from_rgba_unmultiplied(
-                                                180, 220, 180, (alpha * 255.0) as u8,
-                                            )),
-                                    );
-                                }
+                        // Stats
+                        if let Some(mesh) = last_mesh {
+                            ui.label(format!(
+                                "Vertices: {}  Triangles: {}",
+                                format_count(mesh.vertex_count() as u64),
+                                format_count(mesh.triangle_count() as u64),
+                            ));
+                        }
+                        ui.label(format!("Gen time: {:.1} ms", gen_time_ms));
+
+                        ui.separator();
+
+                        // Action buttons
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {
+                                want_save = true;
+                            }
+                            if ui.button("Save As").clicked() {
+                                want_save_as = true;
+                            }
+                            if ui.button("Export").clicked() {
+                                want_export = true;
+                            }
+                            if ui.button("Reset").clicked() {
+                                want_reset = true;
                             }
                         });
+
+                        // Status message (auto-fades after 4 seconds)
+                        if let Some((msg, when)) = &status_msg {
+                            let age = when.elapsed().as_secs_f32();
+                            if age < 4.0 {
+                                let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
+                                ui.label(egui::RichText::new(msg).small().color(
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        180,
+                                        220,
+                                        180,
+                                        (alpha * 255.0) as u8,
+                                    ),
+                                ));
+                            }
+                        }
+                    });
 
                     // Parameter groups — fills remaining space with scroll
                     egui::ScrollArea::vertical()
@@ -1021,7 +1009,10 @@ impl GenPreviewApp {
                         ui.checkbox(&mut texture_tiled, "Tiled");
                         if texture_tiled {
                             for n in [2usize, 3, 4] {
-                                if ui.selectable_label(texture_tile_count == n, format!("{n}x{n}")).clicked() {
+                                if ui
+                                    .selectable_label(texture_tile_count == n, format!("{n}x{n}"))
+                                    .clicked()
+                                {
                                     texture_tile_count = n;
                                 }
                             }
@@ -1047,15 +1038,17 @@ impl GenPreviewApp {
                         let available = ui.available_size();
 
                         // Fit scale: zoom 1.0 = content fits in viewport
-                        let tiles_f = if texture_tiled { texture_tile_count as f32 } else { 1.0 };
+                        let tiles_f = if texture_tiled {
+                            texture_tile_count as f32
+                        } else {
+                            1.0
+                        };
                         let fit_scale = (available.x / (tex_size.x * tiles_f))
                             .min(available.y / (tex_size.y * tiles_f));
 
                         // Interactive area for zoom/pan
-                        let (response, painter) = ui.allocate_painter(
-                            available,
-                            egui::Sense::click_and_drag(),
-                        );
+                        let (response, painter) =
+                            ui.allocate_painter(available, egui::Sense::click_and_drag());
                         let rect = response.rect;
 
                         // Scroll-to-zoom (centered on cursor)
@@ -1063,12 +1056,15 @@ impl GenPreviewApp {
                             let scroll = ui.input(|i| i.raw_scroll_delta.y);
                             if scroll != 0.0 {
                                 let old_zoom = texture_zoom;
-                                texture_zoom = (texture_zoom * (1.0 + scroll * 0.003)).clamp(0.1, 20.0);
+                                texture_zoom =
+                                    (texture_zoom * (1.0 + scroll * 0.003)).clamp(0.1, 20.0);
                                 if let Some(mouse_pos) = response.hover_pos() {
                                     let factor = texture_zoom / old_zoom;
                                     let rel = mouse_pos - rect.center();
-                                    texture_offset[0] = texture_offset[0] * factor + rel.x * (1.0 - factor);
-                                    texture_offset[1] = texture_offset[1] * factor + rel.y * (1.0 - factor);
+                                    texture_offset[0] =
+                                        texture_offset[0] * factor + rel.x * (1.0 - factor);
+                                    texture_offset[1] =
+                                        texture_offset[1] * factor + rel.y * (1.0 - factor);
                                 }
                             }
                         }
@@ -1096,14 +1092,13 @@ impl GenPreviewApp {
                             + egui::vec2(texture_offset[0], texture_offset[1])
                             - total * 0.5;
 
-                        let uv = egui::Rect::from_min_max(
-                            egui::pos2(0.0, 0.0),
-                            egui::pos2(1.0, 1.0),
-                        );
+                        let uv =
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                         let tiles_n = if texture_tiled { texture_tile_count } else { 1 };
                         for ty in 0..tiles_n {
                             for tx in 0..tiles_n {
-                                let pos = origin + egui::vec2(tx as f32 * tile_px.x, ty as f32 * tile_px.y);
+                                let pos = origin
+                                    + egui::vec2(tx as f32 * tile_px.x, ty as f32 * tile_px.y);
                                 let tile_rect = egui::Rect::from_min_size(pos, tile_px);
                                 painter.image(handle.id(), tile_rect, uv, egui::Color32::WHITE);
                             }
@@ -1267,7 +1262,11 @@ impl ApplicationHandler for GenPreviewApp {
                     ctx.resize(physical_size);
                     self.camera.aspect = ctx.aspect_ratio();
                     if let Some(renderer) = &mut self.scene_renderer {
-                        renderer.resize_postprocess(&ctx.device, physical_size.width, physical_size.height);
+                        renderer.resize_postprocess(
+                            &ctx.device,
+                            physical_size.width,
+                            physical_size.height,
+                        );
                     }
                 }
             }
@@ -1336,11 +1335,12 @@ impl ApplicationHandler for GenPreviewApp {
                         }
                         PhysicalKey::Code(KeyCode::F2) => {
                             if let Some(renderer) = &mut self.scene_renderer {
-                                let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
-                                    DebugMode::Pbr
-                                } else {
-                                    DebugMode::WireframeOverlay
-                                };
+                                let mode =
+                                    if renderer.debug_state().mode == DebugMode::WireframeOverlay {
+                                        DebugMode::Pbr
+                                    } else {
+                                        DebugMode::WireframeOverlay
+                                    };
                                 renderer.set_debug_mode(mode);
                                 println!("Debug mode: {}", mode.label());
                                 if let (Some(world), Some(context)) =
@@ -1353,10 +1353,7 @@ impl ApplicationHandler for GenPreviewApp {
                         PhysicalKey::Code(KeyCode::F3) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_normal_arrows();
-                                println!(
-                                    "Normal arrows: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
+                                println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
                                 if let (Some(world), Some(context)) =
                                     (&self.last_world, &self.render_context)
                                 {
@@ -1367,10 +1364,7 @@ impl ApplicationHandler for GenPreviewApp {
                         PhysicalKey::Code(KeyCode::F4) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_skeleton_overlay();
-                                println!(
-                                    "Skeleton overlay: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
+                                println!("Skeleton overlay: {}", if on { "ON" } else { "OFF" });
                             }
                             self.update_skeleton_overlay();
                         }
@@ -1397,11 +1391,8 @@ impl ApplicationHandler for GenPreviewApp {
             ref ev @ (WindowEvent::MouseInput { .. }
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. }) => {
-                self.orbit.handle_event(
-                    ev,
-                    &mut self.camera,
-                    self.egui_ctx.is_pointer_over_area(),
-                );
+                self.orbit
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
             }
 
             WindowEvent::RedrawRequested => {
@@ -1482,11 +1473,12 @@ impl ApplicationHandler for GenPreviewApp {
                 } else {
                     // Clear to dark gray for texture-only mode
                     let context = self.render_context.as_ref().unwrap();
-                    let mut encoder = context.device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor {
-                            label: Some("Clear Encoder"),
-                        },
-                    );
+                    let mut encoder =
+                        context
+                            .device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Clear Encoder"),
+                            });
                     {
                         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("Clear Pass"),
@@ -1567,10 +1559,7 @@ fn build_mesh_world(submesh_count: usize) -> FlintWorld {
 
         let model = toml::Value::Table({
             let mut m = toml::map::Map::new();
-            m.insert(
-                "asset".to_string(),
-                toml::Value::String(asset_name),
-            );
+            m.insert("asset".to_string(), toml::Value::String(asset_name));
             m
         });
         let _ = world.set_component(eid, comp::MODEL, model);

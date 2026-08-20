@@ -10,7 +10,9 @@ pub enum DensitySource {
 }
 
 impl Default for DensitySource {
-    fn default() -> Self { Self::Splat }
+    fn default() -> Self {
+        Self::Splat
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,15 +60,25 @@ pub struct GrassConfig {
 impl Default for GrassConfig {
     fn default() -> Self {
         Self {
-            enabled: false, density: default_density(), max_distance: default_max_distance(),
-            fade_start: default_fade_start(), blade_width: default_blade_width(),
-            blade_height: default_blade_height(), height_variation: default_height_variation(),
-            color_base: default_color_base(), color_tip: default_color_tip(),
-            color_dry: default_color_dry(), dry_amount: default_dry_amount(),
-            wind_direction: default_wind_direction(), wind_speed: default_wind_speed(),
-            wind_strength: default_wind_strength(), bend_radius: default_bend_radius(),
-            bend_strength: default_bend_strength(), density_source: DensitySource::default(),
-            density_layer: 0, density_threshold: default_density_threshold(),
+            enabled: false,
+            density: default_density(),
+            max_distance: default_max_distance(),
+            fade_start: default_fade_start(),
+            blade_width: default_blade_width(),
+            blade_height: default_blade_height(),
+            height_variation: default_height_variation(),
+            color_base: default_color_base(),
+            color_tip: default_color_tip(),
+            color_dry: default_color_dry(),
+            dry_amount: default_dry_amount(),
+            wind_direction: default_wind_direction(),
+            wind_speed: default_wind_speed(),
+            wind_strength: default_wind_strength(),
+            bend_radius: default_bend_radius(),
+            bend_strength: default_bend_strength(),
+            density_source: DensitySource::default(),
+            density_layer: 0,
+            density_threshold: default_density_threshold(),
         }
     }
 }
@@ -78,22 +90,54 @@ impl GrassConfig {
     }
 }
 
-fn default_density() -> f32 { 8.0 }
-fn default_max_distance() -> f32 { 80.0 }
-fn default_fade_start() -> f32 { 60.0 }
-fn default_blade_width() -> f32 { 0.08 }
-fn default_blade_height() -> f32 { 0.4 }
-fn default_height_variation() -> f32 { 0.3 }
-fn default_color_base() -> [f32; 3] { [0.15, 0.45, 0.1] }
-fn default_color_tip() -> [f32; 3] { [0.3, 0.7, 0.15] }
-fn default_color_dry() -> [f32; 3] { [0.55, 0.5, 0.2] }
-fn default_dry_amount() -> f32 { 0.15 }
-fn default_wind_direction() -> [f32; 3] { [1.0, 0.0, 0.3] }
-fn default_wind_speed() -> f32 { 1.0 }
-fn default_wind_strength() -> f32 { 0.15 }
-fn default_bend_radius() -> f32 { 2.0 }
-fn default_bend_strength() -> f32 { 0.8 }
-fn default_density_threshold() -> f32 { 0.1 }
+fn default_density() -> f32 {
+    8.0
+}
+fn default_max_distance() -> f32 {
+    80.0
+}
+fn default_fade_start() -> f32 {
+    60.0
+}
+fn default_blade_width() -> f32 {
+    0.08
+}
+fn default_blade_height() -> f32 {
+    0.4
+}
+fn default_height_variation() -> f32 {
+    0.3
+}
+fn default_color_base() -> [f32; 3] {
+    [0.15, 0.45, 0.1]
+}
+fn default_color_tip() -> [f32; 3] {
+    [0.3, 0.7, 0.15]
+}
+fn default_color_dry() -> [f32; 3] {
+    [0.55, 0.5, 0.2]
+}
+fn default_dry_amount() -> f32 {
+    0.15
+}
+fn default_wind_direction() -> [f32; 3] {
+    [1.0, 0.0, 0.3]
+}
+fn default_wind_speed() -> f32 {
+    1.0
+}
+fn default_wind_strength() -> f32 {
+    0.15
+}
+fn default_bend_radius() -> f32 {
+    2.0
+}
+fn default_bend_strength() -> f32 {
+    0.8
+}
+fn default_density_threshold() -> f32 {
+    0.1
+}
 
 #[cfg(test)]
 mod tests {
@@ -170,7 +214,7 @@ density_threshold = 0.2
     #[test]
     fn max_instances_estimate() {
         let cfg = GrassConfig::default(); // density = 8.0
-        // 256 * 256 * 8 * 0.5 = 262144
+                                          // 256 * 256 * 8 * 0.5 = 262144
         assert_eq!(cfg.max_instances(256.0, 256.0), 262144);
     }
 

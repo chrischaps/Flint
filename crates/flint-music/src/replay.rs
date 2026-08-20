@@ -19,9 +19,11 @@
 //! a chart — the milestone evidence and `--synthetic` both use them.
 
 use crate::chart_eval::{ChannelValue, ChartEval};
-use crate::tempo::ms_to_samples;
 use crate::conductor::Conductor;
-use crate::input_stream::{InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample};
+use crate::input_stream::{
+    InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample,
+};
+use crate::tempo::ms_to_samples;
 use flint_core::{FlintError, Result};
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -80,7 +82,10 @@ impl SessionHeader {
             return Err(bad("t"));
         }
         Ok(Self {
-            schema: v.get("schema").and_then(|x| x.as_i64()).ok_or_else(|| bad("schema"))?,
+            schema: v
+                .get("schema")
+                .and_then(|x| x.as_i64())
+                .ok_or_else(|| bad("schema"))?,
             suite: v
                 .get("suite")
                 .and_then(|x| x.as_str())
@@ -161,8 +166,7 @@ impl SessionWriter {
                 serde_json::json!({"t": "lean", "sample": l.sample, "x": l.x, "y": l.y})
             }
             InputEvent::Pulse(p) => {
-                let mut v =
-                    serde_json::json!({"t": "pulse", "sample": p.sample, "kind": p.kind});
+                let mut v = serde_json::json!({"t": "pulse", "sample": p.sample, "kind": p.kind});
                 // Only flicks carry a direction; absent for everything else
                 // so pre-W2 streams stay byte-identical.
                 if let Some(d) = p.direction {
@@ -186,7 +190,11 @@ impl SessionWriter {
                     PressureSide::Right => 1,
                 };
                 if let Some(prev) = &self.last_pressure[slot] {
-                    if decimate((p.value - prev.value).abs(), p.sample - prev.sample, sample_rate) {
+                    if decimate(
+                        (p.value - prev.value).abs(),
+                        p.sample - prev.sample,
+                        sample_rate,
+                    ) {
                         return Ok(());
                     }
                 }
@@ -279,9 +287,11 @@ fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEven
         }
         let v: serde_json::Value = serde_json::from_str(&line)
             .map_err(|e| FlintError::ParseError(format!("session line {}: {e}", i + 2)))?;
-        let bad =
-            |what: &str| FlintError::ParseError(format!("session line {}: `{what}`", i + 2));
-        let sample = v.get("sample").and_then(|x| x.as_i64()).ok_or_else(|| bad("sample"))?;
+        let bad = |what: &str| FlintError::ParseError(format!("session line {}: `{what}`", i + 2));
+        let sample = v
+            .get("sample")
+            .and_then(|x| x.as_i64())
+            .ok_or_else(|| bad("sample"))?;
         if sample < last {
             return Err(FlintError::ValidationError(format!(
                 "session line {}: sample {sample} after {last}",
@@ -291,13 +301,20 @@ fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEven
         last = sample;
         let ev = match v.get("t").and_then(|t| t.as_str()) {
             Some("timeline_jump") => {
-                offset = v.get("offset").and_then(|x| x.as_i64()).ok_or_else(|| bad("offset"))?;
+                offset = v
+                    .get("offset")
+                    .and_then(|x| x.as_i64())
+                    .ok_or_else(|| bad("offset"))?;
                 continue;
             }
             Some("lean") => InputEvent::Lean(LeanSample {
                 sample: sample - offset,
-                x: v.get("x").and_then(|x| x.as_f64()).ok_or_else(|| bad("x"))?,
-                y: v.get("y").and_then(|x| x.as_f64()).ok_or_else(|| bad("y"))?,
+                x: v.get("x")
+                    .and_then(|x| x.as_f64())
+                    .ok_or_else(|| bad("x"))?,
+                y: v.get("y")
+                    .and_then(|x| x.as_f64())
+                    .ok_or_else(|| bad("y"))?,
             }),
             Some("pulse") => InputEvent::Pulse(PulseEvent {
                 sample: sample - offset,
@@ -316,8 +333,12 @@ fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEven
             }),
             Some("sway") => InputEvent::Sway(SwaySample {
                 sample: sample - offset,
-                x: v.get("x").and_then(|x| x.as_f64()).ok_or_else(|| bad("x"))?,
-                y: v.get("y").and_then(|x| x.as_f64()).ok_or_else(|| bad("y"))?,
+                x: v.get("x")
+                    .and_then(|x| x.as_f64())
+                    .ok_or_else(|| bad("x"))?,
+                y: v.get("y")
+                    .and_then(|x| x.as_f64())
+                    .ok_or_else(|| bad("y"))?,
             }),
             Some("pressure") => InputEvent::Pressure(PressureSample {
                 sample: sample - offset,
@@ -331,10 +352,12 @@ fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEven
                     .and_then(|x| x.as_f64())
                     .ok_or_else(|| bad("value"))?,
             }),
-            other => return Err(FlintError::ParseError(format!(
-                "session line {}: unknown event type {other:?}",
-                i + 2
-            ))),
+            other => {
+                return Err(FlintError::ParseError(format!(
+                    "session line {}: unknown event type {other:?}",
+                    i + 2
+                )))
+            }
         };
         events.push((sample, ev));
     }
@@ -397,7 +420,8 @@ pub fn synthesize(
         .iter()
         .map(|w| w.close())
         .chain(crate::CHANNELS.iter().filter_map(|(name, _)| {
-            eval.last_key_beat(name).map(|b| conductor.sample_at_beat(b))
+            eval.last_key_beat(name)
+                .map(|b| conductor.sample_at_beat(b))
         }))
         .max()
         .unwrap_or(0);
@@ -609,7 +633,11 @@ silent = true
         assert_eq!(a, b);
 
         // Perfect pulses sit exactly on centers.
-        let centers: Vec<i64> = eval.pulse_windows().iter().map(|w| w.center_sample).collect();
+        let centers: Vec<i64> = eval
+            .pulse_windows()
+            .iter()
+            .map(|w| w.center_sample)
+            .collect();
         let pulse_samples: Vec<i64> = a
             .iter()
             .filter_map(|e| match e {

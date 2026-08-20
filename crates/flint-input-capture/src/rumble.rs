@@ -391,7 +391,9 @@ impl RumbleSpikeReport {
         out.push_str("# Motor onset is write-only hardware state: both measurements below are\n");
         out.push_str("# call-site costs. The gilrs ff-server path adds a structural 0-50 ms\n");
         out.push_str("# quantization on top (server ticks every 50 ms; gilrs src/ff/server.rs);\n");
-        out.push_str("# ERM actuator spin-up (~20-50 ms) is on top of everything and is absorbed\n");
+        out.push_str(
+            "# ERM actuator spin-up (~20-50 ms) is on top of everything and is absorbed\n",
+        );
         out.push_str("# by the feel-tuned lead_ms knob in config/haptics.toml.\n");
         out.push_str("[run]\n");
         out.push_str(&format!("pad = {:?}\n", self.pad));
@@ -427,7 +429,9 @@ fn open_ff_device() -> flint_core::Result<(String, gilrs_core::FfDevice)> {
         flint_core::FlintError::InputError(format!("gamepad backend unavailable: {e}"))
     })?;
     for id in 0..gilrs.last_gamepad_hint() {
-        let Some(pad) = gilrs.gamepad(id) else { continue };
+        let Some(pad) = gilrs.gamepad(id) else {
+            continue;
+        };
         if !pad.is_connected() {
             continue;
         }
@@ -644,7 +648,10 @@ mod tests {
         assert_eq!(s, u16::MAX); // 1.6 clamps to full scale
         let mut e = RumbleEngine::new();
         e.push(RumbleCommand::SetGain(0.5));
-        e.push(RumbleCommand::SetContinuous { strong: 1.0, weak: 0.0 });
+        e.push(RumbleCommand::SetContinuous {
+            strong: 1.0,
+            weak: 0.0,
+        });
         let (s, _) = e.tick(0).unwrap();
         assert_eq!(s, (0.5 * f64::from(u16::MAX)) as u16);
     }
@@ -652,7 +659,10 @@ mod tests {
     #[test]
     fn flush_drops_scheduled_ends_active_and_stops_continuous() {
         let mut e = RumbleEngine::new();
-        e.push(RumbleCommand::SetContinuous { strong: 0.3, weak: 0.0 });
+        e.push(RumbleCommand::SetContinuous {
+            strong: 0.3,
+            weak: 0.0,
+        });
         e.push(RumbleCommand::Schedule {
             at_clock_sample: 0,
             burst: burst(0.0, 0.4, 1000),
@@ -683,11 +693,17 @@ mod tests {
     #[test]
     fn silence_is_unconditional_and_resets_shadow() {
         let mut e = RumbleEngine::new();
-        e.push(RumbleCommand::SetContinuous { strong: 1.0, weak: 1.0 });
+        e.push(RumbleCommand::SetContinuous {
+            strong: 1.0,
+            weak: 1.0,
+        });
         assert!(e.tick(0).is_some());
         assert_eq!(e.silence(), (0, 0));
         // Shadow reset: a fresh nonzero state must re-write.
-        e.push(RumbleCommand::SetContinuous { strong: 0.2, weak: 0.0 });
+        e.push(RumbleCommand::SetContinuous {
+            strong: 0.2,
+            weak: 0.0,
+        });
         assert!(e.tick(1).is_some());
     }
 

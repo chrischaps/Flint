@@ -74,17 +74,11 @@ fn kind_color(kind: &str) -> egui::Color32 {
 
 /// A small 2D stick pad: square with crosshair, ring = authored target,
 /// dot = player actual. Values in [-1,1]²; chart convention +y up.
-fn stick_pad(
-    ui: &mut egui::Ui,
-    label: &str,
-    actual: [f32; 2],
-    target: Option<[f32; 2]>,
-) {
+fn stick_pad(ui: &mut egui::Ui, label: &str, actual: [f32; 2], target: Option<[f32; 2]>) {
     ui.vertical(|ui| {
         ui.label(egui::RichText::new(label).size(10.0).weak());
         let size = 72.0;
-        let (resp, painter) =
-            ui.allocate_painter(egui::vec2(size, size), egui::Sense::hover());
+        let (resp, painter) = ui.allocate_painter(egui::vec2(size, size), egui::Sense::hover());
         let rect = resp.rect;
         let center = rect.center();
         let half = size / 2.0 - 2.0;
@@ -101,11 +95,17 @@ fn stick_pad(
         );
         let cross = egui::Stroke::new(0.5, egui::Color32::from_gray(60));
         painter.line_segment(
-            [egui::pos2(rect.left(), center.y), egui::pos2(rect.right(), center.y)],
+            [
+                egui::pos2(rect.left(), center.y),
+                egui::pos2(rect.right(), center.y),
+            ],
             cross,
         );
         painter.line_segment(
-            [egui::pos2(center.x, rect.top()), egui::pos2(center.x, rect.bottom())],
+            [
+                egui::pos2(center.x, rect.top()),
+                egui::pos2(center.x, rect.bottom()),
+            ],
             cross,
         );
         if let Some(t) = target {
@@ -115,7 +115,11 @@ fn stick_pad(
                 egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 120)),
             );
         }
-        painter.circle_filled(to_screen(actual), 3.5, egui::Color32::from_rgb(150, 210, 255));
+        painter.circle_filled(
+            to_screen(actual),
+            3.5,
+            egui::Color32::from_rgb(150, 210, 255),
+        );
     });
 }
 
@@ -123,15 +127,22 @@ fn stick_pad(
 fn trigger_bar(ui: &mut egui::Ui, label: &str, actual: f32, target: Option<f64>) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(label).size(10.0).weak());
-        let (resp, painter) =
-            ui.allocate_painter(egui::vec2(120.0, 12.0), egui::Sense::hover());
+        let (resp, painter) = ui.allocate_painter(egui::vec2(120.0, 12.0), egui::Sense::hover());
         let rect = resp.rect;
-        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_gray(90)));
+        painter.rect_stroke(
+            rect,
+            2.0,
+            egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+        );
         let fill = egui::Rect::from_min_size(
             rect.min,
             egui::vec2(rect.width() * actual.clamp(0.0, 1.0), rect.height()),
         );
-        painter.rect_filled(fill.shrink(1.0), 1.0, egui::Color32::from_rgb(150, 210, 255));
+        painter.rect_filled(
+            fill.shrink(1.0),
+            1.0,
+            egui::Color32::from_rgb(150, 210, 255),
+        );
         if let Some(t) = target {
             let x = rect.left() + rect.width() * (t.clamp(0.0, 1.0) as f32);
             painter.line_segment(
@@ -163,7 +174,11 @@ impl DebugPanel for MusicGuidePanel {
                 "bar {}  beat {:.2}  {}  coherence {:.2}",
                 f.bar,
                 f.beat,
-                if f.section.is_empty() { "—" } else { &f.section },
+                if f.section.is_empty() {
+                    "—"
+                } else {
+                    &f.section
+                },
                 f.coherence
             ))
             .monospace()
@@ -178,10 +193,13 @@ impl DebugPanel for MusicGuidePanel {
         ui.separator();
 
         // NOW: any window currently open is the thing to do this instant.
-        let open: Vec<&GuideWindow> =
-            self.guide.windows.iter().filter(|w| w.open_now).collect();
+        let open: Vec<&GuideWindow> = self.guide.windows.iter().filter(|w| w.open_now).collect();
         if open.is_empty() {
-            ui.label(egui::RichText::new("now: follow the curves").weak().size(11.0));
+            ui.label(
+                egui::RichText::new("now: follow the curves")
+                    .weak()
+                    .size(11.0),
+            );
         } else {
             for w in open {
                 ui.label(
@@ -197,7 +215,12 @@ impl DebugPanel for MusicGuidePanel {
         // Upcoming windows within the horizon, soonest first.
         ui.label(egui::RichText::new("upcoming").weak().size(10.0));
         let mut rows = 0;
-        for w in self.guide.windows.iter().filter(|w| !w.open_now && w.beats_until > 0.0) {
+        for w in self
+            .guide
+            .windows
+            .iter()
+            .filter(|w| !w.open_now && w.beats_until > 0.0)
+        {
             if rows >= MAX_ROWS {
                 ui.label(egui::RichText::new("…").weak());
                 break;
@@ -217,7 +240,11 @@ impl DebugPanel for MusicGuidePanel {
             });
         }
         if rows == 0 {
-            ui.label(egui::RichText::new("(none in the next 8 beats)").weak().size(10.0));
+            ui.label(
+                egui::RichText::new("(none in the next 8 beats)")
+                    .weak()
+                    .size(10.0),
+            );
         }
         ui.separator();
 

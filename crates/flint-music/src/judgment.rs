@@ -188,7 +188,10 @@ struct Arrival {
 /// Degrees between two directions; 180 when either is (near) zero-length —
 /// a flick with no direction is fully wrong, never a divide-by-zero.
 fn direction_err_deg(a: [f64; 2], b: [f64; 2]) -> f64 {
-    let (ma, mb) = ((a[0] * a[0] + a[1] * a[1]).sqrt(), (b[0] * b[0] + b[1] * b[1]).sqrt());
+    let (ma, mb) = (
+        (a[0] * a[0] + a[1] * a[1]).sqrt(),
+        (b[0] * b[0] + b[1] * b[1]).sqrt(),
+    );
     if ma < 1e-9 || mb < 1e-9 {
         return 180.0;
     }
@@ -442,8 +445,9 @@ impl Judge {
                 if grid_sample > sample || grid_sample > self.end_sample {
                     break;
                 }
-                if let Some(ChannelValue::Vec2(target)) =
-                    self.eval.sample_channel(TRACKED_CHANNEL, self.next_grid_beat)
+                if let Some(ChannelValue::Vec2(target)) = self
+                    .eval
+                    .sample_channel(TRACKED_CHANNEL, self.next_grid_beat)
                 {
                     let dx = self.lean[0] - target[0];
                     let dy = self.lean[1] - target[1];

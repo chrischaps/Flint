@@ -273,7 +273,9 @@ mod tests {
 
         assert!(comps.has("stats"));
         assert_eq!(
-            comps.get_field("stats", "strength").and_then(|v| v.as_integer()),
+            comps
+                .get_field("stats", "strength")
+                .and_then(|v| v.as_integer()),
             Some(18)
         );
     }

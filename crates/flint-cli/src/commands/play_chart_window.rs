@@ -138,8 +138,7 @@ impl ApplicationHandler for App {
                                 }
                                 Err(e) => {
                                     self.error = Some(
-                                        anyhow::Error::new(e)
-                                            .context("reloading session configs"),
+                                        anyhow::Error::new(e).context("reloading session configs"),
                                     );
                                     event_loop.exit();
                                 }
@@ -259,7 +258,11 @@ impl Gfx {
         }
     }
 
-    fn render(&mut self, frame: &flint_music::chart_session::VisualFrame, time_s: f32) -> Result<()> {
+    fn render(
+        &mut self,
+        frame: &flint_music::chart_session::VisualFrame,
+        time_s: f32,
+    ) -> Result<()> {
         let aspect = self.ctx.aspect_ratio();
         let data: [f32; 20] = [
             frame.lean[0],

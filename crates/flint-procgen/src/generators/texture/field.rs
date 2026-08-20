@@ -149,11 +149,7 @@ impl TextureField {
                 let r = self.get("r", x, y);
                 let g = self.get("g", x, y);
                 let b = self.get("b", x, y);
-                let a = if has_alpha {
-                    self.get("a", x, y)
-                } else {
-                    1.0
-                };
+                let a = if has_alpha { self.get("a", x, y) } else { 1.0 };
 
                 let offset = ((y * w + x) * 4) as usize;
                 img.pixels[offset] = linear_to_srgb(r);

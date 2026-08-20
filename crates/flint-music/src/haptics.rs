@@ -21,10 +21,10 @@
 //! which fires them early by the feel-tuned `lead_ms` (rumble transport and
 //! actuator spin-up are unmeasurable in software — ADR 0025).
 
-use crate::config_toml::{self, VersionPolicy};
-use crate::tempo::ms_to_samples;
 use crate::conductor::{Conductor, Grid};
+use crate::config_toml::{self, VersionPolicy};
 use crate::reintegration::{ReintegrationEvent, SeqPhase};
+use crate::tempo::ms_to_samples;
 use flint_core::{FlintError, Result};
 use std::path::Path;
 
@@ -164,9 +164,15 @@ impl HapticsConfig {
     }
 
     fn validate(&self) -> Result<()> {
-        let err =
-            |msg: String| Err(FlintError::ValidationError(format!("haptics config: {msg}")));
-        for (name, v) in [("timing.lead_ms", self.lead_ms), ("timing.late_drop_ms", self.late_drop_ms)] {
+        let err = |msg: String| {
+            Err(FlintError::ValidationError(format!(
+                "haptics config: {msg}"
+            )))
+        };
+        for (name, v) in [
+            ("timing.lead_ms", self.lead_ms),
+            ("timing.late_drop_ms", self.late_drop_ms),
+        ] {
             if !(0.0..=250.0).contains(&v) {
                 return err(format!("{name} {v} out of range (0..250)"));
             }
@@ -193,7 +199,10 @@ impl HapticsConfig {
             }
         }
         if self.pickup_count > 8 {
-            return err(format!("pickup.count {} out of range (0..8)", self.pickup_count));
+            return err(format!(
+                "pickup.count {} out of range (0..8)",
+                self.pickup_count
+            ));
         }
         Ok(())
     }
@@ -346,7 +355,10 @@ impl HapticsDriver {
                     // post-seam grid tick.
                     if self.cfg.pickup.is_active() && self.cfg.pickup_count > 0 {
                         let beat_samples = samples_per_beat(conductor, *re_entry_sample);
-                        let n = self.cfg.pickup_count.min(pickup_beats.floor().max(0.0) as u32);
+                        let n = self
+                            .cfg
+                            .pickup_count
+                            .min(pickup_beats.floor().max(0.0) as u32);
                         for k in 1..=i64::from(n) {
                             out.push(HapticEvent::Burst {
                                 at_suite_sample: seam_suite_sample - k * beat_samples,
@@ -369,7 +381,11 @@ impl HapticsDriver {
         // Rewind grind: sustained low weight growing with the spin-down.
         // Delta-gated; the seam's Flush releases it.
         if self.cfg.grind.is_active() {
-            let target = if phase == SeqPhase::Failing { rewind } else { 0.0 };
+            let target = if phase == SeqPhase::Failing {
+                rewind
+            } else {
+                0.0
+            };
             if (target - self.grind_level).abs() > 1.0 / 64.0
                 || (target == 0.0 && self.grind_level != 0.0)
             {

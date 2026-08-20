@@ -314,9 +314,7 @@ impl ScriptSystem {
     /// Take the reality-tear render mode overrides set by scripts this
     /// frame (clears them): ((mode, mix), mode_params).
     #[allow(clippy::type_complexity)]
-    pub fn take_render_mode_overrides(
-        &mut self,
-    ) -> (Option<(u32, f32)>, Option<[f32; 4]>) {
+    pub fn take_render_mode_overrides(&mut self) -> (Option<(u32, f32)>, Option<[f32; 4]>) {
         let mut c = self.engine.ctx.lock().unwrap();
         (
             c.postprocess_render_mode_override.take(),

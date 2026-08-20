@@ -749,7 +749,8 @@ pub fn load_splines(
             None => {
                 tracing::warn!(
                     "spline_mesh '{}' references unknown spline entity '{}'",
-                    job.entity_name, job.def.spline_entity
+                    job.entity_name,
+                    job.def.spline_entity
                 );
                 continue;
             }

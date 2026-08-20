@@ -28,9 +28,7 @@ pub fn generate_leaves(
         LeafStyle::BillboardCluster => {
             generate_billboard_leaves(tips, tip_directions, segments, params, rng)
         }
-        LeafStyle::MeshCluster => {
-            generate_mesh_leaves(tips, tip_directions, segments, params, rng)
-        }
+        LeafStyle::MeshCluster => generate_mesh_leaves(tips, tip_directions, segments, params, rng),
         LeafStyle::None => {
             let builder = MeshBuilder::new();
             Ok(builder.build())
@@ -112,8 +110,7 @@ fn generate_billboard_leaves(
     rng: &mut SeededRng,
 ) -> Result<MeshData> {
     // Collect along-branch positions
-    let (along_positions, along_directions) =
-        sample_along_branch_positions(segments, params, rng);
+    let (along_positions, along_directions) = sample_along_branch_positions(segments, params, rng);
 
     let tip_count = tips.len().min(tip_directions.len());
     let total_points = tip_count + along_positions.len();
@@ -129,10 +126,14 @@ fn generate_billboard_leaves(
     });
 
     // Combine tip positions with along-branch positions
-    let all_positions: Vec<Vec3> = tips.iter().copied()
+    let all_positions: Vec<Vec3> = tips
+        .iter()
+        .copied()
         .chain(along_positions.into_iter())
         .collect();
-    let all_directions: Vec<Vec3> = tip_directions.iter().copied()
+    let all_directions: Vec<Vec3> = tip_directions
+        .iter()
+        .copied()
         .chain(along_directions.into_iter())
         .collect();
 
@@ -216,8 +217,7 @@ fn generate_mesh_leaves(
     rng: &mut SeededRng,
 ) -> Result<MeshData> {
     // Collect along-branch positions
-    let (along_positions, along_directions) =
-        sample_along_branch_positions(segments, params, rng);
+    let (along_positions, along_directions) = sample_along_branch_positions(segments, params, rng);
 
     let tip_count = tips.len().min(tip_directions.len());
     let total_points = tip_count + along_positions.len();
@@ -234,10 +234,14 @@ fn generate_mesh_leaves(
     });
 
     // Combine tip positions with along-branch positions
-    let all_positions: Vec<Vec3> = tips.iter().copied()
+    let all_positions: Vec<Vec3> = tips
+        .iter()
+        .copied()
         .chain(along_positions.into_iter())
         .collect();
-    let all_directions: Vec<Vec3> = tip_directions.iter().copied()
+    let all_directions: Vec<Vec3> = tip_directions
+        .iter()
+        .copied()
         .chain(along_directions.into_iter())
         .collect();
 
@@ -507,7 +511,8 @@ mod tests {
             ..LeafParams::default()
         };
         let mut rng1 = SeededRng::new(42);
-        let mesh_no = generate_leaves(&tips, &dirs, &segments, &params_no_along, &mut rng1).unwrap();
+        let mesh_no =
+            generate_leaves(&tips, &dirs, &segments, &params_no_along, &mut rng1).unwrap();
 
         // With along-branch
         let params_along = LeafParams {
@@ -531,15 +536,13 @@ mod tests {
     fn along_branch_respects_min_depth() {
         let tips: Vec<Vec3> = vec![];
         let dirs: Vec<Vec3> = vec![];
-        let segments = vec![
-            BranchSegment {
-                start: Vec3::new(0.0, 3.0, 0.0),
-                end: Vec3::new(1.0, 4.0, 0.0),
-                radius_start: 0.1,
-                radius_end: 0.08,
-                depth: 1, // below min_depth=2
-            },
-        ];
+        let segments = vec![BranchSegment {
+            start: Vec3::new(0.0, 3.0, 0.0),
+            end: Vec3::new(1.0, 4.0, 0.0),
+            radius_start: 0.1,
+            radius_end: 0.08,
+            depth: 1, // below min_depth=2
+        }];
 
         let params = LeafParams {
             density: 1.0,

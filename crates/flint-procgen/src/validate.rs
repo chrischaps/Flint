@@ -8,7 +8,7 @@ use std::fmt;
 
 use crate::output::GeneratorOutput;
 use crate::spec::ProcGenSpec;
-use crate::types::{ImageData, MeshData, MaterialData, Vertex};
+use crate::types::{ImageData, MaterialData, MeshData, Vertex};
 
 // ── Status / Check / Constraints ────────────────────────────────────────────
 
@@ -60,15 +60,24 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn count_passed(&self) -> usize {
-        self.checks.iter().filter(|c| c.status == CheckStatus::Pass).count()
+        self.checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Pass)
+            .count()
     }
 
     pub fn count_warnings(&self) -> usize {
-        self.checks.iter().filter(|c| c.status == CheckStatus::Warn).count()
+        self.checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Warn)
+            .count()
     }
 
     pub fn count_failed(&self) -> usize {
-        self.checks.iter().filter(|c| c.status == CheckStatus::Fail).count()
+        self.checks
+            .iter()
+            .filter(|c| c.status == CheckStatus::Fail)
+            .count()
     }
 
     pub fn has_failures(&self) -> bool {
@@ -193,7 +202,12 @@ fn validate_mesh(
 
     // 1. Triangle budget
     if let Some(max_tris) = constraints.max_triangles {
-        check_triangle_budget_value(mesh.triangle_count(), max_tris, checks, &label("triangle budget"));
+        check_triangle_budget_value(
+            mesh.triangle_count(),
+            max_tris,
+            checks,
+            &label("triangle budget"),
+        );
     } else {
         checks.push(ValidationCheck {
             name: label("triangle budget"),
@@ -206,11 +220,21 @@ fn validate_mesh(
     check_uv_range(&mesh.vertices, checks, &label("UV range"));
 
     // 3 & 4. PBR roughness & metallic
-    check_pbr_roughness(&mesh.materials, constraints, checks, &label("PBR roughness"));
+    check_pbr_roughness(
+        &mesh.materials,
+        constraints,
+        checks,
+        &label("PBR roughness"),
+    );
     check_pbr_metallic(&mesh.materials, constraints, checks, &label("PBR metallic"));
 
     // 5. Degenerate triangles
-    check_degenerate_triangles(&mesh.vertices, &mesh.indices, checks, &label("degenerate triangles"));
+    check_degenerate_triangles(
+        &mesh.vertices,
+        &mesh.indices,
+        checks,
+        &label("degenerate triangles"),
+    );
 }
 
 fn check_triangle_budget_value(
@@ -241,11 +265,7 @@ fn check_triangle_budget_value(
     }
 }
 
-fn check_uv_range(
-    vertices: &[Vertex],
-    checks: &mut Vec<ValidationCheck>,
-    name: &str,
-) {
+fn check_uv_range(vertices: &[Vertex], checks: &mut Vec<ValidationCheck>, name: &str) {
     let mut bad = 0usize;
     for v in vertices {
         if v.uv[0] < 0.0 || v.uv[0] > 1.0 || v.uv[1] < 0.0 || v.uv[1] > 1.0 {
@@ -444,7 +464,9 @@ fn validate_image(
             } else {
                 CheckStatus::Fail
             };
-            dim_detail = if dim_status == CheckStatus::Fail && constraints.expected_texture_width.is_some() {
+            dim_detail = if dim_status == CheckStatus::Fail
+                && constraints.expected_texture_width.is_some()
+            {
                 format!(
                     "{}x{} != expected {}x{}",
                     img.width,
@@ -462,10 +484,7 @@ fn validate_image(
     if dim_status == CheckStatus::Pass {
         if !img.width.is_power_of_two() || !img.height.is_power_of_two() {
             dim_status = CheckStatus::Warn;
-            dim_detail = format!(
-                "{}x{} — not power-of-two",
-                img.width, img.height
-            );
+            dim_detail = format!("{}x{} — not power-of-two", img.width, img.height);
         }
     }
 
@@ -556,7 +575,11 @@ value = 42
         let spec = make_spec();
         let constraints = ValidationConstraints::default();
         let report = validate_output(&output, &spec, &constraints);
-        let uv_check = report.checks.iter().find(|c| c.name.contains("UV range")).unwrap();
+        let uv_check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("UV range"))
+            .unwrap();
         assert_eq!(uv_check.status, CheckStatus::Fail);
         assert!(uv_check.detail.contains("1/3"));
     }
@@ -587,7 +610,11 @@ value = 42
             ..Default::default()
         };
         let report = validate_output(&output2, &spec, &constraints);
-        let budget_check = report.checks.iter().find(|c| c.name.contains("triangle budget")).unwrap();
+        let budget_check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("triangle budget"))
+            .unwrap();
         assert_eq!(budget_check.status, CheckStatus::Warn);
     }
 
@@ -625,7 +652,11 @@ value = 42
             ..Default::default()
         };
         let report = validate_output(&output, &spec, &constraints);
-        let budget_check = report.checks.iter().find(|c| c.name.contains("triangle budget")).unwrap();
+        let budget_check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("triangle budget"))
+            .unwrap();
         assert_eq!(budget_check.status, CheckStatus::Fail);
     }
 
@@ -638,7 +669,11 @@ value = 42
         let spec = make_spec();
         let constraints = ValidationConstraints::default();
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("roughness")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("roughness"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Fail);
     }
 
@@ -654,7 +689,11 @@ value = 42
             ..Default::default()
         };
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("roughness")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("roughness"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Warn);
     }
 
@@ -669,7 +708,11 @@ value = 42
         let spec = make_spec();
         let constraints = ValidationConstraints::default();
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("degenerate")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("degenerate"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Fail);
         assert!(check.detail.contains("1/1"));
     }
@@ -686,7 +729,11 @@ value = 42
             ..Default::default()
         };
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("texture")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("texture"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Fail);
     }
 
@@ -698,7 +745,11 @@ value = 42
         let spec = make_spec();
         let constraints = ValidationConstraints::default();
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("texture")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("texture"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Warn);
     }
 
@@ -734,15 +785,29 @@ value = 42
         let output = GeneratorOutput::MeshWithLods(vec![lod0, lod1]);
         let mut spec = make_spec();
         spec.lod = Some(vec![
-            crate::LodLevel { level: 0, target_triangles: 10 },
-            crate::LodLevel { level: 1, target_triangles: 1 },
+            crate::LodLevel {
+                level: 0,
+                target_triangles: 10,
+            },
+            crate::LodLevel {
+                level: 1,
+                target_triangles: 1,
+            },
         ]);
         let constraints = ValidationConstraints::default();
         let report = validate_output(&output, &spec, &constraints);
         assert!(!report.has_failures());
         // Should have checks prefixed with LOD0 and LOD1
-        let lod0_checks: Vec<_> = report.checks.iter().filter(|c| c.name.starts_with("LOD0")).collect();
-        let lod1_checks: Vec<_> = report.checks.iter().filter(|c| c.name.starts_with("LOD1")).collect();
+        let lod0_checks: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|c| c.name.starts_with("LOD0"))
+            .collect();
+        let lod1_checks: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|c| c.name.starts_with("LOD1"))
+            .collect();
         assert!(!lod0_checks.is_empty());
         assert!(!lod1_checks.is_empty());
     }
@@ -810,7 +875,11 @@ value = 42
         let spec = make_spec();
         let constraints = ValidationConstraints::default();
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("metallic")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("metallic"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Fail);
     }
 
@@ -826,7 +895,11 @@ value = 42
             ..Default::default()
         };
         let report = validate_output(&output, &spec, &constraints);
-        let check = report.checks.iter().find(|c| c.name.contains("metallic")).unwrap();
+        let check = report
+            .checks
+            .iter()
+            .find(|c| c.name.contains("metallic"))
+            .unwrap();
         assert_eq!(check.status, CheckStatus::Warn);
     }
 

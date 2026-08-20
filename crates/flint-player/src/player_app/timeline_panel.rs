@@ -7,9 +7,7 @@
 //! (the no-gamified-UI rule).
 
 use flint_debug_ui::{DebugPanel, PanelLayout};
-use flint_music::chart_session::{
-    PulseKind, SeamMarkKind, TimelineFrame, TimelineMap,
-};
+use flint_music::chart_session::{PulseKind, SeamMarkKind, TimelineFrame, TimelineMap};
 
 pub const MANIFEST_MAP_PANEL: &str = "Manifest Map";
 
@@ -84,8 +82,10 @@ impl DebugPanel for ManifestMapPanel {
         );
 
         let height = SECTION_H + RULER_H + HISTORY_H;
-        let (resp, painter) =
-            ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+        let (resp, painter) = ui.allocate_painter(
+            egui::vec2(ui.available_width(), height),
+            egui::Sense::hover(),
+        );
         let rect = resp.rect;
 
         // Suite-sample → x. Domain starts at min(playhead, 0) so the preroll
@@ -194,7 +194,10 @@ impl DebugPanel for ManifestMapPanel {
             let x = to_x(t.sample);
             let color = egui::Color32::from_rgb(150, 210, 255);
             painter.line_segment(
-                [egui::pos2(x, ruler_top), egui::pos2(x, hist_top + HISTORY_H)],
+                [
+                    egui::pos2(x, ruler_top),
+                    egui::pos2(x, hist_top + HISTORY_H),
+                ],
                 egui::Stroke::new(1.0, color),
             );
             painter.text(
@@ -209,7 +212,10 @@ impl DebugPanel for ManifestMapPanel {
         // Lane 3 — this-run history. Pulse ticks: hit up-green, miss
         // down-red, spurious mid-yellow (the guide panel's color language).
         painter.line_segment(
-            [egui::pos2(rect.left(), hist_mid), egui::pos2(rect.right(), hist_mid)],
+            [
+                egui::pos2(rect.left(), hist_mid),
+                egui::pos2(rect.right(), hist_mid),
+            ],
             egui::Stroke::new(0.5, egui::Color32::from_gray(55)),
         );
         for p in &f.pulses {
@@ -267,14 +273,8 @@ impl DebugPanel for ManifestMapPanel {
                 SeamMarkKind::Seam => {
                     let y = hist_top + HISTORY_H - 5.0;
                     let stroke = egui::Stroke::new(1.5, color);
-                    painter.line_segment(
-                        [egui::pos2(x - 4.0, y - 4.0), egui::pos2(x, y)],
-                        stroke,
-                    );
-                    painter.line_segment(
-                        [egui::pos2(x, y), egui::pos2(x - 4.0, y + 4.0)],
-                        stroke,
-                    );
+                    painter.line_segment([egui::pos2(x - 4.0, y - 4.0), egui::pos2(x, y)], stroke);
+                    painter.line_segment([egui::pos2(x, y), egui::pos2(x - 4.0, y + 4.0)], stroke);
                 }
                 SeamMarkKind::ReassemblyComplete => {
                     painter.line_segment(
@@ -311,8 +311,7 @@ impl DebugPanel for ManifestMapPanel {
 
         // Hover: cursor x → sample/bar readout.
         if let Some(pos) = resp.hover_pos() {
-            let sample = min_s
-                + ((pos.x - rect.left()) / rect.width().max(1.0) * span) as i64;
+            let sample = min_s + ((pos.x - rect.left()) / rect.width().max(1.0) * span) as i64;
             let bar = match map.bars.binary_search_by_key(&sample, |b| b.sample) {
                 Ok(i) => map.bars[i].bar,
                 Err(0) => -1,

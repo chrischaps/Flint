@@ -40,10 +40,12 @@ pub fn build_skeleton(
 
     // 1. Add explicit bones from the bone table
     for (i, def) in bone_defs.iter().enumerate() {
-        let table = def.as_table().ok_or_else(|| ProcGenError::InvalidParameter {
-            name: format!("bones[{i}]"),
-            reason: "expected a table".into(),
-        })?;
+        let table = def
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: format!("bones[{i}]"),
+                reason: "expected a table".into(),
+            })?;
 
         let name = table
             .get("name")
@@ -52,12 +54,15 @@ pub fn build_skeleton(
 
         let parent = if let Some(parent_val) = table.get("parent") {
             let parent_name = toml_string(parent_val, &format!("bones[{i}].parent"))?;
-            let idx = name_to_index.get(&parent_name).ok_or_else(|| {
-                ProcGenError::InvalidParameter {
-                    name: format!("bones[{i}].parent"),
-                    reason: format!("bone '{parent_name}' not found (must be defined before use)"),
-                }
-            })?;
+            let idx =
+                name_to_index
+                    .get(&parent_name)
+                    .ok_or_else(|| ProcGenError::InvalidParameter {
+                        name: format!("bones[{i}].parent"),
+                        reason: format!(
+                            "bone '{parent_name}' not found (must be defined before use)"
+                        ),
+                    })?;
             Some(*idx)
         } else {
             None

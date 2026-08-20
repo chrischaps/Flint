@@ -59,8 +59,9 @@ pub fn run(args: TerrainEditArgs) -> Result<()> {
     let spec_path = PathBuf::from(&args.spec);
 
     let mut spec = if spec_path.exists() {
-        TerrainSpec::from_file(&spec_path)
-            .map_err(|e| anyhow::anyhow!("failed to load spec from {}: {}", spec_path.display(), e))?
+        TerrainSpec::from_file(&spec_path).map_err(|e| {
+            anyhow::anyhow!("failed to load spec from {}: {}", spec_path.display(), e)
+        })?
     } else {
         let name = spec_path
             .file_stem()
@@ -68,8 +69,9 @@ pub fn run(args: TerrainEditArgs) -> Result<()> {
             .unwrap_or("terrain")
             .replace(".terrain", "");
         let spec = TerrainSpec::default_spec(&name);
-        spec.save(&spec_path)
-            .map_err(|e| anyhow::anyhow!("failed to create spec at {}: {}", spec_path.display(), e))?;
+        spec.save(&spec_path).map_err(|e| {
+            anyhow::anyhow!("failed to create spec at {}: {}", spec_path.display(), e)
+        })?;
         tracing::info!("Created new terrain spec: {}", spec_path.display());
         spec
     };
@@ -386,8 +388,11 @@ impl TerrainEditApp {
         let terrain = Terrain::generate(&hm, &config);
 
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-            renderer
-                .reload_terrain_geometry(&context.device, &terrain.chunks, &Transform::default());
+            renderer.reload_terrain_geometry(
+                &context.device,
+                &terrain.chunks,
+                &Transform::default(),
+            );
         }
     }
 
@@ -567,11 +572,8 @@ impl TerrainEditApp {
 
         if let Some(hm_path) = dialog.save_file() {
             let geo = &self.spec.geometry;
-            let hm = Heightmap::from_raw(
-                self.heightmap_data.clone(),
-                geo.resolution,
-                geo.resolution,
-            );
+            let hm =
+                Heightmap::from_raw(self.heightmap_data.clone(), geo.resolution, geo.resolution);
 
             match hm.save_png(&hm_path) {
                 Ok(()) => {
@@ -585,9 +587,8 @@ impl TerrainEditApp {
                             + "_splat.png",
                     );
                     let res = geo.resolution;
-                    let img =
-                        image::RgbaImage::from_raw(res, res, self.splat_data.clone())
-                            .expect("splat data size mismatch");
+                    let img = image::RgbaImage::from_raw(res, res, self.splat_data.clone())
+                        .expect("splat data size mismatch");
                     match img.save(&splat_path) {
                         Ok(()) => {
                             self.set_status(&format!(
@@ -597,9 +598,7 @@ impl TerrainEditApp {
                             ));
                         }
                         Err(e) => {
-                            self.set_status(&format!(
-                                "Heightmap OK, splat failed: {e}"
-                            ));
+                            self.set_status(&format!("Heightmap OK, splat failed: {e}"));
                         }
                     }
                 }
@@ -701,38 +700,38 @@ impl TerrainEditApp {
                     ui.separator();
 
                     // Bottom buttons
-                    egui::TopBottomPanel::bottom("left_bottom")
-                        .show_inside(ui, |ui| {
-                            ui.label(format!("Gen: {:.1} ms | FPS: {:.0}", gen_time_ms, fps));
-                            ui.label(format!("Heightmap: {}x{}", heightmap_res, heightmap_res));
+                    egui::TopBottomPanel::bottom("left_bottom").show_inside(ui, |ui| {
+                        ui.label(format!("Gen: {:.1} ms | FPS: {:.0}", gen_time_ms, fps));
+                        ui.label(format!("Heightmap: {}x{}", heightmap_res, heightmap_res));
 
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                if ui.button("Save").clicked() {
-                                    want_save = true;
-                                }
-                                if ui.button("Save As").clicked() {
-                                    want_save_as = true;
-                                }
-                                if ui.button("Export").clicked() {
-                                    want_export = true;
-                                }
-                            });
-
-                            if let Some((msg, when)) = &status_msg {
-                                let age = when.elapsed().as_secs_f32();
-                                if age < 4.0 {
-                                    let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
-                                    ui.label(
-                                        egui::RichText::new(msg)
-                                            .small()
-                                            .color(egui::Color32::from_rgba_unmultiplied(
-                                                180, 220, 180, (alpha * 255.0) as u8,
-                                            )),
-                                    );
-                                }
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {
+                                want_save = true;
+                            }
+                            if ui.button("Save As").clicked() {
+                                want_save_as = true;
+                            }
+                            if ui.button("Export").clicked() {
+                                want_export = true;
                             }
                         });
+
+                        if let Some((msg, when)) = &status_msg {
+                            let age = when.elapsed().as_secs_f32();
+                            if age < 4.0 {
+                                let alpha = if age > 3.0 { 1.0 - (age - 3.0) } else { 1.0 };
+                                ui.label(egui::RichText::new(msg).small().color(
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        180,
+                                        220,
+                                        180,
+                                        (alpha * 255.0) as u8,
+                                    ),
+                                ));
+                            }
+                        }
+                    });
 
                     // Mode-specific content
                     egui::ScrollArea::vertical()
@@ -744,16 +743,36 @@ impl TerrainEditApp {
                                     egui::CollapsingHeader::new("Geometry")
                                         .default_open(true)
                                         .show(ui, |ui| {
-                                            dirty |= drag_f32(ui, "Width", &mut spec.geometry.width, 1.0, 1.0..=2048.0);
-                                            dirty |= drag_f32(ui, "Depth", &mut spec.geometry.depth, 1.0, 1.0..=2048.0);
-                                            dirty |= drag_f32(ui, "Height Scale", &mut spec.geometry.height_scale, 0.5, 0.0..=500.0);
+                                            dirty |= drag_f32(
+                                                ui,
+                                                "Width",
+                                                &mut spec.geometry.width,
+                                                1.0,
+                                                1.0..=2048.0,
+                                            );
+                                            dirty |= drag_f32(
+                                                ui,
+                                                "Depth",
+                                                &mut spec.geometry.depth,
+                                                1.0,
+                                                1.0..=2048.0,
+                                            );
+                                            dirty |= drag_f32(
+                                                ui,
+                                                "Height Scale",
+                                                &mut spec.geometry.height_scale,
+                                                0.5,
+                                                0.0..=500.0,
+                                            );
                                             let mut res = spec.geometry.resolution as i64;
                                             if drag_i64(ui, "Resolution", &mut res, 1, 4..=2048) {
                                                 spec.geometry.resolution = res as u32;
                                                 dirty = true;
                                             }
-                                            let mut chunk_res = spec.geometry.chunk_resolution as i64;
-                                            if drag_i64(ui, "Chunk Res", &mut chunk_res, 1, 2..=256) {
+                                            let mut chunk_res =
+                                                spec.geometry.chunk_resolution as i64;
+                                            if drag_i64(ui, "Chunk Res", &mut chunk_res, 1, 2..=256)
+                                            {
                                                 spec.geometry.chunk_resolution = chunk_res as u32;
                                                 dirty = true;
                                             }
@@ -784,12 +803,8 @@ impl TerrainEditApp {
                                                 .id_salt(format!("hlayer_{i}"))
                                                 .default_open(i == 0)
                                                 .show(ui, |ui| {
-                                                    dirty |=
-                                                        render_height_layer_ui(ui, layer, i);
-                                                    if ui
-                                                        .small_button("Remove")
-                                                        .clicked()
-                                                    {
+                                                    dirty |= render_height_layer_ui(ui, layer, i);
+                                                    if ui.small_button("Remove").clicked() {
                                                         remove_idx = Some(i);
                                                     }
                                                 });
@@ -846,21 +861,22 @@ impl TerrainEditApp {
                                     .default_open(true)
                                     .show(ui, |ui| {
                                         let mut remove_idx = None;
-                                        for (i, rule) in
-                                            spec.splat_rules.iter_mut().enumerate()
-                                        {
+                                        for (i, rule) in spec.splat_rules.iter_mut().enumerate() {
                                             egui::CollapsingHeader::new(format!(
                                                 "[{}] Layer {}",
                                                 i, rule.layer
                                             ))
                                             .id_salt(format!("srule_{i}"))
                                             .default_open(true)
-                                            .show(ui, |ui| {
-                                                dirty |= render_splat_rule_ui(ui, rule, i);
-                                                if ui.small_button("Remove").clicked() {
-                                                    remove_idx = Some(i);
-                                                }
-                                            });
+                                            .show(
+                                                ui,
+                                                |ui| {
+                                                    dirty |= render_splat_rule_ui(ui, rule, i);
+                                                    if ui.small_button("Remove").clicked() {
+                                                        remove_idx = Some(i);
+                                                    }
+                                                },
+                                            );
                                         }
                                         if let Some(idx) = remove_idx {
                                             spec.splat_rules.remove(idx);
@@ -974,19 +990,57 @@ impl TerrainEditApp {
                     egui::CollapsingHeader::new("Texture Layers")
                         .default_open(true)
                         .show(ui, |ui| {
-                            dirty |= render_texture_layer_ui(ui, "Layer 0 (R)", &mut spec.textures.layers.layer0, 0);
-                            dirty |= render_texture_layer_ui(ui, "Layer 1 (G)", &mut spec.textures.layers.layer1, 1);
-                            dirty |= render_texture_layer_ui(ui, "Layer 2 (B)", &mut spec.textures.layers.layer2, 2);
-                            dirty |= render_texture_layer_ui(ui, "Layer 3 (A)", &mut spec.textures.layers.layer3, 3);
+                            dirty |= render_texture_layer_ui(
+                                ui,
+                                "Layer 0 (R)",
+                                &mut spec.textures.layers.layer0,
+                                0,
+                            );
+                            dirty |= render_texture_layer_ui(
+                                ui,
+                                "Layer 1 (G)",
+                                &mut spec.textures.layers.layer1,
+                                1,
+                            );
+                            dirty |= render_texture_layer_ui(
+                                ui,
+                                "Layer 2 (B)",
+                                &mut spec.textures.layers.layer2,
+                                2,
+                            );
+                            dirty |= render_texture_layer_ui(
+                                ui,
+                                "Layer 3 (A)",
+                                &mut spec.textures.layers.layer3,
+                                3,
+                            );
                         });
 
                     // PBR params
                     egui::CollapsingHeader::new("PBR")
                         .default_open(true)
                         .show(ui, |ui| {
-                            dirty |= drag_f32(ui, "Texture Tile", &mut spec.textures.texture_tile, 0.5, 0.1..=128.0);
-                            dirty |= drag_f32(ui, "Metallic", &mut spec.textures.metallic, 0.01, 0.0..=1.0);
-                            dirty |= drag_f32(ui, "Roughness", &mut spec.textures.roughness, 0.01, 0.0..=1.0);
+                            dirty |= drag_f32(
+                                ui,
+                                "Texture Tile",
+                                &mut spec.textures.texture_tile,
+                                0.5,
+                                0.1..=128.0,
+                            );
+                            dirty |= drag_f32(
+                                ui,
+                                "Metallic",
+                                &mut spec.textures.metallic,
+                                0.01,
+                                0.0..=1.0,
+                            );
+                            dirty |= drag_f32(
+                                ui,
+                                "Roughness",
+                                &mut spec.textures.roughness,
+                                0.01,
+                                0.0..=1.0,
+                            );
                         });
                 });
 
@@ -1020,12 +1074,11 @@ impl TerrainEditApp {
 
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        let mut encoder =
-            context
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("egui Encoder"),
-                });
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("egui Encoder"),
+            });
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -1160,9 +1213,7 @@ impl ApplicationHandler for TerrainEditApp {
                             self.current_seed = random_seed();
                             self.mark_dirty();
                         }
-                        PhysicalKey::Code(KeyCode::KeyS)
-                            if !event.repeat =>
-                        {
+                        PhysicalKey::Code(KeyCode::KeyS) if !event.repeat => {
                             let mods = self.egui_ctx.input(|i| i.modifiers);
                             if mods.command && mods.shift {
                                 self.save_spec_as();
@@ -1170,9 +1221,7 @@ impl ApplicationHandler for TerrainEditApp {
                                 self.save_spec();
                             }
                         }
-                        PhysicalKey::Code(KeyCode::KeyE)
-                            if !event.repeat =>
-                        {
+                        PhysicalKey::Code(KeyCode::KeyE) if !event.repeat => {
                             if self.egui_ctx.input(|i| i.modifiers.command) {
                                 self.export_maps();
                             }
@@ -1180,20 +1229,17 @@ impl ApplicationHandler for TerrainEditApp {
                         PhysicalKey::Code(KeyCode::Space) => {
                             let half_w = self.spec.geometry.width * 0.5;
                             let half_d = self.spec.geometry.depth * 0.5;
-                            self.camera.target =
-                                flint_core::Vec3::new(half_w, 0.0, half_d);
+                            self.camera.target = flint_core::Vec3::new(half_w, 0.0, half_d);
                             self.camera.distance = self.spec.geometry.width * 0.8;
                             self.camera.pitch = 0.7;
                             self.camera.yaw = std::f32::consts::FRAC_PI_4;
                             self.camera.update_orbit();
                         }
                         PhysicalKey::Code(KeyCode::BracketRight) => {
-                            self.brush_params.radius =
-                                (self.brush_params.radius * 1.2).min(0.5);
+                            self.brush_params.radius = (self.brush_params.radius * 1.2).min(0.5);
                         }
                         PhysicalKey::Code(KeyCode::BracketLeft) => {
-                            self.brush_params.radius =
-                                (self.brush_params.radius / 1.2).max(0.005);
+                            self.brush_params.radius = (self.brush_params.radius / 1.2).max(0.005);
                         }
                         _ => {}
                     }
@@ -1208,11 +1254,8 @@ impl ApplicationHandler for TerrainEditApp {
                 }
 
                 // Pass to orbit for right-drag
-                self.orbit.handle_event(
-                    ev,
-                    &mut self.camera,
-                    self.egui_ctx.is_pointer_over_area(),
-                );
+                self.orbit
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
             }
 
             ref ev @ WindowEvent::MouseInput { state, button, .. } => {
@@ -1239,11 +1282,8 @@ impl ApplicationHandler for TerrainEditApp {
             }
 
             ref ev @ WindowEvent::MouseWheel { .. } => {
-                self.orbit.handle_event(
-                    ev,
-                    &mut self.camera,
-                    self.egui_ctx.is_pointer_over_area(),
-                );
+                self.orbit
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
             }
 
             WindowEvent::RedrawRequested => {
@@ -1407,11 +1447,19 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
     match layer {
         HeightLayer::Noise(n) => {
             // Noise type
-            let types = [NoiseType::Perlin, NoiseType::Simplex, NoiseType::Value, NoiseType::Ridged];
+            let types = [
+                NoiseType::Perlin,
+                NoiseType::Simplex,
+                NoiseType::Value,
+                NoiseType::Ridged,
+            ];
             ui.horizontal(|ui| {
                 ui.label("Type:");
                 for t in &types {
-                    if ui.selectable_label(n.noise_type == *t, format!("{:?}", t)).clicked() {
+                    if ui
+                        .selectable_label(n.noise_type == *t, format!("{:?}", t))
+                        .clicked()
+                    {
                         n.noise_type = *t;
                         dirty = true;
                     }
@@ -1429,11 +1477,20 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
             dirty |= drag_f64(ui, "Amplitude", &mut n.amplitude, 0.05, 0.0..=10.0);
 
             // Blend mode
-            let blends = [BlendMode::Add, BlendMode::Multiply, BlendMode::Max, BlendMode::Min, BlendMode::Overlay];
+            let blends = [
+                BlendMode::Add,
+                BlendMode::Multiply,
+                BlendMode::Max,
+                BlendMode::Min,
+                BlendMode::Overlay,
+            ];
             ui.horizontal(|ui| {
                 ui.label("Blend:");
                 for b in &blends {
-                    if ui.selectable_label(n.blend == *b, format!("{:?}", b)).clicked() {
+                    if ui
+                        .selectable_label(n.blend == *b, format!("{:?}", b))
+                        .clicked()
+                    {
                         n.blend = *b;
                         dirty = true;
                     }
@@ -1445,11 +1502,17 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
             dirty |= drag_f64(ui, "Falloff", &mut f.falloff, 0.01, 0.0..=1.0);
             ui.horizontal(|ui| {
                 ui.label("Mode:");
-                if ui.selectable_label(f.mode == FlattenMode::Below, "Below").clicked() {
+                if ui
+                    .selectable_label(f.mode == FlattenMode::Below, "Below")
+                    .clicked()
+                {
                     f.mode = FlattenMode::Below;
                     dirty = true;
                 }
-                if ui.selectable_label(f.mode == FlattenMode::Above, "Above").clicked() {
+                if ui
+                    .selectable_label(f.mode == FlattenMode::Above, "Above")
+                    .clicked()
+                {
                     f.mode = FlattenMode::Above;
                     dirty = true;
                 }
@@ -1458,11 +1521,17 @@ fn render_height_layer_ui(ui: &mut egui::Ui, layer: &mut HeightLayer, _idx: usiz
         HeightLayer::Erosion(e) => {
             ui.horizontal(|ui| {
                 ui.label("Kind:");
-                if ui.selectable_label(e.kind == ErosionKind::Thermal, "Thermal").clicked() {
+                if ui
+                    .selectable_label(e.kind == ErosionKind::Thermal, "Thermal")
+                    .clicked()
+                {
                     e.kind = ErosionKind::Thermal;
                     dirty = true;
                 }
-                if ui.selectable_label(e.kind == ErosionKind::Hydraulic, "Hydraulic").clicked() {
+                if ui
+                    .selectable_label(e.kind == ErosionKind::Hydraulic, "Hydraulic")
+                    .clicked()
+                {
                     e.kind = ErosionKind::Hydraulic;
                     dirty = true;
                 }

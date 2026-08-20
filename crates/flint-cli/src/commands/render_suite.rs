@@ -117,7 +117,14 @@ pub fn run(args: RenderSuiteArgs) -> Result<()> {
         if pos.sample < 0 {
             return;
         }
-        let key = (pos.bar, if status_bars { 0 } else { pos.beat_in_bar as i64 });
+        let key = (
+            pos.bar,
+            if status_bars {
+                0
+            } else {
+                pos.beat_in_bar as i64
+            },
+        );
         if key != last_line {
             last_line = key;
             let section = conductor.section_at_sample(pos.sample);

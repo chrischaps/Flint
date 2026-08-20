@@ -42,7 +42,7 @@ impl DebugMode {
         match self {
             Self::Pbr => 0,
             Self::WireframeOverlay => 0, // shader stays PBR, overlay handled by pipeline
-            Self::WireframeOnly => 0, // wireframe is handled by pipeline swap, shader stays PBR
+            Self::WireframeOnly => 0,    // wireframe is handled by pipeline swap, shader stays PBR
             Self::Normals => 1,
             Self::Depth => 2,
             Self::UvChecker => 3,

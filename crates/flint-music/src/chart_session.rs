@@ -22,18 +22,18 @@
 //! structured events instead of writing to stdout.
 
 use crate::chart_eval::ChartEval;
-use crate::tempo::ms_to_samples;
 use crate::clock_bridge::ClockBridge;
 use crate::coherence::{Coherence, CoherenceConfig};
 use crate::conductor::{Conductor, MusicalPosition};
 use crate::gradient::{GradientConfig, GradientDriver};
 use crate::input_stream::InputEvent;
-use crate::judgment::{Judge, JudgmentConfig, JudgmentRecord, JsonlWriter, LeanMode};
+use crate::judgment::{JsonlWriter, Judge, JudgmentConfig, JudgmentRecord, LeanMode};
 use crate::ladder::{Ladder, LadderConfig, LadderDriver, LadderParams};
 use crate::reintegration::{ReintegrationEvent, Reintegrator, SeqTick};
 use crate::replay::{SessionHeader, SessionWriter};
 use crate::session::{FileStems, SuiteSession};
 use crate::status::status_line_with_coherence;
+use crate::tempo::ms_to_samples;
 use crate::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
 use flint_core::{FlintError, Result};
 use kira::backend::Backend;
@@ -133,7 +133,10 @@ fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
         Ok(e) => e,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
         Err(err) => {
-            tracing::warn!("cannot read {}: {err} — treating as no record", dir.display());
+            tracing::warn!(
+                "cannot read {}: {err} — treating as no record",
+                dir.display()
+            );
             return None;
         }
     };
@@ -151,14 +154,20 @@ fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
         let text = match std::fs::read_to_string(&path) {
             Ok(t) => t,
             Err(err) => {
-                tracing::warn!("cannot read {}: {err} — skipping, trying next-newest", path.display());
+                tracing::warn!(
+                    "cannot read {}: {err} — skipping, trying next-newest",
+                    path.display()
+                );
                 continue;
             }
         };
         match text.parse::<toml::Value>() {
             Ok(value) => return Some((name, value)),
             Err(err) => {
-                tracing::warn!("cannot parse {}: {err} — skipping, trying next-newest", path.display());
+                tracing::warn!(
+                    "cannot parse {}: {err} — skipping, trying next-newest",
+                    path.display()
+                );
             }
         }
     }
@@ -173,7 +182,10 @@ pub fn judgment_offset_samples(
     calibration_ms: f64,
     sample_rate: u32,
 ) -> i64 {
-    ms_to_samples(latency_ms.unwrap_or(0.0) + calibration_ms, sample_rate as f64)
+    ms_to_samples(
+        latency_ms.unwrap_or(0.0) + calibration_ms,
+        sample_rate as f64,
+    )
 }
 
 // --- lean mode --------------------------------------------------------------
@@ -532,8 +544,7 @@ impl ChartCore {
             .unwrap_or([0.0, 0.0]);
         let err = ((self.lean[0] - target[0]).powi(2) + (self.lean[1] - target[1]).powi(2)).sqrt();
         let lean_mag = (self.lean[0].powi(2) + self.lean[1].powi(2)).sqrt();
-        let now_seconds =
-            pos.sample.max(0) as f64 / self.conductor.tempo().sample_rate() as f64;
+        let now_seconds = pos.sample.max(0) as f64 / self.conductor.tempo().sample_rate() as f64;
         // Evaluate only while Playing: the seam resets the gradient, and
         // holding the slew still through Failing/Reassembling means play
         // resumes with the gradient easing in from silence, not jumping to
@@ -647,7 +658,9 @@ impl ChartCore {
                         "ladder_config": self.ladder.config().to_json(),
                     }))?;
                 }
-                Err(e) => notices.push(format!("ladder reload failed, keeping current config: {e}")),
+                Err(e) => {
+                    notices.push(format!("ladder reload failed, keeping current config: {e}"))
+                }
             }
         }
         if self.gradient_path.exists() {
@@ -660,9 +673,9 @@ impl ChartCore {
                         "gradient_config": self.gradient.config().to_json(),
                     }))?;
                 }
-                Err(e) => {
-                    notices.push(format!("gradient reload failed, keeping current config: {e}"))
-                }
+                Err(e) => notices.push(format!(
+                    "gradient reload failed, keeping current config: {e}"
+                )),
             }
         }
         Ok(notices)
@@ -1202,10 +1215,12 @@ impl ChartSession {
     /// Load and validate the manifest + chart before any audio is touched,
     /// so the failure path is identical on both open fronts.
     fn validate(cfg: &ChartSessionConfig) -> Result<(SuiteManifest, Chart)> {
-        let manifest = SuiteManifest::load(&cfg.manifest)
-            .map_err(|e| FlintError::ValidationError(format!("loading {}: {e}", cfg.manifest.display())))?;
-        let chart = Chart::load(&cfg.chart)
-            .map_err(|e| FlintError::ValidationError(format!("loading {}: {e}", cfg.chart.display())))?;
+        let manifest = SuiteManifest::load(&cfg.manifest).map_err(|e| {
+            FlintError::ValidationError(format!("loading {}: {e}", cfg.manifest.display()))
+        })?;
+        let chart = Chart::load(&cfg.chart).map_err(|e| {
+            FlintError::ValidationError(format!("loading {}: {e}", cfg.chart.display()))
+        })?;
         let mut issues = validate_manifest(&manifest);
         issues.extend(validate_manifest_assets(&manifest, &cfg.base_dir));
         issues.extend(validate_chart(&chart, &manifest));
@@ -1242,7 +1257,10 @@ impl ChartSession {
             lean_mode: cfg.lean_mode,
             ..Default::default()
         };
-        notices.push(format!("lean mode: {}", lean_mode_name(judgment_cfg.lean_mode)));
+        notices.push(format!(
+            "lean mode: {}",
+            lean_mode_name(judgment_cfg.lean_mode)
+        ));
         let judge = Judge::new(eval, judge_conductor, judgment_cfg);
 
         // Coherence config: explicit path must load; the default path is
@@ -1256,10 +1274,12 @@ impl ChartSession {
             CoherenceSource::Snapshot => unreachable!("no snapshot source in a live session"),
         };
         match &source {
-            CoherenceSource::Explicit(p) | CoherenceSource::DefaultFile(p) => notices.push(format!(
-                "coherence config: {} (r+Enter = reload, q+Enter = quit)",
-                p.display()
-            )),
+            CoherenceSource::Explicit(p) | CoherenceSource::DefaultFile(p) => {
+                notices.push(format!(
+                    "coherence config: {} (r+Enter = reload, q+Enter = quit)",
+                    p.display()
+                ))
+            }
             CoherenceSource::Builtin(p) => notices.push(format!(
                 "coherence config: built-in defaults (no {})",
                 p.display()
@@ -1358,7 +1378,9 @@ impl ChartSession {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let log_path = cfg.base_dir.join(format!("logs/judgment/judgment-{epoch}.jsonl"));
+        let log_path = cfg
+            .base_dir
+            .join(format!("logs/judgment/judgment-{epoch}.jsonl"));
         let header = serde_json::json!({
             "t": "header", "schema": 0,
             "suite": manifest.id, "chart": cfg.chart.display().to_string(),
@@ -1484,10 +1506,7 @@ impl ChartSession {
     /// the capture thread's rumble channel. Events arrive suite-addressed
     /// converted to **raw clock samples** already — the sink forwards them
     /// verbatim. Without a sink the driver never runs.
-    pub fn set_haptic_sink(
-        &mut self,
-        sink: Box<dyn FnMut(crate::haptics::HapticEvent) + Send>,
-    ) {
+    pub fn set_haptic_sink(&mut self, sink: Box<dyn FnMut(crate::haptics::HapticEvent) + Send>) {
         self.haptic_sink = Some(sink);
     }
 
@@ -1585,8 +1604,7 @@ impl ChartSession {
                 &seq_events,
                 &mut events,
             );
-            let offset =
-                self.session.timeline_offset() + self.session.conductor.latency_samples();
+            let offset = self.session.timeline_offset() + self.session.conductor.latency_samples();
             for ev in events {
                 sink(match ev {
                     crate::haptics::HapticEvent::Burst {
@@ -1711,9 +1729,9 @@ impl ChartSession {
                         None => self.haptic_pending.push(ev),
                     }
                 }
-                Err(e) => {
-                    notices.push(format!("haptics reload failed, keeping current config: {e}"))
-                }
+                Err(e) => notices.push(format!(
+                    "haptics reload failed, keeping current config: {e}"
+                )),
             }
         }
         Ok(notices)
@@ -1805,10 +1823,8 @@ mod newest_toml_tests {
     /// judgment).
     #[test]
     fn corrupt_newest_falls_back_to_next() {
-        let dir = std::env::temp_dir().join(format!(
-            "flint-music-newest-toml-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("flint-music-newest-toml-{}", std::process::id()));
         let latency = dir.join("logs/latency");
         std::fs::create_dir_all(&latency).unwrap();
         std::fs::write(

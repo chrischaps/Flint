@@ -25,9 +25,7 @@ pub enum TextureNode {
         inputs: HashMap<String, String>,
     },
     /// The final output node that gathers the pipeline results.
-    Output {
-        output_maps: Vec<String>,
-    },
+    Output { output_maps: Vec<String> },
 }
 
 impl TextureNode {
@@ -53,10 +51,7 @@ impl TextureNode {
     pub fn from_toml(value: &toml::Value, index: usize) -> Result<Self> {
         let op = parse_op(value, index)?;
         let port_info = op.port_info();
-        let mut params = value
-            .as_table()
-            .cloned()
-            .unwrap_or_default();
+        let mut params = value.as_table().cloned().unwrap_or_default();
         let op_type = params
             .get("type")
             .and_then(|v| v.as_str())
@@ -147,7 +142,9 @@ impl TextureNode {
                 for map in output_maps {
                     match map.as_str() {
                         "albedo" => channels.extend_from_slice(&["r", "g", "b"]),
-                        "normal" => channels.extend_from_slice(&["normal_x", "normal_y", "normal_z"]),
+                        "normal" => {
+                            channels.extend_from_slice(&["normal_x", "normal_y", "normal_z"])
+                        }
                         "roughness" => channels.push("roughness"),
                         _ => {}
                     }
@@ -175,11 +172,9 @@ pub struct Connection {
 
 /// Check whether any op in the array has an `id` field (explicit wiring mode).
 pub fn has_explicit_connections(ops_array: &[toml::Value]) -> bool {
-    ops_array.iter().any(|v| {
-        v.as_table()
-            .map(|t| t.contains_key("id"))
-            .unwrap_or(false)
-    })
+    ops_array
+        .iter()
+        .any(|v| v.as_table().map(|t| t.contains_key("id")).unwrap_or(false))
 }
 
 /// Parse explicit `inputs` references from a set of nodes into [`Connection`]s.
@@ -336,13 +331,9 @@ pub fn graph_to_ops(nodes: &[TextureNode]) -> Vec<toml::Value> {
                 if !inputs.is_empty() {
                     let mut inputs_table = toml::map::Map::new();
                     for (k, v) in inputs {
-                        inputs_table
-                            .insert(k.clone(), toml::Value::String(v.clone()));
+                        inputs_table.insert(k.clone(), toml::Value::String(v.clone()));
                     }
-                    table.insert(
-                        "inputs".to_string(),
-                        toml::Value::Table(inputs_table),
-                    );
+                    table.insert("inputs".to_string(), toml::Value::Table(inputs_table));
                 }
                 Some(toml::Value::Table(table))
             }
@@ -502,11 +493,8 @@ mod tests {
 
     #[test]
     fn output_node_input_channels() {
-        let node = TextureNode::new_output(vec![
-            "albedo".into(),
-            "normal".into(),
-            "roughness".into(),
-        ]);
+        let node =
+            TextureNode::new_output(vec!["albedo".into(), "normal".into(), "roughness".into()]);
         let inputs = node.input_channels();
         assert!(inputs.contains(&"r"));
         assert!(inputs.contains(&"g"));
@@ -532,7 +520,13 @@ mod tests {
         let ops_back = graph_to_ops(&nodes);
         assert_eq!(ops_back.len(), 3);
         assert_eq!(
-            ops_back[0].as_table().unwrap().get("type").unwrap().as_str().unwrap(),
+            ops_back[0]
+                .as_table()
+                .unwrap()
+                .get("type")
+                .unwrap()
+                .as_str()
+                .unwrap(),
             "brick_grid"
         );
     }
@@ -578,9 +572,14 @@ mod tests {
 
         let node = TextureNode::from_toml(&val, 0).unwrap();
         match &node {
-            TextureNode::Op { id, inputs, params, .. } => {
+            TextureNode::Op {
+                id, inputs, params, ..
+            } => {
                 assert_eq!(id.as_deref(), Some("heights"));
-                assert_eq!(inputs.get("cell_id").map(|s| s.as_str()), Some("grid.cell_id"));
+                assert_eq!(
+                    inputs.get("cell_id").map(|s| s.as_str()),
+                    Some("grid.cell_id")
+                );
                 // id and inputs should be stripped from params
                 assert!(!params.contains_key("id"));
                 assert!(!params.contains_key("inputs"));
@@ -606,7 +605,10 @@ mod tests {
         let table = ops[0].as_table().unwrap();
         assert_eq!(table.get("id").unwrap().as_str().unwrap(), "heights");
         let inputs = table.get("inputs").unwrap().as_table().unwrap();
-        assert_eq!(inputs.get("cell_id").unwrap().as_str().unwrap(), "grid.cell_id");
+        assert_eq!(
+            inputs.get("cell_id").unwrap().as_str().unwrap(),
+            "grid.cell_id"
+        );
     }
 
     #[test]
@@ -653,7 +655,7 @@ mod tests {
         let order = topological_sort(4, &edges).unwrap();
         assert_eq!(order[0], 0); // source first
         assert_eq!(order[3], 3); // sink last
-        // 1 and 2 can be in either order
+                                 // 1 and 2 can be in either order
         assert!(order.contains(&1));
         assert!(order.contains(&2));
     }
@@ -699,8 +701,12 @@ mod tests {
         assert_eq!(nodes.len(), 4);
 
         // grid -> heights (cell_id), grid -> color (cell_id), and output connections
-        assert!(connections.iter().any(|c| c.from_node == 0 && c.to_node == 1));
-        assert!(connections.iter().any(|c| c.from_node == 0 && c.to_node == 2));
+        assert!(connections
+            .iter()
+            .any(|c| c.from_node == 0 && c.to_node == 1));
+        assert!(connections
+            .iter()
+            .any(|c| c.from_node == 0 && c.to_node == 2));
         // Output node should have connections inferred from last producers
         assert!(connections.iter().any(|c| c.to_node == 3));
     }

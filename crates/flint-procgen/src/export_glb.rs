@@ -8,11 +8,11 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::mem;
 
+use gltf::json;
 use gltf::json::accessor::{ComponentType, GenericComponentType, Type};
 use gltf::json::buffer::Target;
 use gltf::json::mesh::{Mode, Primitive, Semantic};
 use gltf::json::validation::{Checked, USize64};
-use gltf::json;
 
 use crate::skinning::SkinnedMeshData;
 use crate::types::{MaterialData, MeshData};
@@ -376,8 +376,7 @@ fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) ->
         if let Some(parent) = bone.parent {
             let parent_node: json::Index<json::Node> =
                 json::Index::new(bone_node_base + parent as u32);
-            let child_node: json::Index<json::Node> =
-                json::Index::new(bone_node_base + i as u32);
+            let child_node: json::Index<json::Node> = json::Index::new(bone_node_base + i as u32);
             if let Some(ref mut children) = root.nodes[parent_node.value()].children {
                 children.push(child_node);
             } else {
@@ -822,9 +821,13 @@ mod tests {
         // GLB magic: "glTF"
         assert_eq!(&glb_bytes[0..4], b"glTF");
         // Version 2
-        assert_eq!(u32::from_le_bytes([glb_bytes[4], glb_bytes[5], glb_bytes[6], glb_bytes[7]]), 2);
+        assert_eq!(
+            u32::from_le_bytes([glb_bytes[4], glb_bytes[5], glb_bytes[6], glb_bytes[7]]),
+            2
+        );
         // Total length matches actual bytes
-        let total_len = u32::from_le_bytes([glb_bytes[8], glb_bytes[9], glb_bytes[10], glb_bytes[11]]);
+        let total_len =
+            u32::from_le_bytes([glb_bytes[8], glb_bytes[9], glb_bytes[10], glb_bytes[11]]);
         assert_eq!(total_len as usize, glb_bytes.len());
     }
 

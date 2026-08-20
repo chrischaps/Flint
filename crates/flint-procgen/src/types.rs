@@ -172,7 +172,8 @@ impl MeshData {
         use std::mem::size_of;
         self.vertices.len() * size_of::<Vertex>()
             + self.indices.len() * size_of::<u32>()
-            + self.materials
+            + self
+                .materials
                 .iter()
                 .map(|m| m.name.len() + size_of::<MaterialData>())
                 .sum::<usize>()

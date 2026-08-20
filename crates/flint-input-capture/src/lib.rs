@@ -299,14 +299,16 @@ fn capture_loop(
     let mut engine = rumble::RumbleEngine::new();
     // Every exit path below must leave the motors silent: XInput holds the
     // last written state until someone overwrites it.
-    let quiet =
-        |engine: &mut rumble::RumbleEngine, ff: &mut Option<gilrs_core::FfDevice>| {
-            let (s, w) = engine.silence();
-            if let Some(dev) = ff {
-                dev.set_ff_state(s, w, Duration::ZERO);
-            }
-        };
-    let pads: Vec<_> = gilrs.gamepads().map(|(_, g)| g.name().to_string()).collect();
+    let quiet = |engine: &mut rumble::RumbleEngine, ff: &mut Option<gilrs_core::FfDevice>| {
+        let (s, w) = engine.silence();
+        if let Some(dev) = ff {
+            dev.set_ff_state(s, w, Duration::ZERO);
+        }
+    };
+    let pads: Vec<_> = gilrs
+        .gamepads()
+        .map(|(_, g)| g.name().to_string())
+        .collect();
     if pads.is_empty() {
         tracing::warn!(
             "no gamepads visible to the input backend — capture will be silent \
@@ -374,9 +376,11 @@ fn capture_loop(
                 EventType::ButtonPressed(Button::RightTrigger2, _) if !full => {
                     pulses += 1;
                 }
-                EventType::ButtonChanged(side @ (Button::LeftTrigger2 | Button::RightTrigger2), v, _)
-                    if full =>
-                {
+                EventType::ButtonChanged(
+                    side @ (Button::LeftTrigger2 | Button::RightTrigger2),
+                    v,
+                    _,
+                ) if full => {
                     let slot = if side == Button::LeftTrigger2 { 0 } else { 1 };
                     trig[slot] = (v as f64).clamp(0.0, 1.0);
                     pressure_dirty[slot] = true;
@@ -410,7 +414,9 @@ fn capture_loop(
                         .map(|t0| now.duration_since(t0).as_secs_f64() * 1000.0 <= FLICK_WINDOW_MS)
                         .unwrap_or(false);
                     let refractory_ok = flick_last_fire
-                        .map(|t| now.duration_since(t).as_secs_f64() * 1000.0 >= FLICK_REFRACTORY_MS)
+                        .map(|t| {
+                            now.duration_since(t).as_secs_f64() * 1000.0 >= FLICK_REFRACTORY_MS
+                        })
                         .unwrap_or(true);
                     if in_window && refractory_ok {
                         flick_dir = Some([sway_x / mag, sway_y / mag]);
@@ -486,9 +492,7 @@ fn capture_loop(
                 None => {
                     if !warned_cold {
                         warned_cold = true;
-                        tracing::warn!(
-                            "input before clock bridge warm-up dropped (pre-roll)"
-                        );
+                        tracing::warn!("input before clock bridge warm-up dropped (pre-roll)");
                     }
                 }
             }
@@ -548,7 +552,10 @@ const BUCKET_EDGES_MS: [f64; 8] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 33.0, f64::INF
 /// Poll gilrs at `poll_hz` for `duration`, recording inter-event intervals
 /// while the operator wiggles the stick. Blocking; run on a spare thread or
 /// a dedicated CLI mode.
-pub fn measure_granularity(duration: Duration, poll_hz: u32) -> flint_core::Result<GranularityReport> {
+pub fn measure_granularity(
+    duration: Duration,
+    poll_hz: u32,
+) -> flint_core::Result<GranularityReport> {
     let mut gilrs = Gilrs::new().map_err(|e| {
         flint_core::FlintError::InputError(format!("gamepad backend unavailable: {e}"))
     })?;
@@ -606,8 +613,14 @@ impl GranularityReport {
         out.push_str(&format!("duration_s = {}\n", self.duration_s));
         out.push_str(&format!("poll_hz = {}\n", self.poll_hz));
         out.push_str(&format!("events = {}\n", self.events));
-        out.push_str(&format!("receipt_median_ms = {}\n", fmt(self.receipt_median_ms)));
-        out.push_str(&format!("driver_median_ms = {}\n", fmt(self.driver_median_ms)));
+        out.push_str(&format!(
+            "receipt_median_ms = {}\n",
+            fmt(self.receipt_median_ms)
+        ));
+        out.push_str(&format!(
+            "driver_median_ms = {}\n",
+            fmt(self.driver_median_ms)
+        ));
         for (name, buckets) in [
             ("receipt_deltas", &self.receipt_deltas),
             ("driver_deltas", &self.driver_deltas),

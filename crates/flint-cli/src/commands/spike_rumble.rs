@@ -24,8 +24,8 @@ pub fn run(args: SpikeRumbleArgs) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("."));
 
     println!("rumble command-path spike (hold the controller)");
-    let report =
-        flint_input_capture::rumble::spike_rumble(!args.no_feel).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let report = flint_input_capture::rumble::spike_rumble(!args.no_feel)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!(
         "direct set_ff_state: median {:.1} us, p99 {:.1} us, max {:.1} us (n={})",
         report.direct.median_us, report.direct.p99_us, report.direct.max_us, report.direct.n

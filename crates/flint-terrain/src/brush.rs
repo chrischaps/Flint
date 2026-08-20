@@ -160,8 +160,7 @@ pub fn apply_splat_brush(
                     // Increase target layer, decrease others proportionally
                     let current = splat[idx + layer as usize] as f32;
                     let add = (255.0 - current) * weight;
-                    splat[idx + layer as usize] =
-                        (current + add).round().clamp(0.0, 255.0) as u8;
+                    splat[idx + layer as usize] = (current + add).round().clamp(0.0, 255.0) as u8;
 
                     // Redistribute remaining to other channels
                     let new_val = splat[idx + layer as usize] as f32;
@@ -174,8 +173,7 @@ pub fn apply_splat_brush(
                     if others_total > 0.0 {
                         for c in 0..4 {
                             if c != layer as usize {
-                                splat[idx + c] = (splat[idx + c] as f32 * remaining
-                                    / others_total)
+                                splat[idx + c] = (splat[idx + c] as f32 * remaining / others_total)
                                     .round()
                                     .clamp(0.0, 255.0)
                                     as u8;
@@ -187,13 +185,13 @@ pub fn apply_splat_brush(
                     // Decrease target layer, increase layer 0 as fallback
                     let current = splat[idx + layer as usize] as f32;
                     let sub = current * weight;
-                    splat[idx + layer as usize] =
-                        (current - sub).round().clamp(0.0, 255.0) as u8;
+                    splat[idx + layer as usize] = (current - sub).round().clamp(0.0, 255.0) as u8;
 
                     // Give the removed weight to layer 0 (unless erasing layer 0)
                     let fallback = if layer == 0 { 1 } else { 0 };
-                    splat[idx + fallback] =
-                        (splat[idx + fallback] as f32 + sub).round().clamp(0.0, 255.0) as u8;
+                    splat[idx + fallback] = (splat[idx + fallback] as f32 + sub)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
                 }
             }
         }
@@ -247,8 +245,8 @@ pub fn ray_heightmap_intersect(
             continue;
         }
 
-        let terrain_h = sample_bilinear(heights, res, u.clamp(0.0, 1.0), v.clamp(0.0, 1.0))
-            * height_scale;
+        let terrain_h =
+            sample_bilinear(heights, res, u.clamp(0.0, 1.0), v.clamp(0.0, 1.0)) * height_scale;
         let above = py > terrain_h;
 
         if !above && prev_above && t > 0.0 {
@@ -419,7 +417,16 @@ mod tests {
 
         // Apply smooth several times
         for _ in 0..10 {
-            apply_height_brush(&mut heights, res, 0.5, 0.5, HeightBrushMode::Smooth, &params, 0.1, 42);
+            apply_height_brush(
+                &mut heights,
+                res,
+                0.5,
+                0.5,
+                HeightBrushMode::Smooth,
+                &params,
+                0.1,
+                42,
+            );
         }
 
         // The spike should have smoothed out

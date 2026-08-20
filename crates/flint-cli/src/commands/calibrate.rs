@@ -129,7 +129,10 @@ pub fn run(args: CalibrateArgs) -> Result<()> {
         let mut devs: Vec<f64> = errors_ms.iter().map(|e| (e - median_ms).abs()).collect();
         median(&mut devs)
     };
-    println!("calibration: median {median_ms:+.1} ms, MAD {mad_ms:.1} ms over {} taps", errors_ms.len());
+    println!(
+        "calibration: median {median_ms:+.1} ms, MAD {mad_ms:.1} ms over {} taps",
+        errors_ms.len()
+    );
 
     let latency_file = latency.map(|(f, _)| f).unwrap_or_else(|| "none".into());
     let contents = format!(

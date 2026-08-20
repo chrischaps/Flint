@@ -37,7 +37,7 @@ fn chart() -> Chart {
         (16.0, -0.4, 0.3),
         (24.0, 0.3, 0.4),
         (32.0, -0.2, -0.4),
-        (40.0, 0.4, 0.1),   // the change lands here
+        (40.0, 0.4, 0.1), // the change lands here
         (48.0, -0.3, -0.3),
         (56.0, 0.2, 0.3),
         (60.0, 0.0, 0.0),
@@ -88,10 +88,10 @@ fn run(events: &[InputEvent]) -> RunResult {
         final_value: 0.0,
     };
     let fold = |records: &mut Vec<JudgmentRecord>,
-                    at_sample: i64,
-                    coherence: &mut Coherence,
-                    result: &mut RunResult,
-                    conductor: &Conductor| {
+                at_sample: i64,
+                coherence: &mut Coherence,
+                result: &mut RunResult,
+                conductor: &Conductor| {
         let beats_per_bar = conductor
             .tempo()
             .anchor_at(at_sample.max(0))
@@ -117,7 +117,13 @@ fn run(events: &[InputEvent]) -> RunResult {
 
     for ev in events {
         judge.ingest(ev, &mut out);
-        fold(&mut out, ev.sample(), &mut coherence, &mut result, &conductor);
+        fold(
+            &mut out,
+            ev.sample(),
+            &mut coherence,
+            &mut result,
+            &conductor,
+        );
     }
     let last = events.last().map(|e| e.sample()).unwrap_or(0);
     judge.finish(&mut out);
@@ -160,7 +166,10 @@ fn perfect_play_exceeds_090_by_bar_four_and_holds_across_the_change() {
     // From the moment it crosses 0.9 it stays there — including across the
     // tempo/meter change at bar 10 — to the end of the chart.
     let after = &result.trace[first_idx..];
-    assert!(after.iter().any(|(bar, _)| *bar >= 12), "trace crosses the change");
+    assert!(
+        after.iter().any(|(bar, _)| *bar >= 12),
+        "trace crosses the change"
+    );
     for (bar, v) in after {
         assert!(*v > 0.9, "coherence {v:.3} sagged at bar {bar}");
     }

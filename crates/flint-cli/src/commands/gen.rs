@@ -7,8 +7,8 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::Args;
 use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
-use flint_core::ContentHash;
 use flint_asset_gen::StyleGuide;
+use flint_core::ContentHash;
 use flint_procgen::{
     export_glb, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig, SeedMode,
     ValidationConstraints,
@@ -145,12 +145,7 @@ pub fn run(args: GenArgs) -> Result<()> {
                 }
             }
 
-            println!(
-                "[{}/{}] Generating seed {}...",
-                i + 1,
-                batch_count,
-                seed
-            );
+            println!("[{}/{}] Generating seed {}...", i + 1, batch_count, seed);
 
             let output = generate_one(&batch_spec, &registry, &out_path, args.format.as_deref())?;
             generated += 1;
@@ -221,12 +216,8 @@ pub fn run(args: GenArgs) -> Result<()> {
             }
 
             if args.validate {
-                let passed = run_validation(
-                    &output,
-                    &spec,
-                    args.style_guide.as_deref(),
-                    args.strict,
-                )?;
+                let passed =
+                    run_validation(&output, &spec, args.style_guide.as_deref(), args.strict)?;
                 if !passed {
                     std::process::exit(1);
                 }
@@ -243,12 +234,8 @@ pub fn run(args: GenArgs) -> Result<()> {
             }
 
             if args.validate {
-                let passed = run_validation(
-                    &output,
-                    &spec,
-                    args.style_guide.as_deref(),
-                    args.strict,
-                )?;
+                let passed =
+                    run_validation(&output, &spec, args.style_guide.as_deref(), args.strict)?;
                 if !passed {
                     std::process::exit(1);
                 }
@@ -376,7 +363,9 @@ fn write_output(
             // If out_path is a directory (exists as dir or ends with separator),
             // write images directly inside it with stem "output".
             let (parent, stem) = if out_path.is_dir()
-                || out_path.to_str().map_or(false, |s| s.ends_with('/') || s.ends_with('\\'))
+                || out_path
+                    .to_str()
+                    .map_or(false, |s| s.ends_with('/') || s.ends_with('\\'))
             {
                 let dir = out_path;
                 std::fs::create_dir_all(dir)
@@ -466,10 +455,10 @@ fn register_output(
 
     let name = format!(
         "{}_{}",
-        spec.meta.name.replace(' ', "_").replace(
-            |c: char| !c.is_alphanumeric() && c != '_' && c != '-',
-            ""
-        ),
+        spec.meta
+            .name
+            .replace(' ', "_")
+            .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', ""),
         seed
     );
 
@@ -514,7 +503,11 @@ fn register_output(
     std::fs::write(&sidecar_path, toml_str)
         .with_context(|| format!("failed to write sidecar {}", sidecar_path.display()))?;
 
-    println!("Registered: {} -> {}", out_path.display(), content_hash.to_prefixed_hex());
+    println!(
+        "Registered: {} -> {}",
+        out_path.display(),
+        content_hash.to_prefixed_hex()
+    );
 
     Ok(())
 }
@@ -528,8 +521,8 @@ fn check_cache_hit(out_path: &Path, spec_hash: &ContentHash, seed: u64) -> Resul
 
     let content = std::fs::read_to_string(&sidecar)
         .with_context(|| format!("failed to read sidecar {}", sidecar.display()))?;
-    let asset_file: AssetFile =
-        toml::from_str(&content).with_context(|| format!("failed to parse {}", sidecar.display()))?;
+    let asset_file: AssetFile = toml::from_str(&content)
+        .with_context(|| format!("failed to parse {}", sidecar.display()))?;
 
     let cached_spec_hash = asset_file
         .asset
@@ -542,18 +535,14 @@ fn check_cache_hit(out_path: &Path, spec_hash: &ContentHash, seed: u64) -> Resul
         .get("seed")
         .and_then(|v| v.as_integer());
 
-    Ok(cached_spec_hash == Some(&spec_hash.to_prefixed_hex())
-        && cached_seed == Some(seed as i64))
+    Ok(cached_spec_hash == Some(&spec_hash.to_prefixed_hex()) && cached_seed == Some(seed as i64))
 }
 
 /// Get the .asset.toml sidecar path for an output file.
 fn sidecar_path_for(out_path: &Path) -> PathBuf {
     out_path.with_extension(format!(
         "{}.asset.toml",
-        out_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
+        out_path.extension().and_then(|e| e.to_str()).unwrap_or("")
     ))
 }
 
@@ -585,10 +574,7 @@ fn resolve_batch_output_path(base: &Path, seed: u64) -> PathBuf {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    let ext = base
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("glb");
+    let ext = base.extension().and_then(|e| e.to_str()).unwrap_or("glb");
     let parent = base.parent().unwrap_or(Path::new("."));
     parent.join(format!("{stem}_{seed}.{ext}"))
 }

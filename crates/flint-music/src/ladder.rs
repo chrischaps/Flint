@@ -146,11 +146,7 @@ impl Default for LadderConfig {
     /// chromatic). Values are starting points; `config/ladder.toml` is the
     /// tuning surface.
     fn default() -> Self {
-        let rung = |name: &str,
-                    enter: f64,
-                    exit: f64,
-                    audio: RungAudio,
-                    visual: RungVisual| Rung {
+        let rung = |name: &str, enter: f64, exit: f64, audio: RungAudio, visual: RungVisual| Rung {
             name: name.into(),
             enter_below: enter,
             exit_above: exit,
@@ -256,7 +252,9 @@ impl LadderConfig {
         let d = Self::default().full_fail;
         let ff = root.get("full_fail");
         let ff_f = |key: &str, default: f64| {
-            ff.and_then(|t| t.get(key)).and_then(toml_f64).unwrap_or(default)
+            ff.and_then(|t| t.get(key))
+                .and_then(toml_f64)
+                .unwrap_or(default)
         };
         let enter_below = ff_f("enter_below", d.enter_below);
         let full_fail = FullFail {
@@ -428,7 +426,9 @@ impl LadderConfig {
                 }
             }
             if r.audio.warble_depth_semitones < 0.0 || r.audio.warble_depth_semitones > 1.0 {
-                return err(format!("rung {i} warble depth out of range (0..1 semitones)"));
+                return err(format!(
+                    "rung {i} warble depth out of range (0..1 semitones)"
+                ));
             }
             if r.audio.warble_rate_hz < 0.0 || r.audio.warble_rate_hz > 8.0 {
                 return err(format!("rung {i} warble rate out of range (0..8 Hz)"));
@@ -474,9 +474,7 @@ impl LadderConfig {
                 self.seam_pickup_beats
             ));
         }
-        if !(0.0..=1.0).contains(&self.arm_above)
-            || self.arm_above <= self.full_fail.enter_below
-        {
+        if !(0.0..=1.0).contains(&self.arm_above) || self.arm_above <= self.full_fail.enter_below {
             return err(format!(
                 "arm_above {} must be in 0..1 and above full_fail.enter_below {}",
                 self.arm_above, self.full_fail.enter_below
@@ -635,9 +633,11 @@ impl LadderParams {
             ramp_ms: lerp_f(self.ramp_ms, other.ramp_ms),
             alternate_mix,
             visual: RungVisual {
-                desaturate: self.visual.desaturate + (other.visual.desaturate - self.visual.desaturate) * tf,
+                desaturate: self.visual.desaturate
+                    + (other.visual.desaturate - self.visual.desaturate) * tf,
                 blur: self.visual.blur + (other.visual.blur - self.visual.blur) * tf,
-                chromatic: self.visual.chromatic + (other.visual.chromatic - self.visual.chromatic) * tf,
+                chromatic: self.visual.chromatic
+                    + (other.visual.chromatic - self.visual.chromatic) * tf,
             },
         }
     }
@@ -949,7 +949,10 @@ mod tests {
         assert!(mid.visual.desaturate < fail.visual.desaturate);
         let trim = mid.gain_trim_db.get("texture").copied().unwrap();
         assert!(trim > DROP_DB && trim < 0.0);
-        assert_eq!(fail.lerp(&clean, 1.0).gain_trim_db.get("texture"), Some(&0.0));
+        assert_eq!(
+            fail.lerp(&clean, 1.0).gain_trim_db.get("texture"),
+            Some(&0.0)
+        );
     }
 
     #[test]
@@ -1020,4 +1023,3 @@ warble_rate_hz = 1.0
         assert!(cfg.to_json()["rungs"].as_array().unwrap().len() == 2);
     }
 }
-

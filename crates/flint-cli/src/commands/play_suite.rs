@@ -41,7 +41,10 @@ pub fn run(args: PlaySuiteArgs) -> Result<()> {
         for i in &issues {
             eprintln!("{i}");
         }
-        bail!("manifest failed validation ({} issue(s)); not playing", issues.len());
+        bail!(
+            "manifest failed validation ({} issue(s)); not playing",
+            issues.len()
+        );
     }
 
     // --- latency report ------------------------------------------------------

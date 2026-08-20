@@ -16,8 +16,7 @@
 use anyhow::{anyhow, Result};
 use flint_audio::engine::AudioEngine;
 use flint_music::chart_session::{
-    judgment_offset_samples, parse_lean_mode,
-    ChartSession, ChartSessionConfig,
+    judgment_offset_samples, parse_lean_mode, ChartSession, ChartSessionConfig,
 };
 use flint_music::{InputEvent, Tick, VisualFrame};
 use flint_runtime::InputState;
@@ -232,8 +231,7 @@ impl MusicSession {
                 .map_err(|e| anyhow!("music_session component: {e}"))?,
             None => flint_input_capture::VerbMap::default(),
         };
-        for n in flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples)
-        {
+        for n in flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples) {
             println!("[music] {n}");
         }
 
@@ -381,9 +379,7 @@ impl MusicSession {
                                 toml::Value::Integer(i) => {
                                     flint_script::CueParam::Number(*i as f64)
                                 }
-                                toml::Value::String(s) => {
-                                    flint_script::CueParam::Text(s.clone())
-                                }
+                                toml::Value::String(s) => flint_script::CueParam::Text(s.clone()),
                                 toml::Value::Boolean(b) => flint_script::CueParam::Flag(*b),
                                 _ => return None,
                             };

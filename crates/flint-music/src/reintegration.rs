@@ -17,11 +17,11 @@
 //! the designed loop; only the debounce restarts.
 
 use crate::conductor::Grid;
-use crate::tempo::ms_to_samples;
 use crate::gradient::GradientOffsets;
 use crate::ladder::{Ladder, LadderDriver, LadderParams};
 use crate::manifest::Reintegration;
 use crate::session::SuiteSession;
+use crate::tempo::ms_to_samples;
 use flint_core::Result;
 use kira::Tween;
 use std::time::Duration;
@@ -281,8 +281,7 @@ impl Reintegrator {
         // starts sit on bar lines, so beat phase is continuous across the
         // jump. The gesture is measured in beats at the CURRENT tempo and
         // ends at the seam, so (for whole-beat lengths) it starts on a beat.
-        let lead_samples =
-            ms_to_samples(self.fade_ms + MIN_LEAD_MS, sample_rate);
+        let lead_samples = ms_to_samples(self.fade_ms + MIN_LEAD_MS, sample_rate);
         let now_beat = session.conductor.position_at_sample(now_suite).beat;
         let beat_samples = (session.conductor.sample_at_beat(now_beat + 1.0)
             - session.conductor.sample_at_beat(now_beat))
@@ -301,9 +300,9 @@ impl Reintegrator {
         // re-plays locked at the seam.
         let gesture_start_suite = seam_suite - rewind_span;
         if rewind_span > 0 {
-            let start_time = kira::StartTime::ClockTime(session.clock_time_at_raw(
-                gesture_start_suite + session.timeline_offset(),
-            ));
+            let start_time = kira::StartTime::ClockTime(
+                session.clock_time_at_raw(gesture_start_suite + session.timeline_offset()),
+            );
             let dur = Duration::from_secs_f64(rewind_span as f64 / sample_rate);
             for name in crate::BUSES {
                 if let Some(bus) = session.mixer.bus_mut(name) {
@@ -378,9 +377,8 @@ impl Reintegrator {
             span = span.min(available);
             if span > beat_samples / 4 {
                 let seam_raw_pre = seam_suite + session.timeline_offset();
-                let cue_start = kira::StartTime::ClockTime(
-                    session.clock_time_at_raw(seam_raw_pre - span),
-                );
+                let cue_start =
+                    kira::StartTime::ClockTime(session.clock_time_at_raw(seam_raw_pre - span));
                 let ramp = Tween {
                     start_time: cue_start,
                     duration: Duration::from_secs_f64(span as f64 / sample_rate),
@@ -388,8 +386,7 @@ impl Reintegrator {
                 };
                 // Fade completes AT the seam so the cue never doubles the
                 // ensemble's sample-pure downbeat entry.
-                let fade_samples =
-                    ms_to_samples(self.fade_ms, sample_rate);
+                let fade_samples = ms_to_samples(self.fade_ms, sample_rate);
                 let stop_at_seam = Tween {
                     start_time: kira::StartTime::ClockTime(
                         session.clock_time_at_raw(seam_raw_pre - fade_samples),

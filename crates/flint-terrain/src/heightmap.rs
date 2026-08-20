@@ -145,12 +145,7 @@ impl Heightmap {
         let encoder = image::codecs::png::PngEncoder::new(w);
         use image::ImageEncoder;
         encoder
-            .write_image(
-                &buf,
-                self.width,
-                self.depth,
-                image::ExtendedColorType::L16,
-            )
+            .write_image(&buf, self.width, self.depth, image::ExtendedColorType::L16)
             .map_err(|e| format!("PNG encode failed: {}", e))?;
 
         Ok(())

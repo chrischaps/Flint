@@ -76,9 +76,7 @@ fn lock_or_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| {
         static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            tracing::error!(
-                "clock-bridge mutex poisoned; recovering with last state (ADR 0039)"
-            );
+            tracing::error!("clock-bridge mutex poisoned; recovering with last state (ADR 0039)");
         }
         poisoned.into_inner()
     })
@@ -154,10 +152,7 @@ impl ClockBridge {
                         e * e
                     })
                     .sum();
-                (
-                    ((ss / n).sqrt() / inner.sample_rate) * 1000.0,
-                    m.slope,
-                )
+                (((ss / n).sqrt() / inner.sample_rate) * 1000.0, m.slope)
             }
             None => (f64::NAN, f64::NAN),
         };

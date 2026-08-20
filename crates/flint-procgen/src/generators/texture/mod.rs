@@ -71,17 +71,32 @@ impl Generator for TextureGenerator {
             "voronoi_brick" => {
                 let params = VoronoiBrickParams::from_toml(&spec.params)?;
                 let pattern = VoronoiBrickPattern::new(params);
-                pattern.generate(map_params.width, map_params.height, map_params.seamless, &mut pattern_rng)
+                pattern.generate(
+                    map_params.width,
+                    map_params.height,
+                    map_params.seamless,
+                    &mut pattern_rng,
+                )
             }
             "perlin_organic" => {
                 let params = PerlinOrganicParams::from_toml(&spec.params)?;
                 let pattern = PerlinOrganicPattern::new(params);
-                pattern.generate(map_params.width, map_params.height, map_params.seamless, &mut pattern_rng)
+                pattern.generate(
+                    map_params.width,
+                    map_params.height,
+                    map_params.seamless,
+                    &mut pattern_rng,
+                )
             }
             "tiling_grid" => {
                 let params = TilingGridParams::from_toml(&spec.params)?;
                 let pattern = TilingGridPattern::new(params);
-                pattern.generate(map_params.width, map_params.height, map_params.seamless, &mut pattern_rng)
+                pattern.generate(
+                    map_params.width,
+                    map_params.height,
+                    map_params.seamless,
+                    &mut pattern_rng,
+                )
             }
             other => {
                 return Err(ProcGenError::InvalidParameter {
@@ -258,7 +273,10 @@ pattern = "{pattern}"
         let images_a = output_a.as_image_set().unwrap();
         let images_b = output_b.as_image_set().unwrap();
         for (a, b) in images_a.iter().zip(images_b.iter()) {
-            assert_eq!(a.pixels, b.pixels, "same seed should produce identical pixels");
+            assert_eq!(
+                a.pixels, b.pixels,
+                "same seed should produce identical pixels"
+            );
         }
     }
 

@@ -56,21 +56,19 @@ impl Generator for CreatureGenerator {
 
         // ─── Parse limb chains ──────────────────────────────────────────
         let limb_chain_defs: Vec<LimbChainDef> = if let Some(v) = params.get("limb_chains") {
-            let arr = v
-                .as_array()
-                .ok_or_else(|| ProcGenError::InvalidParameter {
-                    name: "limb_chains".into(),
-                    reason: "expected an array".into(),
-                })?;
+            let arr = v.as_array().ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "limb_chains".into(),
+                reason: "expected an array".into(),
+            })?;
             arr.iter()
                 .enumerate()
                 .map(|(i, val)| {
-                    let table =
-                        val.as_table()
-                            .ok_or_else(|| ProcGenError::InvalidParameter {
-                                name: format!("limb_chains[{i}]"),
-                                reason: "expected a table".into(),
-                            })?;
+                    let table = val
+                        .as_table()
+                        .ok_or_else(|| ProcGenError::InvalidParameter {
+                            name: format!("limb_chains[{i}]"),
+                            reason: "expected a table".into(),
+                        })?;
                     parse_limb_chain(table, i)
                 })
                 .collect::<Result<Vec<_>>>()?
@@ -80,21 +78,19 @@ impl Generator for CreatureGenerator {
 
         // ─── Parse body parts ───────────────────────────────────────────
         let body_part_defs: Vec<BodyPartDef> = if let Some(v) = params.get("body_parts") {
-            let arr = v
-                .as_array()
-                .ok_or_else(|| ProcGenError::InvalidParameter {
-                    name: "body_parts".into(),
-                    reason: "expected an array".into(),
-                })?;
+            let arr = v.as_array().ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "body_parts".into(),
+                reason: "expected an array".into(),
+            })?;
             arr.iter()
                 .enumerate()
                 .map(|(i, val)| {
-                    let table =
-                        val.as_table()
-                            .ok_or_else(|| ProcGenError::InvalidParameter {
-                                name: format!("body_parts[{i}]"),
-                                reason: "expected a table".into(),
-                            })?;
+                    let table = val
+                        .as_table()
+                        .ok_or_else(|| ProcGenError::InvalidParameter {
+                            name: format!("body_parts[{i}]"),
+                            reason: "expected a table".into(),
+                        })?;
                     parse_body_part(table, i)
                 })
                 .collect::<Result<Vec<_>>>()?
@@ -114,27 +110,26 @@ impl Generator for CreatureGenerator {
         let mut material_index_map: HashMap<String, usize> = HashMap::new();
 
         // Helper to get or create material index
-        let get_material_index =
-            |mat_name: &str,
-             materials: &HashMap<String, MaterialData>,
-             all_mats: &mut Vec<MaterialData>,
-             mat_map: &mut HashMap<String, usize>|
-             -> usize {
-                if let Some(&idx) = mat_map.get(mat_name) {
-                    return idx;
-                }
-                let mat = materials
-                    .get(mat_name)
-                    .cloned()
-                    .unwrap_or_else(|| MaterialData {
-                        name: mat_name.to_string(),
-                        ..Default::default()
-                    });
-                let idx = all_mats.len();
-                all_mats.push(mat);
-                mat_map.insert(mat_name.to_string(), idx);
-                idx
-            };
+        let get_material_index = |mat_name: &str,
+                                  materials: &HashMap<String, MaterialData>,
+                                  all_mats: &mut Vec<MaterialData>,
+                                  mat_map: &mut HashMap<String, usize>|
+         -> usize {
+            if let Some(&idx) = mat_map.get(mat_name) {
+                return idx;
+            }
+            let mat = materials
+                .get(mat_name)
+                .cloned()
+                .unwrap_or_else(|| MaterialData {
+                    name: mat_name.to_string(),
+                    ..Default::default()
+                });
+            let idx = all_mats.len();
+            all_mats.push(mat);
+            mat_map.insert(mat_name.to_string(), idx);
+            idx
+        };
 
         // Body parts
         for part in &body_part_defs {
@@ -348,10 +343,12 @@ fn parse_materials(
     };
 
     for (name, val) in materials_table {
-        let table = val.as_table().ok_or_else(|| ProcGenError::InvalidParameter {
-            name: format!("materials.{name}"),
-            reason: "expected a table".into(),
-        })?;
+        let table = val
+            .as_table()
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: format!("materials.{name}"),
+                reason: "expected a table".into(),
+            })?;
 
         let base_color = if let Some(hex) = table.get("base_color").and_then(|v| v.as_str()) {
             parse_hex_color(hex)?

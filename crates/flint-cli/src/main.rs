@@ -7,8 +7,7 @@ use clap::{Parser, Subcommand};
 use commands::{
     asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
     prefab, preview, query, render, render_suite, replay_chart, scene, schema, spike_rumble,
-    spline_edit,
-    terrain_edit, tex_edit, validate, validate_suite,
+    spline_edit, terrain_edit, tex_edit, validate, validate_suite,
 };
 
 #[derive(Parser)]

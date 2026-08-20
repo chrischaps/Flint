@@ -17,7 +17,7 @@ use flint_music::chart_session::{
 use flint_music::coherence::Coherence;
 use flint_music::conductor::Conductor;
 use flint_music::gradient::{GradientConfig, GradientDriver};
-use flint_music::judgment::{Judge, JudgmentConfig, JsonlWriter};
+use flint_music::judgment::{JsonlWriter, Judge, JudgmentConfig};
 use flint_music::ladder::{Ladder, LadderConfig};
 use flint_music::reintegration::{ReintegrationEvent, Reintegrator};
 use flint_music::replay::{synthesize, SyntheticProfile};
@@ -243,8 +243,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         .with_context(|| format!("creating judgment log {}", out_path.display()))?;
 
     // --- ladder: with --render, its presence switches to the reactive loop ----
-    let default_ladder_path =
-        base_dir.join(flint_music::chart_session::DEFAULT_LADDER_CONFIG);
+    let default_ladder_path = base_dir.join(flint_music::chart_session::DEFAULT_LADDER_CONFIG);
     let (ladder_cfg, ladder_path) = if let Some(path) = &args.ladder {
         let cfg = LadderConfig::load(Path::new(path))
             .with_context(|| format!("loading ladder config {path}"))?;
@@ -277,8 +276,7 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     // Gradient config (ADR 0024): explicit path must load, the default file
     // is optional, absent = inert built-ins (byte-identical to pre-gradient
     // renders). Applied only inside the reactive loop.
-    let default_gradient_path =
-        base_dir.join(flint_music::chart_session::DEFAULT_GRADIENT_CONFIG);
+    let default_gradient_path = base_dir.join(flint_music::chart_session::DEFAULT_GRADIENT_CONFIG);
     let (gradient_cfg, gradient_path) = if let Some(path) = &args.gradient {
         let cfg = GradientConfig::load(Path::new(path))
             .with_context(|| format!("loading gradient config {path}"))?;
@@ -286,7 +284,10 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
         (cfg, PathBuf::from(path))
     } else if default_gradient_path.exists() {
         let cfg = GradientConfig::load(&default_gradient_path).with_context(|| {
-            format!("loading gradient config {}", default_gradient_path.display())
+            format!(
+                "loading gradient config {}",
+                default_gradient_path.display()
+            )
         })?;
         println!(
             "gradient config: {} (tune bus: {})",
@@ -320,9 +321,9 @@ pub fn run(args: ReplayChartArgs) -> Result<()> {
     ));
     if reactive {
         let wav = args
-        .render
-        .as_ref()
-        .expect("run_reactive is entered only with --render present");
+            .render
+            .as_ref()
+            .expect("run_reactive is entered only with --render present");
         return run_reactive(
             &manifest,
             &base_dir,

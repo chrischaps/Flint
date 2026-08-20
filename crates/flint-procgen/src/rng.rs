@@ -102,7 +102,12 @@ impl SeededRng {
         let l2 = (l + self.next_range(-variation, variation)).clamp(0.0, 1.0);
         let s2 = (s + self.next_range(-variation * 0.5, variation * 0.5)).clamp(0.0, 1.0);
         let (r, g, b) = hsl_to_rgb(h, s2, l2);
-        [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0), base[3]]
+        [
+            r.clamp(0.0, 1.0),
+            g.clamp(0.0, 1.0),
+            b.clamp(0.0, 1.0),
+            base[3],
+        ]
     }
 
     /// Derive a child RNG from a label string.
@@ -401,7 +406,11 @@ mod tests {
             );
             // All channels valid
             for i in 0..3 {
-                assert!(c[i] >= 0.0 && c[i] <= 1.0, "channel {i} out of range: {}", c[i]);
+                assert!(
+                    c[i] >= 0.0 && c[i] <= 1.0,
+                    "channel {i} out of range: {}",
+                    c[i]
+                );
             }
             assert_eq!(c[3], 1.0, "alpha preserved");
         }
@@ -426,7 +435,11 @@ mod tests {
         for _ in 0..100 {
             let c = rng.next_color_variation_hsl(base, 0.5);
             for i in 0..3 {
-                assert!(c[i] >= 0.0 && c[i] <= 1.0, "channel {i} out of range: {}", c[i]);
+                assert!(
+                    c[i] >= 0.0 && c[i] <= 1.0,
+                    "channel {i} out of range: {}",
+                    c[i]
+                );
             }
             assert_eq!(c[3], 0.8, "alpha should be preserved");
         }

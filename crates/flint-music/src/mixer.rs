@@ -150,7 +150,9 @@ impl StemBus {
 
     /// The alternate's authored span `[from, to)`, if one is attached.
     pub fn alternate_span(&self) -> Option<(i64, i64)> {
-        self.alternate.as_ref().map(|a| (a.from_sample, a.to_sample))
+        self.alternate
+            .as_ref()
+            .map(|a| (a.from_sample, a.to_sample))
     }
 
     pub fn sound(&self) -> Option<&StaticSoundHandle> {
@@ -328,10 +330,7 @@ impl BusMixer {
         }
         let sound = bus
             .track
-            .play(
-                data.start_time(start_at)
-                    .volume(Decibels(ALT_MUTED_DB)),
-            )
+            .play(data.start_time(start_at).volume(Decibels(ALT_MUTED_DB)))
             .map_err(|e| FlintError::AudioError(format!("bus '{bus_name}' alternate: {e}")))?;
         bus.alternate = Some(AlternateVoice {
             sound,
@@ -392,11 +391,7 @@ impl BusMixer {
         let positions: Vec<f64> = self
             .buses
             .iter()
-            .flat_map(|b| {
-                b.sound
-                    .iter()
-                    .chain(b.alternate.as_ref().map(|a| &a.sound))
-            })
+            .flat_map(|b| b.sound.iter().chain(b.alternate.as_ref().map(|a| &a.sound)))
             .map(|s| s.position())
             .collect();
         let mut max = 0.0f64;

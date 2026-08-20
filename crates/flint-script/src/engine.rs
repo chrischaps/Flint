@@ -183,10 +183,7 @@ impl ScriptEngine {
             .engine
             .run_ast_with_scope(&mut instance.scope, &instance.ast)
         {
-            tracing::warn!(
-                "module init error ({}): {}",
-                instance.source_path, e
-            );
+            tracing::warn!("module init error ({}): {}", instance.source_path, e);
         }
         self.scripts.insert(entity, instance);
     }
@@ -341,10 +338,7 @@ impl ScriptEngine {
                     cb::ON_COLLISION,
                     (other_id,),
                 ) {
-                    tracing::warn!(
-                        "on_collision error ({}): {}",
-                        script.source_path, e
-                    );
+                    tracing::warn!("on_collision error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -364,10 +358,7 @@ impl ScriptEngine {
                     cb::ON_COLLISION_EXIT,
                     (other_id,),
                 ) {
-                    tracing::warn!(
-                        "on_collision_exit error ({}): {}",
-                        script.source_path, e
-                    );
+                    tracing::warn!("on_collision_exit error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -387,10 +378,7 @@ impl ScriptEngine {
                     cb::ON_TRIGGER_ENTER,
                     (entity_id,),
                 ) {
-                    tracing::warn!(
-                        "on_trigger_enter error ({}): {}",
-                        script.source_path, e
-                    );
+                    tracing::warn!("on_trigger_enter error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -410,10 +398,7 @@ impl ScriptEngine {
                     cb::ON_TRIGGER_EXIT,
                     (entity_id,),
                 ) {
-                    tracing::warn!(
-                        "on_trigger_exit error ({}): {}",
-                        script.source_path, e
-                    );
+                    tracing::warn!("on_trigger_exit error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -498,10 +483,7 @@ impl ScriptEngine {
                     self.engine
                         .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_SCENE_EXIT, ())
                 {
-                    tracing::warn!(
-                        "on_scene_exit error ({}): {}",
-                        script.source_path, e
-                    );
+                    tracing::warn!("on_scene_exit error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -525,10 +507,7 @@ impl ScriptEngine {
                     cb::ON_SCENE_ENTER,
                     (),
                 ) {
-                    tracing::warn!(
-                        "on_scene_enter error ({}): {}",
-                        script.source_path, e
-                    );
+                    tracing::warn!("on_scene_enter error ({}): {}", script.source_path, e);
                 }
             }
         }
@@ -560,10 +539,7 @@ impl ScriptEngine {
                         cb::ON_ANIMATION_END,
                         (clip_name,),
                     ) {
-                        tracing::warn!(
-                            "on_animation_end error ({}): {}",
-                            script.source_path, e
-                        );
+                        tracing::warn!("on_animation_end error ({}): {}", script.source_path, e);
                     }
                 }
             }
@@ -853,8 +829,16 @@ mod tests {
                 toml::Value::Table({
                     let mut m = toml::map::Map::new();
                     for f in [
-                        "coh", "lx", "ty", "npulses", "kind_ok", "sec_ok", "age", "err",
-                        "reassembly", "preroll",
+                        "coh",
+                        "lx",
+                        "ty",
+                        "npulses",
+                        "kind_ok",
+                        "sec_ok",
+                        "age",
+                        "err",
+                        "reassembly",
+                        "preroll",
                     ] {
                         m.insert(f.into(), toml::Value::Float(-1.0));
                     }
@@ -1045,7 +1029,11 @@ mod tests {
         assert_eq!(probe_float(&world, id, "reassembly"), 1.0);
         assert_eq!(probe_float(&world, id, "lx"), 0.0);
         assert_eq!(probe_float(&world, id, "ntx"), 0.0);
-        assert_eq!(probe_float(&world, id, "ntb"), 1e6, "sentinel: nothing inbound");
+        assert_eq!(
+            probe_float(&world, id, "ntb"),
+            1e6,
+            "sentinel: nothing inbound"
+        );
         assert_eq!(probe_float(&world, id, "npulses"), 0.0);
         assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "preroll"), 0.0);
@@ -1128,10 +1116,8 @@ mod tests {
         let id = world.spawn("binder").unwrap();
         probe_component(&mut world, id);
 
-        let dir = std::env::temp_dir().join(format!(
-            "flint-conducted-reload-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("flint-conducted-reload-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("binder.rhai");
         let v1 = r#"fn on_update() {
@@ -1155,7 +1141,10 @@ mod tests {
             set_field(self_entity(), "probe", "lx", conducted_lean().x + 2.0);
         }"#;
         std::fs::write(&path, v2).unwrap();
-        let f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
             .unwrap();
         drop(f);
@@ -1165,7 +1154,10 @@ mod tests {
 
         // A broken edit: the old (v2) AST keeps running, no panic.
         std::fs::write(&path, "fn on_update( {").unwrap();
-        let f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(10))
             .unwrap();
         drop(f);

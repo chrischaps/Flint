@@ -105,7 +105,12 @@ pub(crate) fn float_in(name: &str, t: &toml::value::Table, key: &str, ctx: &str)
     t.get(key).and_then(toml_f64).ok_or_else(|| bad(name, ctx))
 }
 
-pub(crate) fn string_in(name: &str, t: &toml::value::Table, key: &str, ctx: &str) -> Result<String> {
+pub(crate) fn string_in(
+    name: &str,
+    t: &toml::value::Table,
+    key: &str,
+    ctx: &str,
+) -> Result<String> {
     t.get(key)
         .and_then(|v| v.as_str())
         .map(String::from)

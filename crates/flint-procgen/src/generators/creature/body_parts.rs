@@ -100,12 +100,13 @@ pub fn generate_body_part(
     skeleton: &SkeletonDef,
     world_transforms: &[[f32; 16]],
 ) -> Result<(Vec<SkinnedVertex>, Vec<u32>, String)> {
-    let bone_idx = skeleton.find_bone(&part.bone).ok_or_else(|| {
-        ProcGenError::InvalidParameter {
-            name: "body_part.bone".into(),
-            reason: format!("bone '{}' not found in skeleton", part.bone),
-        }
-    })?;
+    let bone_idx =
+        skeleton
+            .find_bone(&part.bone)
+            .ok_or_else(|| ProcGenError::InvalidParameter {
+                name: "body_part.bone".into(),
+                reason: format!("bone '{}' not found in skeleton", part.bone),
+            })?;
 
     let mesh = generate_shape(&part.shape, &part.dimensions)?;
 
@@ -237,7 +238,8 @@ mod tests {
             material: "test".into(),
         };
 
-        let (verts, indices, mat) = generate_body_part(&part, &skeleton, &world_transforms).unwrap();
+        let (verts, indices, mat) =
+            generate_body_part(&part, &skeleton, &world_transforms).unwrap();
         assert!(!verts.is_empty());
         assert!(!indices.is_empty());
         assert_eq!(mat, "test");

@@ -158,12 +158,7 @@ pub fn run(args: EditArgs) -> Result<()> {
                     .first()
                     .map(|s| s.as_str())
                     .unwrap_or("schemas");
-                flint_viewer::app::run(
-                    &args.file,
-                    args.watch,
-                    schemas_path,
-                    !args.no_inspector,
-                )
+                flint_viewer::app::run(&args.file, args.watch, schemas_path, !args.no_inspector)
             }
         }
         FileKind::ProcGenSpec => {

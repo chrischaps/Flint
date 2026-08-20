@@ -47,7 +47,13 @@ count = 2
 
 /// Run the driver over a span at a fixed hop, Playing phase, no pulses or
 /// sequencer events — pure grid behavior.
-fn run_grid(driver: &mut HapticsDriver, c: &Conductor, from: i64, to: i64, hop: i64) -> Vec<HapticEvent> {
+fn run_grid(
+    driver: &mut HapticsDriver,
+    c: &Conductor,
+    from: i64,
+    to: i64,
+    hop: i64,
+) -> Vec<HapticEvent> {
     let mut out = Vec::new();
     let mut now = from;
     while now < to {
@@ -69,7 +75,16 @@ fn inert_config_emits_nothing_ever() {
     }];
     let mut out = Vec::new();
     for i in 0..500 {
-        d.evaluate(&c, i * 960, SeqPhase::Playing, 0.5, 2.0, &pulses, &seam, &mut out);
+        d.evaluate(
+            &c,
+            i * 960,
+            SeqPhase::Playing,
+            0.5,
+            2.0,
+            &pulses,
+            &seam,
+            &mut out,
+        );
     }
     assert!(out.is_empty(), "inert built-ins must never emit: {out:?}");
 }
@@ -86,11 +101,17 @@ fn ticks_land_on_the_beat_grid_across_the_tempo_change() {
     let bursts: Vec<i64> = out
         .iter()
         .filter_map(|e| match e {
-            HapticEvent::Burst { at_suite_sample, .. } => Some(*at_suite_sample),
+            HapticEvent::Burst {
+                at_suite_sample, ..
+            } => Some(*at_suite_sample),
             _ => None,
         })
         .collect();
-    assert!(bursts.len() > 40, "expected a tick per beat over 30 s: {}", bursts.len());
+    assert!(
+        bursts.len() > 40,
+        "expected a tick per beat over 30 s: {}",
+        bursts.len()
+    );
     // Strictly increasing, no duplicates (the lookahead window slides over
     // each tick exactly once).
     for w in bursts.windows(2) {
@@ -120,12 +141,25 @@ fn thump_fires_on_hits_only() {
         (1300, -3.0, PulseKind::Hit),
     ];
     let mut out = Vec::new();
-    d.evaluate(&c, 2000, SeqPhase::Playing, 0.0, 2.0, &pulses, &[], &mut out);
+    d.evaluate(
+        &c,
+        2000,
+        SeqPhase::Playing,
+        0.0,
+        2.0,
+        &pulses,
+        &[],
+        &mut out,
+    );
     let thumps: Vec<_> = out
         .iter()
         .filter(|e| matches!(e, HapticEvent::Immediate { .. }))
         .collect();
-    assert_eq!(thumps.len(), 2, "two hits → two thumps, silence for miss/spurious: {out:?}");
+    assert_eq!(
+        thumps.len(),
+        2,
+        "two hits → two thumps, silence for miss/spurious: {out:?}"
+    );
     assert!(
         !out.iter().any(|e| matches!(e, HapticEvent::Burst { .. })),
         "thumps must be Immediate (no lead, no late-drop — a scheduled 'now' \
@@ -145,19 +179,33 @@ fn grind_follows_rewind_and_seam_flushes() {
     let mut out = Vec::new();
     // Playing: no grind.
     d.evaluate(&c, 0, SeqPhase::Playing, 0.0, 2.0, &[], &[], &mut out);
-    assert!(!out.iter().any(|e| matches!(e, HapticEvent::Continuous { .. })));
+    assert!(!out
+        .iter()
+        .any(|e| matches!(e, HapticEvent::Continuous { .. })));
     // Failing with rising rewind: continuous levels rise (delta-gated).
     let mut levels = Vec::new();
     for i in 0..10 {
         let mut step = Vec::new();
-        d.evaluate(&c, 1000 * i, SeqPhase::Failing, i as f64 / 10.0, 2.0, &[], &[], &mut step);
+        d.evaluate(
+            &c,
+            1000 * i,
+            SeqPhase::Failing,
+            i as f64 / 10.0,
+            2.0,
+            &[],
+            &[],
+            &mut step,
+        );
         for e in &step {
             if let HapticEvent::Continuous { strong, .. } = e {
                 levels.push(*strong);
             }
         }
     }
-    assert!(levels.len() >= 3, "grind updates as the rewind deepens: {levels:?}");
+    assert!(
+        levels.len() >= 3,
+        "grind updates as the rewind deepens: {levels:?}"
+    );
     assert!(
         levels.windows(2).all(|w| w[1] > w[0]),
         "grind grows with the spin-down: {levels:?}"
@@ -169,7 +217,16 @@ fn grind_follows_rewind_and_seam_flushes() {
         timeline_offset: 50_000,
         re_entry_sample: 50_000,
     }];
-    d.evaluate(&c, 50_000, SeqPhase::Reassembling, 0.0, 2.0, &[], &seam, &mut step);
+    d.evaluate(
+        &c,
+        50_000,
+        SeqPhase::Reassembling,
+        0.0,
+        2.0,
+        &[],
+        &seam,
+        &mut step,
+    );
     assert!(
         step.iter().any(|e| matches!(e, HapticEvent::Flush)),
         "seam must flush: {step:?}"
@@ -193,11 +250,22 @@ fn pickup_ticks_land_on_the_beats_before_the_seam() {
         seam_suite_sample: seam,
     }];
     let mut out = Vec::new();
-    d.evaluate(&c, seam - 96_000, SeqPhase::Failing, 0.0, 2.0, &[], &full_fail, &mut out);
+    d.evaluate(
+        &c,
+        seam - 96_000,
+        SeqPhase::Failing,
+        0.0,
+        2.0,
+        &[],
+        &full_fail,
+        &mut out,
+    );
     let bursts: Vec<i64> = out
         .iter()
         .filter_map(|e| match e {
-            HapticEvent::Burst { at_suite_sample, .. } => Some(*at_suite_sample),
+            HapticEvent::Burst {
+                at_suite_sample, ..
+            } => Some(*at_suite_sample),
             _ => None,
         })
         .collect();

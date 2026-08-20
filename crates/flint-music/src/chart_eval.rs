@@ -16,8 +16,8 @@
 //!   enclosing section's value.
 
 use crate::chart::Chart;
-use crate::tempo::ms_to_samples;
 use crate::conductor::Conductor;
+use crate::tempo::ms_to_samples;
 use flint_core::{FlintError, Result};
 use std::collections::BTreeMap;
 
@@ -103,10 +103,11 @@ impl ChartEval {
                 "smooth" => Interp::Smooth,
                 other => return Err(bad(format!("unknown interp `{other}`"))),
             };
-            channels
-                .entry(key.channel.clone())
-                .or_default()
-                .push((key.beat, key.value.clone(), interp));
+            channels.entry(key.channel.clone()).or_default().push((
+                key.beat,
+                key.value.clone(),
+                interp,
+            ));
         }
         for (name, keys) in &channels {
             if keys.windows(2).any(|w| w[1].0 <= w[0].0) {
@@ -121,12 +122,17 @@ impl ChartEval {
             let center_sample = conductor.sample_at_beat(pulse.beat);
             let half_width_ms = match pulse.window_ms {
                 Some(ms) => ms,
-                None => conductor
-                    .section_at_sample(center_sample)
-                    .ok_or_else(|| {
-                        bad(format!("pulse at beat {} is outside all sections", pulse.beat))
-                    })?
-                    .pulse_window_ms,
+                None => {
+                    conductor
+                        .section_at_sample(center_sample)
+                        .ok_or_else(|| {
+                            bad(format!(
+                                "pulse at beat {} is outside all sections",
+                                pulse.beat
+                            ))
+                        })?
+                        .pulse_window_ms
+                }
             };
             let direction = match &pulse.direction {
                 Some(d) if d.len() == 2 => Some([d[0], d[1]]),
@@ -404,6 +410,9 @@ window_ms = 50
             "{HEADER}[[curves]]\nchannel = \"lean\"\nbeat = 0.0\nvalue = [0.0]\ninterp = \"linear\"\n"
         ))
         .unwrap();
-        assert!(ChartEval::new(&chart, &conductor()).is_err(), "arity mismatch");
+        assert!(
+            ChartEval::new(&chart, &conductor()).is_err(),
+            "arity mismatch"
+        );
     }
 }

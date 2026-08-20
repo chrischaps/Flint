@@ -17,7 +17,7 @@ use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use flint_procgen::generators::texture::node_graph::{self, TextureNode};
 use flint_procgen::generators::texture::pipeline::{self, op_param_schema, ALL_OP_TYPES};
 use flint_procgen::{
-    parse_param_schema, ImageData, ProcGenSpec, SeededRng, SeedConfig, SeedMode, TextureField,
+    parse_param_schema, ImageData, ProcGenSpec, SeedConfig, SeedMode, SeededRng, TextureField,
     TextureMapParams,
 };
 use flint_render::RenderContext;
@@ -83,9 +83,8 @@ pub fn run(args: TexEditArgs) -> Result<()> {
         .cloned()
         .unwrap_or_default();
 
-    let (nodes, connections) =
-        node_graph::ops_to_graph(&ops_array, &map_params.output_maps)
-            .with_context(|| "failed to parse pipeline ops into graph")?;
+    let (nodes, connections) = node_graph::ops_to_graph(&ops_array, &map_params.output_maps)
+        .with_context(|| "failed to parse pipeline ops into graph")?;
 
     // Build the snarl graph
     let mut snarl = Snarl::new();
@@ -138,10 +137,7 @@ pub fn run(args: TexEditArgs) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let current_seed = spec
-        .seed
-        .value
-        .unwrap_or(42);
+    let current_seed = spec.seed.value.unwrap_or(42);
 
     let mut app = TexEditApp {
         spec,
@@ -276,10 +272,7 @@ struct UndoSnapshot {
 
 impl TexEditApp {
     fn initialize(&mut self, event_loop: &ActiveEventLoop) {
-        let title = format!(
-            "Flint Tex Edit \u{2014} {}",
-            self.spec.meta.name
-        );
+        let title = format!("Flint Tex Edit \u{2014} {}", self.spec.meta.name);
 
         let window = Arc::new(
             event_loop
@@ -314,10 +307,7 @@ impl TexEditApp {
     /// Generate a unique node ID for an op type, given a set of existing IDs.
     ///
     /// Returns the op_type itself if unused, otherwise appends `_2`, `_3`, etc.
-    fn auto_assign_id(
-        existing: &std::collections::HashSet<String>,
-        op_type: &str,
-    ) -> String {
+    fn auto_assign_id(existing: &std::collections::HashSet<String>, op_type: &str) -> String {
         let base = op_type.to_string();
         if !existing.contains(&base) {
             return base;
@@ -341,10 +331,7 @@ impl TexEditApp {
 
         for (nid, node) in self.snarl.node_ids() {
             match node {
-                TextureNode::Op {
-                    id: Some(id),
-                    ..
-                } => {
+                TextureNode::Op { id: Some(id), .. } => {
                     existing.insert(id.clone());
                 }
                 TextureNode::Op {
@@ -393,10 +380,7 @@ impl TexEditApp {
 
         let mut result = Vec::with_capacity(ordered.len());
         for (nid, node) in &ordered {
-            if let TextureNode::Op {
-                params, id, ..
-            } = node
-            {
+            if let TextureNode::Op { params, id, .. } = node {
                 let mut table = params.clone();
 
                 // Serialize id
@@ -423,14 +407,10 @@ impl TexEditApp {
                         } = src_node
                         {
                             let src_out_channels = src_node.output_channels();
-                            if let Some(src_channel) =
-                                src_out_channels.get(remote.output)
-                            {
+                            if let Some(src_channel) = src_out_channels.get(remote.output) {
                                 inputs_table.insert(
                                     channel.to_string(),
-                                    toml::Value::String(format!(
-                                        "{src_id}.{src_channel}"
-                                    )),
+                                    toml::Value::String(format!("{src_id}.{src_channel}")),
                                 );
                             }
                         }
@@ -438,10 +418,7 @@ impl TexEditApp {
                 }
 
                 if !inputs_table.is_empty() {
-                    table.insert(
-                        "inputs".to_string(),
-                        toml::Value::Table(inputs_table),
-                    );
+                    table.insert("inputs".to_string(), toml::Value::Table(inputs_table));
                 }
 
                 result.push(toml::Value::Table(table));
@@ -510,8 +487,7 @@ impl TexEditApp {
                 self.update_node_previews();
             }
             Err(e) => {
-                self.status_message =
-                    Some((format!("Generation error: {e}"), Instant::now()));
+                self.status_message = Some((format!("Generation error: {e}"), Instant::now()));
             }
         }
     }
@@ -552,8 +528,7 @@ impl TexEditApp {
         if let Some(nid) = output_node_id {
             if let Some(img) = self.last_images.first() {
                 let size = [img.width as usize, img.height as usize];
-                let color_image =
-                    egui::ColorImage::from_rgba_unmultiplied(size, &img.pixels);
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &img.pixels);
                 let handle = self.egui_ctx.load_texture(
                     "node_preview_output",
                     color_image,
@@ -571,11 +546,9 @@ impl TexEditApp {
             let name = names.get(i).copied().unwrap_or("Unknown");
             let size = [img.width as usize, img.height as usize];
             let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &img.pixels);
-            let handle = self.egui_ctx.load_texture(
-                name,
-                color_image,
-                egui::TextureOptions::LINEAR,
-            );
+            let handle =
+                self.egui_ctx
+                    .load_texture(name, color_image, egui::TextureOptions::LINEAR);
             self.egui_textures.push((name.to_string(), handle));
         }
     }
@@ -587,8 +560,7 @@ impl TexEditApp {
         let raw = match std::fs::read_to_string(&self.spec_path) {
             Ok(s) => s,
             Err(e) => {
-                self.status_message =
-                    Some((format!("Read error: {e}"), Instant::now()));
+                self.status_message = Some((format!("Read error: {e}"), Instant::now()));
                 return;
             }
         };
@@ -596,8 +568,7 @@ impl TexEditApp {
         let mut doc: toml::Value = match raw.parse() {
             Ok(v) => v,
             Err(e) => {
-                self.status_message =
-                    Some((format!("Parse error: {e}"), Instant::now()));
+                self.status_message = Some((format!("Parse error: {e}"), Instant::now()));
                 return;
             }
         };
@@ -631,18 +602,23 @@ impl TexEditApp {
         let output = toml::to_string_pretty(&doc).unwrap_or_default();
         match std::fs::write(&self.spec_path, output) {
             Ok(()) => {
-                self.status_message =
-                    Some((format!("Saved to {}", self.spec_path.display()), Instant::now()));
+                self.status_message = Some((
+                    format!("Saved to {}", self.spec_path.display()),
+                    Instant::now(),
+                ));
             }
             Err(e) => {
-                self.status_message =
-                    Some((format!("Save error: {e}"), Instant::now()));
+                self.status_message = Some((format!("Save error: {e}"), Instant::now()));
             }
         }
     }
 
     fn export_textures(&mut self) {
-        let stem = self.spec_path.file_stem().and_then(|s| s.to_str()).unwrap_or("texture");
+        let stem = self
+            .spec_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("texture");
         // Strip .procgen if present
         let stem = stem.strip_suffix(".procgen").unwrap_or(stem);
         let dir = self.spec_path.parent().unwrap_or(std::path::Path::new("."));
@@ -652,13 +628,16 @@ impl TexEditApp {
             let suffix = suffixes.get(i).copied().unwrap_or("unknown");
             let path = dir.join(format!("{}_{}.png", stem, suffix));
             if let Err(e) = img.save_png(&path) {
-                self.status_message =
-                    Some((format!("Export error: {e}"), Instant::now()));
+                self.status_message = Some((format!("Export error: {e}"), Instant::now()));
                 return;
             }
         }
         self.status_message = Some((
-            format!("Exported {} textures to {}", self.last_images.len(), dir.display()),
+            format!(
+                "Exported {} textures to {}",
+                self.last_images.len(),
+                dir.display()
+            ),
             Instant::now(),
         ));
     }
@@ -678,8 +657,7 @@ impl TexEditApp {
                     self.spec = spec;
                     self.map_params = map_params;
                     self.restore_from_ops(&ops_array);
-                    self.status_message =
-                        Some(("Reloaded from disk".to_string(), Instant::now()));
+                    self.status_message = Some(("Reloaded from disk".to_string(), Instant::now()));
                 }
             }
         }
@@ -694,9 +672,19 @@ impl TexEditApp {
             .collect();
         // Sort by Y position (top to bottom = pipeline order)
         ops.sort_by(|(id_a, _), (id_b, _)| {
-            let pos_a = self.snarl.get_node_info(*id_a).map(|n| n.pos.y).unwrap_or(0.0);
-            let pos_b = self.snarl.get_node_info(*id_b).map(|n| n.pos.y).unwrap_or(0.0);
-            pos_a.partial_cmp(&pos_b).unwrap_or(std::cmp::Ordering::Equal)
+            let pos_a = self
+                .snarl
+                .get_node_info(*id_a)
+                .map(|n| n.pos.y)
+                .unwrap_or(0.0);
+            let pos_b = self
+                .snarl
+                .get_node_info(*id_b)
+                .map(|n| n.pos.y)
+                .unwrap_or(0.0);
+            pos_a
+                .partial_cmp(&pos_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         ops
     }
@@ -711,7 +699,9 @@ struct TexEditViewer<'a> {
 /// Pick the best visualization for a node's preview thumbnail based on its port info.
 fn best_preview_image(node: &TextureNode, snapshot: &TextureField) -> ImageData {
     match node {
-        TextureNode::Op { port_info, params, .. } => {
+        TextureNode::Op {
+            port_info, params, ..
+        } => {
             let all_channels: Vec<&str> = port_info
                 .writes
                 .iter()
@@ -737,9 +727,7 @@ fn best_preview_image(node: &TextureNode, snapshot: &TextureField) -> ImageData 
                 // Resolve dynamic placeholders like <target>, <source>, <output>
                 let ch = if first.starts_with('<') && first.ends_with('>') {
                     let param_name = &first[1..first.len() - 1];
-                    params
-                        .get(param_name)
-                        .and_then(|v| v.as_str())
+                    params.get(param_name).and_then(|v| v.as_str())
                 } else {
                     Some(*first)
                 };
@@ -777,7 +765,9 @@ fn resolve_channel_label(node: &TextureNode, channel: &str) -> String {
 
 /// Collect the set of param names that correspond to dynamic channel references
 /// (e.g. `<target>` → "target", `<source>` → "source", `<output>` → "output").
-fn dynamic_channel_params(port_info: &flint_procgen::generators::texture::ops::OpPortInfo) -> Vec<String> {
+fn dynamic_channel_params(
+    port_info: &flint_procgen::generators::texture::ops::OpPortInfo,
+) -> Vec<String> {
     port_info
         .reads
         .iter()
@@ -792,11 +782,11 @@ fn dynamic_channel_params(port_info: &flint_procgen::generators::texture::ops::O
 fn channel_color(channel: &str) -> egui::Color32 {
     match channel {
         "cell_id" | "edge_dist" | "mask" => egui::Color32::from_rgb(80, 140, 220), // Blue: structure
-        "height" => egui::Color32::from_rgb(160, 160, 160),                // Gray: height
-        "r" | "g" | "b" | "a" => egui::Color32::from_rgb(220, 150, 50),   // Orange: color
+        "height" => egui::Color32::from_rgb(160, 160, 160),                        // Gray: height
+        "r" | "g" | "b" | "a" => egui::Color32::from_rgb(220, 150, 50),            // Orange: color
         "normal_x" | "normal_y" | "normal_z" => egui::Color32::from_rgb(160, 80, 200), // Purple
-        "roughness" => egui::Color32::from_rgb(80, 200, 100),              // Green
-        _ => egui::Color32::from_rgb(180, 180, 180),                       // Default gray
+        "roughness" => egui::Color32::from_rgb(80, 200, 100),                      // Green
+        _ => egui::Color32::from_rgb(180, 180, 180),                               // Default gray
     }
 }
 
@@ -868,7 +858,9 @@ impl<'a> SnarlViewer<TextureNode> for TexEditViewer<'a> {
 
             // Gather op info (cloned to release snarl borrow)
             let op_info = match &snarl[node] {
-                TextureNode::Op { op_type, port_info, .. } => {
+                TextureNode::Op {
+                    op_type, port_info, ..
+                } => {
                     let schema = op_param_schema(op_type);
                     let field_specs = parse_param_schema(&schema);
                     let hidden = dynamic_channel_params(port_info);
@@ -1053,19 +1045,25 @@ impl ApplicationHandler for TexEditApp {
                             self.export_textures();
                         }
                         PhysicalKey::Code(KeyCode::KeyZ)
-                            if self.egui_ctx.input(|i| i.modifiers.ctrl && !i.modifiers.shift) =>
+                            if self
+                                .egui_ctx
+                                .input(|i| i.modifiers.ctrl && !i.modifiers.shift) =>
                         {
                             self.undo();
                         }
                         PhysicalKey::Code(KeyCode::KeyZ)
-                            if self.egui_ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift) =>
+                            if self
+                                .egui_ctx
+                                .input(|i| i.modifiers.ctrl && i.modifiers.shift) =>
                         {
                             self.redo();
                         }
                         PhysicalKey::Code(KeyCode::Delete) => {
                             if let Some(node_id) = self.selected_node {
-                                if matches!(self.snarl.get_node(node_id), Some(TextureNode::Op { .. }))
-                                {
+                                if matches!(
+                                    self.snarl.get_node(node_id),
+                                    Some(TextureNode::Op { .. })
+                                ) {
                                     self.push_undo();
                                     self.snarl.remove_node(node_id);
                                     self.selected_node = None;
@@ -1116,8 +1114,7 @@ impl ApplicationHandler for TexEditApp {
 
                 // Debounced regeneration
                 if self.dirty
-                    && self.last_change.elapsed()
-                        >= Duration::from_millis(self.debounce_ms)
+                    && self.last_change.elapsed() >= Duration::from_millis(self.debounce_ms)
                 {
                     self.dirty = false;
                     self.regenerate();
@@ -1159,10 +1156,9 @@ impl TexEditApp {
             .unwrap()
             .handle_platform_output(window.as_ref(), full_output.platform_output);
 
-        let paint_jobs = self.egui_ctx.tessellate(
-            full_output.shapes,
-            self.egui_ctx.pixels_per_point(),
-        );
+        let paint_jobs = self
+            .egui_ctx
+            .tessellate(full_output.shapes, self.egui_ctx.pixels_per_point());
 
         let ctx = self.render_context.as_ref().unwrap();
 
@@ -1194,11 +1190,11 @@ impl TexEditApp {
             egui_renderer.update_texture(&ctx.device, &ctx.queue, *id, delta);
         }
 
-        let mut encoder = ctx.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor {
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("tex_edit_encoder"),
-            },
-        );
+            });
 
         egui_renderer.update_buffers(
             &ctx.device,
@@ -1281,7 +1277,10 @@ impl TexEditApp {
                 ui.horizontal(|ui| {
                     ui.label("Width:");
                     let mut w = self.map_params.width as i32;
-                    if ui.add(egui::DragValue::new(&mut w).speed(1).range(1..=4096)).changed() {
+                    if ui
+                        .add(egui::DragValue::new(&mut w).speed(1).range(1..=4096))
+                        .changed()
+                    {
                         self.map_params.width = w.max(1) as u32;
                         self.mark_dirty();
                     }
@@ -1289,7 +1288,10 @@ impl TexEditApp {
                 ui.horizontal(|ui| {
                     ui.label("Height:");
                     let mut h = self.map_params.height as i32;
-                    if ui.add(egui::DragValue::new(&mut h).speed(1).range(1..=4096)).changed() {
+                    if ui
+                        .add(egui::DragValue::new(&mut h).speed(1).range(1..=4096))
+                        .changed()
+                    {
                         self.map_params.height = h.max(1) as u32;
                         self.mark_dirty();
                     }
@@ -1304,7 +1306,11 @@ impl TexEditApp {
                         self.current_seed = s.max(0) as u64;
                         self.mark_dirty();
                     }
-                    if ui.button("\u{1f3b2}").on_hover_text("Randomize (R)").clicked() {
+                    if ui
+                        .button("\u{1f3b2}")
+                        .on_hover_text("Randomize (R)")
+                        .clicked()
+                    {
                         self.current_seed = random_seed();
                         self.mark_dirty();
                     }
@@ -1357,16 +1363,15 @@ impl TexEditApp {
                     let schema = op_param_schema(op_type);
                     let field_specs = parse_param_schema(&schema);
 
-                    if let Some(TextureNode::Op { params, .. }) =
-                        self.snarl.get_node_mut(node_id)
-                    {
+                    if let Some(TextureNode::Op { params, .. }) = self.snarl.get_node_mut(node_id) {
                         let mut changed = false;
                         for field in &field_specs {
                             // Skip the "type" field
                             if field.name == "type" {
                                 continue;
                             }
-                            if gen_preview_common::render_param_field_full(ui, field, params, false) {
+                            if gen_preview_common::render_param_field_full(ui, field, params, false)
+                            {
                                 changed = true;
                             }
                         }
@@ -1455,8 +1460,7 @@ impl TexEditApp {
                 if snap_idx < self.snapshots.len() {
                     let img = self.snapshots[snap_idx].to_channel_grayscale(channel);
                     let size = [img.width as usize, img.height as usize];
-                    let color_image =
-                        egui::ColorImage::from_rgba_unmultiplied(size, &img.pixels);
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &img.pixels);
                     Some(self.egui_ctx.load_texture(
                         format!("chan_{channel}"),
                         color_image,
@@ -1474,8 +1478,8 @@ impl TexEditApp {
             if let Some(handle) = &tex_handle {
                 let avail = ui.available_size();
                 let tex_size = handle.size_vec2();
-                let scale = (avail.x / tex_size.x).min(avail.y / tex_size.y).min(1.0)
-                    * self.texture_zoom;
+                let scale =
+                    (avail.x / tex_size.x).min(avail.y / tex_size.y).min(1.0) * self.texture_zoom;
                 let sized = egui::Vec2::new(tex_size.x * scale, tex_size.y * scale);
 
                 // Tiled or single
@@ -1497,10 +1501,7 @@ impl TexEditApp {
             // Zoom controls
             ui.horizontal(|ui| {
                 ui.label("Zoom:");
-                ui.add(
-                    egui::Slider::new(&mut self.texture_zoom, 0.25..=4.0)
-                        .logarithmic(true),
-                );
+                ui.add(egui::Slider::new(&mut self.texture_zoom, 0.25..=4.0).logarithmic(true));
             });
             ui.checkbox(&mut self.texture_tiled, "Tile preview");
         } else {
@@ -1531,9 +1532,9 @@ impl TexEditApp {
                     if *snap_idx < self.snapshots.len() {
                         let channel_names = self.snapshots[*snap_idx].channel_names();
                         for ch in &channel_names {
-                            let is_ch_selected =
-                                self.selected_channel.as_deref() == Some(ch.as_str())
-                                    && self.selected_snapshot_node == Some(*snap_idx);
+                            let is_ch_selected = self.selected_channel.as_deref()
+                                == Some(ch.as_str())
+                                && self.selected_snapshot_node == Some(*snap_idx);
                             if ui.selectable_label(is_ch_selected, ch).clicked() {
                                 new_channel = Some((ch.clone(), *snap_idx));
                             }

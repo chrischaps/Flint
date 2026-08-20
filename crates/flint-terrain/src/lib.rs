@@ -9,8 +9,8 @@ pub mod chunk;
 pub mod grass_config;
 pub mod heightmap;
 pub mod procgen;
-pub mod splatgen;
 pub mod spec;
+pub mod splatgen;
 pub mod terrain;
 
 pub use brush::{
@@ -18,11 +18,11 @@ pub use brush::{
     SplatBrushMode,
 };
 pub use chunk::TerrainChunk;
+pub use grass_config::GrassConfig;
 pub use heightmap::Heightmap;
 pub use procgen::generate_heightmap;
-pub use splatgen::generate_splat_map;
 pub use spec::TerrainSpec;
-pub use grass_config::GrassConfig;
+pub use splatgen::generate_splat_map;
 pub use terrain::{Terrain, TerrainConfig};
 
 #[cfg(test)]

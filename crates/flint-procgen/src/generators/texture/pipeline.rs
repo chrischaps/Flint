@@ -89,13 +89,12 @@ fn parse_pipeline(params: &toml::Value) -> Result<(Vec<toml::Value>, Vec<Box<dyn
             reason: "expected a TOML table".into(),
         })?;
 
-    let ops_array = table
-        .get("ops")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| ProcGenError::InvalidParameter {
+    let ops_array = table.get("ops").and_then(|v| v.as_array()).ok_or_else(|| {
+        ProcGenError::InvalidParameter {
             name: "ops".into(),
             reason: "pipeline pattern requires a [[params.ops]] array".into(),
-        })?;
+        }
+    })?;
 
     if ops_array.is_empty() {
         return Err(ProcGenError::InvalidParameter {
@@ -209,7 +208,15 @@ fn run_pipeline_dag(
     let mut field = TextureField::new(map_params.width, map_params.height);
 
     for &exec_idx in &execution_order {
-        execute_dag_node(exec_idx, &dag_nodes, ops[exec_idx].as_ref(), &ops_array[exec_idx], ops_array, &mut field, rng);
+        execute_dag_node(
+            exec_idx,
+            &dag_nodes,
+            ops[exec_idx].as_ref(),
+            &ops_array[exec_idx],
+            ops_array,
+            &mut field,
+            rng,
+        );
     }
 
     // Resolve output: copy the last writer's scoped channels to bare names
@@ -234,7 +241,15 @@ fn run_pipeline_dag_with_snapshots(
     let mut snapshots_by_idx: Vec<Option<TextureField>> = vec![None; ops.len()];
 
     for &exec_idx in &execution_order {
-        execute_dag_node(exec_idx, &dag_nodes, ops[exec_idx].as_ref(), &ops_array[exec_idx], ops_array, &mut field, rng);
+        execute_dag_node(
+            exec_idx,
+            &dag_nodes,
+            ops[exec_idx].as_ref(),
+            &ops_array[exec_idx],
+            ops_array,
+            &mut field,
+            rng,
+        );
         snapshots_by_idx[dag_nodes[exec_idx].original_index] = Some(field.clone());
     }
 
@@ -741,18 +756,19 @@ fn json_to_toml(v: &serde_json::Value) -> toml::Value {
 
 /// Parse a single op from a TOML table.
 pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>> {
-    let table = value.as_table().ok_or_else(|| ProcGenError::InvalidParameter {
-        name: format!("ops[{index}]"),
-        reason: "each op must be a TOML table".into(),
-    })?;
-
-    let op_type = table
-        .get("type")
-        .and_then(|v| v.as_str())
+    let table = value
+        .as_table()
         .ok_or_else(|| ProcGenError::InvalidParameter {
+            name: format!("ops[{index}]"),
+            reason: "each op must be a TOML table".into(),
+        })?;
+
+    let op_type = table.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+        ProcGenError::InvalidParameter {
             name: format!("ops[{index}].type"),
             reason: "each op must have a \"type\" string".into(),
-        })?;
+        }
+    })?;
 
     match op_type {
         "brick_grid" => {
@@ -762,8 +778,14 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let gap_width = opt_f32(table, "gap_width")?.unwrap_or(0.04);
             let width_variation = opt_f32(table, "width_variation")?.unwrap_or(0.0);
             let row_height_variation = opt_f32(table, "row_height_variation")?.unwrap_or(0.0);
-            let warp_x = table.get("warp_x").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let warp_y = table.get("warp_y").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let warp_x = table
+                .get("warp_x")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let warp_y = table
+                .get("warp_y")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
             Ok(Box::new(BrickGridOp {
                 columns,
@@ -781,8 +803,14 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let cell_count = opt_u32(table, "cell_count")?.unwrap_or(20);
             let regularity = opt_f32(table, "regularity")?.unwrap_or(0.0);
             let mortar_width = opt_f32(table, "mortar_width")?.unwrap_or(0.03);
-            let warp_x = table.get("warp_x").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let warp_y = table.get("warp_y").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let warp_x = table
+                .get("warp_x")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let warp_y = table
+                .get("warp_y")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let warp_strength = opt_f32(table, "warp_strength")?.unwrap_or(0.0);
             Ok(Box::new(VoronoiGridOp {
                 cell_count,
@@ -851,7 +879,10 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let octaves = opt_u32(table, "octaves")?.unwrap_or(4);
             let scale_x = opt_f32(table, "scale_x")?.unwrap_or(1.0);
             let scale_y = opt_f32(table, "scale_y")?.unwrap_or(1.0);
-            let cell_offset = table.get("cell_offset").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cell_offset = table
+                .get("cell_offset")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             Ok(Box::new(NoiseLayerOp {
                 output,
                 frequency,
@@ -993,10 +1024,7 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 .and_then(|v| v.as_str())
                 .map(MapRangeInterp::from_str)
                 .unwrap_or(MapRangeInterp::Linear);
-            let clamp_output = table
-                .get("clamp")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            let clamp_output = table.get("clamp").and_then(|v| v.as_bool()).unwrap_or(true);
             Ok(Box::new(MapRangeOp {
                 input,
                 output,
@@ -1028,10 +1056,13 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 })?;
             let mut stops = Vec::with_capacity(stops_arr.len());
             for (si, stop_val) in stops_arr.iter().enumerate() {
-                let stop_table = stop_val.as_table().ok_or_else(|| ProcGenError::InvalidParameter {
-                    name: format!("ops[{index}].stops[{si}]"),
-                    reason: "each stop must be a TOML table".into(),
-                })?;
+                let stop_table =
+                    stop_val
+                        .as_table()
+                        .ok_or_else(|| ProcGenError::InvalidParameter {
+                            name: format!("ops[{index}].stops[{si}]"),
+                            reason: "each stop must be a TOML table".into(),
+                        })?;
                 let position = opt_f32(stop_table, "position")?.unwrap_or(0.0);
                 let color = if let Some(v) = stop_table.get("color") {
                     let hex = v.as_str().ok_or_else(|| ProcGenError::InvalidParameter {
@@ -1046,7 +1077,11 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
                 stops.push(ColorStop { position, color });
             }
             // Sort stops by position
-            stops.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap_or(std::cmp::Ordering::Equal));
+            stops.sort_by(|a, b| {
+                a.position
+                    .partial_cmp(&b.position)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             Ok(Box::new(ColorRampOp {
                 input,
                 interpolation,
@@ -1182,7 +1217,10 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let gain = opt_f32(table, "gain")?.unwrap_or(2.0);
             let scale_x = opt_f32(table, "scale_x")?.unwrap_or(1.0);
             let scale_y = opt_f32(table, "scale_y")?.unwrap_or(1.0);
-            let cell_offset = table.get("cell_offset").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cell_offset = table
+                .get("cell_offset")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             Ok(Box::new(MusgraveTextureOp {
                 output,
                 noise_type,
@@ -1344,7 +1382,10 @@ pub fn parse_op(value: &toml::Value, index: usize) -> Result<Box<dyn TextureOp>>
             let strength = opt_f32(table, "strength")?.unwrap_or(0.02);
             let edge_width = opt_f32(table, "edge_width")?.unwrap_or(0.06);
             let noise_type = NoiseType::from_str(
-                table.get("noise_type").and_then(|v| v.as_str()).unwrap_or("perlin"),
+                table
+                    .get("noise_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("perlin"),
             );
             let octaves = opt_u32(table, "octaves")?.unwrap_or(1);
             let threshold = opt_f32(table, "threshold")?.unwrap_or(0.3);
@@ -1496,7 +1537,10 @@ strength = 1.0
         let maps_b = run_pipeline(&spec.params, &map_params, &mut rng_b).unwrap();
 
         for (a, b) in maps_a.iter().zip(maps_b.iter()) {
-            assert_eq!(a.pixels, b.pixels, "same seed should produce identical pixels");
+            assert_eq!(
+                a.pixels, b.pixels,
+                "same seed should produce identical pixels"
+            );
         }
     }
 

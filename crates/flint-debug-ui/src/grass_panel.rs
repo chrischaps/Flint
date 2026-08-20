@@ -1,14 +1,20 @@
-use std::path::PathBuf;
-use flint_terrain::GrassConfig;
-use flint_scene::SceneDocument;
 use crate::DebugPanel;
+use flint_scene::SceneDocument;
+use flint_terrain::GrassConfig;
+use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
 // Helper widgets
 // ---------------------------------------------------------------------------
 
 /// Single labeled drag value. Returns true if the value changed.
-fn drag_f32(ui: &mut egui::Ui, label: &str, value: &mut f32, speed: f64, range: std::ops::RangeInclusive<f64>) -> bool {
+fn drag_f32(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+) -> bool {
     let before = *value;
     ui.horizontal(|ui| {
         ui.label(label);
@@ -23,33 +29,75 @@ fn drag_f32(ui: &mut egui::Ui, label: &str, value: &mut f32, speed: f64, range: 
 }
 
 /// Labeled [f32; 3] drag row with R/G/B prefixes (for colors). Returns true if any element changed.
-fn drag_vec3(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3], speed: f64, range: std::ops::RangeInclusive<f64>) -> bool {
+fn drag_vec3(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut [f32; 3],
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+) -> bool {
     let before = *value;
     let [r, g, b] = value;
     ui.horizontal(|ui| {
         ui.label(label);
         ui.label("R");
-        ui.add(egui::DragValue::new(r).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(
+            egui::DragValue::new(r)
+                .speed(speed)
+                .range(range.clone())
+                .max_decimals(3),
+        );
         ui.label("G");
-        ui.add(egui::DragValue::new(g).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(
+            egui::DragValue::new(g)
+                .speed(speed)
+                .range(range.clone())
+                .max_decimals(3),
+        );
         ui.label("B");
-        ui.add(egui::DragValue::new(b).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(
+            egui::DragValue::new(b)
+                .speed(speed)
+                .range(range.clone())
+                .max_decimals(3),
+        );
     });
     before != [*r, *g, *b]
 }
 
 /// Labeled [f32; 3] drag row with X/Y/Z prefixes (for directions). Returns true if any element changed.
-fn drag_xyz(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3], speed: f64, range: std::ops::RangeInclusive<f64>) -> bool {
+fn drag_xyz(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut [f32; 3],
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+) -> bool {
     let before = *value;
     let [x, y, z] = value;
     ui.horizontal(|ui| {
         ui.label(label);
         ui.label("X");
-        ui.add(egui::DragValue::new(x).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(
+            egui::DragValue::new(x)
+                .speed(speed)
+                .range(range.clone())
+                .max_decimals(3),
+        );
         ui.label("Y");
-        ui.add(egui::DragValue::new(y).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(
+            egui::DragValue::new(y)
+                .speed(speed)
+                .range(range.clone())
+                .max_decimals(3),
+        );
         ui.label("Z");
-        ui.add(egui::DragValue::new(z).speed(speed).range(range.clone()).max_decimals(3));
+        ui.add(
+            egui::DragValue::new(z)
+                .speed(speed)
+                .range(range.clone())
+                .max_decimals(3),
+        );
     });
     before != [*x, *y, *z]
 }
@@ -133,11 +181,19 @@ impl GrassDebugPanel {
             blade_width = c.blade_width,
             blade_height = c.blade_height,
             height_variation = c.height_variation,
-            rb = rb, gb = gb, bb = bb,
-            rt = rt, gt = gt, bt = bt,
-            rd = rd, gd = gd, bd = bd,
+            rb = rb,
+            gb = gb,
+            bb = bb,
+            rt = rt,
+            gt = gt,
+            bt = bt,
+            rd = rd,
+            gd = gd,
+            bd = bd,
             dry_amount = c.dry_amount,
-            wx = wx, wy = wy, wz = wz,
+            wx = wx,
+            wy = wy,
+            wz = wz,
             wind_speed = c.wind_speed,
             wind_strength = c.wind_strength,
             bend_radius = c.bend_radius,
@@ -163,23 +219,48 @@ impl GrassDebugPanel {
 
         let mut doc = SceneDocument::from_file(&self.scene_path)?;
 
-        doc.patch_field(entity, "terrain", "grass.enabled",           &b(c.enabled))?;
-        doc.patch_field(entity, "terrain", "grass.density",           &f(c.density))?;
-        doc.patch_field(entity, "terrain", "grass.max_distance",      &f(c.max_distance))?;
-        doc.patch_field(entity, "terrain", "grass.fade_start",        &f(c.fade_start))?;
-        doc.patch_field(entity, "terrain", "grass.density_threshold", &f(c.density_threshold))?;
-        doc.patch_field(entity, "terrain", "grass.blade_width",       &f(c.blade_width))?;
-        doc.patch_field(entity, "terrain", "grass.blade_height",      &f(c.blade_height))?;
-        doc.patch_field(entity, "terrain", "grass.height_variation",  &f(c.height_variation))?;
-        doc.patch_field(entity, "terrain", "grass.color_base",        &v3(c.color_base))?;
-        doc.patch_field(entity, "terrain", "grass.color_tip",         &v3(c.color_tip))?;
-        doc.patch_field(entity, "terrain", "grass.color_dry",         &v3(c.color_dry))?;
-        doc.patch_field(entity, "terrain", "grass.dry_amount",        &f(c.dry_amount))?;
-        doc.patch_field(entity, "terrain", "grass.wind_direction",    &v3(c.wind_direction))?;
-        doc.patch_field(entity, "terrain", "grass.wind_speed",        &f(c.wind_speed))?;
-        doc.patch_field(entity, "terrain", "grass.wind_strength",     &f(c.wind_strength))?;
-        doc.patch_field(entity, "terrain", "grass.bend_radius",       &f(c.bend_radius))?;
-        doc.patch_field(entity, "terrain", "grass.bend_strength",     &f(c.bend_strength))?;
+        doc.patch_field(entity, "terrain", "grass.enabled", &b(c.enabled))?;
+        doc.patch_field(entity, "terrain", "grass.density", &f(c.density))?;
+        doc.patch_field(entity, "terrain", "grass.max_distance", &f(c.max_distance))?;
+        doc.patch_field(entity, "terrain", "grass.fade_start", &f(c.fade_start))?;
+        doc.patch_field(
+            entity,
+            "terrain",
+            "grass.density_threshold",
+            &f(c.density_threshold),
+        )?;
+        doc.patch_field(entity, "terrain", "grass.blade_width", &f(c.blade_width))?;
+        doc.patch_field(entity, "terrain", "grass.blade_height", &f(c.blade_height))?;
+        doc.patch_field(
+            entity,
+            "terrain",
+            "grass.height_variation",
+            &f(c.height_variation),
+        )?;
+        doc.patch_field(entity, "terrain", "grass.color_base", &v3(c.color_base))?;
+        doc.patch_field(entity, "terrain", "grass.color_tip", &v3(c.color_tip))?;
+        doc.patch_field(entity, "terrain", "grass.color_dry", &v3(c.color_dry))?;
+        doc.patch_field(entity, "terrain", "grass.dry_amount", &f(c.dry_amount))?;
+        doc.patch_field(
+            entity,
+            "terrain",
+            "grass.wind_direction",
+            &v3(c.wind_direction),
+        )?;
+        doc.patch_field(entity, "terrain", "grass.wind_speed", &f(c.wind_speed))?;
+        doc.patch_field(
+            entity,
+            "terrain",
+            "grass.wind_strength",
+            &f(c.wind_strength),
+        )?;
+        doc.patch_field(entity, "terrain", "grass.bend_radius", &f(c.bend_radius))?;
+        doc.patch_field(
+            entity,
+            "terrain",
+            "grass.bend_strength",
+            &f(c.bend_strength),
+        )?;
 
         doc.save(&self.scene_path)
     }
@@ -190,7 +271,9 @@ impl GrassDebugPanel {
 // ---------------------------------------------------------------------------
 
 impl DebugPanel for GrassDebugPanel {
-    fn name(&self) -> &str { "Grass Debug" }
+    fn name(&self) -> &str {
+        "Grass Debug"
+    }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
@@ -215,13 +298,31 @@ impl DebugPanel for GrassDebugPanel {
                         self.density_changed = true;
                     }
                 }
-                if drag_f32(ui, "Max Distance", &mut self.config.max_distance, 1.0, 10.0..=500.0) {
+                if drag_f32(
+                    ui,
+                    "Max Distance",
+                    &mut self.config.max_distance,
+                    1.0,
+                    10.0..=500.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Fade Start", &mut self.config.fade_start, 1.0, 5.0..=500.0) {
+                if drag_f32(
+                    ui,
+                    "Fade Start",
+                    &mut self.config.fade_start,
+                    1.0,
+                    5.0..=500.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Density Threshold", &mut self.config.density_threshold, 0.005, 0.0..=1.0) {
+                if drag_f32(
+                    ui,
+                    "Density Threshold",
+                    &mut self.config.density_threshold,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
             });
@@ -230,13 +331,31 @@ impl DebugPanel for GrassDebugPanel {
         egui::CollapsingHeader::new("Blade Geometry")
             .default_open(true)
             .show(ui, |ui| {
-                if drag_f32(ui, "Blade Width", &mut self.config.blade_width, 0.001, 0.01..=1.0) {
+                if drag_f32(
+                    ui,
+                    "Blade Width",
+                    &mut self.config.blade_width,
+                    0.001,
+                    0.01..=1.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Blade Height", &mut self.config.blade_height, 0.005, 0.01..=2.0) {
+                if drag_f32(
+                    ui,
+                    "Blade Height",
+                    &mut self.config.blade_height,
+                    0.005,
+                    0.01..=2.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Height Variation", &mut self.config.height_variation, 0.005, 0.0..=1.0) {
+                if drag_f32(
+                    ui,
+                    "Height Variation",
+                    &mut self.config.height_variation,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
             });
@@ -245,16 +364,40 @@ impl DebugPanel for GrassDebugPanel {
         egui::CollapsingHeader::new("Colors")
             .default_open(true)
             .show(ui, |ui| {
-                if drag_vec3(ui, "Base Color", &mut self.config.color_base, 0.005, 0.0..=1.0) {
+                if drag_vec3(
+                    ui,
+                    "Base Color",
+                    &mut self.config.color_base,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
-                if drag_vec3(ui, "Tip Color", &mut self.config.color_tip, 0.005, 0.0..=1.0) {
+                if drag_vec3(
+                    ui,
+                    "Tip Color",
+                    &mut self.config.color_tip,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
-                if drag_vec3(ui, "Dry Color", &mut self.config.color_dry, 0.005, 0.0..=1.0) {
+                if drag_vec3(
+                    ui,
+                    "Dry Color",
+                    &mut self.config.color_dry,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Dry Amount", &mut self.config.dry_amount, 0.005, 0.0..=1.0) {
+                if drag_f32(
+                    ui,
+                    "Dry Amount",
+                    &mut self.config.dry_amount,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
             });
@@ -263,13 +406,31 @@ impl DebugPanel for GrassDebugPanel {
         egui::CollapsingHeader::new("Wind")
             .default_open(true)
             .show(ui, |ui| {
-                if drag_xyz(ui, "Wind Direction", &mut self.config.wind_direction, 0.01, -1.0..=1.0) {
+                if drag_xyz(
+                    ui,
+                    "Wind Direction",
+                    &mut self.config.wind_direction,
+                    0.01,
+                    -1.0..=1.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Wind Speed", &mut self.config.wind_speed, 0.05, 0.0..=10.0) {
+                if drag_f32(
+                    ui,
+                    "Wind Speed",
+                    &mut self.config.wind_speed,
+                    0.05,
+                    0.0..=10.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Wind Strength", &mut self.config.wind_strength, 0.005, 0.0..=1.0) {
+                if drag_f32(
+                    ui,
+                    "Wind Strength",
+                    &mut self.config.wind_strength,
+                    0.005,
+                    0.0..=1.0,
+                ) {
                     changed = true;
                 }
             });
@@ -278,10 +439,22 @@ impl DebugPanel for GrassDebugPanel {
         egui::CollapsingHeader::new("Bend")
             .default_open(true)
             .show(ui, |ui| {
-                if drag_f32(ui, "Bend Radius", &mut self.config.bend_radius, 0.1, 0.0..=20.0) {
+                if drag_f32(
+                    ui,
+                    "Bend Radius",
+                    &mut self.config.bend_radius,
+                    0.1,
+                    0.0..=20.0,
+                ) {
                     changed = true;
                 }
-                if drag_f32(ui, "Bend Strength", &mut self.config.bend_strength, 0.01, 0.0..=2.0) {
+                if drag_f32(
+                    ui,
+                    "Bend Strength",
+                    &mut self.config.bend_strength,
+                    0.01,
+                    0.0..=2.0,
+                ) {
                     changed = true;
                 }
             });
@@ -314,10 +487,22 @@ impl DebugPanel for GrassDebugPanel {
         });
     }
 
-    fn is_open(&self) -> bool { self.open }
-    fn toggle(&mut self) { self.open = !self.open; }
-    fn is_dirty(&self) -> bool { self.dirty }
-    fn clear_dirty(&mut self) { self.dirty = false; }
-    fn as_any(&self) -> &dyn std::any::Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+    fn is_open(&self) -> bool {
+        self.open
+    }
+    fn toggle(&mut self) {
+        self.open = !self.open;
+    }
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+    fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }

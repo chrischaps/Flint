@@ -87,8 +87,11 @@ impl CoherenceConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let (root, _) =
-            config_toml::parse_versioned("coherence config", text, VersionPolicy::DefaultZeroStrict)?;
+        let (root, _) = config_toml::parse_versioned(
+            "coherence config",
+            text,
+            VersionPolicy::DefaultZeroStrict,
+        )?;
         let f = |table: &str, key: &str, default: f64| -> f64 {
             config_toml::section_f64(&root, table, key, default)
         };
@@ -117,10 +120,22 @@ impl CoherenceConfig {
             ("weights.sway", cfg.w_sway, 0.0),
             ("weights.pressure_l", cfg.w_pressure_l, 0.0),
             ("weights.pressure_r", cfg.w_pressure_r, 0.0),
-            ("press.depth_err_full", cfg.press_depth_err_full, f64::MIN_POSITIVE),
-            ("flick.dir_err_full_deg", cfg.flick_dir_err_full_deg, f64::MIN_POSITIVE),
+            (
+                "press.depth_err_full",
+                cfg.press_depth_err_full,
+                f64::MIN_POSITIVE,
+            ),
+            (
+                "flick.dir_err_full_deg",
+                cfg.flick_dir_err_full_deg,
+                f64::MIN_POSITIVE,
+            ),
             ("tracking.err_full", cfg.track_err_full, f64::MIN_POSITIVE),
-            ("pulse.err_full_ms", cfg.pulse_err_full_ms, f64::MIN_POSITIVE),
+            (
+                "pulse.err_full_ms",
+                cfg.pulse_err_full_ms,
+                f64::MIN_POSITIVE,
+            ),
             ("smoothing.rise_bars", cfg.rise_bars, f64::MIN_POSITIVE),
             ("smoothing.fall_bars", cfg.fall_bars, f64::MIN_POSITIVE),
         ] {
@@ -232,12 +247,7 @@ impl Coherence {
     /// is the current meter (bar-denominated time constants); `grid_beats`
     /// is the judgment grid step, so each track record advances time by
     /// `grid_beats / beats_per_bar` bars.
-    pub fn step(
-        &mut self,
-        records: &[JudgmentRecord],
-        grid_beats: f64,
-        beats_per_bar: f64,
-    ) -> f64 {
+    pub fn step(&mut self, records: &[JudgmentRecord], grid_beats: f64, beats_per_bar: f64) -> f64 {
         let c = &self.cfg;
         for rec in records {
             match rec {

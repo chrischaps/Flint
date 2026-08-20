@@ -24,12 +24,7 @@ pub fn generate_heightmap(spec: &TerrainSpec, seed: u64) -> Vec<f32> {
     buffer
 }
 
-fn apply_noise(
-    buffer: &mut [f32],
-    res: usize,
-    layer: &crate::spec::NoiseLayer,
-    seed: u64,
-) {
+fn apply_noise(buffer: &mut [f32], res: usize, layer: &crate::spec::NoiseLayer, seed: u64) {
     let seed_u32 = (seed & 0xFFFF_FFFF) as u32;
 
     // Generate FBM noise values
@@ -137,12 +132,7 @@ fn apply_flatten(buffer: &mut [f32], _res: usize, layer: &crate::spec::FlattenLa
     }
 }
 
-fn apply_erosion(
-    buffer: &mut [f32],
-    res: usize,
-    layer: &crate::spec::ErosionLayer,
-    seed: u64,
-) {
+fn apply_erosion(buffer: &mut [f32], res: usize, layer: &crate::spec::ErosionLayer, seed: u64) {
     match layer.kind {
         ErosionKind::Thermal => thermal_erosion(buffer, res, layer),
         ErosionKind::Hydraulic => hydraulic_erosion(buffer, res, layer, seed),
@@ -193,12 +183,7 @@ fn thermal_erosion(buffer: &mut [f32], res: usize, layer: &crate::spec::ErosionL
     }
 }
 
-fn hydraulic_erosion(
-    buffer: &mut [f32],
-    res: usize,
-    layer: &crate::spec::ErosionLayer,
-    seed: u64,
-) {
+fn hydraulic_erosion(buffer: &mut [f32], res: usize, layer: &crate::spec::ErosionLayer, seed: u64) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let strength = layer.strength as f32;
 
@@ -376,5 +361,4 @@ mod tests {
         assert!(min >= 0.0 - 1e-6);
         assert!(max <= 1.0 + 1e-6);
     }
-
 }

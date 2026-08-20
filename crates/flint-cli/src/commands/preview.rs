@@ -1057,9 +1057,9 @@ impl PreviewApp {
         }
 
         let state_guard = self.state.lock().ok();
-        let skeleton = state_guard.as_ref().and_then(|s| {
-            s.import_result.as_ref().and_then(|ir| ir.skeletons.first())
-        });
+        let skeleton = state_guard
+            .as_ref()
+            .and_then(|s| s.import_result.as_ref().and_then(|ir| ir.skeletons.first()));
 
         let Some(skeleton) = skeleton else {
             renderer.clear_skeleton_overlay();
@@ -1596,7 +1596,11 @@ impl PreviewApp {
         }
         if let Some(wf) = new_wireframe {
             if let Some(renderer) = &mut self.scene_renderer {
-                let mode = if wf { DebugMode::WireframeOverlay } else { DebugMode::Pbr };
+                let mode = if wf {
+                    DebugMode::WireframeOverlay
+                } else {
+                    DebugMode::Pbr
+                };
                 renderer.set_debug_mode(mode);
             }
         }
@@ -1687,34 +1691,39 @@ fn invert_4x4(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
 
     let det = s[0] * c[5] - s[1] * c[4] + s[2] * c[3] + s[3] * c[2] - s[4] * c[1] + s[5] * c[0];
     if det.abs() < 1e-12 {
-        return [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        return [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
     }
     let inv_det = 1.0 / det;
 
     [
         [
-            ( m[1][1] * c[5] - m[1][2] * c[4] + m[1][3] * c[3]) * inv_det,
+            (m[1][1] * c[5] - m[1][2] * c[4] + m[1][3] * c[3]) * inv_det,
             (-m[0][1] * c[5] + m[0][2] * c[4] - m[0][3] * c[3]) * inv_det,
-            ( m[3][1] * s[5] - m[3][2] * s[4] + m[3][3] * s[3]) * inv_det,
+            (m[3][1] * s[5] - m[3][2] * s[4] + m[3][3] * s[3]) * inv_det,
             (-m[2][1] * s[5] + m[2][2] * s[4] - m[2][3] * s[3]) * inv_det,
         ],
         [
             (-m[1][0] * c[5] + m[1][2] * c[2] - m[1][3] * c[1]) * inv_det,
-            ( m[0][0] * c[5] - m[0][2] * c[2] + m[0][3] * c[1]) * inv_det,
+            (m[0][0] * c[5] - m[0][2] * c[2] + m[0][3] * c[1]) * inv_det,
             (-m[3][0] * s[5] + m[3][2] * s[2] - m[3][3] * s[1]) * inv_det,
-            ( m[2][0] * s[5] - m[2][2] * s[2] + m[2][3] * s[1]) * inv_det,
+            (m[2][0] * s[5] - m[2][2] * s[2] + m[2][3] * s[1]) * inv_det,
         ],
         [
-            ( m[1][0] * c[4] - m[1][1] * c[2] + m[1][3] * c[0]) * inv_det,
+            (m[1][0] * c[4] - m[1][1] * c[2] + m[1][3] * c[0]) * inv_det,
             (-m[0][0] * c[4] + m[0][1] * c[2] - m[0][3] * c[0]) * inv_det,
-            ( m[3][0] * s[4] - m[3][1] * s[2] + m[3][3] * s[0]) * inv_det,
+            (m[3][0] * s[4] - m[3][1] * s[2] + m[3][3] * s[0]) * inv_det,
             (-m[2][0] * s[4] + m[2][1] * s[2] - m[2][3] * s[0]) * inv_det,
         ],
         [
             (-m[1][0] * c[3] + m[1][1] * c[1] - m[1][2] * c[0]) * inv_det,
-            ( m[0][0] * c[3] - m[0][1] * c[1] + m[0][2] * c[0]) * inv_det,
+            (m[0][0] * c[3] - m[0][1] * c[1] + m[0][2] * c[0]) * inv_det,
             (-m[3][0] * s[3] + m[3][1] * s[1] - m[3][2] * s[0]) * inv_det,
-            ( m[2][0] * s[3] - m[2][1] * s[1] + m[2][2] * s[0]) * inv_det,
+            (m[2][0] * s[3] - m[2][1] * s[1] + m[2][2] * s[0]) * inv_det,
         ],
     ]
 }
@@ -1959,11 +1968,8 @@ impl ApplicationHandler for PreviewApp {
             ref ev @ (WindowEvent::MouseInput { .. }
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseWheel { .. }) => {
-                self.orbit.handle_event(
-                    ev,
-                    &mut self.camera,
-                    self.egui_ctx.is_pointer_over_area(),
-                );
+                self.orbit
+                    .handle_event(ev, &mut self.camera, self.egui_ctx.is_pointer_over_area());
             }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -2024,9 +2030,7 @@ impl ApplicationHandler for PreviewApp {
 
                     // Upload bone matrices for skinned meshes
                     for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                        if let Some(matrices) =
-                            self.animation.bone_matrices(entity_id)
-                        {
+                        if let Some(matrices) = self.animation.bone_matrices(entity_id) {
                             renderer.update_bone_matrices(&context.queue, asset_name, matrices);
                         }
                     }

@@ -123,8 +123,7 @@ fn open_session(args: &PlayChartArgs, base_dir: &Path) -> Result<ChartSession> {
 
     // Total judgment offset: what the ear hears, adjusted by the player's
     // own measured tap tendency. The capture thread applies it at the stamp.
-    let offset_samples =
-        judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
+    let offset_samples = judgment_offset_samples(latency_ms, calibration_ms, session.sample_rate());
     let verb_map = flint_input_capture::VerbMap::parse(&args.input_map)
         .with_context(|| format!("parsing input map '{}'", args.input_map))?;
     for n in flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples) {
@@ -151,7 +150,10 @@ fn run_cli(mut session: ChartSession) -> Result<()> {
                 break;
             }
             Ok(StdinCommand::Reload) => {
-                for n in session.reload_config().context("reloading session configs")? {
+                for n in session
+                    .reload_config()
+                    .context("reloading session configs")?
+                {
                     println!("{n}");
                 }
             }
@@ -165,8 +167,7 @@ fn run_cli(mut session: ChartSession) -> Result<()> {
 }
 
 fn run_spike(base_dir: &Path, secs: u64) -> Result<()> {
-    let pads =
-        flint_input_capture::connected_gamepads().context("listing connected gamepads")?;
+    let pads = flint_input_capture::connected_gamepads().context("listing connected gamepads")?;
     if pads.is_empty() {
         eprintln!(
             "WARNING: the input backend sees NO gamepads — the spike will record zero \

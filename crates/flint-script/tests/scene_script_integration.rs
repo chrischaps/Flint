@@ -56,7 +56,11 @@ fn on_init() {
         .unwrap()
         .as_float()
         .unwrap();
-    assert!((x - 7.0).abs() < 0.01, "script should read x=7 from scene, got {}", x);
+    assert!(
+        (x - 7.0).abs() < 0.01,
+        "script should read x=7 from scene, got {}",
+        x
+    );
 }
 
 #[test]
@@ -103,7 +107,10 @@ current = 80
         .unwrap()
         .as_integer()
         .unwrap();
-    assert_eq!(hp_before, 80, "entity override should win over archetype default");
+    assert_eq!(
+        hp_before, 80,
+        "entity override should win over archetype default"
+    );
 
     let max_hp = world
         .get_components(id)
@@ -147,7 +154,10 @@ fn on_init() {
         .unwrap()
         .as_integer()
         .unwrap();
-    assert_eq!(max_after, 100, "archetype default 'max' should survive script mutation");
+    assert_eq!(
+        max_after, 100,
+        "archetype default 'max' should survive script mutation"
+    );
 }
 
 #[test]

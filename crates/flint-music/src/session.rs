@@ -9,10 +9,10 @@
 //! the tempo map because it never speaks musical time at all.
 
 use crate::conductor::Conductor;
-use crate::tempo::ms_to_samples;
 use crate::manifest::{BusDecl, SuiteManifest};
 use crate::mixer::BusMixer;
 use crate::scheduler::{FiredEvent, Scheduler};
+use crate::tempo::ms_to_samples;
 use flint_core::{FlintError, Result};
 use kira::backend::Backend;
 use kira::clock::{ClockHandle, ClockSpeed, ClockTime};
@@ -65,9 +65,7 @@ impl StemResolver for FileStems {
     fn load_alternate(&self, bus: &str, file: &str) -> Result<Option<StaticSoundData>> {
         StaticSoundData::from_file(self.base_dir.join(file))
             .map(Some)
-            .map_err(|e| {
-                FlintError::AudioError(format!("alternate for bus '{bus}' ({file}): {e}"))
-            })
+            .map_err(|e| FlintError::AudioError(format!("alternate for bus '{bus}' ({file}): {e}")))
     }
 }
 
@@ -247,7 +245,8 @@ impl SuiteSession {
             seam_tick as u64,
         ));
         self.mixer.stop_all(fade);
-        self.mixer.replay_all_at(re_entry_sample as u64, start_at, entry_db)?;
+        self.mixer
+            .replay_all_at(re_entry_sample as u64, start_at, entry_db)?;
         self.pending_jump = Some((seam_raw, seam_raw - re_entry_sample));
         Ok(())
     }

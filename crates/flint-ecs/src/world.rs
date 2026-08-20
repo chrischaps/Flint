@@ -803,10 +803,7 @@ style = "hinged"
 
         let comp = world.get_component(id, "door").unwrap();
         assert_eq!(comp.get("locked").and_then(|v| v.as_bool()), Some(false));
-        assert_eq!(
-            comp.get("style").and_then(|v| v.as_str()),
-            Some("hinged")
-        );
+        assert_eq!(comp.get("style").and_then(|v| v.as_str()), Some("hinged"));
     }
 
     #[test]

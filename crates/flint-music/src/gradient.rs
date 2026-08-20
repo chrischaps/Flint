@@ -85,12 +85,18 @@ impl GradientConfig {
     }
 
     pub fn parse(text: &str) -> Result<Self> {
-        let (root, _) =
-            config_toml::parse_versioned("gradient config", text, VersionPolicy::DefaultZeroStrict)?;
+        let (root, _) = config_toml::parse_versioned(
+            "gradient config",
+            text,
+            VersionPolicy::DefaultZeroStrict,
+        )?;
         let d = Self::default();
         let tune_t = root.get("tune");
         let tf = |key: &str, default: f64| {
-            tune_t.and_then(|t| t.get(key)).and_then(toml_f64).unwrap_or(default)
+            tune_t
+                .and_then(|t| t.get(key))
+                .and_then(toml_f64)
+                .unwrap_or(default)
         };
         let tune = TuneConfig {
             bus: tune_t
@@ -121,7 +127,10 @@ impl GradientConfig {
         }
         let smooth_t = root.get("smoothing");
         let sf = |key: &str, default: f64| {
-            smooth_t.and_then(|t| t.get(key)).and_then(toml_f64).unwrap_or(default)
+            smooth_t
+                .and_then(|t| t.get(key))
+                .and_then(toml_f64)
+                .unwrap_or(default)
         };
         let cfg = Self {
             tune,
@@ -135,8 +144,11 @@ impl GradientConfig {
     }
 
     fn validate(&self) -> Result<()> {
-        let err =
-            |msg: String| Err(FlintError::ValidationError(format!("gradient config: {msg}")));
+        let err = |msg: String| {
+            Err(FlintError::ValidationError(format!(
+                "gradient config: {msg}"
+            )))
+        };
         if !DEGRADABLE_BUSES.contains(&self.tune.bus.as_str()) {
             return err(format!(
                 "tune.bus '{}' is protected (degradable: {DEGRADABLE_BUSES:?})",
@@ -150,7 +162,10 @@ impl GradientConfig {
             ));
         }
         if !(0.0..=8.0).contains(&self.tune.rate_hz) {
-            return err(format!("tune.rate_hz {} out of range (0..8)", self.tune.rate_hz));
+            return err(format!(
+                "tune.rate_hz {} out of range (0..8)",
+                self.tune.rate_hz
+            ));
         }
         if !self.tune.err_full.is_finite() || self.tune.err_full <= 0.0 {
             return err(format!("tune.err_full {} must be > 0", self.tune.err_full));
@@ -177,7 +192,10 @@ impl GradientConfig {
                 return err(format!("sink.db.{bus} {db} out of range (-24..0)"));
             }
         }
-        for (name, ms) in [("attack_ms", self.attack_ms), ("release_ms", self.release_ms)] {
+        for (name, ms) in [
+            ("attack_ms", self.attack_ms),
+            ("release_ms", self.release_ms),
+        ] {
             if !ms.is_finite() || ms < 0.0 {
                 return err(format!("smoothing.{name} {ms} out of range"));
             }
@@ -282,8 +300,20 @@ impl GradientDriver {
         } else {
             0.0
         };
-        self.err_s = slew(self.err_s, err_target, dt, self.cfg.attack_ms, self.cfg.release_ms);
-        self.sink_s = slew(self.sink_s, sink_target, dt, self.cfg.attack_ms, self.cfg.release_ms);
+        self.err_s = slew(
+            self.err_s,
+            err_target,
+            dt,
+            self.cfg.attack_ms,
+            self.cfg.release_ms,
+        );
+        self.sink_s = slew(
+            self.sink_s,
+            sink_target,
+            dt,
+            self.cfg.attack_ms,
+            self.cfg.release_ms,
+        );
 
         let mut out = GradientOffsets::default();
         if !self.cfg.is_active() {
@@ -311,7 +341,11 @@ impl GradientDriver {
 /// Asymmetric exponential slew: attack toward degraded (rising), release
 /// toward clean (falling). Sub-millisecond taus snap.
 fn slew(current: f64, target: f64, dt: f64, attack_ms: f64, release_ms: f64) -> f64 {
-    let tau_ms = if target > current { attack_ms } else { release_ms };
+    let tau_ms = if target > current {
+        attack_ms
+    } else {
+        release_ms
+    };
     if tau_ms < 1.0 {
         return target;
     }
@@ -362,7 +396,12 @@ release_ms = 450.0
         assert!(cfg.is_active());
         assert_eq!(cfg.tune.bus, "world_voice");
         assert_eq!(cfg.sink_db["texture"], -6.0);
-        assert!(cfg.to_json()["tune"]["max_depth_semitones"].as_f64().unwrap() > 0.2);
+        assert!(
+            cfg.to_json()["tune"]["max_depth_semitones"]
+                .as_f64()
+                .unwrap()
+                > 0.2
+        );
 
         // Protected tune bus.
         assert!(GradientConfig::parse("[tune]\nbus = \"home_theme\"\n").is_err());
@@ -393,13 +432,23 @@ release_ms = 450.0
                 min_det = min_det.min(*det);
             }
         }
-        assert!(max_det > 0.2 && min_det < -0.2, "LFO must swing both ways near full depth");
-        assert!(out.gain_db["world_voice"] < -2.5, "tune bus dulled at full error");
+        assert!(
+            max_det > 0.2 && min_det < -0.2,
+            "LFO must swing both ways near full depth"
+        );
+        assert!(
+            out.gain_db["world_voice"] < -2.5,
+            "tune bus dulled at full error"
+        );
         // Then the lean lands: depth releases toward zero.
         let mut last = f64::MAX;
         for i in 0..3000 {
             let out = d.evaluate(0.0, 1.0, 4.0 + i as f64 * 0.002);
-            let mag = out.detune.get("world_voice").map(|d| d.abs()).unwrap_or(0.0);
+            let mag = out
+                .detune
+                .get("world_voice")
+                .map(|d| d.abs())
+                .unwrap_or(0.0);
             last = mag;
         }
         assert!(last < 0.01, "wobble settles as the lean lands: {last}");
@@ -429,7 +478,11 @@ release_ms = 450.0
             for i in 0..500 {
                 let out = d.evaluate(1.0, 0.05, i as f64 * 0.002);
                 trace.push((
-                    out.detune.get("world_voice").copied().unwrap_or(0.0).to_bits(),
+                    out.detune
+                        .get("world_voice")
+                        .copied()
+                        .unwrap_or(0.0)
+                        .to_bits(),
                     out.gain_db.get("texture").copied().unwrap_or(0.0).to_bits(),
                 ));
             }
@@ -443,6 +496,12 @@ release_ms = 450.0
         d.reset();
         // First post-reset tick has dt 0 → offsets start from silence again.
         let out = d.evaluate(2.0, 0.0, 10.0);
-        assert!(out.detune.get("world_voice").map(|d| d.abs()).unwrap_or(0.0) < 1e-9);
+        assert!(
+            out.detune
+                .get("world_voice")
+                .map(|d| d.abs())
+                .unwrap_or(0.0)
+                < 1e-9
+        );
     }
 }

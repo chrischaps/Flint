@@ -441,18 +441,18 @@ pub fn musgrave_sample(
 ) -> f64 {
     match musgrave_type {
         MusgraveType::Fbm => musgrave_fbm(source, x, y, frequency, octaves, lacunarity, dimension),
-        MusgraveType::Multifractal => {
-            musgrave_multifractal(source, x, y, frequency, octaves, lacunarity, dimension, offset)
-        }
+        MusgraveType::Multifractal => musgrave_multifractal(
+            source, x, y, frequency, octaves, lacunarity, dimension, offset,
+        ),
         MusgraveType::RidgedMultifractal => musgrave_ridged(
             source, x, y, frequency, octaves, lacunarity, dimension, offset, gain,
         ),
         MusgraveType::HybridMultifractal => musgrave_hybrid(
             source, x, y, frequency, octaves, lacunarity, dimension, offset, gain,
         ),
-        MusgraveType::HeteroTerrain => {
-            musgrave_hetero(source, x, y, frequency, octaves, lacunarity, dimension, offset)
-        }
+        MusgraveType::HeteroTerrain => musgrave_hetero(
+            source, x, y, frequency, octaves, lacunarity, dimension, offset,
+        ),
     }
 }
 

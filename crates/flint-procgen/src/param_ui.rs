@@ -21,29 +21,19 @@ pub struct ParamFieldSpec {
 #[derive(Debug, Clone)]
 pub enum ParamFieldType {
     /// Floating-point slider/drag.
-    Float {
-        min: Option<f64>,
-        max: Option<f64>,
-    },
+    Float { min: Option<f64>, max: Option<f64> },
     /// Integer slider/drag.
-    Integer {
-        min: Option<i64>,
-        max: Option<i64>,
-    },
+    Integer { min: Option<i64>, max: Option<i64> },
     /// Checkbox.
     Bool,
     /// Hex color string (e.g. "#573214").
     HexColor,
     /// Dropdown with fixed choices.
-    Enum {
-        values: Vec<String>,
-    },
+    Enum { values: Vec<String> },
     /// Free-form text input.
     String,
     /// Array of strings, optionally constrained to enum choices (multi-checkbox).
-    StringArray {
-        item_enum: Option<Vec<String>>,
-    },
+    StringArray { item_enum: Option<Vec<String>> },
     /// Array of objects (e.g. bones, body_parts, limb_chains).
     ObjectArray,
 }
@@ -90,17 +80,13 @@ fn classify_field(prop: &Value) -> ParamFieldType {
 
     match type_str {
         "number" => {
-            let min = get_f64(prop, "minimum")
-                .or_else(|| get_f64(prop, "exclusiveMinimum"));
-            let max = get_f64(prop, "maximum")
-                .or_else(|| get_f64(prop, "exclusiveMaximum"));
+            let min = get_f64(prop, "minimum").or_else(|| get_f64(prop, "exclusiveMinimum"));
+            let max = get_f64(prop, "maximum").or_else(|| get_f64(prop, "exclusiveMaximum"));
             ParamFieldType::Float { min, max }
         }
         "integer" => {
-            let min = get_i64(prop, "minimum")
-                .or_else(|| get_i64(prop, "exclusiveMinimum"));
-            let max = get_i64(prop, "maximum")
-                .or_else(|| get_i64(prop, "exclusiveMaximum"));
+            let min = get_i64(prop, "minimum").or_else(|| get_i64(prop, "exclusiveMinimum"));
+            let max = get_i64(prop, "maximum").or_else(|| get_i64(prop, "exclusiveMaximum"));
             ParamFieldType::Integer { min, max }
         }
         "boolean" => ParamFieldType::Bool,
@@ -124,9 +110,7 @@ fn classify_field(prop: &Value) -> ParamFieldType {
                     return ParamFieldType::ObjectArray;
                 }
             }
-            let item_enum = prop
-                .get("items")
-                .and_then(extract_string_enum);
+            let item_enum = prop.get("items").and_then(extract_string_enum);
             ParamFieldType::StringArray { item_enum }
         }
         _ => ParamFieldType::String,
@@ -386,12 +370,33 @@ mod tests {
         let by_name: std::collections::HashMap<&str, &ParamFieldSpec> =
             fields.iter().map(|f| (f.name.as_str(), f)).collect();
 
-        assert!(matches!(by_name["trunk_height"].field_type, ParamFieldType::Float { .. }));
-        assert!(matches!(by_name["trunk_radius_base"].field_type, ParamFieldType::Float { .. }));
-        assert!(matches!(by_name["bark_color_base"].field_type, ParamFieldType::HexColor));
-        assert!(matches!(by_name["branch_method"].field_type, ParamFieldType::Enum { .. }));
-        assert!(matches!(by_name["branch_levels"].field_type, ParamFieldType::Integer { .. }));
-        assert!(matches!(by_name["leaf_style"].field_type, ParamFieldType::Enum { .. }));
-        assert!(matches!(by_name["seamless"].field_type, ParamFieldType::Bool));
+        assert!(matches!(
+            by_name["trunk_height"].field_type,
+            ParamFieldType::Float { .. }
+        ));
+        assert!(matches!(
+            by_name["trunk_radius_base"].field_type,
+            ParamFieldType::Float { .. }
+        ));
+        assert!(matches!(
+            by_name["bark_color_base"].field_type,
+            ParamFieldType::HexColor
+        ));
+        assert!(matches!(
+            by_name["branch_method"].field_type,
+            ParamFieldType::Enum { .. }
+        ));
+        assert!(matches!(
+            by_name["branch_levels"].field_type,
+            ParamFieldType::Integer { .. }
+        ));
+        assert!(matches!(
+            by_name["leaf_style"].field_type,
+            ParamFieldType::Enum { .. }
+        ));
+        assert!(matches!(
+            by_name["seamless"].field_type,
+            ParamFieldType::Bool
+        ));
     }
 }

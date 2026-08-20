@@ -15,7 +15,9 @@
 
 use crate::algorithms::noise::{perlin_fbm, NoiseSource};
 use crate::generators::texture::pattern::PatternField;
-use crate::generators::util::{parse_hex_color, toml_f32, toml_string, toml_string_array, toml_u32};
+use crate::generators::util::{
+    parse_hex_color, toml_f32, toml_string, toml_string_array, toml_u32,
+};
 use crate::types::{ChannelSemantics, ImageData};
 use crate::{ProcGenError, Result, SeededRng};
 
@@ -62,11 +64,7 @@ impl Default for TextureMapParams {
         Self {
             width: 512,
             height: 512,
-            output_maps: vec![
-                "albedo".into(),
-                "normal".into(),
-                "roughness".into(),
-            ],
+            output_maps: vec!["albedo".into(), "normal".into(), "roughness".into()],
             pattern: "voronoi_brick".into(),
             base_color: [0.45, 0.35, 0.28, 1.0],
             color_variation: 0.06,
@@ -185,7 +183,12 @@ impl TextureMapParams {
 
 /// Deterministic per-cell color from cell ID, using a hash-based approach
 /// to avoid dependence on pixel traversal order.
-fn cell_color_for_id(cell_id: u32, base_color: [f32; 4], variation: f32, rng_seed: u64) -> [f32; 4] {
+fn cell_color_for_id(
+    cell_id: u32,
+    base_color: [f32; 4],
+    variation: f32,
+    rng_seed: u64,
+) -> [f32; 4] {
     if variation <= 0.0 {
         return base_color;
     }
@@ -259,7 +262,11 @@ fn combined_height(
 /// - Blend toward mortar_color near edges
 /// - Overlay subtle FBM noise for micro-detail
 /// - Output sRGB RGBA8
-pub fn derive_albedo(field: &PatternField, params: &TextureMapParams, rng: &mut SeededRng) -> ImageData {
+pub fn derive_albedo(
+    field: &PatternField,
+    params: &TextureMapParams,
+    rng: &mut SeededRng,
+) -> ImageData {
     let w = field.width;
     let h = field.height;
     let mut img = ImageData::new(w, h, ChannelSemantics::Color);
@@ -278,7 +285,12 @@ pub fn derive_albedo(field: &PatternField, params: &TextureMapParams, rng: &mut 
             let cell = field.get(x, y);
 
             // Per-cell color variation
-            let mut color = cell_color_for_id(cell.cell_id, params.base_color, params.color_variation, seed);
+            let mut color = cell_color_for_id(
+                cell.cell_id,
+                params.base_color,
+                params.color_variation,
+                seed,
+            );
 
             // Mortar blend: smooth transition near edges
             if cell.distance_to_edge < params.mortar_threshold && params.mortar_threshold > 0.0 {
@@ -321,7 +333,11 @@ pub fn derive_albedo(field: &PatternField, params: &TextureMapParams, rng: &mut 
 ///
 /// Output is linear RGBA8 with the standard encoding:
 /// `((nx * 0.5 + 0.5) * 255, (ny * 0.5 + 0.5) * 255, (nz * 0.5 + 0.5) * 255, 255)`
-pub fn derive_normal(field: &PatternField, params: &TextureMapParams, rng: &mut SeededRng) -> ImageData {
+pub fn derive_normal(
+    field: &PatternField,
+    params: &TextureMapParams,
+    rng: &mut SeededRng,
+) -> ImageData {
     let w = field.width;
     let h = field.height;
     let mut img = ImageData::new(w, h, ChannelSemantics::Normal);
@@ -329,7 +345,11 @@ pub fn derive_normal(field: &PatternField, params: &TextureMapParams, rng: &mut 
     // FBM detail noise (optional)
     let detail_noise: Option<Box<dyn NoiseSource>> = if params.detail_strength > 0.0 {
         let noise_rng = rng.fork("normal_detail");
-        Some(Box::new(perlin_fbm(noise_rng.seed(), 4, params.detail_scale as f64)))
+        Some(Box::new(perlin_fbm(
+            noise_rng.seed(),
+            4,
+            params.detail_scale as f64,
+        )))
     } else {
         None
     };
@@ -341,10 +361,38 @@ pub fn derive_normal(field: &PatternField, params: &TextureMapParams, rng: &mut 
             let iy = y as i32;
 
             // Finite-difference gradient (2-sample Sobel-like)
-            let h_left = combined_height(field, ix - 1, iy, noise_ref, params.detail_strength, params.detail_scale);
-            let h_right = combined_height(field, ix + 1, iy, noise_ref, params.detail_strength, params.detail_scale);
-            let h_up = combined_height(field, ix, iy - 1, noise_ref, params.detail_strength, params.detail_scale);
-            let h_down = combined_height(field, ix, iy + 1, noise_ref, params.detail_strength, params.detail_scale);
+            let h_left = combined_height(
+                field,
+                ix - 1,
+                iy,
+                noise_ref,
+                params.detail_strength,
+                params.detail_scale,
+            );
+            let h_right = combined_height(
+                field,
+                ix + 1,
+                iy,
+                noise_ref,
+                params.detail_strength,
+                params.detail_scale,
+            );
+            let h_up = combined_height(
+                field,
+                ix,
+                iy - 1,
+                noise_ref,
+                params.detail_strength,
+                params.detail_scale,
+            );
+            let h_down = combined_height(
+                field,
+                ix,
+                iy + 1,
+                noise_ref,
+                params.detail_strength,
+                params.detail_scale,
+            );
 
             let dx = (h_right - h_left) * params.normal_strength;
             let dy = (h_down - h_up) * params.normal_strength;
@@ -380,7 +428,11 @@ pub fn derive_normal(field: &PatternField, params: &TextureMapParams, rng: &mut 
 /// - Smooth blend between mortar and surface via `distance_to_edge`
 /// - Optional FBM detail overlay (less aggressive than on albedo)
 /// - Output is grayscale RGBA8 (R=G=B=roughness, A=255), linear
-pub fn derive_roughness(field: &PatternField, params: &TextureMapParams, rng: &mut SeededRng) -> ImageData {
+pub fn derive_roughness(
+    field: &PatternField,
+    params: &TextureMapParams,
+    rng: &mut SeededRng,
+) -> ImageData {
     let w = field.width;
     let h = field.height;
     let mut img = ImageData::new(w, h, ChannelSemantics::Roughness);
@@ -403,7 +455,9 @@ pub fn derive_roughness(field: &PatternField, params: &TextureMapParams, rng: &m
             let surface_rough = (params.roughness_base + cell_shift).clamp(0.0, 1.0);
 
             // Mortar blend
-            let roughness = if cell.distance_to_edge < params.mortar_threshold && params.mortar_threshold > 0.0 {
+            let roughness = if cell.distance_to_edge < params.mortar_threshold
+                && params.mortar_threshold > 0.0
+            {
                 let t = cell.distance_to_edge / params.mortar_threshold;
                 params.roughness_mortar * (1.0 - t) + surface_rough * t
             } else {
@@ -439,7 +493,11 @@ pub fn derive_roughness(field: &PatternField, params: &TextureMapParams, rng: &m
 ///
 /// Returns one [`ImageData`] per requested map, in the order they appear in
 /// `output_maps`. Each map is generated with a forked RNG for determinism.
-pub fn derive_maps(field: &PatternField, params: &TextureMapParams, rng: &mut SeededRng) -> Vec<ImageData> {
+pub fn derive_maps(
+    field: &PatternField,
+    params: &TextureMapParams,
+    rng: &mut SeededRng,
+) -> Vec<ImageData> {
     let mut results = Vec::with_capacity(params.output_maps.len());
 
     for map_name in &params.output_maps {
@@ -489,7 +547,8 @@ mod tests {
                 let dx = (x as f32 - half as f32).abs() / half as f32;
                 let dy = (y as f32 - half as f32).abs() / half as f32;
                 let dist_to_edge = dx.min(dy).min(
-                    (x as f32 / size as f32).min(y as f32 / size as f32)
+                    (x as f32 / size as f32)
+                        .min(y as f32 / size as f32)
                         .min((1.0 - x as f32 / size as f32).min(1.0 - y as f32 / size as f32)),
                 );
 
@@ -521,10 +580,7 @@ mod tests {
             for x in 0..field.width {
                 let offset = ((y * field.width + x) * 4 + 2) as usize;
                 let z_byte = normal_map.pixels[offset];
-                assert!(
-                    z_byte >= 128,
-                    "normal Z < 128 at ({x}, {y}): {z_byte}"
-                );
+                assert!(z_byte >= 128, "normal Z < 128 at ({x}, {y}): {z_byte}");
             }
         }
     }
@@ -540,10 +596,7 @@ mod tests {
 
         for i in (0..rough_map.pixels.len()).step_by(4) {
             let r = rough_map.pixels[i] as f32 / 255.0;
-            assert!(
-                (0.0..=1.0).contains(&r),
-                "roughness out of range: {r}"
-            );
+            assert!((0.0..=1.0).contains(&r), "roughness out of range: {r}");
         }
     }
 
@@ -566,7 +619,11 @@ mod tests {
             for x in 0..field.width {
                 let cell = field.get(x, y);
                 let offset = ((y * field.width + x) * 4) as usize;
-                let rgb = [albedo.pixels[offset], albedo.pixels[offset + 1], albedo.pixels[offset + 2]];
+                let rgb = [
+                    albedo.pixels[offset],
+                    albedo.pixels[offset + 1],
+                    albedo.pixels[offset + 2],
+                ];
 
                 if cell.distance_to_edge < 0.01 && edge_pixel.is_none() {
                     edge_pixel = Some(rgb);
@@ -579,8 +636,12 @@ mod tests {
 
         if let (Some(edge), Some(interior)) = (edge_pixel, interior_pixel) {
             // At least one channel should differ
-            let differs = edge[0] != interior[0] || edge[1] != interior[1] || edge[2] != interior[2];
-            assert!(differs, "edge {edge:?} should differ from interior {interior:?}");
+            let differs =
+                edge[0] != interior[0] || edge[1] != interior[1] || edge[2] != interior[2];
+            assert!(
+                differs,
+                "edge {edge:?} should differ from interior {interior:?}"
+            );
         }
     }
 
@@ -704,8 +765,8 @@ mod tests {
     #[test]
     #[ignore]
     fn visual_debug_pngs() {
-        use crate::generators::texture::voronoi::{VoronoiBrickParams, VoronoiBrickPattern};
         use crate::generators::texture::pattern::Pattern;
+        use crate::generators::texture::voronoi::{VoronoiBrickParams, VoronoiBrickPattern};
         use std::path::PathBuf;
 
         let dir = PathBuf::from(std::env::temp_dir()).join("flint_texture_maps_debug");
@@ -743,12 +804,26 @@ mod tests {
         // Also save the pattern debug images
         let height_img = field.to_height_image();
         let path = dir.join("pattern_height.png");
-        image::save_buffer(&path, &height_img.pixels, height_img.width, height_img.height, image::ColorType::Rgba8).unwrap();
+        image::save_buffer(
+            &path,
+            &height_img.pixels,
+            height_img.width,
+            height_img.height,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
         println!("wrote {}", path.display());
 
         let edge_img = field.to_edge_distance_image();
         let path = dir.join("pattern_edge.png");
-        image::save_buffer(&path, &edge_img.pixels, edge_img.width, edge_img.height, image::ColorType::Rgba8).unwrap();
+        image::save_buffer(
+            &path,
+            &edge_img.pixels,
+            edge_img.width,
+            edge_img.height,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
         println!("wrote {}", path.display());
 
         println!("\nAll debug PNGs written to: {}", dir.display());
