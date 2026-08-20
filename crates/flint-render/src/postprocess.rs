@@ -62,11 +62,26 @@ pub struct PostProcessConfig {
     pub render_mode: u32,
     /// Blend strength for the active render mode (0 = normal view).
     pub mode_mix: f32,
+    /// Animated film grain intensity (0 = off). Hash noise on pixel coords,
+    /// time-quantized to 24 Hz off the shared post `time`; luma-weighted so
+    /// highlights stay clean (ADR 0050).
+    pub film_grain: f32,
+    /// Color grade, ASC-CDL-shaped, applied right after ACES tonemapping:
+    /// pow(max(color * gain + lift, 0), 1/gamma). Neutral = lift 0 /
+    /// gamma 1 / gain 1; neutrality is guarded by a CPU-computed enable
+    /// flag, never by pow(x, 1.0) float identity (ADR 0050).
+    pub grade_lift: [f32; 3],
+    pub grade_gamma: [f32; 3],
+    pub grade_gain: [f32; 3],
     /// Per-mode tuning. Tears (1-4): x = bleed-mask scale, y = mask style
     /// (0 fbm / 1 iris), z = per-mode rate, w = spare. Underwater (5):
     /// x = signed eye depth in meters (+ = submerged; waterline Y =
     /// camera Y + x), y = sea energy 0..1, z = daylight 0..1, w = biolum 0..1.
     pub mode_params: [f32; 4],
+    /// FXAA pass on the final composite output (default off — headless
+    /// pixel-diff gates run single-path without it; ADR 0050, the cheap
+    /// interim for tech-debt #13 until the MSAA workstream).
+    pub fxaa_enabled: bool,
 }
 
 impl Default for PostProcessConfig {
@@ -114,7 +129,22 @@ impl Default for PostProcessConfig {
             render_mode: 0,
             mode_mix: 0.0,
             mode_params: [0.0; 4],
+            film_grain: 0.0,
+            grade_lift: [0.0; 3],
+            grade_gamma: [1.0; 3],
+            grade_gain: [1.0; 3],
+            fxaa_enabled: false,
         }
+    }
+}
+
+impl PostProcessConfig {
+    /// True when any grade component deviates from neutral. The shader
+    /// gates the grade block on this (uploaded as grade_enabled) so the
+    /// neutral path is the original code verbatim — pow(x, 1.0) is not
+    /// trusted to be bit-exact across drivers.
+    pub fn grade_active(&self) -> bool {
+        self.grade_lift != [0.0; 3] || self.grade_gamma != [1.0; 3] || self.grade_gain != [1.0; 3]
     }
 }
 
@@ -162,6 +192,11 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
     config.kuwahara_hardness = pp_def.kuwahara_hardness;
     config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
+    config.film_grain = pp_def.film_grain;
+    config.grade_lift = pp_def.grade_lift;
+    config.grade_gamma = pp_def.grade_gamma;
+    config.grade_gain = pp_def.grade_gain;
+    config.fxaa_enabled = pp_def.fxaa;
     config
 }
 
@@ -179,7 +214,8 @@ pub struct PostProcessUniforms {
     pub chromatic_aberration: f32,
     pub radial_blur: f32,
     pub desaturate: f32,
-    pub _pad: f32,
+    /// Film grain intensity (rides the former _pad slot; 0 = off).
+    pub grain_intensity: f32,
     // Fog parameters
     pub fog_color: [f32; 3],
     pub fog_density: f32,
@@ -206,6 +242,15 @@ pub struct PostProcessUniforms {
     pub mode_time: f32,
     pub _pad_mode: f32,
     pub mode_params: [f32; 4],
+    // Color grade (ADR 0050) — three appended 16-byte rows; grade_enabled is
+    // CPU-computed (see PostProcessConfig::grade_active) so the neutral path
+    // never relies on pow(x, 1.0) float identity.
+    pub grade_lift: [f32; 3],
+    pub grade_enabled: f32,
+    pub grade_gamma: [f32; 3],
+    pub _pad3: f32,
+    pub grade_gain: [f32; 3],
+    pub _pad4: f32,
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -695,6 +740,152 @@ impl KuwaharaPipelines {
     }
 }
 
+/// Intermediate target for the FXAA pass (ADR 0050) — only allocated when
+/// `fxaa_enabled` (Kuwahara lazy pattern). The composite pass renders into
+/// this instead of the swapchain; the FXAA pass then samples it and writes
+/// the real target. Same format as the composite pipeline's baked fragment
+/// target so that pipeline is reused unchanged.
+pub struct FxaaResources {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+impl FxaaResources {
+    pub fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("FXAA Intermediate Texture"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { texture, view }
+    }
+}
+
+/// Uniforms for the FXAA pass.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct FxaaUniforms {
+    pub texel_size: [f32; 2],
+    pub _pad: [f32; 2],
+}
+
+/// FXAA pipeline — only created when enabled (Kuwahara lazy pattern).
+pub struct FxaaPipeline {
+    pub pipeline: wgpu::RenderPipeline,
+    pub uniform_bgl: wgpu::BindGroupLayout,
+    pub texture_bgl: wgpu::BindGroupLayout,
+    pub uniform_buffer: wgpu::Buffer,
+}
+
+impl FxaaPipeline {
+    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("FXAA Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("fxaa_shader.wgsl").into()),
+        });
+
+        let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("FXAA Uniform BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("FXAA Texture BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("FXAA Pipeline Layout"),
+            bind_group_layouts: &[&uniform_bgl, &texture_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("FXAA Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_fxaa"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_fxaa"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FXAA Uniform Buffer"),
+            size: std::mem::size_of::<FxaaUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline,
+            uniform_bgl,
+            texture_bgl,
+            uniform_buffer,
+        }
+    }
+}
+
 /// GPU resources for the HDR buffer and bloom mip chain.
 /// Recreated on resize.
 pub struct PostProcessResources {
@@ -717,6 +908,8 @@ pub struct PostProcessResources {
     pub volumetric_blur_view: wgpu::TextureView,
     // Kuwahara textures (full resolution, Rgba16Float) — only allocated when enabled
     pub kuwahara: Option<KuwaharaTextures>,
+    // FXAA intermediate (full resolution, surface format) — only allocated when enabled
+    pub fxaa: Option<FxaaResources>,
 }
 
 /// A single level in the bloom mip chain.
@@ -779,6 +972,8 @@ pub struct PostProcessPipeline {
     pub volumetric_black_view: wgpu::TextureView,
     // Kuwahara filter pipelines and resources — only allocated when enabled
     pub kuwahara: Option<KuwaharaPipelines>,
+    // FXAA pipeline — only created when enabled (ADR 0050)
+    pub fxaa: Option<FxaaPipeline>,
 }
 
 impl PostProcessPipeline {
@@ -1759,7 +1954,78 @@ impl PostProcessPipeline {
             volumetric_blur_uniform_buffer,
             volumetric_black_view,
             kuwahara,
+            // FXAA is created on demand via ensure_fxaa_resources (ADR 0050)
+            fxaa: None,
         }
+    }
+
+    /// Run the FXAA pass: sample the intermediate composite output and write
+    /// the real target. Caller guarantees both `self.fxaa` and
+    /// `resources.fxaa` exist (see SceneRenderer::ensure_fxaa_resources).
+    pub fn run_fxaa(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        resources: &PostProcessResources,
+        target_view: &wgpu::TextureView,
+    ) {
+        let (Some(fxaa), Some(fxaa_res)) = (&self.fxaa, &resources.fxaa) else {
+            return;
+        };
+
+        let uniforms = FxaaUniforms {
+            texel_size: [1.0 / resources.width as f32, 1.0 / resources.height as f32],
+            _pad: [0.0; 2],
+        };
+        queue.write_buffer(&fxaa.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+        let uniform_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("FXAA Uniform BG"),
+            layout: &fxaa.uniform_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: fxaa.uniform_buffer.as_entire_binding(),
+            }],
+        });
+        let texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("FXAA Texture BG"),
+            layout: &fxaa.texture_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fxaa_res.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("FXAA Encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("FXAA Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&fxaa.pipeline);
+            pass.set_bind_group(0, &uniform_bg, &[]);
+            pass.set_bind_group(1, &texture_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
     }
 
     /// Run the bloom downsample/upsample chain.
@@ -2645,7 +2911,7 @@ impl PostProcessPipeline {
             chromatic_aberration: config.chromatic_aberration,
             radial_blur: config.radial_blur,
             desaturate: if effects_on { config.desaturate } else { 0.0 },
-            _pad: 0.0,
+            grain_intensity: if effects_on { config.film_grain } else { 0.0 },
             fog_color: config.fog_color,
             fog_density: config.fog_density,
             fog_start: config.fog_start,
@@ -2676,6 +2942,16 @@ impl PostProcessPipeline {
             mode_time: time,
             _pad_mode: 0.0,
             mode_params: config.mode_params,
+            grade_lift: config.grade_lift,
+            grade_enabled: if effects_on && config.grade_active() {
+                1.0
+            } else {
+                0.0
+            },
+            grade_gamma: config.grade_gamma,
+            _pad3: 0.0,
+            grade_gain: config.grade_gain,
+            _pad4: 0.0,
         };
 
         queue.write_buffer(
@@ -2927,6 +3203,8 @@ impl PostProcessResources {
             volumetric_blur_texture,
             volumetric_blur_view,
             kuwahara,
+            // FXAA intermediate is allocated on demand (ADR 0050)
+            fxaa: None,
         }
     }
 }
@@ -3006,10 +3284,23 @@ mod tests {
     /// fog block (through dither_intensity) = 112 bytes, inv_view_proj mat4
     /// at 112..176, DoF row (strength/focus/range/pad) at 176..192, mode
     /// scalars (render_mode/mode_mix/mode_time/pad) at 192..208, mode_params
-    /// vec4 at 208..224.
+    /// vec4 at 208..224, grade rows (lift+enabled / gamma+pad / gain+pad)
+    /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44).
     #[test]
     fn composite_uniforms_match_wgsl_layout() {
-        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 224);
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 272);
         assert_eq!(std::mem::size_of::<PostProcessUniforms>() % 16, 0);
+    }
+
+    /// Grade neutrality is a CPU decision (grade_enabled), never float-math
+    /// identity: defaults must read as inactive.
+    #[test]
+    fn grade_defaults_are_inactive() {
+        let config = PostProcessConfig::default();
+        assert!(!config.grade_active());
+        assert_eq!(config.film_grain, 0.0);
+        let mut warm = config.clone();
+        warm.grade_gain = [1.05, 1.0, 0.95];
+        assert!(warm.grade_active());
     }
 }

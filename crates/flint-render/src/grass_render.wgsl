@@ -80,6 +80,8 @@ struct LightUniforms {
     _pad: u32,
     ambient_sky: vec4<f32>,
     ambient_ground: vec4<f32>,
+    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
+    sheen_color_strength: vec4<f32>,
 };
 
 struct ShadowUniforms {

@@ -27,7 +27,11 @@ pub struct ShadowDrawUniforms {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct ShadowUniforms {
     pub cascade_view_proj: [[[f32; 4]; 4]; CASCADE_COUNT],
-    pub cascade_splits: [f32; 4], // 3 splits + padding
+    /// xyz = the 3 cascade split distances; w = shadow-map texel size
+    /// (1.0 / resolution). w rides the former padding slot: 0.0 means
+    /// "unset" and shaders fall back to the legacy hardcoded 1/2048, so
+    /// stale/default uniforms keep the exact pre-lever behavior.
+    pub cascade_splits: [f32; 4],
 }
 
 impl Default for ShadowUniforms {
@@ -272,7 +276,12 @@ impl ShadowPass {
         let lambda = 0.5f32; // blend factor
         let splits = compute_cascade_splits(near, far, CASCADE_COUNT, lambda);
 
-        self.shadow_uniforms.cascade_splits = [splits[1], splits[2], splits[3], 0.0];
+        self.shadow_uniforms.cascade_splits = [
+            splits[1],
+            splits[2],
+            splits[3],
+            1.0 / self.resolution as f32,
+        ];
 
         let light_dir_norm = normalize_3(light_dir);
 

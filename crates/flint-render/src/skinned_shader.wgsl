@@ -86,6 +86,8 @@ struct LightUniforms {
     _pad: u32,
     ambient_sky: vec4<f32>,
     ambient_ground: vec4<f32>,
+    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
+    sheen_color_strength: vec4<f32>,
 };
 
 @group(2) @binding(0)
@@ -242,11 +244,17 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
         cascade = 2;
     }
 
+    // Texel size rides cascade_splits.w (0 = unset -> legacy 1/2048).
+    var texel_size = shadow.cascade_splits.w;
+    if (texel_size <= 0.0) {
+        texel_size = 1.0 / 2048.0;
+    }
+
     // Normal-offset bias: push the receiver out along the surface normal by
     // ~2 shadow texels (world units) before projecting.
     let m = shadow.cascade_view_proj[cascade];
     let row0_len = length(vec3<f32>(m[0].x, m[1].x, m[2].x));
-    let texel_world = 2.0 / (max(row0_len, 0.0001) * 2048.0);
+    let texel_world = 2.0 * texel_size / max(row0_len, 0.0001);
     let biased_pos = world_pos + N * texel_world * 2.0;
 
     let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(biased_pos, 1.0);
@@ -265,7 +273,6 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
 
     let depth = proj.z;
 
-    let texel_size = 1.0 / 2048.0;
     var shadow_sum = 0.0;
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {

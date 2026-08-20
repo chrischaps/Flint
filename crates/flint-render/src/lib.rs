@@ -76,9 +76,15 @@ pub use texture_cache::TextureCache;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn shader_wgsl_parses() {
+    fn shader_wgsl_parses_and_validates() {
         let source = include_str!("shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("shader.wgsl failed to parse");
+        let module = naga::front::wgsl::parse_str(source).expect("shader.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("shader.wgsl failed validation");
     }
 
     #[test]
@@ -149,16 +155,68 @@ mod tests {
     }
 
     #[test]
+    fn fxaa_shader_wgsl_parses_and_validates() {
+        let source = include_str!("fxaa_shader.wgsl");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("fxaa_shader.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("fxaa_shader.wgsl failed validation");
+    }
+
+    #[test]
     fn post_process_uniforms_layout() {
         // Desaturate reused a pre-existing pad slot (176 bytes); the DoF row
         // (strength/focus/range/_pad2) and the render-mode rows
         // (render_mode/mode_mix/mode_time/pad + mode_params vec4) were
-        // appended after inv_view_proj, growing the struct by exactly three
-        // 16-byte rows. Any other size means the Rust struct and the WGSL
-        // mirror have diverged.
+        // appended after inv_view_proj (224); the color-grade rows
+        // (lift+enabled / gamma+pad / gain+pad, ADR 0050) grew it to 272,
+        // with film grain reusing the former _pad slot. Any other size means
+        // the Rust struct and the WGSL mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 224, "PostProcessUniforms size changed");
+        assert_eq!(size, 272, "PostProcessUniforms size changed");
+    }
+
+    #[test]
+    fn light_uniforms_layout() {
+        // LightUniforms is mirrored field-for-field in SIX WGSL structs
+        // (shader / skinned / terrain / grass_render / volumetric / ocean);
+        // bind groups use min_binding_size: None, so a divergence surfaces
+        // as a draw-time wgpu validation error, not a compile error. The
+        // sheen vec4 (ADR 0048) grew the struct from 1264 to 1280 bytes.
+        let size = std::mem::size_of::<crate::pipeline::LightUniforms>();
+        assert_eq!(size % 16, 0, "LightUniforms not 16-byte aligned");
+        assert_eq!(
+            size, 1280,
+            "LightUniforms size changed — update all six WGSL mirrors"
+        );
+    }
+
+    #[test]
+    fn light_uniforms_defaults_are_lever_neutral() {
+        use bytemuck::Zeroable;
+        // The clay-look levers must decode to "off" from every pre-existing
+        // writer: wrap rides ambient_sky.w as (1 + wrap), Oren-Nayar rides
+        // ambient_ground.w the same way, sheen is a plain zeroed vec4.
+        let defaults = crate::pipeline::LightUniforms::default_scene_lights();
+        assert_eq!(defaults.ambient_sky[3], 1.0, "wrap must decode to 0");
+        assert_eq!(defaults.ambient_ground[3], 1.0, "oren must decode to 0");
+        assert_eq!(defaults.sheen_color_strength, [0.0; 4], "sheen must be off");
+        let zeroed = crate::pipeline::LightUniforms::zeroed();
+        assert_eq!(zeroed.sheen_color_strength, [0.0; 4]);
+    }
+
+    #[test]
+    fn shadow_uniforms_default_texel_is_unset() {
+        // cascade_splits.w = 0 means "unset" — shaders fall back to the
+        // legacy hardcoded 1/2048 (ADR 0049), so a default/stale uniform
+        // keeps the exact pre-lever behavior.
+        let defaults = crate::shadow::ShadowUniforms::default();
+        assert_eq!(defaults.cascade_splits[3], 0.0);
     }
 
     #[test]

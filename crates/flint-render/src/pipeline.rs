@@ -209,8 +209,18 @@ pub struct LightUniforms {
     pub point_count: u32,
     pub spot_count: u32,
     pub _pad: u32,
+    /// rgb = hemisphere sky color; w encodes the diffuse-wrap knob as
+    /// (1 + wrap) so legacy writes of 1.0 decode to wrap = 0 (ADR 0044).
     pub ambient_sky: [f32; 4],
+    /// rgb = hemisphere ground color; w encodes the Oren-Nayar diffuse
+    /// blend the same way: (1 + oren), legacy 1.0 = off (ADR 0048).
     pub ambient_ground: [f32; 4],
+    /// rgb = sheen tint (linear), w = sheen strength; all-zero = off.
+    /// New field (not an encoding trick): `Pod::zeroed()` and every
+    /// pre-existing writer leave it disabled. Mirrored in SIX WGSL structs —
+    /// shader / skinned / terrain / grass_render / volumetric / ocean —
+    /// see the `light_uniforms_layout` test (ADR 0048).
+    pub sheen_color_strength: [f32; 4],
 }
 
 impl LightUniforms {

@@ -123,6 +123,10 @@ fn main() -> Result<()> {
             ));
         }
         app.scene_diffuse_wrap = env.diffuse_wrap;
+        app.scene_oren_nayar = env.oren_nayar;
+        app.scene_sheen = env
+            .sheen_strength
+            .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s));
     }
 
     // Pass camera settings from scene

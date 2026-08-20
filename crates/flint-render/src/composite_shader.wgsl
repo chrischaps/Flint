@@ -17,7 +17,8 @@ struct PostProcessUniforms {
     chromatic_aberration: f32,
     radial_blur: f32,
     desaturate: f32,
-    _pad: f32,
+    // Film grain intensity (rides the former _pad slot; 0 = off)
+    grain_intensity: f32,
     // Fog parameters
     fog_color: vec3<f32>,
     fog_density: f32,
@@ -48,6 +49,15 @@ struct PostProcessUniforms {
     // depth in meters (+ = submerged; waterline Y = camera_pos.y + x),
     // y = sea energy/turbidity 0..1, z = daylight 0..1, w = biolum 0..1.
     mode_params: vec4<f32>,
+    // Color grade (ADR 0050): pow(max(color * gain + lift, 0), 1/gamma),
+    // applied right after ACES. grade_enabled is CPU-computed so the
+    // neutral path is the original code verbatim.
+    grade_lift: vec3<f32>,
+    grade_enabled: f32,
+    grade_gamma: vec3<f32>,
+    _pad3: f32,
+    grade_gain: vec3<f32>,
+    _pad4: f32,
 };
 
 @group(0) @binding(0)
@@ -557,6 +567,14 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     color = color * params.exposure;
     var mapped = aces_filmic(color);
 
+    // ── Color grade (ADR 0050): ASC-CDL-shaped lift/gamma/gain, right after
+    // tonemapping so it grades the display-referred image. Gated by the
+    // CPU-computed enable flag — never trust pow(x, 1.0) float identity.
+    if (params.grade_enabled > 0.5) {
+        let graded = max(mapped * params.grade_gain + params.grade_lift, vec3<f32>(0.0));
+        mapped = pow(graded, vec3<f32>(1.0) / max(params.grade_gamma, vec3<f32>(0.01)));
+    }
+
     // ── Desaturation (mix toward darkened ash-grey, never neutral) ──
     // Rec.601 luma and the 0.62 grey target match the ladder stage of the
     // play-chart window harness so the disintegration language reads the same.
@@ -587,6 +605,21 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
         let vdist = dist * 1.41421356;
         let vignette = 1.0 - pow(vdist, params.vignette_smoothness) * params.vignette_intensity;
         mapped = mapped * max(vignette, 0.0);
+    }
+
+    // ── Film grain (ADR 0050): hash noise on pixel coords, time-quantized
+    // to 24 Hz (film cadence; the Tier-3 "on twos" tie-in is this one
+    // constant), luma-weighted so highlights stay clean. Before dither —
+    // grain is signal, dither is a quantization aid and stays last. Uses
+    // the shared post time (mode_time), which headless render fixes at 0
+    // so PNG gates stay deterministic.
+    if (params.grain_intensity > 0.0) {
+        let grain_frame = floor(params.mode_time * 24.0);
+        let n = hash2(in.position.xy + vec2<f32>(grain_frame * 17.0, grain_frame * 61.0)) - 0.5;
+        let g_luma = dot(mapped, vec3<f32>(0.299, 0.587, 0.114));
+        let weight = 0.3 + 0.7 * (1.0 - saturate(g_luma));
+        mapped = mapped + vec3<f32>(n * params.grain_intensity * weight);
+        mapped = max(mapped, vec3<f32>(0.0));
     }
 
     // ── Ordered (Bayer) Dither ──

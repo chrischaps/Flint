@@ -41,6 +41,11 @@ Flint uses an **edit -> validate -> play** loop:
    #   --volumetric-density 1.0  --volumetric-samples 32
    #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
    #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
+   #   --oren-nayar 0.7          --sheen-strength 0.15  --sheen-color 1,0.9,0.8
+   #   --grade-lift 0.03,0.02,0.015  --grade-gamma 1,1,1  --grade-gain 1.04,1,0.94
+   #   --film-grain 0.03         --grain-time 0  --fxaa
+   # Note: --shadow-resolution defaults to 2048 (the renderer's construction
+   # default) and is a real control since the texel-size upload (ADR 0049).
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
    #     (modes: 1=matrix 2=blood 3=drunk 4=tron [reality tears; params =
    #      mask scale, mask style 0 fbm/1 iris, rate, spare] 5=underwater

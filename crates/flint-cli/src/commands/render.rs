@@ -76,8 +76,9 @@ pub struct RenderArgs {
     #[arg(long)]
     pub no_shadows: bool,
 
-    /// Shadow map resolution per cascade (default: 1024)
-    #[arg(long, default_value = "1024")]
+    /// Shadow map resolution per cascade (default: 2048, the renderer's
+    /// construction default)
+    #[arg(long, default_value = "2048")]
     pub shadow_resolution: u32,
 
     /// Disable post-processing (bloom, vignette, tonemapping in composite pass)
@@ -123,6 +124,19 @@ pub struct RenderArgs {
     /// Desaturation toward ash-grey (0 = full color, 1 = fully drained)
     #[arg(long)]
     pub desaturate: Option<f32>,
+
+    /// Oren-Nayar diffuse blend (0 = legacy Lambert, 1 = full Oren-Nayar;
+    /// sigma comes from material roughness)
+    #[arg(long)]
+    pub oren_nayar: Option<f32>,
+
+    /// Charlie-sheen rim strength (0 = off; keep <= ~0.3)
+    #[arg(long)]
+    pub sheen_strength: Option<f32>,
+
+    /// Charlie-sheen rim tint as comma-separated R,G,B (default: 1,1,1)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub sheen_color: Option<[f32; 3]>,
 
     /// Depth-of-field strength (0 = off/sharp, 1 = full defocus)
     #[arg(long)]
@@ -173,6 +187,32 @@ pub struct RenderArgs {
     /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
     #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
     pub mode_params: Option<[f32; 4]>,
+
+    /// Film grain intensity (0 = off; ~0.02-0.05 is subtle)
+    #[arg(long)]
+    pub film_grain: Option<f32>,
+
+    /// Post time in seconds for grain/mode animation (default 0.0 —
+    /// headless renders are deterministic; two renders at the same value
+    /// are identical, different values differ)
+    #[arg(long)]
+    pub grain_time: Option<f32>,
+
+    /// Color grade lift as R,G,B (per-channel add post-ACES; neutral 0,0,0)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub grade_lift: Option<[f32; 3]>,
+
+    /// Color grade gamma as R,G,B (per-channel curve; neutral 1,1,1)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub grade_gamma: Option<[f32; 3]>,
+
+    /// Color grade gain as R,G,B (per-channel multiply; neutral 1,1,1)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub grade_gain: Option<[f32; 3]>,
+
+    /// Enable the FXAA anti-aliasing pass
+    #[arg(long)]
+    pub fxaa: bool,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -293,6 +333,19 @@ pub fn run(args: RenderArgs) -> Result<()> {
         if let Some(wrap) = env.diffuse_wrap {
             renderer.set_diffuse_wrap(wrap);
         }
+        if let Some(oren) = env.oren_nayar {
+            renderer.set_oren_nayar(oren);
+        }
+        if let Some(strength) = env.sheen_strength {
+            renderer.set_sheen(env.sheen_color.unwrap_or([1.0; 3]), strength);
+        }
+    }
+    // CLI overrides win over scene-authored values
+    if let Some(oren) = args.oren_nayar {
+        renderer.set_oren_nayar(oren);
+    }
+    if let Some(strength) = args.sheen_strength {
+        renderer.set_sheen(args.sheen_color.unwrap_or([1.0; 3]), strength);
     }
 
     // Load models and textures from the scene
@@ -334,7 +387,11 @@ pub fn run(args: RenderArgs) -> Result<()> {
     if args.no_shadows {
         renderer.set_shadows(false);
     }
-    if args.shadow_resolution != 1024 {
+    // The renderer constructs at 2048; only recreate the pass when the flag
+    // actually deviates. Historically the flag defaulted to 1024 but the
+    // != 1024 guard meant an explicit 1024 was silently ignored — with the
+    // texel size now uploaded per-resolution (ADR 0049) the flag is real.
+    if args.shadow_resolution != 2048 {
         renderer.set_shadow_resolution(&ctx.device, args.shadow_resolution);
     }
 
@@ -430,9 +487,31 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.kuwahara_anisotropy = anisotropy;
             pp_config.kuwahara_enabled = true;
         }
+        if let Some(grain) = args.film_grain {
+            pp_config.film_grain = grain;
+        }
+        if let Some(lift) = args.grade_lift {
+            pp_config.grade_lift = lift;
+        }
+        if let Some(gamma) = args.grade_gamma {
+            pp_config.grade_gamma = gamma;
+        }
+        if let Some(gain) = args.grade_gain {
+            pp_config.grade_gain = gain;
+        }
+        if args.fxaa {
+            pp_config.fxaa_enabled = true;
+        }
 
         renderer.set_post_process_config(pp_config);
         renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
+        renderer.ensure_fxaa_resources(&ctx.device);
+    }
+
+    // Post time for grain/mode animation. Headless renders leave this 0.0 so
+    // PNG snapshots stay deterministic; --grain-time pins an explicit frame.
+    if let Some(t) = args.grain_time {
+        renderer.ocean_time = t as f64;
     }
 
     // Load terrain (if any)

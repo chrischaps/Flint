@@ -85,6 +85,8 @@ struct LightUniforms {
     _pad: u32,
     ambient_sky: vec4<f32>,
     ambient_ground: vec4<f32>,
+    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
+    sheen_color_strength: vec4<f32>,
 };
 
 @group(2) @binding(0)
@@ -239,9 +241,17 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
     // Normal-offset bias: push the receiver position out along the surface
     // normal by ~2 shadow texels (in world units) before projecting. The
     // cascade's world-per-texel comes from the ortho projection row scale.
+    // Texel size rides cascade_splits.w (0 = unset -> legacy hardcoded
+    // 1/2048, the exact pre-lever behavior at the default 2048 resolution;
+    // powers of two keep the fallback bit-identical).
+    var texel_size = shadow.cascade_splits.w;
+    if (texel_size <= 0.0) {
+        texel_size = 1.0 / 2048.0;
+    }
+
     let m = shadow.cascade_view_proj[cascade];
     let row0_len = length(vec3<f32>(m[0].x, m[1].x, m[2].x));
-    let texel_world = 2.0 / (max(row0_len, 0.0001) * 2048.0);
+    let texel_world = 2.0 * texel_size / max(row0_len, 0.0001);
     let biased_pos = world_pos + N * texel_world * 2.0;
 
     // Project world position into shadow map space
@@ -263,7 +273,6 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
     let depth = proj.z;
 
     // 3x3 PCF (percentage-closer filtering) for soft shadow edges
-    let texel_size = 1.0 / 2048.0; // shadow map resolution
     var shadow_sum = 0.0;
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
@@ -286,7 +295,12 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
 // Evaluate a single directional light using Cook-Torrance BRDF.
 // `wrap` softens only the diffuse terminator (wrap-diffuse, a cheap
 // subsurface-ish cue for matte materials); specular keeps the true n·l.
-// wrap = 0 takes the original code path exactly.
+// `oren` blends the diffuse magnitude from Lambert toward the Fujii
+// qualitative Oren-Nayar approximation (sigma = material roughness) —
+// a flatter, chalkier falloff for rough matte surfaces. The two levers
+// are orthogonal: wrap replaces the diffuse n·l, Oren-Nayar scales the
+// diffuse magnitude computed from the raw geometric angles.
+// wrap = 0 and oren = 0 take the original code path exactly.
 fn evaluate_light(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -298,6 +312,7 @@ fn evaluate_light(
     roughness: f32,
     n_dot_v: f32,
     wrap: f32,
+    oren: f32,
 ) -> vec3<f32> {
     let H = normalize(V + L);
 
@@ -316,11 +331,42 @@ fn evaluate_light(
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
-    if (wrap <= 0.0) {
+    let sheen_strength = lights.sheen_color_strength.w;
+    if (wrap <= 0.0 && oren <= 0.0 && sheen_strength <= 0.0) {
         return (kD * albedo / PI + specular) * radiance * n_dot_l;
     }
-    let n_dot_l_wrap = max((dot(N, L) + wrap) / (1.0 + wrap), 0.0);
-    return (kD * albedo / PI) * radiance * n_dot_l_wrap + specular * radiance * n_dot_l;
+    // Charlie sheen rim (Estevez & Kulla 2017 NDF, fixed sheen roughness,
+    // no visibility term — a velvety grazing response, tinted per scene;
+    // masked by n·l so it reads as rim under each light, not a screen glow).
+    var sheen = vec3<f32>(0.0);
+    if (sheen_strength > 0.0) {
+        let alpha_s = 0.5;
+        let sin2h = max(1.0 - n_dot_h * n_dot_h, 1e-4);
+        let d_charlie = (2.0 + 1.0 / alpha_s) * pow(sin2h, 0.5 / alpha_s) / (2.0 * PI);
+        sheen = lights.sheen_color_strength.rgb * sheen_strength * d_charlie;
+    }
+    // Wrap replaces the diffuse n·l (terminator softening only).
+    var n_dot_l_diffuse = n_dot_l;
+    if (wrap > 0.0) {
+        n_dot_l_diffuse = max((dot(N, L) + wrap) / (1.0 + wrap), 0.0);
+    }
+    // Fujii's energy-conserving qualitative Oren-Nayar; `oren` blends.
+    var diffuse_scale = 1.0;
+    if (oren > 0.0) {
+        let sigma = roughness;
+        let fujii_a = 1.0 / (1.0 + (0.5 - 2.0 / (3.0 * PI)) * sigma);
+        let fujii_b = sigma * fujii_a;
+        let s = dot(L, V) - n_dot_l * n_dot_v;
+        let t = select(1.0, max(n_dot_l, n_dot_v), s > 0.0);
+        // Clamp s/t to 1: with normal-mapped grazing angles both n·l and
+        // n·v can approach 0 while s stays positive, exploding the ratio
+        // into white fireflies (and wrap-diffuse removes the n·l damping
+        // that would normally hide them). The physical range is [0, 1].
+        let s_over_t = clamp(max(s, 0.0) / max(t, 1e-4), 0.0, 1.0);
+        diffuse_scale = mix(1.0, fujii_a + fujii_b * s_over_t, oren);
+    }
+    return (kD * albedo / PI) * diffuse_scale * radiance * n_dot_l_diffuse
+        + (specular + sheen) * radiance * n_dot_l;
 }
 
 @fragment
@@ -423,13 +469,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // === Directional lights ===
     // Diffuse-wrap knob rides ambient_sky.w, encoded as (1 + wrap) so every
     // legacy CPU write of 1.0 decodes to wrap = 0 (exact original shading).
+    // Oren-Nayar blend rides ambient_ground.w the same way (ADR 0048).
     let wrap = max(lights.ambient_sky.w - 1.0, 0.0);
+    let oren = max(lights.ambient_ground.w - 1.0, 0.0);
     var Lo = vec3<f32>(0.0);
     for (var i = 0u; i < lights.directional_count; i = i + 1u) {
         let light = lights.directional_lights[i];
         let L = normalize(light.direction);
         let radiance = light.color * light.intensity;
-        var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap);
+        var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap, oren);
 
         // Apply shadow from cascaded shadow maps to the first directional light
         if (i == 0u) {
@@ -448,7 +496,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let L = normalize(light_vec);
         let atten = attenuation(distance, light.radius);
         let radiance = light.color * light.intensity * atten;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap);
+        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap, oren);
     }
 
     // === Spot lights ===
@@ -460,7 +508,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let atten = attenuation(distance, light.radius);
         let cone = spot_cone_factor(light_vec, light.direction, light.inner_angle, light.outer_angle);
         let radiance = light.color * light.intensity * atten * cone;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap);
+        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap, oren);
     }
 
     // Hemisphere ambient from light uniforms

@@ -7,17 +7,17 @@ mod input_config;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
+pub(crate) mod scene_loading;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
-pub(crate) mod scene_loading;
 
 use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
+use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
-use flint_core::components as comp;
 
 /// Game-side day/night component driven by a script; the player only knows
 /// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
@@ -186,6 +186,8 @@ pub struct PlayerApp {
     pub scene_ambient: Option<([f32; 3], [f32; 3])>,
     /// Scene-authored diffuse terminator wrap; None = 0 = legacy shading
     pub scene_diffuse_wrap: Option<f32>,
+    pub scene_oren_nayar: Option<f32>,
+    pub scene_sheen: Option<([f32; 3], f32)>,
 
     // Scene-level camera configuration
     pub scene_camera: Option<flint_scene::CameraDef>,
@@ -302,6 +304,8 @@ impl PlayerApp {
             skybox_path: None,
             scene_ambient: None,
             scene_diffuse_wrap: None,
+            scene_oren_nayar: None,
+            scene_sheen: None,
             scene_camera: None,
             scene_post_process: None,
             pp_vignette_override: None,
@@ -551,6 +555,12 @@ impl PlayerApp {
         if let Some(wrap) = self.scene_diffuse_wrap {
             scene_renderer.set_diffuse_wrap(wrap);
         }
+        if let Some(oren) = self.scene_oren_nayar {
+            scene_renderer.set_oren_nayar(oren);
+        }
+        if let Some((color, strength)) = self.scene_sheen {
+            scene_renderer.set_sheen(color, strength);
+        }
 
         // Load skybox if configured
         if let Some(skybox_rel) = &self.skybox_path {
@@ -602,6 +612,7 @@ impl PlayerApp {
             scene_renderer
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
             scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
+            scene_renderer.ensure_fxaa_resources(&render_context.device);
         }
 
         self.render_context = Some(render_context);
@@ -1347,11 +1358,7 @@ impl PlayerApp {
             };
             if let Some(day) = tod_panel.take_day_set() {
                 if let Some(comps) = self.world.get_components_mut(entity_id) {
-                    comps.set_field(
-                        TIME_OF_DAY_COMPONENT,
-                        "day",
-                        toml::Value::Float(day as f64),
-                    );
+                    comps.set_field(TIME_OF_DAY_COMPONENT, "day", toml::Value::Float(day as f64));
                 }
             }
             if tod_panel.is_dirty() {
@@ -1539,11 +1546,7 @@ impl PlayerApp {
                         .and_then(flint_core::toml_util::toml_f32)
                         .unwrap_or(dv)
                 };
-                calm_panel.sync_status(
-                    g("phase", 0.0),
-                    g("calm", 0.0),
-                    g("next_in_s", -1.0),
-                );
+                calm_panel.sync_status(g("phase", 0.0), g("calm", 0.0), g("next_in_s", -1.0));
             }
         }
 
@@ -2108,8 +2111,7 @@ impl PlayerApp {
                     .iter()
                     .enumerate()
                     .filter(|(_, p)| {
-                        p.is_open()
-                            && matches!(p.layout(), flint_debug_ui::PanelLayout::SideRight)
+                        p.is_open() && matches!(p.layout(), flint_debug_ui::PanelLayout::SideRight)
                     })
                     .map(|(i, _)| i)
                     .collect();
@@ -2225,11 +2227,13 @@ impl PlayerApp {
             match cmd {
                 ScriptCommand::PlaySound { name, volume } => {
                     if self.audio.engine.is_available() {
-                        if let Err(e) = self
-                            .audio
-                            .engine
-                            .play_non_spatial(&name, volume, 1.0, false, flint_audio::Bus::Sfx)
-                        {
+                        if let Err(e) = self.audio.engine.play_non_spatial(
+                            &name,
+                            volume,
+                            1.0,
+                            false,
+                            flint_audio::Bus::Sfx,
+                        ) {
                             tracing::warn!(target: "script", "play_sound error: {:?}", e);
                         }
                     }
@@ -2242,7 +2246,11 @@ impl PlayerApp {
                 } => {
                     let pos =
                         FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
-                    if let Err(e) = self.audio.engine.play_at_position(&name, pos, volume, pitch) {
+                    if let Err(e) = self
+                        .audio
+                        .engine
+                        .play_at_position(&name, pos, volume, pitch)
+                    {
                         tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
                     }
                 }
@@ -2772,6 +2780,14 @@ impl PlayerApp {
                     .environment
                     .as_ref()
                     .and_then(|env| env.diffuse_wrap);
+                self.scene_oren_nayar = scene_file
+                    .environment
+                    .as_ref()
+                    .and_then(|env| env.oren_nayar);
+                self.scene_sheen = scene_file.environment.as_ref().and_then(|env| {
+                    env.sheen_strength
+                        .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s))
+                });
                 self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
@@ -2860,6 +2876,12 @@ impl PlayerApp {
             if let Some(wrap) = self.scene_diffuse_wrap {
                 renderer.set_diffuse_wrap(wrap);
             }
+            if let Some(oren) = self.scene_oren_nayar {
+                renderer.set_oren_nayar(oren);
+            }
+            if let Some((color, strength)) = self.scene_sheen {
+                renderer.set_sheen(color, strength);
+            }
 
             // Reload skybox
             if let Some(skybox_rel) = &self.skybox_path {
@@ -2886,6 +2908,7 @@ impl PlayerApp {
                 renderer
                     .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
                 renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                renderer.ensure_fxaa_resources(&context.device);
             }
         }
 
@@ -3417,10 +3440,9 @@ impl ApplicationHandler for PlayerApp {
 use hud_render::render_draw_commands;
 use scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_particle_textures_from_world, load_scripts_from_world,
-    load_sprite_animations_from_world, load_terrain_from_world_inner,
-    register_node_animation_data, register_skeletal_data, resolve_procgen_assets,
-    resolve_scene_path,
+    load_particle_textures_from_world, load_scripts_from_world, load_sprite_animations_from_world,
+    load_terrain_from_world_inner, register_node_animation_data, register_skeletal_data,
+    resolve_procgen_assets, resolve_scene_path,
 };
 
 impl PlayerApp {

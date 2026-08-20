@@ -136,6 +136,8 @@ pub struct SceneRenderer {
     /// Scene-authored diffuse terminator wrap. Rides ambient_sky.w encoded as
     /// (1 + wrap) so legacy writes of 1.0 decode to wrap = 0 in the shader.
     diffuse_wrap_override: Option<f32>,
+    oren_nayar_override: Option<f32>,
+    sheen_override: Option<([f32; 3], f32)>,
     texture_cache: Option<TextureCache>,
     shadow_pass: Option<ShadowPass>,
     selected_entity: Option<flint_core::EntityId>,
@@ -344,6 +346,8 @@ impl SceneRenderer {
             light_uniforms,
             ambient_override: None,
             diffuse_wrap_override: None,
+            oren_nayar_override: None,
+            sheen_override: None,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
@@ -534,7 +538,9 @@ impl SceneRenderer {
         if self.ocean_grab_dummy_bind_group.is_some() {
             return;
         }
-        let Some(op) = &self.ocean_pipeline else { return };
+        let Some(op) = &self.ocean_pipeline else {
+            return;
+        };
         let dummy_color = crate::ocean_pipeline::create_dummy_grab_texture(
             device,
             HDR_FORMAT,
@@ -568,7 +574,9 @@ impl SceneRenderer {
     /// Called only on the ocean+postprocess path; cheap when size unchanged.
     fn ensure_ocean_grab_resources(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.ensure_ocean_grab_dummy(device);
-        let Some(op) = &self.ocean_pipeline else { return };
+        let Some(op) = &self.ocean_pipeline else {
+            return;
+        };
 
         if self.ocean_grab_size == (width, height) && self.ocean_grab_bind_group.is_some() {
             return;
@@ -596,21 +604,20 @@ impl SceneRenderer {
         let color = make(HDR_FORMAT, "Ocean Grab Color");
         let depth = make(wgpu::TextureFormat::R32Float, "Ocean Grab Depth");
 
-        self.ocean_grab_bind_group =
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &op.grab_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&color.1),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&depth.1),
-                    },
-                ],
-                label: Some("Ocean Grab Bind Group"),
-            }));
+        self.ocean_grab_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &op.grab_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&color.1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&depth.1),
+                },
+            ],
+            label: Some("Ocean Grab Bind Group"),
+        }));
         self.ocean_grab_color = Some(color);
         self.ocean_grab_depth = Some(depth);
         self.ocean_grab_size = (width, height);
@@ -898,8 +905,16 @@ impl SceneRenderer {
                 transform_bind_group,
                 model,
                 model_inv_transpose,
-                aabb_min: [chunk.aabb_min[0] + tx, chunk.aabb_min[1] + ty, chunk.aabb_min[2] + tz],
-                aabb_max: [chunk.aabb_max[0] + tx, chunk.aabb_max[1] + ty, chunk.aabb_max[2] + tz],
+                aabb_min: [
+                    chunk.aabb_min[0] + tx,
+                    chunk.aabb_min[1] + ty,
+                    chunk.aabb_min[2] + tz,
+                ],
+                aabb_max: [
+                    chunk.aabb_max[0] + tx,
+                    chunk.aabb_max[1] + ty,
+                    chunk.aabb_max[2] + tz,
+                ],
             });
         }
 
@@ -981,8 +996,16 @@ impl SceneRenderer {
                 transform_bind_group,
                 model,
                 model_inv_transpose,
-                aabb_min: [chunk.aabb_min[0] + tx, chunk.aabb_min[1] + ty, chunk.aabb_min[2] + tz],
-                aabb_max: [chunk.aabb_max[0] + tx, chunk.aabb_max[1] + ty, chunk.aabb_max[2] + tz],
+                aabb_min: [
+                    chunk.aabb_min[0] + tx,
+                    chunk.aabb_min[1] + ty,
+                    chunk.aabb_min[2] + tz,
+                ],
+                aabb_max: [
+                    chunk.aabb_max[0] + tx,
+                    chunk.aabb_max[1] + ty,
+                    chunk.aabb_max[2] + tz,
+                ],
             });
         }
     }
@@ -1432,7 +1455,8 @@ impl SceneRenderer {
             None => return,
         };
 
-        let max_instances = config.max_instances(self.grass_terrain_width, self.grass_terrain_depth);
+        let max_instances =
+            config.max_instances(self.grass_terrain_width, self.grass_terrain_depth);
         let instance_buffer_size =
             (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
 
@@ -1463,39 +1487,40 @@ impl SceneRenderer {
         });
 
         // Recreate compute storage bind group (binds instance buffer at binding 0)
-        let compute_storage_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &grass_pipeline.compute_storage_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: instance_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: counter_buffer.as_entire_binding(),
-                    },
-                ],
-                label: Some("Grass Compute Storage Bind Group"),
-            });
+        let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.compute_storage_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instance_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: counter_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("Grass Compute Storage Bind Group"),
+        });
 
         // Recreate render instance bind group (binds instance buffer at binding 0)
-        let entity_buffer = self.grass_entity_buffer.as_ref().expect("grass entity buffer");
-        let render_instance_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &grass_pipeline.render_instance_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: instance_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: entity_buffer.as_entire_binding(),
-                    },
-                ],
-                label: Some("Grass Render Instance Bind Group"),
-            });
+        let entity_buffer = self
+            .grass_entity_buffer
+            .as_ref()
+            .expect("grass entity buffer");
+        let render_instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &grass_pipeline.render_instance_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: instance_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: entity_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("Grass Render Instance Bind Group"),
+        });
 
         // Update stored state
         // Note: grass_compute_texture_bind_group, compute_uniform_bind_group,
@@ -1676,6 +1701,8 @@ impl SceneRenderer {
             light_uniforms,
             ambient_override: None,
             diffuse_wrap_override: None,
+            oren_nayar_override: None,
+            sheen_override: None,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
@@ -1946,7 +1973,11 @@ impl SceneRenderer {
         let billboard_draws = self.billboard_draws.len() as u32;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
-        let grass_draw_calls = if self.grass_instance_count > 0 { 1u32 } else { 0 };
+        let grass_draw_calls = if self.grass_instance_count > 0 {
+            1u32
+        } else {
+            0
+        };
 
         let draw_calls = entity_draws
             + skinned_draws
@@ -1980,8 +2011,7 @@ impl SceneRenderer {
         let particle_instances: u32 = self.particle_draws.iter().map(|d| d.instance_count).sum();
         triangles += particle_instances * 2;
         // Sprites: instanced quads (2 triangles per instance)
-        let sprite_instances: u32 =
-            self.sprite2d_batches.iter().map(|b| b.instance_count).sum();
+        let sprite_instances: u32 = self.sprite2d_batches.iter().map(|b| b.instance_count).sum();
         triangles += sprite_instances * 2;
         // Grass: BLADE_INDEX_COUNT indices per instance
         triangles += self.grass_instance_count * BLADE_INDEX_COUNT / 3;
@@ -2348,8 +2378,8 @@ impl SceneRenderer {
         // Extract procedural sky params (+ optional ambient override)
         self.extract_sky_from_world(world);
 
-        let need_overlay =
-            self.debug_state.mode == DebugMode::WireframeOverlay || self.debug_state.mode == DebugMode::WireframeOnly;
+        let need_overlay = self.debug_state.mode == DebugMode::WireframeOverlay
+            || self.debug_state.mode == DebugMode::WireframeOnly;
         let need_normals = self.debug_state.show_normals;
         let arrow_length = self.debug_state.normal_arrow_length;
 
@@ -2782,7 +2812,9 @@ impl SceneRenderer {
             let ocean_comp = world
                 .get_components(entity_id)
                 .and_then(|components| components.get(comp::OCEAN).cloned());
-            let Some(ocean_comp) = ocean_comp else { continue };
+            let Some(ocean_comp) = ocean_comp else {
+                continue;
+            };
 
             let params = flint_core::ocean::OceanParams::from_component(&ocean_comp);
             let needs_regen = self
@@ -2793,8 +2825,7 @@ impl SceneRenderer {
             if needs_regen {
                 self.ocean_spectrum = Some(flint_core::ocean::WaveSpectrum::generate(&params));
             }
-            self.ocean_visuals =
-                crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
+            self.ocean_visuals = crate::ocean_pipeline::OceanVisuals::from_component(&ocean_comp);
             self.ocean_active = self.ocean_pipeline.is_some();
             break; // one ocean per scene
         }
@@ -2809,9 +2840,15 @@ impl SceneRenderer {
         use flint_core::toml_util::{toml_f32, toml_vec3};
         self.ocean_contact = None;
         for &entity_id in world.entities_with_component(comp::OCEAN_CONTACT) {
-            let Some(components) = world.get_components(entity_id) else { continue };
-            let Some(contact) = components.get(comp::OCEAN_CONTACT) else { continue };
-            let Some(tf) = components.get(comp::TRANSFORM) else { continue };
+            let Some(components) = world.get_components(entity_id) else {
+                continue;
+            };
+            let Some(contact) = components.get(comp::OCEAN_CONTACT) else {
+                continue;
+            };
+            let Some(tf) = components.get(comp::TRANSFORM) else {
+                continue;
+            };
 
             let pos = tf.get("position").and_then(toml_vec3).unwrap_or([0.0; 3]);
             let rot = tf.get("rotation").and_then(toml_vec3).unwrap_or([0.0; 3]);
@@ -2888,16 +2925,36 @@ impl SceneRenderer {
     pub fn reset_ambient(&mut self) {
         self.ambient_override = None;
         self.diffuse_wrap_override = None;
+        self.oren_nayar_override = None;
+        self.sheen_override = None;
         let [sr, sg, sb] = LightUniforms::DEFAULT_AMBIENT_SKY;
         let [gr, gg, gb] = LightUniforms::DEFAULT_AMBIENT_GROUND;
         self.light_uniforms.ambient_sky = [sr, sg, sb, 1.0];
         self.light_uniforms.ambient_ground = [gr, gg, gb, 1.0];
+        self.light_uniforms.sheen_color_strength = [0.0; 4];
     }
 
     /// Soften the diffuse terminator (0 = physically sharp / legacy shading).
     /// Scenes set this via `[environment] diffuse_wrap`.
     pub fn set_diffuse_wrap(&mut self, wrap: f32) {
         self.diffuse_wrap_override = Some(wrap.max(0.0));
+        self.apply_ambient_override();
+    }
+
+    /// Blend the diffuse term from Lambert toward the Fujii Oren-Nayar
+    /// approximation (0 = exact legacy shading, 1 = full Oren-Nayar; sigma
+    /// comes from material roughness). Scenes set this via
+    /// `[environment] oren_nayar` (ADR 0048).
+    pub fn set_oren_nayar(&mut self, blend: f32) {
+        self.oren_nayar_override = Some(blend.max(0.0));
+        self.apply_ambient_override();
+    }
+
+    /// Tinted Charlie-sheen rim: `color` is a linear RGB tint, `strength`
+    /// 0..~0.3 (0 = exact legacy shading). Scenes set this via
+    /// `[environment] sheen_color / sheen_strength` (ADR 0048).
+    pub fn set_sheen(&mut self, color: [f32; 3], strength: f32) {
+        self.sheen_override = Some((color, strength.max(0.0)));
         self.apply_ambient_override();
     }
 
@@ -2909,6 +2966,13 @@ impl SceneRenderer {
         if let Some(wrap) = self.diffuse_wrap_override {
             // Shader decodes wrap = ambient_sky.w - 1.0
             self.light_uniforms.ambient_sky[3] = 1.0 + wrap;
+        }
+        if let Some(oren) = self.oren_nayar_override {
+            // Shader decodes oren = ambient_ground.w - 1.0
+            self.light_uniforms.ambient_ground[3] = 1.0 + oren;
+        }
+        if let Some((color, strength)) = self.sheen_override {
+            self.light_uniforms.sheen_color_strength = [color[0], color[1], color[2], strength];
         }
     }
 
@@ -3030,8 +3094,11 @@ impl SceneRenderer {
         // Strongest directional casts the shadows: only index 0 gets CSM, so
         // put the highest-intensity directional first (sun over fill),
         // independent of entity naming. Stable sort keeps name order on ties.
-        directionals[..dir_count as usize]
-            .sort_by(|a, b| b.intensity.partial_cmp(&a.intensity).unwrap_or(std::cmp::Ordering::Equal));
+        directionals[..dir_count as usize].sort_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // If no lights found in scene, use defaults
         if dir_count == 0 && point_count == 0 && spot_count == 0 {
@@ -3098,6 +3165,37 @@ impl SceneRenderer {
             height,
             self.postprocess_config.kuwahara_enabled,
         ));
+        // The recreated resources drop the FXAA intermediate; re-allocate it
+        // at the new size when the pass is active (ADR 0050).
+        self.ensure_fxaa_resources(device);
+    }
+
+    /// Ensure FXAA GPU resources exist (call after enabling FXAA at runtime
+    /// and after resize). No-op when `fxaa` is disabled — the default-off
+    /// path allocates nothing (ADR 0050, Kuwahara lazy pattern).
+    pub fn ensure_fxaa_resources(&mut self, device: &wgpu::Device) {
+        if !self.postprocess_config.fxaa_enabled {
+            return;
+        }
+        if let Some(pp) = &mut self.postprocess_pipeline {
+            if pp.fxaa.is_none() {
+                pp.fxaa = Some(crate::postprocess::FxaaPipeline::new(
+                    device,
+                    self.surface_format,
+                ));
+            }
+        }
+        if let Some(resources) = &mut self.postprocess_resources {
+            if resources.fxaa.is_none() {
+                let (w, h) = (resources.width, resources.height);
+                resources.fxaa = Some(crate::postprocess::FxaaResources::new(
+                    device,
+                    w,
+                    h,
+                    self.surface_format,
+                ));
+            }
+        }
     }
 
     /// Get the current post-processing configuration.

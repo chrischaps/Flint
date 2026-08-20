@@ -128,6 +128,8 @@ struct LightUniforms {
     _pad: u32,
     ambient_sky: vec4<f32>,
     ambient_ground: vec4<f32>,
+    // rgb = sheen tint, w = strength; zero = off (must match LightUniforms in pipeline.rs)
+    sheen_color_strength: vec4<f32>,
 };
 
 @group(2) @binding(0)
@@ -331,7 +333,11 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
     }
 
     let depth = proj.z;
-    let texel_size = 1.0 / 2048.0;
+    // Texel size rides cascade_splits.w (0 = unset -> legacy 1/2048).
+    var texel_size = shadow.cascade_splits.w;
+    if (texel_size <= 0.0) {
+        texel_size = 1.0 / 2048.0;
+    }
     var shadow_sum = 0.0;
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
