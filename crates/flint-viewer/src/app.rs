@@ -14,8 +14,11 @@ use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader::{self, ModelLoadConfig};
-use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
-use flint_scene::{load_scene, save_scene, SceneDocument};
+use flint_render::{
+    post_process_config_from_def, Camera, PostProcessConfig, RenderContext, RendererConfig,
+    SceneRenderer,
+};
+use flint_scene::{load_scene, save_scene, PostProcessDef, SceneDocument};
 use flint_schema::SchemaRegistry;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
@@ -36,6 +39,10 @@ struct ViewerState {
     scene_path: String,
     needs_reload: bool,
     scene_doc: Option<SceneDocument>,
+    /// The scene's authored `[post_process]` block, if any — applied on load
+    /// so the viewer shows the authored look (DoF, vignette, fog, …);
+    /// F11 toggles between it and the viewer's default config.
+    scene_post: Option<PostProcessDef>,
 }
 
 /// Run the viewer application (standard viewer mode)
@@ -65,6 +72,7 @@ pub fn run(scene_path: &str, watch: bool, schemas_path: &str, inspector: bool) -
         scene_path: scene_path.to_string(),
         needs_reload: false,
         scene_doc,
+        scene_post: scene_file.post_process.clone(),
     }));
 
     let _watcher = if watch {
@@ -138,6 +146,7 @@ pub fn run_with_world(
         scene_path: scene_path_anchor.to_string(),
         needs_reload: false,
         scene_doc: None,
+        scene_post: None,
     }));
 
     let event_loop = EventLoop::new()?;
@@ -185,6 +194,7 @@ pub fn run_editor(
         scene_path: scene_path.to_string(),
         needs_reload: false,
         scene_doc: None,
+        scene_post: scene_file.post_process.clone(),
     }));
 
     let _watcher = if watch {
@@ -304,6 +314,17 @@ pub struct ViewerApp {
 
     // Status message (e.g., "Saved!" in editor mode)
     status_message: Option<(String, Instant)>,
+
+    // Scene [post_process] application (F11 toggles authored <-> viewer default)
+    scene_post_enabled: bool,
+    default_post_config: Option<PostProcessConfig>,
+
+    // Viewer DoF follow (F12): focus tracks the last selected entity;
+    // strength/range are tunable in a small egui window while active.
+    dof_follow: bool,
+    dof_focus_entity: Option<flint_core::EntityId>,
+    dof_strength: f32,
+    dof_range: f32,
 }
 
 impl ViewerApp {
@@ -343,6 +364,12 @@ impl ViewerApp {
             gizmo_drag_ended: false,
             dirty_fields: std::collections::HashSet::new(),
             status_message: None,
+            scene_post_enabled: true,
+            default_post_config: None,
+            dof_follow: false,
+            dof_focus_entity: None,
+            dof_strength: 0.5,
+            dof_range: 5.0,
         }
     }
 
@@ -382,6 +409,12 @@ impl ViewerApp {
             gizmo_drag_ended: false,
             dirty_fields: std::collections::HashSet::new(),
             status_message: None,
+            scene_post_enabled: true,
+            default_post_config: None,
+            dof_follow: false,
+            dof_focus_entity: None,
+            dof_strength: 0.5,
+            dof_range: 5.0,
         }
     }
 
@@ -471,6 +504,18 @@ impl ViewerApp {
             scene_renderer.update_from_world(&state.world, &render_context.device);
         }
 
+        // Apply the scene's authored [post_process] block (DoF, vignette,
+        // fog, …) so the viewer shows the authored look. F11 toggles back
+        // to the viewer's default config (kept here for that).
+        self.default_post_config = Some(scene_renderer.post_process_config().clone());
+        {
+            let state = self.state.lock().unwrap();
+            if let Some(def) = &state.scene_post {
+                scene_renderer.set_post_process_config(post_process_config_from_def(def));
+                println!("Scene [post_process] applied (F11 toggles scene/default)");
+            }
+        }
+
         // Run initial constraint evaluation
         self.update_constraints();
 
@@ -530,6 +575,15 @@ impl ViewerApp {
 
         self.render_stats.record_frame();
 
+        // Track the last selected entity so DoF follow keeps its target
+        // after a deselect, and drive the focus plane while F12 is on.
+        if let Some(id) = self.scene_tree.selected_entity() {
+            self.dof_focus_entity = Some(id);
+        }
+        if self.dof_follow {
+            self.apply_dof_follow();
+        }
+
         // Render the 3D scene
         {
             let context = self.render_context.as_ref().unwrap();
@@ -570,6 +624,83 @@ impl ViewerApp {
         }
 
         output.present();
+    }
+
+    /// View depth of the DoF focus entity along the camera forward axis, as
+    /// (entity name, true view depth, shader-space focus distance).
+    ///
+    /// The projection is GL-convention but the composite shader linearizes
+    /// depth with the wgpu [0,1] formula (docs/tech-debt.md entry 12), so a
+    /// surface at true view depth `z` reads back as `far·z / (2·far − z)` —
+    /// the focus value must be authored in that shader space to land on the
+    /// object. When the depth convention is fixed, this conversion collapses
+    /// to the identity and should be deleted.
+    fn dof_focus_readout(&self, world: &FlintWorld) -> Option<(String, f32, f32)> {
+        let id = self.dof_focus_entity?;
+        let pos = world.get_world_position(id)?;
+        let name = world.get_name(id).unwrap_or("<unnamed>").to_string();
+        let cam = &self.camera;
+        let fwd = flint_core::Vec3::new(
+            cam.target.x - cam.position.x,
+            cam.target.y - cam.position.y,
+            cam.target.z - cam.position.z,
+        )
+        .normalized();
+        let to_entity = flint_core::Vec3::new(
+            pos.x - cam.position.x,
+            pos.y - cam.position.y,
+            pos.z - cam.position.z,
+        );
+        let z = to_entity.dot(&fwd).clamp(cam.near, cam.far);
+        let shader_z = cam.far * z / (2.0 * cam.far - z);
+        Some((name, z, shader_z))
+    }
+
+    /// Drive the renderer's DoF params from the follow state (once per frame
+    /// while F12 DoF follow is on). Only the three dof_* fields are touched;
+    /// writes are diff-gated. A missing focus entity (deleted, or ids
+    /// remapped by a scene reload) leaves the config untouched.
+    fn apply_dof_follow(&mut self) {
+        let focus = {
+            let state = self.state.lock().unwrap();
+            self.dof_focus_readout(&state.world)
+        };
+        let Some((_, _, shader_z)) = focus else {
+            return;
+        };
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        let config = renderer.post_process_config();
+        if (config.dof_strength - self.dof_strength).abs() < 1e-4
+            && (config.dof_focus_distance - shader_z).abs() < 1e-4
+            && (config.dof_focus_range - self.dof_range).abs() < 1e-4
+        {
+            return;
+        }
+        let mut config = config.clone();
+        config.dof_strength = self.dof_strength;
+        config.dof_focus_distance = shader_z;
+        config.dof_focus_range = self.dof_range;
+        renderer.set_post_process_config(config);
+    }
+
+    /// Restore DoF params to the active base config (authored scene post if
+    /// enabled, else the viewer default) when F12 follow is switched off.
+    fn restore_base_dof(&mut self) {
+        let scene_post = self.state.lock().unwrap().scene_post.clone();
+        let base = match (&scene_post, self.scene_post_enabled) {
+            (Some(def), true) => Some(post_process_config_from_def(def)),
+            _ => self.default_post_config.clone(),
+        };
+        let (Some(base), Some(renderer)) = (base, self.scene_renderer.as_mut()) else {
+            return;
+        };
+        let mut config = renderer.post_process_config().clone();
+        config.dof_strength = base.dof_strength;
+        config.dof_focus_distance = base.dof_focus_distance;
+        config.dof_focus_range = base.dof_focus_range;
+        renderer.set_post_process_config(config);
     }
 
     fn animate_camera(&mut self) {
@@ -631,6 +762,16 @@ impl ViewerApp {
     }
 
     fn render_egui(&mut self, target_view: &wgpu::TextureView) -> Option<GizmoAction> {
+        // DoF follow window state (F12): readout computed up front — it
+        // borrows all of self, which must end before the field borrows below.
+        let dof_follow = self.dof_follow;
+        let dof_readout = if dof_follow {
+            let st = self.state.lock().unwrap();
+            Some(self.dof_focus_readout(&st.world))
+        } else {
+            None
+        };
+
         // Extract references to disjoint fields to satisfy the borrow checker
         let window = match &self.window {
             Some(w) => w.clone(),
@@ -665,6 +806,8 @@ impl ViewerApp {
         let dirty = self.dirty;
         let undo_stack = &self.undo_stack;
         let status_message = &self.status_message;
+        let dof_strength = &mut self.dof_strength;
+        let dof_range = &mut self.dof_range;
 
         // Pre-compute render stats snapshot for the overlay (borrows scene_renderer before closure)
         let overlay_stats: Option<flint_render::RenderStats> = if self.show_stats {
@@ -796,6 +939,33 @@ impl ViewerApp {
                                     }
                                 });
                         }
+                    });
+            }
+
+            // DoF follow tuning window (F12)
+            if dof_follow {
+                egui::Window::new("Depth of Field")
+                    .default_pos(egui::pos2(240.0, 60.0))
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        match &dof_readout {
+                            Some(Some((name, z, shader_z))) => {
+                                ui.label(format!("Focus: {}", name));
+                                ui.label(format!(
+                                    "View depth {:.2} → focus {:.2} (shader-z)",
+                                    z, shader_z
+                                ));
+                            }
+                            _ => {
+                                ui.label("No focus target — select an entity.");
+                            }
+                        }
+                        ui.add(egui::Slider::new(dof_strength, 0.0..=1.5).text("Strength"));
+                        ui.add(
+                            egui::Slider::new(dof_range, 0.1..=60.0)
+                                .logarithmic(true)
+                                .text("Depth range"),
+                        );
                     });
             }
 
@@ -1310,6 +1480,7 @@ impl ViewerApp {
                     {
                         let mut state = self.state.lock().unwrap();
                         state.world = new_world;
+                        state.scene_post = scene_file.post_process.clone();
                     }
 
                     if let (Some(context), Some(renderer)) =
@@ -1325,6 +1496,15 @@ impl ViewerApp {
                             &config,
                         );
                         renderer.update_from_world(&state.world, &context.device);
+
+                        // Re-derive the authored post-process so [post_process]
+                        // edits hot-reload like the rest of the scene.
+                        if self.scene_post_enabled {
+                            if let Some(def) = &state.scene_post {
+                                renderer
+                                    .set_post_process_config(post_process_config_from_def(def));
+                            }
+                        }
                     }
 
                     {
@@ -1605,18 +1785,31 @@ impl ApplicationHandler for ViewerApp {
                                 self.save();
                                 return;
                             }
-                            // W = Translate gizmo mode
-                            KeyCode::KeyW if self.modifiers.is_empty() => {
+                            // W/E/R = gizmo mode shortcuts, but ONLY while an
+                            // entity is selected (the gizmo doesn't exist
+                            // otherwise). With no selection they fall through
+                            // to the keyboard-orbit tracker — previously E
+                            // (zoom in) was swallowed here on the initial
+                            // press and only started zooming once OS key
+                            // repeat kicked in.
+                            KeyCode::KeyW
+                                if self.modifiers.is_empty()
+                                    && self.scene_tree.selected_entity().is_some() =>
+                            {
                                 self.transform_gizmo.mode = GizmoMode::Translate;
                                 return;
                             }
-                            // E = Rotate gizmo mode
-                            KeyCode::KeyE if self.modifiers.is_empty() => {
+                            KeyCode::KeyE
+                                if self.modifiers.is_empty()
+                                    && self.scene_tree.selected_entity().is_some() =>
+                            {
                                 self.transform_gizmo.mode = GizmoMode::Rotate;
                                 return;
                             }
-                            // R = Scale gizmo mode
-                            KeyCode::KeyR if self.modifiers.is_empty() => {
+                            KeyCode::KeyR
+                                if self.modifiers.is_empty()
+                                    && self.scene_tree.selected_entity().is_some() =>
+                            {
                                 self.transform_gizmo.mode = GizmoMode::Scale;
                                 return;
                             }
@@ -1670,7 +1863,16 @@ impl ApplicationHandler for ViewerApp {
                         KeyCode::KeyW | KeyCode::KeyA | KeyCode::KeyS | KeyCode::KeyD
                         | KeyCode::KeyQ | KeyCode::KeyE => {
                             if event.state == ElementState::Pressed {
-                                self.held_orbit_keys.insert(code);
+                                // W/E double as gizmo-mode shortcuts while an
+                                // entity is selected; keep key-repeat events
+                                // from leaking them into orbit in that state.
+                                let gizmo_key = matches!(code, KeyCode::KeyW | KeyCode::KeyE);
+                                let gizmo_owns = gizmo_key
+                                    && !is_editor
+                                    && self.scene_tree.selected_entity().is_some();
+                                if !gizmo_owns {
+                                    self.held_orbit_keys.insert(code);
+                                }
                             } else {
                                 self.held_orbit_keys.remove(&code);
                             }
@@ -1772,6 +1974,51 @@ impl ApplicationHandler for ViewerApp {
                                 config.volumetric_enabled = !config.volumetric_enabled;
                                 println!("Volumetric: {}", if config.volumetric_enabled { "ON" } else { "OFF" });
                                 renderer.set_post_process_config(config);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F11) => {
+                            if let Some(renderer) = &mut self.scene_renderer {
+                                let scene_post =
+                                    self.state.lock().unwrap().scene_post.clone();
+                                match scene_post {
+                                    None => println!(
+                                        "Scene has no [post_process] block — nothing to toggle"
+                                    ),
+                                    Some(def) if !self.scene_post_enabled => {
+                                        renderer.set_post_process_config(
+                                            post_process_config_from_def(&def),
+                                        );
+                                        self.scene_post_enabled = true;
+                                        println!("Scene post-process: ON (authored)");
+                                    }
+                                    Some(_) => {
+                                        if let Some(default) = &self.default_post_config {
+                                            renderer.set_post_process_config(default.clone());
+                                        }
+                                        self.scene_post_enabled = false;
+                                        println!("Scene post-process: OFF (viewer default)");
+                                    }
+                                }
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::F12) => {
+                            self.dof_follow = !self.dof_follow;
+                            if self.dof_follow {
+                                if self.dof_focus_entity.is_none() {
+                                    self.dof_focus_entity = self.scene_tree.selected_entity();
+                                }
+                                match self.dof_focus_entity {
+                                    Some(_) => println!(
+                                        "DoF follow: ON — focus tracks the last selected entity \
+                                         (tune strength/range in the DoF window)"
+                                    ),
+                                    None => println!(
+                                        "DoF follow: ON — select an entity to set the focus target"
+                                    ),
+                                }
+                            } else {
+                                self.restore_base_dof();
+                                println!("DoF follow: OFF (base post-process DoF restored)");
                             }
                         }
                         _ => {}

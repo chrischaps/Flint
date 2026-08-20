@@ -158,6 +158,10 @@ pub struct PlayerApp {
 
     // Environment
     pub skybox_path: Option<String>,
+    /// Scene-authored hemisphere ambient (sky, ground); None = renderer default
+    pub scene_ambient: Option<([f32; 3], [f32; 3])>,
+    /// Scene-authored diffuse terminator wrap; None = 0 = legacy shading
+    pub scene_diffuse_wrap: Option<f32>,
 
     // Scene-level camera configuration
     pub scene_camera: Option<flint_scene::CameraDef>,
@@ -264,6 +268,8 @@ impl PlayerApp {
             fullscreen,
             cursor_captured: false,
             skybox_path: None,
+            scene_ambient: None,
+            scene_diffuse_wrap: None,
             scene_camera: None,
             scene_post_process: None,
             pp_vignette_override: None,
@@ -501,6 +507,14 @@ impl PlayerApp {
 
         // Refresh renderer with any new procedural meshes
         scene_renderer.update_from_world(&self.world, &render_context.device);
+
+        // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
+        if let Some((sky, ground)) = self.scene_ambient {
+            scene_renderer.set_ambient(sky, ground);
+        }
+        if let Some(wrap) = self.scene_diffuse_wrap {
+            scene_renderer.set_diffuse_wrap(wrap);
+        }
 
         // Load skybox if configured
         if let Some(skybox_rel) = &self.skybox_path {
@@ -2093,6 +2107,20 @@ impl PlayerApp {
                     .environment
                     .as_ref()
                     .and_then(|env| env.skybox.clone());
+                self.scene_ambient = scene_file.environment.as_ref().and_then(|env| {
+                    (env.ambient_sky.is_some() || env.ambient_ground.is_some()).then(|| {
+                        (
+                            env.ambient_sky
+                                .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
+                            env.ambient_ground
+                                .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
+                        )
+                    })
+                });
+                self.scene_diffuse_wrap = scene_file
+                    .environment
+                    .as_ref()
+                    .and_then(|env| env.diffuse_wrap);
                 self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
@@ -2170,6 +2198,17 @@ impl PlayerApp {
                 &context.device,
             );
             renderer.update_from_world(&self.world, &context.device);
+
+            // Scene-authored hemisphere ambient + wrap; reset first so the
+            // previous scene's values never leak into one that doesn't
+            // author them (reset clears both ambient and wrap)
+            renderer.reset_ambient();
+            if let Some((sky, ground)) = self.scene_ambient {
+                renderer.set_ambient(sky, ground);
+            }
+            if let Some(wrap) = self.scene_diffuse_wrap {
+                renderer.set_diffuse_wrap(wrap);
+            }
 
             // Reload skybox
             if let Some(skybox_rel) = &self.skybox_path {

@@ -13,54 +13,14 @@ use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
 use flint_render::model_loader::{self, ModelLoadConfig};
-use flint_render::{PostProcessConfig, SceneRenderer};
-use flint_scene::PostProcessDef;
+use flint_render::SceneRenderer;
 use flint_script::ScriptSystem;
 use std::path::{Path, PathBuf};
 
 /// Convert a `PostProcessDef` (scene TOML) to a `PostProcessConfig` (renderer).
-///
-/// Centralises the field-by-field copy so that new fields are never forgotten.
-pub fn post_process_config_from_def(pp_def: &PostProcessDef) -> PostProcessConfig {
-    let mut config = PostProcessConfig::default();
-    config.bloom_enabled = pp_def.bloom_enabled;
-    config.bloom_intensity = pp_def.bloom_intensity;
-    config.bloom_threshold = pp_def.bloom_threshold;
-    config.vignette_enabled = pp_def.vignette_enabled;
-    config.vignette_intensity = pp_def.vignette_intensity;
-    config.vignette_smoothness = pp_def.vignette_smoothness;
-    config.exposure = pp_def.exposure;
-    config.ssao_enabled = pp_def.ssao_enabled;
-    config.ssao_radius = pp_def.ssao_radius;
-    config.ssao_intensity = pp_def.ssao_intensity;
-    config.fog_enabled = pp_def.fog_enabled;
-    config.fog_color = pp_def.fog_color;
-    config.fog_density = pp_def.fog_density;
-    config.fog_start = pp_def.fog_start;
-    config.fog_end = pp_def.fog_end;
-    config.fog_height_enabled = pp_def.fog_height_enabled;
-    config.fog_height_falloff = pp_def.fog_height_falloff;
-    config.fog_height_origin = pp_def.fog_height_origin;
-    config.chromatic_aberration = pp_def.chromatic_aberration;
-    config.radial_blur = pp_def.radial_blur;
-    config.desaturate = pp_def.desaturate;
-    config.dof_strength = pp_def.dof_strength;
-    config.dof_focus_distance = pp_def.dof_focus_distance;
-    config.dof_focus_range = pp_def.dof_focus_range;
-    config.dither_enabled = pp_def.dither_enabled;
-    config.dither_intensity = pp_def.dither_intensity;
-    config.volumetric_enabled = pp_def.volumetric_enabled;
-    config.volumetric_samples = pp_def.volumetric_samples;
-    config.volumetric_density = pp_def.volumetric_density;
-    config.volumetric_max_distance = pp_def.volumetric_max_distance;
-    config.volumetric_decay = pp_def.volumetric_decay;
-    config.kuwahara_enabled = pp_def.kuwahara_enabled;
-    config.kuwahara_radius = pp_def.kuwahara_radius;
-    config.kuwahara_sharpness = pp_def.kuwahara_sharpness;
-    config.kuwahara_hardness = pp_def.kuwahara_hardness;
-    config.kuwahara_anisotropy = pp_def.kuwahara_anisotropy;
-    config
-}
+/// Moved to flint-render so the viewer shares it; re-exported to keep the
+/// `flint_player::post_process_config_from_def` path (flint-cli uses it).
+pub use flint_render::post_process_config_from_def;
 
 /// Load terrain from world entities. Free function to avoid borrow conflicts.
 /// Info about loaded grass, returned from terrain loading for debug panel creation.
@@ -1082,8 +1042,6 @@ pub(super) fn upload_completed_procgen_assets(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn vertex_conversion_correctness() {
         let procgen_vertex = flint_procgen::Vertex {

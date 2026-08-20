@@ -266,6 +266,21 @@ pub fn run(args: RenderArgs) -> Result<()> {
         },
     );
 
+    // Scene-authored hemisphere ambient + diffuse wrap (absent = renderer default)
+    if let Some(env) = &scene_file.environment {
+        if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
+            renderer.set_ambient(
+                env.ambient_sky
+                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
+                env.ambient_ground
+                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
+            );
+        }
+        if let Some(wrap) = env.diffuse_wrap {
+            renderer.set_diffuse_wrap(wrap);
+        }
+    }
+
     // Load models and textures from the scene
     let config = ModelLoadConfig::from_scene_path(&args.scene);
     model_loader::load_models_from_world(

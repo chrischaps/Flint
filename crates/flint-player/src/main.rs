@@ -97,9 +97,18 @@ fn main() -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
-    // Pass skybox path from scene environment settings
+    // Pass skybox path + ambient from scene environment settings
     if let Some(env) = &scene_file.environment {
         app.skybox_path = env.skybox.clone();
+        if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
+            app.scene_ambient = Some((
+                env.ambient_sky
+                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
+                env.ambient_ground
+                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
+            ));
+        }
+        app.scene_diffuse_wrap = env.diffuse_wrap;
     }
 
     // Pass camera settings from scene

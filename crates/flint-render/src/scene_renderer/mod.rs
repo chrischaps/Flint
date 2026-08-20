@@ -127,6 +127,13 @@ pub struct SceneRenderer {
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
     light_uniforms: LightUniforms,
+    /// Scene-authored hemisphere ambient override (sky, ground). None keeps
+    /// the built-in default; stored so the zero-light fallback in
+    /// `extract_lights_from_world` cannot stomp it.
+    ambient_override: Option<([f32; 3], [f32; 3])>,
+    /// Scene-authored diffuse terminator wrap. Rides ambient_sky.w encoded as
+    /// (1 + wrap) so legacy writes of 1.0 decode to wrap = 0 in the shader.
+    diffuse_wrap_override: Option<f32>,
     texture_cache: Option<TextureCache>,
     shadow_pass: Option<ShadowPass>,
     selected_entity: Option<flint_core::EntityId>,
@@ -292,6 +299,8 @@ impl SceneRenderer {
             light_buffer,
             light_bind_group,
             light_uniforms,
+            ambient_override: None,
+            diffuse_wrap_override: None,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
@@ -1394,6 +1403,8 @@ impl SceneRenderer {
             light_buffer,
             light_bind_group,
             light_uniforms,
+            ambient_override: None,
+            diffuse_wrap_override: None,
             texture_cache: Some(texture_cache),
             shadow_pass: Some(shadow_pass),
             selected_entity: None,
@@ -2456,6 +2467,44 @@ impl SceneRenderer {
     // ── Light extraction ──
 
     /// Extract light entities from the world and update the light uniform buffer
+    /// Override the hemisphere ambient colors (linear RGB). Scenes set this
+    /// via `[environment] ambient_sky / ambient_ground`; when never called,
+    /// the built-in default ambient is byte-identical to prior behavior.
+    pub fn set_ambient(&mut self, sky: [f32; 3], ground: [f32; 3]) {
+        self.ambient_override = Some((sky, ground));
+        self.apply_ambient_override();
+    }
+
+    /// Clear any scene-authored ambient override, restoring the built-in
+    /// default (needed on scene transitions so an old scene's ambient never
+    /// leaks into a scene that doesn't author one).
+    pub fn reset_ambient(&mut self) {
+        self.ambient_override = None;
+        self.diffuse_wrap_override = None;
+        let [sr, sg, sb] = LightUniforms::DEFAULT_AMBIENT_SKY;
+        let [gr, gg, gb] = LightUniforms::DEFAULT_AMBIENT_GROUND;
+        self.light_uniforms.ambient_sky = [sr, sg, sb, 1.0];
+        self.light_uniforms.ambient_ground = [gr, gg, gb, 1.0];
+    }
+
+    /// Soften the diffuse terminator (0 = physically sharp / legacy shading).
+    /// Scenes set this via `[environment] diffuse_wrap`.
+    pub fn set_diffuse_wrap(&mut self, wrap: f32) {
+        self.diffuse_wrap_override = Some(wrap.max(0.0));
+        self.apply_ambient_override();
+    }
+
+    fn apply_ambient_override(&mut self) {
+        if let Some((sky, ground)) = self.ambient_override {
+            self.light_uniforms.ambient_sky = [sky[0], sky[1], sky[2], 1.0];
+            self.light_uniforms.ambient_ground = [ground[0], ground[1], ground[2], 1.0];
+        }
+        if let Some(wrap) = self.diffuse_wrap_override {
+            // Shader decodes wrap = ambient_sky.w - 1.0
+            self.light_uniforms.ambient_sky[3] = 1.0 + wrap;
+        }
+    }
+
     fn extract_lights_from_world(&mut self, world: &FlintWorld) {
         let mut dir_count = 0u32;
         let mut point_count = 0u32;
@@ -2464,7 +2513,24 @@ impl SceneRenderer {
         let mut points = [PointLight::default(); MAX_POINT_LIGHTS];
         let mut spots = [SpotLight::default(); MAX_SPOT_LIGHTS];
 
-        for &entity_id in world.entities_with_component(comp::LIGHT) {
+        // Deterministic iteration: the component index is a HashSet whose
+        // order changes per process, which silently reassigned the one
+        // shadow-casting directional slot (index 0) between runs. Sort by
+        // entity name (then id) so light order is stable and authored.
+        let mut light_entities: Vec<_> = world
+            .entities_with_component(comp::LIGHT)
+            .iter()
+            .copied()
+            .collect();
+        light_entities.sort_by(|a, b| {
+            world
+                .get_name(*a)
+                .unwrap_or("")
+                .cmp(world.get_name(*b).unwrap_or(""))
+                .then(a.cmp(b))
+        });
+
+        for entity_id in light_entities {
             let light_component = world
                 .get_components(entity_id)
                 .and_then(|components| components.get(comp::LIGHT).cloned());
@@ -2554,9 +2620,16 @@ impl SceneRenderer {
             }
         }
 
+        // Strongest directional casts the shadows: only index 0 gets CSM, so
+        // put the highest-intensity directional first (sun over fill),
+        // independent of entity naming. Stable sort keeps name order on ties.
+        directionals[..dir_count as usize]
+            .sort_by(|a, b| b.intensity.partial_cmp(&a.intensity).unwrap_or(std::cmp::Ordering::Equal));
+
         // If no lights found in scene, use defaults
         if dir_count == 0 && point_count == 0 && spot_count == 0 {
             self.light_uniforms = LightUniforms::default_scene_lights();
+            self.apply_ambient_override();
         } else {
             self.light_uniforms.directional_lights = directionals;
             self.light_uniforms.point_lights = points;

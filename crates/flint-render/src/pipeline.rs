@@ -214,6 +214,11 @@ pub struct LightUniforms {
 }
 
 impl LightUniforms {
+    /// Built-in hemisphere ambient colors (linear RGB), used whenever a scene
+    /// does not author `[environment] ambient_sky / ambient_ground`.
+    pub const DEFAULT_AMBIENT_SKY: [f32; 3] = [0.12, 0.13, 0.18];
+    pub const DEFAULT_AMBIENT_GROUND: [f32; 3] = [0.06, 0.05, 0.04];
+
     /// Default lighting — matches the original two hardcoded directionals
     pub fn default_scene_lights() -> Self {
         let mut lights = Self::zeroed();
@@ -242,8 +247,10 @@ impl LightUniforms {
         lights.point_count = 0;
         lights.spot_count = 0;
         lights._pad = 0;
-        lights.ambient_sky = [0.12, 0.13, 0.18, 1.0];
-        lights.ambient_ground = [0.06, 0.05, 0.04, 1.0];
+        let [sr, sg, sb] = Self::DEFAULT_AMBIENT_SKY;
+        let [gr, gg, gb] = Self::DEFAULT_AMBIENT_GROUND;
+        lights.ambient_sky = [sr, sg, sb, 1.0];
+        lights.ambient_ground = [gr, gg, gb, 1.0];
 
         lights
     }

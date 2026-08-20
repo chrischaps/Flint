@@ -272,7 +272,10 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
     return mix(1.0, raw_shadow, distance_fade * edge_fade);
 }
 
-// Evaluate a single directional light using Cook-Torrance BRDF
+// Evaluate a single directional light using Cook-Torrance BRDF.
+// `wrap` softens only the diffuse terminator (wrap-diffuse, a cheap
+// subsurface-ish cue for matte materials); specular keeps the true n·l.
+// wrap = 0 takes the original code path exactly.
 fn evaluate_light(
     N: vec3<f32>,
     V: vec3<f32>,
@@ -283,6 +286,7 @@ fn evaluate_light(
     metallic: f32,
     roughness: f32,
     n_dot_v: f32,
+    wrap: f32,
 ) -> vec3<f32> {
     let H = normalize(V + L);
 
@@ -301,7 +305,11 @@ fn evaluate_light(
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metallic);
 
-    return (kD * albedo / PI + specular) * radiance * n_dot_l;
+    if (wrap <= 0.0) {
+        return (kD * albedo / PI + specular) * radiance * n_dot_l;
+    }
+    let n_dot_l_wrap = max((dot(N, L) + wrap) / (1.0 + wrap), 0.0);
+    return (kD * albedo / PI) * radiance * n_dot_l_wrap + specular * radiance * n_dot_l;
 }
 
 @fragment
@@ -402,12 +410,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_depth = length(in.world_pos - transform.camera_pos);
 
     // === Directional lights ===
+    // Diffuse-wrap knob rides ambient_sky.w, encoded as (1 + wrap) so every
+    // legacy CPU write of 1.0 decodes to wrap = 0 (exact original shading).
+    let wrap = max(lights.ambient_sky.w - 1.0, 0.0);
     var Lo = vec3<f32>(0.0);
     for (var i = 0u; i < lights.directional_count; i = i + 1u) {
         let light = lights.directional_lights[i];
         let L = normalize(light.direction);
         let radiance = light.color * light.intensity;
-        var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v);
+        var contribution = evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap);
 
         // Apply shadow from cascaded shadow maps to the first directional light
         if (i == 0u) {
@@ -426,7 +437,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let L = normalize(light_vec);
         let atten = attenuation(distance, light.radius);
         let radiance = light.color * light.intensity * atten;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v);
+        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap);
     }
 
     // === Spot lights ===
@@ -438,7 +449,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let atten = attenuation(distance, light.radius);
         let cone = spot_cone_factor(light_vec, light.direction, light.inner_angle, light.outer_angle);
         let radiance = light.color * light.intensity * atten * cone;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v);
+        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap);
     }
 
     // Hemisphere ambient from light uniforms

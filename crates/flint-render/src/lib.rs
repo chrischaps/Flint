@@ -51,7 +51,10 @@ pub use pipeline::{
     DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
     TransformUniforms,
 };
-pub use postprocess::{PostProcessConfig, PostProcessPipeline, PostProcessResources, HDR_FORMAT};
+pub use postprocess::{
+    post_process_config_from_def, PostProcessConfig, PostProcessPipeline, PostProcessResources,
+    HDR_FORMAT,
+};
 pub use primitives::{
     create_box_mesh, create_plane_mesh, generate_normal_arrows, generate_skeleton_lines,
     triangles_to_wireframe_indices, Mesh, SkinnedMesh, SkinnedVertex, Vertex,

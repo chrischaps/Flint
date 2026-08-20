@@ -55,6 +55,7 @@ Flint uses an **edit -> validate -> play** loop:
    ```
    Supported extensions: `.scene.toml`, `.chunk.toml`, `.procgen.toml`, `.terrain.toml`, `.glb`, `.gltf`.
    Common flags: `--width`, `--height`, `--no-grid`, `--watch`, `--seed`, `--no-inspector`, `--auto-orbit`.
+   Scene viewer applies the scene's `[post_process]` block on load (F11 toggles authored vs viewer default; F5-F10 per-effect toggles; F12 DoF-follow — focus plane tracks the last selected entity, strength/depth-range sliders in a floating window, values shown in shader-z; WASD orbit, Q/E zoom — while an entity is selected, W/E/R switch gizmo mode instead of orbiting).
    Model flags: `--clip <name>`, `--anim-speed <f32>`, `--render <path.png>`, `--no-animate`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov`.
    Scene flags: `--spline` (opens spline/track editor).
    Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.

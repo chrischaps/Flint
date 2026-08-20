@@ -253,6 +253,18 @@ pub struct EnvironmentDef {
     /// Path to equirectangular panorama image for the skybox
     #[serde(default)]
     pub skybox: Option<String>,
+    /// Hemisphere ambient sky color [r, g, b] (linear). Absent keeps the
+    /// renderer's built-in default.
+    #[serde(default)]
+    pub ambient_sky: Option<[f32; 3]>,
+    /// Hemisphere ambient ground color [r, g, b] (linear). Absent keeps the
+    /// renderer's built-in default.
+    #[serde(default)]
+    pub ambient_ground: Option<[f32; 3]>,
+    /// Diffuse terminator wrap (0 = physically sharp, ~0.2-0.5 = soft matte /
+    /// subsurface-ish). Absent = 0 = exact legacy shading.
+    #[serde(default)]
+    pub diffuse_wrap: Option<f32>,
 }
 
 /// Scene metadata
