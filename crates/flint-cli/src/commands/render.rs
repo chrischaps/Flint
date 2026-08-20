@@ -105,6 +105,11 @@ pub struct RenderArgs {
     #[arg(long)]
     pub ssao_intensity: Option<f32>,
 
+    /// SSAO hemisphere samples per pixel, 1-64 (default: 64; the kernel is
+    /// strided so lower counts keep full radius coverage)
+    #[arg(long)]
+    pub ssao_samples: Option<u32>,
+
     /// Fog density (enables fog; default: 0.02, 0 = disabled)
     #[arg(long)]
     pub fog_density: Option<f32>,
@@ -425,6 +430,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
             if intensity <= 0.0 {
                 pp_config.ssao_enabled = false;
             }
+        }
+        if let Some(samples) = args.ssao_samples {
+            pp_config.ssao_samples = samples.clamp(1, 64);
         }
         if let Some(density) = args.fog_density {
             pp_config.fog_density = density;

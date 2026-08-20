@@ -35,6 +35,12 @@ pub struct PostProcessConfig {
     pub ssao_radius: f32,
     pub ssao_intensity: f32,
     pub ssao_bias: f32,
+    /// Hemisphere samples per pixel, 1..=64 (clamped at upload). 64 is the
+    /// full kernel (the pre-lever behavior); the shader strides through the
+    /// scale-ordered kernel so lower counts keep full radius coverage. SSAO
+    /// is the renderer's heaviest per-pixel pass — 16 is the quality/cost
+    /// sweet spot when the blur pass can hide the extra noise.
+    pub ssao_samples: u32,
     pub fog_enabled: bool,
     pub fog_color: [f32; 3],
     pub fog_density: f32,
@@ -106,6 +112,7 @@ impl Default for PostProcessConfig {
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
             ssao_bias: 0.025,
+            ssao_samples: 64,
             fog_enabled: false,
             fog_color: [0.7, 0.75, 0.82],
             fog_density: 0.02,
@@ -166,6 +173,7 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.ssao_enabled = pp_def.ssao_enabled;
     config.ssao_radius = pp_def.ssao_radius;
     config.ssao_intensity = pp_def.ssao_intensity;
+    config.ssao_samples = pp_def.ssao_samples;
     config.fog_enabled = pp_def.fog_enabled;
     config.fog_color = pp_def.fog_color;
     config.fog_density = pp_def.fog_density;
@@ -302,7 +310,9 @@ pub struct SsaoUniforms {
     pub intensity: f32,
     pub near: f32,
     pub far: f32,
-    pub _pad: f32,
+    /// Hemisphere sample count (rides the former padding slot — layout
+    /// unchanged). The shader treats out-of-range as the full 64.
+    pub sample_count: f32,
 }
 
 /// Uniform data for the SSAO blur pass.
@@ -2269,7 +2279,7 @@ impl PostProcessPipeline {
             intensity: config.ssao_intensity,
             near: camera.near,
             far: camera.far,
-            _pad: 0.0,
+            sample_count: config.ssao_samples.clamp(1, SSAO_KERNEL_SIZE as u32) as f32,
         };
         queue.write_buffer(
             &self.ssao_uniform_buffer,

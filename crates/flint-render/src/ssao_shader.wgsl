@@ -2,7 +2,8 @@
 //
 // Samples the depth buffer and reconstructs view-space positions/normals
 // to estimate ambient occlusion at each pixel. Uses a hemisphere kernel
-// of 64 samples rotated by a 4x4 noise texture to break banding.
+// of up to 64 samples rotated by a 4x4 noise texture to break banding;
+// `sample_count` (scene `ssao_samples`) trades quality for speed.
 
 struct SsaoUniforms {
     inv_projection: mat4x4<f32>,
@@ -14,7 +15,9 @@ struct SsaoUniforms {
     intensity: f32,
     near: f32,
     far: f32,
-    _pad: f32,
+    // Rides the former padding slot; out-of-range (incl. a zeroed stale
+    // uniform) falls back to the full 64-sample kernel, the pre-lever path.
+    sample_count: f32,
 };
 
 @group(0) @binding(0)
@@ -113,11 +116,17 @@ fn fs_ssao(in: VsOut) -> @location(0) f32 {
 
     // Sample kernel and accumulate occlusion
     var occlusion = 0.0;
-    let sample_count = 64;
+    var sample_count = i32(params.sample_count);
+    if (sample_count < 1 || sample_count > 64) {
+        sample_count = 64;
+    }
 
     for (var i = 0; i < sample_count; i++) {
-        // Transform sample from tangent space to view space
-        let sample_dir = tbn * params.kernel[i].xyz;
+        // Stride through the kernel rather than truncating it: samples are
+        // scale-ordered near-to-far (see generate_ssao_kernel), so taking
+        // only the first N would collapse the effective radius. At 64 the
+        // stride is the identity, so the full-count path is unchanged.
+        let sample_dir = tbn * params.kernel[(i * 64) / sample_count].xyz;
         let sample_pos = frag_pos + sample_dir * params.radius;
 
         // Project sample to screen space

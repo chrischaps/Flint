@@ -67,6 +67,11 @@ pub struct PostProcessDef {
     pub ssao_radius: f32,
     #[serde(default = "default_ssao_intensity")]
     pub ssao_intensity: f32,
+    /// SSAO hemisphere samples per pixel, 1-64 (default 64 = full quality).
+    /// The heaviest per-pixel cost in the post stack; 16 is usually
+    /// indistinguishable on soft/matte scenes and ~4x cheaper.
+    #[serde(default = "default_ssao_samples")]
+    pub ssao_samples: u32,
     #[serde(default)]
     pub fog_enabled: bool,
     #[serde(default = "default_fog_color")]
@@ -171,6 +176,10 @@ fn default_ssao_radius() -> f32 {
 
 fn default_ssao_intensity() -> f32 {
     1.0
+}
+
+fn default_ssao_samples() -> u32 {
+    64
 }
 
 fn default_fog_color() -> [f32; 3] {

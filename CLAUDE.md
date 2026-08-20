@@ -35,6 +35,7 @@ Flint uses an **edit -> validate -> play** loop:
    #   --no-shadows           --shadow-resolution 2048
    #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
    #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
+   #   --ssao-samples 64      (1-64; SSAO is the heaviest per-pixel pass — 16 is ~4x cheaper)
    #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
    #   --dither-intensity 0.03   --desaturate 0.85
    #   --dof 0.6  --dof-focus 10  --dof-range 5
