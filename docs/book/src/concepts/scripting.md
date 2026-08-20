@@ -112,9 +112,17 @@ Audio functions produce deferred commands that the player processes after the sc
 | `play_sound(name)` | Play a non-spatial sound at default volume |
 | `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
 | `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
+| `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
 | `stop_sound(name)` | Stop a playing sound |
 
-Sound names match the audio files loaded from the `audio/` directory (without extension).
+Sound names match the audio files loaded from the `audio/` directory (without extension). A one-shot naming a file that is not there fails silently — it logs a warning and plays nothing.
+
+Varying `pitch` slightly per trigger (say 0.9–1.1) is the cheapest way to stop a
+repeated one-shot sounding like a repeated one-shot.
+
+Spatial one-shot tracks attenuate to silence at 25 m. An event further away
+than that must use non-spatial `play_sound` with a hand-scaled volume, or it
+will simply not be heard.
 
 ### Animation API
 
@@ -163,6 +171,45 @@ Use the direction helpers (`forward_from_yaw`, `right_from_yaw`) to convert a ya
 | `min(a, b)` | `f64` | Minimum of two values |
 | `max(a, b)` | `f64` | Maximum of two values |
 | `atan2(y, x)` | `f64` | Two-argument arctangent (radians) |
+
+### Ocean API
+
+Available when the scene has an [`ocean`](ocean.md) component. All coordinates
+are world-space; all queries are evaluated on the same clock the renderer used
+this frame, so what you sample is what is on screen.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `ocean_height(x, z)` | `f64` | Eulerian surface height in meters |
+| `ocean_velocity_y(x, z)` | `f64` | Vertical surface velocity in m/s (analytic ∂h/∂t) |
+| `ocean_normal(x, z)` | `Map` | Surface normal `#{x, y, z}` |
+
+```rhai
+// Float a hull on five probe points.
+let p = get_field(me, "transform", "position");
+let h = ocean_height(p.x, p.z);
+```
+
+`ocean_velocity_y` is the impact signal: the *relative* approach speed between
+water and hull is what distinguishes a lap from a slam. Without a scene ocean
+these return 0 (and `#{0,1,0}`) rather than failing.
+
+A handful of probes per frame is cheap. Thousands are not.
+
+### Input and Cursor API
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `any_input_just_pressed()` | `bool` | True on the frame any key, mouse button, or gamepad button was pressed |
+| `set_cursor_captured(captured)` | | Capture (hide + lock) or release the mouse cursor |
+
+`any_input_just_pressed` reads **raw** presses and bypasses action maps
+entirely — it is for "press any key to continue", where the whole point is that
+you do not care which key.
+
+`set_cursor_captured(true)` is how a scene gets mouse-look without a
+character-controller player entity. The engine only captures automatically for
+scenes that have one, so a fixed-camera or custom-camera scene must ask.
 
 ### Event API
 
@@ -277,8 +324,22 @@ Control the HDR post-processing pipeline at runtime from scripts:
 | `set_vignette(intensity)` | Set vignette intensity (0.0 = none, 1.0 = heavy) |
 | `set_bloom_intensity(intensity)` | Set bloom strength (0.0 = none) |
 | `set_exposure(value)` | Set exposure multiplier (1.0 = default) |
+| `set_chromatic_aberration(amount)` | Set chromatic aberration strength |
+| `set_radial_blur(amount)` | Set radial blur strength |
+| `set_ssao_intensity(value)` | Set SSAO intensity |
+| `set_fog_density(value)` | Set fog density |
+| `set_fog_color(r, g, b)` | Set fog color (linear 0--1) |
+| `set_render_mode(mode, mix)` | Stylized render mode (see below) |
+| `set_render_mode_params(x, y, z, w)` | Per-mode tuning parameters |
 
 These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
+
+**All of these are sticky except `set_render_mode`.** Set an override once and
+it persists until you change it. The render mode is the deliberate exception:
+it is cleared the frame your script stops calling it, so a crashed or
+hot-reloaded script cannot strand the world inside an effect. Call it every
+frame the effect is active. See
+[Post-Processing: Render Modes](post-processing.md#render-modes).
 
 ### Audio Filter API
 

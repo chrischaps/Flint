@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+flint-core = { workspace = true }
 flint-terrain = { workspace = true }
 flint-scene = { workspace = true }
 egui = { workspace = true }

@@ -31,6 +31,14 @@ struct Args {
     /// Optional input config overlay path
     #[arg(long)]
     input_config: Option<String>,
+
+    /// Initial music bus volume (linear, 0.0 = muted, 1.0 = full)
+    #[arg(long, default_value_t = 1.0)]
+    music_volume: f64,
+
+    /// Initial SFX bus volume (linear, 0.0 = muted, 1.0 = full)
+    #[arg(long, default_value_t = 1.0)]
+    sfx_volume: f64,
 }
 
 fn main() -> Result<()> {
@@ -96,6 +104,12 @@ fn main() -> Result<()> {
         args.input_config,
         scene_file.scene.input_config.clone(),
     );
+
+    // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
+    app.audio
+        .set_bus_volume(flint_audio::Bus::Music, args.music_volume);
+    app.audio
+        .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
 
     // Pass skybox path + ambient from scene environment settings
     if let Some(env) = &scene_file.environment {

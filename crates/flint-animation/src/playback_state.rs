@@ -16,6 +16,14 @@ pub struct ClipPlaybackState {
     pub blend_duration: f32,
     /// Time elapsed in the current blend
     pub blend_elapsed: f32,
+    /// Additive layer clip (empty = none): loops independently and
+    /// composes onto the base pose relative to the joints' REST pose,
+    /// only for joints the layer clip keys. Survives base crossfades.
+    pub layer_clip: String,
+    /// Additive layer strength (0 = off, 1 = full)
+    pub layer_weight: f32,
+    /// Independent playback time of the layer clip
+    pub layer_time: f64,
 }
 
 impl ClipPlaybackState {
@@ -29,6 +37,9 @@ impl ClipPlaybackState {
             blend_target: String::new(),
             blend_duration: 0.3,
             blend_elapsed: 0.0,
+            layer_clip: String::new(),
+            layer_weight: 1.0,
+            layer_time: 0.0,
         }
     }
 }

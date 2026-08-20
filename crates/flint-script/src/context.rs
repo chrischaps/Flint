@@ -54,6 +54,8 @@ pub struct InputSnapshot {
     pub actions_just_pressed: HashSet<String>,
     pub actions_just_released: HashSet<String>,
     pub action_values: std::collections::HashMap<String, f64>,
+    /// Any raw key/mouse/gamepad press this frame (unbound keys included)
+    pub any_just_pressed: bool,
     pub mouse_delta: (f64, f64),
     /// Active touches: (id, norm_x, norm_y)
     pub touches: Vec<(i64, f64, f64)>,
@@ -192,6 +194,7 @@ pub enum ScriptCommand {
         name: String,
         position: (f64, f64, f64),
         volume: f64,
+        pitch: f64,
     },
     StopSound {
         name: String,
@@ -368,8 +371,16 @@ pub struct ScriptCallContext {
     pub postprocess_dof_strength_override: Option<f32>,
     pub postprocess_dof_focus_distance_override: Option<f32>,
     pub postprocess_dof_focus_range_override: Option<f32>,
+    pub postprocess_fog_color_override: Option<[f32; 3]>,
+    /// Reality-tear render mode override: (mode, mix). Set by set_render_mode.
+    pub postprocess_render_mode_override: Option<(u32, f32)>,
+    /// Per-mode tuning params. Set by set_render_mode_params.
+    pub postprocess_mode_params_override: Option<[f32; 4]>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
+    /// Script-driven cursor capture request. Games without a character
+    /// controller (which normally gates capture) use this for mouse look.
+    pub cursor_captured_override: Option<bool>,
     /// Raw pointer to the GameStateMachine — valid only during call scope
     pub state_machine: *mut GameStateMachine,
     /// Raw pointer to the PersistentStore — valid only during call scope
@@ -438,7 +449,11 @@ impl ScriptCallContext {
             postprocess_dof_strength_override: None,
             postprocess_dof_focus_distance_override: None,
             postprocess_dof_focus_range_override: None,
+            postprocess_fog_color_override: None,
+            postprocess_render_mode_override: None,
+            postprocess_mode_params_override: None,
             audio_lowpass_cutoff_override: None,
+            cursor_captured_override: None,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),
             transition_progress: -1.0,

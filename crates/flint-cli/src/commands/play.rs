@@ -22,6 +22,14 @@ pub struct PlayArgs {
     /// Optional input config overlay path
     #[arg(long)]
     pub input_config: Option<String>,
+
+    /// Initial music bus volume (linear, 0.0 = muted, 1.0 = full)
+    #[arg(long, default_value_t = 1.0)]
+    pub music_volume: f64,
+
+    /// Initial SFX bus volume (linear, 0.0 = muted, 1.0 = full)
+    #[arg(long, default_value_t = 1.0)]
+    pub sfx_volume: f64,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
@@ -74,6 +82,12 @@ pub fn run(args: PlayArgs) -> Result<()> {
         args.input_config,
         scene_file.scene.input_config.clone(),
     );
+
+    // Apply initial mixer bus volumes from CLI
+    app.audio
+        .set_bus_volume(flint_player::Bus::Music, args.music_volume);
+    app.audio
+        .set_bus_volume(flint_player::Bus::Sfx, args.sfx_volume);
 
     // Pass skybox path from scene environment settings
     if let Some(env) = &scene_file.environment {

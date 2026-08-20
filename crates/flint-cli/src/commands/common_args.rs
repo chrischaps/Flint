@@ -55,3 +55,21 @@ pub(crate) fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
         .map_err(|e| format!("invalid z: {}", e))?;
     Ok([x, y, z])
 }
+
+pub(crate) fn parse_vec4(s: &str) -> Result<[f32; 4], String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    if parts.len() != 4 {
+        return Err(format!(
+            "expected 4 comma-separated values, got {}",
+            parts.len()
+        ));
+    }
+    let mut out = [0.0f32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        out[i] = p
+            .trim()
+            .parse::<f32>()
+            .map_err(|e| format!("invalid number '{}': {}", p, e))?;
+    }
+    Ok(out)
+}

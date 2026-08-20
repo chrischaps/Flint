@@ -215,7 +215,10 @@ fn spot_cone_factor(light_to_frag: vec3<f32>, spot_dir: vec3<f32>, inner_angle: 
 
 // Compute shadow factor for a world-space position using cascaded shadow maps
 // Returns 1.0 (fully lit) or a value approaching 0.0 (shadowed)
-fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
+// N is the geometric surface normal, used for normal-offset receiver bias:
+// slope-scale bias in the depth pass alone can't prevent acne at glancing
+// angles on curved surfaces (low-poly cylinders/capsules band visibly).
+fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
     // cascade_splits.z is the shadow far plane — fade out over the last 15%
     let shadow_far = shadow.cascade_splits.z;
     let fade_start = shadow_far * 0.75;
@@ -233,8 +236,16 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
         cascade = 2;
     }
 
+    // Normal-offset bias: push the receiver position out along the surface
+    // normal by ~2 shadow texels (in world units) before projecting. The
+    // cascade's world-per-texel comes from the ortho projection row scale.
+    let m = shadow.cascade_view_proj[cascade];
+    let row0_len = length(vec3<f32>(m[0].x, m[1].x, m[2].x));
+    let texel_world = 2.0 / (max(row0_len, 0.0001) * 2048.0);
+    let biased_pos = world_pos + N * texel_world * 2.0;
+
     // Project world position into shadow map space
-    let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(world_pos, 1.0);
+    let light_space = shadow.cascade_view_proj[cascade] * vec4<f32>(biased_pos, 1.0);
     let proj = light_space.xyz / light_space.w;
 
     // Convert from clip space [-1,1] to texture space [0,1]
@@ -422,7 +433,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // Apply shadow from cascaded shadow maps to the first directional light
         if (i == 0u) {
-            let sf = shadow_factor(in.world_pos, view_depth);
+            let sf = shadow_factor(in.world_pos, view_depth, normalize(in.normal));
             contribution = contribution * sf;
         }
 

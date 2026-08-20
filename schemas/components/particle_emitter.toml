@@ -17,7 +17,8 @@ size_start = { type = "f32", default = 0.1, min = 0.0, max = 10.0, description =
 size_end = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Particle size at death" }
 color_start = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "RGBA color at birth" }
 color_end = { type = "vec4", default = [1.0, 1.0, 1.0, 0.0], description = "RGBA color at death" }
-texture = { type = "string", default = "", description = "Sprite texture path (empty = white dot)" }
+texture = { type = "string", default = "", description = "Sprite texture path, resolved against the scene dir then its parent (empty = white dot)" }
+stretch = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Velocity-aligned billboard stretch (s): quad elongates along on-screen motion by |velocity|*stretch. 0 = normal camera-facing quad. Rain streaks ~0.03" }
 frames_x = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet columns" }
 frames_y = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet rows" }
 animate_frames = { type = "bool", default = false, description = "Auto-advance frames over lifetime" }

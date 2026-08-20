@@ -98,7 +98,11 @@ impl AnimationSystem {
     }
 
     /// Register an entity's node name → EntityId mapping for node animation
-    pub fn register_node_entity(&mut self, entity_id: EntityId, node_map: HashMap<String, EntityId>) {
+    pub fn register_node_entity(
+        &mut self,
+        entity_id: EntityId,
+        node_map: HashMap<String, EntityId>,
+    ) {
         self.node_sync.register_entity(entity_id, node_map);
     }
 
@@ -112,6 +116,12 @@ impl AnimationSystem {
     /// Get computed bone matrices for an entity (skeletal animation)
     pub fn bone_matrices(&self, entity_id: &EntityId) -> Option<&[[[f32; 4]; 4]]> {
         self.skeletal_sync.bone_matrices(entity_id)
+    }
+
+    /// Model-space position of a named joint (bone_probe: camera anchors,
+    /// attachment points)
+    pub fn joint_position(&self, entity_id: &EntityId, joint: &str) -> Option<[f32; 3]> {
+        self.skeletal_sync.joint_position(entity_id, joint)
     }
 
     /// Drain sprite animation end events
@@ -222,6 +232,8 @@ impl RuntimeSystem for AnimationSystem {
         // Tier 2: Skeletal animation
         self.skeletal_sync.sync_from_world(world);
         self.skeletal_sync.advance_and_compute(dt);
+        // Retire finished crossfades in the ECS, or they re-arm forever.
+        self.skeletal_sync.write_back(world);
 
         // Tier 3: Node transform animation
         self.node_sync.sync_from_world(world);

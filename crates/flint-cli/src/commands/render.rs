@@ -159,6 +159,20 @@ pub struct RenderArgs {
     /// Kuwahara anisotropy strength (0=isotropic, 1=full; default: 1.0)
     #[arg(long)]
     pub kuwahara_anisotropy: Option<f32>,
+
+    /// Stylized render mode (0=none, 1=matrix, 2=blood, 3=drunk, 4=tron,
+    /// 5=underwater)
+    #[arg(long)]
+    pub render_mode: Option<u32>,
+
+    /// Render mode blend strength 0..1 (default: 0.0)
+    #[arg(long)]
+    pub mode_mix: Option<f32>,
+
+    /// Render mode params as X,Y,Z,W. Tears 1-4: mask scale, mask style,
+    /// rate, spare. Underwater 5: eye depth m, sea energy, daylight, biolum
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
+    pub mode_params: Option<[f32; 4]>,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
@@ -381,6 +395,17 @@ pub fn run(args: RenderArgs) -> Result<()> {
         }
         if let Some(range) = args.dof_range {
             pp_config.dof_focus_range = range;
+        }
+        if let Some(mode) = args.render_mode {
+            pp_config.render_mode = mode;
+            // A mode with no explicit mix defaults to fully torn through.
+            pp_config.mode_mix = args.mode_mix.unwrap_or(1.0);
+        }
+        if let Some(mix) = args.mode_mix {
+            pp_config.mode_mix = mix;
+        }
+        if let Some(params) = args.mode_params {
+            pp_config.mode_params = params;
         }
         if let Some(density) = args.volumetric_density {
             pp_config.volumetric_density = density;

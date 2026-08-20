@@ -240,6 +240,83 @@ When the post-processing pipeline is active, the engine sets `enable_tonemapping
 
 When post-processing is disabled (via `--no-postprocess` or F6), the shader handles tonemapping and gamma internally. This dual-path design ensures backward compatibility with scenes that don't use post-processing.
 
+## Render Modes
+
+Render modes are whole-screen stylizations that branch **after ACES tonemapping
+and before vignette**. They are not debug views: they are a supported way to
+make the world visibly stop being itself for a while.
+
+![Tron render mode](../images/render-mode-tron.png)
+
+*Mode 4 over an ocean scene: depth-reconstructed world grid, Sobel edges on
+depth and luminance.*
+
+| Mode | Name | What it does |
+|------|------|--------------|
+| 0 | None | Normal output. |
+| 1 | Matrix | Procedural dot-matrix glyphs per 8×12 px cell. Brightness *and* density track scene luminance, with per-column rain heads. |
+| 2 | Blood | Palette remap. Ocean scenes recolor through the ocean shader too, so the water is genuinely a different sea rather than a red filter over a blue one. |
+| 3 | Drunk | Pre-sample UV sway warping the whole composite chain, plus a ghosting double-tap. |
+| 4 | Tron | Depth Sobel + luminance edges in cyan over a dimmed scene, with a world-space grid reconstructed from depth so it rides real geometry. |
+| 5 | Underwater | Masks per pixel against a **waterline plane**, not a patch mask. Banded murk absorption, a wobbled foam lip on the line, light shafts, Snell-window brightening. |
+
+Four uniforms carry the state: `render_mode`, `mode_mix` (0..1 blend),
+`mode_time`, and a `mode_params` vec4 whose meaning is per-mode.
+
+| Mode | `mode_params` |
+|------|---------------|
+| 1–4 | `x` = bleed-mask scale, `y` = mask style (0 = fbm patches, 1 = radial iris), `z` = rate, `w` = spare |
+| 5 | `x` = signed eye depth in meters (+ = submerged), `y` = sea energy 0..1, `z` = daylight 0..1, `w` = bioluminescence 0..1 |
+
+Modes 1–4 fade in through an fbm **bleed mask** whose threshold sweeps across
+the noise span, so patch coverage grows with `mode_mix` and pins to full
+coverage at 1. Mode 5 ignores the mask entirely — being underwater is a fact
+about where your eye is, not a patch that spreads.
+
+### From scripts
+
+```rhai
+set_render_mode(4, 0.85);                  // mode, mix
+set_render_mode_params(3.0, 0.0, 6.0, 0.0);
+```
+
+**`set_render_mode` is transient, and it is the only post-process override that
+is.** Every other override — exposure, bloom, fog, chromatic aberration — is
+sticky: set it once and it persists. The render mode is zeroed the frame your
+script *stops calling it*.
+
+That asymmetry is deliberate. A sticky render mode plus a script that crashed,
+hot-reloaded, or was disabled mid-effect would leave the world permanently
+inside a hallucination with no way out. Instead, a dead script means a healed
+world. The cost is that you must call it every frame the effect is active:
+
+```rhai
+fn on_update() {
+    let m = current_mix();          // your own envelope
+    if m > 0.001 {
+        set_render_mode(active_mode, m);
+    }
+    // stop calling -> the engine restores the world by itself
+}
+```
+
+Sticky effects a mode borrows (FOV, radial blur, chromatic aberration) are
+*not* covered by this, so zero them yourself when your effect ends.
+
+### Headless
+
+```bash
+flint render scene.toml --schemas schemas \
+  --render-mode 4 --mode-mix 1.0 --mode-params 3,0,6,0
+```
+
+Since `flint render` runs no scripts, these flags **are** the fixture — there
+is no script to drive the mode for you.
+
+One practical note: modes 1 and 4 key off scene luminance, so they read best
+in daylight even if your game schedules them at night. A night scene renders
+the Matrix mode nearly black.
+
 ## Design Decisions
 
 - **Rgba16Float** for the HDR buffer provides sufficient precision for bloom extraction without the memory cost of Rgba32Float

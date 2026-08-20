@@ -1,0 +1,55 @@
+[component.ocean]
+description = "Endless Gerstner-wave ocean surface with stylized cel shading. One per scene; the grid follows the camera."
+
+[component.ocean.fields]
+# ── Simulation (flint_core::ocean::OceanParams) ─────────────────────────
+seed = { type = "integer", description = "Wave spectrum RNG seed (same seed = same ocean)", default = 7 }
+num_waves = { type = "integer", description = "Number of Gerstner waves, 1-16", default = 12 }
+wavelength_min = { type = "float", description = "Shortest wavelength in meters", default = 4.0 }
+wavelength_max = { type = "float", description = "Longest wavelength in meters", default = 55.0 }
+amplitude = { type = "float", description = "Total wave amplitude in meters (max crest height)", default = 0.85 }
+choppiness = { type = "float", description = "0 = rolling swells, 1 = sharp trochoids (pre-cusp)", default = 0.7 }
+direction_deg = { type = "float", description = "Primary wave travel direction in degrees (0 = +Z)", default = 25.0 }
+spread_deg = { type = "float", description = "Directional spread in degrees; small waves wander more", default = 40.0 }
+speed_scale = { type = "float", description = "Time multiplier: 0 = frozen, 1 = physical speed", default = 1.0 }
+wind_speed = { type = "float", description = "Wind speed m/s: shapes the JONSWAP energy peak (where the height lives)", default = 7.0 }
+fetch_km = { type = "float", description = "Wind fetch in km: longer = energy in longer swells", default = 60.0 }
+peak_enhancement = { type = "float", description = "JONSWAP gamma: 1 = broad sea, 3.3 = typical, higher = single narrow swell", default = 3.3 }
+
+# ── Style (flint_render OceanVisuals) ───────────────────────────────────
+deep_color = { type = "vec4", description = "Water color in wave shadow (RGBA linear)", default = [0.055, 0.22, 0.53, 1.0] }
+shallow_color = { type = "vec4", description = "Water color in full light (RGBA linear)", default = [0.16, 0.51, 0.83, 1.0] }
+foam_color = { type = "vec4", description = "Crest foam color (RGBA linear)", default = [0.96, 0.99, 1.0, 1.0] }
+sss_color = { type = "vec4", description = "Fake subsurface glow through backlit wave flanks", default = [0.10, 0.75, 0.75, 1.0] }
+foam_threshold = { type = "float", description = "Jacobian threshold: higher = more foam", default = 0.62 }
+foam_noise_scale = { type = "float", description = "World-space frequency of foam breakup noise", default = 0.35 }
+ramp_steps = { type = "float", description = "Cel bands in the diffuse ramp (1-8)", default = 3.0 }
+specular_strength = { type = "float", description = "Sun glint intensity (0 disables)", default = 1.0 }
+band_wobble = { type = "float", description = "Ramp edge wobble: noise raggedizes cel band contours (0 = razor edges)", default = 0.2 }
+band_dither = { type = "float", description = "Halftone dither width at band edges: dots grow/merge across the transition (0 = hard line)", default = 0.0 }
+rain_ripple = { type = "float", description = "Rain impact-ring density 0..1 (weather-driven; 0 = off)", default = 0.0 }
+band_dither_scale = { type = "float", description = "Halftone dot grid frequency in dots per meter", default = 1.5 }
+foam_glow_color = { type = "vec4", description = "Bioluminescent foam glow color (RGBA linear, emissive teal-green)", default = [0.35, 0.95, 0.75, 1.0] }
+foam_glow = { type = "float", description = "Bioluminescent glow strength (0 = off; time_of_day.rhai fades it in at night)", default = 0.0 }
+
+# ── Contact foam (splash ring around the scene's ocean_contact hull) ────
+splash_strength = { type = "float", description = "Contact foam overall gain (0 disables)", default = 1.0 }
+splash_width = { type = "float", description = "Max foam band width outward from the hull at full churn (m)", default = 0.35 }
+splash_flicker_speed = { type = "float", description = "Contact foam lapping/flicker animation rate", default = 1.6 }
+splash_noise_scale = { type = "float", description = "World-space frequency of the contact foam scalloped edge", default = 1.8 }
+splash_baseline = { type = "float", description = "Churn floor on calm water (0 = foam vanishes when flat)", default = 0.15 }
+splash_response = { type = "float", description = "Impact speed to churn gain (s/m): how hard waves striking the hull flare the foam", default = 1.0 }
+
+# ── Refraction / turbidity (requires post-processing) ───────────────────
+turbidity = { type = "float", description = "Water cloudiness: 0 = glass-clear legs, high = murk in half a meter", default = 0.8 }
+refraction_strength = { type = "float", description = "Screen-space refraction distortion of underwater objects", default = 0.6 }
+absorption_color = { type = "vec3", description = "Per-channel absorption rate (red dies first in seawater)", default = [0.9, 0.35, 0.22] }
+sky_reflection_strength = { type = "float", description = "Fresnel-weighted analytic sky reflection (needs a sky component; 0 disables)", default = 0.8 }
+
+# ── Grid ────────────────────────────────────────────────────────────────
+grid_scale = { type = "float", description = "Inner metric scale of the camera-following grid (m)", default = 60.0 }
+fade_start = { type = "float", description = "Distance where wave displacement starts fading (m)", default = 90.0 }
+fade_end = { type = "float", description = "Distance where the ocean is flat (m)", default = 170.0 }
+
+# ── Diagnostics ─────────────────────────────────────────────────────────
+show_probe = { type = "bool", description = "Show the CPU/GPU parity buoy (a wave_probe script pins it to ocean_height; parked underwater when false)", default = false }

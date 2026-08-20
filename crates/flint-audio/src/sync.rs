@@ -4,7 +4,7 @@
 //! creates Kira tracks, and updates positions each frame.
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
-use crate::engine::{amplitude_to_db, AudioEngine};
+use crate::engine::{amplitude_to_db, AudioEngine, Bus};
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
@@ -126,6 +126,12 @@ impl AudioSync {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
+            let bus = audio_data
+                .get("bus")
+                .and_then(|v| v.as_str())
+                .map(Bus::from_name)
+                .unwrap_or_default();
+
             if file.is_empty() {
                 self.synced_entities.insert(entity_id);
                 continue;
@@ -144,7 +150,12 @@ impl AudioSync {
                     .and_then(toml_f32)
                     .unwrap_or(25.0);
 
-                match engine.create_spatial_track(transform.position, min_distance, max_distance) {
+                match engine.create_spatial_track(
+                    transform.position,
+                    min_distance,
+                    max_distance,
+                    bus,
+                ) {
                     Ok(mut track) => {
                         let mut handles = Vec::new();
                         if autoplay && engine.has_sound(file) {
@@ -173,7 +184,7 @@ impl AudioSync {
                 // Non-spatial: play directly on the main track
                 let mut handles = Vec::new();
                 if autoplay && engine.has_sound(file) {
-                    match engine.play_non_spatial(file, volume, pitch, looping) {
+                    match engine.play_non_spatial(file, volume, pitch, looping, bus) {
                         Ok(handle) => handles.push(handle),
                         Err(e) => {
                             tracing::warn!("Failed to play non-spatial '{}': {:?}", file, e)

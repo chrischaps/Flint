@@ -55,6 +55,18 @@ pub struct PostProcessConfig {
     pub kuwahara_sharpness: f32,
     pub kuwahara_hardness: f32,
     pub kuwahara_anisotropy: f32,
+    /// Stylized render mode: 0 = none, 1 = Matrix code, 2 = blood ocean
+    /// grade, 3 = drunk, 4 = Tron wireframe (reality tears), 5 = underwater
+    /// (submerged-eye moments; masks by a per-pixel waterline, not the
+    /// tear mask).
+    pub render_mode: u32,
+    /// Blend strength for the active render mode (0 = normal view).
+    pub mode_mix: f32,
+    /// Per-mode tuning. Tears (1-4): x = bleed-mask scale, y = mask style
+    /// (0 fbm / 1 iris), z = per-mode rate, w = spare. Underwater (5):
+    /// x = signed eye depth in meters (+ = submerged; waterline Y =
+    /// camera Y + x), y = sea energy 0..1, z = daylight 0..1, w = biolum 0..1.
+    pub mode_params: [f32; 4],
 }
 
 impl Default for PostProcessConfig {
@@ -99,6 +111,9 @@ impl Default for PostProcessConfig {
             kuwahara_sharpness: 8.0,
             kuwahara_hardness: 8.0,
             kuwahara_anisotropy: 1.0,
+            render_mode: 0,
+            mode_mix: 0.0,
+            mode_params: [0.0; 4],
         }
     }
 }
@@ -185,6 +200,12 @@ pub struct PostProcessUniforms {
     pub dof_focus_distance: f32,
     pub dof_focus_range: f32,
     pub _pad2: f32,
+    // Reality-tear render mode (must mirror composite_shader.wgsl)
+    pub render_mode: u32,
+    pub mode_mix: f32,
+    pub mode_time: f32,
+    pub _pad_mode: f32,
+    pub mode_params: [f32; 4],
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -2556,6 +2577,7 @@ impl PostProcessPipeline {
         target_view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
         camera: &Camera,
+        time: f32,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_view = if config.enabled && config.ssao_enabled {
@@ -2649,6 +2671,11 @@ impl PostProcessPipeline {
             dof_focus_distance: config.dof_focus_distance,
             dof_focus_range: config.dof_focus_range.max(0.001),
             _pad2: 0.0,
+            render_mode: if effects_on { config.render_mode } else { 0 },
+            mode_mix: if effects_on { config.mode_mix } else { 0.0 },
+            mode_time: time,
+            _pad_mode: 0.0,
+            mode_params: config.mode_params,
         };
 
         queue.write_buffer(
@@ -2968,4 +2995,21 @@ fn generate_ssao_noise() -> [u8; 64] {
     }
 
     data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Rust uniform struct must byte-match the WGSL PostProcessUniforms
+    /// in composite_shader.wgsl. Layout: 12 scalars + texel_size vec2 +
+    /// fog block (through dither_intensity) = 112 bytes, inv_view_proj mat4
+    /// at 112..176, DoF row (strength/focus/range/pad) at 176..192, mode
+    /// scalars (render_mode/mode_mix/mode_time/pad) at 192..208, mode_params
+    /// vec4 at 208..224.
+    #[test]
+    fn composite_uniforms_match_wgsl_layout() {
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 224);
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>() % 16, 0);
+    }
 }

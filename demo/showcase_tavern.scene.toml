@@ -2,6 +2,12 @@
 name = ""
 version = "1.0"
 
+[post_process]
+kuwahara_enabled = true
+kuwahara_radius = 4        # default 4, max 16 — bigger = more painterly
+kuwahara_sharpness = 6.0   # default 8 — lower = softer blending between sectors
+kuwahara_hardness = 4.0    # default 8 — lower = broader, smoother strokes
+
 [prefabs]
 
 [entities.game_controller.script]

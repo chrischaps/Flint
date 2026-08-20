@@ -16,6 +16,7 @@ mod gpu_mesh;
 pub mod grass_pipeline;
 mod headless;
 pub mod model_loader;
+pub mod ocean_pipeline;
 pub mod orbit_controller;
 pub mod particle_pipeline;
 mod pipeline;
@@ -25,6 +26,7 @@ pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
 pub mod skinned_pipeline;
+pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
@@ -43,6 +45,7 @@ pub use grass_pipeline::{
     GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
 };
 pub use headless::HeadlessContext;
+pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{
     ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
@@ -62,6 +65,7 @@ pub use primitives::{
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
 pub use skinned_pipeline::SkinnedPipeline;
+pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
 pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
@@ -108,6 +112,18 @@ mod tests {
     }
 
     #[test]
+    fn ocean_shader_wgsl_parses() {
+        let source = include_str!("ocean_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
+    }
+
+    #[test]
+    fn sky_shader_wgsl_parses() {
+        let source = include_str!("sky_shader.wgsl");
+        naga::front::wgsl::parse_str(source).expect("sky_shader.wgsl failed to parse");
+    }
+
+    #[test]
     fn outline_shader_wgsl_parses() {
         let source = include_str!("outline_shader.wgsl");
         naga::front::wgsl::parse_str(source).expect("outline_shader.wgsl failed to parse");
@@ -135,12 +151,14 @@ mod tests {
     #[test]
     fn post_process_uniforms_layout() {
         // Desaturate reused a pre-existing pad slot (176 bytes); the DoF row
-        // (strength/focus/range/_pad2) was appended after inv_view_proj,
-        // growing the struct to exactly one extra 16-byte row. Any other size
-        // means the Rust struct and the WGSL mirror have diverged.
+        // (strength/focus/range/_pad2) and the render-mode rows
+        // (render_mode/mode_mix/mode_time/pad + mode_params vec4) were
+        // appended after inv_view_proj, growing the struct by exactly three
+        // 16-byte rows. Any other size means the Rust struct and the WGSL
+        // mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 192, "PostProcessUniforms size changed");
+        assert_eq!(size, 224, "PostProcessUniforms size changed");
     }
 
     #[test]

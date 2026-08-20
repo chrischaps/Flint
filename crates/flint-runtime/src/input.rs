@@ -725,6 +725,14 @@ impl InputState {
         self.keys_just_pressed.contains(&key)
     }
 
+    /// True if ANY keyboard key, mouse button, or gamepad button was pressed
+    /// this frame, regardless of action bindings ("press any key" screens).
+    pub fn any_just_pressed(&self) -> bool {
+        !self.keys_just_pressed.is_empty()
+            || !self.mouse_buttons_just_pressed.is_empty()
+            || !self.gamepad_buttons_just_pressed.is_empty()
+    }
+
     pub fn is_action_pressed(&self, action: &str) -> bool {
         self.evaluate_action(action).pressed
     }

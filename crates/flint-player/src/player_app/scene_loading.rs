@@ -464,6 +464,58 @@ pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem,
     }
 }
 
+/// Load image files referenced by `particle_emitter.texture` fields into the
+/// renderer's texture cache. The cache key is the field string verbatim (the
+/// particle draw path looks textures up by that name); the file is searched
+/// in the scene dir, then its parent (game root) — same as audio and models.
+pub(super) fn load_particle_textures_from_world(
+    world: &FlintWorld,
+    renderer: &mut SceneRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene_path: &str,
+) {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let mut search_dirs = vec![scene_dir.to_path_buf()];
+    if let Some(parent) = scene_dir.parent() {
+        search_dirs.push(parent.to_path_buf());
+    }
+
+    for entity in world.all_entities() {
+        let tex_name = world
+            .get_components(entity.id)
+            .and_then(|components| components.get(comp::PARTICLE_EMITTER))
+            .and_then(|emitter| emitter.get("texture"))
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.is_empty());
+
+        if let Some(tex_name) = tex_name {
+            let mut found = false;
+            for dir in &search_dirs {
+                let path = dir.join(&tex_name);
+                if path.exists() {
+                    match renderer.load_texture_file(device, queue, &tex_name, &path) {
+                        Ok(true) => println!("Loaded particle texture: {tex_name}"),
+                        Ok(false) => {} // already cached
+                        Err(e) => tracing::warn!(
+                            "Failed to load particle texture '{}': {}",
+                            tex_name,
+                            e
+                        ),
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                tracing::warn!("Particle texture not found: {}", tex_name);
+            }
+        }
+    }
+}
+
 /// Load `.anim.toml` files from the `animations/` directory next to the scene.
 /// Also checks one level up (game root) for projects that use a `scenes/` subdirectory.
 pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {
