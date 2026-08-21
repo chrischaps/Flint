@@ -207,6 +207,7 @@ impl GrassPipeline {
         scene_format: wgpu::TextureFormat,
         transform_bind_group_layout: &wgpu::BindGroupLayout,
         light_bind_group_layout: &wgpu::BindGroupLayout,
+        sample_count: u32,
     ) -> Option<Self> {
         // Compute shader
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -418,7 +419,10 @@ impl GrassPipeline {
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });

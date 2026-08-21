@@ -49,11 +49,6 @@ fn vs_ssao(@builtin(vertex_index) vid: u32) -> VsOut {
     return out;
 }
 
-// Linearize depth from the non-linear depth buffer value
-fn linearize_depth(d: f32) -> f32 {
-    return (params.near * params.far) / (params.far - d * (params.far - params.near));
-}
-
 // Reconstruct view-space position from UV and depth
 fn view_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     // Map UV to clip space: [0,1] → [-1,1], flip Y

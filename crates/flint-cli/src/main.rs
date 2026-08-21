@@ -189,7 +189,7 @@ fn main() -> Result<()> {
         } => {
             // Serve uses first schemas path (viewer doesn't need multi-dir yet)
             let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");
-            flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector)
+            flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector, false)
         }
         Commands::Gen(args) => gen::run(args),
         Commands::GenPreview(args) => gen_preview::run(args),

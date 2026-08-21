@@ -63,7 +63,7 @@ pub use primitives::{
     triangles_to_wireframe_indices, Mesh, SkinnedMesh, SkinnedVertex, Vertex,
 };
 pub use render_stats::{format_count, RenderStats};
-pub use scene_renderer::{ArchetypeVisual, RendererConfig, SceneRenderer};
+pub use scene_renderer::{ArchetypeVisual, LightingLevers, RendererConfig, SceneRenderer};
 pub use skinned_pipeline::SkinnedPipeline;
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
@@ -155,6 +155,19 @@ mod tests {
     }
 
     #[test]
+    fn depth_resolve_shader_wgsl_parses_and_validates() {
+        let source = include_str!("depth_resolve.wgsl");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("depth_resolve.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("depth_resolve.wgsl failed validation");
+    }
+
+    #[test]
     fn fxaa_shader_wgsl_parses_and_validates() {
         let source = include_str!("fxaa_shader.wgsl");
         let module =
@@ -187,11 +200,13 @@ mod tests {
         // (shader / skinned / terrain / grass_render / volumetric / ocean);
         // bind groups use min_binding_size: None, so a divergence surfaces
         // as a draw-time wgpu validation error, not a compile error. The
-        // sheen vec4 (ADR 0048) grew the struct from 1264 to 1280 bytes.
+        // sheen vec4 (ADR 0048) grew the struct from 1264 to 1280 bytes;
+        // PointLight's source_radius row (ADR 0056) grew it to 1536
+        // (16 point lights × 16 extra bytes).
         let size = std::mem::size_of::<crate::pipeline::LightUniforms>();
         assert_eq!(size % 16, 0, "LightUniforms not 16-byte aligned");
         assert_eq!(
-            size, 1280,
+            size, 1536,
             "LightUniforms size changed — update all six WGSL mirrors"
         );
     }
@@ -208,6 +223,28 @@ mod tests {
         assert_eq!(defaults.sheen_color_strength, [0.0; 4], "sheen must be off");
         let zeroed = crate::pipeline::LightUniforms::zeroed();
         assert_eq!(zeroed.sheen_color_strength, [0.0; 4]);
+        // Area-light levers (ADR 0056): 0 = punctual → verbatim legacy path.
+        for d in defaults
+            .directional_lights
+            .iter()
+            .chain(zeroed.directional_lights.iter())
+        {
+            assert_eq!(d.angular_size, 0.0, "angular_size must default punctual");
+        }
+        for p in defaults
+            .point_lights
+            .iter()
+            .chain(zeroed.point_lights.iter())
+        {
+            assert_eq!(p.source_radius, 0.0, "point source_radius must default 0");
+        }
+        for sl in defaults.spot_lights.iter().chain(zeroed.spot_lights.iter()) {
+            assert_eq!(sl.source_radius, 0.0, "spot source_radius must default 0");
+        }
+        use crate::pipeline::{DirectionalLight, PointLight, SpotLight};
+        assert_eq!(DirectionalLight::default().angular_size, 0.0);
+        assert_eq!(PointLight::default().source_radius, 0.0);
+        assert_eq!(SpotLight::default().source_radius, 0.0);
     }
 
     #[test]
@@ -217,6 +254,28 @@ mod tests {
         // keeps the exact pre-lever behavior.
         let defaults = crate::shadow::ShadowUniforms::default();
         assert_eq!(defaults.cascade_splits[3], 0.0);
+    }
+
+    #[test]
+    fn shadow_uniforms_layout() {
+        // ShadowUniforms is mirrored in six WGSL shaders (same set as
+        // LightUniforms); the PCSS vec4 (ADR 0057) grew it 208 → 224 bytes.
+        let size = std::mem::size_of::<crate::shadow::ShadowUniforms>();
+        assert_eq!(size % 16, 0, "ShadowUniforms not 16-byte aligned");
+        assert_eq!(
+            size, 224,
+            "ShadowUniforms size changed — update all six WGSL mirrors"
+        );
+    }
+
+    #[test]
+    fn shadow_uniforms_default_pcss_is_unset() {
+        use bytemuck::Zeroable;
+        // pcss.w = 0 means "PCSS off" — shaders take the legacy 3×3 PCF
+        // path verbatim (ADR 0057), so default/stale uniforms keep the
+        // exact pre-lever behavior.
+        assert_eq!(crate::shadow::ShadowUniforms::default().pcss, [0.0; 4]);
+        assert_eq!(crate::shadow::ShadowUniforms::zeroed().pcss, [0.0; 4]);
     }
 
     #[test]

@@ -1688,6 +1688,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "flint-core",
+ "flint-render",
  "flint-scene",
  "flint-terrain",
  "toml",
@@ -1942,6 +1943,7 @@ dependencies = [
  "egui-winit",
  "flint-constraint",
  "flint-core",
+ "flint-debug-ui",
  "flint-ecs",
  "flint-import",
  "flint-render",

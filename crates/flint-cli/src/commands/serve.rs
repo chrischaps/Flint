@@ -146,7 +146,10 @@ impl ViewerApp {
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.update_orbit();
 
-        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
+        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig {
+            show_grid: true,
+            ..Default::default()
+        });
 
         // Load models (including skeletal data) and update meshes from world
         {

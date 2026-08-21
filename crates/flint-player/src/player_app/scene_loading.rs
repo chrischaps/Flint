@@ -9,12 +9,14 @@ use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
+use flint_core::EntityId;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
 use flint_physics::PhysicsSystem;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::SceneRenderer;
 use flint_script::ScriptSystem;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Convert a `PostProcessDef` (scene TOML) to a `PostProcessConfig` (renderer).
@@ -339,24 +341,55 @@ pub(super) fn register_skeletal_data(
     load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
 ) {
+    // Skeletons built from the first import of each asset, so entities that hit
+    // the mesh cache (`import_result: None` — every 2nd+ entity sharing a
+    // skinned asset) still get their own skeleton and animate independently.
+    let mut skeletons_by_asset: HashMap<String, Vec<Skeleton>> = HashMap::new();
+    let mut deferred: Vec<(EntityId, String)> = Vec::new();
+
     for loaded in &load_result.models {
-        if loaded.is_skinned {
-            if let Some(ref import_result) = loaded.import_result {
-                for imported_skel in &import_result.skeletons {
-                    let skeleton = Skeleton::from_imported(imported_skel);
-                    animation.add_skeleton(loaded.entity_id, skeleton);
-                }
-                for imported_clip in &import_result.skeletal_clips {
-                    let clip = SkeletalClip::from_imported(imported_clip);
-                    println!(
-                        "  Skeletal clip: {} ({:.1}s, {} tracks)",
-                        clip.name,
-                        clip.duration,
-                        clip.joint_tracks.len()
-                    );
-                    animation.add_skeletal_clip(clip);
+        if !loaded.is_skinned {
+            continue;
+        }
+        let Some(ref import_result) = loaded.import_result else {
+            deferred.push((loaded.entity_id, loaded.asset_name.clone()));
+            continue;
+        };
+        let skeletons: Vec<Skeleton> = import_result
+            .skeletons
+            .iter()
+            .map(Skeleton::from_imported)
+            .collect();
+        for skeleton in &skeletons {
+            animation.add_skeleton(loaded.entity_id, skeleton.clone());
+        }
+        skeletons_by_asset
+            .entry(loaded.asset_name.clone())
+            .or_insert(skeletons);
+        for imported_clip in &import_result.skeletal_clips {
+            let clip = SkeletalClip::from_imported(imported_clip);
+            println!(
+                "  Skeletal clip: {} ({:.1}s, {} tracks)",
+                clip.name,
+                clip.duration,
+                clip.joint_tracks.len()
+            );
+            animation.add_skeletal_clip(clip);
+        }
+    }
+
+    for (entity_id, asset_name) in deferred {
+        match skeletons_by_asset.get(&asset_name) {
+            Some(skeletons) => {
+                for skeleton in skeletons {
+                    animation.add_skeleton(entity_id, skeleton.clone());
                 }
             }
+            None => tracing::warn!(
+                "skinned entity {:?} uses `{}` but no import of that asset produced a skeleton this load; it will render in rest pose",
+                entity_id,
+                asset_name
+            ),
         }
     }
 }

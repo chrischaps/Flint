@@ -16,11 +16,39 @@ use crate::sprite2d_pipeline::Sprite2dInstanceGpu;
 use crate::texture_cache::TextureCache;
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_color as extract_color, toml_f32, toml_vec4};
+use flint_core::EntityId;
 use flint_ecs::DynamicComponents;
 use flint_ecs::FlintWorld;
 use wgpu::util::DeviceExt;
 
 impl SceneRenderer {
+    /// ECS `material.base_color_r/g/b[/a]` tint for a model entity, checking the
+    /// entity first and then its parent (so expanded GLB child nodes inherit a
+    /// script-set colour). `None` when neither declares one.
+    fn ecs_base_color_override(world: &FlintWorld, entity_id: EntityId) -> Option<[f32; 4]> {
+        let extract = |m: &toml::Value| -> Option<[f32; 4]> {
+            let r = m.get("base_color_r")?.as_float()? as f32;
+            let g = m.get("base_color_g")?.as_float()? as f32;
+            let b = m.get("base_color_b")?.as_float()? as f32;
+            let a = m
+                .get("base_color_a")
+                .and_then(|v| v.as_float())
+                .unwrap_or(1.0) as f32;
+            Some([r, g, b, a])
+        };
+        world
+            .get_components(entity_id)
+            .and_then(|c| c.get(comp::MATERIAL))
+            .and_then(extract)
+            .or_else(|| {
+                world
+                    .get_parent(entity_id)
+                    .and_then(|pid| world.get_components(pid))
+                    .and_then(|c| c.get(comp::MATERIAL))
+                    .and_then(extract)
+            })
+    }
+
     /// Extract a skinned (skeletal) entity into draw calls.
     /// Returns `true` if skinned meshes were found (caller should `continue`).
     pub(super) fn extract_skinned_entity(
@@ -64,8 +92,14 @@ impl SceneRenderer {
                 &tex_cache.default_metallic_roughness,
             );
 
+            // Material color override (entity, then parent) — same contract as
+            // the static model path, so a scene can tint a skinned figure via
+            // `material.base_color_r/g/b` too.
+            let base_color = Self::ecs_base_color_override(world, entity_id)
+                .unwrap_or(gpu_mesh.material.base_color);
+
             let mut material_uniforms = MaterialUniforms::from_pbr(
-                gpu_mesh.material.base_color,
+                base_color,
                 gpu_mesh.material.metallic,
                 gpu_mesh.material.roughness,
             );
@@ -207,27 +241,7 @@ impl SceneRenderer {
             // Material color override: check entity first, then inherit from parent.
             // This lets scripts color a parent entity and have all child meshes
             // (e.g. expanded GLB nodes) pick up the tint automatically.
-            let extract_color_fn = |m: &toml::Value| -> Option<[f32; 4]> {
-                let r = m.get("base_color_r")?.as_float()? as f32;
-                let g = m.get("base_color_g")?.as_float()? as f32;
-                let b = m.get("base_color_b")?.as_float()? as f32;
-                let a = m
-                    .get("base_color_a")
-                    .and_then(|v| v.as_float())
-                    .unwrap_or(1.0) as f32;
-                Some([r, g, b, a])
-            };
-            let base_color = world
-                .get_components(entity_id)
-                .and_then(|c| c.get(comp::MATERIAL))
-                .and_then(|m| extract_color_fn(m))
-                .or_else(|| {
-                    world
-                        .get_parent(entity_id)
-                        .and_then(|pid| world.get_components(pid))
-                        .and_then(|c| c.get(comp::MATERIAL))
-                        .and_then(|m| extract_color_fn(m))
-                })
+            let base_color = Self::ecs_base_color_override(world, entity_id)
                 .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(

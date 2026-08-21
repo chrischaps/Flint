@@ -55,6 +55,13 @@ struct PointLight {
     radius: f32,
     color: vec3<f32>,
     intensity: f32,
+    // Physical source radius (world units); 0 = punctual (ADR 0056).
+    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
+    // LightUniforms mirrors (light_uniforms_layout test).
+    source_radius: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct SpotLight {
@@ -87,6 +94,9 @@ struct LightUniforms {
 struct ShadowUniforms {
     cascade_view_proj: array<mat4x4<f32>, 3>,
     cascade_splits: vec4<f32>,
+    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
+    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
+    pcss: vec4<f32>,
 };
 
 // Bind group 0: Transform (shared)

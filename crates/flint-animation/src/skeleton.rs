@@ -26,6 +26,7 @@ impl Default for JointPose {
 /// 3. Accumulates `global[i] = global[parent[i]] * local_to_mat4(local_poses[i])`
 /// 4. Final: `bone_matrices[i] = global[i] * inverse_bind_matrices[i]`
 /// 5. `bone_matrices` is uploaded to GPU for vertex skinning
+#[derive(Clone, Debug)]
 pub struct Skeleton {
     pub joint_names: Vec<String>,
     pub parents: Vec<Option<usize>>,

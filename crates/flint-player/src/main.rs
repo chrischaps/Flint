@@ -39,6 +39,10 @@ struct Args {
     /// Initial SFX bus volume (linear, 0.0 = muted, 1.0 = full)
     #[arg(long, default_value_t = 1.0)]
     sfx_volume: f64,
+
+    /// MSAA sample count for the scene passes: 1 (off) or 4 (ADR 0058)
+    #[arg(long, default_value_t = 1)]
+    msaa: u32,
 }
 
 fn main() -> Result<()> {
@@ -85,12 +89,9 @@ fn main() -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit");
-    println!("  F1       - Cycle debug mode");
-    println!("  F4       - Toggle shadows");
-    println!("  F5       - Toggle bloom");
-    println!("  F6       - Toggle post-processing");
-    println!("  F7       - Toggle SSAO");
-    println!("  F8       - Toggle fog");
+    println!("  F2       - Rendering stats overlay");
+    println!("  F3       - Scene debug panels");
+    println!("  F4       - Rendering & Effects menu");
     println!("  F11      - Toggle fullscreen");
 
     // Create and run the event loop
@@ -104,6 +105,8 @@ fn main() -> Result<()> {
         args.input_config,
         scene_file.scene.input_config.clone(),
     );
+
+    app.msaa_sample_count = args.msaa;
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
     app.audio

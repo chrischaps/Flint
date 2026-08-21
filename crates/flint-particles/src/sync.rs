@@ -89,6 +89,19 @@ impl ParticleSync {
                 state.config.color_end = config.color_end;
                 state.config.blend_mode = config.blend_mode;
                 state.config.texture = config.texture;
+                // Emission-shape fields scripts drive per frame (e.g. a trail
+                // that sheds in the direction of lateral motion — ADR 0061).
+                state.config.direction = config.direction;
+                state.config.spread = config.spread;
+                state.config.speed_min = config.speed_min;
+                state.config.speed_max = config.speed_max;
+                state.config.lifetime_min = config.lifetime_min;
+                state.config.lifetime_max = config.lifetime_max;
+                state.config.stretch = config.stretch;
+                state.config.shape = config.shape;
+                state.config.shape_offset = config.shape_offset;
+                state.config.shape_axis_u = config.shape_axis_u;
+                state.config.shape_axis_v = config.shape_axis_v;
 
                 // Update emitter position from transform
                 if let Some(transform) = components.get(comp::TRANSFORM).and_then(|v| v.as_table())
@@ -206,12 +219,21 @@ impl ParticleSync {
             }
             let start = self.instance_buffer.len();
             for p in state.pool.alive_slice() {
-                self.instance_buffer.push(ParticleInstance::from_particle(
+                let mut inst = ParticleInstance::from_particle(
                     p,
                     state.config.frames_x,
                     state.config.frames_y,
                     state.config.stretch,
-                ));
+                );
+                // Local-space particles are simulated relative to the emitter
+                // and ride with it; resolve to world space at pack time (the
+                // render path has no per-emitter transform).
+                if !state.config.world_space {
+                    inst.pos_size[0] += state.emitter_position[0];
+                    inst.pos_size[1] += state.emitter_position[1];
+                    inst.pos_size[2] += state.emitter_position[2];
+                }
+                self.instance_buffer.push(inst);
             }
             self.instance_ranges.push((
                 entity_id,
@@ -288,9 +310,21 @@ fn spawn_particle(state: &mut EmitterState, rng: &mut ParticleRng) {
             let x = rng.range(-extents[0], extents[0]);
             let y = rng.range(-extents[1], extents[1]);
             let z = rng.range(-extents[2], extents[2]);
-            ([x, y, z], None)
+            match oriented_basis(state.config.shape_axis_u, state.config.shape_axis_v) {
+                Some((u, v, w)) => (
+                    [
+                        u[0] * x + v[0] * y + w[0] * z,
+                        u[1] * x + v[1] * y + w[1] * z,
+                        u[2] * x + v[2] * y + w[2] * z,
+                    ],
+                    None,
+                ),
+                None => ([x, y, z], None),
+            }
         }
     };
+    let so = state.config.shape_offset;
+    let offset = [offset[0] + so[0], offset[1] + so[1], offset[2] + so[2]];
 
     // Position in world space
     if state.config.world_space {
@@ -318,6 +352,26 @@ fn spawn_particle(state: &mut EmitterState, rng: &mut ParticleRng) {
     p.rotation = rng.range(0.0, std::f32::consts::TAU);
     p.frame = 0;
     p.alive = true;
+}
+
+/// Orthonormal (u, v, u×v) from two authored axes; `None` when either is
+/// degenerate (zero or parallel), which selects the legacy axis-aligned box.
+fn oriented_basis(u: [f32; 3], v: [f32; 3]) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
+    fn norm(a: [f32; 3]) -> Option<[f32; 3]> {
+        let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        (l > 1e-6).then(|| [a[0] / l, a[1] / l, a[2] / l])
+    }
+    fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    }
+    let u = norm(u)?;
+    let w = norm(cross(u, v))?;
+    let v = cross(w, u); // re-orthogonalised, unit by construction
+    Some((u, v, w))
 }
 
 fn read_position(transform: &toml::value::Table) -> [f32; 3] {
@@ -376,5 +430,49 @@ mod tests {
 
         assert_eq!(sync.instance_data().len(), 5);
         assert_eq!(sync.draw_data().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod oriented_rect_tests {
+    use super::*;
+
+    #[test]
+    fn degenerate_axes_select_legacy_box() {
+        assert!(oriented_basis([0.0; 3], [0.0; 3]).is_none());
+        assert!(oriented_basis([1.0, 0.0, 0.0], [2.0, 0.0, 0.0]).is_none());
+    }
+
+    #[test]
+    fn basis_is_orthonormal_and_reorthogonalised() {
+        let (u, v, w) = oriented_basis([0.0, 0.0, 2.0], [0.3, 1.0, 0.5]).unwrap();
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        for a in [u, v, w] {
+            assert!((dot(a, a) - 1.0).abs() < 1e-5);
+        }
+        assert!(dot(u, v).abs() < 1e-5 && dot(u, w).abs() < 1e-5 && dot(v, w).abs() < 1e-5);
+        assert_eq!(u, [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn shape_offset_translates_spawn_region() {
+        let config = EmitterConfig {
+            emission_rate: 0.0,
+            burst_count: 4,
+            max_particles: 8,
+            speed_min: 0.0,
+            speed_max: 0.0,
+            shape: EmissionShape::Point,
+            shape_offset: [1.0, 2.0, 3.0],
+            autoplay: true,
+            playing: true,
+            ..Default::default()
+        };
+        let mut state = EmitterState::new(config);
+        state.emitter_position = [10.0, 0.0, 0.0];
+        let mut rng = ParticleRng::new(7);
+        spawn_particle(&mut state, &mut rng);
+        let p = &state.pool.alive_slice()[0];
+        assert_eq!(p.position, [11.0, 2.0, 3.0]);
     }
 }

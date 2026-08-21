@@ -56,7 +56,7 @@ pub struct Sprite2dPipeline {
 }
 
 impl Sprite2dPipeline {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Sprite2D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("sprite2d_shader.wgsl").into()),
@@ -167,7 +167,10 @@ impl Sprite2dPipeline {
                 conservative: false,
             },
             depth_stencil: Some(depth_stencil),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });

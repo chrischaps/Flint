@@ -61,6 +61,13 @@ struct PointLight {
     radius: f32,
     color: vec3<f32>,
     intensity: f32,
+    // Physical source radius (world units); 0 = punctual (ADR 0056).
+    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
+    // LightUniforms mirrors (light_uniforms_layout test).
+    source_radius: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct SpotLight {
@@ -101,6 +108,9 @@ var shadow_sampler: sampler_comparison;
 struct ShadowUniforms {
     cascade_view_proj: array<mat4x4<f32>, 3>,
     cascade_splits: vec4<f32>,
+    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
+    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
+    pcss: vec4<f32>,
 };
 
 @group(2) @binding(3)
@@ -273,21 +283,74 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
 
     let depth = proj.z;
 
-    var shadow_sum = 0.0;
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            shadow_sum += textureSampleCompareLevel(
-                shadow_maps,
-                shadow_sampler,
-                shadow_uv + offset,
-                cascade,
-                depth
-            );
+    var raw_shadow = 1.0;
+    if (shadow.pcss.w > 0.0) {
+        // === PCSS: penumbra grows with occluder distance (ADR 0057) ===
+        // Mirrors shader.wgsl's implementation — see there for the notes.
+        let tan_a = shadow.pcss.w;
+        let depth_range = shadow.pcss[cascade];
+        let uv_per_world = row0_len * 0.5;
+        let max_radius_uv = 8.0 * texel_size;
+        let resolution = 1.0 / texel_size;
+        let max_coord = i32(resolution) - 1;
+
+        let search_uv = clamp(tan_a * depth * depth_range * uv_per_world,
+            texel_size, max_radius_uv);
+        var blocker_sum = 0.0;
+        var blocker_count = 0.0;
+        for (var i = 0; i < 16; i = i + 1) {
+            let r = sqrt((f32(i) + 0.5) / 16.0);
+            let theta = f32(i) * 2.39996;
+            let tap_uv = shadow_uv + vec2<f32>(cos(theta), sin(theta)) * r * search_uv;
+            let coords = clamp(vec2<i32>(tap_uv * resolution),
+                vec2<i32>(0), vec2<i32>(max_coord));
+            let d = textureLoad(shadow_maps, coords, cascade, 0);
+            if (d < depth) {
+                blocker_sum += d;
+                blocker_count += 1.0;
+            }
         }
+
+        if (blocker_count > 0.0) {
+            let avg_blocker = blocker_sum / blocker_count;
+            let penumbra_world = tan_a * max(depth - avg_blocker, 0.0) * depth_range;
+            let filter_uv = clamp(penumbra_world * uv_per_world,
+                texel_size, max_radius_uv);
+
+            var shadow_sum = 0.0;
+            for (var i = 0; i < 16; i = i + 1) {
+                let r = sqrt((f32(i) + 0.5) / 16.0);
+                let theta = f32(i) * 2.39996;
+                let offset = vec2<f32>(cos(theta), sin(theta)) * r * filter_uv;
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps,
+                    shadow_sampler,
+                    shadow_uv + offset,
+                    cascade,
+                    depth
+                );
+            }
+            raw_shadow = shadow_sum / 16.0;
+        }
+        // No blockers found -> fully lit (raw_shadow stays 1.0).
+    } else {
+        // Legacy 3x3 PCF — verbatim pre-PCSS path (pcss.w = 0 = lever off).
+        var shadow_sum = 0.0;
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps,
+                    shadow_sampler,
+                    shadow_uv + offset,
+                    cascade,
+                    depth
+                );
+            }
+        }
+        raw_shadow = shadow_sum / 9.0;
     }
 
-    let raw_shadow = shadow_sum / 9.0;
     // Blend shadow toward 1.0 (lit) based on distance and edge fades
     return mix(1.0, raw_shadow, distance_fade * edge_fade);
 }

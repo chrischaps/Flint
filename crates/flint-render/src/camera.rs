@@ -173,11 +173,14 @@ impl Camera {
 
         let depth = self.far - self.near;
 
+        // wgpu [0,1] depth convention: z_view=-near → 0, z_view=-far → 1
+        // (matches orthographic_matrix; ADR 0055 — the former GL [-1,1] rows
+        // clipped geometry nearer than 2×near and halved linearized depth)
         [
             [f / self.aspect, 0.0, 0.0, 0.0],
             [0.0, f, 0.0, 0.0],
-            [0.0, 0.0, -(self.far + self.near) / depth, -1.0],
-            [0.0, 0.0, -(2.0 * self.far * self.near) / depth, 0.0],
+            [0.0, 0.0, -self.far / depth, -1.0],
+            [0.0, 0.0, -(self.far * self.near) / depth, 0.0],
         ]
     }
 
@@ -194,8 +197,6 @@ impl Camera {
 
         // Column-major: m[col][row]
         // Maps depth to [0, 1] (wgpu convention): z_view=-near → 0, z_view=-far → 1
-        // (The perspective matrix uses [-1,1] OpenGL convention which works due to
-        // hyperbolic 1/z mapping, but orthographic has w=1 so we need [0,1] directly)
         [
             [1.0 / half_w, 0.0, 0.0, 0.0],
             [0.0, 1.0 / half_h, 0.0, 0.0],

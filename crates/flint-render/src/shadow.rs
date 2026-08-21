@@ -32,6 +32,12 @@ pub struct ShadowUniforms {
     /// "unset" and shaders fall back to the legacy hardcoded 1/2048, so
     /// stale/default uniforms keep the exact pre-lever behavior.
     pub cascade_splits: [f32; 4],
+    /// PCSS parameters (ADR 0057). xyz = per-cascade light-ortho depth
+    /// range in world units (pull_back + radius — converts blocker-depth
+    /// deltas back to world distances); w = tan(sun angular size).
+    /// w = 0.0 means "PCSS off" and shaders take the legacy 3×3 PCF path
+    /// verbatim, so stale/default uniforms keep pre-lever behavior.
+    pub pcss: [f32; 4],
 }
 
 impl Default for ShadowUniforms {
@@ -45,6 +51,7 @@ impl Default for ShadowUniforms {
         Self {
             cascade_view_proj: [identity; CASCADE_COUNT],
             cascade_splits: [0.0; 4],
+            pcss: [0.0; 4],
         }
     }
 }
@@ -271,6 +278,7 @@ impl ShadowPass {
         near: f32,
         far: f32,
         max_shadow_distance: f32,
+        sun_tan_angular: f32,
     ) {
         // Practical cascade split scheme (logarithmic/uniform blend)
         let lambda = 0.5f32; // blend factor
@@ -294,7 +302,7 @@ impl ShadowPass {
                 frustum_corners(cascade_near, cascade_far, near, far, &camera_view_proj_inv);
 
             // Compute tight orthographic bounds from light's perspective
-            let light_vp = compute_light_matrix(
+            let (light_vp, depth_range) = compute_light_matrix(
                 &corners,
                 &light_dir_norm,
                 camera_pos,
@@ -302,7 +310,10 @@ impl ShadowPass {
                 max_shadow_distance,
             );
             self.shadow_uniforms.cascade_view_proj[i] = light_vp;
+            self.shadow_uniforms.pcss[i] = depth_range;
         }
+        // 0 = PCSS off → shaders take the legacy 3×3 PCF path (ADR 0057).
+        self.shadow_uniforms.pcss[3] = sun_tan_angular;
     }
 
     pub fn shadow_uniforms(&self) -> &ShadowUniforms {
@@ -334,14 +345,15 @@ fn frustum_corners(
     cam_far: f32,
     inv_view_proj: &[[f32; 4]; 4],
 ) -> [[f32; 3]; 8] {
-    // Perspective-correct NDC Z mapping (OpenGL convention: near → -1, far → +1)
+    // Perspective-correct NDC Z mapping (wgpu convention: near → 0, far → 1;
+    // paired with perspective_matrix, ADR 0055).
     // The relationship between view distance d and NDC Z is hyperbolic, not linear:
-    //   ndc_z = (F+N)/(F-N) - 2*F*N / ((F-N)*d)
+    //   ndc_z = F/(F-N) - F*N / ((F-N)*d)  =  F*(d-N) / ((F-N)*d)
     let depth_range = cam_far - cam_near;
-    let sum_ratio = (cam_far + cam_near) / depth_range;
-    let prod_term = 2.0 * cam_far * cam_near / depth_range;
-    let ndc_near = sum_ratio - prod_term / cascade_near;
-    let ndc_far = sum_ratio - prod_term / cascade_far;
+    let far_ratio = cam_far / depth_range;
+    let prod_term = cam_far * cam_near / depth_range;
+    let ndc_near = far_ratio - prod_term / cascade_near;
+    let ndc_far = far_ratio - prod_term / cascade_far;
 
     let ndc_corners = [
         [-1.0, -1.0, ndc_near],
@@ -365,13 +377,18 @@ fn frustum_corners(
 /// Compute a tight orthographic light view-projection matrix from frustum corners.
 /// Snaps the shadow origin to texel boundaries to eliminate shadow swimming/shimmering
 /// caused by sub-texel shifts when the camera moves.
+///
+/// Returns `(light_view_proj, depth_range)` where `depth_range` is the
+/// ortho projection's world-unit depth extent (pull_back + radius) — PCSS
+/// needs it to convert [0,1] blocker-depth deltas back to world distances
+/// (ADR 0057).
 fn compute_light_matrix(
     corners: &[[f32; 3]; 8],
     light_dir: &[f32; 3],
     _camera_pos: [f32; 3],
     shadow_resolution: u32,
     max_shadow_distance: f32,
-) -> [[f32; 4]; 4] {
+) -> ([[f32; 4]; 4], f32) {
     // Compute frustum center
     let mut center = [0.0f32; 3];
     for c in corners {
@@ -426,7 +443,7 @@ fn compute_light_matrix(
     light_matrix[3][0] += (texel_x.round() - texel_x) / half_res;
     light_matrix[3][1] += (texel_y.round() - texel_y) / half_res;
 
-    light_matrix
+    (light_matrix, pull_back + radius)
 }
 
 fn normalize_3(v: [f32; 3]) -> [f32; 3] {

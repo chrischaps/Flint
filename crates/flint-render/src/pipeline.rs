@@ -123,7 +123,11 @@ pub struct DirectionalLight {
     pub color: [f32; 3],
     pub intensity: f32,
     pub volumetric_color: [f32; 3], // god ray tint, defaults to light color
-    pub _pad1: f32,
+    /// Apparent angular size of the source in radians (authored in degrees
+    /// on the light table); 0 = punctual → hard legacy shadows. Drives PCSS
+    /// penumbra via ShadowUniforms.pcss.w — the WGSL mirrors keep this slot
+    /// named `_pad1` because no shader reads it directly (ADR 0056).
+    pub angular_size: f32, // was _pad1 — layout unchanged
 }
 
 impl Default for DirectionalLight {
@@ -134,7 +138,7 @@ impl Default for DirectionalLight {
             color: [1.0, 1.0, 1.0],
             intensity: 0.0,
             volumetric_color: [1.0, 1.0, 1.0],
-            _pad1: 0.0,
+            angular_size: 0.0,
         }
     }
 }
@@ -147,6 +151,13 @@ pub struct PointLight {
     pub radius: f32,
     pub color: [f32; 3],
     pub intensity: f32,
+    /// Physical source radius in world units (representative-point area
+    /// light, ADR 0056); 0 = punctual → verbatim legacy shading. Grew the
+    /// struct 32 → 48 B — mirrored in all six WGSL light structs.
+    pub source_radius: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 impl Default for PointLight {
@@ -156,6 +167,10 @@ impl Default for PointLight {
             radius: 10.0,
             color: [1.0, 1.0, 1.0],
             intensity: 0.0,
+            source_radius: 0.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -171,7 +186,10 @@ pub struct SpotLight {
     pub color: [f32; 3],
     pub outer_angle: f32,
     pub intensity: f32,
-    pub _pad0: f32,
+    /// Physical source radius in world units (ADR 0056); 0 = punctual.
+    /// Rides the former _pad0 slot — layout unchanged; only shader.wgsl's
+    /// mirror renames the field (sole reader).
+    pub source_radius: f32, // was _pad0
     pub _pad1: f32,
     pub _pad2: f32,
 }
@@ -186,7 +204,7 @@ impl Default for SpotLight {
             color: [1.0, 1.0, 1.0],
             outer_angle: 0.5,
             intensity: 0.0,
-            _pad0: 0.0,
+            source_radius: 0.0,
             _pad1: 0.0,
             _pad2: 0.0,
         }
@@ -240,7 +258,7 @@ impl LightUniforms {
             color: [1.0, 0.98, 0.95],
             intensity: 3.0,
             volumetric_color: [1.0, 0.98, 0.95],
-            _pad1: 0.0,
+            angular_size: 0.0,
         };
 
         // Fill light (cool, from lower-left-behind)
@@ -250,7 +268,7 @@ impl LightUniforms {
             color: [0.6, 0.7, 0.9],
             intensity: 0.8,
             volumetric_color: [0.6, 0.7, 0.9],
-            _pad1: 0.0,
+            angular_size: 0.0,
         };
 
         lights.directional_count = 2;
@@ -282,7 +300,7 @@ pub struct RenderPipeline {
 }
 
 impl RenderPipeline {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -470,7 +488,10 @@ impl RenderPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });
@@ -511,7 +532,10 @@ impl RenderPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });
@@ -557,7 +581,10 @@ impl RenderPipeline {
                         clamp: 0.0,
                     },
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });
@@ -603,7 +630,10 @@ impl RenderPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });
@@ -646,7 +676,10 @@ impl RenderPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });
@@ -688,7 +721,10 @@ impl RenderPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });
@@ -741,7 +777,10 @@ impl RenderPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });
@@ -794,7 +833,10 @@ impl RenderPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });

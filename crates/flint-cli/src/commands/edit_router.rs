@@ -99,7 +99,7 @@ pub struct EditArgs {
     #[arg(long)]
     pub spline: bool,
 
-    /// Start with auto-orbit enabled (model/procgen)
+    /// Start with auto-orbit enabled (scene/model/procgen)
     #[arg(long)]
     pub auto_orbit: bool,
 
@@ -158,7 +158,13 @@ pub fn run(args: EditArgs) -> Result<()> {
                     .first()
                     .map(|s| s.as_str())
                     .unwrap_or("schemas");
-                flint_viewer::app::run(&args.file, args.watch, schemas_path, !args.no_inspector)
+                flint_viewer::app::run(
+                    &args.file,
+                    args.watch,
+                    schemas_path,
+                    !args.no_inspector,
+                    args.auto_orbit,
+                )
             }
         }
         FileKind::ProcGenSpec => {

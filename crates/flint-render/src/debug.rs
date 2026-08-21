@@ -23,6 +23,18 @@ pub enum DebugMode {
 }
 
 impl DebugMode {
+    /// All modes in cycle order, for UI enumeration (combo boxes)
+    pub const ALL: [DebugMode; 8] = [
+        Self::Pbr,
+        Self::WireframeOverlay,
+        Self::WireframeOnly,
+        Self::Normals,
+        Self::Depth,
+        Self::UvChecker,
+        Self::Unlit,
+        Self::MetallicRoughness,
+    ];
+
     /// Cycle to the next debug mode
     pub fn next(self) -> Self {
         match self {

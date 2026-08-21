@@ -103,6 +103,13 @@ struct PointLight {
     radius: f32,
     color: vec3<f32>,
     intensity: f32,
+    // Physical source radius (world units); 0 = punctual (ADR 0056).
+    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
+    // LightUniforms mirrors (light_uniforms_layout test).
+    source_radius: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct SpotLight {
@@ -143,6 +150,9 @@ var shadow_sampler: sampler_comparison;
 struct ShadowUniforms {
     cascade_view_proj: array<mat4x4<f32>, 3>,
     cascade_splits: vec4<f32>,
+    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
+    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
+    pcss: vec4<f32>,
 };
 
 @group(2) @binding(3)
@@ -352,12 +362,12 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32) -> f32 {
     return mix(1.0, raw_shadow, distance_fade * edge_fade);
 }
 
-// Invert the engine's GL-style projection: stored depth d ∈ [0,1] maps to
-// view distance z = 2nf / ((f+n) − d·(f−n)).
+// Invert the engine's wgpu-convention [0,1] projection (ADR 0055): stored
+// depth d maps to view distance z = n·f / (f − d·(f−n)).
 fn linearize_depth(d: f32) -> f32 {
     let n = ocean.camera_near;
     let f = ocean.camera_far;
-    return (2.0 * n * f) / max((f + n) - d * (f - n), 1e-4);
+    return (n * f) / max(f - d * (f - n), 1e-4);
 }
 
 fn aces_filmic(x: vec3<f32>) -> vec3<f32> {

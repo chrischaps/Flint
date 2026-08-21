@@ -130,7 +130,8 @@ fn world_pos_from_depth(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return world.xyz / world.w;
 }
 
-// Linearize a [0,1] depth-buffer value to world-space view depth
+// Linearize a [0,1] depth-buffer value to world-space view depth.
+// Matches the wgpu-convention projection since ADR 0055.
 fn linear_depth(depth: f32) -> f32 {
     return params.near * params.far / (params.far - depth * (params.far - params.near));
 }
@@ -324,6 +325,7 @@ fn blood_grade(mapped: vec3<f32>, mask: f32) -> vec3<f32> {
 }
 
 // Linearize a conventional (0 = near, 1 = far) depth value.
+// Matches the wgpu-convention projection since ADR 0055.
 fn linearize_depth(d: f32) -> f32 {
     return params.near * params.far / (params.far - d * (params.far - params.near));
 }

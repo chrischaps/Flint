@@ -55,9 +55,19 @@ impl SceneRenderer {
         // Use the first directional light for shadows
         let light = &self.light_uniforms.directional_lights[0];
 
-        // Update cascade matrices
+        // Update cascade matrices. The sun's angular size (radians, 0 =
+        // punctual) rides along as tan() for PCSS penumbra math (ADR 0057).
         let camera_inv = camera.inverse_view_projection_matrix();
-        shadow_pass.update_cascades(light.direction, camera_pos, camera_inv, 0.1, 200.0, 100.0);
+        let sun_tan_angular = light.angular_size.tan().max(0.0);
+        shadow_pass.update_cascades(
+            light.direction,
+            camera_pos,
+            camera_inv,
+            0.1,
+            200.0,
+            100.0,
+            sun_tan_angular,
+        );
 
         // Write shadow uniforms
         queue.write_buffer(

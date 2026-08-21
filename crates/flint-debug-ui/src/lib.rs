@@ -3,6 +3,7 @@ mod dead_calm_panel;
 mod grass_panel;
 mod ocean_panel;
 mod reality_panel;
+mod render_panel;
 mod tod_panel;
 mod visitor_panel;
 mod weather_panel;
@@ -12,6 +13,7 @@ pub use dead_calm_panel::DeadCalmDebugPanel;
 pub use grass_panel::GrassDebugPanel;
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
 pub use reality_panel::{RealityDebugPanel, RealityPanelConfig};
+pub use render_panel::{RenderDebugPanel, RenderPanelFlags, RENDER_DEBUG_PANEL};
 pub use tod_panel::{TimeOfDayDebugPanel, TimeOfDayPanelConfig};
 pub use visitor_panel::VisitorDebugPanel;
 pub use weather_panel::{WeatherDebugPanel, WeatherPanelConfig};
@@ -66,6 +68,7 @@ pub trait DebugPanel {
 /// panel — take the default, which only costs a slightly uneven layout.
 fn panel_weight(name: &str) -> u32 {
     match name {
+        "Rendering & Effects" => 60,
         "Ocean Debug" => 46,
         "Grass Debug" => 22,
         "Reality" => 20,
@@ -124,6 +127,7 @@ mod column_tests {
         // A representative full roster in creation order, mixing engine
         // panels with game-supplied ones (which take the default weight).
         let names = [
+            "Rendering & Effects",
             "Ocean Debug",
             "Day / Time",
             "Weather",
@@ -135,8 +139,10 @@ mod column_tests {
         let cols = assign_columns(&names, 3);
         assert_eq!(cols.len(), 3);
         assert!(cols.iter().all(|c| !c.is_empty()));
-        // Ocean (46 rows) is heavy enough to hold a column alone.
+        // Rendering & Effects (60 rows) is heavy enough to hold a column
+        // alone; Ocean (46 rows) anchors the second column.
         assert_eq!(cols[0], vec![0]);
+        assert_eq!(cols[1].first(), Some(&1));
         // Every panel lands in exactly one column.
         let mut all: Vec<usize> = cols.iter().flatten().copied().collect();
         all.sort_unstable();

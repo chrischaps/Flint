@@ -60,6 +60,13 @@ struct PointLight {
     radius: f32,
     color: vec3<f32>,
     intensity: f32,
+    // Physical source radius (world units); 0 = punctual (ADR 0056).
+    // Struct grew 32 -> 48 B — must match the Rust PointLight in all six
+    // LightUniforms mirrors (light_uniforms_layout test).
+    source_radius: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct SpotLight {
@@ -70,7 +77,10 @@ struct SpotLight {
     color: vec3<f32>,
     outer_angle: f32,
     intensity: f32,
-    _pad0: f32,
+    // Physical source radius (world units); 0 = punctual (ADR 0056).
+    // Rides the former _pad0 slot — layout unchanged; the other five
+    // mirrors keep the _pad0 name (they never read it).
+    source_radius: f32,
     _pad1: f32,
     _pad2: f32,
 };
@@ -100,6 +110,9 @@ var shadow_sampler: sampler_comparison;
 struct ShadowUniforms {
     cascade_view_proj: array<mat4x4<f32>, 3>,
     cascade_splits: vec4<f32>, // 3 splits + padding
+    // PCSS (ADR 0057): xyz = per-cascade light-ortho depth range (world
+    // units), w = tan(sun angular size); w = 0 -> legacy 3x3 PCF verbatim.
+    pcss: vec4<f32>,
 };
 
 @group(2) @binding(3)
@@ -272,22 +285,86 @@ fn shadow_factor(world_pos: vec3<f32>, view_depth: f32, N: vec3<f32>) -> f32 {
 
     let depth = proj.z;
 
-    // 3x3 PCF (percentage-closer filtering) for soft shadow edges
-    var shadow_sum = 0.0;
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            shadow_sum += textureSampleCompareLevel(
-                shadow_maps,
-                shadow_sampler,
-                shadow_uv + offset,
-                cascade,
-                depth
-            );
+    var raw_shadow = 1.0;
+    if (shadow.pcss.w > 0.0) {
+        // === PCSS: penumbra grows with occluder distance (ADR 0057) ===
+        // pcss.w = tan(sun angular size); pcss[cascade] = the light-ortho
+        // depth range in world units (converts [0,1] depth deltas back to
+        // world distances). The ortho row scale converts world -> UV.
+        let tan_a = shadow.pcss.w;
+        let depth_range = shadow.pcss[cascade];
+        let uv_per_world = row0_len * 0.5;
+        let max_radius_uv = 8.0 * texel_size; // kernel-cost / cascade-bleed cap
+        let resolution = 1.0 / texel_size;
+        let max_coord = i32(resolution) - 1;
+
+        // Blocker search: average occluder depth over a Vogel disk sized by
+        // how far a blocker across the whole depth range could spread the
+        // penumbra at this receiver. textureLoad (raw depth reads) — the
+        // comparison sampler can't return depths and Depth32Float is not
+        // filterable, so no new binding is needed.
+        let search_uv = clamp(tan_a * depth * depth_range * uv_per_world,
+            texel_size, max_radius_uv);
+        var blocker_sum = 0.0;
+        var blocker_count = 0.0;
+        for (var i = 0; i < 16; i = i + 1) {
+            // Vogel disk: r = sqrt((i+0.5)/N), golden-angle steps.
+            let r = sqrt((f32(i) + 0.5) / 16.0);
+            let theta = f32(i) * 2.39996;
+            let tap_uv = shadow_uv + vec2<f32>(cos(theta), sin(theta)) * r * search_uv;
+            let coords = clamp(vec2<i32>(tap_uv * resolution),
+                vec2<i32>(0), vec2<i32>(max_coord));
+            let d = textureLoad(shadow_maps, coords, cascade, 0);
+            if (d < depth) {
+                blocker_sum += d;
+                blocker_count += 1.0;
+            }
         }
+
+        if (blocker_count > 0.0) {
+            // Directional/ortho penumbra: width = tan(angular) x world-space
+            // occluder distance. No divide (that's the point-light form) —
+            // the clamps below are the firefly-lesson guards (ADR 0048).
+            let avg_blocker = blocker_sum / blocker_count;
+            let penumbra_world = tan_a * max(depth - avg_blocker, 0.0) * depth_range;
+            let filter_uv = clamp(penumbra_world * uv_per_world,
+                texel_size, max_radius_uv);
+
+            var shadow_sum = 0.0;
+            for (var i = 0; i < 16; i = i + 1) {
+                let r = sqrt((f32(i) + 0.5) / 16.0);
+                let theta = f32(i) * 2.39996;
+                let offset = vec2<f32>(cos(theta), sin(theta)) * r * filter_uv;
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps,
+                    shadow_sampler,
+                    shadow_uv + offset,
+                    cascade,
+                    depth
+                );
+            }
+            raw_shadow = shadow_sum / 16.0;
+        }
+        // No blockers found -> fully lit (raw_shadow stays 1.0).
+    } else {
+        // Legacy 3x3 PCF (percentage-closer filtering) — verbatim pre-PCSS
+        // path; pcss.w = 0 means the lever is off (ADR 0057).
+        var shadow_sum = 0.0;
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+                shadow_sum += textureSampleCompareLevel(
+                    shadow_maps,
+                    shadow_sampler,
+                    shadow_uv + offset,
+                    cascade,
+                    depth
+                );
+            }
+        }
+        raw_shadow = shadow_sum / 9.0;
     }
 
-    let raw_shadow = shadow_sum / 9.0;
     // Blend shadow toward 1.0 (lit) based on distance and edge fades
     return mix(1.0, raw_shadow, distance_fade * edge_fade);
 }
@@ -494,9 +571,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_vec = light.position - in.world_pos;
         let distance = length(light_vec);
         let L = normalize(light_vec);
-        let atten = attenuation(distance, light.radius);
+        // Representative-point area source (ADR 0056): a source of radius r
+        // seen from distance d widens the specular lobe by ~r/(2d), and the
+        // shading distance never falls inside the source. source_radius = 0
+        // passes the original arguments verbatim.
+        var roughness_l = roughness;
+        var shade_dist = distance;
+        if (light.source_radius > 0.0) {
+            roughness_l = clamp(
+                roughness + light.source_radius / (2.0 * max(distance, light.source_radius)),
+                roughness, 1.0);
+            shade_dist = max(distance, light.source_radius);
+        }
+        let atten = attenuation(shade_dist, light.radius);
         let radiance = light.color * light.intensity * atten;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap, oren);
+        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness_l, n_dot_v, wrap, oren);
     }
 
     // === Spot lights ===
@@ -505,10 +594,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_vec = light.position - in.world_pos;
         let distance = length(light_vec);
         let L = normalize(light_vec);
-        let atten = attenuation(distance, light.radius);
+        // Representative-point area source — same construction as the point
+        // loop above (ADR 0056); 0 = verbatim legacy.
+        var roughness_l = roughness;
+        var shade_dist = distance;
+        if (light.source_radius > 0.0) {
+            roughness_l = clamp(
+                roughness + light.source_radius / (2.0 * max(distance, light.source_radius)),
+                roughness, 1.0);
+            shade_dist = max(distance, light.source_radius);
+        }
+        let atten = attenuation(shade_dist, light.radius);
         let cone = spot_cone_factor(light_vec, light.direction, light.inner_angle, light.outer_angle);
         let radiance = light.color * light.intensity * atten * cone;
-        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness, n_dot_v, wrap, oren);
+        Lo += evaluate_light(N, V, L, radiance, albedo, f0, metallic, roughness_l, n_dot_v, wrap, oren);
     }
 
     // Hemisphere ambient from light uniforms

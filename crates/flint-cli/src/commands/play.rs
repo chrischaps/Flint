@@ -67,8 +67,9 @@ pub fn run(args: PlayArgs) -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit");
-    println!("  F1       - Cycle debug mode");
-    println!("  F4       - Toggle shadows");
+    println!("  F2       - Rendering stats overlay");
+    println!("  F3       - Scene debug panels");
+    println!("  F4       - Rendering & Effects menu");
     println!("  F11      - Toggle fullscreen");
 
     // Create and run the event loop

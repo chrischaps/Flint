@@ -85,6 +85,11 @@ pub struct RenderArgs {
     #[arg(long)]
     pub no_postprocess: bool,
 
+    /// MSAA sample count for the scene passes: 1 (off) or 4 (ADR 0058).
+    /// Default 1 keeps headless pixel gates single-sample.
+    #[arg(long, default_value = "1")]
+    pub msaa: u32,
+
     /// Bloom intensity (enables bloom; default: 0.04)
     #[arg(long)]
     pub bloom_intensity: Option<f32>,
@@ -322,6 +327,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
         ctx.height,
         RendererConfig {
             show_grid: !args.no_grid,
+            sample_count: args.msaa,
         },
     );
 

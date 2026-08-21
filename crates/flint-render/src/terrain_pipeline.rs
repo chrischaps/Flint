@@ -43,6 +43,7 @@ impl TerrainPipeline {
         format: wgpu::TextureFormat,
         transform_layout: &wgpu::BindGroupLayout,
         light_layout: &wgpu::BindGroupLayout,
+        sample_count: u32,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Terrain Shader"),
@@ -129,7 +130,10 @@ impl TerrainPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });

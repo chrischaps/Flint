@@ -45,6 +45,8 @@ Flint uses an **edit -> validate -> play** loop:
    #   --oren-nayar 0.7          --sheen-strength 0.15  --sheen-color 1,0.9,0.8
    #   --grade-lift 0.03,0.02,0.015  --grade-gamma 1,1,1  --grade-gain 1.04,1,0.94
    #   --film-grain 0.03         --grain-time 0  --fxaa
+   #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
+   #                           Also on flint-player. ADR 0058)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction
    # default) and is a real control since the texel-size upload (ADR 0049).
    #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
@@ -66,7 +68,7 @@ Flint uses an **edit -> validate -> play** loop:
    ```
    Supported extensions: `.scene.toml`, `.chunk.toml`, `.procgen.toml`, `.terrain.toml`, `.glb`, `.gltf`.
    Common flags: `--width`, `--height`, `--no-grid`, `--watch`, `--seed`, `--no-inspector`, `--auto-orbit`.
-   Scene viewer applies the scene's `[post_process]` block on load (F11 toggles authored vs viewer default; F5-F10 per-effect toggles; F12 DoF-follow — focus plane tracks the last selected entity, strength/depth-range sliders in a floating window, values shown in shader-z; WASD orbit, Q/E zoom — while an entity is selected, W/E/R switch gizmo mode instead of orbiting).
+   Scene viewer applies the scene's `[post_process]` block on load. **F4 opens the Rendering & Effects menu** (ADR 0053) — every render/post toggle plus its non-binary parameters (SSAO radius/samples, DoF, bloom, fog, grade/grain/FXAA, kuwahara, render modes, shadows + resolution, lighting levers, FOV, debug shading mode), an authored-vs-viewer-default post toggle, and DoF-follow (focus plane tracks the last selected entity; values are plain view distances since the ADR 0055 depth fix). WASD orbit, Q/E zoom — while an entity is selected, W/E/R switch gizmo mode instead of orbiting. It also seeds the orbit camera from the scene's authored `[camera]` block (Space returns to that framing; ADR 0051 in game repos using this pattern), and supports `--auto-orbit` turntable with O toggle and [ / ] speed like the model previewer.
    Model flags: `--clip <name>`, `--anim-speed <f32>`, `--render <path.png>`, `--no-animate`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov`.
    Scene flags: `--spline` (opens spline/track editor).
    Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.
@@ -123,7 +125,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `--schemas engine/schemas --schemas schemas` for layered overrides
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
-- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), Kuwahara (anisotropic painterly filter), vignette; `[post_process]` TOML block; F5-F9 runtime toggles, F10 volumetric, F12 Kuwahara; when active, PBR shaders output linear HDR
+- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), Kuwahara (anisotropic painterly filter), vignette; `[post_process]` TOML block; F4 opens the Rendering & Effects debug menu in the player and viewer (all toggles + parameters, ADR 0053); when active, PBR shaders output linear HDR
 - **Scene transitions** -- `TransitionPhase` lifecycle with script-driven visuals; `PersistentStore` survives transitions; `GameStateMachine` pushdown automaton with per-system `SystemPolicy`
 - **Input system** -- TOML-based `InputConfig` with layered loading (built-in -> game -> user overrides -> CLI); keyboard/mouse/gamepad/touch unified via `Binding` enum
 

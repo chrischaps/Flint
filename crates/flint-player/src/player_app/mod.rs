@@ -184,6 +184,9 @@ pub struct PlayerApp {
     pub skybox_path: Option<String>,
     /// Scene-authored hemisphere ambient (sky, ground); None = renderer default
     pub scene_ambient: Option<([f32; 3], [f32; 3])>,
+    /// MSAA sample count for the scene renderer (1 = off, 4 = on; ADR 0058).
+    /// Set from the --msaa CLI flag before the window/renderer exist.
+    pub msaa_sample_count: u32,
     /// Scene-authored diffuse terminator wrap; None = 0 = legacy shading
     pub scene_diffuse_wrap: Option<f32>,
     pub scene_oren_nayar: Option<f32>,
@@ -215,6 +218,13 @@ pub struct PlayerApp {
     /// stops calling set_render_mode — a dead or hot-reloaded script must
     /// never freeze a tear over the world.
     pp_mode_was_active: bool,
+
+    /// Rendering & Effects panel's "freeze script post overrides" switch
+    /// (ADR 0053): while true the per-frame script/ladder override stamp is
+    /// skipped so panel edits to contended post fields stick. Cached from
+    /// the panel each frame (one-frame toggle lag, imperceptible).
+    #[cfg(feature = "debug-hud")]
+    pp_debug_freeze: bool,
 
     // Ladder-driven post params: the scene's authored base, captured at
     // session start and written back after teardown (ADR 0021).
@@ -303,6 +313,7 @@ impl PlayerApp {
             cursor_captured: false,
             skybox_path: None,
             scene_ambient: None,
+            msaa_sample_count: 1,
             scene_diffuse_wrap: None,
             scene_oren_nayar: None,
             scene_sheen: None,
@@ -323,6 +334,8 @@ impl PlayerApp {
             pp_render_mode_override: None,
             pp_mode_params_override: None,
             pp_mode_was_active: false,
+            #[cfg(feature = "debug-hud")]
+            pp_debug_freeze: false,
             music_pp_base: None,
             music_pp_restore: None,
             input_config_override,
@@ -453,7 +466,13 @@ impl PlayerApp {
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.fov = 70.0; // Slightly wider FOV for first-person
 
-        let mut scene_renderer = SceneRenderer::new(&render_context, Default::default());
+        let mut scene_renderer = SceneRenderer::new(
+            &render_context,
+            flint_render::RendererConfig {
+                sample_count: self.msaa_sample_count,
+                ..Default::default()
+            },
+        );
 
         // Rebuild component index as a safety net after scene loading
         self.world.rebuild_component_index();
@@ -725,6 +744,11 @@ impl PlayerApp {
             self.create_visitor_debug_panel();
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
+            // Rendering & Effects (ADR 0053): unconditional — every scene has
+            // a renderer to tune. Registered closed; F4 summons it. show_freeze
+            // is true here because player scripts drive post fields.
+            self.debug_panels
+                .push(Box::new(flint_debug_ui::RenderDebugPanel::new(true)));
         }
     }
 
@@ -1223,22 +1247,31 @@ impl PlayerApp {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Apply script-driven post-processing overrides before rendering
-        if self.pp_vignette_override.is_some()
-            || self.pp_bloom_override.is_some()
-            || self.pp_exposure_override.is_some()
-            || self.pp_chromatic_aberration_override.is_some()
-            || self.pp_radial_blur_override.is_some()
-            || self.pp_ssao_intensity_override.is_some()
-            || self.pp_fog_density_override.is_some()
-            || self.pp_desaturation_override.is_some()
-            || self.pp_dof_strength_override.is_some()
-            || self.pp_dof_focus_distance_override.is_some()
-            || self.pp_dof_focus_range_override.is_some()
-            || self.pp_fog_color_override.is_some()
-            || self.pp_render_mode_override.is_some()
-            || self.pp_mode_params_override.is_some()
-            || self.pp_mode_was_active
+        // Apply script-driven post-processing overrides before rendering.
+        // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
+        // stamp entirely so panel edits to contended fields stick; the
+        // drained overrides are plain Options re-filled each tick, so nothing
+        // piles up and un-freezing resumes on the next script write.
+        #[cfg(feature = "debug-hud")]
+        let pp_stamp_frozen = self.pp_debug_freeze;
+        #[cfg(not(feature = "debug-hud"))]
+        let pp_stamp_frozen = false;
+        if !pp_stamp_frozen
+            && (self.pp_vignette_override.is_some()
+                || self.pp_bloom_override.is_some()
+                || self.pp_exposure_override.is_some()
+                || self.pp_chromatic_aberration_override.is_some()
+                || self.pp_radial_blur_override.is_some()
+                || self.pp_ssao_intensity_override.is_some()
+                || self.pp_fog_density_override.is_some()
+                || self.pp_desaturation_override.is_some()
+                || self.pp_dof_strength_override.is_some()
+                || self.pp_dof_focus_distance_override.is_some()
+                || self.pp_dof_focus_range_override.is_some()
+                || self.pp_fog_color_override.is_some()
+                || self.pp_render_mode_override.is_some()
+                || self.pp_mode_params_override.is_some()
+                || self.pp_mode_was_active)
         {
             let mut config = renderer.post_process_config().clone();
             if let Some(v) = self.pp_vignette_override {
@@ -1315,6 +1348,67 @@ impl PlayerApp {
                     }
                 }
                 panel.clear_dirty();
+            }
+        }
+
+        // Rendering & Effects panel (ADR 0053): live-mirror renderer state
+        // while the panel is clean; write edits through when dirty, routing
+        // expensive operations by the per-group flags.
+        #[cfg(feature = "debug-hud")]
+        for panel in &mut self.debug_panels {
+            if panel.name() != flint_debug_ui::RENDER_DEBUG_PANEL {
+                continue;
+            }
+            // A name collision must be a miss, not a panic.
+            let Some(rp) = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::RenderDebugPanel>()
+            else {
+                continue;
+            };
+            self.pp_debug_freeze = rp.freeze_scripts;
+            if flint_debug_ui::DebugPanel::is_dirty(rp) {
+                let flags = rp.take_flags();
+                if flags.pp_changed {
+                    renderer.set_post_process_config(rp.pp.clone());
+                    if flags.kuwahara_needs_resources {
+                        renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                    }
+                    if flags.fxaa_needs_resources {
+                        renderer.ensure_fxaa_resources(&context.device);
+                    }
+                }
+                if flags.shadows_changed {
+                    renderer.set_shadows(rp.shadows_enabled);
+                }
+                if flags.shadow_res_changed {
+                    renderer.set_shadow_resolution(&context.device, rp.shadow_resolution);
+                }
+                if flags.lighting_reset {
+                    renderer.reset_ambient();
+                } else if flags.lighting_changed {
+                    renderer.set_ambient(rp.lighting.ambient_sky, rp.lighting.ambient_ground);
+                    renderer.set_diffuse_wrap(rp.lighting.diffuse_wrap);
+                    renderer.set_oren_nayar(rp.lighting.oren_nayar);
+                    renderer.set_sheen(rp.lighting.sheen_color, rp.lighting.sheen_strength);
+                }
+                if flags.mode_changed {
+                    renderer.set_debug_mode(rp.debug_mode);
+                    renderer.update_from_world(&self.world, &context.device);
+                }
+                if flags.fov_changed {
+                    self.camera.fov = rp.fov_deg;
+                }
+                flint_debug_ui::DebugPanel::clear_dirty(rp);
+            } else {
+                rp.refresh(
+                    renderer.post_process_config(),
+                    renderer.debug_state().mode,
+                    renderer.shadows_enabled(),
+                    renderer.shadow_resolution(),
+                    renderer.lighting_levers(),
+                    self.camera.fov,
+                );
             }
         }
 
@@ -3123,31 +3217,36 @@ impl ApplicationHandler for PlayerApp {
 
                             // Debug keys
                             match key_code {
-                                KeyCode::F1 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let next = renderer.debug_state().mode.next();
-                                        renderer.set_debug_mode(next);
-                                        if let Some(context) = &self.render_context {
-                                            renderer
-                                                .update_from_world(&self.world, &context.device);
-                                        }
-                                    }
-                                }
                                 KeyCode::F2 => {
                                     self.show_stats = !self.show_stats;
                                 }
                                 #[cfg(feature = "debug-hud")]
                                 KeyCode::F3 => {
-                                    // Toggle all registered debug panels (grass, ocean, ...)
-                                    if self.debug_panels.is_empty() {
+                                    // Toggle the scene-component debug panels
+                                    // (grass, ocean, ...). The Rendering &
+                                    // Effects panel is excluded — it has its
+                                    // own key (F4) and would otherwise flip
+                                    // out of phase with it.
+                                    let scene_panels: Vec<usize> = self
+                                        .debug_panels
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, p)| {
+                                            p.name() != flint_debug_ui::RENDER_DEBUG_PANEL
+                                        })
+                                        .map(|(i, _)| i)
+                                        .collect();
+                                    if scene_panels.is_empty() {
                                         tracing::info!("No debug panels in current scene");
                                     } else {
                                         // Toggle the panels, then adjust cursor outside the borrow
-                                        let mut any_open = false;
-                                        for panel in &mut self.debug_panels {
-                                            panel.toggle();
-                                            any_open |= panel.is_open();
+                                        for i in scene_panels {
+                                            self.debug_panels[i].toggle();
                                         }
+                                        // Cursor follows ALL panels (incl. the
+                                        // render panel, which F3 leaves alone).
+                                        let any_open =
+                                            self.debug_panels.iter().any(|p| p.is_open());
                                         if any_open {
                                             self.release_cursor();
                                         } else if self.physics.has_player_entity() {
@@ -3173,52 +3272,16 @@ impl ApplicationHandler for PlayerApp {
                                         "no music session running — nothing to map",
                                     );
                                 }
+                                // Rendering & Effects menu (ADR 0053): the
+                                // one home for every render/post debug
+                                // control the old F1/F4-F10/F12 keys used to
+                                // flip blindly, plus their non-binary params.
+                                #[cfg(feature = "debug-hud")]
                                 KeyCode::F4 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        renderer.toggle_shadows();
-                                    }
-                                }
-                                KeyCode::F5 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.bloom_enabled = !config.bloom_enabled;
-                                        renderer.set_post_process_config(config);
-                                    }
-                                }
-                                KeyCode::F6 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.enabled = !config.enabled;
-                                        renderer.set_post_process_config(config);
-                                    }
-                                }
-                                KeyCode::F7 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.ssao_enabled = !config.ssao_enabled;
-                                        renderer.set_post_process_config(config);
-                                    }
-                                }
-                                KeyCode::F8 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.fog_enabled = !config.fog_enabled;
-                                        renderer.set_post_process_config(config);
-                                    }
-                                }
-                                KeyCode::F9 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.dither_enabled = !config.dither_enabled;
-                                        renderer.set_post_process_config(config);
-                                    }
-                                }
-                                KeyCode::F10 => {
-                                    if let Some(renderer) = &mut self.scene_renderer {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.volumetric_enabled = !config.volumetric_enabled;
-                                        renderer.set_post_process_config(config);
-                                    }
+                                    self.toggle_named_panel(
+                                        flint_debug_ui::RENDER_DEBUG_PANEL,
+                                        "no renderer active — nothing to tune",
+                                    );
                                 }
                                 KeyCode::F11 => {
                                     if let Some(window) = &self.window {
@@ -3229,21 +3292,6 @@ impl ApplicationHandler for PlayerApp {
                                                 winit::window::Fullscreen::Borderless(None),
                                             ));
                                         }
-                                    }
-                                }
-                                KeyCode::F12 => {
-                                    if let (Some(renderer), Some(ctx)) =
-                                        (&mut self.scene_renderer, &self.render_context)
-                                    {
-                                        let mut config = renderer.post_process_config().clone();
-                                        config.kuwahara_enabled = !config.kuwahara_enabled;
-                                        let enabled = config.kuwahara_enabled;
-                                        renderer.set_post_process_config(config);
-                                        renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
-                                        eprintln!(
-                                            "Kuwahara filter: {}",
-                                            if enabled { "ON" } else { "OFF" }
-                                        );
                                     }
                                 }
                                 _ => {}

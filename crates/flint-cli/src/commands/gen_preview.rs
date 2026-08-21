@@ -279,6 +279,7 @@ impl GenPreviewApp {
             &context,
             RendererConfig {
                 show_grid: !self.args.no_grid,
+                ..Default::default()
             },
         );
 

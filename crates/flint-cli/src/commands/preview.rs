@@ -410,6 +410,7 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
         ctx.height,
         RendererConfig {
             show_grid: !args.no_grid,
+            ..Default::default()
         },
     );
 
@@ -691,6 +692,7 @@ impl PreviewApp {
             &context,
             RendererConfig {
                 show_grid: !self.args.no_grid,
+                ..Default::default()
             },
         );
 

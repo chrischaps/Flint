@@ -100,12 +100,39 @@ struct SkinnedDrawCall {
 pub struct RendererConfig {
     /// Show the ground-plane grid (useful for debug/inspection modes)
     pub show_grid: bool,
+    /// MSAA sample count for the scene passes: 1 (off, the default) or 4
+    /// (ADR 0058). Anything else is clamped to 1 with a warning. Post/
+    /// shadow/blit passes stay single-sample; depth consumers read a
+    /// sample-0 resolve.
+    pub sample_count: u32,
 }
 
 impl Default for RendererConfig {
     fn default() -> Self {
-        Self { show_grid: false }
+        Self {
+            show_grid: false,
+            sample_count: 1,
+        }
     }
+}
+
+/// Snapshot of the runtime lighting levers (ambient hemisphere, diffuse
+/// wrap, Oren-Nayar blend, sheen). Values are the active overrides when set,
+/// else the built-in neutral defaults — suitable for seeding UI controls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LightingLevers {
+    /// Hemisphere ambient, sky half (linear RGB)
+    pub ambient_sky: [f32; 3],
+    /// Hemisphere ambient, ground half (linear RGB)
+    pub ambient_ground: [f32; 3],
+    /// Diffuse terminator wrap (0 = physically sharp / legacy)
+    pub diffuse_wrap: f32,
+    /// Lambert → Oren-Nayar blend (0 = exact legacy shading)
+    pub oren_nayar: f32,
+    /// Charlie-sheen rim tint (linear RGB)
+    pub sheen_color: [f32; 3],
+    /// Sheen strength, 0..~0.3 (0 = exact legacy shading)
+    pub sheen_strength: f32,
 }
 
 /// Renders a FlintWorld to the screen
@@ -215,6 +242,15 @@ pub struct SceneRenderer {
     // 2D sprites
     sprite2d_pipeline: Option<Sprite2dPipeline>,
     sprite2d_batches: Vec<crate::sprite2d_pipeline::Sprite2dBatch>,
+    // MSAA (ADR 0058): 1 = off (default), 4 = on. Scene passes render into
+    // the MSAA color/depth targets and resolve color into the HDR buffer;
+    // depth resolves (sample 0) into the caller's depth view so every
+    // depth consumer stays single-sample and unchanged.
+    sample_count: u32,
+    msaa_color: Option<(wgpu::Texture, wgpu::TextureView, u32, u32)>,
+    msaa_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
+    depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
+    depth_resolve_layout: Option<wgpu::BindGroupLayout>,
     // Post-processing
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
@@ -240,8 +276,9 @@ impl SceneRenderer {
         let surface_format = context.config.format;
         // Scene geometry renders to HDR; the composite pass tonemaps to the surface.
         let scene_format = HDR_FORMAT;
+        let sample_count = Self::resolve_sample_count(config.sample_count);
 
-        let pipeline = RenderPipeline::new(&context.device, scene_format);
+        let pipeline = RenderPipeline::new(&context.device, scene_format, sample_count);
         let archetype_visuals = Self::default_archetype_visuals();
         let texture_cache = TextureCache::new(&context.device, &context.queue);
 
@@ -273,22 +310,26 @@ impl SceneRenderer {
             &pipeline.transform_bind_group_layout,
             &pipeline.material_bind_group_layout,
             &pipeline.light_bind_group_layout,
+            sample_count,
         );
 
-        let billboard_pipeline = BillboardPipeline::new(&context.device, scene_format);
+        let billboard_pipeline =
+            BillboardPipeline::new(&context.device, scene_format, sample_count);
         let terrain_pipeline = TerrainPipeline::new(
             &context.device,
             scene_format,
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
+            sample_count,
         );
         let ocean_resources = Self::create_ocean_resources(
             &context.device,
             scene_format,
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
+            sample_count,
         );
-        let sky_resources = Self::create_sky_resources(&context.device, scene_format);
+        let sky_resources = Self::create_sky_resources(&context.device, scene_format, sample_count);
 
         // Graceful degradation: wrap in catch_unwind like the Kuwahara pipeline.
         // If compute shaders aren't supported, grass is silently disabled.
@@ -298,6 +339,7 @@ impl SceneRenderer {
                 scene_format,
                 &pipeline.transform_bind_group_layout,
                 &pipeline.light_bind_group_layout,
+                sample_count,
             )
         }))
         .unwrap_or_else(|_| {
@@ -305,9 +347,9 @@ impl SceneRenderer {
             None
         });
 
-        let particle_pipeline = ParticlePipeline::new(&context.device, scene_format);
-        let sprite2d_pipeline = Sprite2dPipeline::new(&context.device, scene_format);
-        let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format);
+        let particle_pipeline = ParticlePipeline::new(&context.device, scene_format, sample_count);
+        let sprite2d_pipeline = Sprite2dPipeline::new(&context.device, scene_format, sample_count);
+        let skybox_pipeline = SkyboxPipeline::new(&context.device, scene_format, sample_count);
 
         // Create post-processing pipeline and resources
         let postprocess_config = PostProcessConfig::default();
@@ -410,6 +452,11 @@ impl SceneRenderer {
             particle_draws: Vec::new(),
             sprite2d_pipeline: Some(sprite2d_pipeline),
             sprite2d_batches: Vec::new(),
+            sample_count,
+            msaa_color: None,
+            msaa_depth: None,
+            depth_resolve_pipeline: None,
+            depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
@@ -429,13 +476,14 @@ impl SceneRenderer {
     fn create_sky_resources(
         device: &wgpu::Device,
         scene_format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> (
         Option<crate::sky_pipeline::SkyPipeline>,
         Option<wgpu::Buffer>,
         Option<wgpu::BindGroup>,
     ) {
         let pipeline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::sky_pipeline::SkyPipeline::new(device, scene_format)
+            crate::sky_pipeline::SkyPipeline::new(device, scene_format, sample_count)
         }));
         let pipeline = match pipeline {
             Ok(p) => p,
@@ -470,6 +518,7 @@ impl SceneRenderer {
         scene_format: wgpu::TextureFormat,
         transform_layout: &wgpu::BindGroupLayout,
         light_layout: &wgpu::BindGroupLayout,
+        sample_count: u32,
     ) -> (
         Option<crate::ocean_pipeline::OceanPipeline>,
         Option<wgpu::Buffer>,
@@ -483,6 +532,7 @@ impl SceneRenderer {
                 scene_format,
                 transform_layout,
                 light_layout,
+                sample_count,
             )
         }));
         let pipeline = match pipeline {
@@ -1601,8 +1651,9 @@ impl SceneRenderer {
         let surface_format = format;
         // Scene geometry renders to HDR; composite tonemaps to the readback surface.
         let scene_format = HDR_FORMAT;
+        let sample_count = Self::resolve_sample_count(config.sample_count);
 
-        let pipeline = RenderPipeline::new(device, scene_format);
+        let pipeline = RenderPipeline::new(device, scene_format, sample_count);
         let archetype_visuals = Self::default_archetype_visuals();
         let texture_cache = TextureCache::new(device, queue);
 
@@ -1634,6 +1685,7 @@ impl SceneRenderer {
             &pipeline.transform_bind_group_layout,
             &pipeline.material_bind_group_layout,
             &pipeline.light_bind_group_layout,
+            sample_count,
         );
 
         let terrain_pipeline = TerrainPipeline::new(
@@ -1641,6 +1693,7 @@ impl SceneRenderer {
             scene_format,
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
+            sample_count,
         );
 
         let grass_pipeline = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1649,6 +1702,7 @@ impl SceneRenderer {
                 scene_format,
                 &pipeline.transform_bind_group_layout,
                 &pipeline.light_bind_group_layout,
+                sample_count,
             )
         }))
         .unwrap_or_else(|_| {
@@ -1656,17 +1710,18 @@ impl SceneRenderer {
             None
         });
 
-        let billboard_pipeline = BillboardPipeline::new(device, scene_format);
-        let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format);
-        let skybox_pipeline = SkyboxPipeline::new(device, scene_format);
+        let billboard_pipeline = BillboardPipeline::new(device, scene_format, sample_count);
+        let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format, sample_count);
+        let skybox_pipeline = SkyboxPipeline::new(device, scene_format, sample_count);
 
         let ocean_resources = Self::create_ocean_resources(
             device,
             scene_format,
             &pipeline.transform_bind_group_layout,
             &pipeline.light_bind_group_layout,
+            sample_count,
         );
-        let sky_resources = Self::create_sky_resources(device, scene_format);
+        let sky_resources = Self::create_sky_resources(device, scene_format, sample_count);
 
         // Create post-processing pipeline and resources for headless
         let postprocess_config = PostProcessConfig::default();
@@ -1765,6 +1820,11 @@ impl SceneRenderer {
             particle_draws: Vec::new(),
             sprite2d_pipeline: Some(sprite2d_pipeline),
             sprite2d_batches: Vec::new(),
+            sample_count,
+            msaa_color: None,
+            msaa_depth: None,
+            depth_resolve_pipeline: None,
+            depth_resolve_layout: None,
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
@@ -2262,6 +2322,18 @@ impl SceneRenderer {
         } else {
             false
         }
+    }
+
+    /// Whether shadow rendering is currently enabled
+    pub fn shadows_enabled(&self) -> bool {
+        self.shadow_pass.as_ref().is_some_and(|sp| sp.enabled)
+    }
+
+    /// Current shadow map resolution per cascade
+    pub fn shadow_resolution(&self) -> u32 {
+        self.shadow_pass
+            .as_ref()
+            .map_or(crate::shadow::DEFAULT_SHADOW_RESOLUTION, |sp| sp.resolution)
     }
 
     fn default_archetype_visuals() -> HashMap<String, ArchetypeVisual> {
@@ -2958,6 +3030,24 @@ impl SceneRenderer {
         self.apply_ambient_override();
     }
 
+    /// Snapshot of the current lighting-lever state (overrides if set, else
+    /// the built-in neutral defaults). Read by the render debug panel.
+    pub fn lighting_levers(&self) -> LightingLevers {
+        let (ambient_sky, ambient_ground) = self.ambient_override.unwrap_or((
+            LightUniforms::DEFAULT_AMBIENT_SKY,
+            LightUniforms::DEFAULT_AMBIENT_GROUND,
+        ));
+        let (sheen_color, sheen_strength) = self.sheen_override.unwrap_or(([0.0; 3], 0.0));
+        LightingLevers {
+            ambient_sky,
+            ambient_ground,
+            diffuse_wrap: self.diffuse_wrap_override.unwrap_or(0.0),
+            oren_nayar: self.oren_nayar_override.unwrap_or(0.0),
+            sheen_color,
+            sheen_strength,
+        }
+    }
+
     fn apply_ambient_override(&mut self) {
         if let Some((sky, ground)) = self.ambient_override {
             self.light_uniforms.ambient_sky = [sky[0], sky[1], sky[2], 1.0];
@@ -3027,13 +3117,21 @@ impl SceneRenderer {
                             let volumetric_color =
                                 Self::extract_light_vec3(&light, "volumetric_color")
                                     .unwrap_or(color);
+                            // Apparent source angular size, authored in
+                            // degrees (sun ~0.5, softbox 2-5); drives PCSS
+                            // penumbra (ADR 0056). Stored in radians.
+                            let angular_size = light
+                                .get("angular_size")
+                                .and_then(toml_f32)
+                                .unwrap_or(0.0)
+                                .to_radians();
                             directionals[dir_count as usize] = DirectionalLight {
                                 direction,
                                 volumetric_intensity,
                                 color,
                                 intensity,
                                 volumetric_color,
-                                _pad1: 0.0,
+                                angular_size,
                             };
                             dir_count += 1;
                         }
@@ -3047,11 +3145,17 @@ impl SceneRenderer {
                                 .or_else(|| light.get("radius"))
                                 .and_then(toml_f32)
                                 .unwrap_or(10.0);
+                            let source_radius =
+                                light.get("source_radius").and_then(toml_f32).unwrap_or(0.0);
                             points[point_count as usize] = PointLight {
                                 position: [light_pos.x, light_pos.y, light_pos.z],
                                 radius,
                                 color,
                                 intensity,
+                                source_radius,
+                                _pad0: 0.0,
+                                _pad1: 0.0,
+                                _pad2: 0.0,
                             };
                             point_count += 1;
                         }
@@ -3071,6 +3175,8 @@ impl SceneRenderer {
                                 light.get("inner_angle").and_then(toml_f32).unwrap_or(0.3);
                             let outer_angle =
                                 light.get("outer_angle").and_then(toml_f32).unwrap_or(0.5);
+                            let source_radius =
+                                light.get("source_radius").and_then(toml_f32).unwrap_or(0.0);
                             spots[spot_count as usize] = SpotLight {
                                 position: [light_pos.x, light_pos.y, light_pos.z],
                                 radius,
@@ -3079,7 +3185,7 @@ impl SceneRenderer {
                                 color,
                                 outer_angle,
                                 intensity,
-                                _pad0: 0.0,
+                                source_radius,
                                 _pad1: 0.0,
                                 _pad2: 0.0,
                             };
@@ -3251,6 +3357,164 @@ impl SceneRenderer {
         }
     }
 
+    /// Validate the configured MSAA sample count (ADR 0058): 1 or 4;
+    /// anything else clamps to 1 with a warning.
+    fn resolve_sample_count(requested: u32) -> u32 {
+        match requested {
+            1 | 4 => requested,
+            other => {
+                tracing::warn!(
+                    "Unsupported MSAA sample count {} - falling back to 1 (supported: 1, 4)",
+                    other
+                );
+                1
+            }
+        }
+    }
+
+    /// Lazily (re)create the MSAA color+depth targets at the given size.
+    fn ensure_msaa_targets(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if let Some((_, _, w, h)) = &self.msaa_color {
+            if *w == width && *h == height {
+                return;
+            }
+        }
+        let color = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA Scene Color"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: self.sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA Scene Depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: self.sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        self.msaa_color = Some((color, color_view, width, height));
+        self.msaa_depth = Some((depth, depth_view));
+    }
+
+    /// Lazily create the sample-0 depth-resolve pipeline (ADR 0058).
+    fn ensure_depth_resolve_pipeline(&mut self, device: &wgpu::Device) {
+        if self.depth_resolve_pipeline.is_some() {
+            return;
+        }
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Depth Resolve Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../depth_resolve.wgsl").into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Depth Resolve Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Depth Resolve Pipeline Layout"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Depth Resolve Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_fullscreen"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_resolve"),
+                targets: &[],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        self.depth_resolve_layout = Some(layout);
+        self.depth_resolve_pipeline = Some(pipeline);
+    }
+
+    /// Copy sample 0 of the MSAA depth into a single-sample depth view via
+    /// a fullscreen frag-depth pass, so SSAO/DoF/fog/volumetric/ocean-grab
+    /// consumers stay unchanged (ADR 0058).
+    fn resolve_depth_into(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        target_depth_view: &wgpu::TextureView,
+    ) {
+        let (pipeline, layout) = match (&self.depth_resolve_pipeline, &self.depth_resolve_layout) {
+            (Some(p), Some(l)) => (p, l),
+            _ => return,
+        };
+        let msaa_depth_view = match &self.msaa_depth {
+            Some((_, v)) => v,
+            None => return,
+        };
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Depth Resolve Bind Group"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(msaa_depth_view),
+            }],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Depth Resolve Pass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: target_depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
 
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
@@ -3346,11 +3610,38 @@ impl SceneRenderer {
             self.read_grass_instance_count(device);
         }
 
+        // MSAA (ADR 0058): scene passes draw into MSAA color/depth and
+        // resolve color into the HDR buffer; depth resolves (sample 0) into
+        // the caller's depth view after each opaque phase so every existing
+        // depth consumer stays single-sample. Requires the HDR chain (both
+        // constructors always build it).
+        let msaa_active = self.sample_count > 1 && has_postprocess;
+        if msaa_active {
+            let (w, h) = {
+                let res = self.postprocess_resources.as_ref().unwrap();
+                (res.width, res.height)
+            };
+            self.ensure_msaa_targets(device, w, h);
+            self.ensure_depth_resolve_pipeline(device);
+        }
+
         // Choose render target: HDR buffer or direct to surface
         let scene_target_view = if has_postprocess {
             &self.postprocess_resources.as_ref().unwrap().hdr_view
         } else {
             target_view
+        };
+
+        // Scene-pass attachments: MSAA views with a color resolve when
+        // active, the plain single-sample pair otherwise.
+        let (pass_color_view, pass_resolve_target, pass_depth_view) = if msaa_active {
+            (
+                &self.msaa_color.as_ref().unwrap().1,
+                Some(scene_target_view),
+                &self.msaa_depth.as_ref().unwrap().1,
+            )
+        } else {
+            (scene_target_view, None, depth_view)
         };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -3362,8 +3653,8 @@ impl SceneRenderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: scene_target_view,
-                    resolve_target: None,
+                    view: pass_color_view,
+                    resolve_target: pass_resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.1,
@@ -3375,7 +3666,7 @@ impl SceneRenderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
+                    view: pass_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -3393,6 +3684,9 @@ impl SceneRenderer {
                 RenderPhase::All,
             );
             drop(render_pass);
+            if msaa_active {
+                self.resolve_depth_into(device, &mut encoder, depth_view);
+            }
         } else {
             // ── Grab-pass split: opaque scene → snapshot → ocean + rest ──
             // Pass A: sky + all opaque geometry (including the legs).
@@ -3400,8 +3694,8 @@ impl SceneRenderer {
                 let mut pass_a = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Render Pass A (pre-ocean)"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: scene_target_view,
-                        resolve_target: None,
+                        view: pass_color_view,
+                        resolve_target: pass_resolve_target,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
                                 r: 0.1,
@@ -3413,7 +3707,7 @@ impl SceneRenderer {
                         },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: depth_view,
+                        view: pass_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Store,
@@ -3430,6 +3724,12 @@ impl SceneRenderer {
                     camera,
                     RenderPhase::PreOcean,
                 );
+            }
+
+            // With MSAA, the grab blit below reads the caller's single-sample
+            // depth view — resolve the opaque depth into it first (ADR 0058).
+            if msaa_active {
+                self.resolve_depth_into(device, &mut encoder, depth_view);
             }
 
             // Blit: snapshot opaque color + depth into sampleable copies.
@@ -3485,15 +3785,15 @@ impl SceneRenderer {
                 let mut pass_b = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Render Pass B (ocean + transparents)"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: scene_target_view,
-                        resolve_target: None,
+                        view: pass_color_view,
+                        resolve_target: pass_resolve_target,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
                         },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: depth_view,
+                        view: pass_depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -3510,6 +3810,12 @@ impl SceneRenderer {
                     camera,
                     RenderPhase::PostOcean,
                 );
+            }
+
+            // Final depth resolve so postprocess (SSAO/DoF/fog/volumetric)
+            // sees the complete frame's depth (ADR 0058).
+            if msaa_active {
+                self.resolve_depth_into(device, &mut encoder, depth_view);
             }
         }
 

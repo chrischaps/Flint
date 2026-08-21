@@ -309,6 +309,7 @@ impl OceanPipeline {
         scene_format: wgpu::TextureFormat,
         transform_layout: &wgpu::BindGroupLayout,
         light_layout: &wgpu::BindGroupLayout,
+        sample_count: u32,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ocean Shader"),
@@ -390,7 +391,10 @@ impl OceanPipeline {
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });

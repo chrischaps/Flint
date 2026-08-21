@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 flint-core = { workspace = true }
+flint-render = { workspace = true }
 flint-terrain = { workspace = true }
 flint-scene = { workspace = true }
 egui = { workspace = true }
