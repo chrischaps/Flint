@@ -181,6 +181,43 @@ impl PlayerApp {
     }
 
     pub(super) fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        // Window, then renderer + model/procgen loading (context and
+        // renderer stay locals until the environment pass is done — they
+        // are stored on self only once fully built, as before).
+        let window = self.create_window(event_loop)?;
+        let (render_context, mut scene_renderer) = self.init_render_and_models(&window)?;
+
+        // Input bindings, gamepad backend, egui overlay
+        self.init_input_and_egui(&window, &render_context);
+
+        // Splines, ambient/wrap/sheen, skybox, terrain, camera, post config
+        self.apply_scene_environment(&render_context, &mut scene_renderer);
+
+        self.render_context = Some(render_context);
+        self.scene_renderer = Some(scene_renderer);
+
+        // Physics → audio → music session → animation → particles → scripts
+        // (audio before the scene-declared session, session before script
+        // init so the conducted context exists from the scripts' first
+        // frame — F3/F4 ordering).
+        self.init_game_systems()?;
+
+        // Capture cursor for first-person look (only if FPS player exists).
+        // On Android, always set cursor_captured = true so touch input flows
+        // without requiring a click-to-capture gate.
+        #[cfg(target_os = "android")]
+        {
+            self.cursor_captured = true;
+        }
+        #[cfg(not(target_os = "android"))]
+        if self.physics.has_player_entity() {
+            self.capture_cursor();
+        }
+
+        Ok(())
+    }
+
+    fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
         let window_attrs = Window::default_attributes().with_title("Flint Player");
         #[cfg(not(target_os = "android"))]
         let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(1280, 720));
@@ -197,6 +234,13 @@ impl PlayerApp {
 
         self.window = Some(window.clone());
 
+        Ok(window)
+    }
+
+    fn init_render_and_models(
+        &mut self,
+        window: &Arc<Window>,
+    ) -> Result<(RenderContext, SceneRenderer)> {
         // Initialize rendering
         let render_context = pollster::block_on(RenderContext::new(window.clone()))
             .context("Failed to initialize render context")?;
@@ -267,6 +311,10 @@ impl PlayerApp {
         self.skeletal_entity_assets = load_result.skinned_entities;
         scene_renderer.update_from_world(&self.world, &render_context.device);
 
+        Ok((render_context, scene_renderer))
+    }
+
+    fn init_input_and_egui(&mut self, window: &Arc<Window>, render_context: &RenderContext) {
         // Load input configs with deterministic layering.
         self.configure_input_bindings()
             .unwrap_or_else(|e| tracing::warn!("Input config load error: {e:#}"));
@@ -278,7 +326,7 @@ impl PlayerApp {
         let egui_winit = egui_winit::State::new(
             self.egui_ctx.clone(),
             egui::ViewportId::ROOT,
-            &window,
+            window,
             Some(window.scale_factor() as f32),
             None,
             None,
@@ -292,12 +340,18 @@ impl PlayerApp {
         );
         self.egui_winit = Some(egui_winit);
         self.egui_renderer = Some(egui_renderer);
+    }
 
+    fn apply_scene_environment(
+        &mut self,
+        render_context: &RenderContext,
+        scene_renderer: &mut SceneRenderer,
+    ) {
         // Generate procedural geometry from spline + spline_mesh entities
         crate::spline_gen::load_splines(
             &self.scene_path,
             &mut self.world,
-            &mut scene_renderer,
+            scene_renderer,
             Some(&mut self.physics),
             &render_context.device,
         );
@@ -354,7 +408,7 @@ impl PlayerApp {
         self.load_terrain_from_world(
             &render_context.device,
             &render_context.queue,
-            &mut scene_renderer,
+            scene_renderer,
         );
 
         // Set terrain height callback for scripts
@@ -371,10 +425,9 @@ impl PlayerApp {
             scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
         }
+    }
 
-        self.render_context = Some(render_context);
-        self.scene_renderer = Some(scene_renderer);
-
+    fn init_game_systems(&mut self) -> Result<()> {
         // Initialize physics
         self.physics
             .initialize(&mut self.world)
@@ -415,18 +468,6 @@ impl PlayerApp {
             self.script
                 .initialize(&mut self.world)
                 .unwrap_or_else(|e| tracing::warn!("Script init failed: {:?}", e));
-        }
-
-        // Capture cursor for first-person look (only if FPS player exists).
-        // On Android, always set cursor_captured = true so touch input flows
-        // without requiring a click-to-capture gate.
-        #[cfg(target_os = "android")]
-        {
-            self.cursor_captured = true;
-        }
-        #[cfg(not(target_os = "android"))]
-        if self.physics.has_player_entity() {
-            self.capture_cursor();
         }
 
         Ok(())
