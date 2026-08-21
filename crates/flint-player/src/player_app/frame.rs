@@ -24,7 +24,7 @@ use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::{GrassEntityPosition, ParticleDrawData, ParticleInstanceGpu};
-use flint_runtime::{RuntimeSystem, SystemPolicy};
+use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
 
 impl PlayerApp {
     pub(super) fn render(&mut self) {
@@ -489,6 +489,91 @@ impl PlayerApp {
     }
 
     pub(super) fn tick(&mut self) {
+        // Music session drain + guide/timeline panel feed (F3, ADR 0018).
+        self.tick_music_session();
+
+        // Advance game clock
+        self.clock.tick();
+
+        // Advance transition phase timing
+        self.advance_transition();
+
+        // Read active state config to decide which systems run
+        let config = self.state_machine.active_config().clone();
+
+        let has_fps_player = self.physics.has_player_entity();
+
+        // Fixed-timestep physics + FPS camera/listener follow
+        self.tick_fixed_physics(&config, has_fps_player);
+
+        // Physics + input events — scripts and audio both consume them
+        let game_events = self.collect_game_events();
+
+        // Set state machine + persistent store + physics pointers for script
+        // access. The RAII guard must outlive every script call this frame —
+        // including the sprite-anim-end callbacks inside tick_av_systems —
+        // so it lives here, in tick's own scope, not in a sub-step.
+        let _state_scope = self.script.state_scope(
+            &mut self.state_machine,
+            &mut self.persistent_store,
+            &self.physics,
+        );
+        self.script.set_current_scene(&self.scene_path);
+
+        // Script context (transition state, camera, input/events, conducted
+        // parameters — session tick above precedes set_conducted, which
+        // precedes provide_context/on_update: F4/ADR 0020 ordering), then
+        // on_update.
+        self.run_scripts(&config, &game_events);
+
+        // Script camera overrides (chase cam etc.) + roll basis + listener
+        self.apply_script_camera_overrides(has_fps_player);
+
+        // on_draw_ui (always runs), script commands, draw-command collection
+        self.drive_script_ui();
+
+        // Audio triggers, animations + sprite-end callbacks, bone matrices,
+        // bone probes, particles
+        self.tick_av_systems(&config, &game_events);
+
+        // Frame-budgeted procgen queue
+        self.tick_procgen();
+
+        // Renderer sync: transforms, particle upload, grass/ocean time
+        self.sync_renderer();
+
+        // Script post-override drain + music-session ladder merge (ADR 0021)
+        self.drain_post_overrides();
+
+        // Script audio/cursor frame overrides, then per-frame input clear
+        self.finish_frame();
+    }
+
+    fn finish_frame(&mut self) {
+        // Apply audio low-pass filter override from scripts
+        if let Some(cutoff) = self.script.take_audio_overrides() {
+            self.audio.set_filter_cutoff(cutoff);
+        }
+
+        // Apply cursor capture request from scripts (skipped while a debug
+        // panel is open — the panel needs the mouse).
+        if let Some(capture) = self.script.take_cursor_capture_override() {
+            #[cfg(feature = "debug-hud")]
+            let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+            #[cfg(not(feature = "debug-hud"))]
+            let panel_open = false;
+            if capture && !panel_open && !self.cursor_captured {
+                self.capture_cursor();
+            } else if !capture && self.cursor_captured {
+                self.release_cursor();
+            }
+        }
+
+        // Clear per-frame input state
+        self.input.end_frame();
+    }
+
+    fn tick_music_session(&mut self) {
         // Music session (F3, ADR 0018): while a session is active the capture
         // thread owns the pad — its drain replaces the player's own polling,
         // feeding the Judge at full precision and InputState down-sampled.
@@ -541,18 +626,9 @@ impl PlayerApp {
                 }
             }
         }
+    }
 
-        // Advance game clock
-        self.clock.tick();
-
-        // Advance transition phase timing
-        self.advance_transition();
-
-        // Read active state config to decide which systems run
-        let config = self.state_machine.active_config().clone();
-
-        let has_fps_player = self.physics.has_player_entity();
-
+    fn tick_fixed_physics(&mut self, config: &StateConfig, has_fps_player: bool) {
         // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
@@ -589,7 +665,9 @@ impl PlayerApp {
                 );
             }
         }
+    }
 
+    fn collect_game_events(&mut self) -> Vec<flint_runtime::GameEvent> {
         // Process physics events — scripts + audio both consume them
         // Always collect events (input always processed so pause/unpause keybinds work)
         let mut game_events = self.physics.drain_events();
@@ -599,15 +677,11 @@ impl PlayerApp {
         for action in self.input.actions_just_released() {
             game_events.push(flint_runtime::GameEvent::ActionReleased(action));
         }
+        game_events
 
-        // Set state machine + persistent store + physics pointers for script access (RAII guard)
-        let _state_scope = self.script.state_scope(
-            &mut self.state_machine,
-            &mut self.persistent_store,
-            &self.physics,
-        );
-        self.script.set_current_scene(&self.scene_path);
+    }
 
+    fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
         // Set transition state for script access
         match &self.transition_phase {
             TransitionPhase::Idle => {
@@ -658,7 +732,9 @@ impl PlayerApp {
                 .update(&mut self.world, self.clock.delta_time)
                 .unwrap_or_else(|e| tracing::warn!("Script error: {:?}", e));
         }
+    }
 
+    fn apply_script_camera_overrides(&mut self, has_fps_player: bool) {
         // Apply script camera overrides (for non-FPS camera modes like chase camera)
         let cam = self.script.take_camera_overrides();
         if let Some(pos) = cam.position {
@@ -724,7 +800,9 @@ impl PlayerApp {
             let pitch = (-dir.y).atan2(horiz);
             self.audio.update_listener(cam_pos, yaw, pitch);
         }
+    }
 
+    fn drive_script_ui(&mut self) {
         // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
         self.script.call_draw_uis(&mut self.world);
 
@@ -739,7 +817,9 @@ impl PlayerApp {
             .generate_ui_draw_commands(screen_rect.width(), screen_rect.height());
         commands.extend(ui_commands);
         self.draw_commands = commands;
+    }
 
+    fn tick_av_systems(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
         // Audio triggers from game events (skip when paused)
         if config.audio == SystemPolicy::Run {
             self.audio.process_events(&game_events, &self.world);
@@ -809,7 +889,9 @@ impl PlayerApp {
                 .update(&mut self.world, self.clock.delta_time)
                 .ok();
         }
+    }
 
+    fn tick_procgen(&mut self) {
         // Process procgen generation queue (frame-budgeted)
         {
             let camera_pos = self.camera.position_array();
@@ -827,7 +909,9 @@ impl PlayerApp {
                 }
             }
         }
+    }
 
+    fn sync_renderer(&mut self) {
         // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             renderer.camera_offset = [self.camera.position.x, self.camera.position.y];
@@ -872,7 +956,9 @@ impl PlayerApp {
             }];
             renderer.update_grass_entities(&context.queue, &grass_entities);
         }
+    }
 
+    fn drain_post_overrides(&mut self) {
         // Drain script post-processing overrides for this frame
         let pp = self.script.take_postprocess_overrides();
         self.pp_vignette_override = pp.vignette;
@@ -917,29 +1003,8 @@ impl PlayerApp {
                 base,
             );
         }
-
-        // Apply audio low-pass filter override from scripts
-        if let Some(cutoff) = self.script.take_audio_overrides() {
-            self.audio.set_filter_cutoff(cutoff);
-        }
-
-        // Apply cursor capture request from scripts (skipped while a debug
-        // panel is open — the panel needs the mouse).
-        if let Some(capture) = self.script.take_cursor_capture_override() {
-            #[cfg(feature = "debug-hud")]
-            let panel_open = self.debug_panels.iter().any(|p| p.is_open());
-            #[cfg(not(feature = "debug-hud"))]
-            let panel_open = false;
-            if capture && !panel_open && !self.cursor_captured {
-                self.capture_cursor();
-            } else if !capture && self.cursor_captured {
-                self.release_cursor();
-            }
-        }
-
-        // Clear per-frame input state
-        self.input.end_frame();
     }
+
 
     fn render_hud(&mut self, target_view: &wgpu::TextureView) {
         // Lazy-load any sprite textures referenced by draw commands
