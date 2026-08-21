@@ -2,6 +2,7 @@
 //!
 //! Runs the game loop with physics, input, and first-person camera.
 
+mod debug_panels;
 mod hud_render;
 mod input_config;
 #[cfg(feature = "debug-hud")]
@@ -18,28 +19,6 @@ use flint_audio::AudioSystem;
 use flint_core::components as comp;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
-
-/// Game-side day/night component driven by a script; the player only knows
-/// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
-#[cfg(feature = "debug-hud")]
-const TIME_OF_DAY_COMPONENT: &str = "time_of_day";
-#[cfg(feature = "debug-hud")]
-const WEATHER_COMPONENT: &str = "weather";
-/// Reality-tear controller (rare render-mode world events) driven by a
-/// game-side script; the F3 Reality panel forces/ends tears for tuning.
-#[cfg(feature = "debug-hud")]
-const REALITY_COMPONENT: &str = "reality";
-/// Second-raft visitor event controller driven by a game-side script; the
-/// F3 Visitor panel shows its phase/day and can force a visit for tuning.
-#[cfg(feature = "debug-hud")]
-const RAFT_VISITOR_COMPONENT: &str = "raft_visitor";
-/// Dead-calm ocean-stillness event controller driven by a game-side script;
-/// the F3 Dead Calm panel shows its phase/envelope and can force/end one.
-#[cfg(feature = "debug-hud")]
-const DEAD_CALM_COMPONENT: &str = "dead_calm";
-/// Live-tunable camera settings applied to the render camera at scene load
-/// and edited through the F3 Camera panel (see flint-debug-ui camera_panel).
-const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
@@ -68,6 +47,32 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::NativeKeyCode;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
+
+// Component-name conventions shared by the debug panels (debug_panels.rs)
+// and the frame loop's panel-drain blocks. Kept here, the defining module,
+// so both siblings reach them via `super::`.
+
+/// Game-side day/night component driven by a script; the player only knows
+/// it to offer the F3 time scrubber (see flint-debug-ui tod_panel).
+#[cfg(feature = "debug-hud")]
+const TIME_OF_DAY_COMPONENT: &str = "time_of_day";
+#[cfg(feature = "debug-hud")]
+const WEATHER_COMPONENT: &str = "weather";
+/// Reality-tear controller (rare render-mode world events) driven by a
+/// game-side script; the F3 Reality panel forces/ends tears for tuning.
+#[cfg(feature = "debug-hud")]
+const REALITY_COMPONENT: &str = "reality";
+/// Second-raft visitor event controller driven by a game-side script; the
+/// F3 Visitor panel shows its phase/day and can force a visit for tuning.
+#[cfg(feature = "debug-hud")]
+const RAFT_VISITOR_COMPONENT: &str = "raft_visitor";
+/// Dead-calm ocean-stillness event controller driven by a game-side script;
+/// the F3 Dead Calm panel shows its phase/envelope and can force/end one.
+#[cfg(feature = "debug-hud")]
+const DEAD_CALM_COMPONENT: &str = "dead_calm";
+/// Live-tunable camera settings applied to the render camera at scene load
+/// and edited through the F3 Camera panel (see flint-debug-ui camera_panel).
+const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
 
 /// Panel name for the terrain grass debug overlay (F3) — the engine-side
 /// sibling of `music_guide_panel::MUSIC_GUIDE_PANEL` /
@@ -749,221 +754,6 @@ impl PlayerApp {
             // is true here because player scripts drive post fields.
             self.debug_panels
                 .push(Box::new(flint_debug_ui::RenderDebugPanel::new(true)));
-        }
-    }
-
-    /// Create the ocean tuning panel if the scene has an `ocean` component.
-    #[cfg(feature = "debug-hud")]
-    fn create_ocean_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(comp::OCEAN)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let Some(ocean_comp) = self
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(comp::OCEAN).cloned())
-        else {
-            return;
-        };
-        let config = flint_debug_ui::OceanPanelConfig::from_component(&ocean_comp);
-        let panel = flint_debug_ui::OceanDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.scene_path),
-            name,
-        );
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Create the time-of-day scrubber if the scene has a `time_of_day`
-    /// component (a game-side convention — see flint-debug-ui tod_panel).
-    #[cfg(feature = "debug-hud")]
-    fn create_tod_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(TIME_OF_DAY_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let Some(tod_comp) = self
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(TIME_OF_DAY_COMPONENT).cloned())
-        else {
-            return;
-        };
-        let config = flint_debug_ui::TimeOfDayPanelConfig::from_component(&tod_comp);
-        let panel = flint_debug_ui::TimeOfDayDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.scene_path),
-            name,
-        );
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Create the weather panel if the scene has a `weather` component
-    /// (a game-side convention — see flint-debug-ui weather_panel).
-    #[cfg(feature = "debug-hud")]
-    fn create_weather_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(WEATHER_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let Some(weather_comp) = self
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(WEATHER_COMPONENT).cloned())
-        else {
-            return;
-        };
-        let config = flint_debug_ui::WeatherPanelConfig::from_component(&weather_comp);
-        let panel = flint_debug_ui::WeatherDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.scene_path),
-            name,
-        );
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Create the reality-tear panel if the scene has a `reality` component
-    /// (a game-side convention — see flint-debug-ui reality_panel).
-    #[cfg(feature = "debug-hud")]
-    fn create_reality_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(REALITY_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let Some(reality_comp) = self
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(REALITY_COMPONENT).cloned())
-        else {
-            return;
-        };
-        let config = flint_debug_ui::RealityPanelConfig::from_component(&reality_comp);
-        let panel = flint_debug_ui::RealityDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.scene_path),
-            name,
-        );
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Create the visitor panel if the scene has a `raft_visitor` component
-    /// (a game-side convention — see flint-debug-ui visitor_panel).
-    #[cfg(feature = "debug-hud")]
-    fn create_visitor_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(RAFT_VISITOR_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let panel = flint_debug_ui::VisitorDebugPanel::new(name);
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Create the dead-calm panel if the scene has a `dead_calm` component
-    /// (a game-side convention — see flint-debug-ui dead_calm_panel).
-    #[cfg(feature = "debug-hud")]
-    fn create_dead_calm_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(DEAD_CALM_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let panel = flint_debug_ui::DeadCalmDebugPanel::new(name);
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Create the camera tuning panel if the scene has a `camera_tuning`
-    /// component.
-    #[cfg(feature = "debug-hud")]
-    fn create_camera_debug_panel(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(CAMERA_TUNING_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        let Some(name) = self.world.get_name(entity_id).map(str::to_string) else {
-            return;
-        };
-        let Some(cam_comp) = self
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT).cloned())
-        else {
-            return;
-        };
-        let config = flint_debug_ui::CameraPanelConfig::from_component(&cam_comp);
-        let panel = flint_debug_ui::CameraDebugPanel::new(
-            config,
-            std::path::PathBuf::from(&self.scene_path),
-            name,
-        );
-        self.debug_panels.push(Box::new(panel));
-    }
-
-    /// Apply the scene's `camera_tuning` component to the render camera.
-    /// Called after `apply_camera_def()` so the tuning value wins when a
-    /// scene declares both.
-    fn apply_camera_tuning(&mut self) {
-        let Some(&entity_id) = self
-            .world
-            .entities_with_component(CAMERA_TUNING_COMPONENT)
-            .iter()
-            .next()
-        else {
-            return;
-        };
-        if let Some(fov) = self
-            .world
-            .get_components(entity_id)
-            .and_then(|comps| comps.get(CAMERA_TUNING_COMPONENT))
-            .and_then(|c| c.get("fov_deg"))
-            .and_then(flint_core::toml_util::toml_f32)
-        {
-            self.camera.fov = fov;
         }
     }
 
@@ -2730,31 +2520,6 @@ impl PlayerApp {
             }
             Ok(None) => {}
             Err(e) => eprintln!("[music] session failed to start: {e:#}"),
-        }
-    }
-
-    /// Toggle a named debug panel, adjusting cursor capture to match its new
-    /// state; logs `absent_msg` when no such panel is registered (no music
-    /// session running). One body for the Backquote/Backslash key handlers.
-    #[cfg(feature = "debug-hud")]
-    fn toggle_named_panel(&mut self, name: &str, absent_msg: &str) {
-        let mut opened = false;
-        let mut exists = false;
-        for panel in &mut self.debug_panels {
-            if panel.name() == name {
-                exists = true;
-                panel.toggle();
-                opened = panel.is_open();
-            }
-        }
-        if exists {
-            if opened {
-                self.release_cursor();
-            } else if self.physics.has_player_entity() {
-                self.capture_cursor();
-            }
-        } else {
-            tracing::info!("{absent_msg}");
         }
     }
 
