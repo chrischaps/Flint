@@ -243,6 +243,25 @@ impl PlayerApp {
 
     /// Unload the current scene and load a new one.
     pub(super) fn execute_scene_transition(&mut self, target_scene: &str) {
+        // Teardown: scripts told, music session stopped BEFORE audio.clear()
+        // (ADR 0017 producer→handles→device order), systems/world/terrain/
+        // transient render state cleared.
+        self.teardown_current_scene();
+
+        // Load: resolve + schema discovery + scene parse; on failure the
+        // transition aborts here (world already cleared, same as before).
+        if !self.load_target_scene(target_scene) {
+            return;
+        }
+
+        // Bring-up: camera, models, terrain, system re-init (audio before
+        // the scene-declared music session, session before script init so
+        // the conducted context exists from the scripts' first frame),
+        // on_scene_enter, cursor.
+        self.bring_up_scene();
+    }
+
+    fn teardown_current_scene(&mut self) {
         println!("[transition] Unloading current scene...");
 
         // Call on_scene_exit on all scripts
@@ -281,7 +300,9 @@ impl PlayerApp {
         self.ui_textures.clear();
         self.draw_commands.clear();
         self.loaded_chunks.clear();
+    }
 
+    fn load_target_scene(&mut self, target_scene: &str) -> bool {
         println!("[transition] Loading scene: {}", target_scene);
 
         // Resolve scene path relative to current scene
@@ -352,13 +373,17 @@ impl PlayerApp {
             }
             Err(e) => {
                 tracing::error!("Failed to load scene '{}': {:?}", new_scene_path, e);
-                return;
+                return false;
             }
         }
 
         // Rebuild component index after loading new scene
         self.world.rebuild_component_index();
 
+        true
+    }
+
+    fn bring_up_scene(&mut self) {
         // Apply camera config before borrowing renderer
         self.apply_camera_def();
 
