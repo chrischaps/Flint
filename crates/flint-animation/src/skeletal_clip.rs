@@ -11,11 +11,15 @@ pub enum JointProperty {
 }
 
 /// A keyframe for a single joint property
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct JointKeyframe {
     pub time: f64,
     /// 3 floats for translation/scale, 4 for rotation (quaternion xyzw)
     pub value: Vec<f32>,
+    /// Incoming tangent for cubic-spline tracks (empty for step/linear)
+    pub in_tangent: Vec<f32>,
+    /// Outgoing tangent for cubic-spline tracks (empty for step/linear)
+    pub out_tangent: Vec<f32>,
 }
 
 /// A single track targeting one joint's property (translation, rotation, or scale)
@@ -60,6 +64,8 @@ impl SkeletalClip {
                     .map(|kf| JointKeyframe {
                         time: kf.time as f64,
                         value: kf.value.clone(),
+                        in_tangent: kf.in_tangent.clone(),
+                        out_tangent: kf.out_tangent.clone(),
                     })
                     .collect();
 

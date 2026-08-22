@@ -55,14 +55,66 @@ pub fn sample_joint_track(track: &JointTrack, time: f64) -> Vec<f32> {
             }
         }
         Interpolation::CubicSpline => {
-            // For cubicspline, glTF packs [in_tangent, value, out_tangent] per keyframe.
-            // Our importer stores just the value, so fall back to linear for now.
-            if is_rotation {
-                quat_slerp(&prev.value, &next.value, t)
-            } else {
-                lerp_vec(&prev.value, &next.value, t, components)
+            // Tangents are only present when the importer saw a CUBICSPLINE sampler;
+            // degrade gracefully to linear if they're missing.
+            if prev.out_tangent.len() < components || next.in_tangent.len() < components {
+                return if is_rotation {
+                    quat_slerp(&prev.value, &next.value, t)
+                } else {
+                    lerp_vec(&prev.value, &next.value, t, components)
+                };
             }
+            let mut v = hermite_vec(
+                &prev.value,
+                &prev.out_tangent,
+                &next.value,
+                &next.in_tangent,
+                t,
+                span as f32,
+                components,
+            );
+            if is_rotation {
+                normalize_quat(&mut v);
+            }
+            v
         }
+    }
+}
+
+/// Cubic Hermite interpolation as specified by glTF for CUBICSPLINE samplers.
+///
+/// `span` is the keyframe interval in seconds; glTF tangents are per-second slopes
+/// so they are scaled by the interval. Quaternion results must be normalized by the caller.
+fn hermite_vec(
+    p0: &[f32],
+    out_tangent: &[f32],
+    p1: &[f32],
+    in_tangent: &[f32],
+    t: f32,
+    span: f32,
+    count: usize,
+) -> Vec<f32> {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = t3 - 2.0 * t2 + t;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = t3 - t2;
+    (0..count)
+        .map(|i| {
+            h00 * p0[i] + h10 * span * out_tangent[i] + h01 * p1[i] + h11 * span * in_tangent[i]
+        })
+        .collect()
+}
+
+fn normalize_quat(q: &mut [f32]) {
+    let len = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+    if len > 1e-6 {
+        for c in q.iter_mut() {
+            *c /= len;
+        }
+    } else {
+        q.copy_from_slice(&[0.0, 0.0, 0.0, 1.0]);
     }
 }
 
@@ -187,10 +239,14 @@ mod tests {
                 JointKeyframe {
                     time: 0.0,
                     value: vec![0.0, 0.0, 0.0],
+                    in_tangent: vec![],
+                    out_tangent: vec![],
                 },
                 JointKeyframe {
                     time: 2.0,
                     value: vec![4.0, 6.0, 8.0],
+                    in_tangent: vec![],
+                    out_tangent: vec![],
                 },
             ],
         };
@@ -212,10 +268,14 @@ mod tests {
                 JointKeyframe {
                     time: 0.0,
                     value: vec![0.0, 0.0, 0.0, 1.0],
+                    in_tangent: vec![],
+                    out_tangent: vec![],
                 },
                 JointKeyframe {
                     time: 1.0,
                     value: vec![0.0, 0.7071, 0.0, 0.7071],
+                    in_tangent: vec![],
+                    out_tangent: vec![],
                 },
             ],
         };
@@ -241,15 +301,107 @@ mod tests {
                 JointKeyframe {
                     time: 0.0,
                     value: vec![1.0, 2.0, 3.0],
+                    in_tangent: vec![],
+                    out_tangent: vec![],
                 },
                 JointKeyframe {
                     time: 1.0,
                     value: vec![4.0, 5.0, 6.0],
+                    in_tangent: vec![],
+                    out_tangent: vec![],
                 },
             ],
         };
 
         let v = sample_joint_track(&track, 0.5);
         assert_eq!(v, vec![1.0, 2.0, 3.0]); // Step holds first value
+    }
+
+    #[test]
+    fn cubic_spline_zero_tangents_never_collapse() {
+        // Regression: Blender exports CUBICSPLINE with zero tangents. Every sample
+        // must stay between the keyframe values rather than dipping toward zero.
+        let track = JointTrack {
+            joint_index: 0,
+            property: JointProperty::Scale,
+            interpolation: Interpolation::CubicSpline,
+            keyframes: vec![
+                JointKeyframe {
+                    time: 0.0,
+                    value: vec![1.0, 1.0, 1.0],
+                    in_tangent: vec![0.0; 3],
+                    out_tangent: vec![0.0; 3],
+                },
+                JointKeyframe {
+                    time: 2.0,
+                    value: vec![1.0, 1.0, 1.0],
+                    in_tangent: vec![0.0; 3],
+                    out_tangent: vec![0.0; 3],
+                },
+            ],
+        };
+        for i in 0..=20 {
+            let v = sample_joint_track(&track, i as f64 * 0.1);
+            for c in v {
+                assert!((c - 1.0).abs() < 1e-6, "scale drifted to {c}");
+            }
+        }
+    }
+
+    #[test]
+    fn cubic_spline_hermite_matches_formula() {
+        // Non-zero tangents: check against the glTF Hermite basis at t = 0.5
+        // over a 2s span. p0=0, m0=1, p1=2, m1=1 → 0.5*0 + 0.125*2*1 + 0.5*2 + (-0.125)*2*1 = 1.0
+        let track = JointTrack {
+            joint_index: 0,
+            property: JointProperty::Translation,
+            interpolation: Interpolation::CubicSpline,
+            keyframes: vec![
+                JointKeyframe {
+                    time: 0.0,
+                    value: vec![0.0, 0.0, 0.0],
+                    in_tangent: vec![0.0; 3],
+                    out_tangent: vec![1.0, 0.0, 0.0],
+                },
+                JointKeyframe {
+                    time: 2.0,
+                    value: vec![2.0, 0.0, 0.0],
+                    in_tangent: vec![1.0, 0.0, 0.0],
+                    out_tangent: vec![0.0; 3],
+                },
+            ],
+        };
+        let v = sample_joint_track(&track, 1.0);
+        assert!((v[0] - 1.0).abs() < 1e-6, "got {}", v[0]);
+        // Steeper out-tangent biases the midpoint upward
+        let mut steep = track.clone();
+        steep.keyframes[0].out_tangent = vec![4.0, 0.0, 0.0];
+        assert!(sample_joint_track(&steep, 1.0)[0] > 1.0);
+    }
+
+    #[test]
+    fn cubic_spline_rotation_is_normalized() {
+        let track = JointTrack {
+            joint_index: 0,
+            property: JointProperty::Rotation,
+            interpolation: Interpolation::CubicSpline,
+            keyframes: vec![
+                JointKeyframe {
+                    time: 0.0,
+                    value: vec![0.0, 0.0, 0.0, 1.0],
+                    in_tangent: vec![0.0; 4],
+                    out_tangent: vec![0.5, 0.0, 0.0, 0.0],
+                },
+                JointKeyframe {
+                    time: 1.0,
+                    value: vec![0.7071068, 0.0, 0.0, 0.7071068],
+                    in_tangent: vec![0.5, 0.0, 0.0, 0.0],
+                    out_tangent: vec![0.0; 4],
+                },
+            ],
+        };
+        let q = sample_joint_track(&track, 0.5);
+        let len: f32 = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+        assert!((len - 1.0).abs() < 1e-5, "quaternion length {len}");
     }
 }

@@ -541,10 +541,14 @@ mod tests {
                     JointKeyframe {
                         time: 0.0,
                         value: vec![0.0, 0.0, 0.0],
+                        in_tangent: vec![],
+                        out_tangent: vec![],
                     },
                     JointKeyframe {
                         time: duration,
                         value: vec![duration as f32, 0.0, 0.0],
+                        in_tangent: vec![],
+                        out_tangent: vec![],
                     },
                 ],
             }],

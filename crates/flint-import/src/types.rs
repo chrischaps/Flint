@@ -212,6 +212,10 @@ pub struct ImportedKeyframe {
     pub time: f32,
     /// 3 floats for translation/scale, 4 for rotation (quaternion xyzw)
     pub value: Vec<f32>,
+    /// Incoming tangent (CUBICSPLINE only; empty otherwise). Same arity as `value`.
+    pub in_tangent: Vec<f32>,
+    /// Outgoing tangent (CUBICSPLINE only; empty otherwise). Same arity as `value`.
+    pub out_tangent: Vec<f32>,
 }
 
 /// An animation channel targeting a specific joint property

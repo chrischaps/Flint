@@ -49,6 +49,8 @@ impl NodeClip {
                     .map(|kf| JointKeyframe {
                         time: kf.time as f64,
                         value: kf.value.clone(),
+                        in_tangent: kf.in_tangent.clone(),
+                        out_tangent: kf.out_tangent.clone(),
                     })
                     .collect();
 

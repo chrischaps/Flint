@@ -505,19 +505,12 @@ fn extract_skeletal_clips(
                     .unwrap_or_default(),
             };
 
-            let keyframes: Vec<ImportedKeyframe> = timestamps
-                .iter()
-                .zip(outputs.iter())
-                .map(|(&time, value)| {
-                    if time > max_time {
-                        max_time = time;
-                    }
-                    ImportedKeyframe {
-                        time,
-                        value: value.clone(),
-                    }
-                })
-                .collect();
+            let keyframes = build_keyframes(&timestamps, &outputs, interpolation);
+            for kf in &keyframes {
+                if kf.time > max_time {
+                    max_time = kf.time;
+                }
+            }
 
             channels.push(ImportedChannel {
                 joint_index: joint_idx,
@@ -629,19 +622,12 @@ fn extract_node_clips(
                     .unwrap_or_default(),
             };
 
-            let keyframes: Vec<ImportedKeyframe> = timestamps
-                .iter()
-                .zip(outputs.iter())
-                .map(|(&time, value)| {
-                    if time > max_time {
-                        max_time = time;
-                    }
-                    ImportedKeyframe {
-                        time,
-                        value: value.clone(),
-                    }
-                })
-                .collect();
+            let keyframes = build_keyframes(&timestamps, &outputs, interpolation);
+            for kf in &keyframes {
+                if kf.time > max_time {
+                    max_time = kf.time;
+                }
+            }
 
             channels.push(ImportedNodeChannel {
                 node_index: imported_idx,
@@ -671,4 +657,48 @@ fn identity_4x4() -> [[f32; 4]; 4] {
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 0.0, 0.0, 1.0],
     ]
+}
+
+/// Pair sampler timestamps with their output values.
+///
+/// For STEP/LINEAR samplers glTF stores one output per timestamp. For CUBICSPLINE it
+/// stores three per timestamp — `[in_tangent, value, out_tangent]` — so the outputs
+/// must be consumed in triples or the tangents (typically zero) end up as keyframe
+/// values and the animation collapses toward zero between keys.
+fn build_keyframes(
+    timestamps: &[f32],
+    outputs: &[Vec<f32>],
+    interpolation: &str,
+) -> Vec<ImportedKeyframe> {
+    if interpolation == "CUBICSPLINE" {
+        if outputs.len() < timestamps.len() * 3 {
+            eprintln!(
+                "warning: CUBICSPLINE sampler has {} outputs for {} timestamps (expected {}); treating as LINEAR",
+                outputs.len(),
+                timestamps.len(),
+                timestamps.len() * 3
+            );
+        } else {
+            return timestamps
+                .iter()
+                .zip(outputs.chunks_exact(3))
+                .map(|(&time, triple)| ImportedKeyframe {
+                    time,
+                    in_tangent: triple[0].clone(),
+                    value: triple[1].clone(),
+                    out_tangent: triple[2].clone(),
+                })
+                .collect();
+        }
+    }
+    timestamps
+        .iter()
+        .zip(outputs.iter())
+        .map(|(&time, value)| ImportedKeyframe {
+            time,
+            value: value.clone(),
+            in_tangent: Vec::new(),
+            out_tangent: Vec::new(),
+        })
+        .collect()
 }
