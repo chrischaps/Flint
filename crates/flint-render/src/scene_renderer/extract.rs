@@ -59,6 +59,7 @@ impl SceneRenderer {
         entity_id: flint_core::EntityId,
         asset_name: &str,
         model_matrix: [[f32; 4]; 4],
+        need_overlay: bool,
     ) -> bool {
         let skinned_meshes = match self.mesh_cache.get_skinned(asset_name) {
             Some(meshes) => meshes,
@@ -169,6 +170,25 @@ impl SceneRenderer {
                 || blend_mode != BlendMode::Alpha
                 || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
 
+            // Wireframe edges for debug modes: unique edges of the triangle
+            // list, indexed into the same skinned vertex buffer so the lines
+            // are posed by the bone matrices exactly like the surface.
+            let (wire_index_buffer, wire_index_count) = if need_overlay {
+                let wire_indices = triangles_to_wireframe_indices(&gpu_mesh.triangle_indices());
+                if wire_indices.is_empty() {
+                    (None, 0)
+                } else {
+                    let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Skinned Wireframe Index Buffer"),
+                        contents: bytemuck::cast_slice(&wire_indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+                    (Some(buf), wire_indices.len() as u32)
+                }
+            } else {
+                (None, 0)
+            };
+
             let skinned_draw = SkinnedDrawCall {
                 vertex_buffer: gpu_mesh.create_vertex_buffer_copy(device),
                 index_buffer: gpu_mesh.create_index_buffer_copy(device),
@@ -178,6 +198,8 @@ impl SceneRenderer {
                 material_buffer,
                 material_bind_group,
                 bone_bind_group,
+                wire_index_buffer,
+                wire_index_count,
                 model: model_matrix,
                 model_inv_transpose: inv_transpose,
                 entity_id: Some(entity_id),

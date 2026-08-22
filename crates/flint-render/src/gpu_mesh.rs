@@ -76,6 +76,11 @@ impl GpuSkinnedMesh {
             usage: wgpu::BufferUsages::INDEX,
         })
     }
+
+    /// Reinterpret the raw index data as a slice of u32 triangle indices
+    pub fn triangle_indices(&self) -> Vec<u32> {
+        bytemuck::cast_slice::<u8, u32>(&self.index_data).to_vec()
+    }
 }
 
 /// Cache of imported meshes uploaded to the GPU, keyed by asset name

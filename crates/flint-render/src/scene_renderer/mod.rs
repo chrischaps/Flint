@@ -89,6 +89,10 @@ struct SkinnedDrawCall {
     material_buffer: wgpu::Buffer,
     material_bind_group: wgpu::BindGroup,
     bone_bind_group: wgpu::BindGroup,
+    /// Unique-edge index buffer for wireframe debug modes (shares the
+    /// skinned vertex buffer, so the lines follow the animated pose).
+    wire_index_buffer: Option<wgpu::Buffer>,
+    wire_index_count: u32,
     model: [[f32; 4]; 4],
     model_inv_transpose: [[f32; 4]; 4],
     entity_id: Option<flint_core::EntityId>,
@@ -2533,6 +2537,7 @@ impl SceneRenderer {
                     entity.id,
                     asset_name,
                     model_matrix,
+                    need_overlay,
                 ) {
                     continue;
                 }

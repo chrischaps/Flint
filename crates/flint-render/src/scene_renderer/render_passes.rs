@@ -796,6 +796,29 @@ impl SceneRenderer {
         }
     }
 
+    /// Draw the wireframe edges of every skinned draw call (opaque and
+    /// transparent) through the skinned line pipeline so they follow the pose.
+    fn draw_skinned_wireframes<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        let Some(sp) = &self.skinned_pipeline else {
+            return;
+        };
+        render_pass.set_pipeline(&sp.wire_line_pipeline);
+        for draw in self
+            .skinned_entity_draws
+            .iter()
+            .chain(self.transparent_skinned_draws.iter())
+        {
+            let Some(wire_ib) = &draw.wire_index_buffer else {
+                continue;
+            };
+            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+            render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(wire_ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..draw.wire_index_count, 0, 0..1);
+        }
+    }
+
     /// Wireframe-only mode rendering: depth prepass + outline + wireframe lines.
     fn render_wireframe_only_pass<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
         if let Some(sel_id) = self.selected_entity {
@@ -896,6 +919,9 @@ impl SceneRenderer {
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
+
+        // Skinned meshes: edges posed by the bone matrices
+        self.draw_skinned_wireframes(render_pass);
     }
 
     /// Normal mode rendering: terrain → outlines → entities → skinned → billboards → sprites → transparent → particles → wireframe.
@@ -1207,6 +1233,7 @@ impl SceneRenderer {
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
+            self.draw_skinned_wireframes(render_pass);
         }
     }
 
