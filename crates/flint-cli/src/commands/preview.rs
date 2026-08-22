@@ -1064,6 +1064,15 @@ impl PreviewApp {
             return;
         }
 
+        // Prefer the live animated pose when the animation system owns a skeleton
+        // for this entity; fall back to the rest pose baked into the import.
+        let entity_id = self.state.lock().ok().and_then(|s| s.entity_id);
+        if let Some(skel) = entity_id.and_then(|eid| self.animation.skeleton(&eid)) {
+            let mesh = skeleton_overlay_mesh(skel);
+            renderer.set_skeleton_overlay(&context.device, &mesh);
+            return;
+        }
+
         let state_guard = self.state.lock().ok();
         let skeleton = state_guard
             .as_ref()
@@ -1678,11 +1687,22 @@ impl PreviewApp {
                     }
                 }
             }
+            self.update_skeleton_overlay_from_model();
         }
     }
 }
 
 /// Recursively render a node tree in the UI
+/// Build the armature overlay from a skeleton's current model-space joint globals.
+fn skeleton_overlay_mesh(skel: &Skeleton) -> flint_render::Mesh {
+    let positions: Vec<[f32; 3]> = skel
+        .global_matrices
+        .iter()
+        .map(|g| [g[3][0], g[3][1], g[3][2]])
+        .collect();
+    flint_render::generate_skeleton_lines(&positions, &skel.parents)
+}
+
 /// Invert a row-major 4x4 matrix (for extracting world transforms from inverse bind matrices).
 fn invert_4x4(m: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     // Use cofactor expansion for a general 4x4 inverse
@@ -2052,6 +2072,19 @@ impl ApplicationHandler for PreviewApp {
                                 asset_name,
                                 matrices,
                             );
+                        }
+                    }
+
+                    // Keep the armature overlay in step with the animated pose
+                    if renderer.debug_state().show_skeleton {
+                        if let Some(skel) = self
+                            .skeletal_entity_assets
+                            .keys()
+                            .next()
+                            .and_then(|eid| self.animation.skeleton(eid))
+                        {
+                            let mesh = skeleton_overlay_mesh(skel);
+                            renderer.set_skeleton_overlay(&context.device, &mesh);
                         }
                     }
                 }

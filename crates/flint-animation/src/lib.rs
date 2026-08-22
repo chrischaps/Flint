@@ -118,6 +118,12 @@ impl AnimationSystem {
         self.skeletal_sync.bone_matrices(entity_id)
     }
 
+    /// The skeleton driving an entity (joint hierarchy + model-space globals
+    /// from the last pose computation — e.g. for a debug armature overlay)
+    pub fn skeleton(&self, entity_id: &EntityId) -> Option<&Skeleton> {
+        self.skeletal_sync.skeleton(entity_id)
+    }
+
     /// Model-space position of a named joint (bone_probe: camera anchors,
     /// attachment points)
     pub fn joint_position(&self, entity_id: &EntityId, joint: &str) -> Option<[f32; 3]> {
