@@ -404,4 +404,39 @@ mod tests {
         let len: f32 = q.iter().map(|c| c * c).sum::<f32>().sqrt();
         assert!((len - 1.0).abs() < 1e-5, "quaternion length {len}");
     }
+
+    #[test]
+    fn cubic_spline_survives_hemisphere_flip() {
+        use crate::skeletal_clip::make_rotation_track_continuous;
+        // Same rotation keyed as q then -q (what Blender exported for the
+        // starthing thighs). Without continuity the Hermite curve passes
+        // through zero and the pose snaps ~180°.
+        let q = [0.0, 0.7071068, 0.0, 0.7071068];
+        let mut keyframes = vec![
+            JointKeyframe {
+                time: 0.0,
+                value: q.to_vec(),
+                in_tangent: vec![0.0; 4],
+                out_tangent: vec![0.0; 4],
+            },
+            JointKeyframe {
+                time: 1.0,
+                value: q.iter().map(|c| -c).collect(),
+                in_tangent: vec![0.0; 4],
+                out_tangent: vec![0.0; 4],
+            },
+        ];
+        make_rotation_track_continuous(&mut keyframes);
+        let track = JointTrack {
+            joint_index: 0,
+            property: JointProperty::Rotation,
+            interpolation: Interpolation::CubicSpline,
+            keyframes,
+        };
+        for i in 0..=10 {
+            let v = sample_joint_track(&track, i as f64 * 0.1);
+            let dot: f32 = v.iter().zip(&q).map(|(a, b)| a * b).sum();
+            assert!(dot.abs() > 0.999, "rotation drifted at step {i}: {v:?}");
+        }
+    }
 }

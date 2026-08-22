@@ -5,7 +5,7 @@
 //! via their transforms (as opposed to vertex skinning).
 
 use crate::clip::Interpolation;
-use crate::skeletal_clip::{JointKeyframe, JointProperty};
+use crate::skeletal_clip::{make_rotation_track_continuous, JointKeyframe, JointProperty};
 
 /// A single track targeting one node's property (translation, rotation, or scale)
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ impl NodeClip {
                     _ => Interpolation::Linear,
                 };
 
-                let keyframes = ch
+                let mut keyframes: Vec<JointKeyframe> = ch
                     .keyframes
                     .iter()
                     .map(|kf| JointKeyframe {
@@ -53,6 +53,9 @@ impl NodeClip {
                         out_tangent: kf.out_tangent.clone(),
                     })
                     .collect();
+                if property == JointProperty::Rotation {
+                    make_rotation_track_continuous(&mut keyframes);
+                }
 
                 NodeTrack {
                     node_name: ch.node_name.clone(),

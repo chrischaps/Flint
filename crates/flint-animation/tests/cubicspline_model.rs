@@ -22,13 +22,34 @@ fn real_cubicspline_model_stays_sane() {
             if track.interpolation == flint_animation::clip::Interpolation::CubicSpline {
                 cubic_tracks += 1;
                 for kf in &track.keyframes {
-                    assert_eq!(kf.in_tangent.len(), kf.value.len(), "{}: tangent arity", ic.name);
+                    assert_eq!(
+                        kf.in_tangent.len(),
+                        kf.value.len(),
+                        "{}: tangent arity",
+                        ic.name
+                    );
                 }
             }
             let steps = 200;
+            let mut prev_rot: Option<Vec<f32>> = None;
             for i in 0..=steps {
                 let t = clip.duration * i as f64 / steps as f64;
                 let v = sample_joint_track(track, t);
+                if track.property == JointProperty::Rotation {
+                    // No rotation should swing more than 45° in 1/200 of a clip —
+                    // catches hemisphere flips that collapse the Hermite curve.
+                    if let Some(p) = &prev_rot {
+                        let dot: f32 = p.iter().zip(&v).map(|(a, b)| a * b).sum::<f32>().abs();
+                        let deg = 2.0 * dot.min(1.0).acos().to_degrees();
+                        assert!(
+                            deg < 45.0,
+                            "{} joint {} jumped {deg:.1}° at t={t:.3}",
+                            ic.name,
+                            track.joint_index
+                        );
+                    }
+                    prev_rot = Some(v.clone());
+                }
                 match track.property {
                     JointProperty::Scale => {
                         for c in &v {
@@ -43,7 +64,11 @@ fn real_cubicspline_model_stays_sane() {
                     }
                     JointProperty::Rotation => {
                         let len: f32 = v.iter().map(|c| c * c).sum::<f32>().sqrt();
-                        assert!((len - 1.0).abs() < 1e-3, "{} quat len {len} at t={t}", ic.name);
+                        assert!(
+                            (len - 1.0).abs() < 1e-3,
+                            "{} quat len {len} at t={t}",
+                            ic.name
+                        );
                     }
                     JointProperty::Translation => {
                         for c in &v {
