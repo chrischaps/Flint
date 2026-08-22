@@ -269,6 +269,10 @@ pub struct SceneRenderer {
     pub grass_time: f32,
     /// Set when GPU device is lost (e.g. driver crash); skips all rendering
     device_lost: bool,
+    /// Per-entity bone matrix buffers. The `GpuSkinnedMesh` bone buffer is
+    /// shared by every entity that instances the asset, so entities playing
+    /// different clips need their own storage or the last upload wins.
+    entity_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
 }
 
 impl SceneRenderer {
@@ -372,6 +376,7 @@ impl SceneRenderer {
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
+            entity_bone_buffers: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
@@ -1740,6 +1745,7 @@ impl SceneRenderer {
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
+            entity_bone_buffers: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
@@ -1928,21 +1934,50 @@ impl SceneRenderer {
         }
     }
 
-    /// Update bone matrices for a skinned mesh asset on the GPU
+    /// Upload an entity's bone matrices to the GPU.
+    ///
+    /// Each skinned entity gets its own storage buffer (created on first use),
+    /// so several entities instancing the same asset can play different clips.
+    /// The asset's shared buffer is also written so code paths that draw the
+    /// asset without an entity (previews) keep animating.
     pub fn update_bone_matrices(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
+        entity_id: flint_core::EntityId,
         asset_name: &str,
         matrices: &[[[f32; 4]; 4]],
     ) {
         if self.device_lost {
             return;
         }
+        let bytes: &[u8] = bytemuck::cast_slice(matrices);
+        let capacity = crate::skinned_pipeline::MAX_BONES * std::mem::size_of::<[[f32; 4]; 4]>();
+        let buffer = self
+            .entity_bone_buffers
+            .entry(entity_id)
+            .or_insert_with(|| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!(
+                        "{} Bone Buffer (entity {:?})",
+                        asset_name, entity_id
+                    )),
+                    size: capacity as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            });
+        queue.write_buffer(buffer, 0, &bytes[..bytes.len().min(capacity)]);
         if let Some(skinned_meshes) = self.mesh_cache.get_skinned_mut(asset_name) {
             for mesh in skinned_meshes.iter_mut() {
-                queue.write_buffer(&mesh.bone_buffer, 0, bytemuck::cast_slice(matrices));
+                queue.write_buffer(&mesh.bone_buffer, 0, bytes);
             }
         }
+    }
+
+    /// Drop per-entity bone buffers (call when a scene is unloaded).
+    pub fn clear_entity_bone_buffers(&mut self) {
+        self.entity_bone_buffers.clear();
     }
 
     /// Load a texture from an image file into the texture cache

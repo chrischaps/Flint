@@ -846,7 +846,13 @@ impl PlayerApp {
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
                 if let Some(matrices) = self.animation.bone_matrices(entity_id) {
-                    renderer.update_bone_matrices(&context.queue, asset_name, matrices);
+                    renderer.update_bone_matrices(
+                        &context.device,
+                        &context.queue,
+                        *entity_id,
+                        asset_name,
+                        matrices,
+                    );
                 }
             }
         }

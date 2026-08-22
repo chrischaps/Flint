@@ -454,7 +454,13 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
                 // Upload bone matrices
                 for (eid, asset) in &skeletal_entity_assets {
                     if let Some(matrices) = animation.bone_matrices(eid) {
-                        renderer.update_bone_matrices(&ctx.queue, asset, matrices);
+                        renderer.update_bone_matrices(
+                            &ctx.device,
+                            &ctx.queue,
+                            *eid,
+                            asset,
+                            matrices,
+                        );
                     }
                 }
 
@@ -1662,7 +1668,13 @@ impl PreviewApp {
             if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
                 for (entity_id, asset_name) in &self.skeletal_entity_assets {
                     if let Some(matrices) = self.animation.bone_matrices(entity_id) {
-                        renderer.update_bone_matrices(&ctx.queue, asset_name, matrices);
+                        renderer.update_bone_matrices(
+                            &ctx.device,
+                            &ctx.queue,
+                            *entity_id,
+                            asset_name,
+                            matrices,
+                        );
                     }
                 }
             }
@@ -2033,7 +2045,13 @@ impl ApplicationHandler for PreviewApp {
                     // Upload bone matrices for skinned meshes
                     for (entity_id, asset_name) in &self.skeletal_entity_assets {
                         if let Some(matrices) = self.animation.bone_matrices(entity_id) {
-                            renderer.update_bone_matrices(&context.queue, asset_name, matrices);
+                            renderer.update_bone_matrices(
+                                &context.device,
+                                &context.queue,
+                                *entity_id,
+                                asset_name,
+                                matrices,
+                            );
                         }
                     }
                 }

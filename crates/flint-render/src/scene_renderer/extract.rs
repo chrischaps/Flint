@@ -132,7 +132,11 @@ impl SceneRenderer {
                     .bone_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: gpu_mesh.bone_buffer.as_entire_binding(),
+                    resource: self
+                        .entity_bone_buffers
+                        .get(&entity_id)
+                        .unwrap_or(&gpu_mesh.bone_buffer)
+                        .as_entire_binding(),
                 }],
                 label: Some("Skinned Draw Bone Bind Group"),
             });
