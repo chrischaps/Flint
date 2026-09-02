@@ -180,6 +180,11 @@ impl AnimSequence {
                 )));
             }
         }
+        if self.looping && self.resolved_duration() <= 0.0 {
+            return Err(FlintError::AnimationError(format!(
+                "{origin}: looping sequence has zero duration"
+            )));
+        }
         // Stable sort keeps same-time events in authored order
         self.events.sort_by(|a, b| a.time.total_cmp(&b.time));
         Ok(self)
@@ -459,6 +464,23 @@ impl SequenceSync {
                         self.last_seen.insert(entity_id, String::new());
                     }
                 }
+            } else if duration <= 0.0 && !rt.looping() {
+                rt.time = 0.0;
+                rt.playing = false;
+                if self
+                    .last_seen
+                    .get(&entity_id)
+                    .is_some_and(|s| !s.is_empty())
+                {
+                    if let Some(comps) = world.get_components_mut(entity_id) {
+                        comps.set_field(
+                            comp::ANIMATOR,
+                            "sequence",
+                            toml::Value::String(String::new()),
+                        );
+                    }
+                    self.last_seen.insert(entity_id, String::new());
+                }
             }
         }
     }
@@ -632,6 +654,33 @@ name = "done"
             load_sequence_from_str("name = \"x\"\n[[events]]\ntime = 1\nkind = \"nope\"", "t")
                 .is_err()
         );
+        assert!(load_sequence_from_str(
+            "name = \"loop\"\nloop = true\n[[events]]\ntime = 0\nkind = \"cue\"\nname = \"a\"",
+            "t"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn zero_duration_non_looping_sequence_finishes_after_initial_events() {
+        let seq = load_sequence_from_str(
+            "name = \"instant\"\n[[events]]\ntime = 0.0\nkind = \"cue\"\nname = \"ready\"",
+            "t",
+        )
+        .unwrap();
+        let (mut world, id) = world_with_animator();
+        world
+            .get_components_mut(id)
+            .unwrap()
+            .set_field(comp::ANIMATOR, "sequence", "instant".into());
+        let mut sync = SequenceSync::new();
+        sync.add_sequence(seq);
+        sync.sync_from_world(&world);
+        sync.advance(&mut world, 1.0);
+        let rt = sync.state(&id).unwrap();
+        assert!(!rt.playing);
+        assert_eq!(sync.drain_cues().len(), 1);
+        assert_eq!(animator(&world, id)["sequence"].as_str(), Some(""));
     }
 
     #[test]
