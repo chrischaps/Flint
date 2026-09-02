@@ -428,23 +428,46 @@ impl SequenceSync {
             }
             rt.time += dt;
             let seq = rt.sequence.clone();
-            for (i, ev) in seq.events.iter().enumerate() {
-                if rt.fired[i] {
-                    continue;
-                }
-                if ev.time > rt.time {
-                    break;
-                }
-                rt.fired[i] = true;
-                Self::apply_step(world, entity_id, &seq.name, ev, &mut self.fired_cues);
-            }
-
             let duration = seq.resolved_duration();
-            if duration > 0.0 && rt.time >= duration {
-                if rt.looping() {
+
+            if rt.looping() && duration > 0.0 {
+                while rt.time >= duration {
                     rt.time -= duration;
                     rt.fired.iter_mut().for_each(|f| *f = false);
-                } else {
+                    for (i, ev) in seq.events.iter().enumerate() {
+                        if rt.fired[i] {
+                            continue;
+                        }
+                        if ev.time > rt.time {
+                            break;
+                        }
+                        rt.fired[i] = true;
+                        Self::apply_step(world, entity_id, &seq.name, ev, &mut self.fired_cues);
+                    }
+                }
+                for (i, ev) in seq.events.iter().enumerate() {
+                    if rt.fired[i] {
+                        continue;
+                    }
+                    if ev.time > rt.time {
+                        break;
+                    }
+                    rt.fired[i] = true;
+                    Self::apply_step(world, entity_id, &seq.name, ev, &mut self.fired_cues);
+                }
+            } else {
+                for (i, ev) in seq.events.iter().enumerate() {
+                    if rt.fired[i] {
+                        continue;
+                    }
+                    if ev.time > rt.time {
+                        break;
+                    }
+                    rt.fired[i] = true;
+                    Self::apply_step(world, entity_id, &seq.name, ev, &mut self.fired_cues);
+                }
+
+                if duration > 0.0 && rt.time >= duration {
                     rt.time = duration;
                     rt.playing = false;
                     // Retire the request so re-playing the same name is an
@@ -769,6 +792,40 @@ name = "done"
         assert!(rt.time < 6.0);
         // After the wrap the early events fired again; cue twice overall
         assert_eq!(sync.drain_cues().len(), 2);
+    }
+
+    #[test]
+    fn loop_wrap_handles_large_dt() {
+        let seq = load_sequence_from_str(
+            r#"
+            name = "pulse"
+            loop = true
+
+            [[events]]
+            time = 0.0
+            kind = "cue"
+            name = "start"
+
+            [[events]]
+            time = 1.0
+            kind = "cue"
+            name = "step"
+            "#,
+            "test",
+        )
+        .unwrap();
+        let (mut world, id) = world_with_animator();
+        let mut sync = SequenceSync::new();
+        sync.add_sequence(seq);
+        sync.play(id, "pulse");
+
+        sync.advance(&mut world, 2.5);
+
+        let cues: Vec<_> = sync.drain_cues().iter().map(|c| c.cue.clone()).collect();
+        assert_eq!(cues, vec!["start", "step", "start"]);
+        let rt = sync.state(&id).unwrap();
+        assert!(rt.playing);
+        assert!((rt.time - 0.5).abs() < 1e-9);
     }
 
     #[test]
