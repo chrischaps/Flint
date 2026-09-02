@@ -60,9 +60,8 @@ impl BuildManifest {
     /// Load manifest from file
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let file: ManifestFile = toml::from_str(&content).map_err(|e| {
-            FlintError::GenerationError(format!("Failed to parse manifest: {}", e))
-        })?;
+        let file: ManifestFile = toml::from_str(&content)
+            .map_err(|e| FlintError::GenerationError(format!("Failed to parse manifest: {}", e)))?;
         Ok(file.manifest)
     }
 
@@ -94,10 +93,7 @@ impl BuildManifest {
                     manifest.add_entry(ManifestEntry {
                         name: meta.name.clone(),
                         asset_type: format!("{:?}", meta.asset_type).to_lowercase(),
-                        provider: provider
-                            .as_str()
-                            .unwrap_or("unknown")
-                            .to_string(),
+                        provider: provider.as_str().unwrap_or("unknown").to_string(),
                         prompt: meta
                             .properties
                             .get("prompt")
@@ -195,10 +191,8 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "flint_manifest_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("flint_manifest_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

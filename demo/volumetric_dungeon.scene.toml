@@ -1,0 +1,284 @@
+# Volumetric Lighting Test — Dungeon Cell
+# A small dark room with one barred window. Sunlight streams through the bars
+# at a steep angle, casting a light rectangle from window to floor.
+# Camera is positioned to the SIDE of the shaft so the shaft edges are visible.
+
+[scene]
+name = "Volumetric Dungeon Cell"
+version = "1.0"
+description = "God rays through a barred dungeon window"
+
+[camera]
+# Low corner, looking UP at the shaft crossing from window to floor
+position = [-2.0, 0.5, -2.5]
+target = [2.0, 2.5, 0.0]
+fov = 80
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.1
+bloom_threshold = 1.0
+ssao_enabled = true
+ssao_intensity = 1.5
+fog_enabled = false
+volumetric_enabled = true
+volumetric_samples = 64
+volumetric_density = 30.0
+volumetric_max_distance = 15.0
+volumetric_decay = 0.998
+exposure = 2.5
+
+# --- Player ---
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [-1.5, 1.0, -1.5]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 3.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+# --- Light ---
+
+# Steep sun: enters window and hits the floor ~1.5m inside the room
+# direction = toward light; light travels in the opposite direction
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.4, 0.4, 0.05]
+color = [1.0, 0.92, 0.75]
+intensity = 6.0
+volumetric_intensity = 4.0
+volumetric_color = [1.0, 0.88, 0.6]
+
+# Dim fill so walls are barely visible, not pitch black
+[entities.fill]
+[entities.fill.light]
+type = "directional"
+direction = [0.0, 1.0, 0.0]
+color = [0.1, 0.12, 0.18]
+intensity = 0.05
+
+# --- Room shell (dark stone, 6m x 4m x 6m) ---
+
+# Floor
+[entities.floor]
+archetype = "furniture"
+[entities.floor.transform]
+position = [0, 0, 0]
+[entities.floor.bounds]
+min = [-3, -0.2, -3]
+max = [3, 0, 3]
+[entities.floor.rigidbody]
+body_type = "static"
+[entities.floor.collider]
+shape = "box"
+size = [6, 0.2, 6]
+friction = 0.8
+[entities.floor.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.95
+
+# Ceiling — extends well beyond room for shadow map coverage,
+# but stops at x=3 (window wall) so light can enter through the window
+[entities.ceiling]
+archetype = "furniture"
+[entities.ceiling.transform]
+position = [0, 4, 0]
+[entities.ceiling.bounds]
+min = [-50, 0, -50]
+max = [3.0, 0.3, 50]
+[entities.ceiling.material]
+color = [0.1, 0.09, 0.08, 1.0]
+roughness = 0.95
+
+# Back wall (-X, opposite window)
+[entities.wall_back]
+archetype = "furniture"
+[entities.wall_back.transform]
+position = [-3, 0, 0]
+[entities.wall_back.bounds]
+min = [0, 0, -3]
+max = [0.3, 4, 3]
+[entities.wall_back.rigidbody]
+body_type = "static"
+[entities.wall_back.collider]
+shape = "box"
+size = [0.3, 4, 6]
+[entities.wall_back.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# Left wall (-Z)
+[entities.wall_left]
+archetype = "furniture"
+[entities.wall_left.transform]
+position = [0, 0, -3]
+[entities.wall_left.bounds]
+min = [-3, 0, 0]
+max = [3, 4, 0.3]
+[entities.wall_left.rigidbody]
+body_type = "static"
+[entities.wall_left.collider]
+shape = "box"
+size = [6, 4, 0.3]
+[entities.wall_left.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# Right wall (+Z)
+[entities.wall_right]
+archetype = "furniture"
+[entities.wall_right.transform]
+position = [0, 0, 3]
+[entities.wall_right.bounds]
+min = [-3, 0, -0.3]
+max = [3, 4, 0]
+[entities.wall_right.rigidbody]
+body_type = "static"
+[entities.wall_right.collider]
+shape = "box"
+size = [6, 4, 0.3]
+[entities.wall_right.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# --- Window wall (+X side) — pieces around the opening ---
+# Window opening: Y = 1.5..3.5, Z = -1.0..1.0 (2.0m wide x 2.0m tall)
+
+# Below window
+[entities.wall_win_below]
+archetype = "furniture"
+[entities.wall_win_below.transform]
+position = [3, 0, 0]
+[entities.wall_win_below.bounds]
+min = [-0.4, 0, -3]
+max = [0, 1.5, 3]
+[entities.wall_win_below.rigidbody]
+body_type = "static"
+[entities.wall_win_below.collider]
+shape = "box"
+size = [0.4, 1.5, 6]
+[entities.wall_win_below.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# Above window
+[entities.wall_win_above]
+archetype = "furniture"
+[entities.wall_win_above.transform]
+position = [3, 3.5, 0]
+[entities.wall_win_above.bounds]
+min = [-0.4, 0, -3]
+max = [0, 0.5, 3]
+[entities.wall_win_above.rigidbody]
+body_type = "static"
+[entities.wall_win_above.collider]
+shape = "box"
+size = [0.4, 0.5, 6]
+[entities.wall_win_above.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# Left of window
+[entities.wall_win_left]
+archetype = "furniture"
+[entities.wall_win_left.transform]
+position = [3, 1.5, 0]
+[entities.wall_win_left.bounds]
+min = [-0.4, 0, -3]
+max = [0, 2.0, -1.0]
+[entities.wall_win_left.rigidbody]
+body_type = "static"
+[entities.wall_win_left.collider]
+shape = "box"
+size = [0.4, 2.0, 2.0]
+[entities.wall_win_left.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# Right of window
+[entities.wall_win_right]
+archetype = "furniture"
+[entities.wall_win_right.transform]
+position = [3, 1.5, 0]
+[entities.wall_win_right.bounds]
+min = [-0.4, 0, 1.0]
+max = [0, 2.0, 3]
+[entities.wall_win_right.rigidbody]
+body_type = "static"
+[entities.wall_win_right.collider]
+shape = "box"
+size = [0.4, 2.0, 2.0]
+[entities.wall_win_right.material]
+color = [0.15, 0.13, 0.11, 1.0]
+roughness = 0.9
+
+# --- Window bars (thick enough to cast clear shadow stripes) ---
+
+# 3 vertical bars across 2m window
+[entities.bar1]
+archetype = "furniture"
+[entities.bar1.transform]
+position = [2.8, 1.5, -0.5]
+[entities.bar1.bounds]
+min = [-0.06, 0, -0.06]
+max = [0.06, 2.0, 0.06]
+[entities.bar1.material]
+color = [0.06, 0.05, 0.05, 1.0]
+metallic = 0.9
+roughness = 0.35
+
+[entities.bar2]
+archetype = "furniture"
+[entities.bar2.transform]
+position = [2.8, 1.5, 0.0]
+[entities.bar2.bounds]
+min = [-0.06, 0, -0.06]
+max = [0.06, 2.0, 0.06]
+[entities.bar2.material]
+color = [0.06, 0.05, 0.05, 1.0]
+metallic = 0.9
+roughness = 0.35
+
+[entities.bar3]
+archetype = "furniture"
+[entities.bar3.transform]
+position = [2.8, 1.5, 0.5]
+[entities.bar3.bounds]
+min = [-0.06, 0, -0.06]
+max = [0.06, 2.0, 0.06]
+[entities.bar3.material]
+color = [0.06, 0.05, 0.05, 1.0]
+metallic = 0.9
+roughness = 0.35
+
+# Horizontal crossbar
+[entities.crossbar]
+archetype = "furniture"
+[entities.crossbar.transform]
+position = [2.8, 2.5, 0.0]
+[entities.crossbar.bounds]
+min = [-0.06, -0.06, -1.05]
+max = [0.06, 0.06, 1.05]
+[entities.crossbar.material]
+color = [0.06, 0.05, 0.05, 1.0]
+metallic = 0.9
+roughness = 0.35

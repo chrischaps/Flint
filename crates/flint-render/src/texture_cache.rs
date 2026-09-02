@@ -10,6 +10,10 @@ pub struct GpuTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    /// Texture width in pixels
+    pub width: u32,
+    /// Texture height in pixels
+    pub height: u32,
 }
 
 /// Cache of GPU textures, keyed by name, with built-in defaults
@@ -80,6 +84,8 @@ impl TextureCache {
             texture,
             view,
             sampler,
+            width: 1,
+            height: 1,
         }
     }
 
@@ -96,7 +102,12 @@ impl TextureCache {
         }
 
         // Convert to RGBA8 if needed
-        let rgba_data = Self::ensure_rgba(&imported.data, &imported.format, imported.width, imported.height);
+        let rgba_data = Self::ensure_rgba(
+            &imported.data,
+            &imported.format,
+            imported.width,
+            imported.height,
+        );
 
         // Determine if this is a normal map (use Rgba8Unorm, not sRGB)
         let format = if name.contains("normal") {
@@ -142,6 +153,8 @@ impl TextureCache {
                 texture,
                 view,
                 sampler,
+                width: imported.width,
+                height: imported.height,
             },
         );
     }
@@ -207,15 +220,160 @@ impl TextureCache {
                 texture,
                 view,
                 sampler,
+                width,
+                height,
             },
         );
 
         Ok(true)
     }
 
+    /// Upload raw RGBA8 pixel data to the GPU as a named texture.
+    ///
+    /// Returns `Ok(true)` if newly uploaded, `Ok(false)` if already cached.
+    pub fn upload_rgba(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        is_normal_map: bool,
+    ) -> Result<bool, String> {
+        if self.textures.contains_key(name) {
+            return Ok(false);
+        }
+
+        let expected = (width * height * 4) as usize;
+        if data.len() != expected {
+            return Err(format!(
+                "RGBA data length {} doesn't match {}x{}x4 = {}",
+                data.len(),
+                width,
+                height,
+                expected
+            ));
+        }
+
+        let format = if is_normal_map {
+            wgpu::TextureFormat::Rgba8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        };
+
+        let texture = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some(name),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(&format!("{} Sampler", name)),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
+
+        self.textures.insert(
+            name.to_string(),
+            GpuTexture {
+                texture,
+                view,
+                sampler,
+                width,
+                height,
+            },
+        );
+
+        Ok(true)
+    }
+
+    /// Check if a texture is already cached by name.
+    pub fn contains(&self, name: &str) -> bool {
+        self.textures.contains_key(name)
+    }
+
     /// Get a texture by name, returning None if not found
     pub fn get(&self, name: &str) -> Option<&GpuTexture> {
         self.textures.get(name)
+    }
+
+    /// Get the pixel dimensions of a cached texture
+    pub fn get_dimensions(&self, name: &str) -> Option<(u32, u32)> {
+        self.textures.get(name).map(|t| (t.width, t.height))
+    }
+
+    /// Update an existing texture's pixel data in-place on the GPU.
+    ///
+    /// The texture must already exist and the data must match its dimensions.
+    /// Uses `queue.write_texture()` — no bind group rebuild needed.
+    pub fn update_rgba(&self, queue: &wgpu::Queue, name: &str, data: &[u8]) -> Result<(), String> {
+        let tex = self
+            .textures
+            .get(name)
+            .ok_or_else(|| format!("Texture '{}' not found in cache", name))?;
+
+        let expected = (tex.width * tex.height * 4) as usize;
+        if data.len() != expected {
+            return Err(format!(
+                "Data length {} doesn't match {}x{}x4 = {}",
+                data.len(),
+                tex.width,
+                tex.height,
+                expected
+            ));
+        }
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(tex.width * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: tex.width,
+                height: tex.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Remove a texture from the cache by name.
+    pub fn remove_texture(&mut self, name: &str) {
+        self.textures.remove(name);
+    }
+
+    /// Clear all user-loaded textures (preserves built-in defaults)
+    pub fn clear_user_textures(&mut self) {
+        self.textures.clear();
     }
 
     /// Convert imported texture data to RGBA8 format

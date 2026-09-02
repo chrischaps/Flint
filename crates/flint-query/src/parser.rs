@@ -102,7 +102,10 @@ pub fn parse_query(input: &str) -> Result<Query, QueryError> {
         }
     }
 
-    Ok(Query { resource, condition })
+    Ok(Query {
+        resource,
+        condition,
+    })
 }
 
 fn parse_condition(pair: pest::iterators::Pair<Rule>) -> Result<Condition, QueryError> {

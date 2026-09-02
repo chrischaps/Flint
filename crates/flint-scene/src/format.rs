@@ -8,6 +8,8 @@ use std::collections::HashMap;
 pub struct SceneFile {
     pub scene: SceneMetadata,
     #[serde(default)]
+    pub camera: Option<CameraDef>,
+    #[serde(default)]
     pub environment: Option<EnvironmentDef>,
     #[serde(default)]
     pub post_process: Option<PostProcessDef>,
@@ -65,6 +67,11 @@ pub struct PostProcessDef {
     pub ssao_radius: f32,
     #[serde(default = "default_ssao_intensity")]
     pub ssao_intensity: f32,
+    /// SSAO hemisphere samples per pixel, 1-64 (default 64 = full quality).
+    /// The heaviest per-pixel cost in the post stack; 16 is usually
+    /// indistinguishable on soft/matte scenes and ~4x cheaper.
+    #[serde(default = "default_ssao_samples")]
+    pub ssao_samples: u32,
     #[serde(default)]
     pub fog_enabled: bool,
     #[serde(default = "default_fog_color")]
@@ -81,6 +88,62 @@ pub struct PostProcessDef {
     pub fog_height_falloff: f32,
     #[serde(default)]
     pub fog_height_origin: f32,
+    #[serde(default)]
+    pub dither_enabled: bool,
+    #[serde(default = "default_dither_intensity")]
+    pub dither_intensity: f32,
+    #[serde(default)]
+    pub volumetric_enabled: bool,
+    #[serde(default = "default_volumetric_samples")]
+    pub volumetric_samples: u32,
+    #[serde(default = "default_volumetric_density")]
+    pub volumetric_density: f32,
+    #[serde(default = "default_volumetric_max_distance")]
+    pub volumetric_max_distance: f32,
+    #[serde(default = "default_volumetric_decay")]
+    pub volumetric_decay: f32,
+    #[serde(default)]
+    pub chromatic_aberration: f32,
+    #[serde(default)]
+    pub radial_blur: f32,
+    #[serde(default)]
+    pub desaturate: f32,
+    #[serde(default)]
+    pub dof_strength: f32,
+    #[serde(default = "default_dof_focus_distance")]
+    pub dof_focus_distance: f32,
+    #[serde(default = "default_dof_focus_range")]
+    pub dof_focus_range: f32,
+    #[serde(default)]
+    pub kuwahara_enabled: bool,
+    #[serde(default = "default_kuwahara_radius")]
+    pub kuwahara_radius: u32,
+    #[serde(default = "default_kuwahara_sharpness")]
+    pub kuwahara_sharpness: f32,
+    #[serde(default = "default_kuwahara_hardness")]
+    pub kuwahara_hardness: f32,
+    #[serde(default = "default_kuwahara_anisotropy")]
+    pub kuwahara_anisotropy: f32,
+    /// Animated film grain intensity (0 = off; ~0.02-0.05 is subtle).
+    #[serde(default)]
+    pub film_grain: f32,
+    /// Color grade lift (per-channel add after ACES). Neutral = [0,0,0].
+    #[serde(default)]
+    pub grade_lift: [f32; 3],
+    /// Color grade gamma (per-channel midtone curve). Neutral = [1,1,1].
+    #[serde(default = "default_grade_one")]
+    pub grade_gamma: [f32; 3],
+    /// Color grade gain (per-channel multiply). Neutral = [1,1,1].
+    #[serde(default = "default_grade_one")]
+    pub grade_gain: [f32; 3],
+    /// FXAA anti-aliasing pass on the final composite (default off — the
+    /// headless pixel-diff gates run without it; ADR 0050).
+    #[serde(default)]
+    pub fxaa: bool,
+}
+
+fn default_grade_one() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
 }
 
 fn default_true() -> bool {
@@ -115,6 +178,10 @@ fn default_ssao_intensity() -> f32 {
     1.0
 }
 
+fn default_ssao_samples() -> u32 {
+    64
+}
+
 fn default_fog_color() -> [f32; 3] {
     [0.7, 0.75, 0.82]
 }
@@ -135,12 +202,112 @@ fn default_fog_height_falloff() -> f32 {
     0.1
 }
 
+fn default_dof_focus_distance() -> f32 {
+    10.0
+}
+
+fn default_dof_focus_range() -> f32 {
+    5.0
+}
+
+fn default_dither_intensity() -> f32 {
+    0.03
+}
+
+fn default_volumetric_samples() -> u32 {
+    32
+}
+
+fn default_volumetric_density() -> f32 {
+    1.0
+}
+
+fn default_volumetric_max_distance() -> f32 {
+    100.0
+}
+
+fn default_volumetric_decay() -> f32 {
+    0.98
+}
+
+fn default_kuwahara_radius() -> u32 {
+    4
+}
+
+fn default_kuwahara_sharpness() -> f32 {
+    8.0
+}
+
+fn default_kuwahara_hardness() -> f32 {
+    8.0
+}
+
+fn default_kuwahara_anisotropy() -> f32 {
+    1.0
+}
+
+/// Camera configuration for the scene
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraDef {
+    /// Projection type: "perspective" or "orthographic"
+    #[serde(default = "default_projection")]
+    pub projection: String,
+    /// Orthographic half-height in world units (only used when projection = "orthographic")
+    #[serde(default)]
+    pub ortho_height: f32,
+    /// Camera position [x, y, z]
+    #[serde(default)]
+    pub position: Option<[f32; 3]>,
+    /// Camera look-at target [x, y, z]
+    #[serde(default)]
+    pub target: Option<[f32; 3]>,
+    /// Field of view in degrees (perspective only)
+    #[serde(default)]
+    pub fov: Option<f32>,
+    /// Near clipping plane
+    #[serde(default)]
+    pub near: Option<f32>,
+    /// Far clipping plane
+    #[serde(default)]
+    pub far: Option<f32>,
+}
+
+fn default_projection() -> String {
+    "perspective".to_string()
+}
+
 /// Environment settings for the scene (skybox, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentDef {
     /// Path to equirectangular panorama image for the skybox
     #[serde(default)]
     pub skybox: Option<String>,
+    /// Hemisphere ambient sky color [r, g, b] (linear). Absent keeps the
+    /// renderer's built-in default.
+    #[serde(default)]
+    pub ambient_sky: Option<[f32; 3]>,
+    /// Hemisphere ambient ground color [r, g, b] (linear). Absent keeps the
+    /// renderer's built-in default.
+    #[serde(default)]
+    pub ambient_ground: Option<[f32; 3]>,
+    /// Diffuse terminator wrap (0 = physically sharp, ~0.2-0.5 = soft matte /
+    /// subsurface-ish). Absent = 0 = exact legacy shading.
+    #[serde(default)]
+    pub diffuse_wrap: Option<f32>,
+    /// Blend from Lambert diffuse toward the Fujii Oren-Nayar approximation
+    /// (0..1; sigma comes from material roughness — this only blends).
+    /// Rough matte surfaces get a flatter, chalkier falloff. Absent = 0 =
+    /// exact legacy shading (ADR 0048).
+    #[serde(default)]
+    pub oren_nayar: Option<f32>,
+    /// Charlie-sheen rim tint [r, g, b] (linear). Only meaningful with a
+    /// non-zero `sheen_strength`. Absent = white.
+    #[serde(default)]
+    pub sheen_color: Option<[f32; 3]>,
+    /// Charlie-sheen rim strength (0..~0.3 — no energy compensation, high
+    /// values over-brighten). Absent = 0 = exact legacy shading (ADR 0048).
+    #[serde(default)]
+    pub sheen_strength: Option<f32>,
 }
 
 /// Scene metadata
@@ -160,7 +327,7 @@ fn default_version() -> String {
 }
 
 /// Definition of an entity in a scene file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntityDef {
     /// Optional archetype name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,12 +365,6 @@ impl EntityDef {
     }
 }
 
-impl Default for EntityDef {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SceneFile {
     /// Create a new scene file
     pub fn new(name: impl Into<String>) -> Self {
@@ -214,6 +375,7 @@ impl SceneFile {
                 description: None,
                 input_config: None,
             },
+            camera: None,
             environment: None,
             post_process: None,
             prefabs: HashMap::new(),

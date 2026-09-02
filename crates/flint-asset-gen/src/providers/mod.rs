@@ -17,7 +17,9 @@ pub fn create_provider(name: &str, config: &FlintConfig) -> Result<Box<dyn Gener
         "mock" => Ok(Box::new(mock::MockProvider::new())),
         "flux" => Ok(Box::new(flux::FluxProvider::from_config(config)?)),
         "meshy" => Ok(Box::new(meshy::MeshyProvider::from_config(config)?)),
-        "elevenlabs" => Ok(Box::new(elevenlabs::ElevenLabsProvider::from_config(config)?)),
+        "elevenlabs" => Ok(Box::new(elevenlabs::ElevenLabsProvider::from_config(
+            config,
+        )?)),
         _ => Err(FlintError::GenerationError(format!(
             "Unknown provider '{}'. Available: mock, flux, meshy, elevenlabs",
             name

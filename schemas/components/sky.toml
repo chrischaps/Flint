@@ -1,0 +1,18 @@
+[component.sky]
+description = "Procedural sky: gradient + sun disc + stars + FBM clouds. Replaces the texture skybox. Sun disc follows the scene's first directional light. Drive fields per frame for time-of-day."
+
+[component.sky.fields]
+zenith_color = { type = "vec4", description = "Sky color straight up (RGBA linear)", default = [0.12, 0.34, 0.72, 1.0] }
+horizon_color = { type = "vec4", description = "Sky color at the horizon (RGBA linear)", default = [0.55, 0.76, 0.92, 1.0] }
+haze_color = { type = "vec4", description = "Horizon haze band; alpha = strength", default = [0.85, 0.92, 0.98, 0.6] }
+cloud_tint = { type = "vec4", description = "Cloud color; alpha = opacity", default = [1.0, 1.0, 1.0, 0.85] }
+sun_disc_size = { type = "float", description = "Sun angular radius in radians", default = 0.035 }
+sun_glow = { type = "float", description = "Glow strength around the sun disc", default = 1.0 }
+star_opacity = { type = "float", description = "Starfield visibility, 0 day - 1 night", default = 0.0 }
+cloud_coverage = { type = "float", description = "Cloud amount, 0 clear - 1 overcast", default = 0.35 }
+cloud_density = { type = "float", description = "Cloud edge softness/thickness", default = 0.25 }
+cloud_scale = { type = "float", description = "Cloud noise frequency", default = 0.9 }
+cloud_drift_x = { type = "float", description = "Cloud drift speed X", default = 0.004 }
+cloud_drift_y = { type = "float", description = "Cloud drift speed Y", default = 0.0015 }
+ambient_sky = { type = "vec4", description = "Optional hemisphere ambient override, sky half (RGBA linear)", default = [0.12, 0.13, 0.18, 1.0] }
+ambient_ground = { type = "vec4", description = "Optional hemisphere ambient override, ground half (RGBA linear)", default = [0.06, 0.05, 0.04, 1.0] }

@@ -12,7 +12,8 @@ struct ParticleUniforms {
 struct ParticleInstance {
     pos_size: vec4<f32>,    // xyz = world position, w = size
     color: vec4<f32>,       // rgba tint
-    rotation_frame: vec4<f32>, // x = rotation radians, y = frame index, z/w = unused
+    rotation_frame: vec4<f32>, // x = rotation radians, y = frame index, z/w = frames_x/y
+    vel_stretch: vec4<f32>, // xyz = velocity * stretch, w > 0 = stretch enabled
 };
 
 @group(0) @binding(0)
@@ -92,8 +93,28 @@ fn vs_particle(
     // Apply per-particle rotation around the camera-facing normal
     let cos_r = cos(rotation);
     let sin_r = sin(rotation);
-    let rotated_x = local_x * cos_r - local_y * sin_r;
-    let rotated_y = local_x * sin_r + local_y * cos_r;
+    var rotated_x = local_x * cos_r - local_y * sin_r;
+    var rotated_y = local_x * sin_r + local_y * cos_r;
+
+    // Velocity-aligned stretch (rain streaks, spray trails): project the
+    // pre-scaled velocity onto the billboard plane and elongate the quad
+    // along it. The quad's long axis follows the motion on screen, so
+    // falling rain reads as streaks from any camera pitch. Replaces the
+    // rotation path (the alignment IS the rotation).
+    var stretch_len = 0.0;
+    if (inst.vel_stretch.w > 0.5) {
+        let v_screen = vec2<f32>(
+            dot(inst.vel_stretch.xyz, uniforms.camera_right),
+            dot(inst.vel_stretch.xyz, uniforms.camera_up));
+        stretch_len = length(v_screen);
+        if (stretch_len > 1e-4) {
+            let axis = v_screen / stretch_len;             // long axis (screen)
+            let perp = vec2<f32>(-axis.y, axis.x);         // short axis
+            let along = local_y * (1.0 + stretch_len / max(size, 1e-4));
+            rotated_x = perp.x * local_x + axis.x * along;
+            rotated_y = perp.y * local_x + axis.y * along;
+        }
+    }
 
     // Sprite sheet UV calculation
     let fx = max(frames_x, 1.0);

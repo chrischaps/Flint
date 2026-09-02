@@ -1,0 +1,47 @@
+generator = "tree_v1"
+
+[meta]
+name = "library_root"
+description = "Thick twisted root breaking through the library floor"
+version = "1.0.0"
+tags = ["tree", "root", "twisted", "library"]
+
+[seed]
+mode = "derived"
+derive_from = "library:root"
+
+[params]
+trunk_height = 3.0
+trunk_radius_base = 0.5
+trunk_radius_top = 0.15
+trunk_segments = 14
+radial_segments = 10
+trunk_curve_noise = 0.4
+bark_color_base = "#3A2A1A"
+bark_roughness = 0.92
+
+branch_method = "lsystem"
+branch_levels = 2
+branch_angle_min = 35.0
+branch_angle_max = 65.0
+branch_length_falloff = 0.5
+branch_radius_falloff = 0.6
+lsystem_iterations = 2
+lsystem_angle_variation = 25.0
+
+crown_shape = "sphere"
+crown_radius = 1.0
+
+leaf_style = "none"
+
+[[lod]]
+level = 0
+target_triangles = 6000
+
+[[lod]]
+level = 1
+target_triangles = 1500
+
+[[lod]]
+level = 2
+target_triangles = 400

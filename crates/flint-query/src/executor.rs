@@ -92,9 +92,9 @@ fn extract_toml_value(value: &toml::Value, path: &[&str]) -> Option<FieldValue> 
     }
 
     match value {
-        toml::Value::Table(table) => {
-            table.get(path[0]).and_then(|v| extract_toml_value(v, &path[1..]))
-        }
+        toml::Value::Table(table) => table
+            .get(path[0])
+            .and_then(|v| extract_toml_value(v, &path[1..])),
         _ => None,
     }
 }
@@ -159,7 +159,8 @@ mod tests {
             toml::toml! {
                 locked = true
                 style = "hinged"
-            }.into(),
+            }
+            .into(),
         );
 
         let id2 = world.spawn("door2").unwrap();
@@ -170,7 +171,8 @@ mod tests {
             toml::toml! {
                 locked = false
                 style = "sliding"
-            }.into(),
+            }
+            .into(),
         );
 
         let id3 = world.spawn("room1").unwrap();
@@ -201,7 +203,9 @@ mod tests {
 
         if let QueryResult::Entities(entities) = result {
             assert_eq!(entities.len(), 2);
-            assert!(entities.iter().all(|e| e.archetype.as_deref() == Some("door")));
+            assert!(entities
+                .iter()
+                .all(|e| e.archetype.as_deref() == Some("door")));
         } else {
             panic!("Expected Entities result");
         }

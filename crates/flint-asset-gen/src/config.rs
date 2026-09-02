@@ -176,8 +176,7 @@ impl FlintConfig {
         }
 
         if overlay.generation.default_texture_provider != default_texture_provider() {
-            base.generation.default_texture_provider =
-                overlay.generation.default_texture_provider;
+            base.generation.default_texture_provider = overlay.generation.default_texture_provider;
         }
         if overlay.generation.default_model_provider != default_model_provider() {
             base.generation.default_model_provider = overlay.generation.default_model_provider;
@@ -241,10 +240,7 @@ style = "medieval_tavern"
         assert!(config.is_enabled("flux"));
         assert!(!config.is_enabled("meshy"));
         assert_eq!(config.default_style(), Some("medieval_tavern"));
-        assert_eq!(
-            config.api_url("flux"),
-            Some("https://api.example.com/flux")
-        );
+        assert_eq!(config.api_url("flux"), Some("https://api.example.com/flux"));
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_dir(path.parent().unwrap()).ok();

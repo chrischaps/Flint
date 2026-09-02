@@ -25,10 +25,10 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint asset regenerate` | Regenerate an existing asset with new parameters |
 | `flint asset job status` | Check status of an async generation job |
 | `flint asset job list` | List all generation jobs |
-| `flint serve <scene>` | Launch the hot-reload PBR viewer with egui inspector |
+| `flint edit <file>` | Unified interactive editor (auto-detects file type) |
 | `flint play <scene>` | Play a scene with first-person controls and physics |
 | `flint render <scene>` | Render a scene to PNG (headless) |
-| `flint edit <scene>` | Launch the interactive spline/track editor |
+| `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
 
 ## The `play` Command
@@ -45,6 +45,11 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--schemas <path>` | Path to schemas directory (repeatable; later paths override earlier). Default: `schemas` |
 | `--fullscreen` | Launch in fullscreen mode |
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
+| `--music-volume <f32>` | Initial gain for the `music` mixer bus |
+| `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
+
+`--music-volume 0` is the quickest way to audition a scene's sound design
+without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
 ### Player Controls (Defaults)
 
@@ -62,12 +67,41 @@ These are the built-in defaults. Games can override any binding via input config
 | 1 / 2 | Select weapon slot |
 | Escape | Release cursor / Exit |
 | F1 | Cycle debug rendering mode (PBR → Wireframe → Normals → Depth → UV → Unlit → Metal/Rough) |
+| F3 | Toggle debug panels (see below) |
 | F4 | Toggle shadows |
 | F5 | Toggle bloom |
 | F6 | Toggle post-processing pipeline |
 | F11 | Toggle fullscreen |
 
 Gamepad controllers are also supported when connected. Bindings for gamepad buttons and axes can be configured in input config TOML files.
+
+### Debug Panels (F3)
+
+`F3` opens live tuning panels for whichever systems the current scene actually
+uses. Each panel is created **only when its driving component is present**, so a
+scene with no ocean never sees an ocean panel and a scene with no panels at all
+logs a note instead. Panels are fold-open headers distributed across up to three
+size-balanced columns.
+
+Built-in panels:
+
+| Panel | Component | Controls |
+|-------|-----------|----------|
+| Ocean Debug | `ocean` | Wave spectrum, colors, foam, contact foam, cel band edges, clarity/turbidity, grid, CPU/GPU parity probe |
+| Day / Time | `time_of_day` | Clock readout, 0–24 h scrub slider, preset hours, natural-advance toggle, day counter, day length (with the effective ramped length), sun path tilt |
+| Camera | `camera_tuning` | Vertical FOV |
+| Grass Debug | `grass` | Density, height, wind, LOD distances |
+
+Edits apply live through the world's components. **Commit to File** writes the
+current values back into the scene TOML, so a tuning session ends as a diff
+rather than as notes. Values a game script owns each frame (a day counter, a
+published factor) are deliberately never committed.
+
+Games can add their own panels for their own components; unknown panels simply
+take a default size weight in the column layout.
+
+`Escape` releases the mouse so panels can be clicked; clicking the world
+recaptures it.
 
 The `play` command requires the scene to have a `player` archetype entity with a `character_controller` component. Physics colliders on other entities define the walkable geometry.
 
@@ -127,24 +161,75 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--bloom-intensity <f32>` | `0.04` | Bloom strength |
 | `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |
 | `--exposure <f32>` | `1.0` | Exposure multiplier |
+| `--ssao-radius <f32>` | `0.5` | SSAO sample radius |
+| `--ssao-intensity <f32>` | `1.0` | SSAO intensity (0 = disabled) |
+| `--fog-density <f32>` | `0.02` | Fog density (0 = disabled) |
+| `--fog-color <r,g,b>` | `0.7,0.75,0.82` | Fog color |
+| `--fog-height-falloff <f32>` | `0.1` | Fog height falloff |
+| `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater |
+| `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
+| `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
 | `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
 
-## The `serve` Command
+> **`flint render` runs no scripts.** Anything your game drives from a script —
+> a render mode, a time of day, a floating hull, an animated character — will
+> not happen. The render-mode flags exist precisely so a stylized frame can be
+> captured without one. For script-driven world state, bake a fixture scene
+> with the values you want; for animation, note that skinned meshes render at
+> **bind pose** headlessly.
 
-Launch the interactive scene viewer with hot-reload:
+## The `edit` Command
+
+Unified interactive editor that auto-detects file type and opens the appropriate tool:
 
 ```bash
-flint serve demo/phase3_showcase.scene.toml --watch --schemas schemas
-flint serve scene.toml --no-inspector
+flint edit levels/demo.scene.toml              # Scene viewer (hot-reload)
+flint edit levels/demo.scene.toml --spline     # Spline/track editor
+flint edit models/character.glb                # Model previewer (orbit camera)
+flint edit models/character.glb --watch        # Model previewer with file watching
+flint edit specs/oak_tree.procgen.toml         # Procgen previewer (mesh/texture)
+flint edit specs/stone_wall.procgen.toml       # Texture pipeline editor (if pipeline pattern)
+flint edit terrain.terrain.toml                # Terrain editor
 ```
+
+### File Type Detection
+
+| Extension | Tool | Description |
+|-----------|------|-------------|
+| `.scene.toml`, `.chunk.toml` | Scene viewer | Hot-reload, egui inspector, gizmos |
+| `.procgen.toml` (pipeline pattern) | Texture pipeline editor | Node graph for texture specs |
+| `.procgen.toml` (other) | Procgen previewer | Live preview of generated mesh/texture |
+| `.terrain.toml` | Terrain editor | Heightmap terrain editing |
+| `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
+
+### Common Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--watch` | `false` | Watch for file changes and auto-reload |
-| `--no-inspector` | `false` | Hide egui inspector panels |
 | `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+| `--width <px>` | (auto) | Window width |
+| `--height <px>` | (auto) | Window height |
+| `--no-grid` | `false` | Disable ground grid |
+| `--watch` | `false` | Watch for file changes |
+| `--seed <u64>` | (auto) | Override seed (procgen) |
+| `--no-inspector` | `false` | Hide egui inspector (scene) |
+| `--auto-orbit` | `false` | Auto-orbit camera (model/procgen) |
 
-### Viewer Controls
+### Model Previewer Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--distance <f32>` | (auto) | Camera orbit distance |
+| `--yaw <deg>` | (auto) | Horizontal camera angle |
+| `--pitch <deg>` | (auto) | Vertical camera angle |
+| `--target <x,y,z>` | (auto) | Camera look-at point |
+| `--fov <deg>` | (auto) | Field of view |
+| `--no-animate` | `false` | Disable animation playback |
+| `--clip <name>` | (none) | Start with a specific animation clip |
+| `--anim-speed <f32>` | `1.0` | Animation playback speed multiplier |
+| `--render <path>` | (none) | Render to PNG instead of opening a window |
+
+### Scene Viewer Controls
 
 | Input | Action |
 |-------|--------|
@@ -162,6 +247,24 @@ flint serve scene.toml --no-inspector
 | F4 | Toggle shadows |
 
 When an entity is selected, a **translate gizmo** appears with colored axis arrows (red = X, green = Y, blue = Z) and plane handles. Click and drag an axis or plane to move the entity. Position changes can be undone/redone and saved back to the scene file.
+
+### Spline Editor Controls (`--spline`)
+
+| Input | Action |
+|-------|--------|
+| Left-click | Select control point |
+| Left-drag | Move control point on constraint plane |
+| Alt + drag | Move control point vertically (Y axis) |
+| Middle-drag | Orbit camera |
+| Right-drag | Pan camera |
+| Scroll | Zoom |
+| Tab / Shift+Tab | Cycle through control points |
+| I | Insert a new control point after selected |
+| Delete | Remove selected control point |
+| Ctrl+S | Save spline to disk |
+| Ctrl+Z | Undo |
+
+> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work but route through `flint edit`.
 
 ## The `asset generate` Command
 
@@ -187,38 +290,31 @@ flint asset generate audio -d "tavern ambient noise" --duration 10.0
 
 Generated assets are automatically stored in content-addressed storage and registered in the asset catalog with a `.asset.toml` sidecar. Models are validated against style constraints after generation.
 
-## The `edit` Command
+## The `gen` Command
 
-Launch the interactive spline editor for authoring and modifying track layouts:
+Run a procedural generation spec to produce meshes (GLB) or textures (PNG):
 
 ```bash
-flint edit scenes/race_track.scene.toml --schemas engine/schemas --schemas schemas
+flint gen specs/oak_tree.procgen.toml -o tree.glb
+flint gen specs/stone_wall.procgen.toml -o wall.png
+flint gen specs/oak_tree.procgen.toml --dry-run
+flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
+flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 ```
-
-The editor extends the scene viewer with spline-specific tools. It parses the first `.spline.toml` reference found in the scene and provides visual editing of control points.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
-
-### Editor Controls
-
-| Input | Action |
-|-------|--------|
-| Left-click | Select / pick control point |
-| Left-drag | Move control point on constraint plane |
-| Alt + drag | Move control point vertically (Y axis) |
-| Middle-drag | Orbit camera |
-| Right-drag | Pan camera |
-| Scroll | Zoom |
-| Tab / Shift+Tab | Cycle through control points |
-| I | Insert a new control point after the selected one |
-| Delete | Remove selected control point |
-| Ctrl+S | Save spline to disk |
-| Ctrl+Z | Undo |
-| Escape | Cancel current drag |
-
-The editor also provides an egui panel with DragValue editors for precise X/Y/Z/Twist control of the selected point.
+| `-o, --output <path>` | (derived from spec) | Output file or directory |
+| `--seed <u64>` | (from spec) | Override the spec's seed |
+| `--dry-run` | `false` | Print estimated cost without generating |
+| `--format <fmt>` | (auto) | Force output format: `glb` or `png` |
+| `--batch <N>` | (none) | Generate N variants with sequential seeds |
+| `--seed-start <u64>` | `0` | Starting seed for batch generation |
+| `--register` | `false` | Store output in content store with provenance |
+| `--force` | `false` | Regenerate even if cached |
+| `--validate` | `false` | Validate output after generation |
+| `--strict` | `false` | Treat warnings as failures |
+| `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 
 ## The `prefab view` Command
 
@@ -242,7 +338,6 @@ This command loads the `.prefab.toml` template, performs variable substitution, 
 | `--scene <path>` | Path to scene file |
 | `--schemas <path>` | Path to schemas directory (repeatable for multi-schema layering; default: `schemas`) |
 | `--format <fmt>` | Output format: `json`, `toml`, or `text` |
-| `--watch` | Watch for file changes (with `serve`) |
 | `--fix` | Apply auto-fixes (with `validate`) |
 | `--dry-run` | Preview changes without applying |
 
@@ -255,7 +350,10 @@ flint <command> --help
 
 # Examples
 flint init my-game
-flint serve levels/tavern.scene.toml --watch --schemas schemas
+flint edit levels/tavern.scene.toml              # Interactive scene viewer
+flint edit models/character.glb --watch           # Model previewer
 flint play levels/tavern.scene.toml
+flint render levels/tavern.scene.toml -o shot.png
+flint gen specs/oak_tree.procgen.toml -o tree.glb
 flint query "entities where archetype == 'door'" --scene levels/tavern.scene.toml
 ```

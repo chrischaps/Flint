@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flint Architecture Explorer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+</head>
+<body>
+  <div id="app">
+    <aside id="toolbar">
+      <div class="toolbar-section">
+        <label class="toolbar-label">Search</label>
+        <input type="text" id="search-input" placeholder="Find crate, module, type...">
+      </div>
+      <div class="toolbar-section">
+        <label class="toolbar-label">Filter by Tier</label>
+        <div id="tier-filters"></div>
+      </div>
+      <div class="toolbar-section">
+        <label class="toolbar-label">Layout</label>
+        <div id="layout-buttons">
+          <button class="layout-btn active" data-layout="dagre">Hierarchical</button>
+          <button class="layout-btn" data-layout="cose">Force-directed</button>
+          <button class="layout-btn" data-layout="concentric">Concentric</button>
+        </div>
+      </div>
+      <div class="toolbar-section">
+        <label class="toolbar-label">Tools</label>
+        <div id="tool-buttons">
+          <button class="tool-btn" id="btn-path-finder">Path Finder</button>
+          <button class="tool-btn" id="btn-metrics">Metrics Overlay</button>
+          <button class="tool-btn" id="btn-dep-explorer">Dep Explorer</button>
+        </div>
+      </div>
+      <div id="toolbar-footer"></div>
+    </aside>
+    <main id="graph-container"></main>
+    <aside id="detail-panel">
+      <div id="detail-content">
+        <p class="detail-placeholder">Click a node or edge to see details</p>
+      </div>
+    </aside>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

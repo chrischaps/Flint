@@ -44,12 +44,10 @@ pub struct BatchResult {
 /// Scan a scene TOML for asset references and find missing ones
 pub fn scan_scene_assets(scene_path: &str) -> Result<(usize, Vec<MissingAsset>)> {
     let content = std::fs::read_to_string(scene_path)?;
-    let scene: toml::Value = toml::from_str(&content).map_err(|e| {
-        FlintError::GenerationError(format!("Failed to parse scene: {}", e))
-    })?;
+    let scene: toml::Value = toml::from_str(&content)
+        .map_err(|e| FlintError::GenerationError(format!("Failed to parse scene: {}", e)))?;
 
-    let catalog = flint_asset::AssetCatalog::load_from_directory("assets")
-        .unwrap_or_default();
+    let catalog = flint_asset::AssetCatalog::load_from_directory("assets").unwrap_or_default();
 
     let mut total = 0;
     let mut missing = Vec::new();
@@ -164,57 +162,49 @@ pub fn resolve_scene(
     let mut failed = 0;
 
     for asset in &missing_assets {
-        print!(
-            "  {} ({})  -> ",
-            asset.asset_name,
-            asset.kind
-        );
+        print!("  {} ({})  -> ", asset.asset_name, asset.kind);
 
         match strategy {
-            BatchStrategy::AiGenerate => {
-                match generate_asset(asset, style, config, output_dir) {
-                    Ok(secs) => {
-                        println!("Generated via {} ({:.1}s)", config.default_provider(asset.kind), secs);
-                        generated += 1;
-                    }
-                    Err(e) => {
-                        println!("FAILED: {}", e);
-                        failed += 1;
-                    }
+            BatchStrategy::AiGenerate => match generate_asset(asset, style, config, output_dir) {
+                Ok(secs) => {
+                    println!(
+                        "Generated via {} ({:.1}s)",
+                        config.default_provider(asset.kind),
+                        secs
+                    );
+                    generated += 1;
                 }
-            }
-            BatchStrategy::HumanTask => {
-                match create_human_task(asset, style, output_dir) {
+                Err(e) => {
+                    println!("FAILED: {}", e);
+                    failed += 1;
+                }
+            },
+            BatchStrategy::HumanTask => match create_human_task(asset, style, output_dir) {
+                Ok(path) => {
+                    println!("Task created: {}", path.display());
+                    tasks_created += 1;
+                }
+                Err(e) => {
+                    println!("FAILED: {}", e);
+                    failed += 1;
+                }
+            },
+            BatchStrategy::AiThenHuman => match generate_asset(asset, style, config, output_dir) {
+                Ok(secs) => {
+                    println!("Generated ({:.1}s)", secs);
+                    generated += 1;
+                }
+                Err(_) => match create_human_task(asset, style, output_dir) {
                     Ok(path) => {
-                        println!("Task created: {}", path.display());
+                        println!("AI failed, task created: {}", path.display());
                         tasks_created += 1;
                     }
                     Err(e) => {
                         println!("FAILED: {}", e);
                         failed += 1;
                     }
-                }
-            }
-            BatchStrategy::AiThenHuman => {
-                match generate_asset(asset, style, config, output_dir) {
-                    Ok(secs) => {
-                        println!("Generated ({:.1}s)", secs);
-                        generated += 1;
-                    }
-                    Err(_) => {
-                        match create_human_task(asset, style, output_dir) {
-                            Ok(path) => {
-                                println!("AI failed, task created: {}", path.display());
-                                tasks_created += 1;
-                            }
-                            Err(e) => {
-                                println!("FAILED: {}", e);
-                                failed += 1;
-                            }
-                        }
-                    }
-                }
-            }
+                },
+            },
         }
     }
 
@@ -245,7 +235,10 @@ fn generate_asset(
     let provider_name = config.default_provider(asset.kind);
     let provider = crate::providers::create_provider(provider_name, config)?;
 
-    let description = format!("Create {} asset for entity '{}'", asset.kind, asset.entity_name);
+    let description = format!(
+        "Create {} asset for entity '{}'",
+        asset.kind, asset.entity_name
+    );
 
     let request = GenerateRequest {
         name: asset.asset_name.clone(),
@@ -298,10 +291,7 @@ mod tests {
     use std::io::Write;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "flint_batch_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("flint_batch_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -4,7 +4,11 @@ mod commands;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{asset, edit, entity, init, play, prefab, query, render, scene, schema, validate};
+use commands::{
+    asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
+    prefab, preview, query, render, render_suite, replay_chart, scene, schema, spike_rumble,
+    spline_edit, terrain_edit, tex_edit, validate, validate_suite,
+};
 
 #[derive(Parser)]
 #[command(name = "flint")]
@@ -55,7 +59,11 @@ enum Commands {
         schemas: Vec<String>,
     },
 
+    /// Open a file in the appropriate interactive editor
+    Edit(edit_router::EditArgs),
+
     /// Start the scene viewer with hot-reload
+    #[command(hide = true)]
     Serve {
         /// Path to scene file
         scene: String,
@@ -74,40 +82,33 @@ enum Commands {
     },
 
     /// Open the interactive track editor for a scene with spline data
-    Edit {
-        /// Path to scene file
-        scene: String,
-
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
-    },
+    #[command(hide = true)]
+    SplineEdit(spline_edit::EditArgs),
 
     /// Validate a scene against constraints
-    Validate {
-        /// Path to scene file
-        scene: String,
+    Validate(validate::ValidateArgs),
 
-        /// Apply auto-fixes
-        #[arg(long)]
-        fix: bool,
+    /// Validate a musical suite manifest (and optional beatmap chart)
+    ValidateSuite(validate_suite::ValidateSuiteArgs),
 
-        /// Preview fixes without applying
-        #[arg(long)]
-        dry_run: bool,
+    /// Play a validated suite manifest's stems sample-locked (Milestone 0)
+    PlaySuite(play_suite::PlaySuiteArgs),
 
-        /// Show diff of changes
-        #[arg(long)]
-        output_diff: bool,
+    /// Tap-to-beat calibration: write the player's median offset to logs/latency/
+    Calibrate(calibrate::CalibrateArgs),
 
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
+    /// Play a suite against its beatmap chart with live gamepad capture (Phase 2 dev harness)
+    PlayChart(play_chart::PlayChartArgs),
 
-        /// Output format (json or toml)
-        #[arg(long, default_value = "text")]
-        format: String,
-    },
+    /// Rumble spike (ADR 0025): fire the ff motors, time the command paths,
+    /// log to logs/latency/
+    SpikeRumble(spike_rumble::SpikeRumbleArgs),
+
+    /// Replay a recorded or synthetic session through judgment, fully headless
+    ReplayChart(replay_chart::ReplayChartArgs),
+
+    /// Render a scripted suite session to WAV, offline and deterministic
+    RenderSuite(render_suite::RenderSuiteArgs),
 
     /// Prefab operations
     #[command(subcommand)]
@@ -118,250 +119,82 @@ enum Commands {
     Asset(asset::AssetCommands),
 
     /// Play a scene with first-person controls and physics
-    Play {
-        /// Path to scene file
-        scene: String,
+    Play(play::PlayArgs),
 
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
+    /// Preview a 3D model file (GLB/glTF) with orbit camera
+    #[command(hide = true)]
+    Preview(preview::PreviewArgs),
 
-        /// Launch in fullscreen mode
-        #[arg(long)]
-        fullscreen: bool,
+    /// Run a procedural generation spec
+    Gen(gen::GenArgs),
 
-        /// Optional input config overlay path
-        #[arg(long)]
-        input_config: Option<String>,
-    },
+    /// Interactive previewer for procedural generation specs
+    #[command(hide = true)]
+    GenPreview(gen_preview::GenPreviewArgs),
+
+    /// Interactive terrain editor with procgen, sculpting, and painting
+    #[command(hide = true)]
+    TerrainEdit(terrain_edit::TerrainEditArgs),
+
+    /// Visual node editor for texture pipeline specs
+    #[command(hide = true)]
+    TexEdit(tex_edit::TexEditArgs),
 
     /// Render a scene to a PNG image (headless)
-    Render {
-        /// Path to scene file
-        scene: String,
-
-        /// Output image path
-        #[arg(short, long, default_value = "render.png")]
-        output: String,
-
-        /// Image width in pixels
-        #[arg(long, default_value = "1920")]
-        width: u32,
-
-        /// Image height in pixels
-        #[arg(long, default_value = "1080")]
-        height: u32,
-
-        /// Paths to schemas directories (can specify multiple)
-        #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
-        schemas: Vec<String>,
-
-        /// Camera orbit distance
-        #[arg(long)]
-        distance: Option<f32>,
-
-        /// Camera horizontal angle in degrees
-        #[arg(long)]
-        yaw: Option<f32>,
-
-        /// Camera vertical angle in degrees
-        #[arg(long)]
-        pitch: Option<f32>,
-
-        /// Camera look-at point (comma-separated x,y,z)
-        #[arg(long, value_parser = parse_vec3)]
-        target: Option<[f32; 3]>,
-
-        /// Field of view in degrees
-        #[arg(long)]
-        fov: Option<f32>,
-
-        /// Disable ground grid
-        #[arg(long)]
-        no_grid: bool,
-
-        /// Debug visualization mode
-        #[arg(long, value_parser = parse_debug_mode)]
-        debug_mode: Option<String>,
-
-        /// Enable wireframe overlay on solid geometry
-        #[arg(long)]
-        wireframe_overlay: bool,
-
-        /// Show face-normal direction arrows
-        #[arg(long)]
-        show_normals: bool,
-
-        /// Disable tone mapping for raw linear output
-        #[arg(long)]
-        no_tonemapping: bool,
-
-        /// Disable shadow mapping
-        #[arg(long)]
-        no_shadows: bool,
-
-        /// Shadow map resolution per cascade (default: 1024)
-        #[arg(long, default_value = "1024")]
-        shadow_resolution: u32,
-
-        /// Disable post-processing (bloom, vignette, tonemapping in composite pass)
-        #[arg(long)]
-        no_postprocess: bool,
-
-        /// Bloom intensity (enables bloom; default: 0.04)
-        #[arg(long)]
-        bloom_intensity: Option<f32>,
-
-        /// Bloom brightness threshold (default: 1.0)
-        #[arg(long)]
-        bloom_threshold: Option<f32>,
-
-        /// Exposure multiplier (default: 1.0)
-        #[arg(long)]
-        exposure: Option<f32>,
-
-        /// SSAO sample radius (default: 0.5)
-        #[arg(long)]
-        ssao_radius: Option<f32>,
-
-        /// SSAO intensity multiplier (default: 1.0, 0 = disabled)
-        #[arg(long)]
-        ssao_intensity: Option<f32>,
-
-        /// Fog density (enables fog; default: 0.02, 0 = disabled)
-        #[arg(long)]
-        fog_density: Option<f32>,
-
-        /// Fog color as comma-separated R,G,B (default: 0.7,0.75,0.82)
-        #[arg(long, value_parser = parse_vec3)]
-        fog_color: Option<[f32; 3]>,
-
-        /// Fog height falloff (enables height fog; default: 0.1)
-        #[arg(long)]
-        fog_height_falloff: Option<f32>,
-    },
-}
-
-fn parse_debug_mode(s: &str) -> Result<String, String> {
-    match s {
-        "wireframe" | "normals" | "depth" | "uv" | "unlit" | "metalrough" => Ok(s.to_string()),
-        _ => Err(format!(
-            "unknown debug mode '{}'; valid values: wireframe, normals, depth, uv, unlit, metalrough",
-            s
-        )),
-    }
-}
-
-fn parse_vec3(s: &str) -> Result<[f32; 3], String> {
-    let parts: Vec<&str> = s.split(',').collect();
-    if parts.len() != 3 {
-        return Err(format!("expected 3 comma-separated values, got {}", parts.len()));
-    }
-    let x: f32 = parts[0].trim().parse().map_err(|e| format!("invalid x: {}", e))?;
-    let y: f32 = parts[1].trim().parse().map_err(|e| format!("invalid y: {}", e))?;
-    let z: f32 = parts[2].trim().parse().map_err(|e| format!("invalid z: {}", e))?;
-    Ok([x, y, z])
+    Render(render::RenderArgs),
 }
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,rfd=off")),
+        )
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Init { name } => init::run(&name),
         Commands::Entity(cmd) => entity::run(cmd),
         Commands::Scene(cmd) => scene::run(cmd),
-        Commands::Query { query, scene, format } => {
-            query::run(&query, scene.as_deref(), &format)
-        }
-        Commands::Schema { name, schemas } => schema::run(&name, &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
-        Commands::Validate {
+        Commands::Query {
+            query,
             scene,
-            fix,
-            dry_run,
-            output_diff,
-            schemas,
             format,
-        } => validate::run(validate::ValidateArgs {
-            scene,
-            fix,
-            dry_run,
-            output_diff,
-            schemas,
-            format,
-        }),
-        Commands::Play {
-            scene,
-            schemas,
-            fullscreen,
-            input_config,
-        } => play::run(play::PlayArgs {
-            scene,
-            schemas,
-            fullscreen,
-            input_config,
-        }),
+        } => query::run(&query, scene.as_deref(), &format),
+        Commands::Schema { name, schemas } => schema::run(
+            &name,
+            &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        ),
+        Commands::Validate(args) => validate::run(args),
+        Commands::ValidateSuite(args) => validate_suite::run(args),
+        Commands::PlaySuite(args) => play_suite::run(args),
+        Commands::Calibrate(args) => calibrate::run(args),
+        Commands::PlayChart(args) => play_chart::run(args),
+        Commands::SpikeRumble(args) => spike_rumble::run(args),
+        Commands::ReplayChart(args) => replay_chart::run(args),
+        Commands::RenderSuite(args) => render_suite::run(args),
+        Commands::Play(args) => play::run(args),
         Commands::Prefab(cmd) => prefab::run(cmd),
         Commands::Asset(cmd) => asset::run(cmd),
-        Commands::Edit { scene, schemas } => edit::run(edit::EditArgs { scene, schemas }),
-        Commands::Serve { scene, watch, schemas, no_inspector } => {
+        Commands::Edit(args) => edit_router::run(args),
+        Commands::SplineEdit(args) => spline_edit::run(args),
+        Commands::Preview(args) => preview::run(args),
+        Commands::Serve {
+            scene,
+            watch,
+            schemas,
+            no_inspector,
+        } => {
             // Serve uses first schemas path (viewer doesn't need multi-dir yet)
             let schemas_path = schemas.first().map(|s| s.as_str()).unwrap_or("schemas");
-            flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector)
+            flint_viewer::app::run(&scene, watch, schemas_path, !no_inspector, false)
         }
-        Commands::Render {
-            scene,
-            output,
-            width,
-            height,
-            schemas,
-            distance,
-            yaw,
-            pitch,
-            target,
-            fov,
-            no_grid,
-            debug_mode,
-            wireframe_overlay,
-            show_normals,
-            no_tonemapping,
-            no_shadows,
-            shadow_resolution,
-            no_postprocess,
-            bloom_intensity,
-            bloom_threshold,
-            exposure,
-            ssao_radius,
-            ssao_intensity,
-            fog_density,
-            fog_color,
-            fog_height_falloff,
-        } => render::run(render::RenderArgs {
-            scene,
-            output,
-            width,
-            height,
-            schemas,
-            distance,
-            yaw,
-            pitch,
-            target,
-            fov,
-            no_grid,
-            debug_mode,
-            wireframe_overlay,
-            show_normals,
-            no_tonemapping,
-            no_shadows,
-            shadow_resolution,
-            no_postprocess,
-            bloom_intensity,
-            bloom_threshold,
-            exposure,
-            ssao_radius,
-            ssao_intensity,
-            fog_density,
-            fog_color,
-            fog_height_falloff,
-        }),
+        Commands::Gen(args) => gen::run(args),
+        Commands::GenPreview(args) => gen_preview::run(args),
+        Commands::TerrainEdit(args) => terrain_edit::run(args),
+        Commands::TexEdit(args) => tex_edit::run(args),
+        Commands::Render(args) => render::run(args),
     }
 }

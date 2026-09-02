@@ -44,7 +44,7 @@ pub enum AssetRef {
 }
 
 /// TOML sidecar file format for asset metadata
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AssetFile {
     pub asset: AssetMeta,
 }

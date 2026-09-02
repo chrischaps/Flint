@@ -1,6 +1,7 @@
 //! Synchronization between FlintWorld (TOML components) and Rapier physics
 
 use crate::world::PhysicsWorld;
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use rapier3d::na;
@@ -8,19 +9,14 @@ use rapier3d::prelude::*;
 use std::collections::HashMap;
 
 /// Bridges Flint's dynamic components with Rapier's rigid body and collider sets
+#[derive(Default)]
 pub struct PhysicsSync {
     /// EntityId -> RigidBodyHandle mapping
-    pub body_map: HashMap<EntityId, RigidBodyHandle>,
+    pub(crate) body_map: HashMap<EntityId, RigidBodyHandle>,
     /// EntityId -> ColliderHandle mapping
-    pub collider_map: HashMap<EntityId, ColliderHandle>,
+    pub(crate) collider_map: HashMap<EntityId, ColliderHandle>,
     /// Track which entities we've already synced
-    synced_entities: std::collections::HashSet<EntityId>,
-}
-
-impl Default for PhysicsSync {
-    fn default() -> Self {
-        Self::new()
-    }
+    pub(crate) synced_entities: std::collections::HashSet<EntityId>,
 }
 
 impl PhysicsSync {
@@ -41,25 +37,25 @@ impl PhysicsSync {
 
     /// Push Flint entities with rigidbody/collider components into Rapier
     pub fn sync_to_rapier(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
-        // Find entities with rigidbody and/or collider components
-        for entity in world.all_entities() {
-            if self.synced_entities.contains(&entity.id) {
+        // Find entities with rigidbody components
+        for &entity_id in world.entities_with_component(comp::RIGIDBODY) {
+            if self.synced_entities.contains(&entity_id) {
                 continue;
             }
 
-            let components = match world.get_components(entity.id) {
+            let components = match world.get_components(entity_id) {
                 Some(c) => c,
                 None => continue,
             };
 
             // Need at least a rigidbody component to create a physics body
-            let rb_data = match components.get("rigidbody") {
+            let rb_data = match components.get(comp::RIGIDBODY) {
                 Some(v) => v,
                 None => continue,
             };
 
             // Read transform
-            let transform = world.get_transform(entity.id).unwrap_or_default();
+            let transform = world.get_transform(entity_id).unwrap_or_default();
 
             // Build rigid body
             let body_type = rb_data
@@ -94,32 +90,60 @@ impl PhysicsSync {
                 .and_then(|v| v.as_float())
                 .unwrap_or(1.0) as f32;
 
-            let body = builder
+            let mode_2d = rb_data
+                .get("mode_2d")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let pos_z = if mode_2d { 0.0 } else { transform.position.z };
+
+            // Compute sprite anchor offset: shift body position so physics center
+            // aligns with the sprite's visual center. With anchor_y=0 (bottom-anchored),
+            // the visual center is height/2 above the entity position, so the body
+            // must be placed there. sync_from_rapier reverses this when writing back.
+            let sprite_anchor_offset_y = components
+                .get(comp::SPRITE)
+                .map(|s| {
+                    let anchor_y = s
+                        .get("anchor_y")
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                        .unwrap_or(0.0) as f32;
+                    let height = s
+                        .get("height")
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                        .unwrap_or(1.0) as f32;
+                    (0.5 - anchor_y) * height
+                })
+                .unwrap_or(0.0);
+
+            let mut builder = builder
                 .translation(vector![
                     transform.position.x,
-                    transform.position.y,
-                    transform.position.z
+                    transform.position.y + sprite_anchor_offset_y,
+                    pos_z
                 ])
                 .additional_mass(mass)
                 .linear_damping(linear_damping)
                 .angular_damping(angular_damping)
-                .gravity_scale(gravity_scale)
-                .build();
+                .gravity_scale(gravity_scale);
+
+            if mode_2d && body_type == "dynamic" {
+                builder = builder.enabled_rotations(false, false, true);
+            }
+
+            let body = builder.build();
 
             let body_handle = physics.insert_rigid_body(body);
-            self.body_map.insert(entity.id, body_handle);
+            self.body_map.insert(entity_id, body_handle);
 
             // Build collider if present
-            if let Some(col_data) = components.get("collider") {
+            if let Some(col_data) = components.get(comp::COLLIDER) {
                 let shape_str = col_data
                     .get("shape")
                     .and_then(|v| v.as_str())
                     .unwrap_or("box");
 
-                let size = read_vec3_from_value(
-                    col_data.get("size"),
-                    Vec3::new(1.0, 1.0, 1.0),
-                );
+                let size = read_vec3_from_value(col_data.get("size"), Vec3::new(1.0, 1.0, 1.0));
 
                 let collider_shape: SharedShape = match shape_str {
                     "sphere" => SharedShape::ball(size.x * 0.5),
@@ -128,9 +152,32 @@ impl PhysicsSync {
                         let half_height = size.y * 0.5 - radius;
                         SharedShape::capsule_y(half_height.max(0.01), radius)
                     }
+                    "sprite" => {
+                        // Auto-size from sprite component dimensions
+                        let (sw, sh) = components
+                            .get(comp::SPRITE)
+                            .map(|s| {
+                                let w = s
+                                    .get("width")
+                                    .and_then(|v| {
+                                        v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                    })
+                                    .unwrap_or(1.0) as f32;
+                                let h = s
+                                    .get("height")
+                                    .and_then(|v| {
+                                        v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+                                    })
+                                    .unwrap_or(1.0) as f32;
+                                (w, h)
+                            })
+                            .unwrap_or((1.0, 1.0));
+                        SharedShape::cuboid(sw * 0.5, sh * 0.5, 0.1)
+                    }
                     _ => {
                         // "box" — half-extents
-                        SharedShape::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5)
+                        let hz = if mode_2d { 0.1 } else { size.z * 0.5 };
+                        SharedShape::cuboid(size.x * 0.5, size.y * 0.5, hz)
                     }
                 };
 
@@ -151,14 +198,15 @@ impl PhysicsSync {
 
                 // Offset collider to match bounds center (for asymmetric bounds like doors)
                 let bounds_offset = components
-                    .get("bounds")
+                    .get(comp::BOUNDS)
                     .and_then(|b| compute_bounds_center(b))
                     .unwrap_or([0.0, 0.0, 0.0]);
 
                 let mut builder = ColliderBuilder::new(collider_shape)
                     .sensor(is_sensor)
                     .friction(friction)
-                    .restitution(restitution);
+                    .restitution(restitution)
+                    .active_events(ActiveEvents::COLLISION_EVENTS);
 
                 if bounds_offset[0].abs() > f32::EPSILON
                     || bounds_offset[1].abs() > f32::EPSILON
@@ -174,10 +222,10 @@ impl PhysicsSync {
                 let collider = builder.build();
 
                 let col_handle = physics.insert_collider_with_parent(collider, body_handle);
-                self.collider_map.insert(entity.id, col_handle);
+                self.collider_map.insert(entity_id, col_handle);
             }
 
-            self.synced_entities.insert(entity.id);
+            self.synced_entities.insert(entity_id);
         }
     }
 
@@ -200,14 +248,40 @@ impl PhysicsSync {
                 None => continue,
             };
 
+            // Check mode_2d to zero out Z drift
+            let mode_2d = components
+                .get(comp::RIGIDBODY)
+                .and_then(|rb| rb.get("mode_2d"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let z = if mode_2d { 0.0 } else { pos.z as f64 };
+
+            // Reverse the sprite anchor offset applied in sync_to_rapier.
+            // The body position is at the sprite's visual center; subtract the
+            // offset to get back to the transform position the renderer expects.
+            let anchor_offset_y = components
+                .get(comp::SPRITE)
+                .map(|s| {
+                    let anchor_y = s
+                        .get("anchor_y")
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                        .unwrap_or(0.0) as f32;
+                    let height = s
+                        .get("height")
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                        .unwrap_or(1.0) as f32;
+                    (0.5 - anchor_y) * height
+                })
+                .unwrap_or(0.0);
+
             // Update the transform component position
             let position_value = toml::Value::Array(vec![
                 toml::Value::Float(pos.x as f64),
-                toml::Value::Float(pos.y as f64),
-                toml::Value::Float(pos.z as f64),
+                toml::Value::Float((pos.y - anchor_offset_y) as f64),
+                toml::Value::Float(z),
             ]);
 
-            components.set_field("transform", "position", position_value);
+            components.set_field(comp::TRANSFORM, "position", position_value);
         }
     }
 
@@ -227,7 +301,7 @@ impl PhysicsSync {
 
             // Skip entities driven by the character controller (player)
             if let Some(components) = world.get_components(*entity_id) {
-                if components.has("character_controller") {
+                if components.has(comp::CHARACTER_CONTROLLER) {
                     continue;
                 }
             }
@@ -242,29 +316,39 @@ impl PhysicsSync {
             );
 
             // Compute bounds center offset (for asymmetric bounds like doors)
-            let bounds_center = world
-                .get_components(*entity_id)
-                .and_then(|c| c.get("bounds"))
+            let components = world.get_components(*entity_id);
+            let bounds_center = components
+                .and_then(|c| c.get(comp::BOUNDS))
                 .and_then(|b| compute_bounds_center(b))
                 .unwrap_or([0.0, 0.0, 0.0]);
 
+            // Sprite anchor offset (same as sync_to_rapier)
+            let sprite_anchor_offset_y = components
+                .and_then(|c| c.get(comp::SPRITE))
+                .map(|s| {
+                    let anchor_y = s
+                        .get("anchor_y")
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                        .unwrap_or(0.0) as f32;
+                    let height = s
+                        .get("height")
+                        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                        .unwrap_or(1.0) as f32;
+                    (0.5 - anchor_y) * height
+                })
+                .unwrap_or(0.0);
+
             // Rotate the bounds center by the entity's rotation
-            let offset = rotation_f32 * na::Vector3::new(
-                bounds_center[0],
-                bounds_center[1],
-                bounds_center[2],
-            );
+            let offset = rotation_f32
+                * na::Vector3::new(bounds_center[0], bounds_center[1], bounds_center[2]);
 
             let translation = na::Vector3::new(
                 transform.position.x + offset.x,
-                transform.position.y + offset.y,
+                transform.position.y + offset.y + sprite_anchor_offset_y,
                 transform.position.z + offset.z,
             );
 
-            let iso = Isometry::from_parts(
-                translation.into(),
-                rotation_f32,
-            );
+            let iso = Isometry::from_parts(translation.into(), rotation_f32);
 
             // Get mutable body and set next kinematic position
             if let Some(body_mut) = physics.get_rigid_body_mut(*body_handle) {
@@ -282,7 +366,7 @@ impl PhysicsSync {
                 None => continue,
             };
 
-            let col_data = match components.get("collider") {
+            let col_data = match components.get(comp::COLLIDER) {
                 Some(v) => v,
                 None => continue,
             };
@@ -353,7 +437,15 @@ impl PhysicsSync {
         let body_handle = physics.insert_rigid_body(body);
         self.body_map.insert(entity_id, body_handle);
 
-        self.register_trimesh(entity_id, physics, vertices, indices, body_handle, friction, restitution);
+        self.register_trimesh(
+            entity_id,
+            physics,
+            vertices,
+            indices,
+            body_handle,
+            friction,
+            restitution,
+        );
     }
 }
 
@@ -376,9 +468,15 @@ fn compute_bounds_center(bounds: &toml::Value) -> Option<[f32; 3]> {
 fn extract_toml_vec3(value: &toml::Value) -> Option<[f32; 3]> {
     let arr = value.as_array()?;
     if arr.len() >= 3 {
-        let x = arr[0].as_float().or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
-        let y = arr[1].as_float().or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
-        let z = arr[2].as_float().or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
+        let x = arr[0]
+            .as_float()
+            .or_else(|| arr[0].as_integer().map(|i| i as f64))? as f32;
+        let y = arr[1]
+            .as_float()
+            .or_else(|| arr[1].as_integer().map(|i| i as f64))? as f32;
+        let z = arr[2]
+            .as_float()
+            .or_else(|| arr[2].as_integer().map(|i| i as f64))? as f32;
         Some([x, y, z])
     } else {
         None
@@ -459,7 +557,9 @@ mod tests {
             );
             t
         });
-        flint_world.set_component(id, "transform", transform_data).unwrap();
+        flint_world
+            .set_component(id, "transform", transform_data)
+            .unwrap();
 
         // Set rigidbody
         let rb_data = toml::Value::Table({
@@ -513,7 +613,9 @@ mod tests {
             );
             t
         });
-        flint_world.set_component(id, "transform", transform_data).unwrap();
+        flint_world
+            .set_component(id, "transform", transform_data)
+            .unwrap();
 
         let rb_data = toml::Value::Table({
             let mut t = toml::map::Map::new();

@@ -5,6 +5,7 @@
 //! support live hot-reload during play.
 
 use crate::engine::ScriptEngine;
+use flint_core::components as comp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{HashMap, HashSet};
@@ -12,9 +13,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Tracks which entities have scripts and manages file-based hot-reload
+#[derive(Default)]
 pub struct ScriptSync {
     /// Set of entity IDs that have been discovered and loaded
-    discovered: HashSet<EntityId>,
+    pub(crate) discovered: HashSet<EntityId>,
     /// Source path → last modified time for hot-reload detection
     file_timestamps: HashMap<PathBuf, SystemTime>,
     /// Base scripts directory
@@ -49,58 +51,64 @@ impl ScriptSync {
             None => return,
         };
 
-        for entity in world.all_entities() {
-            if self.discovered.contains(&entity.id) {
+        for &entity_id in world.entities_with_component(comp::SCRIPT) {
+            if self.discovered.contains(&entity_id) {
                 continue;
             }
 
-            let script_comp = world.get_components(entity.id)
-                .and_then(|comps| comps.get("script").cloned());
+            let script_comp = world
+                .get_components(entity_id)
+                .and_then(|comps| comps.get(comp::SCRIPT).cloned());
 
-            let Some(script_data) = script_comp else { continue };
+            let Some(script_data) = script_comp else {
+                continue;
+            };
 
             // Check enabled
-            let enabled = script_data.get("enabled")
+            let enabled = script_data
+                .get("enabled")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             if !enabled {
-                self.discovered.insert(entity.id);
+                self.discovered.insert(entity_id);
                 continue;
             }
 
             // Get source file path
-            let source = script_data.get("source")
+            let source = script_data
+                .get("source")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if source.is_empty() {
-                self.discovered.insert(entity.id);
+                self.discovered.insert(entity_id);
                 continue;
             }
 
             let script_path = scripts_dir.join(source);
             if !script_path.exists() {
-                eprintln!("[script] File not found: {}", script_path.display());
-                self.discovered.insert(entity.id);
+                tracing::warn!("File not found: {}", script_path.display());
+                self.discovered.insert(entity_id);
                 continue;
             }
 
+            let entity_name = world.get_name(entity_id).unwrap_or("?");
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
-                    println!("[script] Loaded: {} → {}", entity.name, source);
+                    println!("[script] Loaded: {} → {}", entity_name, source);
                     // Record file timestamp
                     if let Ok(meta) = std::fs::metadata(&script_path) {
                         if let Ok(modified) = meta.modified() {
                             self.file_timestamps.insert(script_path.clone(), modified);
                         }
                     }
-                    engine.add_script(entity.id, ast, source.to_string());
+                    engine.add_script(entity_id, ast, source.to_string());
                 }
                 Err(e) => {
-                    eprintln!("[script] Compile error in {}: {}", source, e);
+                    tracing::warn!("Compile error in {}: {}", source, e);
                 }
             }
 
-            self.discovered.insert(entity.id);
+            self.discovered.insert(entity_id);
         }
     }
 
@@ -122,7 +130,9 @@ impl ScriptSync {
                 Err(_) => continue,
             };
 
-            let Some(current) = current_modified else { continue };
+            let Some(current) = current_modified else {
+                continue;
+            };
             let last = self.file_timestamps.get(&script_path);
 
             if last.is_none_or(|last| current > *last) {
@@ -146,16 +156,10 @@ impl ScriptSync {
                 }
                 Err(e) => {
                     // Keep old AST on compile error
-                    eprintln!("[script] Hot-reload compile error: {}", e);
+                    tracing::warn!("Hot-reload compile error: {}", e);
                 }
             }
         }
-    }
-}
-
-impl Default for ScriptSync {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

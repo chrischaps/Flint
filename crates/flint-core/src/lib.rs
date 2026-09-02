@@ -6,10 +6,15 @@
 //! - `Transform`, `Vec3` - Spatial types
 //! - Error types and Result alias
 
+pub mod callbacks;
+pub mod components;
 mod error;
+pub mod events;
 mod hash;
 mod id;
+pub mod ocean;
 pub mod spline;
+pub mod toml_util;
 mod types;
 
 pub use error::{FlintError, Result};

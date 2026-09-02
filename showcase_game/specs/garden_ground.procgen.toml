@@ -1,0 +1,29 @@
+generator = "texture_v1"
+
+[meta]
+name = "garden_ground"
+description = "Rich earthy ground for the Flooded Garden"
+version = "1.0.0"
+tags = ["texture", "ground", "earth", "garden"]
+
+[seed]
+mode = "derived"
+derive_from = "garden:ground"
+
+[params]
+pattern = "perlin_organic"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+noise_type = "simplex"
+frequency = 1.0
+octaves = 5
+base_color = "#5A6B4A"
+color_variation = 0.18
+roughness_base = 0.82
+roughness_variation = 0.1
+normal_strength = 0.9
+detail_scale = 25.0
+detail_strength = 0.08

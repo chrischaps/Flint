@@ -1,0 +1,7 @@
+[component.sprite_animator]
+description = "Controls sprite sheet animation playback for an entity"
+
+[component.sprite_animator.fields]
+clip = { type = "string", default = "", description = "Current sprite animation clip name" }
+playing = { type = "bool", default = false }
+speed = { type = "f32", default = 1.0, min = 0.0, max = 10.0 }

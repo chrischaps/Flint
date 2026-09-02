@@ -1,15 +1,24 @@
 //! Main viewer application — combines wgpu scene rendering with egui panels.
 //! Supports an optional spline editor mode for interactive track editing.
 
-use anyhow::{Context, Result};
-use crate::panels::{CameraView, EntityInspector, GizmoAction, InspectorAction, RenderStats, SceneTree, SplinePanelAction, ViewGizmo};
+use crate::panels::transform_gizmo::apply_gizmo_delta;
+use crate::panels::{
+    CameraView, EntityInspector, GizmoAction, GizmoMode, RenderStats, SceneTree, SplinePanelAction,
+    TransformGizmo, ViewGizmo,
+};
+use crate::picking::{build_pick_targets, pick_entity};
 use crate::spline_editor::{DragMode, SplineEditor, SplineEditorConfig};
-use crate::transform_gizmo::{TransformGizmo, UndoEntry};
+use crate::undo::{EditAction, UndoCommand, UndoStack};
+use anyhow::{Context, Result};
 use flint_constraint::{ConstraintEvaluator, ConstraintRegistry};
+use flint_core::components as comp;
 use flint_ecs::FlintWorld;
-use flint_import::import_gltf;
-use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
-use flint_scene::load_scene;
+use flint_render::model_loader::{self, ModelLoadConfig};
+use flint_render::{
+    post_process_config_from_def, Camera, PostProcessConfig, RenderContext, RendererConfig,
+    SceneRenderer,
+};
+use flint_scene::{load_scene, save_scene, CameraDef, PostProcessDef, SceneDocument};
 use flint_schema::SchemaRegistry;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use std::path::Path;
@@ -29,6 +38,15 @@ struct ViewerState {
     constraint_registry: ConstraintRegistry,
     scene_path: String,
     needs_reload: bool,
+    scene_doc: Option<SceneDocument>,
+    /// The scene's authored `[post_process]` block, if any — applied on load
+    /// so the viewer shows the authored look (DoF, vignette, fog, …);
+    /// F11 toggles between it and the viewer's default config.
+    scene_post: Option<PostProcessDef>,
+    /// The scene's authored `[camera]` block, if any — seeds the orbit camera
+    /// on load (and on Space reset) so the viewer opens on the authored
+    /// framing instead of the generic default.
+    scene_camera: Option<CameraDef>,
 }
 
 /// Run the viewer application (standard viewer mode)
@@ -37,6 +55,7 @@ pub fn run(
     watch: bool,
     schemas_path: &str,
     inspector: bool,
+    auto_orbit: bool,
 ) -> Result<()> {
     let registry = if Path::new(schemas_path).exists() {
         SchemaRegistry::load_from_directory(schemas_path)?
@@ -53,12 +72,18 @@ pub fn run(
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
 
+    // Parse the scene file as an editable document for structure-preserving saves
+    let scene_doc = SceneDocument::from_file(scene_path).ok();
+
     let state = Arc::new(Mutex::new(ViewerState {
         world,
         registry,
         constraint_registry,
         scene_path: scene_path.to_string(),
         needs_reload: false,
+        scene_doc,
+        scene_post: scene_file.post_process.clone(),
+        scene_camera: scene_file.camera.clone(),
     }));
 
     let _watcher = if watch {
@@ -92,7 +117,7 @@ pub fn run(
                         }
                     }
                     Err(e) => {
-                        eprintln!("Watch error: {:?}", e);
+                        tracing::warn!("Watch error: {:?}", e);
                     }
                 }
             }
@@ -108,6 +133,7 @@ pub fn run(
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = ViewerApp::new(state, inspector);
+    app.auto_orbit = auto_orbit;
     event_loop.run_app(&mut app)?;
 
     Ok(())
@@ -131,6 +157,9 @@ pub fn run_with_world(
         constraint_registry,
         scene_path: scene_path_anchor.to_string(),
         needs_reload: false,
+        scene_doc: None,
+        scene_post: None,
+        scene_camera: None,
     }));
 
     let event_loop = EventLoop::new()?;
@@ -177,6 +206,10 @@ pub fn run_editor(
         constraint_registry,
         scene_path: scene_path.to_string(),
         needs_reload: false,
+        scene_doc: None,
+        scene_post: scene_file.post_process.clone(),
+        // Editor mode overrides the camera with its birds-eye view; never seeded.
+        scene_camera: None,
     }));
 
     let _watcher = if watch {
@@ -212,7 +245,7 @@ pub fn run_editor(
                         }
                     }
                     Err(e) => {
-                        eprintln!("Watch error: {:?}", e);
+                        tracing::warn!("Watch error: {:?}", e);
                     }
                 }
             }
@@ -248,6 +281,7 @@ pub struct ViewerApp {
     right_mouse_pressed: bool,
     middle_mouse_pressed: bool,
     modifiers: ModifiersState,
+    held_orbit_keys: std::collections::HashSet<KeyCode>,
 
     // egui state
     egui_ctx: egui::Context,
@@ -259,7 +293,9 @@ pub struct ViewerApp {
     scene_tree: SceneTree,
     entity_inspector: EntityInspector,
     render_stats: RenderStats,
+    show_stats: bool,
     view_gizmo: ViewGizmo,
+    transform_gizmo: TransformGizmo,
 
     // Camera snap animation
     camera_snap_target: Option<(f32, f32)>,
@@ -272,10 +308,57 @@ pub struct ViewerApp {
     // Editor mode (None = standard viewer)
     editor: Option<SplineEditor>,
 
-    // Transform gizmo (active in non-editor viewer mode)
-    transform_gizmo: TransformGizmo,
-    gizmo_suppresses_orbit: bool,
+    // Undo/redo
+    undo_stack: UndoStack,
+
+    // Dirty tracking + save
+    dirty: bool,
+    last_save_time: Option<Instant>,
+    suppress_reload_until: Option<Instant>,
+
+    // Pending edit actions from inspector (collected inside egui closure, applied after)
+    pending_edits: Vec<EditAction>,
+
+    // Gizmo undo coalescing: when a drag ends, we push a single undo command
+    // from the stored start transform to the current transform
+    gizmo_drag_ended: bool,
+
+    // Dirty field tracking for structure-preserving saves
+    // Each entry is (entity_name, component, field)
+    dirty_fields: std::collections::HashSet<(String, String, String)>,
+
+    // Status message (e.g., "Saved!" in editor mode)
     status_message: Option<(String, Instant)>,
+
+    // Scene [post_process] application (authored <-> viewer default, toggled
+    // from the Rendering & Effects menu)
+    scene_post_enabled: bool,
+    default_post_config: Option<PostProcessConfig>,
+
+    // Viewer DoF follow: focus tracks the last selected entity; toggled from
+    // the Rendering & Effects menu, strength/range live in its DoF section.
+    dof_follow: bool,
+    dof_focus_entity: Option<flint_core::EntityId>,
+
+    // Rendering & Effects menu (F4, ADR 0053): the consolidated render/post
+    // debug controls, shared with the player. `open` tracked viewer-side so
+    // the egui Window can own a close button.
+    render_panel: flint_debug_ui::RenderDebugPanel,
+    render_panel_open: bool,
+
+    // Auto-orbit turntable (O toggles, [/] adjust speed, any manual orbit
+    // input cancels — same convention as the model/procgen previewers).
+    auto_orbit: bool,
+    auto_orbit_speed: f32,
+}
+
+/// Rendering & Effects menu interactions that need `&mut self` side effects
+/// (authored-post swap, DoF follow enable/disable), collected inside the egui
+/// closure and handled after the frame.
+#[derive(Default)]
+struct RenderMenuActions {
+    authored_post_clicked: bool,
+    dof_follow: Option<bool>,
 }
 
 impl ViewerApp {
@@ -291,6 +374,7 @@ impl ViewerApp {
             right_mouse_pressed: false,
             middle_mouse_pressed: false,
             modifiers: ModifiersState::empty(),
+            held_orbit_keys: std::collections::HashSet::new(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -298,15 +382,30 @@ impl ViewerApp {
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
+            show_stats: false,
             view_gizmo: ViewGizmo::new(),
+            transform_gizmo: TransformGizmo::new(),
             camera_snap_target: None,
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
             editor: None,
-            transform_gizmo: TransformGizmo::new(),
-            gizmo_suppresses_orbit: false,
+            undo_stack: UndoStack::new(),
+            dirty: false,
+            last_save_time: None,
+            suppress_reload_until: None,
+            pending_edits: Vec::new(),
+            gizmo_drag_ended: false,
+            dirty_fields: std::collections::HashSet::new(),
             status_message: None,
+            scene_post_enabled: true,
+            default_post_config: None,
+            dof_follow: false,
+            dof_focus_entity: None,
+            render_panel: flint_debug_ui::RenderDebugPanel::new(false),
+            render_panel_open: false,
+            auto_orbit: false,
+            auto_orbit_speed: 0.5,
         }
     }
 
@@ -322,6 +421,7 @@ impl ViewerApp {
             right_mouse_pressed: false,
             middle_mouse_pressed: false,
             modifiers: ModifiersState::empty(),
+            held_orbit_keys: std::collections::HashSet::new(),
             egui_ctx: egui::Context::default(),
             egui_winit: None,
             egui_renderer: None,
@@ -329,15 +429,62 @@ impl ViewerApp {
             scene_tree: SceneTree::new(),
             entity_inspector: EntityInspector::new(),
             render_stats: RenderStats::new(),
+            show_stats: false,
             view_gizmo: ViewGizmo::new(),
+            transform_gizmo: TransformGizmo::new(),
             camera_snap_target: None,
             last_frame_time: Instant::now(),
             violation_count: 0,
             violation_messages: Vec::new(),
             editor: Some(editor),
-            transform_gizmo: TransformGizmo::new(),
-            gizmo_suppresses_orbit: false,
+            undo_stack: UndoStack::new(),
+            dirty: false,
+            last_save_time: None,
+            suppress_reload_until: None,
+            pending_edits: Vec::new(),
+            gizmo_drag_ended: false,
+            dirty_fields: std::collections::HashSet::new(),
             status_message: None,
+            scene_post_enabled: true,
+            default_post_config: None,
+            dof_follow: false,
+            dof_focus_entity: None,
+            render_panel: flint_debug_ui::RenderDebugPanel::new(false),
+            render_panel_open: false,
+            auto_orbit: false,
+            auto_orbit_speed: 0.5,
+        }
+    }
+
+    /// Seed the orbit camera from the scene's authored `[camera]` block so
+    /// the viewer opens on (and Space returns to) the authored framing.
+    /// Orbit distance/yaw/pitch are derived from position/target the same
+    /// way the player does, so `update_orbit()` stays consistent.
+    fn seed_camera_from_scene(&mut self) {
+        let scene_camera = self.state.lock().unwrap().scene_camera.clone();
+        let Some(cam) = scene_camera else { return };
+        if let Some(target) = cam.target {
+            self.camera.target = flint_core::Vec3::new(target[0], target[1], target[2]);
+        }
+        if let Some(fov) = cam.fov {
+            self.camera.fov = fov;
+        }
+        if let Some(near) = cam.near {
+            self.camera.near = near;
+        }
+        if let Some(far) = cam.far {
+            self.camera.far = far;
+        }
+        if let Some(pos) = cam.position {
+            let pos = flint_core::Vec3::new(pos[0], pos[1], pos[2]);
+            let dir = pos - self.camera.target;
+            let dist = dir.length();
+            if dist > 0.001 {
+                self.camera.distance = dist;
+                let n = dir * (1.0 / dist);
+                self.camera.pitch = n.y.asin();
+                self.camera.yaw = n.x.atan2(n.z);
+            }
         }
     }
 
@@ -364,6 +511,11 @@ impl ViewerApp {
 
         self.camera.aspect = render_context.aspect_ratio();
 
+        // Standard viewer: open on the scene's authored [camera] framing
+        if self.editor.is_none() {
+            self.seed_camera_from_scene();
+        }
+
         // In editor mode, start with a good birds-eye view
         if self.editor.is_some() {
             self.camera.distance = 150.0;
@@ -373,8 +525,18 @@ impl ViewerApp {
             if let Some(editor) = &self.editor {
                 if !editor.control_points.is_empty() {
                     let n = editor.control_points.len() as f32;
-                    let cx: f32 = editor.control_points.iter().map(|p| p.position[0]).sum::<f32>() / n;
-                    let cz: f32 = editor.control_points.iter().map(|p| p.position[2]).sum::<f32>() / n;
+                    let cx: f32 = editor
+                        .control_points
+                        .iter()
+                        .map(|p| p.position[0])
+                        .sum::<f32>()
+                        / n;
+                    let cz: f32 = editor
+                        .control_points
+                        .iter()
+                        .map(|p| p.position[2])
+                        .sum::<f32>()
+                        / n;
                     self.camera.target = flint_core::Vec3::new(cx, 0.0, cz);
                 }
             }
@@ -400,19 +562,38 @@ impl ViewerApp {
             false,
         );
 
-        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
+        let mut scene_renderer = SceneRenderer::new(
+            &render_context,
+            RendererConfig {
+                show_grid: true,
+                ..Default::default()
+            },
+        );
 
         // Load models and update meshes from world
         {
-            let state = self.state.lock().unwrap();
-            load_models_from_world(
-                &state.world,
+            let mut state = self.state.lock().unwrap();
+            let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+            model_loader::load_models_from_world(
+                &mut state.world,
                 &mut scene_renderer,
                 &render_context.device,
                 &render_context.queue,
-                &state.scene_path,
+                &config,
             );
             scene_renderer.update_from_world(&state.world, &render_context.device);
+        }
+
+        // Apply the scene's authored [post_process] block (DoF, vignette,
+        // fog, …) so the viewer shows the authored look. F11 toggles back
+        // to the viewer's default config (kept here for that).
+        self.default_post_config = Some(scene_renderer.post_process_config().clone());
+        {
+            let state = self.state.lock().unwrap();
+            if let Some(def) = &state.scene_post {
+                scene_renderer.set_post_process_config(post_process_config_from_def(def));
+                println!("Scene [post_process] applied (F11 toggles scene/default)");
+            }
         }
 
         // Run initial constraint evaluation
@@ -434,11 +615,8 @@ impl ViewerApp {
 
     fn update_constraints(&mut self) {
         let state = self.state.lock().unwrap();
-        let evaluator = ConstraintEvaluator::new(
-            &state.world,
-            &state.registry,
-            &state.constraint_registry,
-        );
+        let evaluator =
+            ConstraintEvaluator::new(&state.world, &state.registry, &state.constraint_registry);
         let report = evaluator.validate();
         self.violation_count = report.violations.len();
         self.violation_messages = report
@@ -449,10 +627,7 @@ impl ViewerApp {
     }
 
     fn render(&mut self) {
-        if self.render_context.is_none()
-            || self.scene_renderer.is_none()
-            || self.window.is_none()
-        {
+        if self.render_context.is_none() || self.scene_renderer.is_none() || self.window.is_none() {
             return;
         }
 
@@ -469,7 +644,7 @@ impl ViewerApp {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return,
             Err(e) => {
-                eprintln!("Surface error: {:?}", e);
+                tracing::warn!("Surface error: {:?}", e);
                 return;
             }
         };
@@ -480,6 +655,19 @@ impl ViewerApp {
 
         self.render_stats.record_frame();
 
+        // Track the last selected entity so DoF follow keeps its target
+        // after a deselect, and drive the focus plane while F12 is on.
+        if let Some(id) = self.scene_tree.selected_entity() {
+            self.dof_focus_entity = Some(id);
+        }
+        if self.dof_follow {
+            self.apply_dof_follow();
+        }
+
+        // Rendering & Effects panel: apply last frame's edits / mirror live
+        // state (after DoF follow so the mirror shows the followed focus).
+        self.sync_render_panel();
+
         // Render the 3D scene
         {
             let context = self.render_context.as_ref().unwrap();
@@ -489,7 +677,16 @@ impl ViewerApp {
         }
 
         // Always render egui overlay (gizmo is always visible, panels are conditional)
-        let gizmo_action = self.render_egui(&view);
+        let (gizmo_action, menu_actions) = self.render_egui(&view);
+
+        // Rendering & Effects menu actions that need &mut self (deferred out
+        // of the egui closure's disjoint field borrows)
+        if menu_actions.authored_post_clicked {
+            self.toggle_authored_post();
+        }
+        if let Some(on) = menu_actions.dof_follow {
+            self.set_dof_follow(on);
+        }
 
         // Process gizmo interaction
         if let Some(action) = gizmo_action {
@@ -499,6 +696,7 @@ impl ViewerApp {
                     self.camera.orthographic = true;
                 }
                 GizmoAction::OrbitDelta { dyaw, dpitch } => {
+                    self.auto_orbit = false;
                     self.camera.orbit_horizontal(dyaw);
                     self.camera.orbit_vertical(dpitch);
                     self.camera_snap_target = None;
@@ -510,13 +708,246 @@ impl ViewerApp {
             }
         }
 
+        // Apply any pending inspector edits (outside egui closure to avoid borrow conflicts)
+        self.apply_pending_edits();
+
+        // Handle gizmo drag end -> push undo
+        if self.gizmo_drag_ended {
+            self.gizmo_drag_ended = false;
+            self.finalize_gizmo_undo();
+        }
+
         output.present();
+    }
+
+    /// View depth of the DoF focus entity along the camera forward axis, as
+    /// (entity name, view depth). Since ADR 0055 the projection and the
+    /// composite linearizer agree, so the focus distance IS the view depth.
+    fn dof_focus_readout(&self, world: &FlintWorld) -> Option<(String, f32)> {
+        let id = self.dof_focus_entity?;
+        let pos = world.get_world_position(id)?;
+        let name = world.get_name(id).unwrap_or("<unnamed>").to_string();
+        let cam = &self.camera;
+        let fwd = flint_core::Vec3::new(
+            cam.target.x - cam.position.x,
+            cam.target.y - cam.position.y,
+            cam.target.z - cam.position.z,
+        )
+        .normalized();
+        let to_entity = flint_core::Vec3::new(
+            pos.x - cam.position.x,
+            pos.y - cam.position.y,
+            pos.z - cam.position.z,
+        );
+        let z = to_entity.dot(&fwd).clamp(cam.near, cam.far);
+        Some((name, z))
+    }
+
+    /// Drive the renderer's DoF params from the follow state (once per frame
+    /// while F12 DoF follow is on). Only the three dof_* fields are touched;
+    /// writes are diff-gated. A missing focus entity (deleted, or ids
+    /// remapped by a scene reload) leaves the config untouched.
+    fn apply_dof_follow(&mut self) {
+        let focus = {
+            let state = self.state.lock().unwrap();
+            self.dof_focus_readout(&state.world)
+        };
+        let Some((_, focus_z)) = focus else {
+            return;
+        };
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        // Strength/range are authored in the Rendering & Effects menu's DoF
+        // section; follow owns only the focus distance.
+        let dof_strength = self.render_panel.pp.dof_strength;
+        let dof_range = self.render_panel.pp.dof_focus_range;
+        let config = renderer.post_process_config();
+        if (config.dof_strength - dof_strength).abs() < 1e-4
+            && (config.dof_focus_distance - focus_z).abs() < 1e-4
+            && (config.dof_focus_range - dof_range).abs() < 1e-4
+        {
+            return;
+        }
+        let mut config = config.clone();
+        config.dof_strength = dof_strength;
+        config.dof_focus_distance = focus_z;
+        config.dof_focus_range = dof_range;
+        renderer.set_post_process_config(config);
+    }
+
+    /// Restore DoF params to the active base config (authored scene post if
+    /// enabled, else the viewer default) when F12 follow is switched off.
+    fn restore_base_dof(&mut self) {
+        let scene_post = self.state.lock().unwrap().scene_post.clone();
+        let base = match (&scene_post, self.scene_post_enabled) {
+            (Some(def), true) => Some(post_process_config_from_def(def)),
+            _ => self.default_post_config.clone(),
+        };
+        let (Some(base), Some(renderer)) = (base, self.scene_renderer.as_mut()) else {
+            return;
+        };
+        let mut config = renderer.post_process_config().clone();
+        config.dof_strength = base.dof_strength;
+        config.dof_focus_distance = base.dof_focus_distance;
+        config.dof_focus_range = base.dof_focus_range;
+        renderer.set_post_process_config(config);
+    }
+
+    /// Swap between the scene's authored `[post_process]` and the viewer
+    /// default config (the old F11; now a button in the Rendering & Effects
+    /// menu). No-op with a console note when the scene authors no block.
+    fn toggle_authored_post(&mut self) {
+        let Some(renderer) = &mut self.scene_renderer else {
+            return;
+        };
+        let scene_post = self.state.lock().unwrap().scene_post.clone();
+        match scene_post {
+            None => println!("Scene has no [post_process] block — nothing to toggle"),
+            Some(def) if !self.scene_post_enabled => {
+                renderer.set_post_process_config(post_process_config_from_def(&def));
+                self.scene_post_enabled = true;
+                println!("Scene post-process: ON (authored)");
+            }
+            Some(_) => {
+                if let Some(default) = &self.default_post_config {
+                    renderer.set_post_process_config(default.clone());
+                }
+                self.scene_post_enabled = false;
+                println!("Scene post-process: OFF (viewer default)");
+            }
+        }
+    }
+
+    /// Enable/disable DoF follow (the old F12; now a checkbox in the
+    /// Rendering & Effects menu). On enable, seeds the focus entity from the
+    /// current selection and gives strength a visible floor; on disable,
+    /// restores the active base config's DoF.
+    fn set_dof_follow(&mut self, on: bool) {
+        self.dof_follow = on;
+        if on {
+            if self.dof_focus_entity.is_none() {
+                self.dof_focus_entity = self.scene_tree.selected_entity();
+            }
+            if self.render_panel.pp.dof_strength <= 0.0 {
+                self.render_panel.pp.dof_strength = 0.5;
+            }
+            match self.dof_focus_entity {
+                Some(_) => println!(
+                    "DoF follow: ON — focus tracks the last selected entity \
+                     (tune strength/range in the Rendering & Effects menu)"
+                ),
+                None => println!("DoF follow: ON — select an entity to set the focus target"),
+            }
+        } else {
+            self.restore_base_dof();
+            println!("DoF follow: OFF (base post-process DoF restored)");
+        }
+    }
+
+    /// Rendering & Effects panel (ADR 0053), once per frame: apply edits the
+    /// user made last frame (write-through), else mirror live renderer state
+    /// into the widgets so the panel always displays the truth.
+    fn sync_render_panel(&mut self) {
+        use flint_debug_ui::DebugPanel as _;
+        let Some(renderer) = self.scene_renderer.as_mut() else {
+            return;
+        };
+        let rp = &mut self.render_panel;
+        if rp.is_dirty() {
+            let Some(context) = self.render_context.as_ref() else {
+                return;
+            };
+            let flags = rp.take_flags();
+            if flags.pp_changed {
+                renderer.set_post_process_config(rp.pp.clone());
+                if flags.kuwahara_needs_resources {
+                    renderer.ensure_kuwahara_resources(&context.device, &context.queue);
+                }
+                if flags.fxaa_needs_resources {
+                    renderer.ensure_fxaa_resources(&context.device);
+                }
+            }
+            if flags.shadows_changed {
+                renderer.set_shadows(rp.shadows_enabled);
+            }
+            if flags.shadow_res_changed {
+                renderer.set_shadow_resolution(&context.device, rp.shadow_resolution);
+            }
+            if flags.lighting_reset {
+                renderer.reset_ambient();
+            } else if flags.lighting_changed {
+                renderer.set_ambient(rp.lighting.ambient_sky, rp.lighting.ambient_ground);
+                renderer.set_diffuse_wrap(rp.lighting.diffuse_wrap);
+                renderer.set_oren_nayar(rp.lighting.oren_nayar);
+                renderer.set_sheen(rp.lighting.sheen_color, rp.lighting.sheen_strength);
+            }
+            if flags.mode_changed {
+                renderer.set_debug_mode(rp.debug_mode);
+                let state = self.state.lock().unwrap();
+                renderer.update_from_world(&state.world, &context.device);
+            }
+            if flags.fov_changed {
+                self.camera.fov = rp.fov_deg;
+            }
+            rp.clear_dirty();
+        } else {
+            rp.refresh(
+                renderer.post_process_config(),
+                renderer.debug_state().mode,
+                renderer.shadows_enabled(),
+                renderer.shadow_resolution(),
+                renderer.lighting_levers(),
+                self.camera.fov,
+            );
+        }
     }
 
     fn animate_camera(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_frame_time).as_secs_f32().min(0.1);
         self.last_frame_time = now;
+
+        // Keyboard orbit: WASD to orbit, Q/E to zoom
+        {
+            let speed = 2.0f32;
+            let zoom_speed = 2.0f32;
+            let mut yaw_delta = 0.0f32;
+            let mut pitch_delta = 0.0f32;
+            let mut zoom_factor = 1.0f32;
+
+            // Auto-orbit turntable: continuous yaw until manual orbit input
+            if self.auto_orbit {
+                yaw_delta += self.auto_orbit_speed * dt;
+            }
+
+            if self.held_orbit_keys.contains(&KeyCode::KeyA) {
+                yaw_delta += speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyD) {
+                yaw_delta -= speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyW) {
+                pitch_delta += speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyS) {
+                pitch_delta -= speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyQ) {
+                zoom_factor *= 1.0 + zoom_speed * dt;
+            }
+            if self.held_orbit_keys.contains(&KeyCode::KeyE) {
+                zoom_factor *= 1.0 - zoom_speed * dt;
+            }
+
+            if yaw_delta != 0.0 || pitch_delta != 0.0 || zoom_factor != 1.0 {
+                self.camera.yaw += yaw_delta;
+                self.camera.pitch = (self.camera.pitch + pitch_delta).clamp(-1.4, 1.4);
+                self.camera.distance = (self.camera.distance * zoom_factor).max(0.1);
+                self.camera.update_orbit();
+                self.camera_snap_target = None;
+            }
+        }
 
         if let Some((target_yaw, target_pitch)) = self.camera_snap_target {
             let t = 1.0 - (-12.0 * dt).exp();
@@ -535,19 +966,35 @@ impl ViewerApp {
         }
     }
 
-    fn render_egui(&mut self, target_view: &wgpu::TextureView) -> Option<GizmoAction> {
+    fn render_egui(
+        &mut self,
+        target_view: &wgpu::TextureView,
+    ) -> (Option<GizmoAction>, RenderMenuActions) {
+        // DoF follow readout for the Rendering & Effects menu: computed up
+        // front — it borrows all of self, which must end before the field
+        // borrows below.
+        let dof_follow = self.dof_follow;
+        let dof_readout = if dof_follow || self.render_panel_open {
+            let st = self.state.lock().unwrap();
+            Some(self.dof_focus_readout(&st.world))
+        } else {
+            None
+        };
+        let has_scene_post = self.state.lock().unwrap().scene_post.is_some();
+        let scene_post_enabled = self.scene_post_enabled;
+
         // Extract references to disjoint fields to satisfy the borrow checker
         let window = match &self.window {
             Some(w) => w.clone(),
-            None => return None,
+            None => return (None, RenderMenuActions::default()),
         };
         let context = match &self.render_context {
             Some(c) => c,
-            None => return None,
+            None => return (None, RenderMenuActions::default()),
         };
         let egui_winit = match &mut self.egui_winit {
             Some(e) => e,
-            None => return None,
+            None => return (None, RenderMenuActions::default()),
         };
 
         let raw_input = egui_winit.take_egui_input(&window);
@@ -563,15 +1010,37 @@ impl ViewerApp {
         let violation_messages = &self.violation_messages;
         let state = &self.state;
         let view_gizmo = &mut self.view_gizmo;
+        let transform_gizmo = &mut self.transform_gizmo;
         let show_panels = self.show_inspector;
         let editor = &mut self.editor;
-        let transform_gizmo = &self.transform_gizmo;
+        let camera = &self.camera;
+        let dirty = self.dirty;
+        let undo_stack = &self.undo_stack;
         let status_message = &self.status_message;
+        let render_panel = &mut self.render_panel;
+        let render_panel_open = &mut self.render_panel_open;
+
+        // Pre-compute render stats snapshot for the overlay (borrows scene_renderer before closure)
+        let overlay_stats: Option<flint_render::RenderStats> = if self.show_stats {
+            self.scene_renderer.as_ref().map(|r| {
+                let mut s = r.collect_stats();
+                s.fps = render_stats.fps();
+                s.frame_time_ms = if s.fps > 0.0 { 1000.0 / s.fps } else { 0.0 };
+                if let Some(ctx) = &self.render_context {
+                    s.resolution = [ctx.config.width, ctx.config.height];
+                }
+                s
+            })
+        } else {
+            None
+        };
 
         let mut gizmo_action = None;
+        let mut menu_actions = RenderMenuActions::default();
         let mut panel_actions: Vec<SplinePanelAction> = Vec::new();
-        let mut inspector_action = InspectorAction::None;
-        let camera_ref = &self.camera;
+        let mut inspector_edits: Vec<EditAction> = Vec::new();
+        let mut gizmo_edits: Vec<EditAction> = Vec::new();
+        let mut gizmo_drag_just_ended = false;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             if show_panels {
@@ -589,12 +1058,19 @@ impl ViewerApp {
                     .resizable(true)
                     .show(ctx, |ui| {
                         if let Some(ed) = editor.as_mut() {
-                            panel_actions = crate::panels::spline_panel::spline_editor_panel(ui, ed);
+                            panel_actions =
+                                crate::panels::spline_panel::spline_editor_panel(ui, ed);
                         } else {
                             let selected = scene_tree.selected_entity();
                             if let Some(entity_id) = selected {
                                 let st = state.lock().unwrap();
-                                inspector_action = entity_inspector.ui(ui, &st.world, entity_id);
+                                let edits = entity_inspector.edit_ui(
+                                    ui,
+                                    &st.world,
+                                    &st.registry,
+                                    entity_id,
+                                );
+                                inspector_edits.extend(edits);
                             } else {
                                 ui.heading("Entity Inspector");
                                 ui.label("Select an entity in the scene tree.");
@@ -602,15 +1078,12 @@ impl ViewerApp {
                         }
                     });
 
-                // Bottom panel: stats + constraint violations + mode indicator
+                // Bottom panel: stats + constraint violations + mode indicator + undo info
                 egui::TopBottomPanel::bottom("status_panel")
                     .default_height(100.0)
                     .resizable(true)
                     .show(ctx, |ui| {
                         ui.horizontal(|ui| {
-                            render_stats.ui(ui);
-                            ui.separator();
-
                             if violation_count == 0 {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(100, 200, 100),
@@ -623,13 +1096,30 @@ impl ViewerApp {
                                 );
                             }
 
-                            // Mode indicator for non-editor mode
+                            ui.separator();
+
+                            // Dirty indicator
+                            if dirty {
+                                ui.colored_label(egui::Color32::from_rgb(255, 200, 80), "Modified");
+                            }
+
+                            // Gizmo mode indicator (non-editor mode)
                             if editor.is_none() {
                                 ui.separator();
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(180, 180, 200),
-                                    "Translate",
-                                );
+                                let mode_label = match transform_gizmo.mode {
+                                    GizmoMode::Translate => "W: Move",
+                                    GizmoMode::Rotate => "E: Rotate",
+                                    GizmoMode::Scale => "R: Scale",
+                                };
+                                ui.label(mode_label);
+                            }
+
+                            // Undo/redo info
+                            if undo_stack.can_undo() {
+                                ui.separator();
+                                if let Some(desc) = undo_stack.undo_description() {
+                                    ui.label(format!("Undo: {}", desc));
+                                }
                             }
 
                             // Status message (e.g., "Saved!" or "Save not supported")
@@ -640,7 +1130,9 @@ impl ViewerApp {
                                     let alpha = ((3.0 - elapsed) / 0.5).min(1.0);
                                     ui.colored_label(
                                         egui::Color32::from_rgba_unmultiplied(
-                                            200, 220, 255,
+                                            200,
+                                            220,
+                                            255,
                                             (alpha * 255.0) as u8,
                                         ),
                                         msg,
@@ -651,57 +1143,158 @@ impl ViewerApp {
 
                         if !violation_messages.is_empty() {
                             ui.separator();
-                            egui::ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
-                                for msg in violation_messages {
-                                    ui.label(msg);
-                                }
-                            });
+                            egui::ScrollArea::vertical()
+                                .max_height(60.0)
+                                .show(ui, |ui| {
+                                    for msg in violation_messages {
+                                        ui.label(msg);
+                                    }
+                                });
                         }
                     });
+            }
+
+            // Rendering & Effects menu (F4, ADR 0053): the shared panel body
+            // plus two viewer-only sections (authored-post toggle, DoF
+            // follow). Side effects that need &mut self are deferred through
+            // menu_actions and handled after the egui frame.
+            if *render_panel_open {
+                let mut open = true;
+                egui::Window::new("Rendering & Effects")
+                    .default_pos(egui::pos2(240.0, 60.0))
+                    .default_width(340.0)
+                    .vscroll(true)
+                    .open(&mut open)
+                    .show(ctx, |ui| {
+                        render_panel.ui_contents(ui);
+                        ui.separator();
+                        egui::CollapsingHeader::new("Authored post")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if has_scene_post {
+                                    ui.label(if scene_post_enabled {
+                                        "Active: scene [post_process]"
+                                    } else {
+                                        "Active: viewer default"
+                                    });
+                                    let label = if scene_post_enabled {
+                                        "Switch to viewer default"
+                                    } else {
+                                        "Apply authored [post_process]"
+                                    };
+                                    if ui.button(label).clicked() {
+                                        menu_actions.authored_post_clicked = true;
+                                    }
+                                } else {
+                                    ui.label("Scene has no [post_process] block");
+                                }
+                            });
+                        egui::CollapsingHeader::new("DoF follow")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                let mut follow = dof_follow;
+                                if ui
+                                    .checkbox(&mut follow, "Focus tracks last selected entity")
+                                    .changed()
+                                {
+                                    menu_actions.dof_follow = Some(follow);
+                                }
+                                match &dof_readout {
+                                    Some(Some((name, z))) => {
+                                        ui.label(format!("Focus: {}", name));
+                                        ui.label(format!("Focus distance {:.2}", z));
+                                    }
+                                    _ => {
+                                        ui.label("No focus target — select an entity.");
+                                    }
+                                }
+                            });
+                    });
+                if !open {
+                    *render_panel_open = false;
+                }
+            }
+
+            // Transform gizmo for selected entity (non-editor mode only)
+            if editor.is_none() {
+                if let Some(entity_id) = scene_tree.selected_entity() {
+                    let st = state.lock().unwrap();
+                    let transform = st.world.get_transform(entity_id).unwrap_or_default();
+                    let pos = [
+                        transform.position.x,
+                        transform.position.y,
+                        transform.position.z,
+                    ];
+                    let rot = [
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                    ];
+                    let scl = [transform.scale.x, transform.scale.y, transform.scale.z];
+                    // Use world position for gizmo placement (accounts for parent transforms)
+                    let world_pos = st
+                        .world
+                        .get_world_position(entity_id)
+                        .map(|p| [p.x, p.y, p.z])
+                        .unwrap_or(pos);
+                    drop(st); // Release lock before gizmo draw (it reads ctx.input)
+
+                    let render_rect = ctx.screen_rect();
+                    let clip_rect = ctx.available_rect();
+
+                    if let Some(delta) = transform_gizmo.draw(
+                        ctx,
+                        camera,
+                        entity_id,
+                        world_pos,
+                        rot,
+                        scl,
+                        render_rect,
+                        clip_rect,
+                    ) {
+                        let edits = apply_gizmo_delta(&delta, pos, rot, scl);
+                        gizmo_edits.extend(edits);
+                    }
+
+                    // Detect drag end for undo coalescing
+                    if !transform_gizmo.is_dragging()
+                        && transform_gizmo.drag_start_transform().is_some()
+                    {
+                        gizmo_drag_just_ended = true;
+                    }
+                }
             }
 
             // View orientation gizmo (always visible)
             gizmo_action = view_gizmo.draw(ctx, &cam_view);
 
-            // Draw spline overlay on the central area
+            // Draw spline overlay on the central area (editor mode)
             if let Some(ed) = editor.as_ref() {
                 let screen_rect = ctx.screen_rect();
                 let painter = ctx.layer_painter(egui::LayerId::new(
                     egui::Order::Foreground,
                     egui::Id::new("spline_overlay"),
                 ));
-                ed.draw_overlay(&painter, camera_ref, [screen_rect.width(), screen_rect.height()]);
+                ed.draw_overlay(
+                    &painter,
+                    camera,
+                    [screen_rect.width(), screen_rect.height()],
+                );
             }
 
-            // Draw transform gizmo overlay when entity selected in non-editor mode
-            if editor.is_none() {
-                if let Some(entity_id) = scene_tree.selected_entity() {
-                    let st = state.lock().unwrap();
-                    if let Some(world_pos) = st.world.get_world_position(entity_id) {
-                        let pos = [world_pos.x, world_pos.y, world_pos.z];
-                        let screen_rect = ctx.screen_rect();
-                        let painter = ctx.layer_painter(egui::LayerId::new(
-                            egui::Order::Foreground,
-                            egui::Id::new("transform_gizmo_overlay"),
-                        ));
-                        transform_gizmo.draw_overlay(
-                            &painter,
-                            camera_ref,
-                            [screen_rect.width(), screen_rect.height()],
-                            pos,
-                        );
-                    }
-                }
+            // Render stats overlay (F2 toggle)
+            if let Some(ref s) = overlay_stats {
+                render_stats_overlay(ctx, s);
             }
         });
 
-        // Process panel actions outside the egui closure
+        // Process spline panel actions outside the egui closure
         for action in panel_actions {
             if let Some(ed) = &mut self.editor {
                 match action {
                     SplinePanelAction::Save => {
                         if let Err(e) = ed.save() {
-                            eprintln!("Save failed: {}", e);
+                            tracing::error!("Save failed: {}", e);
                         }
                     }
                     SplinePanelAction::Undo => {
@@ -720,6 +1313,28 @@ impl ViewerApp {
             }
         }
 
+        // Store inspector results for processing outside the closure
+        self.pending_edits.extend(inspector_edits);
+
+        // Apply gizmo edits immediately (for smooth visual feedback during drag)
+        if !gizmo_edits.is_empty() {
+            let mut st = self.state.lock().unwrap();
+            for edit in &gizmo_edits {
+                if let Some(components) = st.world.get_components_mut(edit.entity_id) {
+                    components.set_field(&edit.component, &edit.field, edit.new_value.clone());
+                }
+            }
+            // Update renderer
+            if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+                renderer.update_from_world(&st.world, &ctx.device);
+            }
+            self.dirty = true;
+        }
+
+        if gizmo_drag_just_ended {
+            self.gizmo_drag_ended = true;
+        }
+
         egui_winit.handle_platform_output(&window, full_output.platform_output);
 
         let paint_jobs = self
@@ -733,12 +1348,11 @@ impl ViewerApp {
 
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        let mut encoder =
-            context
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("egui Encoder"),
-                });
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("egui Encoder"),
+            });
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -772,9 +1386,7 @@ impl ViewerApp {
             egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
 
-        context
-            .queue
-            .submit(std::iter::once(encoder.finish()));
+        context.queue.submit(std::iter::once(encoder.finish()));
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);
@@ -782,32 +1394,315 @@ impl ViewerApp {
 
         self.egui_renderer = Some(egui_renderer);
 
-        // Process inspector action (deferred to avoid borrow conflicts with egui).
-        // Skip while gizmo is dragging — the gizmo already moves the entity each frame,
-        // and the inspector would detect those changes as edits, flooding the undo stack.
-        if !self.transform_gizmo.is_dragging() {
-            if let InspectorAction::TransformChanged {
-                entity_id,
-                entity_name,
-                old_position,
-                new_position,
-            } = inspector_action
-            {
-                self.apply_entity_position(entity_id, new_position);
-                self.transform_gizmo.push_undo(UndoEntry {
-                    entity_id: entity_id.raw(),
-                    entity_name,
-                    old_position,
-                    new_position,
-                });
-                self.refresh_renderer();
+        (gizmo_action, menu_actions)
+    }
+
+    /// Apply pending inspector edits to the world and push undo
+    fn apply_pending_edits(&mut self) {
+        if self.pending_edits.is_empty() {
+            return;
+        }
+
+        let edits: Vec<EditAction> = self.pending_edits.drain(..).collect();
+
+        {
+            let mut st = self.state.lock().unwrap();
+            for edit in &edits {
+                // Track dirty fields for structure-preserving save
+                if let Some(name) = st.world.get_name(edit.entity_id) {
+                    self.dirty_fields.insert((
+                        name.to_string(),
+                        edit.component.clone(),
+                        edit.field.clone(),
+                    ));
+                }
+                if let Some(components) = st.world.get_components_mut(edit.entity_id) {
+                    components.set_field(&edit.component, &edit.field, edit.new_value.clone());
+                }
             }
         }
 
-        gizmo_action
+        // Update renderer
+        {
+            let st = self.state.lock().unwrap();
+            if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+                renderer.update_from_world(&st.world, &ctx.device);
+            }
+        }
+
+        // Push undo
+        let desc = if edits.len() == 1 {
+            format!("Edit {}.{}", edits[0].component, edits[0].field)
+        } else {
+            format!("Edit {} fields", edits.len())
+        };
+        self.undo_stack.push(UndoCommand {
+            actions: edits,
+            description: desc,
+        });
+        self.dirty = true;
+    }
+
+    /// Finalize a gizmo drag into a single undo command
+    fn finalize_gizmo_undo(&mut self) {
+        let start = self.transform_gizmo.drag_start_transform();
+        let entity_id = self.transform_gizmo.drag_entity();
+
+        if let (Some((start_pos, start_rot, start_scl)), Some(eid)) = (start, entity_id) {
+            let st = self.state.lock().unwrap();
+            let current = st.world.get_transform(eid).unwrap_or_default();
+            let cur_pos = [current.position.x, current.position.y, current.position.z];
+            let cur_rot = [current.rotation.x, current.rotation.y, current.rotation.z];
+            let cur_scl = [current.scale.x, current.scale.y, current.scale.z];
+            let entity_name = st.world.get_name(eid).map(|n| n.to_string());
+            drop(st);
+
+            let mut actions = Vec::new();
+
+            if (0..3).any(|i| (cur_pos[i] - start_pos[i]).abs() > 1e-4) {
+                actions.push(EditAction {
+                    entity_id: eid,
+                    component: comp::TRANSFORM.to_string(),
+                    field: "position".to_string(),
+                    old_value: vec3_to_toml(start_pos),
+                    new_value: vec3_to_toml(cur_pos),
+                });
+            }
+            if (0..3).any(|i| (cur_rot[i] - start_rot[i]).abs() > 1e-4) {
+                actions.push(EditAction {
+                    entity_id: eid,
+                    component: comp::TRANSFORM.to_string(),
+                    field: "rotation".to_string(),
+                    old_value: vec3_to_toml(start_rot),
+                    new_value: vec3_to_toml(cur_rot),
+                });
+            }
+            if (0..3).any(|i| (cur_scl[i] - start_scl[i]).abs() > 1e-4) {
+                actions.push(EditAction {
+                    entity_id: eid,
+                    component: comp::TRANSFORM.to_string(),
+                    field: "scale".to_string(),
+                    old_value: vec3_to_toml(start_scl),
+                    new_value: vec3_to_toml(cur_scl),
+                });
+            }
+
+            if !actions.is_empty() {
+                // Track dirty fields for patcher
+                if let Some(name) = &entity_name {
+                    for action in &actions {
+                        self.dirty_fields.insert((
+                            name.clone(),
+                            action.component.clone(),
+                            action.field.clone(),
+                        ));
+                    }
+                }
+
+                let mode_name = match self.transform_gizmo.mode {
+                    GizmoMode::Translate => "Move",
+                    GizmoMode::Rotate => "Rotate",
+                    GizmoMode::Scale => "Scale",
+                };
+                self.undo_stack.push(UndoCommand {
+                    actions,
+                    description: format!("{} entity", mode_name),
+                });
+            }
+        }
+
+        self.transform_gizmo.clear_drag_start();
+    }
+
+    /// Undo the last edit
+    fn undo(&mut self) {
+        if let Some(cmd) = self.undo_stack.undo() {
+            let mut st = self.state.lock().unwrap();
+            for action in &cmd.actions {
+                if let Some(components) = st.world.get_components_mut(action.entity_id) {
+                    components.set_field(
+                        &action.component,
+                        &action.field,
+                        action.old_value.clone(),
+                    );
+                }
+            }
+            drop(st);
+            self.refresh_renderer();
+            println!("Undo: {}", cmd.description);
+        }
+    }
+
+    /// Redo the last undone edit
+    fn redo(&mut self) {
+        if let Some(cmd) = self.undo_stack.redo() {
+            let mut st = self.state.lock().unwrap();
+            for action in &cmd.actions {
+                if let Some(components) = st.world.get_components_mut(action.entity_id) {
+                    components.set_field(
+                        &action.component,
+                        &action.field,
+                        action.new_value.clone(),
+                    );
+                }
+            }
+            drop(st);
+            self.refresh_renderer();
+            println!("Redo: {}", cmd.description);
+        }
+    }
+
+    /// Save the scene to disk using structure-preserving patcher when possible
+    fn save(&mut self) {
+        let mut st = self.state.lock().unwrap();
+        let scene_path = st.scene_path.clone();
+        let has_doc = st.scene_doc.is_some();
+
+        // Try structure-preserving save via patcher
+        if has_doc && !self.dirty_fields.is_empty() {
+            // Collect patch data from world first (immutable borrow of world)
+            let patches: Vec<(String, String, String, toml::Value)> = self
+                .dirty_fields
+                .iter()
+                .filter_map(|(entity_name, component, field)| {
+                    let eid = st.world.get_id(entity_name)?;
+                    let components = st.world.get_components(eid)?;
+                    let value = components.get_field(component, field)?;
+                    Some((
+                        entity_name.clone(),
+                        component.clone(),
+                        field.clone(),
+                        value.clone(),
+                    ))
+                })
+                .collect();
+
+            // Now apply patches (mutable borrow of doc only)
+            let doc = st.scene_doc.as_mut().unwrap();
+            for (entity_name, component, field, value) in &patches {
+                if let Err(e) = doc.patch_field(entity_name, component, field, value) {
+                    tracing::warn!("Patch error: {}", e);
+                }
+            }
+
+            match doc.save(&scene_path) {
+                Ok(()) => {
+                    drop(st);
+                    self.dirty = false;
+                    self.dirty_fields.clear();
+                    self.last_save_time = Some(Instant::now());
+                    self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
+                    self.update_window_title();
+                    self.status_message = Some(("Saved!".to_string(), Instant::now()));
+                    println!("Saved scene to {} (structure-preserving)", scene_path);
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!("Patcher save failed, falling back to full save: {}", e);
+                }
+            }
+        }
+
+        // Fallback: full serialize save
+        let scene_name = Path::new(&scene_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("scene")
+            .to_string();
+
+        match save_scene(&scene_path, &st.world, &scene_name) {
+            Ok(()) => {
+                // Re-parse the document after full save so future patches work
+                st.scene_doc = SceneDocument::from_file(&scene_path).ok();
+                drop(st);
+                self.dirty = false;
+                self.dirty_fields.clear();
+                self.last_save_time = Some(Instant::now());
+                self.suppress_reload_until = Some(Instant::now() + Duration::from_millis(1500));
+                self.update_window_title();
+                self.status_message = Some(("Saved!".to_string(), Instant::now()));
+                println!("Saved scene to {}", scene_path);
+            }
+            Err(e) => {
+                tracing::error!("Failed to save scene: {:?}", e);
+                drop(st);
+                self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
+            }
+        }
+    }
+
+    /// Update the window title to reflect dirty state
+    fn update_window_title(&self) {
+        if let Some(window) = &self.window {
+            let base = if self.editor.is_some() {
+                "Flint Track Editor"
+            } else {
+                "Flint Viewer"
+            };
+            let title = if self.dirty {
+                format!("{} *", base)
+            } else {
+                base.to_string()
+            };
+            window.set_title(&title);
+        }
+    }
+
+    /// Refresh renderer from current world state
+    fn refresh_renderer(&mut self) {
+        let st = self.state.lock().unwrap();
+        if let (Some(ctx), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+            renderer.update_from_world(&st.world, &ctx.device);
+        }
+    }
+
+    /// Handle mouse click picking in the viewport
+    fn try_pick_entity(&mut self, x: f64, y: f64) {
+        let context = match &self.render_context {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Check if pointer is over egui panels
+        if self.egui_ctx.is_pointer_over_area() {
+            return;
+        }
+
+        // Don't pick while gizmo is active
+        if self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered() {
+            return;
+        }
+
+        let st = self.state.lock().unwrap();
+        let targets = build_pick_targets(&st.world);
+        drop(st);
+
+        let vw = context.config.width as f32;
+        let vh = context.config.height as f32;
+
+        if let Some((entity_id, _dist)) =
+            pick_entity(x as f32, y as f32, vw, vh, &self.camera, &targets)
+        {
+            self.scene_tree.select(Some(entity_id));
+        } else {
+            self.scene_tree.select(None);
+        }
     }
 
     fn check_reload(&mut self) {
+        // Suppress reload if we just saved
+        if let Some(until) = self.suppress_reload_until {
+            if Instant::now() < until {
+                // Clear the needs_reload flag silently
+                if let Ok(mut state) = self.state.lock() {
+                    state.needs_reload = false;
+                }
+                return;
+            } else {
+                self.suppress_reload_until = None;
+            }
+        }
+
         let (needs_reload, scene_path) = {
             let state = self.state.lock().unwrap();
             (state.needs_reload, state.scene_path.clone())
@@ -831,20 +1726,33 @@ impl ViewerApp {
                     {
                         let mut state = self.state.lock().unwrap();
                         state.world = new_world;
+                        state.scene_post = scene_file.post_process.clone();
+                        // Refresh authored camera too; applied on the next
+                        // Space reset (the live camera is never yanked).
+                        state.scene_camera = scene_file.camera.clone();
                     }
 
                     if let (Some(context), Some(renderer)) =
                         (&self.render_context, &mut self.scene_renderer)
                     {
-                        let state = self.state.lock().unwrap();
-                        load_models_from_world(
-                            &state.world,
+                        let mut state = self.state.lock().unwrap();
+                        let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+                        model_loader::load_models_from_world(
+                            &mut state.world,
                             renderer,
                             &context.device,
                             &context.queue,
-                            &state.scene_path,
+                            &config,
                         );
                         renderer.update_from_world(&state.world, &context.device);
+
+                        // Re-derive the authored post-process so [post_process]
+                        // edits hot-reload like the rest of the scene.
+                        if self.scene_post_enabled {
+                            if let Some(def) = &state.scene_post {
+                                renderer.set_post_process_config(post_process_config_from_def(def));
+                            }
+                        }
                     }
 
                     {
@@ -852,9 +1760,21 @@ impl ViewerApp {
                         self.scene_tree.update(&state.world);
                     }
                     self.update_constraints();
+
+                    // External reload clears undo and dirty state
+                    self.undo_stack.clear();
+                    self.dirty = false;
+                    self.dirty_fields.clear();
+                    self.update_window_title();
+
+                    // Re-parse scene document for patcher
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        state.scene_doc = SceneDocument::from_file(&scene_path).ok();
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reload scene: {:?}", e);
+                    tracing::error!("Failed to reload scene: {:?}", e);
                 }
             }
         }
@@ -963,12 +1883,7 @@ impl ViewerApp {
         // Update hover state
         let screen = self.screen_size();
         if let Some(editor) = &mut self.editor {
-            editor.update_hover(
-                &self.camera,
-                screen,
-                position.x as f32,
-                position.y as f32,
-            );
+            editor.update_hover(&self.camera, screen, position.x as f32, position.y as f32);
         }
     }
 
@@ -980,7 +1895,7 @@ impl ViewerApp {
             KeyCode::KeyS if ctrl => {
                 if let Some(editor) = &mut self.editor {
                     if let Err(e) = editor.save() {
-                        eprintln!("Save failed: {}", e);
+                        tracing::error!("Save failed: {}", e);
                     }
                 }
                 true
@@ -1014,7 +1929,11 @@ impl ViewerApp {
                         editor.selected = Some(match editor.selected {
                             Some(idx) => {
                                 if shift {
-                                    if idx == 0 { n - 1 } else { idx - 1 }
+                                    if idx == 0 {
+                                        n - 1
+                                    } else {
+                                        idx - 1
+                                    }
                                 } else {
                                     (idx + 1) % n
                                 }
@@ -1037,186 +1956,13 @@ impl ViewerApp {
             _ => false,
         }
     }
-
-    // --- Transform gizmo helpers ---
-
-    /// Apply a new position to an entity in the world via merge_component.
-    fn apply_entity_position(&mut self, entity_id: flint_core::EntityId, pos: [f32; 3]) {
-        let mut state = self.state.lock().unwrap();
-        let mut table = toml::value::Table::new();
-        let mut pos_table = toml::value::Table::new();
-        pos_table.insert("x".to_string(), toml::Value::Float(pos[0] as f64));
-        pos_table.insert("y".to_string(), toml::Value::Float(pos[1] as f64));
-        pos_table.insert("z".to_string(), toml::Value::Float(pos[2] as f64));
-        table.insert("position".to_string(), toml::Value::Table(pos_table));
-        let _ = state.world.merge_component(entity_id, "transform", toml::Value::Table(table));
-    }
-
-    /// Refresh the scene renderer from the current world state.
-    fn refresh_renderer(&mut self) {
-        if let (Some(context), Some(renderer)) =
-            (&self.render_context, &mut self.scene_renderer)
-        {
-            let state = self.state.lock().unwrap();
-            renderer.update_from_world(&state.world, &context.device);
-        }
-    }
-
-    /// Save the current world state back to the scene file.
-    fn save_scene(&mut self) {
-        let state = self.state.lock().unwrap();
-        let scene_path = state.scene_path.clone();
-        drop(state);
-
-        // Check if scene path looks like a real scene file (not a prefab anchor)
-        if !scene_path.ends_with(".scene.toml") {
-            self.status_message = Some(("Save not supported for this view".to_string(), Instant::now()));
-            return;
-        }
-
-        let state = self.state.lock().unwrap();
-        // Use save_scene which rebuilds from the world
-        match flint_scene::save_scene(&scene_path, &state.world, "") {
-            Ok(()) => {
-                drop(state);
-                println!("Saved scene: {}", scene_path);
-                self.status_message = Some(("Saved!".to_string(), Instant::now()));
-                self.transform_gizmo.modified = false;
-            }
-            Err(e) => {
-                drop(state);
-                eprintln!("Save failed: {}", e);
-                self.status_message = Some((format!("Save failed: {}", e), Instant::now()));
-            }
-        }
-    }
-}
-
-/// Scan the world for entities with model components and load the referenced glTF files
-fn load_models_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    for entity in world.all_entities() {
-        let model_asset = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("model").cloned())
-            .and_then(|model| {
-                model
-                    .get("asset")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(asset_name) = model_asset {
-            if renderer.mesh_cache().contains(&asset_name) {
-                continue;
-            }
-
-            // Search scene dir first, then parent (game root)
-            let model_path = {
-                let p = scene_dir.join("models").join(format!("{}.glb", asset_name));
-                if p.exists() {
-                    p
-                } else if let Some(parent) = scene_dir.parent() {
-                    parent.join("models").join(format!("{}.glb", asset_name))
-                } else {
-                    p
-                }
-            };
-
-            if model_path.exists() {
-                match import_gltf(&model_path) {
-                    Ok(import_result) => {
-                        println!(
-                            "Loaded model: {} ({} meshes, {} materials)",
-                            asset_name,
-                            import_result.meshes.len(),
-                            import_result.materials.len()
-                        );
-                        renderer.load_model(device, queue, &asset_name, &import_result);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to load model '{}': {:?}", asset_name, e);
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Model file not found: {} (tried {})",
-                    asset_name,
-                    model_path.display()
-                );
-            }
-        }
-    }
-
-    // Also load texture files referenced by material components
-    load_textures_from_world(world, renderer, device, queue, scene_path);
-}
-
-/// Scan the world for entities with material.texture and pre-load the referenced image files
-fn load_textures_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for entity in world.all_entities() {
-        let texture_name = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("material").cloned())
-            .and_then(|material| {
-                material
-                    .get("texture")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(tex_name) = texture_name {
-            if loaded.contains(&tex_name) {
-                continue;
-            }
-            loaded.insert(tex_name.clone());
-
-            let tex_path = scene_dir.join(&tex_name);
-            if tex_path.exists() {
-                match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
-                    Ok(true) => {
-                        println!("Loaded texture: {}", tex_name);
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        eprintln!("Failed to load texture '{}': {}", tex_name, e);
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Texture file not found: {} (tried {})",
-                    tex_name,
-                    tex_path.display()
-                );
-            }
-        }
-    }
 }
 
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             if let Err(e) = self.initialize(event_loop) {
-                eprintln!("Failed to initialize viewer: {e:#}");
+                tracing::error!("Failed to initialize viewer: {e:#}");
                 event_loop.exit();
             }
         }
@@ -1235,8 +1981,16 @@ impl ApplicationHandler for ViewerApp {
             self.modifiers = mods.state();
         }
 
-        // Handle Tab — in editor mode it cycles selection; in viewer mode it toggles inspector.
-        if let WindowEvent::KeyboardInput { event: ref key_event, .. } = event {
+        // Handle gizmo input priority: if gizmo is hovered/dragging, suppress camera orbit
+        // but still let egui process the event for gizmo interaction
+        let gizmo_active = self.transform_gizmo.is_dragging() || self.transform_gizmo.is_hovered();
+
+        // Handle Tab and other global shortcuts before egui can consume them.
+        if let WindowEvent::KeyboardInput {
+            event: ref key_event,
+            ..
+        } = event
+        {
             if key_event.state == ElementState::Pressed && !key_event.repeat {
                 if is_editor {
                     // In editor mode, handle editor-specific keys first
@@ -1257,43 +2011,60 @@ impl ApplicationHandler for ViewerApp {
                                 );
                                 return;
                             }
-                            KeyCode::KeyZ if self.modifiers.control_key() && self.modifiers.shift_key() => {
+                            KeyCode::KeyZ
+                                if self.modifiers.control_key() && self.modifiers.shift_key() =>
+                            {
                                 // Ctrl+Shift+Z = redo
-                                if let Some(entry) = self.transform_gizmo.redo() {
-                                    self.apply_entity_position(
-                                        flint_core::EntityId::from_raw(entry.entity_id),
-                                        entry.new_position,
-                                    );
-                                    self.entity_inspector.invalidate_cache();
-                                    self.refresh_renderer();
-                                }
+                                self.redo();
                                 return;
                             }
                             KeyCode::KeyZ if self.modifiers.control_key() => {
                                 // Ctrl+Z = undo
-                                if let Some(entry) = self.transform_gizmo.undo() {
-                                    self.apply_entity_position(
-                                        flint_core::EntityId::from_raw(entry.entity_id),
-                                        entry.old_position,
-                                    );
-                                    self.entity_inspector.invalidate_cache();
-                                    self.refresh_renderer();
-                                }
+                                self.undo();
+                                return;
+                            }
+                            KeyCode::KeyY if self.modifiers.control_key() => {
+                                // Ctrl+Y = redo
+                                self.redo();
                                 return;
                             }
                             KeyCode::KeyS if self.modifiers.control_key() => {
                                 // Ctrl+S = save scene
-                                self.save_scene();
+                                self.save();
                                 return;
                             }
-                            KeyCode::Escape if self.transform_gizmo.is_dragging() => {
-                                // Cancel gizmo drag
-                                if let Some(old_pos) = self.transform_gizmo.cancel_drag() {
-                                    if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                        self.apply_entity_position(entity_id, old_pos);
-                                        self.entity_inspector.invalidate_cache();
-                                        self.refresh_renderer();
-                                    }
+                            // W/E/R = gizmo mode shortcuts, but ONLY while an
+                            // entity is selected (the gizmo doesn't exist
+                            // otherwise). With no selection they fall through
+                            // to the keyboard-orbit tracker — previously E
+                            // (zoom in) was swallowed here on the initial
+                            // press and only started zooming once OS key
+                            // repeat kicked in.
+                            KeyCode::KeyW
+                                if self.modifiers.is_empty()
+                                    && self.scene_tree.selected_entity().is_some() =>
+                            {
+                                self.transform_gizmo.mode = GizmoMode::Translate;
+                                return;
+                            }
+                            KeyCode::KeyE
+                                if self.modifiers.is_empty()
+                                    && self.scene_tree.selected_entity().is_some() =>
+                            {
+                                self.transform_gizmo.mode = GizmoMode::Rotate;
+                                return;
+                            }
+                            KeyCode::KeyR
+                                if self.modifiers.is_empty()
+                                    && self.scene_tree.selected_entity().is_some() =>
+                            {
+                                self.transform_gizmo.mode = GizmoMode::Scale;
+                                return;
+                            }
+                            // Ctrl+R = Reload
+                            KeyCode::KeyR if self.modifiers.control_key() => {
+                                if let Ok(mut state) = self.state.lock() {
+                                    state.needs_reload = true;
                                 }
                                 return;
                             }
@@ -1334,56 +2105,72 @@ impl ApplicationHandler for ViewerApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) if !self.transform_gizmo.is_dragging() => {
-                            event_loop.exit();
-                        }
-                        PhysicalKey::Code(KeyCode::KeyR) => {
-                            if let Ok(mut state) = self.state.lock() {
-                                state.needs_reload = true;
+                // Track WASD/QE held state for keyboard orbit
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    match code {
+                        KeyCode::KeyW
+                        | KeyCode::KeyA
+                        | KeyCode::KeyS
+                        | KeyCode::KeyD
+                        | KeyCode::KeyQ
+                        | KeyCode::KeyE => {
+                            if event.state == ElementState::Pressed {
+                                // W/E double as gizmo-mode shortcuts while an
+                                // entity is selected; keep key-repeat events
+                                // from leaking them into orbit in that state.
+                                let gizmo_key = matches!(code, KeyCode::KeyW | KeyCode::KeyE);
+                                let gizmo_owns = gizmo_key
+                                    && !is_editor
+                                    && self.scene_tree.selected_entity().is_some();
+                                if !gizmo_owns {
+                                    self.held_orbit_keys.insert(code);
+                                    self.auto_orbit = false;
+                                }
+                            } else {
+                                self.held_orbit_keys.remove(&code);
                             }
                         }
+                        _ => {}
+                    }
+                }
+
+                if event.state == ElementState::Pressed {
+                    match event.physical_key {
+                        PhysicalKey::Code(KeyCode::Escape)
+                            if !self.transform_gizmo.is_dragging() =>
+                        {
+                            event_loop.exit();
+                        }
+
                         PhysicalKey::Code(KeyCode::Space) if !is_editor => {
                             self.camera = Camera::new();
-                            self.camera.update_orbit();
                             if let Some(context) = &self.render_context {
                                 self.camera.aspect = context.aspect_ratio();
                             }
+                            // Back to the authored framing (viewer default if
+                            // the scene has no [camera] block)
+                            self.seed_camera_from_scene();
+                            self.camera.update_orbit();
                         }
-                        PhysicalKey::Code(KeyCode::F1) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let next = renderer.debug_state().mode.next();
-                                renderer.set_debug_mode(next);
-                                println!("Debug mode: {}", next.label());
-
-                                if let Some(context) = &self.render_context {
-                                    let state = self.state.lock().unwrap();
-                                    renderer.update_from_world(&state.world, &context.device);
-                                }
-                            }
+                        PhysicalKey::Code(KeyCode::KeyO) if !is_editor => {
+                            self.auto_orbit = !self.auto_orbit;
+                            println!("Auto-orbit: {}", if self.auto_orbit { "ON" } else { "OFF" });
+                        }
+                        PhysicalKey::Code(KeyCode::BracketRight) if !is_editor => {
+                            self.auto_orbit_speed = (self.auto_orbit_speed * 1.5).clamp(0.1, 5.0);
+                            println!("Auto-orbit speed: {:.2} rad/s", self.auto_orbit_speed);
+                        }
+                        PhysicalKey::Code(KeyCode::BracketLeft) if !is_editor => {
+                            self.auto_orbit_speed = (self.auto_orbit_speed / 1.5).clamp(0.1, 5.0);
+                            println!("Auto-orbit speed: {:.2} rad/s", self.auto_orbit_speed);
                         }
                         PhysicalKey::Code(KeyCode::F2) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_wireframe_overlay();
-                                println!(
-                                    "Wireframe overlay: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
-
-                                if let Some(context) = &self.render_context {
-                                    let state = self.state.lock().unwrap();
-                                    renderer.update_from_world(&state.world, &context.device);
-                                }
-                            }
+                            self.show_stats = !self.show_stats;
                         }
                         PhysicalKey::Code(KeyCode::F3) => {
                             if let Some(renderer) = &mut self.scene_renderer {
                                 let on = renderer.toggle_normal_arrows();
-                                println!(
-                                    "Normal arrows: {}",
-                                    if on { "ON" } else { "OFF" }
-                                );
+                                println!("Normal arrows: {}", if on { "ON" } else { "OFF" });
 
                                 if let Some(context) = &self.render_context {
                                     let state = self.state.lock().unwrap();
@@ -1391,11 +2178,13 @@ impl ApplicationHandler for ViewerApp {
                                 }
                             }
                         }
+                        // Rendering & Effects menu (ADR 0053): the one home
+                        // for every render/post debug control the old
+                        // F1/F4-F12 keys used to flip blindly, plus their
+                        // non-binary parameters, the authored-post toggle,
+                        // and DoF follow.
                         PhysicalKey::Code(KeyCode::F4) => {
-                            if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_shadows();
-                                println!("Shadows: {}", if on { "ON" } else { "OFF" });
-                            }
+                            self.render_panel_open = !self.render_panel_open;
                         }
                         _ => {}
                     }
@@ -1412,55 +2201,14 @@ impl ApplicationHandler for ViewerApp {
                 } else {
                     match button {
                         MouseButton::Left => {
-                            if state == ElementState::Pressed {
-                                // Check gizmo pick before orbit
-                                let screen = self.screen_size();
-                                if let Some((mx, my)) = self.last_mouse_pos {
-                                    if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                        let world_pos = {
-                                            let st = self.state.lock().unwrap();
-                                            st.world.get_world_position(entity_id)
-                                                .map(|p| [p.x, p.y, p.z])
-                                        };
-                                        if let Some(pos) = world_pos {
-                                            if let Some(axis) = self.transform_gizmo.pick(
-                                                &self.camera, screen,
-                                                mx as f32, my as f32, pos,
-                                            ) {
-                                                self.transform_gizmo.begin_drag(
-                                                    axis, &self.camera, screen,
-                                                    mx as f32, my as f32, pos,
-                                                );
-                                                self.gizmo_suppresses_orbit = true;
-                                                self.mouse_pressed = true;
-                                                return;
-                                            }
-                                        }
-                                    }
+                            let was_pressed = self.mouse_pressed;
+                            self.mouse_pressed = state == ElementState::Pressed;
+
+                            // On click release (not drag), try picking
+                            if state == ElementState::Released && was_pressed && !gizmo_active {
+                                if let Some((x, y)) = self.last_mouse_pos {
+                                    self.try_pick_entity(x, y);
                                 }
-                                self.mouse_pressed = true;
-                            } else {
-                                // Release
-                                if self.transform_gizmo.is_dragging() {
-                                    if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                        let (name, world_pos) = {
-                                            let st = self.state.lock().unwrap();
-                                            let name = st.world.all_entities().iter()
-                                                .find(|e| e.id == entity_id)
-                                                .map(|e| e.name.clone())
-                                                .unwrap_or_default();
-                                            let pos = st.world.get_world_position(entity_id)
-                                                .map(|p| [p.x, p.y, p.z])
-                                                .unwrap_or([0.0; 3]);
-                                            (name, pos)
-                                        };
-                                        self.transform_gizmo.end_drag(
-                                            entity_id.raw(), &name, world_pos,
-                                        );
-                                    }
-                                    self.gizmo_suppresses_orbit = false;
-                                }
-                                self.mouse_pressed = false;
                             }
                         }
                         MouseButton::Right => {
@@ -1475,50 +2223,22 @@ impl ApplicationHandler for ViewerApp {
                 if is_editor {
                     self.handle_editor_cursor_moved(position);
                 } else {
-                    if self.transform_gizmo.is_dragging() {
-                        // Gizmo drag in progress — move entity
-                        let screen = self.screen_size();
-                        if let Some(new_pos) = self.transform_gizmo.handle_drag(
-                            &self.camera, screen,
-                            position.x as f32, position.y as f32,
-                        ) {
-                            if let Some(entity_id) = self.scene_tree.selected_entity() {
-                                self.apply_entity_position(entity_id, new_pos);
-                                self.refresh_renderer();
-                            }
-                        }
-                    } else {
-                        if let Some((last_x, last_y)) = self.last_mouse_pos {
-                            let dx = (position.x - last_x) as f32;
-                            let dy = (position.y - last_y) as f32;
+                    if let Some((last_x, last_y)) = self.last_mouse_pos {
+                        let dx = (position.x - last_x) as f32;
+                        let dy = (position.y - last_y) as f32;
 
-                            if self.mouse_pressed && !self.gizmo_suppresses_orbit {
-                                self.camera.orbit_horizontal(-dx * 0.01);
-                                self.camera.orbit_vertical(-dy * 0.01);
-                                self.camera_snap_target = None;
-                                self.camera.orthographic = false;
-                            }
-
-                            if self.right_mouse_pressed {
-                                self.camera.pan(-dx * 0.02, dy * 0.02);
-                                self.camera_snap_target = None;
-                            }
+                        // Only orbit if gizmo is not active
+                        if self.mouse_pressed && !gizmo_active {
+                            self.camera.orbit_horizontal(-dx * 0.01);
+                            self.camera.orbit_vertical(-dy * 0.01);
+                            self.camera_snap_target = None;
+                            self.camera.orthographic = false;
+                            self.auto_orbit = false;
                         }
 
-                        // Update gizmo hover state
-                        if let Some(entity_id) = self.scene_tree.selected_entity() {
-                            let world_pos = {
-                                let st = self.state.lock().unwrap();
-                                st.world.get_world_position(entity_id)
-                                    .map(|p| [p.x, p.y, p.z])
-                            };
-                            if let Some(pos) = world_pos {
-                                let screen = self.screen_size();
-                                self.transform_gizmo.update_hover(
-                                    &self.camera, screen,
-                                    position.x as f32, position.y as f32, pos,
-                                );
-                            }
+                        if self.right_mouse_pressed {
+                            self.camera.pan(-dx * 0.02, dy * 0.02);
+                            self.camera_snap_target = None;
                         }
                     }
 
@@ -1550,7 +2270,15 @@ impl ApplicationHandler for ViewerApp {
     }
 }
 
-// --- Angle interpolation helpers ---
+// --- Helpers ---
+
+fn vec3_to_toml(v: [f32; 3]) -> toml::Value {
+    toml::Value::Array(vec![
+        toml::Value::Float(v[0] as f64),
+        toml::Value::Float(v[1] as f64),
+        toml::Value::Float(v[2] as f64),
+    ])
+}
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -1570,4 +2298,94 @@ fn shortest_angle_diff(from: f32, to: f32) -> f32 {
 
 fn lerp_angle(from: f32, to: f32, t: f32) -> f32 {
     from + shortest_angle_diff(from, to) * t
+}
+
+fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) {
+    use flint_render::format_count;
+
+    egui::Area::new(egui::Id::new("render_stats_overlay"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+                ))
+                .rounding(egui::Rounding::same(4.0))
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.style_mut().override_font_id = Some(egui::FontId::monospace(11.0));
+                    ui.set_min_width(180.0);
+
+                    ui.colored_label(
+                        egui::Color32::from_gray(136),
+                        egui::RichText::new("RENDERING STATS").size(9.0),
+                    );
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("FPS:");
+                        ui.colored_label(
+                            egui::Color32::from_rgb(74, 222, 128),
+                            format!("{:.0}", stats.fps),
+                        );
+                        ui.colored_label(
+                            egui::Color32::from_gray(102),
+                            format!("({:.1}ms)", stats.frame_time_ms),
+                        );
+                    });
+                    ui.label(format!("Draw Calls: {}", stats.draw_calls));
+                    ui.label(format!("Triangles: {}", format_count(stats.triangles)));
+
+                    ui.separator();
+
+                    ui.label(format!("Entities: {}", stats.entity_draws));
+                    if stats.skinned_draws > 0 {
+                        ui.label(format!("Skinned: {}", stats.skinned_draws));
+                    }
+                    ui.label(format!(
+                        "Terrain: {}/{} chunks",
+                        stats.terrain_draws, stats.terrain_total_chunks
+                    ));
+                    if stats.transparent_draws > 0 {
+                        ui.label(format!("Transparent: {}", stats.transparent_draws));
+                    }
+                    if stats.billboard_draws > 0 {
+                        ui.label(format!("Billboards: {}", stats.billboard_draws));
+                    }
+                    if stats.particle_draws > 0 {
+                        ui.label(format!(
+                            "Particles: {} ({} inst)",
+                            stats.particle_draws,
+                            format_count(stats.particle_instances)
+                        ));
+                    }
+                    if stats.sprite_batches > 0 {
+                        ui.label(format!("Sprites: {}", stats.sprite_batches));
+                    }
+                    if stats.grass_instances > 0 {
+                        ui.label(format!(
+                            "Grass: {} inst",
+                            format_count(stats.grass_instances)
+                        ));
+                    }
+
+                    ui.separator();
+
+                    ui.label(format!("Shadow Calls: {}", stats.shadow_draw_calls));
+                    ui.label(format!(
+                        "Shadow Tris: {}",
+                        format_count(stats.shadow_triangles)
+                    ));
+
+                    ui.separator();
+
+                    ui.colored_label(
+                        egui::Color32::from_gray(102),
+                        format!("{}x{}", stats.resolution[0], stats.resolution[1]),
+                    );
+                });
+        });
 }

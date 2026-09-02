@@ -2,9 +2,16 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use flint_asset::{AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, ResolutionStrategy};
-use flint_asset_gen::provider::{AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams};
-use flint_asset_gen::{register_generated_asset, write_asset_sidecar, FlintConfig, JobStore, StyleGuide};
+use flint_asset::{
+    AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, ResolutionStrategy,
+};
+use flint_asset_gen::provider::{
+    AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams,
+};
+use flint_asset_gen::{
+    register_generated_asset, write_asset_sidecar, FlintConfig, JobStore, StyleGuide,
+};
+use flint_core::components as comp;
 use flint_import::import_gltf;
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,7 +20,7 @@ use std::path::Path;
 pub enum AssetCommands {
     /// Import an asset file
     Import {
-        /// Path to the asset file (e.g., model.glb)
+        /// Path to the asset file (e.g., model.glb or model.gltf)
         path: String,
 
         /// Asset name (defaults to filename without extension)
@@ -112,7 +119,7 @@ pub enum AssetCommands {
 
     /// Validate a generated asset against style constraints
     Validate {
-        /// Path to the asset file (e.g., model.glb)
+        /// Path to the asset file (e.g., model.glb or model.gltf)
         path: String,
 
         /// Style guide name for constraint checking
@@ -269,14 +276,11 @@ fn run_generate(
         .unwrap_or_else(|| config.default_provider(kind));
 
     // Load style guide
-    let style = match style_name
-        .as_deref()
-        .or_else(|| config.default_style())
-    {
+    let style = match style_name.as_deref().or_else(|| config.default_style()) {
         Some(s) => match StyleGuide::find(s) {
             Ok(guide) => Some(guide),
             Err(e) => {
-                eprintln!("Warning: Could not load style '{}': {}", s, e);
+                tracing::warn!("Could not load style '{}': {}", s, e);
                 None
             }
         },
@@ -330,7 +334,10 @@ fn run_generate(
     );
 
     if let Some(ref s) = style {
-        println!("  Style: {} (prompt enriched with palette + constraints)", s.name);
+        println!(
+            "  Style: {} (prompt enriched with palette + constraints)",
+            s.name
+        );
     }
 
     // Show the prompt that will be used
@@ -338,9 +345,7 @@ fn run_generate(
     println!("  Prompt: {}", prompt);
 
     // Generate
-    let out_dir = output_dir
-        .as_deref()
-        .unwrap_or(".flint/generated");
+    let out_dir = output_dir.as_deref().unwrap_or(".flint/generated");
 
     let result = gen_provider.generate(&request, style.as_ref(), Path::new(out_dir))?;
 
@@ -364,7 +369,7 @@ fn run_generate(
                 }
             }
             Err(e) => {
-                eprintln!("  Validation skipped: {}", e);
+                tracing::warn!("Validation skipped: {}", e);
             }
         }
     }
@@ -437,9 +442,7 @@ fn run_regenerate(
         _ => anyhow::bail!("Cannot regenerate asset type: {:?}", meta.asset_type),
     };
 
-    let provider_name = provider_override
-        .as_deref()
-        .unwrap_or(&original_provider);
+    let provider_name = provider_override.as_deref().unwrap_or(&original_provider);
 
     println!(
         "Regenerating '{}' ({}) via {}...",
@@ -474,9 +477,7 @@ fn run_job(cmd: JobCommands) -> Result<()> {
 
     match cmd {
         JobCommands::Status { id } => {
-            let job = store
-                .load(&id)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let job = store.load(&id).map_err(|e| anyhow::anyhow!("{}", e))?;
 
             println!("Job: {}", job.id);
             println!("  Provider: {}", job.provider);
@@ -621,7 +622,11 @@ fn run_list(type_filter: Option<String>, tag_filter: Option<String>, format: &st
     } else if let Some(at) = type_enum {
         catalog.by_type(at)
     } else {
-        catalog.names().iter().filter_map(|n| catalog.get(n)).collect()
+        catalog
+            .names()
+            .iter()
+            .filter_map(|n| catalog.get(n))
+            .collect()
     };
 
     if format == "json" {
@@ -752,9 +757,7 @@ fn run_resolve(
             missing += 1;
             println!(
                 "  Missing: {}.{} -> \"{}\"",
-                reference.entity,
-                reference.field,
-                reference.name
+                reference.entity, reference.field, reference.name
             );
         }
     }
@@ -793,11 +796,11 @@ fn collect_scene_asset_references(scene: &toml::Value) -> Vec<SceneAssetReferenc
         }
 
         // Current component references
-        if let Some(model) = table.get("model").and_then(|v| v.as_table()) {
+        if let Some(model) = table.get(comp::MODEL).and_then(|v| v.as_table()) {
             push_ref_if_string(model, entity_name, "asset", "model.asset", &mut refs);
         }
 
-        if let Some(material) = table.get("material").and_then(|v| v.as_table()) {
+        if let Some(material) = table.get(comp::MATERIAL).and_then(|v| v.as_table()) {
             push_ref_if_string(
                 material,
                 entity_name,
@@ -807,11 +810,11 @@ fn collect_scene_asset_references(scene: &toml::Value) -> Vec<SceneAssetReferenc
             );
         }
 
-        if let Some(sprite) = table.get("sprite").and_then(|v| v.as_table()) {
+        if let Some(sprite) = table.get(comp::SPRITE).and_then(|v| v.as_table()) {
             push_ref_if_string(sprite, entity_name, "texture", "sprite.texture", &mut refs);
         }
 
-        if let Some(audio) = table.get("audio_source").and_then(|v| v.as_table()) {
+        if let Some(audio) = table.get(comp::AUDIO_SOURCE).and_then(|v| v.as_table()) {
             push_ref_if_string(audio, entity_name, "file", "audio_source.file", &mut refs);
         }
     }

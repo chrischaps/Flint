@@ -1,0 +1,5 @@
+[component.camera_tuning]
+description = "Live-tunable camera settings. The player applies fov_deg to the render camera at scene load and exposes it in the F3 Camera debug panel; applied after the [camera] block, so this wins when both set FOV. Script set_camera_fov overrides still take effect on frames a script sets one."
+
+[component.camera_tuning.fields]
+fov_deg = { type = "float", description = "Perspective vertical field of view (degrees)", default = 65.0 }

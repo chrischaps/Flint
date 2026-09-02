@@ -10,14 +10,17 @@ pub fn load_layout(path: &Path) -> Result<(Vec<UiElement>, String), String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read layout {}: {}", path.display(), e))?;
 
-    let doc: toml::Value = content.parse()
+    let doc: toml::Value = content
+        .parse()
         .map_err(|e| format!("Failed to parse layout {}: {}", path.display(), e))?;
 
-    let table = doc.as_table()
+    let table = doc
+        .as_table()
         .ok_or_else(|| format!("Layout {} is not a TOML table", path.display()))?;
 
     // Read [ui] section for metadata
-    let style_path = table.get("ui")
+    let style_path = table
+        .get("ui")
         .and_then(|ui| ui.get("style"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
@@ -37,12 +40,12 @@ pub fn load_layout(path: &Path) -> Result<(Vec<UiElement>, String), String> {
             None => continue,
         };
 
-        let type_str = elem_table.get("type")
+        let type_str = elem_table
+            .get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("panel");
 
-        let element_type = ElementType::from_str(type_str)
-            .unwrap_or(ElementType::Panel);
+        let element_type = ElementType::from_str(type_str).unwrap_or(ElementType::Panel);
 
         let mut elem = UiElement::new(id.clone(), element_type);
 
@@ -95,10 +98,12 @@ pub fn load_styles(path: &Path) -> Result<HashMap<String, StyleClass>, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read style {}: {}", path.display(), e))?;
 
-    let doc: toml::Value = content.parse()
+    let doc: toml::Value = content
+        .parse()
         .map_err(|e| format!("Failed to parse style {}: {}", path.display(), e))?;
 
-    let table = doc.as_table()
+    let table = doc
+        .as_table()
         .ok_or_else(|| format!("Style {} is not a TOML table", path.display()))?;
 
     let styles_table = match table.get("styles") {
@@ -122,10 +127,13 @@ pub fn load_styles(path: &Path) -> Result<HashMap<String, StyleClass>, String> {
             }
         }
 
-        classes.insert(name.clone(), StyleClass {
-            name: name.clone(),
-            properties,
-        });
+        classes.insert(
+            name.clone(),
+            StyleClass {
+                name: name.clone(),
+                properties,
+            },
+        );
     }
 
     Ok(classes)
@@ -141,7 +149,8 @@ fn toml_to_style_value(val: &toml::Value) -> Option<StyleValue> {
         toml::Value::Array(arr) => {
             // Color array [r, g, b, a] or padding [l, t, r, b]
             if arr.len() == 4 {
-                let values: Vec<f32> = arr.iter()
+                let values: Vec<f32> = arr
+                    .iter()
                     .filter_map(|v| match v {
                         toml::Value::Float(f) => Some(*f as f32),
                         toml::Value::Integer(i) => Some(*i as f32),
@@ -149,7 +158,9 @@ fn toml_to_style_value(val: &toml::Value) -> Option<StyleValue> {
                     })
                     .collect();
                 if values.len() == 4 {
-                    return Some(StyleValue::Color([values[0], values[1], values[2], values[3]]));
+                    return Some(StyleValue::Color([
+                        values[0], values[1], values[2], values[3],
+                    ]));
                 }
             }
             None

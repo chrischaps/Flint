@@ -190,7 +190,7 @@ engine/target/release/flint render levels/demo.scene.toml --output render_test.p
 
 Use the **edit → render → play** loop:
 
-1. Edit scene files (`levels/*.scene.toml`), scripts (`scripts/*.rhai`), or models (`models/*.glb`)
+1. Edit scene files (`levels/*.scene.toml`), scripts (`scripts/*.rhai`), or models (`models/*.glb, *.gltf`)
 2. **Render a snapshot** with `flint render` to validate visual changes — fast, headless, no window needed
 3. **Play** with `flint play` to test interactively with physics, scripting, and input
 

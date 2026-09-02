@@ -153,3 +153,9 @@ fn vs_skinned_outline(in: SkinnedVertexInput) -> VertexOutput {
 fn fs_outline() -> @location(0) vec4<f32> {
     return OUTLINE_COLOR;
 }
+
+// Flat black, used by the skinned wireframe line pipeline.
+@fragment
+fn fs_wire() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+}

@@ -4,9 +4,13 @@
 
 mod format;
 mod loader;
+pub mod patcher;
 mod prefab;
 mod saver;
 
-pub use format::{EntityDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata};
-pub use loader::{load_scene, load_scene_string, reload_scene};
-pub use saver::{save_scene, save_scene_string};
+pub use format::{
+    CameraDef, EntityDef, PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata,
+};
+pub use loader::{load_scene, load_scene_string, reload_scene, reload_scene_string};
+pub use patcher::SceneDocument;
+pub use saver::{save_scene, save_scene_string, update_scene_file};

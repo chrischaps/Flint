@@ -4,7 +4,9 @@
 //! creates Kira tracks, and updates positions each frame.
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
-use crate::engine::{amplitude_to_db, AudioEngine};
+use crate::engine::{amplitude_to_db, AudioEngine, Bus};
+use flint_core::components as comp;
+use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use kira::sound::static_sound::StaticSoundHandle;
@@ -29,6 +31,7 @@ struct NonSpatialEntry {
 }
 
 /// Tracks which entities have been synced to Kira and holds their spatial track handles
+#[derive(Default)]
 pub struct AudioSync {
     /// EntityId → spatial audio entry for 3D-positioned sounds
     spatial_map: HashMap<EntityId, SpatialEntry>,
@@ -36,12 +39,6 @@ pub struct AudioSync {
     non_spatial_map: HashMap<EntityId, NonSpatialEntry>,
     /// Entities that have already been discovered and synced
     synced_entities: HashSet<EntityId>,
-}
-
-impl Default for AudioSync {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Smooth tween duration for parameter changes (avoids clicks)
@@ -89,17 +86,17 @@ impl AudioSync {
             return;
         }
 
-        for entity in world.all_entities() {
-            if self.synced_entities.contains(&entity.id) {
+        for &entity_id in world.entities_with_component(comp::AUDIO_SOURCE) {
+            if self.synced_entities.contains(&entity_id) {
                 continue;
             }
 
-            let components = match world.get_components(entity.id) {
+            let components = match world.get_components(entity_id) {
                 Some(c) => c,
                 None => continue,
             };
 
-            let audio_data = match components.get("audio_source") {
+            let audio_data = match components.get(comp::AUDIO_SOURCE) {
                 Some(v) => v,
                 None => continue,
             };
@@ -120,76 +117,91 @@ impl AudioSync {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            let volume = audio_data
-                .get("volume")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let volume = audio_data.get("volume").and_then(toml_f64).unwrap_or(1.0);
 
-            let pitch = audio_data
-                .get("pitch")
-                .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                .unwrap_or(1.0);
+            let pitch = audio_data.get("pitch").and_then(toml_f64).unwrap_or(1.0);
 
             let file = audio_data
                 .get("file")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
+            let bus = audio_data
+                .get("bus")
+                .and_then(|v| v.as_str())
+                .map(Bus::from_name)
+                .unwrap_or_default();
+
             if file.is_empty() {
-                self.synced_entities.insert(entity.id);
+                self.synced_entities.insert(entity_id);
                 continue;
             }
 
             if spatial {
-                let transform = world.get_transform(entity.id).unwrap_or_default();
+                let transform = world.get_transform(entity_id).unwrap_or_default();
 
                 let min_distance = audio_data
                     .get("min_distance")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(1.0) as f32;
+                    .and_then(toml_f32)
+                    .unwrap_or(1.0);
 
                 let max_distance = audio_data
                     .get("max_distance")
-                    .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-                    .unwrap_or(25.0) as f32;
+                    .and_then(toml_f32)
+                    .unwrap_or(25.0);
 
-                match engine.create_spatial_track(transform.position, min_distance, max_distance) {
+                match engine.create_spatial_track(
+                    transform.position,
+                    min_distance,
+                    max_distance,
+                    bus,
+                ) {
                     Ok(mut track) => {
                         let mut handles = Vec::new();
                         if autoplay && engine.has_sound(file) {
-                            match engine.play_on_spatial_track(file, &mut track, volume, pitch, looping) {
+                            match engine
+                                .play_on_spatial_track(file, &mut track, volume, pitch, looping)
+                            {
                                 Ok(handle) => handles.push(handle),
-                                Err(e) => eprintln!("Audio: failed to play '{}': {:?}", file, e),
+                                Err(e) => tracing::warn!("Failed to play '{}': {:?}", file, e),
                             }
                         }
-                        self.spatial_map.insert(entity.id, SpatialEntry {
-                            track,
-                            handles,
-                            last_volume: volume,
-                            last_pitch: pitch,
-                        });
+                        self.spatial_map.insert(
+                            entity_id,
+                            SpatialEntry {
+                                track,
+                                handles,
+                                last_volume: volume,
+                                last_pitch: pitch,
+                            },
+                        );
                     }
                     Err(e) => {
-                        eprintln!("Audio: failed to create spatial track: {:?}", e);
+                        tracing::warn!("Failed to create spatial track: {:?}", e);
                     }
                 }
             } else {
                 // Non-spatial: play directly on the main track
                 let mut handles = Vec::new();
                 if autoplay && engine.has_sound(file) {
-                    match engine.play_non_spatial(file, volume, pitch, looping) {
+                    match engine.play_non_spatial(file, volume, pitch, looping, bus) {
                         Ok(handle) => handles.push(handle),
-                        Err(e) => eprintln!("Audio: failed to play non-spatial '{}': {:?}", file, e),
+                        Err(e) => {
+                            tracing::warn!("Failed to play non-spatial '{}': {:?}", file, e)
+                        }
                     }
                 }
-                self.non_spatial_map.insert(entity.id, NonSpatialEntry {
-                    handles,
-                    last_volume: volume,
-                    last_pitch: pitch,
-                });
+                self.non_spatial_map.insert(
+                    entity_id,
+                    NonSpatialEntry {
+                        handles,
+                        last_volume: volume,
+                        last_pitch: pitch,
+                    },
+                );
             }
 
-            self.synced_entities.insert(entity.id);
+            self.synced_entities.insert(entity_id);
         }
     }
 
@@ -275,20 +287,14 @@ fn read_audio_params(world: &FlintWorld, entity_id: EntityId) -> (f64, f64) {
         None => return (1.0, 1.0),
     };
 
-    let audio_data = match components.get("audio_source") {
+    let audio_data = match components.get(comp::AUDIO_SOURCE) {
         Some(v) => v,
         None => return (1.0, 1.0),
     };
 
-    let volume = audio_data
-        .get("volume")
-        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .unwrap_or(1.0);
+    let volume = audio_data.get("volume").and_then(toml_f64).unwrap_or(1.0);
 
-    let pitch = audio_data
-        .get("pitch")
-        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .unwrap_or(1.0);
+    let pitch = audio_data.get("pitch").and_then(toml_f64).unwrap_or(1.0);
 
     (volume, pitch)
 }
@@ -325,7 +331,10 @@ mod tests {
         // Add audio_source
         let audio = toml::Value::Table({
             let mut t = toml::map::Map::new();
-            t.insert("file".into(), toml::Value::String("fire_crackle.ogg".into()));
+            t.insert(
+                "file".into(),
+                toml::Value::String("fire_crackle.ogg".into()),
+            );
             t.insert("spatial".into(), toml::Value::Boolean(true));
             t.insert("loop".into(), toml::Value::Boolean(true));
             t.insert("volume".into(), toml::Value::Float(0.8));

@@ -1,0 +1,6 @@
+[component.ocean_contact]
+description = "Hull footprint that churns contact foam where it meets the ocean surface. One per scene (first found wins); requires an ocean component. Foam look is tuned by the ocean's splash_* fields."
+
+[component.ocean_contact.fields]
+half_x = { type = "float", description = "Hull half-extent along local X in meters", default = 1.0 }
+half_z = { type = "float", description = "Hull half-extent along local Z in meters", default = 1.0 }

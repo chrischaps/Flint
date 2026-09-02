@@ -16,6 +16,43 @@ The listener position and orientation are updated each frame to match the first-
 
 Non-spatial sounds play on the main audio track at constant volume regardless of listener position. Set `spatial = false` on an `audio_source` to use this mode --- useful for background music, ambient atmosphere, and UI sounds.
 
+## Mixer Buses
+
+Every sound routes through one of two buses — `music` and `sfx` — both children
+of Kira's main track:
+
+```
+main  ──┬── music     (audio_source.bus = "music")
+        └── sfx       (everything else, including all one-shots)
+```
+
+Opt a source into the music bus in the scene:
+
+```toml
+[entities.score.audio_source]
+file = "audio/theme_night.ogg"
+bus = "music"
+loop = true
+autoplay = true
+```
+
+Initial gains come from the CLI:
+
+```bash
+flint play scene.toml --music-volume 0.8 --sfx-volume 1.0
+flint play scene.toml --music-volume 0     # mute the score, keep the world
+```
+
+**Bus gain multiplies underneath per-sound volume.** A script crossfading
+between two music beds keeps working at any bus gain, and a player who has
+turned the music down does not have their fades overridden.
+
+The master low-pass applies to both buses, so `set_audio_lowpass` muffles the
+entire mix — score included — which is what you want when the effect is
+"something is between you and the world" rather than "the sfx got quieter".
+
+One-shots (`play_sound`, `play_sound_at`) are always sfx.
+
 ## Audio Schemas
 
 Three component schemas define audio behavior:
@@ -32,6 +69,11 @@ Three component schemas define audio behavior:
 | `min_distance` | f32 | 1.0 | Distance at full volume |
 | `max_distance` | f32 | 25.0 | Distance at silence |
 | `autoplay` | bool | true | Start playing on scene load |
+| `bus` | string | `"sfx"` | Mixer bus: `"sfx"` or `"music"` |
+
+> **Looping component sources must keep `autoplay = true`.** Components have no
+> play/stop API — scripts can only fade their volume. If you need a sound that
+> starts on cue, use a one-shot instead.
 
 **audio_listener** (`audio_listener.toml`) --- marks which entity receives audio:
 
@@ -69,7 +111,7 @@ When a scene transition occurs (via `load_scene()` or `reload_scene()`), all pla
 
 The audio system has three main components:
 
-- **AudioEngine** --- wraps Kira's `AudioManager`, handles sound file loading, listener positioning, and spatial track creation. Sounds route through spatial tracks for 3D positioning or the main track for ambient playback.
+- **AudioEngine** --- wraps Kira's `AudioManager`, handles sound file loading, listener positioning, and spatial track creation. Sounds route through spatial tracks for 3D positioning, or through a mixer bus for non-positional playback.
 - **AudioSync** --- bridges TOML `audio_source` components to Kira spatial tracks. Discovers new audio entities each frame and updates spatial positions from entity transforms.
 - **AudioTrigger** --- maps game events (collisions, interactions) to `AudioCommand`s that play sounds at specific positions.
 

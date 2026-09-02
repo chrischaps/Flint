@@ -3,6 +3,17 @@
 use crate::primitives::Vertex;
 use bytemuck::{Pod, Zeroable};
 
+/// Blend mode for transparent materials
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendMode {
+    /// Standard alpha blending (default)
+    Alpha,
+    /// Additive blending (glow, energy, fire)
+    Additive,
+    /// Multiplicative blending (tinted glass, color filters)
+    Multiply,
+}
+
 /// Transform uniform buffer data (bind group 0)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -52,9 +63,9 @@ pub struct MaterialUniforms {
     pub has_normal_map: u32,
     pub has_metallic_roughness_tex: u32,
     pub selection_highlight: u32,
-    pub _pad_sel0: u32,
-    pub _pad_sel1: u32,
-    pub _pad_sel2: u32,
+    pub opacity: f32,
+    pub alpha_cutoff: f32,
+    pub texture_scale: f32,
 }
 
 impl MaterialUniforms {
@@ -71,9 +82,9 @@ impl MaterialUniforms {
             has_normal_map: 0,
             has_metallic_roughness_tex: 0,
             selection_highlight: 0,
-            _pad_sel0: 0,
-            _pad_sel1: 0,
-            _pad_sel2: 0,
+            opacity: 1.0,
+            alpha_cutoff: 0.5,
+            texture_scale: 1.0,
         }
     }
 
@@ -90,9 +101,9 @@ impl MaterialUniforms {
             has_normal_map: 0,
             has_metallic_roughness_tex: 0,
             selection_highlight: 0,
-            _pad_sel0: 0,
-            _pad_sel1: 0,
-            _pad_sel2: 0,
+            opacity: 1.0,
+            alpha_cutoff: 0.5,
+            texture_scale: 1.0,
         }
     }
 }
@@ -108,18 +119,26 @@ impl Default for MaterialUniforms {
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct DirectionalLight {
     pub direction: [f32; 3],
-    pub _pad0: f32,
+    pub volumetric_intensity: f32, // 0.0 = no volumetric (was _pad0)
     pub color: [f32; 3],
     pub intensity: f32,
+    pub volumetric_color: [f32; 3], // god ray tint, defaults to light color
+    /// Apparent angular size of the source in radians (authored in degrees
+    /// on the light table); 0 = punctual → hard legacy shadows. Drives PCSS
+    /// penumbra via ShadowUniforms.pcss.w — the WGSL mirrors keep this slot
+    /// named `_pad1` because no shader reads it directly (ADR 0056).
+    pub angular_size: f32, // was _pad1 — layout unchanged
 }
 
 impl Default for DirectionalLight {
     fn default() -> Self {
         Self {
             direction: [0.0, -1.0, 0.0],
-            _pad0: 0.0,
+            volumetric_intensity: 0.0,
             color: [1.0, 1.0, 1.0],
             intensity: 0.0,
+            volumetric_color: [1.0, 1.0, 1.0],
+            angular_size: 0.0,
         }
     }
 }
@@ -132,6 +151,13 @@ pub struct PointLight {
     pub radius: f32,
     pub color: [f32; 3],
     pub intensity: f32,
+    /// Physical source radius in world units (representative-point area
+    /// light, ADR 0056); 0 = punctual → verbatim legacy shading. Grew the
+    /// struct 32 → 48 B — mirrored in all six WGSL light structs.
+    pub source_radius: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 impl Default for PointLight {
@@ -141,6 +167,10 @@ impl Default for PointLight {
             radius: 10.0,
             color: [1.0, 1.0, 1.0],
             intensity: 0.0,
+            source_radius: 0.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -156,7 +186,10 @@ pub struct SpotLight {
     pub color: [f32; 3],
     pub outer_angle: f32,
     pub intensity: f32,
-    pub _pad0: f32,
+    /// Physical source radius in world units (ADR 0056); 0 = punctual.
+    /// Rides the former _pad0 slot — layout unchanged; only shader.wgsl's
+    /// mirror renames the field (sole reader).
+    pub source_radius: f32, // was _pad0
     pub _pad1: f32,
     pub _pad2: f32,
 }
@@ -171,7 +204,7 @@ impl Default for SpotLight {
             color: [1.0, 1.0, 1.0],
             outer_angle: 0.5,
             intensity: 0.0,
-            _pad0: 0.0,
+            source_radius: 0.0,
             _pad1: 0.0,
             _pad2: 0.0,
         }
@@ -194,11 +227,26 @@ pub struct LightUniforms {
     pub point_count: u32,
     pub spot_count: u32,
     pub _pad: u32,
+    /// rgb = hemisphere sky color; w encodes the diffuse-wrap knob as
+    /// (1 + wrap) so legacy writes of 1.0 decode to wrap = 0 (ADR 0044).
     pub ambient_sky: [f32; 4],
+    /// rgb = hemisphere ground color; w encodes the Oren-Nayar diffuse
+    /// blend the same way: (1 + oren), legacy 1.0 = off (ADR 0048).
     pub ambient_ground: [f32; 4],
+    /// rgb = sheen tint (linear), w = sheen strength; all-zero = off.
+    /// New field (not an encoding trick): `Pod::zeroed()` and every
+    /// pre-existing writer leave it disabled. Mirrored in SIX WGSL structs —
+    /// shader / skinned / terrain / grass_render / volumetric / ocean —
+    /// see the `light_uniforms_layout` test (ADR 0048).
+    pub sheen_color_strength: [f32; 4],
 }
 
 impl LightUniforms {
+    /// Built-in hemisphere ambient colors (linear RGB), used whenever a scene
+    /// does not author `[environment] ambient_sky / ambient_ground`.
+    pub const DEFAULT_AMBIENT_SKY: [f32; 3] = [0.12, 0.13, 0.18];
+    pub const DEFAULT_AMBIENT_GROUND: [f32; 3] = [0.06, 0.05, 0.04];
+
     /// Default lighting — matches the original two hardcoded directionals
     pub fn default_scene_lights() -> Self {
         let mut lights = Self::zeroed();
@@ -206,25 +254,31 @@ impl LightUniforms {
         // Key light (warm sun from upper-right)
         lights.directional_lights[0] = DirectionalLight {
             direction: [0.5, 1.0, 0.3],
-            _pad0: 0.0,
+            volumetric_intensity: 0.0,
             color: [1.0, 0.98, 0.95],
             intensity: 3.0,
+            volumetric_color: [1.0, 0.98, 0.95],
+            angular_size: 0.0,
         };
 
         // Fill light (cool, from lower-left-behind)
         lights.directional_lights[1] = DirectionalLight {
             direction: [-0.4, -0.3, -0.6],
-            _pad0: 0.0,
+            volumetric_intensity: 0.0,
             color: [0.6, 0.7, 0.9],
             intensity: 0.8,
+            volumetric_color: [0.6, 0.7, 0.9],
+            angular_size: 0.0,
         };
 
         lights.directional_count = 2;
         lights.point_count = 0;
         lights.spot_count = 0;
         lights._pad = 0;
-        lights.ambient_sky = [0.12, 0.13, 0.18, 1.0];
-        lights.ambient_ground = [0.06, 0.05, 0.04, 1.0];
+        let [sr, sg, sb] = Self::DEFAULT_AMBIENT_SKY;
+        let [gr, gg, gb] = Self::DEFAULT_AMBIENT_GROUND;
+        lights.ambient_sky = [sr, sg, sb, 1.0];
+        lights.ambient_ground = [gr, gg, gb, 1.0];
 
         lights
     }
@@ -237,13 +291,16 @@ pub struct RenderPipeline {
     pub overlay_line_pipeline: wgpu::RenderPipeline,
     pub outline_pipeline: wgpu::RenderPipeline,
     pub depth_prepass_pipeline: wgpu::RenderPipeline,
+    pub transparent_alpha_pipeline: wgpu::RenderPipeline,
+    pub transparent_additive_pipeline: wgpu::RenderPipeline,
+    pub transparent_multiply_pipeline: wgpu::RenderPipeline,
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     pub light_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl RenderPipeline {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PBR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -431,7 +488,10 @@ impl RenderPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });
@@ -472,7 +532,10 @@ impl RenderPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });
@@ -518,7 +581,10 @@ impl RenderPipeline {
                         clamp: 0.0,
                     },
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });
@@ -564,7 +630,10 @@ impl RenderPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
             multiview: None,
             cache: None,
         });
@@ -607,7 +676,167 @@ impl RenderPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        // Transparent alpha pipeline: standard alpha blending, no depth write, no backface cull
+        let transparent_alpha_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Transparent Alpha Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        // Transparent additive pipeline: src*SrcAlpha + dst*One
+        let transparent_additive_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Transparent Additive Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        // Transparent multiply pipeline: src*DstColor + dst*OneMinusSrcAlpha
+        let transparent_multiply_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Transparent Multiply Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Dst,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             });
@@ -618,6 +847,9 @@ impl RenderPipeline {
             overlay_line_pipeline,
             outline_pipeline,
             depth_prepass_pipeline,
+            transparent_alpha_pipeline,
+            transparent_additive_pipeline,
+            transparent_multiply_pipeline,
             transform_bind_group_layout,
             material_bind_group_layout,
             light_bind_group_layout,

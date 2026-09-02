@@ -1,0 +1,463 @@
+# ================================================================
+#  THE OVERGROWN RUINS — Flooded Garden
+# ================================================================
+#
+#  Zone 2: Bright outdoor garden overrun by nature. Lush trees,
+#  climbing vines, and water strider creatures amid ruined walls.
+#
+#  Procgen showcase:
+#    - texture_v1 (perlin_organic): mossy_stone walls, garden_ground floor
+#    - tree_v1: garden_tree (space_colonization, dense, 3 LODs)
+#    - tree_v1: garden_vine (climbing, high curve noise, 3 LODs)
+#    - creature_v1: water_strider (random seed — each unique)
+#    - Runtime: Multiple garden_trees share spec → LRU cache demo
+# ================================================================
+
+[scene]
+name = "The Flooded Garden"
+version = "1.0"
+description = "Overgrown outdoor garden with lush procgen trees and water striders"
+input_config = "showcase_game/config/input_ruins.toml"
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.15
+bloom_threshold = 1.2
+vignette_enabled = true
+vignette_intensity = 0.25
+exposure = 1.2
+ssao_enabled = false
+fog_enabled = true
+fog_color = [0.55, 0.65, 0.5]
+fog_density = 0.003
+fog_start = 30.0
+fog_end = 120.0
+
+
+# ============================================================
+#  PLAYER
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 12]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.script]
+source = "footsteps.rhai"
+
+
+# ============================================================
+#  CONTROLLERS
+# ============================================================
+
+[entities.hud_controller]
+[entities.hud_controller.script]
+source = "zone_hud.rhai"
+
+[entities.game_controller]
+[entities.game_controller.script]
+source = "game_controller.rhai"
+
+[entities.ambient_controller]
+[entities.ambient_controller.transform]
+position = [0, 0, 0]
+[entities.ambient_controller.script]
+source = "zone_ambience.rhai"
+
+
+# ============================================================
+#  LIGHTING — bright natural sun
+# ============================================================
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.4, 0.8, 0.3]
+color = [1.0, 0.95, 0.85]
+intensity = 2.0
+
+# Dappled light through tree canopy
+[entities.canopy_light_1]
+parent = "garden_main"
+[entities.canopy_light_1.transform]
+position = [-4, 3, 2]
+[entities.canopy_light_1.light]
+type = "point"
+color = [0.8, 0.9, 0.6]
+intensity = 6.0
+radius = 8.0
+
+[entities.canopy_light_2]
+parent = "garden_main"
+[entities.canopy_light_2.transform]
+position = [5, 3, -4]
+[entities.canopy_light_2.light]
+type = "point"
+color = [0.85, 0.95, 0.7]
+intensity = 5.0
+radius = 7.0
+
+
+# ============================================================
+#  ROOM
+# ============================================================
+
+[entities.garden_main]
+archetype = "room"
+[entities.garden_main.transform]
+position = [0, 0, 0]
+
+
+# ============================================================
+#  FLOOR — procgen garden_ground
+# ============================================================
+
+[entities.ground]
+archetype = "floor"
+[entities.ground.transform]
+position = [0, -0.1, 0]
+[entities.ground.bounds]
+min = [-25, -0.1, -25]
+max = [25, 0.0, 25]
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [50, 0.2, 50]
+friction = 0.8
+[entities.ground.material]
+texture = "garden_ground"
+roughness = 0.85
+
+
+# ============================================================
+#  RUINED WALLS — partial walls with mossy_stone
+# ============================================================
+
+# Crumbling east wall (partial height)
+[entities.ruin_wall_east]
+archetype = "wall"
+parent = "garden_main"
+[entities.ruin_wall_east.transform]
+position = [10, 1.5, 0]
+[entities.ruin_wall_east.bounds]
+min = [-0.2, -1.5, -8]
+max = [0.2, 1.5, 8]
+[entities.ruin_wall_east.rigidbody]
+body_type = "static"
+[entities.ruin_wall_east.collider]
+shape = "box"
+size = [0.4, 3, 16]
+[entities.ruin_wall_east.material]
+texture = "mossy_stone"
+roughness = 0.8
+
+# Crumbling west wall (broken section)
+[entities.ruin_wall_west]
+archetype = "wall"
+parent = "garden_main"
+[entities.ruin_wall_west.transform]
+position = [-10, 1.0, -2]
+[entities.ruin_wall_west.bounds]
+min = [-0.2, -1.0, -6]
+max = [0.2, 1.0, 6]
+[entities.ruin_wall_west.rigidbody]
+body_type = "static"
+[entities.ruin_wall_west.collider]
+shape = "box"
+size = [0.4, 2, 12]
+[entities.ruin_wall_west.material]
+texture = "mossy_stone"
+roughness = 0.8
+
+# North wall fragment
+[entities.ruin_wall_north]
+archetype = "wall"
+parent = "garden_main"
+[entities.ruin_wall_north.transform]
+position = [0, 1.2, -8]
+[entities.ruin_wall_north.bounds]
+min = [-5, -1.2, -0.2]
+max = [5, 1.2, 0.2]
+[entities.ruin_wall_north.rigidbody]
+body_type = "static"
+[entities.ruin_wall_north.collider]
+shape = "box"
+size = [10, 2.4, 0.4]
+[entities.ruin_wall_north.material]
+texture = "mossy_stone"
+roughness = 0.8
+
+# South wall with doorway
+[entities.ruin_wall_south_left]
+archetype = "wall"
+parent = "garden_main"
+[entities.ruin_wall_south_left.transform]
+position = [-5, 1.5, 14]
+[entities.ruin_wall_south_left.bounds]
+min = [-5, -1.5, -0.15]
+max = [5, 1.5, 0.15]
+[entities.ruin_wall_south_left.rigidbody]
+body_type = "static"
+[entities.ruin_wall_south_left.collider]
+shape = "box"
+size = [10, 3, 0.3]
+[entities.ruin_wall_south_left.material]
+texture = "mossy_stone"
+roughness = 0.8
+
+[entities.ruin_wall_south_right]
+archetype = "wall"
+parent = "garden_main"
+[entities.ruin_wall_south_right.transform]
+position = [5, 1.5, 14]
+[entities.ruin_wall_south_right.bounds]
+min = [-5, -1.5, -0.15]
+max = [5, 1.5, 0.15]
+[entities.ruin_wall_south_right.rigidbody]
+body_type = "static"
+[entities.ruin_wall_south_right.collider]
+shape = "box"
+size = [10, 3, 0.3]
+[entities.ruin_wall_south_right.material]
+texture = "mossy_stone"
+roughness = 0.8
+
+
+# ============================================================
+#  TREES — procgen garden_tree (same spec = LRU cache demo)
+# ============================================================
+
+[entities.tree_1]
+archetype = "character"
+parent = "garden_main"
+[entities.tree_1.transform]
+position = [-5, 0, 3]
+scale = [1.0, 1.0, 1.0]
+[entities.tree_1.model]
+asset = "garden_tree"
+
+[entities.tree_2]
+archetype = "character"
+parent = "garden_main"
+[entities.tree_2.transform]
+position = [6, 0, -2]
+scale = [1.1, 1.1, 1.1]
+[entities.tree_2.model]
+asset = "garden_tree"
+
+[entities.tree_3]
+archetype = "character"
+parent = "garden_main"
+[entities.tree_3.transform]
+position = [-3, 0, -5]
+scale = [0.9, 0.9, 0.9]
+[entities.tree_3.model]
+asset = "garden_tree"
+
+[entities.tree_4]
+archetype = "character"
+parent = "garden_main"
+[entities.tree_4.transform]
+position = [2, 0, 6]
+scale = [1.2, 1.2, 1.2]
+[entities.tree_4.model]
+asset = "garden_tree"
+
+[entities.tree_5]
+archetype = "character"
+parent = "garden_main"
+[entities.tree_5.transform]
+position = [8, 0, 4]
+scale = [0.85, 0.85, 0.85]
+[entities.tree_5.model]
+asset = "garden_tree"
+
+
+# ============================================================
+#  VINES — procgen garden_vine climbing ruin walls
+# ============================================================
+
+[entities.vine_1]
+archetype = "character"
+parent = "garden_main"
+[entities.vine_1.transform]
+position = [9.8, 0, -2]
+scale = [1.0, 1.0, 1.0]
+[entities.vine_1.model]
+asset = "garden_vine"
+
+[entities.vine_2]
+archetype = "character"
+parent = "garden_main"
+[entities.vine_2.transform]
+position = [-9.8, 0, 1]
+scale = [0.8, 1.2, 0.8]
+[entities.vine_2.model]
+asset = "garden_vine"
+
+[entities.vine_3]
+archetype = "character"
+parent = "garden_main"
+[entities.vine_3.transform]
+position = [2, 0, -7.8]
+scale = [0.9, 0.9, 0.9]
+[entities.vine_3.model]
+asset = "garden_vine"
+
+
+# ============================================================
+#  WATER STRIDERS — procgen water_strider (random seed)
+# ============================================================
+
+[entities.strider_1]
+archetype = "character"
+parent = "garden_main"
+[entities.strider_1.transform]
+position = [-2, 0.4, 0]
+rotation = [0, 30, 0]
+[entities.strider_1.model]
+asset = "water_strider"
+[entities.strider_1.interactable]
+prompt_text = "Water Strider"
+range = 2.0
+interaction_type = "examine"
+enabled = true
+[entities.strider_1.script]
+source = "creature_idle.rhai"
+
+[entities.strider_2]
+archetype = "character"
+parent = "garden_main"
+[entities.strider_2.transform]
+position = [4, 0.4, -4]
+rotation = [0, 150, 0]
+[entities.strider_2.model]
+asset = "water_strider"
+[entities.strider_2.interactable]
+prompt_text = "Water Strider"
+range = 2.0
+interaction_type = "examine"
+enabled = true
+[entities.strider_2.script]
+source = "creature_idle.rhai"
+
+[entities.strider_3]
+archetype = "character"
+parent = "garden_main"
+[entities.strider_3.transform]
+position = [7, 0.4, 6]
+rotation = [0, -90, 0]
+[entities.strider_3.model]
+asset = "water_strider"
+[entities.strider_3.interactable]
+prompt_text = "Water Strider"
+range = 2.0
+interaction_type = "examine"
+enabled = true
+[entities.strider_3.script]
+source = "creature_idle.rhai"
+
+
+# ============================================================
+#  ESSENCE PICKUPS
+# ============================================================
+
+[entities.essence_1]
+archetype = "essence"
+parent = "garden_main"
+[entities.essence_1.transform]
+position = [-7, 1.5, -3]
+[entities.essence_1.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_2]
+archetype = "essence"
+parent = "garden_main"
+[entities.essence_2.transform]
+position = [8, 1.2, -5]
+[entities.essence_2.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_3]
+archetype = "essence"
+parent = "garden_main"
+[entities.essence_3.transform]
+position = [0, 1.8, 8]
+[entities.essence_3.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_4]
+archetype = "essence"
+parent = "garden_main"
+[entities.essence_4.transform]
+position = [-8, 1.0, 5]
+[entities.essence_4.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_5]
+archetype = "essence"
+parent = "garden_main"
+[entities.essence_5.transform]
+position = [3, 2.0, -6]
+[entities.essence_5.script]
+source = "essence_pickup.rhai"
+
+
+# ============================================================
+#  RETURN DOOR — back to tavern
+# ============================================================
+
+[entities.return_door]
+archetype = "door"
+parent = "garden_main"
+[entities.return_door.transform]
+position = [-0.75, 0, 14]
+[entities.return_door.bounds]
+min = [0, 0, -0.05]
+max = [1.5, 2.5, 0.05]
+[entities.return_door.material]
+texture = "mossy_stone"
+roughness = 0.6
+[entities.return_door.rigidbody]
+body_type = "kinematic"
+[entities.return_door.collider]
+shape = "box"
+size = [1.5, 2.5, 0.1]
+[entities.return_door.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+[entities.return_door.interactable]
+prompt_text = "Return to Tavern"
+range = 2.5
+interaction_type = "use"
+enabled = true
+[entities.return_door.zone_data]
+zone_name = "Tavern"
+target_scene = "tavern_hub.scene.toml"
+[entities.return_door.script]
+source = "zone_door.rhai"

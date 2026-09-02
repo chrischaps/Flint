@@ -6,6 +6,8 @@ pub enum DebugMode {
     /// Standard PBR Cook-Torrance shading
     #[default]
     Pbr,
+    /// Wireframe overlay on top of solid PBR geometry
+    WireframeOverlay,
     /// Wireframe-only rendering (solid geometry drawn as edge lines)
     WireframeOnly,
     /// World-space normals mapped to RGB
@@ -21,10 +23,23 @@ pub enum DebugMode {
 }
 
 impl DebugMode {
+    /// All modes in cycle order, for UI enumeration (combo boxes)
+    pub const ALL: [DebugMode; 8] = [
+        Self::Pbr,
+        Self::WireframeOverlay,
+        Self::WireframeOnly,
+        Self::Normals,
+        Self::Depth,
+        Self::UvChecker,
+        Self::Unlit,
+        Self::MetallicRoughness,
+    ];
+
     /// Cycle to the next debug mode
     pub fn next(self) -> Self {
         match self {
-            Self::Pbr => Self::WireframeOnly,
+            Self::Pbr => Self::WireframeOverlay,
+            Self::WireframeOverlay => Self::WireframeOnly,
             Self::WireframeOnly => Self::Normals,
             Self::Normals => Self::Depth,
             Self::Depth => Self::UvChecker,
@@ -38,7 +53,8 @@ impl DebugMode {
     pub fn as_u32(self) -> u32 {
         match self {
             Self::Pbr => 0,
-            Self::WireframeOnly => 0, // wireframe is handled by pipeline swap, shader stays PBR
+            Self::WireframeOverlay => 0, // shader stays PBR, overlay handled by pipeline
+            Self::WireframeOnly => 0,    // wireframe is handled by pipeline swap, shader stays PBR
             Self::Normals => 1,
             Self::Depth => 2,
             Self::UvChecker => 3,
@@ -51,6 +67,7 @@ impl DebugMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::Pbr => "PBR",
+            Self::WireframeOverlay => "Wireframe Overlay",
             Self::WireframeOnly => "Wireframe",
             Self::Normals => "Normals",
             Self::Depth => "Depth",
@@ -65,21 +82,21 @@ impl DebugMode {
 pub struct DebugState {
     /// Current shading debug mode (F1 cycles)
     pub mode: DebugMode,
-    /// Whether wireframe overlay is drawn on top of solid geometry (F2 toggles)
-    pub wireframe_overlay: bool,
     /// Whether face-normal direction arrows are drawn (F3 toggles)
     pub show_normals: bool,
     /// Length of normal-direction arrows in model-space units
     pub normal_arrow_length: f32,
+    /// Whether skeleton/armature bone lines are drawn (F4 toggles)
+    pub show_skeleton: bool,
 }
 
 impl Default for DebugState {
     fn default() -> Self {
         Self {
             mode: DebugMode::Pbr,
-            wireframe_overlay: false,
             show_normals: false,
             normal_arrow_length: 0.3,
+            show_skeleton: false,
         }
     }
 }

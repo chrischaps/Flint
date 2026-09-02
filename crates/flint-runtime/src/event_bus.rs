@@ -3,14 +3,9 @@
 use crate::event::GameEvent;
 
 /// A simple event queue that systems push to and consumers drain
+#[derive(Default)]
 pub struct EventBus {
     events: Vec<GameEvent>,
-}
-
-impl Default for EventBus {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl EventBus {

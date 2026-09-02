@@ -3,6 +3,7 @@
 //! Reads `audio_trigger` components from entities and fires sounds
 //! when matching events occur (collisions, interactions, trigger volumes).
 
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -25,20 +26,17 @@ pub enum AudioCommand {
 #[derive(Debug, Clone, Default)]
 struct TriggerRules {
     on_collision: Option<String>,
+    // Reserved for future targeted interaction events.
+    #[allow(dead_code)]
     on_interact: Option<String>,
     on_enter: Option<String>,
     on_exit: Option<String>,
 }
 
 /// Reads audio_trigger components and generates AudioCommands from GameEvents
+#[derive(Default)]
 pub struct AudioTrigger {
     entity_rules: HashMap<EntityId, TriggerRules>,
-}
-
-impl Default for AudioTrigger {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl AudioTrigger {
@@ -60,7 +58,7 @@ impl AudioTrigger {
                 None => continue,
             };
 
-            let trigger_data = match components.get("audio_trigger") {
+            let trigger_data = match components.get(comp::AUDIO_TRIGGER) {
                 Some(v) => v,
                 None => continue,
             };
@@ -85,11 +83,7 @@ impl AudioTrigger {
     }
 
     /// Process a list of game events and generate audio commands
-    pub fn process_events(
-        &self,
-        events: &[GameEvent],
-        world: &FlintWorld,
-    ) -> Vec<AudioCommand> {
+    pub fn process_events(&self, events: &[GameEvent], world: &FlintWorld) -> Vec<AudioCommand> {
         let mut commands = Vec::new();
 
         for event in events {
@@ -106,9 +100,7 @@ impl AudioTrigger {
                 GameEvent::TriggerEntered { entity: _, trigger } => {
                     if let Some(rules) = self.entity_rules.get(trigger) {
                         if let Some(sound) = &rules.on_enter {
-                            let pos = world
-                                .get_transform(*trigger)
-                                .map(|t| t.position);
+                            let pos = world.get_transform(*trigger).map(|t| t.position);
                             commands.push(AudioCommand::Play {
                                 sound: sound.clone(),
                                 position: pos,
@@ -120,9 +112,7 @@ impl AudioTrigger {
                 GameEvent::TriggerExited { entity: _, trigger } => {
                     if let Some(rules) = self.entity_rules.get(trigger) {
                         if let Some(sound) = &rules.on_exit {
-                            let pos = world
-                                .get_transform(*trigger)
-                                .map(|t| t.position);
+                            let pos = world.get_transform(*trigger).map(|t| t.position);
                             commands.push(AudioCommand::Play {
                                 sound: sound.clone(),
                                 position: pos,
@@ -211,7 +201,9 @@ mod tests {
             );
             t
         });
-        world.set_component(door_id, "transform", transform).unwrap();
+        world
+            .set_component(door_id, "transform", transform)
+            .unwrap();
 
         // Add audio_trigger to door
         let trigger_data = toml::Value::Table({

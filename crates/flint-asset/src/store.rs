@@ -84,7 +84,9 @@ impl ContentStore {
                     let name_str = name.to_string_lossy();
                     // Extract hash from filename (before the extension)
                     if let Some(hash_hex) = name_str.split('.').next() {
-                        if let Some(hash) = ContentHash::from_prefixed_hex(&format!("sha256:{}", hash_hex)) {
+                        if let Some(hash) =
+                            ContentHash::from_prefixed_hex(&format!("sha256:{}", hash_hex))
+                        {
                             hashes.push(hash);
                         }
                     }
@@ -109,10 +111,7 @@ impl ContentStore {
     fn path_for_hash(&self, hash: &ContentHash, source: &Path) -> PathBuf {
         let hex = hash.to_hex();
         let prefix = &hex[..2];
-        let ext = source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("bin");
+        let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
 
         self.root.join(prefix).join(format!("{}.{}", hex, ext))
     }

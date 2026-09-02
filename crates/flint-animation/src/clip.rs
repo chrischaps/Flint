@@ -54,10 +54,7 @@ pub enum TrackTarget {
     /// Drives transform.scale
     Scale,
     /// Drives an arbitrary float field on a named component
-    CustomFloat {
-        component: String,
-        field: String,
-    },
+    CustomFloat { component: String, field: String },
 }
 
 /// How to interpolate between keyframes

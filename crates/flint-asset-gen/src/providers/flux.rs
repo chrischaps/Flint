@@ -87,10 +87,7 @@ impl FluxProvider {
             match response {
                 Ok(mut ok) => {
                     return ok.body_mut().read_json().map_err(|e| {
-                        FlintError::GenerationError(format!(
-                            "Failed to parse Flux response: {}",
-                            e
-                        ))
+                        FlintError::GenerationError(format!("Failed to parse Flux response: {}", e))
                     });
                 }
                 Err(e) => {
@@ -192,11 +189,7 @@ impl GenerationProvider for FluxProvider {
         let start = std::time::Instant::now();
         let prompt = self.build_prompt(request, style);
 
-        let params = request
-            .texture_params
-            .as_ref()
-            .cloned()
-            .unwrap_or_default();
+        let params = request.texture_params.as_ref().cloned().unwrap_or_default();
 
         std::fs::create_dir_all(output_dir)?;
 

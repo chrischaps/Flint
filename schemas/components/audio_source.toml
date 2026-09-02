@@ -7,3 +7,4 @@ spatial = { type = "bool", default = true, description = "3D positioned sound (u
 min_distance = { type = "f32", default = 1.0, min = 0.0, description = "Distance at full volume" }
 max_distance = { type = "f32", default = 25.0, min = 0.0, description = "Distance at silence" }
 autoplay = { type = "bool", default = true, description = "Start playing on load" }
+bus = { type = "string", default = "sfx", description = "Mixer bus: 'sfx' or 'music'" }

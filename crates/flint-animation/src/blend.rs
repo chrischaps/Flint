@@ -46,7 +46,11 @@ pub fn additive_blend(
     weight: f32,
     out: &mut [JointPose],
 ) {
-    let count = base.len().min(additive.len()).min(reference.len()).min(out.len());
+    let count = base
+        .len()
+        .min(additive.len())
+        .min(reference.len())
+        .min(out.len());
     let w = weight.clamp(0.0, 1.0);
 
     for i in 0..count {

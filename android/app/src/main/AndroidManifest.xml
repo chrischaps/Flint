@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Require Vulkan support (minSdk 26 also satisfies AAudio requirement) -->
+    <uses-feature
+        android:name="android.hardware.vulkan.level"
+        android:version="0"
+        android:required="true" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:hasCode="true"
+        android:allowBackup="false"
+        android:theme="@style/FlintFullscreen">
+
+        <!-- GameActivity — routes input through Java for trigger/axis interception -->
+        <activity
+            android:name="com.flint.game.FlintActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density"
+            android:screenOrientation="${screenOrientation}">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Point to our native library -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="flint_android" />
+        </activity>
+    </application>
+
+</manifest>

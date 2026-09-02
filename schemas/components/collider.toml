@@ -1,5 +1,5 @@
 [component.collider]
-shape = { type = "enum", values = ["box", "sphere", "capsule"], default = "box", description = "Collision shape type" }
+shape = { type = "enum", values = ["box", "sphere", "capsule", "sprite"], default = "box", description = "Collision shape type ('sprite' auto-sizes from sprite component)" }
 size = { type = "vec3", default = [1, 1, 1], description = "Shape dimensions (width/height/depth for box, diameter for sphere/capsule)" }
 is_sensor = { type = "bool", default = false, description = "Sensor colliders detect overlap but don't create contacts" }
 friction = { type = "f32", default = 0.5, min = 0.0, max = 1.0, description = "Surface friction coefficient" }

@@ -92,13 +92,33 @@ pub fn run(cmd: EntityCommands) -> Result<()> {
             parent,
             props,
             schemas,
-        } => create(&archetype, &name, &scene, parent.as_deref(), props.as_deref(), &schemas),
+        } => create(
+            &archetype,
+            &name,
+            &scene,
+            parent.as_deref(),
+            props.as_deref(),
+            &schemas,
+        ),
 
-        EntityCommands::List { scene, format, schemas } => list(&scene, &format, &schemas),
+        EntityCommands::List {
+            scene,
+            format,
+            schemas,
+        } => list(&scene, &format, &schemas),
 
-        EntityCommands::Delete { name, scene, schemas } => delete(&name, &scene, &schemas),
+        EntityCommands::Delete {
+            name,
+            scene,
+            schemas,
+        } => delete(&name, &scene, &schemas),
 
-        EntityCommands::Show { name, scene, format, schemas } => show(&name, &scene, &format, &schemas),
+        EntityCommands::Show {
+            name,
+            scene,
+            format,
+            schemas,
+        } => show(&name, &scene, &format, &schemas),
     }
 }
 
@@ -151,13 +171,11 @@ fn create(
             for (comp_name, comp_data) in obj {
                 // Convert JSON to TOML value
                 let toml_str = serde_json::to_string(comp_data)?;
-                let toml_val: toml::Value = toml::from_str(&format!(
-                    "data = {}",
-                    toml_str.replace(":", "=")
-                ))
-                .ok()
-                .and_then(|t: toml::Value| t.get("data").cloned())
-                .unwrap_or_else(|| json_to_toml(comp_data));
+                let toml_val: toml::Value =
+                    toml::from_str(&format!("data = {}", toml_str.replace(":", "=")))
+                        .ok()
+                        .and_then(|t: toml::Value| t.get("data").cloned())
+                        .unwrap_or_else(|| json_to_toml(comp_data));
 
                 components.set(comp_name.clone(), toml_val);
             }
@@ -171,7 +189,9 @@ fn create(
     }
     if let Some(components) = world.get_components(id) {
         for (comp_name, comp_data) in &components.data {
-            entity_def.components.insert(comp_name.clone(), comp_data.clone());
+            entity_def
+                .components
+                .insert(comp_name.clone(), comp_data.clone());
         }
     }
     scene_file.entities.insert(name.to_string(), entity_def);
@@ -210,7 +230,8 @@ fn list(scene_path: &str, format: &str, schemas_path: &str) -> Result<()> {
 
 fn delete(name: &str, scene_path: &str, schemas_path: &str) -> Result<()> {
     let registry = load_registry(schemas_path)?;
-    let (mut world, mut scene_file) = load_scene(scene_path, &registry).context("Failed to load scene")?;
+    let (mut world, mut scene_file) =
+        load_scene(scene_path, &registry).context("Failed to load scene")?;
 
     world
         .despawn_by_name(name)
@@ -289,9 +310,7 @@ fn json_to_toml(json: &serde_json::Value) -> toml::Value {
             }
         }
         serde_json::Value::String(s) => toml::Value::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            toml::Value::Array(arr.iter().map(json_to_toml).collect())
-        }
+        serde_json::Value::Array(arr) => toml::Value::Array(arr.iter().map(json_to_toml).collect()),
         serde_json::Value::Object(obj) => {
             let mut map = toml::map::Map::new();
             for (k, v) in obj {

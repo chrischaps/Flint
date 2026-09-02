@@ -1,0 +1,166 @@
+generator = "texture_v1"
+
+[meta]
+name = "alien_organic"
+description = "Alien organic surface with pulsing cell structures using voronoi smooth_f1, musgrave ridged, and HSV manipulation"
+version = "1.0.0"
+tags = ["texture", "alien", "organic", "sci-fi"]
+
+[seed]
+mode = "fixed"
+value = 99031
+
+[params]
+pattern = "pipeline"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# Smooth voronoi cells for organic membrane look
+[[params.ops]]
+type = "voronoi_texture"
+output = "membrane"
+cell_output = "cell_id"
+scale = 8.0
+randomness = 0.85
+feature = "smooth_f1"
+metric = "euclidean"
+
+# F2 voronoi for secondary vein pattern
+[[params.ops]]
+type = "voronoi_texture"
+output = "veins_raw"
+scale = 6.0
+randomness = 1.0
+feature = "f2"
+metric = "manhattan"
+
+# Difference blend to get vein network
+[[params.ops]]
+type = "blend"
+source = "membrane"
+target = "veins_raw"
+mode = "difference"
+strength = 1.0
+
+# Map range to boost vein contrast
+[[params.ops]]
+type = "map_range"
+input = "veins_raw"
+output = "veins"
+from_min = 0.0
+from_max = 0.3
+to_min = 0.0
+to_max = 1.0
+interpolation = "smootherstep"
+clamp = true
+
+# Ridged musgrave for bumpy tissue texture
+[[params.ops]]
+type = "musgrave_texture"
+output = "tissue"
+noise_type = "simplex"
+musgrave_type = "ridged_multifractal"
+frequency = 10.0
+octaves = 5
+lacunarity = 2.3
+dimension = 0.9
+offset = 1.0
+gain = 2.0
+scale_x = 1.0
+scale_y = 1.0
+
+# Combine membrane and tissue for height
+[[params.ops]]
+type = "math"
+operation = "add"
+input_a = "membrane"
+input_b = "tissue"
+output = "height_raw"
+clamp = false
+
+# Normalize height to 0-1
+[[params.ops]]
+type = "map_range"
+input = "height_raw"
+output = "height"
+from_min = 0.2
+from_max = 1.2
+to_min = 0.0
+to_max = 1.0
+interpolation = "linear"
+clamp = true
+
+# Blur the height slightly for organic softness
+[[params.ops]]
+type = "blur"
+input = "height"
+output = "height"
+radius = 1
+sigma = 0.7
+
+# Color ramp: membrane distance → purple-magenta alien flesh
+[[params.ops]]
+type = "color_ramp"
+input = "membrane"
+interpolation = "linear"
+
+[[params.ops.stops]]
+position = 0.0
+color = "#20082A"
+
+[[params.ops.stops]]
+position = 0.25
+color = "#3A1550"
+
+[[params.ops.stops]]
+position = 0.5
+color = "#4E2068"
+
+[[params.ops.stops]]
+position = 0.75
+color = "#3D2548"
+
+[[params.ops.stops]]
+position = 1.0
+color = "#281838"
+
+# Faint bioluminescent vein glow — mostly cyan, very subtle
+[[params.ops]]
+type = "blend"
+source = "veins"
+target = "g"
+mode = "screen"
+strength = 0.1
+
+[[params.ops]]
+type = "blend"
+source = "veins"
+target = "b"
+mode = "screen"
+strength = 0.08
+
+# HSV: boost saturation for richer purple
+[[params.ops]]
+type = "hsv_adjust"
+hue_offset = 0.0
+saturation_factor = 1.4
+value_factor = 1.05
+
+# Derive normals
+[[params.ops]]
+type = "derive_normal"
+strength = 1.8
+
+# Roughness from membrane — smooth in cell centers, rough at edges
+[[params.ops]]
+type = "map_range"
+input = "membrane"
+output = "roughness"
+from_min = 0.0
+from_max = 0.5
+to_min = 0.8
+to_max = 0.3
+interpolation = "smoothstep"
+clamp = true

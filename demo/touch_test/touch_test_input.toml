@@ -1,0 +1,26 @@
+version = 1
+game_id = "touch_test"
+
+[actions.move_left]
+kind = "button"
+[[actions.move_left.bindings]]
+type = "key"
+code = "KeyA"
+[[actions.move_left.bindings]]
+type = "touch_zone"
+zone = "left_half"
+
+[actions.move_right]
+kind = "button"
+[[actions.move_right.bindings]]
+type = "key"
+code = "KeyD"
+[[actions.move_right.bindings]]
+type = "touch_zone"
+zone = "right_half"
+
+[actions.jump]
+kind = "button"
+[[actions.jump.bindings]]
+type = "key"
+code = "Space"

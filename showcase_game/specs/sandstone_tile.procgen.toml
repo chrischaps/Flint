@@ -1,0 +1,30 @@
+generator = "texture_v1"
+
+[meta]
+name = "sandstone_tile"
+description = "Regular sandstone tile pattern for the Collapsed Library"
+version = "1.0.0"
+tags = ["texture", "tile", "sandstone", "library"]
+
+[seed]
+mode = "derived"
+derive_from = "library:sandstone"
+
+[params]
+pattern = "tiling_grid"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+base_color = "#C4A76C"
+color_variation = 0.08
+mortar_color = "#8A7B5A"
+rows = 4
+columns = 4
+gap_width = 0.02
+roughness_base = 0.7
+roughness_variation = 0.05
+normal_strength = 0.9
+detail_scale = 35.0
+detail_strength = 0.06

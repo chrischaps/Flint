@@ -13,6 +13,12 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
+[features]
+default = ["debug-hud"]
+# Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
+# zero debug surface and must still compile.
+debug-hud = ["dep:flint-debug-ui"]
+
 [dependencies]
 flint-core = { workspace = true }
 flint-asset = { workspace = true }
@@ -24,9 +30,15 @@ flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-import = { workspace = true }
 flint-audio = { workspace = true }
+flint-music = { workspace = true }
+flint-input-capture = { workspace = true }
+serde_json = { workspace = true }
 flint-animation = { workspace = true }
 flint-particles = { workspace = true }
+flint-terrain = { workspace = true }
 flint-script = { workspace = true }
+flint-procgen = { workspace = true }
+flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -40,3 +52,5 @@ egui-winit = { workspace = true }
 image = { workspace = true }
 dirs = { workspace = true }
 gilrs = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

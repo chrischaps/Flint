@@ -5,7 +5,11 @@ use flint_schema::{FieldType, SchemaRegistry};
 use std::path::Path;
 
 pub fn run(name: &str, schemas_paths: &[&str]) -> Result<()> {
-    let existing: Vec<&str> = schemas_paths.iter().copied().filter(|p| Path::new(p).exists()).collect();
+    let existing: Vec<&str> = schemas_paths
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect();
     if existing.is_empty() {
         anyhow::bail!("No schemas directories found: {:?}", schemas_paths);
     }
@@ -27,7 +31,11 @@ pub fn run(name: &str, schemas_paths: &[&str]) -> Result<()> {
 
         for (field_name, field_schema) in fields {
             let type_str = format_field_type(&field_schema.field_type);
-            let required = if field_schema.required { " (required)" } else { "" };
+            let required = if field_schema.required {
+                " (required)"
+            } else {
+                ""
+            };
 
             print!("  {} : {}{}", field_name, type_str, required);
 

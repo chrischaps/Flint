@@ -9,3 +9,5 @@ loop = { type = "bool", default = true }
 speed = { type = "f32", default = 1.0, min = -10.0, max = 10.0 }
 blend_target = { type = "string", default = "", description = "Clip to crossfade into" }
 blend_duration = { type = "f32", default = 0.3, min = 0.0, max = 10.0, description = "Crossfade duration in seconds" }
+layer_clip = { type = "string", default = "", description = "Additive layer clip: loops on its own clock, composed onto the base pose (delta from rest, keyed joints only); survives crossfades" }
+layer_weight = { type = "f32", default = 1.0, min = 0.0, max = 1.0, description = "Additive layer strength (live dial: 0 = off)" }

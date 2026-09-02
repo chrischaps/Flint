@@ -5,7 +5,26 @@ use crate::component::{ComponentSchema, ComponentSchemaFile};
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Auto-discover `schemas/` directories by walking up from a scene file path.
+/// Checks `scene_dir/schemas/` then `parent_dir/schemas/`, matching the model
+/// loading pattern used elsewhere in the engine.
+pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let mut dirs = Vec::new();
+    for dir in [Some(scene_dir), scene_dir.parent()] {
+        if let Some(d) = dir {
+            let schemas = d.join("schemas");
+            if schemas.is_dir() {
+                dirs.push(schemas);
+            }
+        }
+    }
+    dirs
+}
 
 /// Registry that holds all loaded component and archetype schemas
 #[derive(Debug, Default)]

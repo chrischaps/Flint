@@ -13,7 +13,7 @@ Flint is built from source using the Rust toolchain. There are no pre-built bina
 Clone the repository and build in release mode:
 
 ```bash
-git clone https://github.com/chaps/flint.git
+git clone https://github.com/chrischaps/flint.git
 cd flint
 cargo build --release
 ```

@@ -110,8 +110,7 @@ impl ViewGizmo {
 
     fn draw_content(&mut self, ui: &mut egui::Ui, cam: &CameraView) -> Option<GizmoAction> {
         let total_size = egui::vec2(GIZMO_DIAMETER, GIZMO_DIAMETER + LABEL_HEIGHT);
-        let (response, painter) =
-            ui.allocate_painter(total_size, egui::Sense::click_and_drag());
+        let (response, painter) = ui.allocate_painter(total_size, egui::Sense::click_and_drag());
 
         let center = egui::pos2(
             response.rect.center().x,
@@ -121,20 +120,52 @@ impl ViewGizmo {
 
         // Background circle with subtle border
         painter.circle_filled(center, bg_radius, BG_FILL);
-        painter.circle_stroke(
-            center,
-            bg_radius,
-            egui::Stroke::new(1.0, BG_STROKE_COLOR),
-        );
+        painter.circle_stroke(center, bg_radius, egui::Stroke::new(1.0, BG_STROKE_COLOR));
 
         // Define all six axis endpoints
         let axes = [
-            AxisDef { dir: [1.0, 0.0, 0.0], label: "X", color: X_COLOR, id: AxisId::PosX, positive: true },
-            AxisDef { dir: [-1.0, 0.0, 0.0], label: "", color: X_DIM, id: AxisId::NegX, positive: false },
-            AxisDef { dir: [0.0, 1.0, 0.0], label: "Y", color: Y_COLOR, id: AxisId::PosY, positive: true },
-            AxisDef { dir: [0.0, -1.0, 0.0], label: "", color: Y_DIM, id: AxisId::NegY, positive: false },
-            AxisDef { dir: [0.0, 0.0, 1.0], label: "Z", color: Z_COLOR, id: AxisId::PosZ, positive: true },
-            AxisDef { dir: [0.0, 0.0, -1.0], label: "", color: Z_DIM, id: AxisId::NegZ, positive: false },
+            AxisDef {
+                dir: [1.0, 0.0, 0.0],
+                label: "X",
+                color: X_COLOR,
+                id: AxisId::PosX,
+                positive: true,
+            },
+            AxisDef {
+                dir: [-1.0, 0.0, 0.0],
+                label: "",
+                color: X_DIM,
+                id: AxisId::NegX,
+                positive: false,
+            },
+            AxisDef {
+                dir: [0.0, 1.0, 0.0],
+                label: "Y",
+                color: Y_COLOR,
+                id: AxisId::PosY,
+                positive: true,
+            },
+            AxisDef {
+                dir: [0.0, -1.0, 0.0],
+                label: "",
+                color: Y_DIM,
+                id: AxisId::NegY,
+                positive: false,
+            },
+            AxisDef {
+                dir: [0.0, 0.0, 1.0],
+                label: "Z",
+                color: Z_COLOR,
+                id: AxisId::PosZ,
+                positive: true,
+            },
+            AxisDef {
+                dir: [0.0, 0.0, -1.0],
+                label: "",
+                color: Z_DIM,
+                id: AxisId::NegZ,
+                positive: false,
+            },
         ];
 
         // Sort back-to-front by depth (draw farthest first so closest is on top)
@@ -152,7 +183,11 @@ impl ViewGizmo {
         for axis in &sorted {
             let proj = Self::project(cam, axis.dir);
             let end = center + proj * AXIS_LENGTH;
-            let cap_r = if axis.positive { POS_CAP_RADIUS } else { NEG_CAP_RADIUS };
+            let cap_r = if axis.positive {
+                POS_CAP_RADIUS
+            } else {
+                NEG_CAP_RADIUS
+            };
 
             // Depth-based dimming: axes pointing away from camera are fainter
             let d = Self::depth(cam, axis.dir);
@@ -204,12 +239,7 @@ impl ViewGizmo {
                     egui::Align2::CENTER_CENTER,
                     axis.label,
                     egui::FontId::new(11.0, egui::FontFamily::Proportional),
-                    egui::Color32::from_rgba_unmultiplied(
-                        255,
-                        255,
-                        255,
-                        (230.0 * alpha) as u8,
-                    ),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, (230.0 * alpha) as u8),
                 );
             }
         }
@@ -274,11 +304,11 @@ impl ViewGizmo {
         use std::f32::consts::{FRAC_PI_2, PI};
         let (yaw, pitch) = match axis {
             AxisId::PosX => (FRAC_PI_2, 0.0),  // Right
-            AxisId::NegX => (-FRAC_PI_2, 0.0),  // Left
-            AxisId::PosY => (0.0, 1.55),        // Top (near π/2, avoids gimbal lock)
-            AxisId::NegY => (0.0, -1.55),       // Bottom
-            AxisId::PosZ => (0.0, 0.0),         // Front
-            AxisId::NegZ => (PI, 0.0),          // Back
+            AxisId::NegX => (-FRAC_PI_2, 0.0), // Left
+            AxisId::PosY => (0.0, 1.55),       // Top (near π/2, avoids gimbal lock)
+            AxisId::NegY => (0.0, -1.55),      // Bottom
+            AxisId::PosZ => (0.0, 0.0),        // Front
+            AxisId::NegZ => (PI, 0.0),         // Back
         };
         GizmoAction::SnapToView { yaw, pitch }
     }

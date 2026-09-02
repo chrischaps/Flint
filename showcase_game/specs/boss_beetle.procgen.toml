@@ -1,0 +1,110 @@
+generator = "creature_v1"
+
+[meta]
+name = "boss_beetle"
+description = "Enlarged cave beetle boss with metallic elytra — crypt guardian"
+version = "1.0.0"
+tags = ["insect", "creature", "beetle", "boss", "crypt"]
+
+[seed]
+mode = "fixed"
+value = 99001
+
+[params]
+symmetry = "bilateral"
+
+[[params.bones]]
+name = "root"
+position = [0, 0.45, 0]
+
+[[params.bones]]
+name = "abdomen"
+parent = "root"
+position = [0, 0, -0.75]
+rotation = [-10, 0, 0]
+
+[[params.bones]]
+name = "thorax"
+parent = "root"
+position = [0, 0.08, 0.3]
+
+[[params.bones]]
+name = "head"
+parent = "thorax"
+position = [0, 0.08, 0.6]
+
+[[params.body_parts]]
+bone = "abdomen"
+shape = "ellipsoid"
+dimensions = [0.55, 0.4, 0.85]
+material = "elytra"
+
+[[params.body_parts]]
+bone = "thorax"
+shape = "ellipsoid"
+dimensions = [0.4, 0.35, 0.45]
+material = "chitin"
+
+[[params.body_parts]]
+bone = "head"
+shape = "ellipsoid"
+dimensions = [0.24, 0.2, 0.28]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "front_leg"
+parent_bone = "thorax"
+attach_offset = [0.32, -0.15, 0.2]
+mirror = true
+segments = [
+  { length = 0.2, radius_start = 0.05, radius_end = 0.04, rest_angles = [-40, 0, -30] },
+  { length = 0.32, radius_start = 0.04, radius_end = 0.03, rest_angles = [70, 0, 0] },
+  { length = 0.24, radius_start = 0.03, radius_end = 0.014, rest_angles = [-50, 0, 0] },
+]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "mid_leg"
+parent_bone = "thorax"
+attach_offset = [0.35, -0.18, 0]
+mirror = true
+segments = [
+  { length = 0.24, radius_start = 0.055, radius_end = 0.045, rest_angles = [-30, 0, -60] },
+  { length = 0.4, radius_start = 0.045, radius_end = 0.032, rest_angles = [65, 0, 0] },
+  { length = 0.28, radius_start = 0.032, radius_end = 0.015, rest_angles = [-45, 0, 0] },
+]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "hind_leg"
+parent_bone = "thorax"
+attach_offset = [0.32, -0.15, -0.2]
+mirror = true
+segments = [
+  { length = 0.28, radius_start = 0.06, radius_end = 0.048, rest_angles = [-25, 0, -80] },
+  { length = 0.45, radius_start = 0.048, radius_end = 0.035, rest_angles = [60, 0, 0] },
+  { length = 0.32, radius_start = 0.035, radius_end = 0.016, rest_angles = [-40, 0, 0] },
+]
+material = "chitin"
+
+[[params.limb_chains]]
+name = "antenna"
+parent_bone = "head"
+attach_offset = [0.1, 0.12, 0.18]
+mirror = true
+segments = [
+  { length = 0.15, radius_start = 0.018, radius_end = 0.015, rest_angles = [40, 0, 15] },
+  { length = 0.18, radius_start = 0.015, radius_end = 0.009, rest_angles = [20, 0, 10] },
+  { length = 0.12, radius_start = 0.009, radius_end = 0.004, rest_angles = [10, 0, 5] },
+]
+material = "chitin"
+
+[params.materials.chitin]
+base_color = "#1a1008"
+roughness = 0.25
+metallic = 0.1
+
+[params.materials.elytra]
+base_color = "#0a200a"
+roughness = 0.15
+metallic = 0.45

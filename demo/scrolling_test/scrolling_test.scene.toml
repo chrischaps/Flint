@@ -1,0 +1,174 @@
+[scene]
+name = "Scrolling World Test"
+description = "Tests WP5: camera follow, parallax backgrounds, screen shake, chunk streaming"
+
+[camera]
+position = [0, 5, 20]
+target = [0, 5, 0]
+orthographic = true
+ortho_height = 10.0
+
+# ─── Player (dynamic, 2D mode, script-driven movement) ───
+
+[entities.player]
+archetype = "custom"
+
+[entities.player.transform]
+position = [0, 3, 0]
+
+[entities.player.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 0.8
+height = 0.8
+tint = [0.2, 0.8, 0.3, 1.0]
+layer = 10
+
+[entities.player.rigidbody]
+body_type = "dynamic"
+gravity_scale = 1.0
+mode_2d = true
+
+[entities.player.collider]
+shape = "sprite"
+friction = 0.3
+restitution = 0.0
+
+[entities.player.script]
+source = "scroll_camera_test.rhai"
+
+# ─── Ground platform ───
+
+[entities.ground]
+archetype = "custom"
+
+[entities.ground.transform]
+position = [0, 0, 0]
+
+[entities.ground.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 30.0
+height = 1.0
+tint = [0.4, 0.3, 0.2, 1.0]
+layer = 5
+
+[entities.ground.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.ground.collider]
+shape = "box"
+size = [30, 1, 1]
+friction = 0.8
+
+# ─── Elevated platform ───
+
+[entities.platform1]
+archetype = "custom"
+
+[entities.platform1.transform]
+position = [3, 4, 0]
+
+[entities.platform1.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 4.0
+height = 0.5
+tint = [0.5, 0.4, 0.3, 1.0]
+layer = 5
+
+[entities.platform1.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.platform1.collider]
+shape = "box"
+size = [4, 0.5, 1]
+friction = 0.8
+
+# ─── Higher platform ───
+
+[entities.platform2]
+archetype = "custom"
+
+[entities.platform2.transform]
+position = [-2, 7, 0]
+
+[entities.platform2.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 3.0
+height = 0.5
+tint = [0.5, 0.4, 0.3, 1.0]
+layer = 5
+
+[entities.platform2.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.platform2.collider]
+shape = "box"
+size = [3, 0.5, 1]
+friction = 0.8
+
+# ─── Parallax background: sky (barely moves) ───
+
+[entities.bg_sky]
+archetype = "custom"
+
+[entities.bg_sky.transform]
+position = [0, 5, 0]
+
+[entities.bg_sky.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 30.0
+height = 30.0
+tint = [0.15, 0.1, 0.3, 1.0]
+layer = -100
+
+[entities.bg_sky.parallax]
+scroll_rate = 0.05
+repeat_x = true
+repeat_y = true
+
+# ─── Parallax background: far mountains (slow) ───
+
+[entities.bg_mountains]
+archetype = "custom"
+
+[entities.bg_mountains.transform]
+position = [0, 3, 0]
+
+[entities.bg_mountains.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 12.0
+height = 6.0
+tint = [0.25, 0.2, 0.35, 1.0]
+layer = -50
+
+[entities.bg_mountains.parallax]
+scroll_rate = 0.2
+repeat_x = true
+
+# ─── Parallax background: near buildings (medium) ───
+
+[entities.bg_buildings]
+archetype = "custom"
+
+[entities.bg_buildings.transform]
+position = [0, 2, 0]
+
+[entities.bg_buildings.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 8.0
+height = 5.0
+tint = [0.35, 0.3, 0.4, 1.0]
+layer = -20
+
+[entities.bg_buildings.parallax]
+scroll_rate = 0.5
+repeat_x = true

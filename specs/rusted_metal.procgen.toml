@@ -1,0 +1,153 @@
+generator = "texture_v1"
+
+[meta]
+name = "rusted_metal"
+description = "Weathered metal plate with procedural rust patches using color_ramp, voronoi, and overlay blending"
+version = "1.0.0"
+tags = ["texture", "metal", "rust", "industrial"]
+
+[seed]
+mode = "fixed"
+value = 55021
+
+[params]
+pattern = "pipeline"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# Base metal height — subtle hammered texture
+[[params.ops]]
+type = "noise_layer"
+output = "metal_height"
+noise_type = "perlin"
+frequency = 20.0
+octaves = 3
+scale_x = 1.0
+scale_y = 1.0
+
+# Low-freq noise for large organic rust blob shapes
+[[params.ops]]
+type = "musgrave_texture"
+output = "rust_blobs"
+noise_type = "simplex"
+musgrave_type = "hybrid_multifractal"
+frequency = 3.0
+octaves = 5
+lacunarity = 2.0
+dimension = 0.8
+offset = 0.5
+gain = 1.5
+scale_x = 1.0
+scale_y = 1.0
+
+# Higher-freq noise for irregular rust edges
+[[params.ops]]
+type = "noise_layer"
+output = "rust_edge_noise"
+noise_type = "perlin"
+frequency = 8.0
+octaves = 4
+scale_x = 1.0
+scale_y = 1.0
+
+# Multiply the two to get organically-edged patches
+[[params.ops]]
+type = "math"
+operation = "multiply"
+input_a = "rust_blobs"
+input_b = "rust_edge_noise"
+output = "rust_combined"
+clamp = false
+
+# Remap and threshold into a rust mask
+[[params.ops]]
+type = "map_range"
+input = "rust_combined"
+output = "rust_mask_hard"
+from_min = 0.2
+from_max = 0.55
+to_min = 0.0
+to_max = 1.0
+interpolation = "smoothstep"
+clamp = true
+
+# Slight blur for softer transitions
+[[params.ops]]
+type = "blur"
+input = "rust_mask_hard"
+output = "rust_mask"
+radius = 3
+sigma = 1.5
+
+# Color ramp: rust_mask → orange-brown rust color
+[[params.ops]]
+type = "color_ramp"
+input = "rust_mask"
+interpolation = "linear"
+
+[[params.ops.stops]]
+position = 0.0
+color = "#4A4A50"
+
+[[params.ops.stops]]
+position = 0.3
+color = "#5C4A3A"
+
+[[params.ops.stops]]
+position = 0.6
+color = "#8B4513"
+
+[[params.ops.stops]]
+position = 1.0
+color = "#A0522D"
+
+# Add height variation from rust — rusted areas are rougher/pitted
+[[params.ops]]
+type = "math"
+operation = "multiply"
+input_a = "rust_mask"
+input_b = "metal_height"
+output = "height"
+clamp = false
+
+# Bump up the height with musgrave pitting in rusted areas
+[[params.ops]]
+type = "musgrave_texture"
+output = "pitting"
+noise_type = "perlin"
+musgrave_type = "ridged_multifractal"
+frequency = 30.0
+octaves = 3
+lacunarity = 2.5
+dimension = 1.2
+offset = 1.0
+gain = 2.0
+scale_x = 1.0
+scale_y = 1.0
+
+# Blend pitting into height (only where rusty)
+[[params.ops]]
+type = "blend"
+source = "pitting"
+target = "height"
+mode = "add"
+strength = 0.15
+
+# Derive normal from combined height
+[[params.ops]]
+type = "derive_normal"
+strength = 2.0
+
+# Roughness: clean metal is smooth, rusted areas are rough
+[[params.ops]]
+type = "map_range"
+input = "rust_mask"
+output = "roughness"
+from_min = 0.0
+from_max = 1.0
+to_min = 0.25
+to_max = 0.85
+interpolation = "linear"
+clamp = true

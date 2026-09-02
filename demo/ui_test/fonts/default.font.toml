@@ -1,0 +1,8 @@
+[font]
+texture = "fonts/default_font.png"
+glyph_width = 8
+glyph_height = 16
+columns = 16
+first_char = 32
+char_count = 95
+spacing = 1.0

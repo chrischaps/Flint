@@ -1,0 +1,348 @@
+# Volumetric Lighting (God Rays) Test Scene
+# Demonstrates god ray shafts from a directional light streaming through
+# tall columns and archways, creating visible light beams in shadow gaps.
+
+[scene]
+name = "Volumetric Lighting Test"
+version = "1.0"
+description = "God rays streaming through columns and obstacles"
+
+[camera]
+# Inside the colonnade looking through columns toward the sunlight
+position = [-3, 2, -5]
+target = [4, 3, 4]
+fov = 60
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.08
+ssao_enabled = true
+ssao_intensity = 1.2
+fog_enabled = true
+fog_density = 0.008
+fog_color = [0.5, 0.55, 0.65]
+fog_start = 5.0
+fog_height_enabled = true
+fog_height_falloff = 0.05
+fog_height_origin = 0.0
+volumetric_enabled = true
+volumetric_samples = 64
+volumetric_density = 4.0
+volumetric_max_distance = 50.0
+volumetric_decay = 0.99
+exposure = 0.9
+
+# --- Lights ---
+
+# Strong warm sun from upper-right — volumetric enabled
+[entities.sun]
+[entities.sun.light]
+type = "directional"
+direction = [0.6, 1.0, 0.4]
+color = [1.0, 0.92, 0.78]
+intensity = 3.5
+volumetric_intensity = 1.5
+volumetric_color = [1.0, 0.9, 0.7]
+
+# Subtle cool fill from the opposite side — no volumetric
+[entities.fill_light]
+[entities.fill_light.light]
+type = "directional"
+direction = [-0.5, 0.3, -0.6]
+color = [0.3, 0.35, 0.5]
+intensity = 0.15
+
+# --- Ground ---
+
+# Large stone floor
+[entities.floor]
+archetype = "furniture"
+
+[entities.floor.transform]
+position = [0, -0.05, 0]
+
+[entities.floor.bounds]
+min = [-15, 0, -15]
+max = [15, 0.1, 15]
+
+[entities.floor.material]
+color = [0.35, 0.32, 0.28, 1.0]
+metallic = 0.0
+roughness = 0.85
+
+# --- Colonnade (tall columns casting shadow gaps for god rays) ---
+
+# Left colonnade
+[entities.pillar_L1]
+archetype = "furniture"
+
+[entities.pillar_L1.transform]
+position = [-4, 0, -6]
+
+[entities.pillar_L1.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_L1.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+[entities.pillar_L2]
+archetype = "furniture"
+
+[entities.pillar_L2.transform]
+position = [-4, 0, -2]
+
+[entities.pillar_L2.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_L2.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+[entities.pillar_L3]
+archetype = "furniture"
+
+[entities.pillar_L3.transform]
+position = [-4, 0, 2]
+
+[entities.pillar_L3.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_L3.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+[entities.pillar_L4]
+archetype = "furniture"
+
+[entities.pillar_L4.transform]
+position = [-4, 0, 6]
+
+[entities.pillar_L4.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_L4.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+# Right colonnade
+[entities.pillar_R1]
+archetype = "furniture"
+
+[entities.pillar_R1.transform]
+position = [4, 0, -6]
+
+[entities.pillar_R1.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_R1.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+[entities.pillar_R2]
+archetype = "furniture"
+
+[entities.pillar_R2.transform]
+position = [4, 0, -2]
+
+[entities.pillar_R2.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_R2.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+[entities.pillar_R3]
+archetype = "furniture"
+
+[entities.pillar_R3.transform]
+position = [4, 0, 2]
+
+[entities.pillar_R3.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_R3.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+[entities.pillar_R4]
+archetype = "furniture"
+
+[entities.pillar_R4.transform]
+position = [4, 0, 6]
+
+[entities.pillar_R4.bounds]
+min = [-0.4, 0, -0.4]
+max = [0.4, 6, 0.4]
+
+[entities.pillar_R4.material]
+color = [0.55, 0.52, 0.48, 1.0]
+metallic = 0.0
+roughness = 0.7
+
+# --- Overhead beams connecting columns (create shadow slits) ---
+
+[entities.beam1]
+archetype = "furniture"
+
+[entities.beam1.transform]
+position = [0, 5.5, -6]
+
+[entities.beam1.bounds]
+min = [-5, 0, -0.3]
+max = [5, 0.5, 0.3]
+
+[entities.beam1.material]
+color = [0.5, 0.47, 0.42, 1.0]
+metallic = 0.0
+roughness = 0.8
+
+[entities.beam2]
+archetype = "furniture"
+
+[entities.beam2.transform]
+position = [0, 5.5, -2]
+
+[entities.beam2.bounds]
+min = [-5, 0, -0.3]
+max = [5, 0.5, 0.3]
+
+[entities.beam2.material]
+color = [0.5, 0.47, 0.42, 1.0]
+metallic = 0.0
+roughness = 0.8
+
+[entities.beam3]
+archetype = "furniture"
+
+[entities.beam3.transform]
+position = [0, 5.5, 2]
+
+[entities.beam3.bounds]
+min = [-5, 0, -0.3]
+max = [5, 0.5, 0.3]
+
+[entities.beam3.material]
+color = [0.5, 0.47, 0.42, 1.0]
+metallic = 0.0
+roughness = 0.8
+
+[entities.beam4]
+archetype = "furniture"
+
+[entities.beam4.transform]
+position = [0, 5.5, 6]
+
+[entities.beam4.bounds]
+min = [-5, 0, -0.3]
+max = [5, 0.5, 0.3]
+
+[entities.beam4.material]
+color = [0.5, 0.47, 0.42, 1.0]
+metallic = 0.0
+roughness = 0.8
+
+# --- Light direction placeholder (DEBUG — remove later) ---
+
+# Bright marker showing where the sun "is"
+[entities.sun_marker]
+archetype = "furniture"
+
+[entities.sun_marker.transform]
+position = [6, 10, 4]
+
+[entities.sun_marker.bounds]
+min = [-0.5, -0.5, -0.5]
+max = [0.5, 0.5, 0.5]
+
+[entities.sun_marker.material]
+color = [1.0, 0.9, 0.3, 1.0]
+metallic = 0.0
+roughness = 1.0
+emissive = [2.0, 1.8, 0.6]
+
+# Thin rod pointing from the sun toward the scene center
+[entities.sun_arrow]
+archetype = "furniture"
+
+[entities.sun_arrow.transform]
+position = [3, 5, 2]
+
+[entities.sun_arrow.bounds]
+min = [-0.08, -0.08, -0.08]
+max = [0.08, 0.08, 0.08]
+
+# Stretched along the light direction via scale
+# light dir normalized ≈ [0.49, 0.82, 0.33], scale to ~6m rod
+[entities.sun_arrow.transform.scale]
+x = 18
+y = 30
+z = 12
+
+[entities.sun_arrow.material]
+color = [1.0, 0.85, 0.2, 1.0]
+metallic = 0.0
+roughness = 1.0
+
+# --- Central altar (catches god ray beams on its surfaces) ---
+
+[entities.altar_base]
+archetype = "furniture"
+
+[entities.altar_base.transform]
+position = [0, 0, 0]
+
+[entities.altar_base.bounds]
+min = [-1.5, 0, -1]
+max = [1.5, 0.6, 1]
+
+[entities.altar_base.material]
+color = [0.6, 0.58, 0.55, 1.0]
+metallic = 0.1
+roughness = 0.6
+
+[entities.altar_top]
+archetype = "furniture"
+
+[entities.altar_top.transform]
+position = [0, 0.6, 0]
+
+[entities.altar_top.bounds]
+min = [-1.2, 0, -0.7]
+max = [1.2, 0.15, 0.7]
+
+[entities.altar_top.material]
+color = [0.7, 0.68, 0.62, 1.0]
+metallic = 0.15
+roughness = 0.4
+
+# --- Back wall (receives projected light shafts) ---
+
+[entities.back_wall]
+archetype = "furniture"
+
+[entities.back_wall.transform]
+position = [-7, 0, 0]
+
+[entities.back_wall.bounds]
+min = [0, 0, -10]
+max = [0.4, 7, 10]
+
+[entities.back_wall.material]
+color = [0.45, 0.42, 0.38, 1.0]
+metallic = 0.0
+roughness = 0.9

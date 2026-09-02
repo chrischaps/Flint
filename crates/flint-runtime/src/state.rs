@@ -161,13 +161,10 @@ impl GameStateMachine {
 
     /// Returns the active configuration (from the top state).
     pub fn active_config(&self) -> &StateConfig {
-        self.stack
-            .last()
-            .map(|s| &s.config)
-            .unwrap_or_else(|| {
-                // Should never happen since we prevent popping the last state
-                &self.stack[0].config
-            })
+        self.stack.last().map(|s| &s.config).unwrap_or_else(|| {
+            // Should never happen since we prevent popping the last state
+            &self.stack[0].config
+        })
     }
 
     /// Returns the number of states on the stack.

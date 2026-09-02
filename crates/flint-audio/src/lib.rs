@@ -11,6 +11,7 @@ pub mod sync;
 pub mod trigger;
 
 use engine::AudioEngine;
+pub use engine::Bus;
 use flint_core::{Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, RuntimeSystem};
@@ -44,6 +45,7 @@ impl AudioSystem {
     pub fn clear(&mut self) {
         self.sync.clear();
         self.triggers = AudioTrigger::new();
+        self.engine.clear_oneshots();
     }
 
     /// Update the listener position (called from PlayerApp after camera update)
@@ -54,6 +56,11 @@ impl AudioSystem {
     /// Set the low-pass filter cutoff frequency on the master bus (Hz)
     pub fn set_filter_cutoff(&mut self, hz: f32) {
         self.engine.set_filter_cutoff(hz);
+    }
+
+    /// Set a mixer bus volume (linear amplitude; 0.0 mutes the bus)
+    pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
+        self.engine.set_bus_volume(bus, volume);
     }
 
     /// Process game events and execute resulting audio commands
@@ -71,14 +78,15 @@ impl AudioSystem {
                     volume,
                 } => {
                     if let Some(pos) = position {
-                        if let Err(e) = self.engine.play_at_position(&sound, pos, volume) {
-                            eprintln!("Audio: {:?}", e);
+                        if let Err(e) = self.engine.play_at_position(&sound, pos, volume, 1.0) {
+                            tracing::warn!("{:?}", e);
                         }
                     } else if let Err(e) =
-                        self.engine.play_non_spatial(&sound, volume, 1.0, false)
+                        self.engine
+                            .play_non_spatial(&sound, volume, 1.0, false, Bus::Sfx)
                     {
                         // One-shot non-spatial: handle not needed
-                        eprintln!("Audio: {:?}", e);
+                        tracing::warn!("{:?}", e);
                     }
                 }
                 AudioCommand::Stop { entity: _ } => {
@@ -93,7 +101,7 @@ impl AudioSystem {
 impl RuntimeSystem for AudioSystem {
     fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
         if !self.engine.is_available() {
-            eprintln!("Audio: no device, running silent");
+            tracing::warn!("No device, running silent");
             return Ok(());
         }
 
@@ -130,6 +138,9 @@ impl RuntimeSystem for AudioSystem {
 
         // Reload trigger rules for any new entities
         self.triggers.load_rules(world);
+
+        // Clean up finished one-shot spatial sounds
+        self.engine.cleanup_finished_oneshots();
 
         Ok(())
     }

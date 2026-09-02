@@ -17,7 +17,7 @@ All five phases of Flint are complete. Contributions are welcome in these areas:
 ## Development Setup
 
 ```bash
-git clone https://github.com/chaps/flint.git
+git clone https://github.com/chrischaps/flint.git
 cd flint
 cargo build
 cargo test

@@ -1,0 +1,108 @@
+generator = "texture_v1"
+
+[meta]
+name = "tavern_stone"
+description = "Coursed stone masonry wall for the tavern hub — cool gray rough-hewn blocks in horizontal rows"
+version = "3.0.0"
+tags = ["texture", "stone", "wall", "tavern"]
+
+[seed]
+mode = "fixed"
+value = 13050
+
+[params]
+width = 1024
+height = 1024
+pattern = "pipeline"
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+# 1. Coursed stone layout
+[[params.ops]]
+type = "brick_grid"
+columns = 5
+rows = 10
+stagger = 0.5
+gap_width = 0.025
+
+# 2. Per-stone height variation
+[[params.ops]]
+type = "cell_height"
+variation = 0.65
+
+# 3. Surface noise for height detail
+[[params.ops]]
+type = "noise_layer"
+noise_type = "simplex"
+frequency = 50.0
+octaves = 6
+output = "noise"
+
+# 4. Blend noise into height for rough surface
+[[params.ops]]
+type = "blend"
+source = "noise"
+target = "height"
+mode = "add"
+strength = 0.35
+
+# 5. Deep narrow mortar grooves
+[[params.ops]]
+type = "mortar_groove"
+depth = 0.25
+width = 0.03
+
+# 6. Cool gray stone color with per-block variation
+[[params.ops]]
+type = "cell_color"
+base_color = "#6E7270"
+variation = 0.12
+
+# 7. Very dark mortar lines
+[[params.ops]]
+type = "mortar_color"
+color = "#252828"
+threshold = 0.04
+
+# 8. Color noise — adds within-cell surface grain
+[[params.ops]]
+type = "noise_layer"
+noise_type = "perlin"
+frequency = 60.0
+octaves = 4
+output = "color_noise"
+
+# 9-11. Blend color noise into R, G, B channels
+[[params.ops]]
+type = "blend"
+source = "color_noise"
+target = "r"
+mode = "add"
+strength = 0.07
+
+[[params.ops]]
+type = "blend"
+source = "color_noise"
+target = "g"
+mode = "add"
+strength = 0.07
+
+[[params.ops]]
+type = "blend"
+source = "color_noise"
+target = "b"
+mode = "add"
+strength = 0.07
+
+# 12. Strong normals for deep stone relief
+[[params.ops]]
+type = "derive_normal"
+strength = 3.0
+
+# 13. High roughness for matte stone, smoother mortar
+[[params.ops]]
+type = "cell_roughness"
+base = 0.94
+variation = 0.05
+mortar = 0.65
+mortar_threshold = 0.04

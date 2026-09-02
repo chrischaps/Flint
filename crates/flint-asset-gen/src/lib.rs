@@ -23,12 +23,9 @@ pub use provider::{
     AssetKind, AudioParams, GenerateRequest, GenerateResult, GenerationProvider, ModelParams,
     ProviderStatus, TextureParams,
 };
+pub use registration::{
+    register_generated_asset, register_generated_asset_with_roots, write_asset_sidecar,
+    write_asset_sidecar_with_root, RegisteredAsset,
+};
 pub use semantic::SemanticAssetDef;
 pub use style::StyleGuide;
-pub use registration::{
-    register_generated_asset,
-    register_generated_asset_with_roots,
-    write_asset_sidecar,
-    write_asset_sidecar_with_root,
-    RegisteredAsset,
-};

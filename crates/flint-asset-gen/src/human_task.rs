@@ -165,10 +165,7 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "flint_task_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir = std::env::temp_dir().join(format!("flint_task_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -176,7 +173,14 @@ mod tests {
     #[test]
     fn test_generate_task_file_no_style() {
         let dir = temp_dir();
-        let path = generate_task_file("tavern_chair", AssetKind::Model, "A sturdy wooden chair", None, &dir).unwrap();
+        let path = generate_task_file(
+            "tavern_chair",
+            AssetKind::Model,
+            "A sturdy wooden chair",
+            None,
+            &dir,
+        )
+        .unwrap();
 
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();

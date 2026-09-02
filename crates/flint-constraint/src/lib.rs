@@ -15,4 +15,6 @@ pub use evaluator::ConstraintEvaluator;
 pub use fixer::{ConstraintFixer, FixAction, FixReport};
 pub use registry::ConstraintRegistry;
 pub use report::{ValidationReport, Violation};
-pub use types::{AutoFix, AutoFixStrategy, ConstraintDef, ConstraintFile, ConstraintKind, Severity};
+pub use types::{
+    AutoFix, AutoFixStrategy, ConstraintDef, ConstraintFile, ConstraintKind, Severity,
+};

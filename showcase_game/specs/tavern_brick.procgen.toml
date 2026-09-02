@@ -1,0 +1,114 @@
+generator = "texture_v1"
+
+[meta]
+description = "Warm red-brown brick wall for the tavern hub — composable pipeline with brick_grid"
+name = "tavern_brick"
+tags = [
+    "texture",
+    "brick",
+    "wall",
+    "tavern",
+]
+version = "2.0.0"
+
+[params]
+height = 1024
+output_maps = [
+    "albedo",
+    "normal",
+    "roughness",
+]
+pattern = "pipeline"
+seamless = true
+width = 1024
+
+[[params.ops]]
+columns = 4
+gap_width = 0.04
+id = "brick_grid"
+rows = 13
+stagger = 0.5
+type = "brick_grid"
+
+[[params.ops]]
+id = "cell_height"
+type = "cell_height"
+variation = 0.3
+
+[params.ops.inputs]
+cell_id = "brick_grid.cell_id"
+
+[[params.ops]]
+frequency = 30.0
+id = "noise_layer"
+noise_type = "perlin"
+octaves = 5
+output = "noise"
+type = "noise_layer"
+
+[[params.ops]]
+id = "blend"
+mode = "add"
+source = "noise"
+strength = 0.16
+target = "height"
+type = "blend"
+
+[params.ops.inputs]
+"<source>" = "noise_layer.<output>"
+"<target>" = "cell_height.height"
+
+[[params.ops]]
+depth = 0.15
+id = "mortar_groove"
+type = "mortar_groove"
+width = 0.04
+
+[params.ops.inputs]
+edge_dist = "brick_grid.edge_dist"
+height = "blend.<target>"
+
+[[params.ops]]
+base_color = "#8B5A3A"
+id = "cell_color"
+type = "cell_color"
+variation = 0.05
+
+[params.ops.inputs]
+cell_id = "brick_grid.cell_id"
+
+[[params.ops]]
+color = "#50483C"
+id = "mortar_color"
+threshold = 0.06
+type = "mortar_color"
+
+[params.ops.inputs]
+b = "cell_color.b"
+edge_dist = "brick_grid.edge_dist"
+g = "cell_color.g"
+r = "cell_color.r"
+
+[[params.ops]]
+id = "derive_normal"
+strength = 1.5
+type = "derive_normal"
+
+[params.ops.inputs]
+height = "mortar_groove.height"
+
+[[params.ops]]
+base = 0.92
+id = "cell_roughness"
+mortar = 0.78
+mortar_threshold = 0.06
+type = "cell_roughness"
+variation = 0.06
+
+[params.ops.inputs]
+cell_id = "brick_grid.cell_id"
+edge_dist = "brick_grid.edge_dist"
+
+[seed]
+mode = "fixed"
+value = 12001

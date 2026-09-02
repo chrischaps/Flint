@@ -24,11 +24,7 @@ pub enum ConstraintKind {
     /// Entity must have a child with the given archetype
     RequiredChild { child_archetype: String },
     /// A numeric field must be within a range
-    ValueRange {
-        field: String,
-        min: f64,
-        max: f64,
-    },
+    ValueRange { field: String, min: f64, max: f64 },
     /// A reference field must point to a valid entity
     ReferenceValid { field: String },
     /// A simple query-based rule expression
@@ -50,10 +46,7 @@ pub enum AutoFixStrategy {
     /// Remove the invalid field/component
     RemoveInvalid,
     /// Copy a field value from the parent entity
-    AssignFromParent {
-        field: String,
-        source_field: String,
-    },
+    AssignFromParent { field: String, source_field: String },
 }
 
 /// Auto-fix configuration for a constraint
@@ -109,7 +102,9 @@ child_archetype = "handle"
         let c = &file.constraint[0];
         assert_eq!(c.name, "doors_have_handles");
         assert_eq!(c.severity, Severity::Warning);
-        assert!(matches!(&c.kind, ConstraintKind::RequiredChild { child_archetype } if child_archetype == "handle"));
+        assert!(
+            matches!(&c.kind, ConstraintKind::RequiredChild { child_archetype } if child_archetype == "handle")
+        );
         assert!(c.auto_fix.is_none());
     }
 
@@ -136,7 +131,9 @@ archetype = "handle"
         let c = &file.constraint[0];
         let fix = c.auto_fix.as_ref().unwrap();
         assert!(fix.enabled);
-        assert!(matches!(&fix.strategy, AutoFixStrategy::AddChild { archetype, .. } if archetype == "handle"));
+        assert!(
+            matches!(&fix.strategy, AutoFixStrategy::AddChild { archetype, .. } if archetype == "handle")
+        );
     }
 
     #[test]
@@ -157,8 +154,10 @@ max = 180.0
 
         let file: ConstraintFile = toml::from_str(toml_str).unwrap();
         let c = &file.constraint[0];
-        assert!(matches!(&c.kind, ConstraintKind::ValueRange { field, min, max }
-            if field == "door.open_angle" && *min == 0.0 && *max == 180.0));
+        assert!(
+            matches!(&c.kind, ConstraintKind::ValueRange { field, min, max }
+            if field == "door.open_angle" && *min == 0.0 && *max == 180.0)
+        );
     }
 
     #[test]
@@ -178,8 +177,10 @@ component = "transform"
 
         let file: ConstraintFile = toml::from_str(toml_str).unwrap();
         let c = &file.constraint[0];
-        assert!(matches!(&c.kind, ConstraintKind::RequiredComponent { archetype, component }
-            if archetype == "door" && component == "transform"));
+        assert!(
+            matches!(&c.kind, ConstraintKind::RequiredComponent { archetype, component }
+            if archetype == "door" && component == "transform")
+        );
     }
 
     #[test]

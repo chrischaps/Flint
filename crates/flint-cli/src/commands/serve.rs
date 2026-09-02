@@ -5,9 +5,8 @@ use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_ecs::FlintWorld;
-use flint_import::import_gltf;
-use flint_render::{Camera, RenderContext, RendererConfig, SceneRenderer};
-use flint_runtime::RuntimeSystem;
+use flint_render::model_loader::{self, ModelLoadConfig};
+use flint_render::{Camera, DebugMode, RenderContext, RendererConfig, SceneRenderer};
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
@@ -69,7 +68,7 @@ pub fn run(scene_path: &str, watch: bool, schemas_path: &str) -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Watch error: {:?}", e);
+                        tracing::warn!("Watch error: {:?}", e);
                     }
                 }
             }
@@ -147,19 +146,24 @@ impl ViewerApp {
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.update_orbit();
 
-        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig { show_grid: true });
+        let mut scene_renderer = SceneRenderer::new(&render_context, RendererConfig {
+            show_grid: true,
+            ..Default::default()
+        });
 
         // Load models (including skeletal data) and update meshes from world
         {
             let mut state = self.state.lock().unwrap();
-            self.skeletal_entity_assets = load_models_from_world(
-                &state.world,
+            let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+            let load_result = model_loader::load_models_from_world(
+                &mut state.world,
                 &mut scene_renderer,
-                &mut self.animation,
                 &render_context.device,
                 &render_context.queue,
-                &state.scene_path,
+                &config,
             );
+            register_skeletal_data(&load_result, &mut self.animation);
+            self.skeletal_entity_assets = load_result.skinned_entities;
             scene_renderer.update_from_world(&state.world, &render_context.device);
 
             // Load property animation clips from animations/ directory
@@ -168,7 +172,7 @@ impl ViewerApp {
             // Initialize animation system (syncs entity states from world)
             self.animation
                 .initialize(&mut state.world)
-                .unwrap_or_else(|e| eprintln!("Animation init: {:?}", e));
+                .unwrap_or_else(|e| tracing::warn!("Animation init: {:?}", e));
         }
 
         self.render_context = Some(render_context);
@@ -186,7 +190,7 @@ impl ViewerApp {
                 return;
             }
             Err(e) => {
-                eprintln!("Surface error: {:?}", e);
+                tracing::warn!("Surface error: {:?}", e);
                 return;
             }
         };
@@ -194,7 +198,7 @@ impl ViewerApp {
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         if let Err(e) = renderer.render(context, &self.camera, &view) {
-            eprintln!("Render error: {:?}", e);
+            tracing::warn!("Render error: {:?}", e);
         }
 
         output.present();
@@ -223,8 +227,14 @@ impl ViewerApp {
             (&mut self.scene_renderer, &self.render_context)
         {
             for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                if let Some(matrices) = self.animation.skeletal_sync.bone_matrices(entity_id) {
-                    renderer.update_bone_matrices(&context.queue, asset_name, matrices);
+                if let Some(matrices) = self.animation.bone_matrices(entity_id) {
+                    renderer.update_bone_matrices(
+                        &context.device,
+                        &context.queue,
+                        *entity_id,
+                        asset_name,
+                        matrices,
+                    );
                 }
             }
         }
@@ -275,148 +285,58 @@ impl ViewerApp {
                         (&self.render_context, &mut self.scene_renderer)
                     {
                         let mut state = self.state.lock().unwrap();
-                        self.skeletal_entity_assets = load_models_from_world(
-                            &state.world,
+                        let config = ModelLoadConfig::from_scene_path(&state.scene_path);
+                        let load_result = model_loader::load_models_from_world(
+                            &mut state.world,
                             renderer,
-                            &mut self.animation,
                             &context.device,
                             &context.queue,
-                            &state.scene_path,
+                            &config,
                         );
+                        register_skeletal_data(&load_result, &mut self.animation);
+                        self.skeletal_entity_assets = load_result.skinned_entities;
                         renderer.update_from_world(&state.world, &context.device);
 
                         // Reload animation clips and re-initialize
                         load_animations_from_world(&state.scene_path, &mut self.animation);
                         self.animation
                             .initialize(&mut state.world)
-                            .unwrap_or_else(|e| eprintln!("Animation re-init: {:?}", e));
+                            .unwrap_or_else(|e| tracing::warn!("Animation re-init: {:?}", e));
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to reload scene: {:?}", e);
+                    tracing::warn!("Failed to reload scene: {:?}", e);
                 }
             }
         }
     }
 }
 
-/// Scan the world for entities with model components and load the referenced glTF files.
-/// Returns a mapping of entity_id → asset_name for skinned entities.
-fn load_models_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
+/// Register skeletal data from loaded models into the animation system.
+fn register_skeletal_data(
+    load_result: &model_loader::ModelLoadResult,
     animation: &mut AnimationSystem,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-) -> HashMap<flint_core::EntityId, String> {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut skeletal_entity_assets = HashMap::new();
-
-    for entity in world.all_entities() {
-        let model_asset = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("model").cloned())
-            .and_then(|model| {
-                model
-                    .get("asset")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(asset_name) = model_asset {
-            if renderer.mesh_cache().contains(&asset_name) {
-                // Track skeletal entities even if mesh already cached
-                if renderer.mesh_cache().contains_skinned(&asset_name) {
-                    skeletal_entity_assets.insert(entity.id, asset_name.clone());
+) {
+    for loaded in &load_result.models {
+        if loaded.is_skinned {
+            if let Some(ref import_result) = loaded.import_result {
+                for imported_skel in &import_result.skeletons {
+                    let skeleton = Skeleton::from_imported(imported_skel);
+                    animation.add_skeleton(loaded.entity_id, skeleton);
                 }
-                continue;
-            }
-
-            let model_path = scene_dir.join("models").join(format!("{}.glb", asset_name));
-
-            if model_path.exists() {
-                match import_gltf(&model_path) {
-                    Ok(import_result) => {
-                        let has_skins = !import_result.skeletons.is_empty();
-                        let has_skinned_meshes = import_result
-                            .meshes
-                            .iter()
-                            .any(|m| m.joint_indices.is_some());
-
-                        println!(
-                            "Loaded model: {} ({} meshes, {} materials{})",
-                            asset_name,
-                            import_result.meshes.len(),
-                            import_result.materials.len(),
-                            if has_skins {
-                                format!(
-                                    ", {} skins, {} skeletal clips",
-                                    import_result.skeletons.len(),
-                                    import_result.skeletal_clips.len()
-                                )
-                            } else {
-                                String::new()
-                            }
-                        );
-
-                        if has_skinned_meshes && has_skins {
-                            // Upload as skinned mesh
-                            renderer.load_skinned_model(
-                                device,
-                                queue,
-                                &asset_name,
-                                &import_result,
-                            );
-                            // Also upload static meshes (unskinned parts)
-                            renderer.load_model(device, queue, &asset_name, &import_result);
-
-                            // Register skeletons with the animation system
-                            for imported_skel in &import_result.skeletons {
-                                let skeleton = Skeleton::from_imported(imported_skel);
-                                animation
-                                    .skeletal_sync
-                                    .add_skeleton(entity.id, skeleton);
-                            }
-
-                            // Register skeletal clips
-                            for imported_clip in &import_result.skeletal_clips {
-                                let clip = SkeletalClip::from_imported(imported_clip);
-                                println!(
-                                    "  Skeletal clip: {} ({:.1}s, {} tracks)",
-                                    clip.name,
-                                    clip.duration,
-                                    clip.joint_tracks.len()
-                                );
-                                animation.skeletal_sync.add_clip(clip);
-                            }
-
-                            skeletal_entity_assets.insert(entity.id, asset_name.clone());
-                        } else {
-                            // Standard static mesh upload
-                            renderer.load_model(device, queue, &asset_name, &import_result);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to load model '{}': {:?}", asset_name, e);
-                    }
+                for imported_clip in &import_result.skeletal_clips {
+                    let clip = SkeletalClip::from_imported(imported_clip);
+                    println!(
+                        "  Skeletal clip: {} ({:.1}s, {} tracks)",
+                        clip.name,
+                        clip.duration,
+                        clip.joint_tracks.len()
+                    );
+                    animation.add_skeletal_clip(clip);
                 }
-            } else {
-                eprintln!(
-                    "Model file not found: {} (tried {})",
-                    asset_name,
-                    model_path.display()
-                );
             }
         }
     }
-
-    // Also load texture files referenced by material components
-    load_textures_from_world(world, renderer, device, queue, scene_path);
-
-    skeletal_entity_assets
 }
 
 /// Load `.anim.toml` files from the `animations/` directory next to the scene
@@ -445,67 +365,16 @@ fn load_animations_from_world(scene_path: &str, animation: &mut AnimationSystem)
             match flint_animation::loader::load_clip_from_file(&path) {
                 Ok(clip) => {
                     println!("Loaded animation: {} ({:.1}s)", clip.name, clip.duration);
-                    animation.player.add_clip(clip);
+                    animation.add_property_clip(clip);
                 }
                 Err(e) => {
-                    eprintln!("Failed to load animation '{}': {:?}", path.display(), e);
+                    tracing::warn!("Failed to load animation '{}': {:?}", path.display(), e);
                 }
             }
         }
     }
 }
 
-/// Scan the world for entities with material.texture and pre-load the referenced image files
-fn load_textures_from_world(
-    world: &FlintWorld,
-    renderer: &mut SceneRenderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene_path: &str,
-) {
-    let scene_dir = Path::new(scene_path)
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut loaded: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for entity in world.all_entities() {
-        let texture_name = world
-            .get_components(entity.id)
-            .and_then(|components| components.get("material").cloned())
-            .and_then(|material| {
-                material
-                    .get("texture")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
-
-        if let Some(tex_name) = texture_name {
-            if loaded.contains(&tex_name) {
-                continue;
-            }
-            loaded.insert(tex_name.clone());
-
-            let tex_path = scene_dir.join(&tex_name);
-            if tex_path.exists() {
-                match renderer.load_texture_file(device, queue, &tex_name, &tex_path) {
-                    Ok(true) => {
-                        println!("Loaded texture: {}", tex_name);
-                    }
-                    Ok(false) => {} // already cached
-                    Err(e) => {
-                        eprintln!("Failed to load texture '{}': {}", tex_name, e);
-                    }
-                }
-            } else {
-                eprintln!(
-                    "Texture file not found: {} (tried {})",
-                    tex_name,
-                    tex_path.display()
-                );
-            }
-        }
-    }
-}
 
 impl ApplicationHandler for ViewerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -574,10 +443,15 @@ impl ApplicationHandler for ViewerApp {
                             }
                         }
                         PhysicalKey::Code(KeyCode::F2) => {
-                            // Toggle wireframe overlay
+                            // Toggle wireframe overlay mode
                             if let Some(renderer) = &mut self.scene_renderer {
-                                let on = renderer.toggle_wireframe_overlay();
-                                println!("Wireframe overlay: {}", if on { "ON" } else { "OFF" });
+                                let mode = if renderer.debug_state().mode == DebugMode::WireframeOverlay {
+                                    DebugMode::Pbr
+                                } else {
+                                    DebugMode::WireframeOverlay
+                                };
+                                renderer.set_debug_mode(mode);
+                                println!("Debug mode: {}", mode.label());
 
                                 // Regenerate auxiliary draws
                                 if let Some(context) = &self.render_context {

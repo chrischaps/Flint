@@ -1,0 +1,54 @@
+generator = "tree_v1"
+
+[meta]
+name = "crypt_mushroom"
+description = "Bioluminescent cave mushroom — short, thick, dome-capped"
+version = "1.0.0"
+tags = ["tree", "mushroom", "cave", "crypt", "bioluminescent"]
+
+[seed]
+mode = "derived"
+derive_from = "crypt:mushroom"
+
+[params]
+trunk_height = 1.5
+trunk_radius_base = 0.4
+trunk_radius_top = 0.35
+trunk_segments = 8
+radial_segments = 10
+trunk_curve_noise = 0.02
+bark_color_base = "#B8A89C"
+bark_roughness = 0.4
+
+branch_method = "lsystem"
+branch_levels = 1
+branch_angle_min = 60.0
+branch_angle_max = 85.0
+branch_length_falloff = 0.4
+branch_radius_falloff = 0.8
+lsystem_iterations = 1
+lsystem_angle_variation = 8.0
+
+crown_shape = "hemisphere"
+crown_radius = 1.2
+
+leaf_style = "mesh"
+leaf_density = 0.95
+leaf_color_base = "#3AFF5A"
+leaf_color_variation = 0.15
+leaf_size = 0.35
+leaf_size_variation = 0.2
+leaves_per_tip = 8
+leaf_spread_radius = 0.5
+
+[[lod]]
+level = 0
+target_triangles = 4000
+
+[[lod]]
+level = 1
+target_triangles = 1000
+
+[[lod]]
+level = 2
+target_triangles = 300

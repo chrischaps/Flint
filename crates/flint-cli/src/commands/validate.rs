@@ -7,17 +7,47 @@ use flint_constraint::{
 use flint_scene::{load_scene, save_scene_string};
 use flint_schema::SchemaRegistry;
 
+#[derive(clap::Args)]
 pub struct ValidateArgs {
+    /// Path to scene file
     pub scene: String,
+
+    /// Apply auto-fixes
+    #[arg(long)]
     pub fix: bool,
+
+    /// Preview fixes without applying
+    #[arg(long)]
     pub dry_run: bool,
+
+    /// Show diff of changes
+    #[arg(long)]
     pub output_diff: bool,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+
+    /// Output format (json or toml)
+    #[arg(long, default_value = "text")]
     pub format: String,
 }
 
 pub fn run(args: ValidateArgs) -> Result<()> {
-    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| std::path::Path::new(p).exists()).collect();
+    // Merge explicit schemas with auto-discovered dirs from scene path
+    let mut all_schemas = args.schemas.clone();
+    for dir in flint_schema::discover_schema_dirs(&args.scene) {
+        let s = dir.to_string_lossy().into_owned();
+        if !all_schemas.contains(&s) {
+            all_schemas.push(s);
+        }
+    }
+
+    let existing: Vec<&str> = all_schemas
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|p| std::path::Path::new(p).exists())
+        .collect();
     let schema_registry = SchemaRegistry::load_from_directories(&existing)?;
     let mut constraint_registry = ConstraintRegistry::new();
 
@@ -126,8 +156,7 @@ pub fn run(args: ValidateArgs) -> Result<()> {
         }
     } else {
         // Validation only
-        let evaluator =
-            ConstraintEvaluator::new(&world, &schema_registry, &constraint_registry);
+        let evaluator = ConstraintEvaluator::new(&world, &schema_registry, &constraint_registry);
         let report = evaluator.validate();
 
         if args.format == "json" {
@@ -160,7 +189,11 @@ fn print_report_text(report: &flint_constraint::ValidationReport) {
             Severity::Info => "INFO ",
         };
 
-        let fix_marker = if violation.has_auto_fix { " [fixable]" } else { "" };
+        let fix_marker = if violation.has_auto_fix {
+            " [fixable]"
+        } else {
+            ""
+        };
 
         println!(
             "  [{}] {}: {}{}",

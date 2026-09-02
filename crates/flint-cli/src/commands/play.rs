@@ -6,16 +6,48 @@ use flint_schema::SchemaRegistry;
 use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
+#[derive(clap::Args)]
 pub struct PlayArgs {
+    /// Path to scene file
     pub scene: String,
+
+    /// Paths to schemas directories (can specify multiple)
+    #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
     pub schemas: Vec<String>,
+
+    /// Launch in fullscreen mode
+    #[arg(long)]
     pub fullscreen: bool,
+
+    /// Optional input config overlay path
+    #[arg(long)]
     pub input_config: Option<String>,
+
+    /// Initial music bus volume (linear, 0.0 = muted, 1.0 = full)
+    #[arg(long, default_value_t = 1.0)]
+    pub music_volume: f64,
+
+    /// Initial SFX bus volume (linear, 0.0 = muted, 1.0 = full)
+    #[arg(long, default_value_t = 1.0)]
+    pub sfx_volume: f64,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
+    // Merge explicit schemas with auto-discovered dirs from scene path
+    let mut all_schemas = args.schemas.clone();
+    for dir in flint_schema::discover_schema_dirs(&args.scene) {
+        let s = dir.to_string_lossy().into_owned();
+        if !all_schemas.contains(&s) {
+            all_schemas.push(s);
+        }
+    }
+
     // Load schemas from all directories
-    let existing: Vec<&str> = args.schemas.iter().map(|s| s.as_str()).filter(|p| Path::new(p).exists()).collect();
+    let existing: Vec<&str> = all_schemas
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|p| Path::new(p).exists())
+        .collect();
     let registry = if !existing.is_empty() {
         SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?
     } else {
@@ -24,8 +56,7 @@ pub fn run(args: PlayArgs) -> Result<()> {
     };
 
     // Load scene
-    let (world, scene_file) =
-        load_scene(&args.scene, &registry).context("Failed to load scene")?;
+    let (world, scene_file) = load_scene(&args.scene, &registry).context("Failed to load scene")?;
 
     println!("Loaded scene: {}", scene_file.scene.name);
     println!("Entities: {}", world.entity_count());
@@ -36,8 +67,9 @@ pub fn run(args: PlayArgs) -> Result<()> {
     println!("  Space    - Jump");
     println!("  Shift    - Sprint");
     println!("  Escape   - Release cursor / Exit");
-    println!("  F1       - Cycle debug mode");
-    println!("  F4       - Toggle shadows");
+    println!("  F2       - Rendering stats overlay");
+    println!("  F3       - Scene debug panels");
+    println!("  F4       - Rendering & Effects menu");
     println!("  F11      - Toggle fullscreen");
 
     // Create and run the event loop
@@ -52,16 +84,25 @@ pub fn run(args: PlayArgs) -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
+    // Apply initial mixer bus volumes from CLI
+    app.audio
+        .set_bus_volume(flint_player::Bus::Music, args.music_volume);
+    app.audio
+        .set_bus_volume(flint_player::Bus::Sfx, args.sfx_volume);
+
     // Pass skybox path from scene environment settings
     if let Some(env) = &scene_file.environment {
         app.skybox_path = env.skybox.clone();
     }
 
+    // Pass camera settings from scene
+    app.scene_camera = scene_file.camera.clone();
+
     // Pass post-processing settings from scene
     app.scene_post_process = scene_file.post_process.clone();
 
-    // Preserve schema paths for scene transitions
-    app.set_schema_paths(args.schemas);
+    // Preserve schema paths for scene transitions (includes auto-discovered)
+    app.set_schema_paths(all_schemas);
 
     event_loop.run_app(&mut app)?;
 

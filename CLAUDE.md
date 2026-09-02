@@ -1,20 +1,20 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The core thesis inverts traditional engine design: the primary interface is CLI and code, with visual tools focused on *validating* results rather than *creating* them. Phase 5 complete: AI asset generation pipeline with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, semantic asset definitions, batch scene resolution, build manifests, model validation, and runtime catalog integration. Phase 4 complete with Rhai scripting, property/skeletal animation, spatial audio, interactable entities. PBR rendering from Phase 3, constraints from Phase 2. Game projects (e.g., the Doom-style FPS) live in their own repositories and include the engine as a git subtree. Extensible input system with TOML-based config, gamepad support (gilrs), layered loading, and runtime rebinding. GPU-instanced particle system with per-emitter pooling, alpha/additive blending, configurable emission shapes, and Rhai script control.
+Flint is a CLI-first, AI-agent-optimized 3D game engine written in Rust. The primary interface is CLI and code; visual tools validate results rather than create them. Phases 1-5 complete (ECS, constraints, PBR rendering, scripting/physics/audio/animation, AI asset generation). Game projects live in their own repositories with the engine as a git subtree.
 
 ## Build & Development Commands
 
 ```bash
 cargo build                    # Debug build
 cargo build --release          # Release build
-cargo run --bin flint -- <cmd> # Run CLI (e.g., cargo run --bin flint -- serve demo/showcase.scene.toml --watch)
-cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene with first-person controls
+cargo run --bin flint -- <cmd> # Run CLI
+cargo run --bin flint -- play demo/phase4_runtime.scene.toml  # Play a scene
 cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas  # Standalone player
-cargo test                     # Run all tests (261 unit tests across crates)
+cargo test                     # Run all tests
 cargo test -p flint-core       # Test a single crate
 cargo clippy                   # Lint
 cargo fmt --check              # Check formatting
@@ -22,177 +22,142 @@ cargo fmt --check              # Check formatting
 
 ## Development Workflow
 
-Flint is designed for a **edit → validate → play** iteration loop. When making visual changes to scenes, models, or scripts, use these tools in order:
+Flint uses an **edit -> validate -> play** loop:
 
-1. **`flint render`** — Headless scene-to-PNG snapshot. Use this to validate visual changes without launching a window. Fast, scriptable, and works in CI. This is the primary validation tool for AI agents.
+1. **`flint render`** -- Headless scene-to-PNG snapshot. Primary validation tool for AI agents.
    ```bash
-   # Render a scene to a PNG file
    flint render levels/demo.scene.toml --output test.png --schemas schemas --width 1280 --height 720
-
-   # Useful flags for framing the shot
    flint render levels/demo.scene.toml --output test.png --schemas schemas \
-     --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid --shadows
+     --distance 20 --pitch 30 --yaw 45 --target 0,1,0 --no-grid
+   # Debug/post-processing flags:
+   #   --debug-mode wireframe|normals|depth|uv|unlit|metalrough
+   #   --wireframe-overlay    --show-normals    --no-tonemapping
+   #   --no-shadows           --shadow-resolution 2048
+   #   --no-postprocess       --bloom-intensity 0.08  --bloom-threshold 1.0
+   #   --exposure 1.5         --ssao-radius 0.5       --ssao-intensity 1.0
+   #   --ssao-samples 64      (1-64; SSAO is the heaviest per-pixel pass — 16 is ~4x cheaper)
+   #   --fog-density 0.02     --fog-color 0.7,0.75,0.82  --fog-height-falloff 0.1
+   #   --dither-intensity 0.03   --desaturate 0.85
+   #   --dof 0.6  --dof-focus 10  --dof-range 5
+   #   --volumetric-density 1.0  --volumetric-samples 32
+   #   --kuwahara-radius 4       --kuwahara-sharpness 8.0
+   #   --kuwahara-hardness 8.0   --kuwahara-anisotropy 1.0
+   #   --oren-nayar 0.7          --sheen-strength 0.15  --sheen-color 1,0.9,0.8
+   #   --grade-lift 0.03,0.02,0.015  --grade-gamma 1,1,1  --grade-gain 1.04,1,0.94
+   #   --film-grain 0.03         --grain-time 0  --fxaa
+   #   --msaa 4               (1|4; default 1 keeps pixel gates single-sample.
+   #                           Also on flint-player. ADR 0058)
+   # Note: --shadow-resolution defaults to 2048 (the renderer's construction
+   # default) and is a real control since the texel-size upload (ADR 0049).
+   #   --render-mode 1 --mode-mix 1.0 --mode-params 3,0,6,0
+   #     (modes: 1=matrix 2=blood 3=drunk 4=tron [reality tears; params =
+   #      mask scale, mask style 0 fbm/1 iris, rate, spare] 5=underwater
+   #      [params = signed eye depth m, sea energy 0-1, daylight 0-1,
+   #      biolum 0-1; masks by per-pixel waterline, not the tear mask])
    ```
 
-2. **`flint serve --watch`** — Interactive 3D viewer with hot-reload. Use for orbit-camera inspection and live scene editing.
+2. **`flint edit <file>`** -- Unified interactive editor. Auto-detects file type and opens the right tool:
    ```bash
-   flint serve --watch levels/demo.scene.toml --schemas schemas
+   flint edit levels/demo.scene.toml              # Scene viewer (hot-reload)
+   flint edit levels/demo.scene.toml --spline      # Spline/track editor
+   flint edit models/character.glb                 # Model previewer (orbit camera)
+   flint edit models/character.glb --watch         # Model previewer with file watching
+   flint edit specs/oak_tree.procgen.toml          # Procgen previewer (mesh/texture)
+   flint edit specs/stone_wall.procgen.toml        # Texture pipeline editor (if pipeline pattern)
+   flint edit terrain.terrain.toml                 # Terrain editor
    ```
+   Supported extensions: `.scene.toml`, `.chunk.toml`, `.procgen.toml`, `.terrain.toml`, `.glb`, `.gltf`.
+   Common flags: `--width`, `--height`, `--no-grid`, `--watch`, `--seed`, `--no-inspector`, `--auto-orbit`.
+   Scene viewer applies the scene's `[post_process]` block on load. **F4 opens the Rendering & Effects menu** (ADR 0053) — every render/post toggle plus its non-binary parameters (SSAO radius/samples, DoF, bloom, fog, grade/grain/FXAA, kuwahara, render modes, shadows + resolution, lighting levers, FOV, debug shading mode), an authored-vs-viewer-default post toggle, and DoF-follow (focus plane tracks the last selected entity; values are plain view distances since the ADR 0055 depth fix). WASD orbit, Q/E zoom — while an entity is selected, W/E/R switch gizmo mode instead of orbiting. It also seeds the orbit camera from the scene's authored `[camera]` block (Space returns to that framing; ADR 0051 in game repos using this pattern), and supports `--auto-orbit` turntable with O toggle and [ / ] speed like the model previewer.
+   Model flags: `--clip <name>`, `--anim-speed <f32>`, `--render <path.png>`, `--no-animate`, `--distance`, `--yaw`, `--pitch`, `--target`, `--fov`.
+   Scene flags: `--spline` (opens spline/track editor).
+   Old commands (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`) still work as hidden aliases.
 
-3. **`flint play`** — Full game runtime with physics, scripting, audio, and input. Use to test gameplay.
+3. **`flint gen`** -- Run a procedural generation spec to produce meshes (GLB) or textures (PNG).
    ```bash
-   flint play levels/demo.scene.toml --schemas schemas
+   flint gen specs/oak_tree.procgen.toml -o tree.glb
+   flint gen specs/stone_wall.procgen.toml -o wall.png
+   flint gen specs/oak_tree.procgen.toml --dry-run
+   flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
    ```
 
-**For AI agents:** After making changes to a scene file, model, or visual configuration, always render a snapshot with `flint render` to verify the result before moving on. The render command loads models (searches `scene_dir/models/` then parent `../models/`), generates spline geometry, and computes the full transform hierarchy — it produces output representative of what `flint play` will display.
+4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
+
+**For AI agents:** After visual changes, always run `flint render` to verify before moving on. The render command loads models (searches `scene_dir/models/` then `../models/`), generates geometry, and computes the full transform hierarchy.
 
 ## Architecture
 
-19-crate Cargo workspace with clear dependency layering:
+23-crate Cargo workspace:
 
 ```
-flint-cli           CLI binary (clap derive). Commands: init, entity, scene, query, schema, serve, play, validate, asset, render
-  └── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock), style guides, batch resolution, validation, manifests
-flint-player        Standalone player binary with game loop, physics, audio, animation, scripting, egui HUD, first-person controls
-  ├── flint-script   Rhai scripting: ScriptEngine, ScriptSync, ScriptSystem (entity/input/audio/animation APIs, hot-reload)
-  ├── flint-particles GPU-instanced particle system: ParticleSystem, ParticleSync, ParticlePool, emission shapes
-  ├── flint-animation Property tween animation: AnimationClip, AnimationPlayer, AnimationSync, AnimationSystem
-  ├── flint-audio    Kira spatial audio: AudioEngine, AudioSync, AudioTrigger, AudioSystem
-  ├── flint-physics  Rapier 3D integration: PhysicsWorld, PhysicsSync, CharacterController
-  ├── flint-runtime  Game loop infrastructure: GameClock, InputState, InputConfig, EventBus, RuntimeSystem trait, GameStateMachine, PersistentStore
-  ├── flint-viewer   egui-based GUI inspector
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, validate, asset, render, gen, prefab
+  ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
+  ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
+  └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
+flint-android       Android entry point (NativeActivity, APK asset extraction)
+flint-player        Standalone player (game loop, physics, audio, animation, scripting, egui HUD)
+  ├── flint-script   Rhai scripting with hot-reload
+  ├── flint-particles GPU-instanced particle system
+  ├── flint-animation Property tween + skeletal animation
+  ├── flint-audio    Kira spatial audio
+  ├── flint-terrain  Heightmap terrain with splat-map blending
+  ├── flint-physics  Rapier 3D (character controller, static bodies)
+  ├── flint-runtime  GameClock, InputState, InputConfig, EventBus, GameStateMachine, PersistentStore
+  ├── flint-viewer   egui inspector with transform gizmos, undo/redo, TOML write-back
   ├── flint-import   glTF model importer
   ├── flint-asset    Content-addressed asset catalog
   ├── flint-constraint Constraint evaluation + auto-fix
-  ├── flint-query    PEG query language (pest parser). Syntax: "entities where archetype == 'door'"
-  ├── flint-scene    TOML scene serialization/deserialization with load/save
-  ├── flint-render   wgpu-based PBR renderer (winit 0.30 ApplicationHandler, wgpu 23, orbit + first-person camera, HDR post-processing with bloom/vignette)
-  ├── flint-ecs      hecs wrapper with stable EntityId mapping (BiMap), named entities, parent/child
-  ├── flint-schema   Component/archetype schema system with TOML loading and runtime validation
-  └── flint-core     Fundamental types: EntityId, ContentHash, Transform, Vec3, Color, FlintError
+  ├── flint-query    PEG query language (pest parser)
+  ├── flint-scene    TOML scene serialization/deserialization
+  ├── flint-render   wgpu PBR renderer (winit 0.30, wgpu 23, HDR post-processing, bloom, SSAO, fog)
+  ├── flint-ecs      hecs wrapper with stable EntityId mapping (BiMap)
+  ├── flint-schema   Component/archetype schema system
+  └── flint-core     EntityId, ContentHash, Transform, Vec3, Color, FlintError
 ```
 
-## Key Design Decisions
+## Key Design Principles
 
-- **Dynamic components** stored as `toml::Value` (not Rust types) so archetypes are defined at runtime in schema TOML files
-- **Stable EntityIds** via atomic counter (never recycled), persisted across save/load with counter adjustment to prevent collisions
-- **Scene format is TOML** — human-readable, diffable, structured as `[scene]` metadata + `[entities.<name>]` sections
-- **Schemas live in `schemas/`** directory — `components/*.toml` define field types and constraints, `archetypes/*.toml` bundle components with defaults. Multiple `--schemas` paths supported; later paths override earlier (game overrides engine)
-- **Query language** uses pest PEG parser (`grammar.pest`). Supports: `==`, `!=`, `contains`, `>`, `<`, `>=`, `<=` on entity fields
-- **Scene reload** is full re-parse (not incremental) to avoid borrow checker issues with `Mutex<ViewerState>`
-- **Physics uses Rapier 3D** via `flint-physics` crate — kinematic character controller for player, static bodies for world geometry
-- **Game loop** uses fixed-timestep accumulator pattern (1/60s default) for deterministic physics
-- **Camera modes** — `CameraMode::Orbit` (scene viewer default) and `CameraMode::FirstPerson` (player) share the same view/projection math
-- **Audio uses Kira** via `flint-audio` crate — spatial 3D audio with distance attenuation, non-spatial ambient loops, event-driven triggers
-- **Animation system** via `flint-animation` crate — property tweens (Tier 1) with Step/Linear/CubicSpline interpolation, `.anim.toml` clip files; skeletal animation (Tier 2) with glTF skin/joint import, GPU vertex skinning, bone matrix computation, crossfade blending; `animator` + `skeleton` component schemas, plays in `update()` (variable-rate for smooth interpolation)
-- **Scripting** via `flint-script` crate — Rhai scripting engine with entity/input/audio/animation/math/UI draw APIs; `script` component schema with `.rhai` files in `scripts/` directory; event callbacks (`on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`, `on_draw_ui`); `on_update()` is parameterless — use `delta_time()` API for frame delta; load-time arity validation warns on mismatched callback signatures; hot-reload via file timestamp checking; ScriptCommand pattern for deferred audio/event effects; DrawCommand pattern for immediate-mode 2D UI rendering
-- **Scriptable 2D UI overlay** — engine provides generic draw primitives (`draw_text`, `draw_rect`, `draw_circle`, `draw_line`, `draw_sprite` + `_ex` variants, `screen_width/height`, `measure_text`, `find_nearest_interactable`); scripts issue `DrawCommand`s each frame via `on_draw_ui()` callback; `PlayerApp` renders them via egui painter sorted by layer; sprites lazy-loaded from `sprites/` directory; no hardcoded HUD — all game UI is script-driven (e.g. `hud.rhai` for Doom FPS combat HUD, `hud_interact.rhai` for tavern interaction prompts)
-- **Interactable system** — `interactable` component schema with prompt text, range, type, enabled flag; `find_nearest_interactable()` exposed to both Rust and Rhai scripts; interaction prompts rendered by game-level HUD scripts
-- **Particle system** via `flint-particles` crate — GPU-instanced rendering with per-emitter pooled particles (up to 10,000); swap-remove pool for O(1) particle kill; CPU-side simulation (position, velocity, gravity, damping, size/color over lifetime); `ParticlePipeline` with alpha and additive blend modes; storage buffer for instance data; configurable emission shapes (point, sphere, cone, box); `particle_emitter` component schema; Rhai script API (`emit_burst`, `start_emitter`, `stop_emitter`, `set_emission_rate`); variable-rate update (not fixed-step); sprite sheet animation support
-- **Post-processing pipeline** via `flint-render::postprocess` module — scene renders to `Rgba16Float` HDR intermediate buffer; bloom via progressive downsample/upsample chain (CoD:AW technique, 5-level mip chain with 13-tap downsample, 9-tap tent upsample, additive blend); composite fullscreen pass applies radial blur → chromatic aberration → SSAO → bloom → fog → exposure → ACES tonemapping → gamma → vignette → sRGB surface; `PostProcessConfig` runtime-adjustable (enabled, exposure, bloom intensity/threshold, vignette intensity/smoothness, fog density/color/start/end/height); scene TOML `[post_process]` block for per-scene settings; CLI flags `--no-postprocess`, `--bloom-intensity`, `--bloom-threshold`, `--exposure`, `--fog-density`, `--fog-color`, `--fog-height-falloff`; F5 toggles bloom, F6 toggles entire post-processing pipeline, F7 toggles SSAO, F8 toggles fog; when post-processing active, PBR shaders output linear HDR (tonemapping disabled in fragment shader); legacy shader tonemapping path preserved as fallback when post-processing disabled
-- **Distance & height fog** — exponential distance fog (`1 - exp(-density * distance)`) with configurable start distance; exponential height fog (falloff above `fog_height_origin`) modulated by distance; applied in composite shader in linear HDR space before tonemapping; world-position reconstruction from depth buffer via `inv_view_proj` matrix; skybox excluded via depth threshold (>= 0.9999); depth texture shared with SSAO in bind group 3; `PostProcessConfig` fog fields: `fog_enabled`, `fog_color`, `fog_density`, `fog_start`, `fog_end`, `fog_height_enabled`, `fog_height_falloff`, `fog_height_origin`
-- **Billboard sprites** — camera-facing quads via `sprite` component; separate `BillboardPipeline` (not extending PBR); binary alpha via `discard` (avoids OIT); sprite sheet UV animation; per-sprite uniform buffer; renders after skinned entities
-- **Raycasting** — Rapier `query_pipeline.cast_ray_and_get_normal()` exposed as `raycast()` in Rhai scripts; collider handle → EntityId resolution; exclude_collider for self-exclusion
-- **Character movement** — `move_character(entity_id, dx, dy, dz)` performs collision-corrected kinematic movement using Rapier's shape-sweep; returns `#{x, y, z, grounded}`; scripts should call `set_position()` with the result; entity must have `rigidbody` + `collider` components; reads ECS position (not Rapier body) so it sees `set_position()` calls from earlier in the same frame; does not apply snap-to-ground or auto-stepping — scripts own their physics feel
-- **Collider extents** — `get_collider_extents(entity_id)` returns collider shape dimensions; `#{shape: "box", half_x, half_y, half_z}` for box, `#{shape: "capsule", radius, half_height}` for capsule, `#{shape: "sphere", radius}` for sphere; returns `()` if entity has no collider
-- **Combat system** — game-level Rhai helper functions (`deal_damage()`, `get_health()`, `heal()`, `is_dead()`) defined in each game script that needs them, using generic `get_field`/`set_field` ECS access; engine has zero concept of "combat"; mouse button → action bindings for weapon firing
-- **HUD overlay** — script-driven via `on_draw_ui()` callback + `DrawCommand` pipeline; engine renders 2D primitives (text, rect, circle, line, sprite) via egui painter; all game-specific UI (crosshair, health, ammo, damage flash, interaction prompts) lives in `.rhai` scripts, not engine code; `hud_controller` entity with `script.source = "hud.rhai"` pattern; supports layered rendering (negative layers = background, 0 = default, positive = foreground)
-- **Game project pattern** — games live in their own repositories and include the engine as a git subtree at `engine/`; `--schemas` flag accepts multiple paths that merge with later-path-wins priority (e.g., `--schemas engine/schemas --schemas schemas`)
-- **AI asset generation** via `flint-asset-gen` crate — pluggable `GenerationProvider` trait with Flux (textures), Meshy (3D models), ElevenLabs (audio), and Mock implementations; `StyleGuide` enriches prompts with palette/material/geometry constraints; `BatchStrategy` resolves entire scenes (AiGenerate, HumanTask, AiThenHuman); `BuildManifest` tracks provenance; `SemanticAssetDef` maps intent to generation requests; `validate_model()` checks GLB against style constraints
-- **Asset config** — layered `FlintConfig`: `~/.flint/config.toml` < `.flint/config.toml` < env vars (`FLINT_{PROVIDER}_API_KEY`); per-provider API key/URL/enabled settings
-- **Runtime catalog resolution** — `PlayerApp` optionally loads `AssetCatalog` + `ContentStore`; tries catalog name → hash → content store path before file-based fallback (backwards-compatible)
-- **Input system** — config-driven, device-agnostic action bindings via `InputConfig` TOML files in `flint-runtime`; `Binding` enum unifies keyboard keys, mouse buttons, mouse delta/wheel, gamepad buttons, and gamepad axes (with deadzone, scale, invert, threshold, direction); layered loading: built-in defaults → game config → user overrides (`~/.flint/input_{game_id}.toml`) → CLI `--input-config` override; runtime rebinding via `rebind_action()` with Replace/Add/Swap modes and automatic user-override persistence; `ActionKind::Button` for discrete actions, `ActionKind::Axis1d` for analog values; gamepad support via `gilrs` 0.11 with `GamepadSelector::Any`/`Index(n)` for multi-controller; `actions_just_released()` now emits `GameEvent::ActionReleased`; scene TOML `[scene]` table supports optional `input_config` field
+- **Dynamic components** stored as `toml::Value` -- archetypes defined at runtime in schema TOML files, not Rust types
+- **Stable EntityIds** via atomic counter (never recycled), persisted across save/load
+- **Scene format is TOML** -- `[scene]` metadata + `[entities.<name>]` sections; reload is full re-parse
+- **Schemas in `schemas/`** -- `components/*.toml` for field types, `archetypes/*.toml` for bundles. Multiple `--schemas` paths; later overrides earlier (game overrides engine)
+- **Scripting via Rhai** -- `script` component with `.rhai` files in `scripts/`; callbacks: `on_init`, `on_update`, `on_collision`, `on_trigger_enter/exit`, `on_action`, `on_interact`, `on_draw_ui`, `on_scene_exit/enter`, `on_animation_end`; `ScriptCommand` for deferred effects; `DrawCommand` for immediate-mode 2D UI
+- **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
+- **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `--schemas engine/schemas --schemas schemas` for layered overrides
+- **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
+- **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), Kuwahara (anisotropic painterly filter), vignette; `[post_process]` TOML block; F4 opens the Rendering & Effects debug menu in the player and viewer (all toggles + parameters, ADR 0053); when active, PBR shaders output linear HDR
+- **Scene transitions** -- `TransitionPhase` lifecycle with script-driven visuals; `PersistentStore` survives transitions; `GameStateMachine` pushdown automaton with per-system `SystemPolicy`
+- **Input system** -- TOML-based `InputConfig` with layered loading (built-in -> game -> user overrides -> CLI); keyboard/mouse/gamepad/touch unified via `Binding` enum
 
-- **Scene transitions** — `TransitionPhase` enum (Idle → Exiting → Loading → Entering → Idle) in `PlayerApp`; scripts call `load_scene(path)` which produces `ScriptCommand::LoadScene`; during Exiting/Entering phases, `on_draw_ui()` still runs so scripts can draw transition visuals using `transition_progress()`, `transition_phase()`, and `is_transitioning()`; scripts call `complete_transition()` to advance phases; engine provides timing/hooks but NOT visual effects — all transition visuals are script-driven; `execute_scene_transition()` calls `on_scene_exit()`, clears all systems, loads new scene with preserved schema paths, calls `on_scene_enter()`; `reload_scene()` reloads the current scene
-- **Game state machine** — pushdown automaton via `GameStateMachine` in `flint-runtime::state`; stack of named `GameState`s with `SystemPolicy` (Run/Pause/Hidden) per system (physics, scripts, animation, particles, audio, rendering); built-in templates: "playing" (all Run), "paused" (sim paused, rendering Run, transparent=true), "loading" (all paused except rendering); scripts call `push_state("paused")` / `pop_state()` / `replace_state(name)`; `register_state(name, config_map)` for custom states; state-aware `tick()` reads `active_config()` to conditionally skip systems; `on_draw_ui()` ALWAYS runs regardless of script pause state (pause menus need to draw); transparent states allow state below to render
-- **Persistent store** — `PersistentStore` in `flint-runtime::persist`; key-value store using `toml::Value` (same type as ECS dynamic components); survives scene transitions; Rhai API: `persist_set/get/has/remove/clear/keys/save/load`; `save_to_file`/`load_from_file` for disk persistence
+## Critical Gotchas
 
-## Technical Gotchas
-
-- `toml::toml!` macro produces `Map<String, Value>` not `Value` — needs `.into()` in tests
-- wgpu v23 `Instance::new()` takes owned `InstanceDescriptor`, not a reference
-- winit v0.30 uses `ApplicationHandler` trait with `run_app()` — no direct event loop matching
-- `FlintError` uses `thiserror`; crate-level `Result<T>` aliases throughout
-- Rapier v0.22 character controller types are in `rapier3d::control`, not `rapier3d::prelude`
-- `move_character()` creates a temporary `KinematicCharacterController` per call — this is intentional; the struct is lightweight and the design avoids shared mutable state
-- For kinematic characters that need collider-aware movement, prefer `move_character()` over manual `raycast()` + `set_position()` — it handles shape-sweep collision, surface sliding, and grounded detection correctly
-- `DeviceEvent::MouseMotion` provides raw mouse delta for first-person camera (independent of cursor position)
-- Rapier's `ChannelEventCollector` requires `crossbeam` channels for collision events
-- Kira v0.11 uses `Decibels(f32)` tuple struct, not `from_amplitude`; `PlaybackRate(f64)` likewise
-- Kira uses `glam::Vec3`/`glam::Quat` for listener/track positioning via `mint` interop
-- `AudioManager::new()` may fail in headless/CI — always wrap in `Option` for graceful degradation
-- Animation clips use `serde` derive on all types — `TrackTarget` uses `#[serde(tag = "type")]` for TOML compatibility
-- `.anim.toml` files go in `demo/animations/` directory next to the scene; loaded by scanning the directory at startup
-- Skeletal animation uses separate `SkinnedVertex` type (6 attributes) and `skinned_pipeline` to avoid overhead on static geometry
-- Bone matrices stored in storage buffer (bind group 3) — uniform buffers have size limits; storage supports arbitrary bone counts
-- `SkeletalSync` bridges ECS to skeletal playback; `skeleton` component + `animator` component on same entity triggers skeletal path
-- Crossfade blending via `blend_target`/`blend_duration` fields on `animator` component — uses pose array slerp/lerp
-- Rhai v1.24 with `sync` feature — `Arc<Mutex<ScriptCallContext>>` pattern for closure-captured world access
-- ScriptCallContext uses raw `*mut FlintWorld` pointer — only valid during `call_update()`/`process_events()` scope
-- `rhai::Engine::call_fn()` requires `&mut Scope` — per-entity Scopes preserve persistent script variables
-- Callback detection via `ast.iter_functions()` checking function names — avoids calling non-existent functions
-- `.rhai` files live in `scripts/` directory next to the scene; discovered via `script` component's `source` field
-- Hot-reload checks file timestamps each frame; on recompile error, keeps old AST (never crashes)
-- `on_interact` is sugar: fires on ActionPressed("interact") + proximity check; reads `interactable.range` (default 3.0) and `interactable.enabled` (default true)
-- Entity IDs passed as `i64` in Rhai (native int type); cast to/from `EntityId` internally
-- Animation control from scripts writes directly to `animator` component — `AnimationSync` picks up changes next frame
-- `DrawCommand` enum in `flint-script::context` — pushed by Rhai draw API functions, drained per frame by `PlayerApp`
-- `on_draw_ui()` callback runs after `on_update()` — scripts push `DrawCommand`s via `draw_text/rect/circle/line/sprite` functions
-- Sprite textures lazy-loaded on first use via `image::open()` → `egui::ColorImage` → `egui::TextureHandle`; cached in `ui_textures` HashMap
-- `measure_text()` uses approximate width (0.6 * font_size per char) — not exact but sufficient for layout
-- `render_draw_commands()` is a free function (not method on PlayerApp) to avoid borrow conflicts with egui closures
-- `load_pending_sprites()` must be called before `egui_winit` borrow in `render_hud()` to avoid double-mutable-borrow
-- ureq v3 requires `json` feature for `send_json()`; uses rustls by default (no `tls-native-certs` feature)
-- `GenerationProvider` trait's `generate()` takes `&Path` for output directory — providers write files directly
-- `FlintConfig::load()` is layered: global `~/.flint/config.toml` merged with local `.flint/config.toml`, then env var overrides
-- MockProvider generates minimal valid files (solid-color PNG, minimal GLB header, silence WAV) for testing without network
-- `StyleGuide::find()` searches `styles/` then `.flint/styles/` for `{name}.style.toml`
-- Model validation via `validate_model()` imports GLB through `import_gltf()` — reuses the same importer as the player
-- `BuildManifest::from_assets_directory()` scans `.asset.toml` sidecars for `provider` property to identify generated assets
-- `SemanticAssetDef` uses `#[serde(rename = "type")]` for `asset_type` field — TOML uses `type = "texture"` directly
-- gilrs v0.11 `Gilrs::new()` may fail on headless/CI — wrapped in `Option` like `AudioManager`
-- `ParticleInstance` and `ParticleInstanceGpu` have identical `#[repr(C)]` layouts (48 bytes, 3x `[f32; 4]`) — use `bytemuck::cast_slice` for zero-copy conversion between flint-particles and flint-render types
-- Particle storage buffers: wgpu rejects zero-size buffers — skip draw calls for emitters with 0 alive particles
-- Particle rendering: no depth write (`depth_write_enabled: false`), depth test still active — translucent particles don't occlude each other but hide behind walls
-- Particle rendering order in `render_to()`: after billboard sprites, before wireframe overlay; alpha pass first, then additive pass
-- Post-processing HDR format is `Rgba16Float` — all scene pipelines (PBR, skinned, billboard, particle, skybox) must use this format when post-processing is active
-- Post-processing renders scene to HDR buffer, then bloom chain, then composite to sRGB surface — egui HUD overlay renders after composite with `LoadOp::Load`
-- Bloom mip count: `floor(log2(min(w, h))) - 3` capped at 5 — ensures smallest mip is at least 8x8; first mip is half scene resolution
-- `PostProcessResources` must be recreated on window resize via `resize_postprocess()` — HDR texture and bloom chain are resolution-dependent
-- When `PostProcessConfig.enabled = true`, shader-side tonemapping is forced off (`enable_tonemapping = 0`) so PBR shaders output linear HDR; when disabled, shader tonemapping is restored for backward compatibility
-- 1x1 black texture used as bloom input when bloom is disabled — avoids conditional bind group creation
-- wgpu default `max_bind_groups` is 4 (groups 0-3) — composite shader packs SSAO + depth textures into group 3 (4 bindings) to stay within limit
-- Fog depth texture uses `TextureSampleType::Float { filterable: false }` + `SamplerBindingType::NonFiltering` (Depth32Float is non-filterable)
-- `InputConfig` uses `BTreeMap` for deterministic serialization order; `Binding` uses `#[serde(tag = "type", rename_all = "snake_case")]` for TOML compatibility
-- Gamepad button/axis names use gilrs `Debug` format (e.g., `"South"`, `"LeftStickX"`) — these are what `format!("{button:?}")` produces
-- Gamepad axis deadzone uses linear remap: `(|value| - deadzone) / (1.0 - deadzone)`, applied before scale/invert
-- `InputState` action evaluation: button actions treat any binding value >= 0.5 as pressed; axis1d sums all binding values
-- User override persistence writes to `~/.flint/input_{game_id}.toml`, falling back to `.flint/input.user.toml` if home directory is unavailable
-- Rebind capture mode (`pending_rebind` on PlayerApp) intercepts the next hardware event; gamepad axis capture requires magnitude >= 0.45 to distinguish from noise
-- `InputConfig::from_toml_str()` validates key codes against winit `KeyCode` names and mouse buttons against Left/Right/Middle/Back/Forward
-- `GameStateMachine` starts with a single "playing" state — cannot pop the last state (returns None)
-- `TransitionPhase::Loading` executes synchronously in one frame — `execute_scene_transition()` does full unload/load
-- `complete_transition()` uses a sentinel `FireEvent("__transition_complete")` — intercepted in `process_script_commands()` before reaching the event bus
-- Scene transition preserves: `persistent_store`, `state_machine`, `sound_cache`, `mesh/texture cache`, window, render context; clears everything else
-- `set_schema_paths()` must be called after `PlayerApp::new()` — schema paths are preserved across transitions for `execute_scene_transition()`
-- `on_draw_ui()` always runs even when `SystemPolicy::Pause` is set for scripts — required for pause menus and transition overlays
-- `on_scene_exit()` / `on_scene_enter()` are zero-argument callbacks (like `on_init`) — detected via `ast.iter_functions()` at compile time
-
-## Implemented vs Planned
-
-**Working now:** Entity CRUD, scene load/save, query parsing/execution, schema introspection, PBR renderer with Cook-Torrance shading, glTF model import, cascaded shadow mapping, constraint validation + auto-fix, content-addressed asset catalog, egui GUI inspector, `serve --watch` hot-reload viewer, game loop with fixed-timestep physics, Rapier 3D character controller, first-person walkable scenes via `play` command, spatial audio with Kira (3D positioned sounds, ambient loops, event-driven triggers), property tween animation (Tier 1: keyframe clips with Step/Linear/CubicSpline, `.anim.toml` loading, `animator` component, event firing), skeletal animation (Tier 2: glTF skin/joint import, GPU vertex skinning via storage buffer, bone hierarchy computation, crossfade blending, skinned shadow mapping), Rhai scripting (entity/input/audio/animation/math/physics/combat/UI draw APIs, event callbacks incl. `on_draw_ui`, hot-reload), **scriptable 2D UI overlay** (DrawCommand pipeline with text/rect/circle/line/sprite primitives, layer sorting, lazy sprite loading, `hud.rhai` for game-specific HUD), interactable entities with script-driven prompts, NPC behavior scripts (bartender/patron/stranger), footstep sounds, ambient events, full atmospheric tavern integration demo, AI asset generation pipeline (Flux textures, Meshy 3D models, ElevenLabs audio with mock provider for testing, style guides, batch scene resolution, model validation, build manifests, semantic asset definitions, runtime catalog integration), **Doom-style FPS** (Phase A: billboard sprite rendering, hitscan raycast weapons, health/damage system, enemy AI state machine, health/ammo pickups, combat HUD with damage flash, mouse button action bindings, multi-directory schema loading for game/engine separation), **extensible input system** (TOML-based InputConfig with layered loading, device-agnostic Binding enum for keyboard/mouse/gamepad, gilrs gamepad integration, runtime rebinding with Replace/Add/Swap modes, user-override persistence, ActionKind Button/Axis1d, `--input-config` CLI flag, scene-level input_config field), **GPU-instanced particle system** (per-emitter pooling with swap-remove, alpha/additive blend pipelines, configurable emission shapes (point/sphere/cone/box), size/color over lifetime, gravity/damping, sprite sheet animation, Rhai script API with `emit_burst`/`start_emitter`/`stop_emitter`/`set_emission_rate`, `particle_emitter` component schema, variable-rate CPU simulation with GPU storage buffer rendering), **HDR post-processing pipeline** (Rgba16Float HDR intermediate buffer, bloom via progressive downsample/upsample chain with 13-tap/9-tap filters, composite pass with exposure/ACES tonemapping/gamma/vignette, scene TOML `[post_process]` config, CLI flags `--no-postprocess`/`--bloom-intensity`/`--bloom-threshold`/`--exposure`, F5/F6/F7/F8 runtime toggles, SSAO, distance & height fog with depth-reconstructed world positions), **scene transitions & game state machine** (pushdown automaton `GameStateMachine` with SystemPolicy per system, built-in playing/paused/loading templates, custom state registration from scripts; `TransitionPhase` lifecycle Idle→Exiting→Loading→Entering→Idle with script-driven visual effects via `transition_progress()`/`complete_transition()`; `PersistentStore` key-value store surviving scene transitions with save/load; Rhai API: `load_scene`/`reload_scene`/`current_scene`/`push_state`/`pop_state`/`replace_state`/`register_state`/`persist_set`/`persist_get`/`persist_has`/`persist_save`/`persist_load`; `on_scene_exit`/`on_scene_enter` callbacks; all system `clear()` methods for clean teardown).
-
-**Designed but not implemented:** See `flint-design-doc.md` for full specification of remaining phases.
+- `toml::toml!` macro produces `Map<String, Value>` not `Value` -- needs `.into()` in tests
+- wgpu v23: `Instance::new()` takes owned `InstanceDescriptor`; max 4 bind groups (0-3)
+- winit v0.30: `ApplicationHandler` trait with `run_app()`; `DeviceEvent::MouseMotion` for raw mouse delta
+- Rapier v0.22: character controller types in `rapier3d::control`, NOT `rapier3d::prelude`
+- Kira v0.11: `Decibels(f32)` and `PlaybackRate(f64)` are tuple structs; uses `glam` via `mint`
+- `AudioManager::new()` / `Gilrs::new()` may fail in headless/CI -- wrap in `Option`
+- Rhai v1.24 `sync`: `call_fn()` Scope visible only to direct callee, NOT sub-functions; entity IDs as `i64`; no implicit numeric coercion (`0.0` is NOT `0`); draw `_ex` functions take `layer` as int (`0`), not float (`0.0`)
+- `ScriptCallContext` uses raw `*mut FlintWorld` -- only valid during `call_update()`/`process_events()` scope
+- `on_update()` is parameterless -- use `delta_time()` API; `on_interact` checks `interactable.range` + `.enabled`
+- `on_draw_ui()` ALWAYS runs even when scripts paused (pause menus need it)
+- HDR format `Rgba16Float` -- all pipelines must use this when post-processing active; `resize_postprocess()` on window resize
+- `render_draw_commands()` is a free function to avoid borrow conflicts; `load_pending_sprites()` before egui borrow
+- Screen size for draw commands must be egui logical points, NOT physical pixels
+- Skeletal animation: separate `SkinnedVertex`/`skinned_pipeline`; bone matrices in storage buffer (bind group 3)
+- Particles: no depth write; storage buffer (not uniform); skip draw for 0 alive; `bytemuck::cast_slice` for zero-copy
+- `flint-terrain` does NOT depend on `flint-render`; uses standard `Vertex` format so reuses shadow pipeline
+- `flint-android` excluded from `default-members` -- use `cargo ndk -p flint-android`; min API 26
+- Windows links a 1 MB main-thread stack; debug builds of flint-cli's clap parser overflow it -- `.cargo/config.toml` links with `/STACK:8388608`. Don't remove it, and don't grow `Commands` assuming stack is free.
+- Scene entity `merge_component()` does field-level merge INTO archetype defaults, not full replacement
+- `flint_core::toml_util` -- use `toml_f64`/`toml_f32`/`toml_vec3`/etc. instead of inline coercion patterns
+- Never use `archetype = "furniture"` on non-visual entities -- furniture includes `bounds`, renders teal boxes
 
 ## Project Structure
 
-- `crates/` — All 18 workspace crates
-- `schemas/` — Engine component and archetype TOML definitions (transform, door, bounds, material, rigidbody, collider, character_controller, player, audio_source, audio_listener, audio_trigger, animator, skeleton, script, interactable, sprite, particle_emitter, asset_def, etc.)
-- Game projects live in separate repositories with the engine as a git subtree (e.g., the Doom FPS)
-- `styles/` — Style guide TOML definitions (medieval_tavern) for AI generation
-- `demo/` — Showcase scenes (showcase, phase3_showcase, phase4_runtime, phase5_ai_demo), demo `scripts/` (.rhai), `audio/` assets, and `animations/` clips
-- `testGame/` — Test project directory (levels/, schemas/)
-- `flint-design-doc.md` — Comprehensive design document covering all planned phases
-- `DOOM_FPS_GAPS.md` — moved to the Doom FPS game repository
-- `PHASE4_ROADMAP.md` — Phase 4 status tracker (all 5 stages complete)
-- `PHASE5_ROADMAP.md` — Phase 5 status tracker (all 5 stages complete)
+- `crates/` -- All workspace crates
+- `schemas/` -- Engine component and archetype TOML definitions
+- `styles/` -- Style guide TOML definitions for AI generation
+- `demo/` -- Showcase scenes, scripts, audio, animations
+- `testGame/` -- Test project (levels/, schemas/)
+- `docs/design/flint-design-doc.md` -- Full design document for remaining phases

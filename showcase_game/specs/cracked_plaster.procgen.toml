@@ -1,0 +1,29 @@
+generator = "texture_v1"
+
+[meta]
+name = "cracked_plaster"
+description = "Crumbling cream plaster ceiling, aged and cracking"
+version = "1.0.0"
+tags = ["texture", "plaster", "ceiling", "interior"]
+
+[seed]
+mode = "fixed"
+value = 12002
+
+[params]
+pattern = "perlin_organic"
+width = 512
+height = 512
+seamless = true
+output_maps = ["albedo", "normal", "roughness"]
+
+noise_type = "simplex"
+frequency = 1.2
+octaves = 4
+base_color = "#C8B89A"
+color_variation = 0.1
+roughness_base = 0.65
+roughness_variation = 0.1
+normal_strength = 0.8
+detail_scale = 30.0
+detail_strength = 0.12

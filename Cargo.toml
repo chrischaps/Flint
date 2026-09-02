@@ -16,9 +16,45 @@ members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-music",
+    "crates/flint-input-capture",
     "crates/flint-animation",
     "crates/flint-script",
     "crates/flint-particles",
+    "crates/flint-terrain",
+    "crates/flint-debug-ui",
+    "crates/flint-procgen",
+    "crates/flint-procgen-ai",
+    "crates/flint-cli",
+    "crates/flint-android",
+    "tools/arch-analyzer",
+]
+# flint-android depends on ndk-sys which only compiles for Android targets.
+# Exclude it from default `cargo build`; build with `cargo ndk -p flint-android`.
+default-members = [
+    "crates/flint-core",
+    "crates/flint-schema",
+    "crates/flint-ecs",
+    "crates/flint-scene",
+    "crates/flint-query",
+    "crates/flint-render",
+    "crates/flint-constraint",
+    "crates/flint-asset",
+    "crates/flint-asset-gen",
+    "crates/flint-import",
+    "crates/flint-viewer",
+    "crates/flint-runtime",
+    "crates/flint-physics",
+    "crates/flint-player",
+    "crates/flint-audio",
+    "crates/flint-music",
+    "crates/flint-input-capture",
+    "crates/flint-animation",
+    "crates/flint-script",
+    "crates/flint-particles",
+    "crates/flint-terrain",
+    "crates/flint-debug-ui",
+    "crates/flint-procgen",
     "crates/flint-cli",
 ]
 
@@ -33,6 +69,7 @@ authors = ["Chris"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+toml_edit = "0.22"
 thiserror = "2.0"
 anyhow = "1.0"
 
@@ -63,7 +100,8 @@ image = "0.25"
 rapier3d = { version = "0.22", features = ["default"] }
 
 # Audio
-kira = { version = "0.11", features = ["cpal", "ogg"] }
+kira = { version = "0.11", features = ["cpal", "ogg", "flac"] }
+hound = "3.5"
 glam = { version = "0.30", features = ["mint"] }
 
 # Scripting
@@ -71,7 +109,22 @@ rhai = { version = "1", features = ["sync"] }
 
 # Game loop
 instant = "0.1"
-gilrs = "0.11"
+# default-features off: gilrs's default Windows backend (WGI) only delivers
+# input to the process owning the foreground window — console apps (play-chart,
+# the input spike) get nothing. XInput polls regardless of focus. See ADR 0011.
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
+# Direct motor access for the haptics rumble path: gilrs's high-level ff
+# server quantizes commands to a 50 ms tick; gilrs-core's FfDevice is a
+# synchronous XInputSetState. Same crate gilrs already depends on.
+gilrs-core = { version = "0.6", default-features = false, features = ["xinput"] }
+
+# Android
+android-activity = { version = "0.6", features = ["game-activity"] }
+ndk = "0.9"
+android_logger = "0.14"
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP
 ureq = { version = "3", features = ["json"] }
@@ -81,14 +134,24 @@ bimap = "0.6"
 sha2 = "0.10"
 uuid = { version = "1.11", features = ["v4"] }
 dirs = "6"
+noise = "0.9"
+rand = "0.9"
+rand_chacha = "0.9"
+
+# Audio probing (validator)
+symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "flac"] }
 
 # glTF
 gltf = "1.4"
+
+# File dialogs
+rfd = "0.15"
 
 # GUI
 egui = "0.30.0"
 egui-wgpu = "0.30.0"
 egui-winit = "0.30.0"
+egui-snarl = "0.6.0"
 
 # Internal crates
 flint-core = { path = "crates/flint-core" }
@@ -104,8 +167,15 @@ flint-viewer = { path = "crates/flint-viewer" }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
+flint-music = { path = "crates/flint-music" }
+flint-input-capture = { path = "crates/flint-input-capture" }
 flint-animation = { path = "crates/flint-animation" }
 flint-script = { path = "crates/flint-script" }
 flint-asset-gen = { path = "crates/flint-asset-gen" }
 flint-particles = { path = "crates/flint-particles" }
+flint-terrain = { path = "crates/flint-terrain" }
+flint-procgen = { path = "crates/flint-procgen" }
+flint-procgen-ai = { path = "crates/flint-procgen-ai" }
+flint-debug-ui = { path = "crates/flint-debug-ui" }
 flint-player = { path = "crates/flint-player" }
+flint-android = { path = "crates/flint-android" }

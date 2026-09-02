@@ -1,0 +1,549 @@
+# ================================================================
+#  THE OVERGROWN RUINS — Collapsed Library
+# ================================================================
+#
+#  Zone 3: Crumbling interior with warm lamplight. Ancient roots
+#  break through sandstone tile floors, and book mites scuttle.
+#
+#  Procgen showcase:
+#    - texture_v1 (tiling_grid): sandstone_tile walls/floor
+#    - tree_v1: library_root (leaf_style="none", extreme curve, 3 LODs)
+#    - creature_v1: book_mite (8 legs, random seed)
+#    - Completes all 3 texture pattern families across the game
+# ================================================================
+
+[scene]
+name = "The Collapsed Library"
+version = "1.0"
+description = "Crumbling library with sandstone tiles, twisted roots, and book mites"
+input_config = "showcase_game/config/input_ruins.toml"
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.1
+bloom_threshold = 1.0
+vignette_enabled = true
+vignette_intensity = 0.3
+exposure = 1.0
+ssao_enabled = true
+ssao_radius = 0.5
+ssao_intensity = 1.0
+
+
+# ============================================================
+#  PLAYER
+# ============================================================
+
+[entities.player]
+archetype = "player"
+
+[entities.player.transform]
+position = [0, 1.0, 8]
+
+[entities.player.collider]
+shape = "capsule"
+size = [0.6, 1.8, 0.6]
+
+[entities.player.rigidbody]
+body_type = "kinematic"
+mass = 80.0
+gravity_scale = 0.0
+
+[entities.player.character_controller]
+move_speed = 5.0
+jump_force = 6.0
+height = 1.8
+radius = 0.3
+camera_mode = "first_person"
+
+[entities.player.audio_listener]
+active = true
+
+[entities.player.script]
+source = "footsteps.rhai"
+
+
+# ============================================================
+#  CONTROLLERS
+# ============================================================
+
+[entities.hud_controller]
+[entities.hud_controller.script]
+source = "zone_hud.rhai"
+
+[entities.game_controller]
+[entities.game_controller.script]
+source = "game_controller.rhai"
+
+[entities.ambient_controller]
+[entities.ambient_controller.transform]
+position = [0, 0, 0]
+[entities.ambient_controller.script]
+source = "zone_ambience.rhai"
+
+
+# ============================================================
+#  LIGHTING — warm reading lamps
+# ============================================================
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [0.3, 0.7, 0.4]
+color = [0.5, 0.45, 0.35]
+intensity = 1.0
+
+[entities.lamp_1]
+parent = "library_main"
+[entities.lamp_1.transform]
+position = [-3, 3, 2]
+[entities.lamp_1.light]
+type = "point"
+color = [1.0, 0.85, 0.5]
+intensity = 12.0
+radius = 10.0
+[entities.lamp_1.script]
+source = "torch_flicker.rhai"
+
+[entities.lamp_2]
+parent = "library_main"
+[entities.lamp_2.transform]
+position = [4, 3, -4]
+[entities.lamp_2.light]
+type = "point"
+color = [1.0, 0.8, 0.45]
+intensity = 10.0
+radius = 9.0
+[entities.lamp_2.script]
+source = "torch_flicker.rhai"
+
+[entities.lamp_3]
+parent = "library_main"
+[entities.lamp_3.transform]
+position = [0, 3, -9]
+[entities.lamp_3.light]
+type = "point"
+color = [0.95, 0.82, 0.5]
+intensity = 14.0
+radius = 12.0
+[entities.lamp_3.script]
+source = "torch_flicker.rhai"
+
+
+# ============================================================
+#  ROOM
+# ============================================================
+
+[entities.library_main]
+archetype = "room"
+[entities.library_main.transform]
+position = [0, 0, 0]
+
+
+# ============================================================
+#  CEILING
+# ============================================================
+
+[entities.ceiling]
+archetype = "wall"
+parent = "library_main"
+[entities.ceiling.transform]
+position = [0, 5, -1]
+[entities.ceiling.bounds]
+min = [-8, -0.1, -12]
+max = [8, 0.1, 12]
+[entities.ceiling.material]
+texture = "sandstone_tile"
+roughness = 0.75
+
+
+# ============================================================
+#  FLOOR — procgen sandstone_tile
+# ============================================================
+
+[entities.ground]
+archetype = "floor"
+[entities.ground.transform]
+position = [0, -0.1, 0]
+[entities.ground.bounds]
+min = [-20, -0.1, -20]
+max = [20, 0.0, 20]
+[entities.ground.rigidbody]
+body_type = "static"
+[entities.ground.collider]
+shape = "box"
+size = [40, 0.2, 40]
+friction = 0.7
+[entities.ground.material]
+texture = "sandstone_tile"
+roughness = 0.72
+
+
+# ============================================================
+#  WALLS — procgen sandstone_tile
+# ============================================================
+
+[entities.wall_west]
+archetype = "wall"
+parent = "library_main"
+[entities.wall_west.transform]
+position = [-8, 2.5, -1]
+[entities.wall_west.bounds]
+min = [-0.15, -2.5, -12]
+max = [0.15, 2.5, 12]
+[entities.wall_west.rigidbody]
+body_type = "static"
+[entities.wall_west.collider]
+shape = "box"
+size = [0.3, 5, 24]
+[entities.wall_west.material]
+texture = "sandstone_tile"
+roughness = 0.72
+
+[entities.wall_east]
+archetype = "wall"
+parent = "library_main"
+[entities.wall_east.transform]
+position = [8, 2.5, -1]
+[entities.wall_east.bounds]
+min = [-0.15, -2.5, -12]
+max = [0.15, 2.5, 12]
+[entities.wall_east.rigidbody]
+body_type = "static"
+[entities.wall_east.collider]
+shape = "box"
+size = [0.3, 5, 24]
+[entities.wall_east.material]
+texture = "sandstone_tile"
+roughness = 0.72
+
+# South wall with doorway
+[entities.wall_south_left]
+archetype = "wall"
+parent = "library_main"
+[entities.wall_south_left.transform]
+position = [-4, 2.5, 11]
+[entities.wall_south_left.bounds]
+min = [-4, -2.5, -0.15]
+max = [4, 2.5, 0.15]
+[entities.wall_south_left.rigidbody]
+body_type = "static"
+[entities.wall_south_left.collider]
+shape = "box"
+size = [8, 5, 0.3]
+[entities.wall_south_left.material]
+texture = "sandstone_tile"
+roughness = 0.72
+
+[entities.wall_south_right]
+archetype = "wall"
+parent = "library_main"
+[entities.wall_south_right.transform]
+position = [4, 2.5, 11]
+[entities.wall_south_right.bounds]
+min = [-4, -2.5, -0.15]
+max = [4, 2.5, 0.15]
+[entities.wall_south_right.rigidbody]
+body_type = "static"
+[entities.wall_south_right.collider]
+shape = "box"
+size = [8, 5, 0.3]
+[entities.wall_south_right.material]
+texture = "sandstone_tile"
+roughness = 0.72
+
+# North wall
+[entities.wall_north]
+archetype = "wall"
+parent = "library_main"
+[entities.wall_north.transform]
+position = [0, 2.5, -13]
+[entities.wall_north.bounds]
+min = [-8, -2.5, -0.15]
+max = [8, 2.5, 0.15]
+[entities.wall_north.rigidbody]
+body_type = "static"
+[entities.wall_north.collider]
+shape = "box"
+size = [16, 5, 0.3]
+[entities.wall_north.material]
+texture = "sandstone_tile"
+roughness = 0.72
+
+
+# ============================================================
+#  FURNITURE — broken shelving
+# ============================================================
+
+[entities.shelf_1]
+archetype = "furniture"
+parent = "library_main"
+[entities.shelf_1.transform]
+position = [-6, 0, -6]
+[entities.shelf_1.bounds]
+min = [-0.3, 0, -1.5]
+max = [0.3, 2.0, 1.5]
+[entities.shelf_1.rigidbody]
+body_type = "static"
+[entities.shelf_1.collider]
+shape = "box"
+size = [0.6, 2.0, 3.0]
+
+[entities.shelf_2]
+archetype = "furniture"
+parent = "library_main"
+[entities.shelf_2.transform]
+position = [6, 0, -3]
+[entities.shelf_2.bounds]
+min = [-0.3, 0, -1.5]
+max = [0.3, 2.0, 1.5]
+[entities.shelf_2.rigidbody]
+body_type = "static"
+[entities.shelf_2.collider]
+shape = "box"
+size = [0.6, 2.0, 3.0]
+
+[entities.shelf_3]
+archetype = "furniture"
+parent = "library_main"
+[entities.shelf_3.transform]
+position = [-5, 0, 4]
+rotation = [0, 15, 8]
+[entities.shelf_3.bounds]
+min = [-0.3, 0, -1.0]
+max = [0.3, 1.5, 1.0]
+[entities.shelf_3.rigidbody]
+body_type = "static"
+[entities.shelf_3.collider]
+shape = "box"
+size = [0.6, 1.5, 2.0]
+
+[entities.reading_table]
+archetype = "furniture"
+parent = "library_main"
+[entities.reading_table.transform]
+position = [0, 0, -5]
+[entities.reading_table.bounds]
+min = [-1.0, 0, -0.5]
+max = [1.0, 0.8, 0.5]
+[entities.reading_table.rigidbody]
+body_type = "static"
+[entities.reading_table.collider]
+shape = "box"
+size = [2.0, 0.8, 1.0]
+
+
+# ============================================================
+#  ROOTS — procgen library_root (leaf_style="none", twisted)
+# ============================================================
+
+[entities.root_1]
+archetype = "character"
+parent = "library_main"
+[entities.root_1.transform]
+position = [-3, 0, 0]
+scale = [1.0, 1.0, 1.0]
+[entities.root_1.model]
+asset = "library_root"
+
+[entities.root_2]
+archetype = "character"
+parent = "library_main"
+[entities.root_2.transform]
+position = [5, 0, -8]
+rotation = [0, 45, 0]
+scale = [1.2, 1.2, 1.2]
+[entities.root_2.model]
+asset = "library_root"
+
+[entities.root_3]
+archetype = "character"
+parent = "library_main"
+[entities.root_3.transform]
+position = [-6, 0, -10]
+rotation = [0, -30, 0]
+scale = [0.8, 0.8, 0.8]
+[entities.root_3.model]
+asset = "library_root"
+
+[entities.root_4]
+archetype = "character"
+parent = "library_main"
+[entities.root_4.transform]
+position = [2, 0, 5]
+rotation = [0, 120, 0]
+scale = [0.9, 0.9, 0.9]
+[entities.root_4.model]
+asset = "library_root"
+
+
+# ============================================================
+#  BOOK MITES — procgen book_mite (random seed, 8 legs)
+# ============================================================
+
+[entities.mite_1]
+archetype = "character"
+parent = "library_main"
+[entities.mite_1.transform]
+position = [-2, 0.12, -3]
+rotation = [0, 70, 0]
+scale = [1.0, 1.0, 1.0]
+[entities.mite_1.model]
+asset = "book_mite"
+[entities.mite_1.interactable]
+prompt_text = "Book Mite"
+range = 1.5
+interaction_type = "examine"
+enabled = true
+[entities.mite_1.script]
+source = "creature_idle.rhai"
+
+[entities.mite_2]
+archetype = "character"
+parent = "library_main"
+[entities.mite_2.transform]
+position = [4, 0.12, -6]
+rotation = [0, -45, 0]
+scale = [0.9, 0.9, 0.9]
+[entities.mite_2.model]
+asset = "book_mite"
+[entities.mite_2.interactable]
+prompt_text = "Book Mite"
+range = 1.5
+interaction_type = "examine"
+enabled = true
+[entities.mite_2.script]
+source = "creature_idle.rhai"
+
+[entities.mite_3]
+archetype = "character"
+parent = "library_main"
+[entities.mite_3.transform]
+position = [-5, 0.12, 3]
+rotation = [0, 160, 0]
+scale = [1.1, 1.1, 1.1]
+[entities.mite_3.model]
+asset = "book_mite"
+[entities.mite_3.interactable]
+prompt_text = "Book Mite"
+range = 1.5
+interaction_type = "examine"
+enabled = true
+[entities.mite_3.script]
+source = "creature_idle.rhai"
+
+[entities.mite_4]
+archetype = "character"
+parent = "library_main"
+[entities.mite_4.transform]
+position = [1, 0.12, -10]
+rotation = [0, 200, 0]
+scale = [0.8, 0.8, 0.8]
+[entities.mite_4.model]
+asset = "book_mite"
+[entities.mite_4.interactable]
+prompt_text = "Book Mite"
+range = 1.5
+interaction_type = "examine"
+enabled = true
+[entities.mite_4.script]
+source = "creature_idle.rhai"
+
+
+# ============================================================
+#  ESSENCE PICKUPS
+# ============================================================
+
+[entities.essence_1]
+archetype = "essence"
+parent = "library_main"
+[entities.essence_1.transform]
+position = [-6, 1.5, -8]
+[entities.essence_1.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_2]
+archetype = "essence"
+parent = "library_main"
+[entities.essence_2.transform]
+position = [6, 1.2, -1]
+[entities.essence_2.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_3]
+archetype = "essence"
+parent = "library_main"
+[entities.essence_3.transform]
+position = [0, 1.8, -11]
+[entities.essence_3.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_4]
+archetype = "essence"
+parent = "library_main"
+[entities.essence_4.transform]
+position = [-4, 1.3, 6]
+[entities.essence_4.script]
+source = "essence_pickup.rhai"
+
+[entities.essence_5]
+archetype = "essence"
+parent = "library_main"
+[entities.essence_5.transform]
+position = [5, 1.6, -10]
+[entities.essence_5.script]
+source = "essence_pickup.rhai"
+
+
+# ============================================================
+#  RETURN DOOR — back to tavern
+# ============================================================
+
+[entities.return_door]
+archetype = "door"
+parent = "library_main"
+[entities.return_door.transform]
+position = [-0.75, 0, 11]
+[entities.return_door.bounds]
+min = [0, 0, -0.05]
+max = [1.5, 2.5, 0.05]
+[entities.return_door.material]
+texture = "sandstone_tile"
+roughness = 0.6
+[entities.return_door.rigidbody]
+body_type = "kinematic"
+[entities.return_door.collider]
+shape = "box"
+size = [1.5, 2.5, 0.1]
+[entities.return_door.door]
+style = "hinged"
+locked = false
+open_angle = 90.0
+[entities.return_door.interactable]
+prompt_text = "Return to Tavern"
+range = 2.5
+interaction_type = "use"
+enabled = true
+[entities.return_door.zone_data]
+zone_name = "Tavern"
+target_scene = "tavern_hub.scene.toml"
+[entities.return_door.script]
+source = "zone_door.rhai"
+
+
+# ============================================================
+#  AUDIO
+# ============================================================
+
+[entities.ambient_sound]
+parent = "library_main"
+[entities.ambient_sound.transform]
+position = [0, 2, 0]
+[entities.ambient_sound.audio_source]
+file = "audio/fire_crackle.ogg"
+volume = 0.25
+spatial = false
+loop = true
+autoplay = true

@@ -89,9 +89,8 @@ impl JobStore {
         let path = self.root.join(format!("{}.job.toml", job.id));
 
         let wrapper = JobFile { job: job.clone() };
-        let content = toml::to_string_pretty(&wrapper).map_err(|e| {
-            FlintError::GenerationError(format!("Failed to serialize job: {}", e))
-        })?;
+        let content = toml::to_string_pretty(&wrapper)
+            .map_err(|e| FlintError::GenerationError(format!("Failed to serialize job: {}", e)))?;
 
         std::fs::write(&path, content)?;
         Ok(())
@@ -108,9 +107,8 @@ impl JobStore {
         }
 
         let content = std::fs::read_to_string(&path)?;
-        let file: JobFile = toml::from_str(&content).map_err(|e| {
-            FlintError::GenerationError(format!("Failed to parse job file: {}", e))
-        })?;
+        let file: JobFile = toml::from_str(&content)
+            .map_err(|e| FlintError::GenerationError(format!("Failed to parse job file: {}", e)))?;
         Ok(file.job)
     }
 

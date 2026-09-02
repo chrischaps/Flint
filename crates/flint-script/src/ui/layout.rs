@@ -23,17 +23,21 @@ pub fn resolve_layout(
     let mut results: HashMap<String, (ResolvedRect, ResolvedStyle)> = HashMap::new();
 
     // Build element lookup
-    let elem_map: HashMap<&str, &UiElement> = elements.iter()
-        .map(|e| (e.id.as_str(), e))
-        .collect();
+    let elem_map: HashMap<&str, &UiElement> = elements.iter().map(|e| (e.id.as_str(), e)).collect();
 
     // Process root elements first (those without a parent), then children
-    let roots: Vec<&UiElement> = elements.iter()
-        .filter(|e| e.parent_id.is_none())
-        .collect();
+    let roots: Vec<&UiElement> = elements.iter().filter(|e| e.parent_id.is_none()).collect();
 
     for root in &roots {
-        resolve_element(root, &elem_map, styles, screen_w, screen_h, None, &mut results);
+        resolve_element(
+            root,
+            &elem_map,
+            styles,
+            screen_w,
+            screen_h,
+            None,
+            &mut results,
+        );
     }
 
     results
@@ -50,7 +54,8 @@ fn resolve_element(
 ) {
     // Resolve style from class
     let class_name = elem.effective_class();
-    let mut style = styles.get(class_name)
+    let mut style = styles
+        .get(class_name)
         .map(|c| c.resolve())
         .unwrap_or_default();
 
@@ -116,12 +121,14 @@ fn resolve_element(
         for child_id in &elem.children {
             if let Some(child_elem) = elem_map.get(child_id.as_str()) {
                 let child_class = child_elem.effective_class();
-                let child_style = styles.get(child_class)
+                let child_style = styles
+                    .get(child_class)
                     .map(|c| c.resolve())
                     .unwrap_or_default();
 
                 let child_h = child_style.height;
-                let child_bottom = child_offset + child_style.y + child_h + child_style.margin_bottom;
+                let child_bottom =
+                    child_offset + child_style.y + child_h + child_style.margin_bottom;
                 if child_bottom > child_extent {
                     child_extent = child_bottom;
                 }
@@ -147,7 +154,8 @@ fn resolve_element(
     for child_id in &elem.children {
         if let Some(child_elem) = elem_map.get(child_id.as_str()) {
             let child_class = child_elem.effective_class();
-            let child_style_resolved = styles.get(child_class)
+            let child_style_resolved = styles
+                .get(child_class)
                 .map(|c| c.resolve())
                 .unwrap_or_default();
 
@@ -167,15 +175,27 @@ fn resolve_element(
                 },
             };
 
-            resolve_element(child_elem, elem_map, styles, screen_w, screen_h, Some(&flow_rect), results);
+            resolve_element(
+                child_elem,
+                elem_map,
+                styles,
+                screen_w,
+                screen_h,
+                Some(&flow_rect),
+                results,
+            );
 
             // Advance flow offset
             match style.layout {
                 LayoutFlow::Stack => {
-                    flow_offset += child_style_resolved.y + child_style_resolved.height + child_style_resolved.margin_bottom;
+                    flow_offset += child_style_resolved.y
+                        + child_style_resolved.height
+                        + child_style_resolved.margin_bottom;
                 }
                 LayoutFlow::Horizontal => {
-                    flow_offset += child_style_resolved.x + child_style_resolved.width + child_style_resolved.margin_bottom;
+                    flow_offset += child_style_resolved.x
+                        + child_style_resolved.width
+                        + child_style_resolved.margin_bottom;
                 }
             }
         }

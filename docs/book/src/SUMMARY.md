@@ -29,12 +29,17 @@
 - [Constraints](concepts/constraints.md)
 - [Assets](concepts/assets.md)
 - [Rendering](concepts/rendering.md)
+- [Sky](concepts/sky.md)
+- [Ocean](concepts/ocean.md)
 - [Post-Processing](concepts/post-processing.md)
 - [Audio](concepts/audio.md)
 - [Animation](concepts/animation.md)
+- [Terrain](concepts/terrain.md)
 - [Particles](concepts/particles.md)
 - [Physics and Runtime](concepts/physics-and-runtime.md)
 - [Scripting](concepts/scripting.md)
+- [2D Sprites](concepts/sprites-2d.md)
+- [Touch Input](concepts/touch-input.md)
 - [AI Asset Generation](concepts/ai-generation.md)
 
 # Guides
@@ -45,6 +50,7 @@
 - [Headless Rendering](guides/headless-rendering.md)
 - [AI Agent Workflow](guides/ai-agent-workflow.md)
 - [Building a Game Project](guides/building-a-game-project.md)
+- [Deploying to Android](guides/android.md)
 
 # Reference
 

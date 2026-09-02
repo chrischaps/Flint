@@ -46,20 +46,12 @@ impl GenerationProvider for MockProvider {
 
         let output_path = match request.kind {
             AssetKind::Texture => {
-                let params = request
-                    .texture_params
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_default();
+                let params = request.texture_params.as_ref().cloned().unwrap_or_default();
                 generate_solid_png(output_dir, &request.name, params.width, params.height)?
             }
             AssetKind::Model => generate_minimal_glb(output_dir, &request.name)?,
             AssetKind::Audio => {
-                let params = request
-                    .audio_params
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_default();
+                let params = request.audio_params.as_ref().cloned().unwrap_or_default();
                 generate_silence_wav(output_dir, &request.name, params.duration)?
             }
         };
@@ -126,7 +118,9 @@ fn generate_solid_png(
     height: u32,
 ) -> Result<std::path::PathBuf> {
     // Generate a warm, earthy color from the name hash for visual interest
-    let hash_val = name.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let hash_val = name
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     let r = ((hash_val >> 16) & 0xFF) as u8;
     let g = ((hash_val >> 8) & 0xFF) as u8;
     let b = (hash_val & 0xFF) as u8;
@@ -137,12 +131,10 @@ fn generate_solid_png(
     }
 
     let path = output_dir.join(format!("{}.png", name));
-    let img = image::RgbaImage::from_raw(width, height, img_data).ok_or_else(|| {
-        FlintError::GenerationError("Failed to create image buffer".to_string())
-    })?;
-    img.save(&path).map_err(|e| {
-        FlintError::GenerationError(format!("Failed to save PNG: {}", e))
-    })?;
+    let img = image::RgbaImage::from_raw(width, height, img_data)
+        .ok_or_else(|| FlintError::GenerationError("Failed to create image buffer".to_string()))?;
+    img.save(&path)
+        .map_err(|e| FlintError::GenerationError(format!("Failed to save PNG: {}", e)))?;
 
     Ok(path)
 }
@@ -187,9 +179,8 @@ fn generate_minimal_glb(output_dir: &Path, name: &str) -> Result<std::path::Path
         "buffers": [{ "byteLength": 44 }]
     });
 
-    let json_str = serde_json::to_string(&json).map_err(|e| {
-        FlintError::GenerationError(format!("Failed to serialize GLB JSON: {}", e))
-    })?;
+    let json_str = serde_json::to_string(&json)
+        .map_err(|e| FlintError::GenerationError(format!("Failed to serialize GLB JSON: {}", e)))?;
 
     // Pad JSON to 4-byte alignment
     let json_bytes = json_str.as_bytes();
@@ -218,8 +209,7 @@ fn generate_minimal_glb(output_dir: &Path, name: &str) -> Result<std::path::Path
     bin_data.resize(bin_padded_len, 0);
 
     // GLB header
-    let total_len =
-        12 + 8 + json_padded.len() as u32 + 8 + bin_data.len() as u32;
+    let total_len = 12 + 8 + json_padded.len() as u32 + 8 + bin_data.len() as u32;
 
     let path = output_dir.join(format!("{}.glb", name));
     let mut file = std::fs::File::create(&path)?;
@@ -292,8 +282,7 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("flint_mock_test_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("flint_mock_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

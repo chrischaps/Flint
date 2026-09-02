@@ -4,6 +4,8 @@
 //! They access the world through the shared ScriptCallContext.
 
 use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
+use flint_core::components as comp;
+use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::EntityId;
 use rhai::{Dynamic, Engine, Map};
 use std::sync::{Arc, Mutex};
@@ -17,6 +19,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_audio_api(engine, ctx.clone());
     register_animation_api(engine, ctx.clone());
     register_physics_api(engine, ctx.clone());
+    register_physics_2d_api(engine, ctx.clone());
     register_math_api(engine);
     register_event_api(engine, ctx.clone());
     register_ui_api(engine, ctx.clone());
@@ -25,7 +28,264 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
+    register_terrain_api(engine, ctx.clone());
+    register_sprite_api(engine, ctx.clone());
+    register_sprite_animation_api(engine, ctx.clone());
+    register_touch_api(engine, ctx.clone());
+    register_camera_2d_api(engine, ctx.clone());
+    register_chunk_api(engine, ctx.clone());
+    register_screen_ui_api(engine, ctx.clone());
+    register_conducted_api(engine, ctx.clone());
+    register_ocean_api(engine, ctx.clone());
     register_log_api(engine, ctx);
+}
+
+// ─── Conducted-parameters API (ADR 0020) ──────────────────
+//
+// The music session's per-frame state for scene bindings: lean, target,
+// coherence, musical position, judged pulses, and the ladder/reintegration
+// visual ramps. Neutral defaults when no session is active (a clean,
+// settled world), so scripts never branch on session existence.
+
+fn register_conducted_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // conducted_lean() / conducted_target() -> Map #{x, y}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_lean", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.lean[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.lean[1]));
+            map
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_target", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.target[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.target[1]));
+            map
+        });
+    }
+
+    // conducted_next_target() -> Map #{x, y, beats}: the next authored lean
+    // key and suite beats until its anchor (ADR 0023). beats = 1e6 (and
+    // x/y = the current target) when nothing is upcoming.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_next_target", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.next_target[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.next_target[1]));
+            map.insert("beats".into(), Dynamic::from(c.conducted.next_target_beats));
+            map
+        });
+    }
+
+    // Scalar getters, all f64 (Rhai has no implicit numeric coercion).
+    macro_rules! scalar_getter {
+        ($name:literal, $field:ident) => {{
+            let ctx = ctx.clone();
+            engine.register_fn($name, move || -> f64 {
+                let c = crate::lock_or_recover(&ctx);
+                c.conducted.$field
+            });
+        }};
+    }
+    scalar_getter!("conducted_coherence", coherence);
+    scalar_getter!("conducted_beat_phase", beat_phase);
+    scalar_getter!("conducted_bar_phase", bar_phase);
+    scalar_getter!("conducted_beat", beat);
+    scalar_getter!("conducted_desaturate", desaturate);
+    scalar_getter!("conducted_blur", blur);
+    scalar_getter!("conducted_chromatic", chromatic);
+    scalar_getter!("conducted_reassembly", reassembly);
+    scalar_getter!("conducted_rewind", rewind);
+
+    // conducted_bar() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_bar", move || -> i64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.conducted.bar
+        });
+    }
+
+    // conducted_section() -> String ("" when none)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_section", move || -> String {
+            let c = crate::lock_or_recover(&ctx);
+            c.conducted.section.clone()
+        });
+    }
+
+    // conducted_pulses() -> Array of Map #{age: f64, err_ms: f64, kind: string}
+    // Pulses judged this frame — empty most frames.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_pulses", move || -> rhai::Array {
+            let c = crate::lock_or_recover(&ctx);
+            c.conducted
+                .pulses
+                .iter()
+                .map(|p| {
+                    let mut map = Map::new();
+                    map.insert("age".into(), Dynamic::from(p.age));
+                    map.insert("err_ms".into(), Dynamic::from(p.err_ms));
+                    map.insert("kind".into(), Dynamic::from(p.kind.clone()));
+                    Dynamic::from_map(map)
+                })
+                .collect()
+        });
+    }
+
+    // conducted_sway() -> Map #{x, y} (zeros under the prototype input map)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_sway", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.conducted.sway[0]));
+            map.insert("y".into(), Dynamic::from(c.conducted.sway[1]));
+            map
+        });
+    }
+
+    // conducted_pressure_l() / conducted_pressure_r() -> f64 in [0,1]
+    scalar_getter!("conducted_pressure_l", pressure_l);
+    scalar_getter!("conducted_pressure_r", pressure_r);
+
+    // conducted_cues() -> Array of Map #{name: string, age: f64, params: Map}
+    // Chart cues fired this frame (ADR 0033) — empty most frames. Params are
+    // the chart's free-form table, flattened to floats/strings/bools.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_cues", move || -> rhai::Array {
+            let c = crate::lock_or_recover(&ctx);
+            c.conducted
+                .cues
+                .iter()
+                .map(|cue| {
+                    let mut params = Map::new();
+                    for (k, v) in &cue.params {
+                        let d = match v {
+                            crate::context::CueParam::Number(n) => Dynamic::from(*n),
+                            crate::context::CueParam::Text(s) => Dynamic::from(s.clone()),
+                            crate::context::CueParam::Flag(b) => Dynamic::from(*b),
+                        };
+                        params.insert(k.as_str().into(), d);
+                    }
+                    let mut map = Map::new();
+                    map.insert("name".into(), Dynamic::from(cue.name.clone()));
+                    map.insert("age".into(), Dynamic::from(cue.age));
+                    map.insert("params".into(), Dynamic::from_map(params));
+                    Dynamic::from_map(map)
+                })
+                .collect()
+        });
+    }
+
+    // conducted_no_input() / conducted_preroll() -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_no_input", move || -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.conducted.no_input
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_preroll", move || -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.conducted.preroll
+        });
+    }
+}
+
+// ─── Ocean API ───────────────────────────────────────────
+//
+// Samples the same Gerstner spectrum the renderer displaces vertices with
+// (flint_core::ocean is the single source of truth, and total_time is the
+// same clock the player hands the renderer as ocean_time). The spectrum is
+// cached and regenerated only when the `ocean` component's params change.
+
+fn register_ocean_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    use flint_core::ocean::{OceanParams, WaveSpectrum};
+
+    type SpectrumCache = Arc<Mutex<Option<WaveSpectrum>>>;
+    let cache: SpectrumCache = Arc::new(Mutex::new(None));
+
+    // Reads the first `ocean` component and returns (spectrum ready?, time).
+    fn with_spectrum<R>(
+        ctx: &Arc<Mutex<ScriptCallContext>>,
+        cache: &Arc<Mutex<Option<WaveSpectrum>>>,
+        f: impl FnOnce(&WaveSpectrum, f64) -> R,
+    ) -> Option<R> {
+        let c = ctx.lock().unwrap();
+        let world = unsafe { c.world_ref() };
+        let entity_id = world
+            .entities_with_component(comp::OCEAN)
+            .iter()
+            .next()
+            .copied()?;
+        let ocean_comp = world
+            .get_components(entity_id)
+            .and_then(|comps| comps.get(comp::OCEAN).cloned())?;
+        let params = OceanParams::from_component(&ocean_comp);
+
+        let mut cached = cache.lock().unwrap();
+        let needs_regen = cached.as_ref().map(|s| s.params != params).unwrap_or(true);
+        if needs_regen {
+            *cached = Some(WaveSpectrum::generate(&params));
+        }
+        Some(f(cached.as_ref().unwrap(), c.total_time))
+    }
+
+    // ocean_height(x, z) -> f64 — Eulerian surface height at world (x, z).
+    {
+        let ctx = ctx.clone();
+        let cache = cache.clone();
+        engine.register_fn("ocean_height", move |x: f64, z: f64| -> f64 {
+            with_spectrum(&ctx, &cache, |spec, t| {
+                spec.sample_height(x as f32, z as f32, t) as f64
+            })
+            .unwrap_or(0.0)
+        });
+    }
+
+    // ocean_velocity_y(x, z) -> f64 — vertical surface velocity (m/s) at
+    // world (x, z). Analytic ∂h/∂t; pairs with ocean_height for impact cues.
+    {
+        let ctx = ctx.clone();
+        let cache = cache.clone();
+        engine.register_fn("ocean_velocity_y", move |x: f64, z: f64| -> f64 {
+            with_spectrum(&ctx, &cache, |spec, t| {
+                spec.sample_velocity_y(x as f32, z as f32, t) as f64
+            })
+            .unwrap_or(0.0)
+        });
+    }
+
+    // ocean_normal(x, z) -> #{x, y, z} — surface normal at world (x, z).
+    {
+        let ctx = ctx.clone();
+        let cache = cache.clone();
+        engine.register_fn("ocean_normal", move |x: f64, z: f64| -> Map {
+            let n = with_spectrum(&ctx, &cache, |spec, t| {
+                spec.sample_normal(x as f32, z as f32, t)
+            })
+            .unwrap_or([0.0, 1.0, 0.0]);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(n[0] as f64));
+            map.insert("y".into(), Dynamic::from(n[1] as f64));
+            map.insert("z".into(), Dynamic::from(n[2] as f64));
+            map
+        });
+    }
 }
 
 // ─── Entity API ──────────────────────────────────────────
@@ -35,7 +295,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("self_entity", move || -> i64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.current_entity.raw() as i64
         });
     }
@@ -44,7 +304,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("this_entity", move || -> i64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.current_entity.raw() as i64
         });
     }
@@ -53,7 +313,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_entity", move |name: &str| -> i64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             world.get_id(name).map(|id| id.raw() as i64).unwrap_or(-1)
         });
@@ -63,8 +323,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("entity_exists", move |id: i64| -> bool {
-            if id < 0 { return false; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return false;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             world.contains(EntityId::from_raw(id as u64))
         });
@@ -74,10 +336,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("entity_name", move |id: i64| -> String {
-            if id < 0 { return String::new(); }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return String::new();
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
-            world.get_name(EntityId::from_raw(id as u64))
+            world
+                .get_name(EntityId::from_raw(id as u64))
                 .unwrap_or("")
                 .to_string()
         });
@@ -87,10 +352,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("has_component", move |id: i64, comp: &str| -> bool {
-            if id < 0 { return false; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return false;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
-            world.get_components(EntityId::from_raw(id as u64))
+            world
+                .get_components(EntityId::from_raw(id as u64))
                 .map(|comps| comps.has(comp))
                 .unwrap_or(false)
         });
@@ -100,16 +368,16 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_component", move |id: i64, comp: &str| -> Dynamic {
-            if id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             match world.get_components(EntityId::from_raw(id as u64)) {
-                Some(comps) => {
-                    match comps.get(comp) {
-                        Some(val) => toml_to_dynamic(val.clone()),
-                        None => Dynamic::UNIT,
-                    }
-                }
+                Some(comps) => match comps.get(comp) {
+                    Some(val) => toml_to_dynamic(val.clone()),
+                    None => Dynamic::UNIT,
+                },
                 None => Dynamic::UNIT,
             }
         });
@@ -118,30 +386,41 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // get_field(id: i64, comp: &str, field: &str) -> Dynamic
     {
         let ctx = ctx.clone();
-        engine.register_fn("get_field", move |id: i64, comp: &str, field: &str| -> Dynamic {
-            if id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_ref() };
-            world.get_components(EntityId::from_raw(id as u64))
-                .and_then(|comps| comps.get_field(comp, field).cloned())
-                .map(toml_to_dynamic)
-                .unwrap_or(Dynamic::UNIT)
-        });
+        engine.register_fn(
+            "get_field",
+            move |id: i64, comp: &str, field: &str| -> Dynamic {
+                if id < 0 {
+                    return Dynamic::UNIT;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_ref() };
+                world
+                    .get_components(EntityId::from_raw(id as u64))
+                    .and_then(|comps| comps.get_field(comp, field).cloned())
+                    .map(toml_to_dynamic)
+                    .unwrap_or(Dynamic::UNIT)
+            },
+        );
     }
 
     // set_field(id: i64, comp: &str, field: &str, val: Dynamic)
     {
         let ctx = ctx.clone();
-        engine.register_fn("set_field", move |id: i64, comp: &str, field: &str, val: Dynamic| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_mut() };
-            if let Some(tv) = dynamic_to_toml(&val) {
-                if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                    comps.set_field(comp, field, tv);
+        engine.register_fn(
+            "set_field",
+            move |id: i64, comp: &str, field: &str, val: Dynamic| {
+                if id < 0 {
+                    return;
                 }
-            }
-        });
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                if let Some(tv) = dynamic_to_toml(&val) {
+                    if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                        comps.set_field(comp, field, tv);
+                    }
+                }
+            },
+        );
     }
 
     // get_position(id: i64) -> Map #{x, y, z}
@@ -149,8 +428,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         let ctx = ctx.clone();
         engine.register_fn("get_position", move |id: i64| -> Map {
             let mut map = Map::new();
-            if id < 0 { return map; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return map;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
                 map.insert("x".into(), Dynamic::from(transform.position.x as f64));
@@ -165,16 +446,22 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_position", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("transform", "position", toml::Value::Array(vec![
-                    toml::Value::Float(x),
-                    toml::Value::Float(y),
-                    toml::Value::Float(z),
-                ]));
+                comps.set_field(
+                    comp::TRANSFORM,
+                    "position",
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
             }
         });
     }
@@ -184,8 +471,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         let ctx = ctx.clone();
         engine.register_fn("get_rotation", move |id: i64| -> Map {
             let mut map = Map::new();
-            if id < 0 { return map; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return map;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
                 map.insert("x".into(), Dynamic::from(transform.rotation.x as f64));
@@ -200,16 +489,28 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_rotation", move |id: i64, x: f64, y: f64, z: f64| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("transform", "rotation", toml::Value::Array(vec![
-                    toml::Value::Float(x),
-                    toml::Value::Float(y),
-                    toml::Value::Float(z),
-                ]));
+                comps.set_field(
+                    comp::TRANSFORM,
+                    "rotation",
+                    toml::Value::Array(vec![
+                        toml::Value::Float(x),
+                        toml::Value::Float(y),
+                        toml::Value::Float(z),
+                    ]),
+                );
+                // Clear quaternion so Euler angles take effect
+                if let Some(transform) = comps.get_mut(comp::TRANSFORM) {
+                    if let Some(table) = transform.as_table_mut() {
+                        table.remove("rotation_quat");
+                    }
+                }
             }
         });
     }
@@ -218,8 +519,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("distance", move |a: i64, b: i64| -> f64 {
-            if a < 0 || b < 0 { return f64::MAX; }
-            let c = ctx.lock().unwrap();
+            if a < 0 || b < 0 {
+                return f64::MAX;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             let ta = world.get_transform(EntityId::from_raw(a as u64));
             let tb = world.get_transform(EntityId::from_raw(b as u64));
@@ -239,7 +542,7 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("spawn_entity", move |name: &str| -> i64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             world.spawn(name).map(|id| id.raw() as i64).unwrap_or(-1)
         });
@@ -249,8 +552,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("despawn_entity", move |id: i64| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let _ = world.despawn(EntityId::from_raw(id as u64));
         });
@@ -260,8 +565,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("set_parent", move |child_id: i64, parent_id: i64| {
-            if child_id < 0 || parent_id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if child_id < 0 || parent_id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let _ = world.set_parent(
                 EntityId::from_raw(child_id as u64),
@@ -274,10 +581,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_parent", move |id: i64| -> i64 {
-            if id < 0 { return -1; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return -1;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
-            world.get_parent(EntityId::from_raw(id as u64))
+            world
+                .get_parent(EntityId::from_raw(id as u64))
                 .map(|pid| pid.raw() as i64)
                 .unwrap_or(-1)
         });
@@ -287,10 +597,13 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("get_children", move |id: i64| -> rhai::Array {
-            if id < 0 { return vec![]; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return vec![];
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
-            world.get_children(EntityId::from_raw(id as u64))
+            world
+                .get_children(EntityId::from_raw(id as u64))
                 .into_iter()
                 .map(|cid| Dynamic::from(cid.raw() as i64))
                 .collect()
@@ -302,8 +615,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         let ctx = ctx.clone();
         engine.register_fn("get_world_position", move |id: i64| -> Map {
             let mut map = Map::new();
-            if id < 0 { return map; }
-            let c = ctx.lock().unwrap();
+            if id < 0 {
+                return map;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             if let Some(pos) = world.get_world_position(EntityId::from_raw(id as u64)) {
                 map.insert("x".into(), Dynamic::from(pos.x as f64));
@@ -317,30 +632,35 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // set_material_color(entity_id: i64, r: f64, g: f64, b: f64, a: f64)
     {
         let ctx = ctx.clone();
-        engine.register_fn("set_material_color", move |id: i64, r: f64, g: f64, b: f64, a: f64| {
-            if id < 0 { return; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(id as u64);
-            if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("material", "base_color_r", toml::Value::Float(r));
-                comps.set_field("material", "base_color_g", toml::Value::Float(g));
-                comps.set_field("material", "base_color_b", toml::Value::Float(b));
-                comps.set_field("material", "base_color_a", toml::Value::Float(a));
-            }
-        });
+        engine.register_fn(
+            "set_material_color",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(comps) = world.get_components_mut(eid) {
+                    comps.set_field(comp::MATERIAL, "base_color_r", toml::Value::Float(r));
+                    comps.set_field(comp::MATERIAL, "base_color_g", toml::Value::Float(g));
+                    comps.set_field(comp::MATERIAL, "base_color_b", toml::Value::Float(b));
+                    comps.set_field(comp::MATERIAL, "base_color_a", toml::Value::Float(a));
+                }
+            },
+        );
     }
 
     // find_entities_with(component: &str) -> Array of entity IDs
     {
         let ctx = ctx.clone();
         engine.register_fn("find_entities_with", move |comp: &str| -> rhai::Array {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
-            world.all_entities()
-                .into_iter()
-                .filter(|info| info.components.iter().any(|c| c == comp))
-                .map(|info| Dynamic::from(info.id.raw() as i64))
+            world
+                .entities_with_component(comp)
+                .iter()
+                .map(|id| Dynamic::from(id.raw() as i64))
                 .collect()
         });
     }
@@ -349,12 +669,9 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     {
         let ctx = ctx.clone();
         engine.register_fn("entity_count_with", move |comp: &str| -> i64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
-            world.all_entities()
-                .into_iter()
-                .filter(|info| info.components.iter().any(|c| c == comp))
-                .count() as i64
+            world.entities_with_component(comp).len() as i64
         });
     }
 }
@@ -365,16 +682,167 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
     // spline_closest_point(spline_entity, x, y, z) -> Map #{t, x, y, z, dist_sq}
     {
         let ctx = ctx.clone();
-        engine.register_fn("spline_closest_point", move |spline_id: i64, qx: f64, qy: f64, qz: f64| -> Dynamic {
-            if spline_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
+        engine.register_fn(
+            "spline_closest_point",
+            move |spline_id: i64, qx: f64, qy: f64, qz: f64| -> Dynamic {
+                if spline_id < 0 {
+                    return Dynamic::UNIT;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_ref() };
+                let eid = EntityId::from_raw(spline_id as u64);
+                let comps = match world.get_components(eid) {
+                    Some(c) => c,
+                    None => return Dynamic::UNIT,
+                };
+                let sd = match comps.get(comp::SPLINE_DATA) {
+                    Some(v) => v,
+                    None => return Dynamic::UNIT,
+                };
+                let table = match sd.as_table() {
+                    Some(t) => t,
+                    None => return Dynamic::UNIT,
+                };
+
+                let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
+                    Some(n) if n > 0 => n as usize,
+                    _ => return Dynamic::UNIT,
+                };
+
+                let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+
+                let mut best_dist_sq = f64::MAX;
+                let mut best_idx = 0usize;
+
+                for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
+                    let sx = px_arr[i].as_float().unwrap_or(0.0);
+                    let sy = py_arr[i].as_float().unwrap_or(0.0);
+                    let sz = pz_arr[i].as_float().unwrap_or(0.0);
+                    let dx = qx - sx;
+                    let dy = qy - sy;
+                    let dz = qz - sz;
+                    let dist_sq = dx * dx + dy * dy + dz * dz;
+                    if dist_sq < best_dist_sq {
+                        best_dist_sq = dist_sq;
+                        best_idx = i;
+                    }
+                }
+
+                let mut map = Map::new();
+                map.insert(
+                    "t".into(),
+                    Dynamic::from(t_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert(
+                    "x".into(),
+                    Dynamic::from(px_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert(
+                    "y".into(),
+                    Dynamic::from(py_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert(
+                    "z".into(),
+                    Dynamic::from(pz_arr[best_idx].as_float().unwrap_or(0.0)),
+                );
+                map.insert("dist_sq".into(), Dynamic::from(best_dist_sq));
+                Dynamic::from(map)
+            },
+        );
+    }
+
+    // spline_is_gap(spline_entity, t) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("spline_is_gap", move |spline_id: i64, t: f64| -> bool {
+            if spline_id < 0 {
+                return false;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(spline_id as u64);
+            let comps = match world.get_components(eid) {
+                Some(c) => c,
+                None => return false,
+            };
+            let sd = match comps.get(comp::SPLINE_DATA) {
+                Some(v) => v,
+                None => return false,
+            };
+            let table = match sd.as_table() {
+                Some(t) => t,
+                None => return false,
+            };
+
+            let gap_count = table
+                .get("gap_count")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0);
+            if gap_count == 0 {
+                return false;
+            }
+
+            let gap_starts = match table.get("gap_starts").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return false,
+            };
+            let gap_ends = match table.get("gap_ends").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return false,
+            };
+
+            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
+            for i in 0..(gap_count as usize)
+                .min(gap_starts.len())
+                .min(gap_ends.len())
+            {
+                let start = gap_starts[i].as_float().unwrap_or(0.0);
+                let end = gap_ends[i].as_float().unwrap_or(0.0);
+                if start <= end {
+                    if t_wrapped >= start && t_wrapped < end {
+                        return true;
+                    }
+                } else {
+                    // Wrap-around range
+                    if t_wrapped >= start || t_wrapped < end {
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+    }
+
+    // spline_gap_at(spline_entity, t) -> Map #{start_t, end_t} or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("spline_gap_at", move |spline_id: i64, t: f64| -> Dynamic {
+            if spline_id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             let eid = EntityId::from_raw(spline_id as u64);
             let comps = match world.get_components(eid) {
                 Some(c) => c,
                 None => return Dynamic::UNIT,
             };
-            let sd = match comps.get("spline_data") {
+            let sd = match comps.get(comp::SPLINE_DATA) {
                 Some(v) => v,
                 None => return Dynamic::UNIT,
             };
@@ -383,165 +851,171 @@ fn register_spline_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 None => return Dynamic::UNIT,
             };
 
-            let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
-                Some(n) if n > 0 => n as usize,
-                _ => return Dynamic::UNIT,
-            };
-
-            let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-
-            let mut best_dist_sq = f64::MAX;
-            let mut best_idx = 0usize;
-
-            for i in 0..count.min(px_arr.len()).min(pz_arr.len()).min(t_arr.len()) {
-                let sx = px_arr[i].as_float().unwrap_or(0.0);
-                let sy = py_arr[i].as_float().unwrap_or(0.0);
-                let sz = pz_arr[i].as_float().unwrap_or(0.0);
-                let dx = qx - sx;
-                let dy = qy - sy;
-                let dz = qz - sz;
-                let dist_sq = dx * dx + dy * dy + dz * dz;
-                if dist_sq < best_dist_sq {
-                    best_dist_sq = dist_sq;
-                    best_idx = i;
-                }
+            let gap_count = table
+                .get("gap_count")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(0);
+            if gap_count == 0 {
+                return Dynamic::UNIT;
             }
 
-            let mut map = Map::new();
-            map.insert("t".into(), Dynamic::from(t_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("x".into(), Dynamic::from(px_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("y".into(), Dynamic::from(py_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("z".into(), Dynamic::from(pz_arr[best_idx].as_float().unwrap_or(0.0)));
-            map.insert("dist_sq".into(), Dynamic::from(best_dist_sq));
-            Dynamic::from(map)
+            let gap_starts = match table.get("gap_starts").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+            let gap_ends = match table.get("gap_ends").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return Dynamic::UNIT,
+            };
+
+            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
+            for i in 0..(gap_count as usize)
+                .min(gap_starts.len())
+                .min(gap_ends.len())
+            {
+                let start = gap_starts[i].as_float().unwrap_or(0.0);
+                let end = gap_ends[i].as_float().unwrap_or(0.0);
+                let in_gap = if start <= end {
+                    t_wrapped >= start && t_wrapped < end
+                } else {
+                    t_wrapped >= start || t_wrapped < end
+                };
+                if in_gap {
+                    let mut map = Map::new();
+                    map.insert("start_t".into(), Dynamic::from(start));
+                    map.insert("end_t".into(), Dynamic::from(end));
+                    return Dynamic::from(map);
+                }
+            }
+            Dynamic::UNIT
         });
     }
 
     // spline_sample_at(spline_entity, t) -> Map #{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}
     {
         let ctx = ctx.clone();
-        engine.register_fn("spline_sample_at", move |spline_id: i64, t: f64| -> Dynamic {
-            if spline_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_ref() };
-            let eid = EntityId::from_raw(spline_id as u64);
-            let comps = match world.get_components(eid) {
-                Some(c) => c,
-                None => return Dynamic::UNIT,
-            };
-            let sd = match comps.get("spline_data") {
-                Some(v) => v,
-                None => return Dynamic::UNIT,
-            };
-            let table = match sd.as_table() {
-                Some(t) => t,
-                None => return Dynamic::UNIT,
-            };
-
-            let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
-                Some(n) if n > 1 => n as usize,
-                _ => return Dynamic::UNIT,
-            };
-
-            let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-            let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
-                Some(a) => a,
-                None => return Dynamic::UNIT,
-            };
-
-            let len = count.min(px_arr.len()).min(py_arr.len()).min(pz_arr.len()).min(t_arr.len());
-            if len < 2 { return Dynamic::UNIT; }
-
-            // Wrap t into [0, 1) for closed splines
-            let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
-
-            // Binary search for the bracketing segment
-            let mut lo = 0usize;
-            let mut hi = len - 1;
-            while lo + 1 < hi {
-                let mid = (lo + hi) / 2;
-                if t_arr[mid].as_float().unwrap_or(0.0) <= t_wrapped {
-                    lo = mid;
-                } else {
-                    hi = mid;
+        engine.register_fn(
+            "spline_sample_at",
+            move |spline_id: i64, t: f64| -> Dynamic {
+                if spline_id < 0 {
+                    return Dynamic::UNIT;
                 }
-            }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_ref() };
+                let eid = EntityId::from_raw(spline_id as u64);
+                let comps = match world.get_components(eid) {
+                    Some(c) => c,
+                    None => return Dynamic::UNIT,
+                };
+                let sd = match comps.get(comp::SPLINE_DATA) {
+                    Some(v) => v,
+                    None => return Dynamic::UNIT,
+                };
+                let table = match sd.as_table() {
+                    Some(t) => t,
+                    None => return Dynamic::UNIT,
+                };
 
-            let t0 = t_arr[lo].as_float().unwrap_or(0.0);
-            let t1 = t_arr[hi].as_float().unwrap_or(0.0);
-            let seg_len = t1 - t0;
-            let frac = if seg_len.abs() > 1e-9 { (t_wrapped - t0) / seg_len } else { 0.0 };
+                let count = match table.get("sample_count").and_then(|v| v.as_integer()) {
+                    Some(n) if n > 1 => n as usize,
+                    _ => return Dynamic::UNIT,
+                };
 
-            let x0 = px_arr[lo].as_float().unwrap_or(0.0);
-            let y0 = py_arr[lo].as_float().unwrap_or(0.0);
-            let z0 = pz_arr[lo].as_float().unwrap_or(0.0);
-            let x1 = px_arr[hi].as_float().unwrap_or(0.0);
-            let y1 = py_arr[hi].as_float().unwrap_or(0.0);
-            let z1 = pz_arr[hi].as_float().unwrap_or(0.0);
+                let px_arr = match table.get("positions_x").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let py_arr = match table.get("positions_y").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let pz_arr = match table.get("positions_z").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
+                let t_arr = match table.get("t_values").and_then(|v| v.as_array()) {
+                    Some(a) => a,
+                    None => return Dynamic::UNIT,
+                };
 
-            let px = x0 + (x1 - x0) * frac;
-            let py = y0 + (y1 - y0) * frac;
-            let pz = z0 + (z1 - z0) * frac;
+                let len = count
+                    .min(px_arr.len())
+                    .min(py_arr.len())
+                    .min(pz_arr.len())
+                    .min(t_arr.len());
+                if len < 2 {
+                    return Dynamic::UNIT;
+                }
 
-            // Forward direction: tangent along the spline
-            let mut fx = x1 - x0;
-            let mut fy = y1 - y0;
-            let mut fz = z1 - z0;
-            let flen = (fx * fx + fy * fy + fz * fz).sqrt();
-            if flen > 1e-9 {
-                fx /= flen;
-                fy /= flen;
-                fz /= flen;
-            }
+                // Wrap t into [0, 1) for closed splines
+                let t_wrapped = ((t % 1.0) + 1.0) % 1.0;
 
-            // Right vector: cross(forward, up) where up = (0,1,0)
-            let mut rx = fz;
-            let ry = 0.0_f64;
-            let mut rz = -fx;
-            let rlen = (rx * rx + rz * rz).sqrt();
-            if rlen > 1e-9 {
-                rx /= rlen;
-                rz /= rlen;
-            }
+                // Binary search for the bracketing segment
+                let mut lo = 0usize;
+                let mut hi = len - 1;
+                while lo + 1 < hi {
+                    let mid = (lo + hi) / 2;
+                    if t_arr[mid].as_float().unwrap_or(0.0) <= t_wrapped {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
 
-            let mut map = Map::new();
-            map.insert("x".into(), Dynamic::from(px));
-            map.insert("y".into(), Dynamic::from(py));
-            map.insert("z".into(), Dynamic::from(pz));
-            map.insert("fwd_x".into(), Dynamic::from(fx));
-            map.insert("fwd_y".into(), Dynamic::from(fy));
-            map.insert("fwd_z".into(), Dynamic::from(fz));
-            map.insert("right_x".into(), Dynamic::from(rx));
-            map.insert("right_y".into(), Dynamic::from(ry));
-            map.insert("right_z".into(), Dynamic::from(rz));
-            Dynamic::from(map)
-        });
+                let t0 = t_arr[lo].as_float().unwrap_or(0.0);
+                let t1 = t_arr[hi].as_float().unwrap_or(0.0);
+                let seg_len = t1 - t0;
+                let frac = if seg_len.abs() > 1e-9 {
+                    (t_wrapped - t0) / seg_len
+                } else {
+                    0.0
+                };
+
+                let x0 = px_arr[lo].as_float().unwrap_or(0.0);
+                let y0 = py_arr[lo].as_float().unwrap_or(0.0);
+                let z0 = pz_arr[lo].as_float().unwrap_or(0.0);
+                let x1 = px_arr[hi].as_float().unwrap_or(0.0);
+                let y1 = py_arr[hi].as_float().unwrap_or(0.0);
+                let z1 = pz_arr[hi].as_float().unwrap_or(0.0);
+
+                let px = x0 + (x1 - x0) * frac;
+                let py = y0 + (y1 - y0) * frac;
+                let pz = z0 + (z1 - z0) * frac;
+
+                // Forward direction: tangent along the spline
+                let mut fx = x1 - x0;
+                let mut fy = y1 - y0;
+                let mut fz = z1 - z0;
+                let flen = (fx * fx + fy * fy + fz * fz).sqrt();
+                if flen > 1e-9 {
+                    fx /= flen;
+                    fy /= flen;
+                    fz /= flen;
+                }
+
+                // Right vector: cross(forward, up) where up = (0,1,0)
+                let mut rx = fz;
+                let ry = 0.0_f64;
+                let mut rz = -fx;
+                let rlen = (rx * rx + rz * rz).sqrt();
+                if rlen > 1e-9 {
+                    rx /= rlen;
+                    rz /= rlen;
+                }
+
+                let mut map = Map::new();
+                map.insert("x".into(), Dynamic::from(px));
+                map.insert("y".into(), Dynamic::from(py));
+                map.insert("z".into(), Dynamic::from(pz));
+                map.insert("fwd_x".into(), Dynamic::from(fx));
+                map.insert("fwd_y".into(), Dynamic::from(fy));
+                map.insert("fwd_z".into(), Dynamic::from(fz));
+                map.insert("right_x".into(), Dynamic::from(rx));
+                map.insert("right_y".into(), Dynamic::from(ry));
+                map.insert("right_z".into(), Dynamic::from(rz));
+                Dynamic::from(map)
+            },
+        );
     }
 }
 
@@ -552,7 +1026,7 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("is_action_pressed", move |action: &str| -> bool {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.input.actions_pressed.contains(action)
         });
     }
@@ -561,7 +1035,7 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("is_action_just_pressed", move |action: &str| -> bool {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.input.actions_just_pressed.contains(action)
         });
     }
@@ -570,7 +1044,7 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("is_action_just_released", move |action: &str| -> bool {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.input.actions_just_released.contains(action)
         });
     }
@@ -579,8 +1053,19 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("action_value", move |action: &str| -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.input.action_values.get(action).copied().unwrap_or(0.0)
+        });
+    }
+
+    // any_input_just_pressed() -> bool
+    // True on any raw keyboard/mouse/gamepad press this frame, including
+    // keys with no action binding ("press any key" screens).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("any_input_just_pressed", move || -> bool {
+            let c = ctx.lock().unwrap();
+            c.input.any_just_pressed
         });
     }
 
@@ -588,7 +1073,7 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("mouse_delta_x", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.input.mouse_delta.0
         });
     }
@@ -597,7 +1082,7 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("mouse_delta_y", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.input.mouse_delta.1
         });
     }
@@ -609,14 +1094,14 @@ fn register_time_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("delta_time", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.delta_time
         });
     }
     {
         let ctx = ctx.clone();
         engine.register_fn("total_time", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.total_time
         });
     }
@@ -629,7 +1114,7 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("play_sound", move |name: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::PlaySound {
                 name: name.to_string(),
                 volume: 1.0,
@@ -641,7 +1126,7 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("play_sound", move |name: &str, volume: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::PlaySound {
                 name: name.to_string(),
                 volume,
@@ -652,21 +1137,42 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // play_sound_at(name: &str, x: f64, y: f64, z: f64, vol: f64)
     {
         let ctx = ctx.clone();
-        engine.register_fn("play_sound_at", move |name: &str, x: f64, y: f64, z: f64, vol: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.commands.push(ScriptCommand::PlaySoundAt {
-                name: name.to_string(),
-                position: (x, y, z),
-                volume: vol,
-            });
-        });
+        engine.register_fn(
+            "play_sound_at",
+            move |name: &str, x: f64, y: f64, z: f64, vol: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::PlaySoundAt {
+                    name: name.to_string(),
+                    position: (x, y, z),
+                    volume: vol,
+                    pitch: 1.0,
+                });
+            },
+        );
+    }
+
+    // play_sound_at(name, x, y, z, vol, pitch) — 6-arg overload with pitch
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "play_sound_at",
+            move |name: &str, x: f64, y: f64, z: f64, vol: f64, pitch: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.commands.push(ScriptCommand::PlaySoundAt {
+                    name: name.to_string(),
+                    position: (x, y, z),
+                    volume: vol,
+                    pitch,
+                });
+            },
+        );
     }
 
     // stop_sound(name: &str)
     {
         let ctx = ctx.clone();
         engine.register_fn("stop_sound", move |name: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::StopSound {
                 name: name.to_string(),
             });
@@ -681,13 +1187,19 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     {
         let ctx = ctx.clone();
         engine.register_fn("play_clip", move |entity_id: i64, clip_name: &str| {
-            if entity_id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if entity_id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "clip", toml::Value::String(clip_name.to_string()));
-                comps.set_field("animator", "playing", toml::Value::Boolean(true));
+                comps.set_field(
+                    comp::ANIMATOR,
+                    "clip",
+                    toml::Value::String(clip_name.to_string()),
+                );
+                comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
             }
         });
     }
@@ -696,12 +1208,14 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     {
         let ctx = ctx.clone();
         engine.register_fn("stop_clip", move |entity_id: i64| {
-            if entity_id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if entity_id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "playing", toml::Value::Boolean(false));
+                comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(false));
             }
         });
     }
@@ -709,28 +1223,43 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     // blend_to(entity_id: i64, clip: &str, duration: f64)
     {
         let ctx = ctx.clone();
-        engine.register_fn("blend_to", move |entity_id: i64, clip: &str, duration: f64| {
-            if entity_id < 0 { return; }
-            let c = ctx.lock().unwrap();
-            let world = unsafe { c.world_mut() };
-            let eid = EntityId::from_raw(entity_id as u64);
-            if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "blend_target", toml::Value::String(clip.to_string()));
-                comps.set_field("animator", "blend_duration", toml::Value::Float(duration));
-            }
-        });
+        engine.register_fn(
+            "blend_to",
+            move |entity_id: i64, clip: &str, duration: f64| {
+                if entity_id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(entity_id as u64);
+                if let Some(comps) = world.get_components_mut(eid) {
+                    comps.set_field(
+                        comp::ANIMATOR,
+                        "blend_target",
+                        toml::Value::String(clip.to_string()),
+                    );
+                    comps.set_field(
+                        comp::ANIMATOR,
+                        "blend_duration",
+                        toml::Value::Float(duration),
+                    );
+                }
+            },
+        );
     }
 
     // set_anim_speed(entity_id: i64, speed: f64)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_anim_speed", move |entity_id: i64, speed: f64| {
-            if entity_id < 0 { return; }
-            let c = ctx.lock().unwrap();
+            if entity_id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_mut() };
             let eid = EntityId::from_raw(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("animator", "speed", toml::Value::Float(speed));
+                comps.set_field(comp::ANIMATOR, "speed", toml::Value::Float(speed));
             }
         });
     }
@@ -742,45 +1271,48 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     // raycast(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
     {
         let ctx = ctx.clone();
-        engine.register_fn("raycast", move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
-            let c = ctx.lock().unwrap();
-            let physics = unsafe { c.physics_ref() };
-            let physics = match physics {
-                Some(p) => p,
-                None => return Dynamic::UNIT,
-            };
+        engine.register_fn(
+            "raycast",
+            move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
+                let c = crate::lock_or_recover(&ctx);
+                let physics = unsafe { c.physics_ref() };
+                let physics = match physics {
+                    Some(p) => p,
+                    None => return Dynamic::UNIT,
+                };
 
-            // Exclude the current entity from the raycast
-            let exclude = Some(c.current_entity);
+                // Exclude the current entity from the raycast
+                let exclude = Some(c.current_entity);
 
-            match physics.raycast(
-                [ox as f32, oy as f32, oz as f32],
-                [dx as f32, dy as f32, dz as f32],
-                max_dist as f32,
-                exclude,
-            ) {
-                Some(hit) => {
-                    let mut map = Map::new();
-                    map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
-                    map.insert("distance".into(), Dynamic::from(hit.distance as f64));
-                    map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
-                    map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
-                    map.insert("point_z".into(), Dynamic::from(hit.point[2] as f64));
-                    map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
-                    map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
-                    map.insert("normal_z".into(), Dynamic::from(hit.normal[2] as f64));
-                    Dynamic::from(map)
+                match physics.raycast(
+                    [ox as f32, oy as f32, oz as f32],
+                    [dx as f32, dy as f32, dz as f32],
+                    max_dist as f32,
+                    exclude,
+                ) {
+                    Some(hit) => {
+                        let mut map = Map::new();
+                        map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
+                        map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+                        map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
+                        map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
+                        map.insert("point_z".into(), Dynamic::from(hit.point[2] as f64));
+                        map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
+                        map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
+                        map.insert("normal_z".into(), Dynamic::from(hit.normal[2] as f64));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
                 }
-                None => Dynamic::UNIT,
-            }
-        });
+            },
+        );
     }
 
     // get_camera_direction() -> Map #{x, y, z}
     {
         let ctx = ctx.clone();
         engine.register_fn("get_camera_direction", move || -> Map {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let mut map = Map::new();
             map.insert("x".into(), Dynamic::from(c.camera_direction[0] as f64));
             map.insert("y".into(), Dynamic::from(c.camera_direction[1] as f64));
@@ -793,7 +1325,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("get_camera_position", move || -> Map {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let mut map = Map::new();
             map.insert("x".into(), Dynamic::from(c.camera_position[0] as f64));
             map.insert("y".into(), Dynamic::from(c.camera_position[1] as f64));
@@ -806,7 +1338,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_camera_position", move |x: f64, y: f64, z: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.camera_position_override = Some([x as f32, y as f32, z as f32]);
         });
     }
@@ -815,7 +1347,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_camera_target", move |x: f64, y: f64, z: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.camera_target_override = Some([x as f32, y as f32, z as f32]);
         });
     }
@@ -824,8 +1356,35 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_camera_fov", move |fov: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.camera_fov_override = Some(fov as f32);
+        });
+    }
+
+    // set_camera_orthographic(enabled) — switch between orthographic and perspective
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_orthographic", move |enabled: bool| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.camera_orthographic_override = Some(enabled);
+        });
+    }
+
+    // set_camera_ortho_height(height) — set orthographic half-height in world units
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_ortho_height", move |height: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.camera_ortho_height_override = Some(height as f32);
+        });
+    }
+
+    // set_camera_roll(radians) — roll the camera about its view axis
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_camera_roll", move |radians: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.camera_roll_override = Some(radians as f32);
         });
     }
 
@@ -833,7 +1392,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_vignette", move |intensity: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_vignette_override = Some(intensity as f32);
         });
     }
@@ -842,7 +1401,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_bloom_intensity", move |intensity: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_bloom_override = Some(intensity as f32);
         });
     }
@@ -851,7 +1410,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_exposure", move |value: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_exposure_override = Some(value as f32);
         });
     }
@@ -860,7 +1419,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_chromatic_aberration", move |intensity: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_chromatic_aberration_override = Some(intensity as f32);
         });
     }
@@ -869,7 +1428,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_radial_blur", move |intensity: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_radial_blur_override = Some(intensity as f32);
         });
     }
@@ -878,7 +1437,7 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_ssao_intensity", move |intensity: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_ssao_intensity_override = Some(intensity as f32);
         });
     }
@@ -887,17 +1446,191 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("set_fog_density", move |density: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.postprocess_fog_density_override = Some(density as f32);
         });
+    }
+
+    // set_desaturation(amount) — override desaturation (0 = full color, 1 = ash-grey)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_desaturation", move |amount: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.postprocess_desaturation_override = Some(amount as f32);
+        });
+    }
+
+    // set_dof(strength) — depth-of-field defocus strength (0 = off / sharp, 1 = full blur)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_dof", move |strength: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.postprocess_dof_strength_override = Some(strength as f32);
+        });
+    }
+
+    // set_dof_focus(distance, range) — focus plane depth and half-width, world units
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_dof_focus", move |distance: f64, range: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.postprocess_dof_focus_distance_override = Some(distance as f32);
+            c.postprocess_dof_focus_range_override = Some(range as f32);
+        });
+    }
+
+    // set_fog_color(r, g, b) — override fog color from scripts (linear 0-1)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_fog_color", move |r: f64, g: f64, b: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_fog_color_override = Some([r as f32, g as f32, b as f32]);
+        });
+    }
+
+    // set_render_mode(mode, mix) — stylized render mode (0 = none,
+    // 1 = Matrix, 2 = blood, 3 = drunk, 4 = Tron, 5 = underwater) with
+    // blend strength 0..1. Transient: call every frame while active; the
+    // player zeroes the mode the frame the calls stop.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_render_mode", move |mode: i64, mix: f64| {
+            let mut c = ctx.lock().unwrap();
+            c.postprocess_render_mode_override =
+                Some((mode.max(0) as u32, mix.clamp(0.0, 1.0) as f32));
+        });
+    }
+
+    // set_render_mode_params(x, y, z, w) — per-mode tuning. Tears (1-4):
+    // x = bleed-mask scale, y = mask style (0 fbm patches / 1 iris),
+    // z = rate, w = spare. Underwater (5): x = signed eye depth in meters
+    // (+ = submerged), y = sea energy 0..1, z = daylight 0..1, w = biolum.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_render_mode_params",
+            move |x: f64, y: f64, z: f64, w: f64| {
+                let mut c = ctx.lock().unwrap();
+                c.postprocess_mode_params_override = Some([x as f32, y as f32, z as f32, w as f32]);
+            },
+        );
     }
 
     // set_audio_lowpass(cutoff_hz) — override audio low-pass filter cutoff from scripts
     {
         let ctx = ctx.clone();
         engine.register_fn("set_audio_lowpass", move |cutoff_hz: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.audio_lowpass_cutoff_override = Some(cutoff_hz as f32);
+        });
+    }
+
+    // set_cursor_captured(captured) — request cursor capture/release.
+    // Mouse deltas only flow while captured; games without a character
+    // controller (which normally gates capture) call this for mouse look.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_cursor_captured", move |captured: bool| {
+            let mut c = ctx.lock().unwrap();
+            c.cursor_captured_override = Some(captured);
+        });
+    }
+}
+
+// ─── 2D Physics API ──────────────────────────────────────
+
+fn register_physics_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // overlap_rect(x, y, w, h) -> Array of entity IDs
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "overlap_rect",
+            move |x: f64, y: f64, w: f64, h: f64| -> rhai::Array {
+                let c = crate::lock_or_recover(&ctx);
+                let physics = unsafe { c.physics_ref() };
+                match physics {
+                    Some(p) => p
+                        .overlap_rect(x as f32, y as f32, w as f32, h as f32)
+                        .into_iter()
+                        .map(|eid| Dynamic::from(eid.raw() as i64))
+                        .collect(),
+                    None => rhai::Array::new(),
+                }
+            },
+        );
+    }
+
+    // raycast_2d(ox, oy, dx, dy, max_dist) -> Map or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "raycast_2d",
+            move |ox: f64, oy: f64, dx: f64, dy: f64, max_dist: f64| -> Dynamic {
+                let c = crate::lock_or_recover(&ctx);
+                let physics = unsafe { c.physics_ref() };
+                let physics = match physics {
+                    Some(p) => p,
+                    None => return Dynamic::UNIT,
+                };
+                let exclude = Some(c.current_entity);
+                match physics.raycast_2d(
+                    ox as f32,
+                    oy as f32,
+                    dx as f32,
+                    dy as f32,
+                    max_dist as f32,
+                    exclude,
+                ) {
+                    Some(hit) => {
+                        let mut map = Map::new();
+                        map.insert("entity".into(), Dynamic::from(hit.entity_id.raw() as i64));
+                        map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+                        map.insert("point_x".into(), Dynamic::from(hit.point[0] as f64));
+                        map.insert("point_y".into(), Dynamic::from(hit.point[1] as f64));
+                        map.insert("normal_x".into(), Dynamic::from(hit.normal[0] as f64));
+                        map.insert("normal_y".into(), Dynamic::from(hit.normal[1] as f64));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
+                }
+            },
+        );
+    }
+
+    // set_velocity_2d(entity_id, vx, vy) -> deferred command
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_velocity_2d",
+            move |entity_id: i64, vx: f64, vy: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands
+                    .push(ScriptCommand::SetVelocity2D { entity_id, vx, vy });
+            },
+        );
+    }
+
+    // get_velocity_2d(entity_id) -> Map #{vx, vy} or ()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_velocity_2d", move |entity_id: i64| -> Dynamic {
+            if entity_id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let physics = unsafe { c.physics_ref() };
+            match physics {
+                Some(p) => match p.get_velocity_2d(EntityId::from_raw(entity_id as u64)) {
+                    Some(vel) => {
+                        let mut map = Map::new();
+                        map.insert("vx".into(), Dynamic::from(vel[0] as f64));
+                        map.insert("vy".into(), Dynamic::from(vel[1] as f64));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
+                },
+                None => Dynamic::UNIT,
+            }
         });
     }
 }
@@ -909,9 +1642,7 @@ fn register_math_api(engine: &mut Engine) {
         val.clamp(min, max)
     });
 
-    engine.register_fn("lerp", |a: f64, b: f64, t: f64| -> f64 {
-        a + (b - a) * t
-    });
+    engine.register_fn("lerp", |a: f64, b: f64, t: f64| -> f64 { a + (b - a) * t });
 
     engine.register_fn("random", || -> f64 {
         // Simple pseudo-random based on time — no external crate needed
@@ -988,7 +1719,7 @@ fn register_event_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("fire_event", move |name: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::FireEvent {
                 name: name.to_string(),
                 data: toml::Value::Table(toml::map::Map::new()),
@@ -1000,7 +1731,7 @@ fn register_event_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("fire_event_data", move |name: &str, data: Map| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             let toml_data = map_to_toml(&data);
             c.commands.push(ScriptCommand::FireEvent {
                 name: name.to_string(),
@@ -1017,11 +1748,9 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
     {
         let ctx = ctx.clone();
         engine.register_fn("emit_burst", move |entity_id: i64, count: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.commands.push(ScriptCommand::EmitBurst {
-                entity_id,
-                count,
-            });
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands
+                .push(ScriptCommand::EmitBurst { entity_id, count });
         });
     }
 
@@ -1029,11 +1758,15 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
     {
         let ctx = ctx.clone();
         engine.register_fn("start_emitter", move |entity_id: i64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             let world = unsafe { &mut *c.world };
             let eid = EntityId(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("particle_emitter", "playing", toml::Value::Boolean(true));
+                comps.set_field(
+                    comp::PARTICLE_EMITTER,
+                    "playing",
+                    toml::Value::Boolean(true),
+                );
             }
         });
     }
@@ -1042,11 +1775,15 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
     {
         let ctx = ctx.clone();
         engine.register_fn("stop_emitter", move |entity_id: i64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             let world = unsafe { &mut *c.world };
             let eid = EntityId(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
-                comps.set_field("particle_emitter", "playing", toml::Value::Boolean(false));
+                comps.set_field(
+                    comp::PARTICLE_EMITTER,
+                    "playing",
+                    toml::Value::Boolean(false),
+                );
             }
         });
     }
@@ -1055,12 +1792,12 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
     {
         let ctx = ctx.clone();
         engine.register_fn("set_emission_rate", move |entity_id: i64, rate: f64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             let world = unsafe { &mut *c.world };
             let eid = EntityId(entity_id as u64);
             if let Some(comps) = world.get_components_mut(eid) {
                 comps.set_field(
-                    "particle_emitter",
+                    comp::PARTICLE_EMITTER,
                     "emission_rate",
                     toml::Value::Float(rate),
                 );
@@ -1074,7 +1811,7 @@ fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("log", move |msg: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::Log {
                 level: LogLevel::Info,
                 message: msg.to_string(),
@@ -1086,7 +1823,7 @@ fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("log_info", move |msg: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::Log {
                 level: LogLevel::Info,
                 message: msg.to_string(),
@@ -1098,7 +1835,7 @@ fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("log_warn", move |msg: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::Log {
                 level: LogLevel::Warn,
                 message: msg.to_string(),
@@ -1110,7 +1847,7 @@ fn register_log_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("log_error", move |msg: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::Log {
                 level: LogLevel::Error,
                 message: msg.to_string(),
@@ -1125,176 +1862,362 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // draw_text(x, y, text, size, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_text", move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Text {
-                x: x as f32, y: y as f32,
-                text: text.to_string(),
-                size: size as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: 0,
-                align: 0,
-                stroke: None,
-            });
-        });
+        engine.register_fn(
+            "draw_text",
+            move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: 0,
+                    align: 0,
+                    stroke: None,
+                });
+            },
+        );
     }
 
     // draw_text_ex(x, y, text, size, r, g, b, a, layer)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_text_ex", move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Text {
-                x: x as f32, y: y as f32,
-                text: text.to_string(),
-                size: size as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: layer as i32,
-                align: 0,
-                stroke: None,
-            });
-        });
+        engine.register_fn(
+            "draw_text_ex",
+            move |x: f64,
+                  y: f64,
+                  text: &str,
+                  size: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                    align: 0,
+                    stroke: None,
+                });
+            },
+        );
     }
 
     // draw_text_stroked(x, y, text, size, r, g, b, a, stroke_r, stroke_g, stroke_b, stroke_a, stroke_width)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_text_stroked", move |x: f64, y: f64, text: &str, size: f64,
-            r: f64, g: f64, b: f64, a: f64,
-            sr: f64, sg: f64, sb: f64, sa: f64, sw: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Text {
-                x: x as f32, y: y as f32,
-                text: text.to_string(),
-                size: size as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: 0,
-                align: 0,
-                stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
-            });
-        });
+        engine.register_fn(
+            "draw_text_stroked",
+            move |x: f64,
+                  y: f64,
+                  text: &str,
+                  size: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  sr: f64,
+                  sg: f64,
+                  sb: f64,
+                  sa: f64,
+                  sw: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: 0,
+                    align: 0,
+                    stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
+                });
+            },
+        );
     }
 
     // draw_rect(x, y, w, h, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_rect", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::RectFilled {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                rounding: 0.0,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_rect",
+            move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::RectFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    rounding: 0.0,
+                    layer: 0,
+                });
+            },
+        );
     }
 
     // draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_rect_ex", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64, rounding: f64, layer: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::RectFilled {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                rounding: rounding as f32,
-                layer: layer as i32,
-            });
-        });
+        engine.register_fn(
+            "draw_rect_ex",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  rounding: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::RectFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    rounding: rounding as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_rect_outline(x, y, w, h, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_rect_outline", move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::RectOutline {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                thickness: thickness as f32,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_rect_outline",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::RectOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
     }
 
     // draw_circle(x, y, radius, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_circle", move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::CircleFilled {
-                x: x as f32, y: y as f32,
-                radius: radius as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_circle",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::CircleFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_circle_ex(x, y, radius, r, g, b, a, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_circle_ex",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::CircleFilled {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_circle_outline(x, y, radius, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_circle_outline", move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::CircleOutline {
-                x: x as f32, y: y as f32,
-                radius: radius as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                thickness: thickness as f32,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_circle_outline",
+            move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::CircleOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_circle_outline_ex(x, y, radius, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_circle_outline_ex",
+            move |x: f64,
+                  y: f64,
+                  radius: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::CircleOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    radius: radius as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_line(x1, y1, x2, y2, r, g, b, a, thickness)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_line", move |x1: f64, y1: f64, x2: f64, y2: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Line {
-                x1: x1 as f32, y1: y1 as f32, x2: x2 as f32, y2: y2 as f32,
-                color: [r as f32, g as f32, b as f32, a as f32],
-                thickness: thickness as f32,
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_line",
+            move |x1: f64,
+                  y1: f64,
+                  x2: f64,
+                  y2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Line {
+                    x1: x1 as f32,
+                    y1: y1 as f32,
+                    x2: x2 as f32,
+                    y2: y2 as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
+    }
+
+    // draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_ex",
+            move |x1: f64,
+                  y1: f64,
+                  x2: f64,
+                  y2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Line {
+                    x1: x1 as f32,
+                    y1: y1 as f32,
+                    x2: x2 as f32,
+                    y2: y2 as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // draw_sprite(x, y, w, h, name)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_sprite", move |x: f64, y: f64, w: f64, h: f64, name: &str| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Sprite {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                name: name.to_string(),
-                uv: [0.0, 0.0, 1.0, 1.0],
-                tint: [1.0, 1.0, 1.0, 1.0],
-                layer: 0,
-            });
-        });
+        engine.register_fn(
+            "draw_sprite",
+            move |x: f64, y: f64, w: f64, h: f64, name: &str| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Sprite {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    name: name.to_string(),
+                    uv: [0.0, 0.0, 1.0, 1.0],
+                    tint: [1.0, 1.0, 1.0, 1.0],
+                    layer: 0,
+                });
+            },
+        );
     }
 
     // draw_sprite_ex(x, y, w, h, name, u0, v0, u1, v1, r, g, b, a, layer)
     {
         let ctx = ctx.clone();
-        engine.register_fn("draw_sprite_ex", move |x: f64, y: f64, w: f64, h: f64, name: &str, u0: f64, v0: f64, u1: f64, v1: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
-            let mut c = ctx.lock().unwrap();
-            c.draw_commands.push(DrawCommand::Sprite {
-                x: x as f32, y: y as f32, w: w as f32, h: h as f32,
-                name: name.to_string(),
-                uv: [u0 as f32, v0 as f32, u1 as f32, v1 as f32],
-                tint: [r as f32, g as f32, b as f32, a as f32],
-                layer: layer as i32,
-            });
-        });
+        engine.register_fn(
+            "draw_sprite_ex",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  name: &str,
+                  u0: f64,
+                  v0: f64,
+                  u1: f64,
+                  v1: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Sprite {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    name: name.to_string(),
+                    uv: [u0 as f32, v0 as f32, u1 as f32, v1 as f32],
+                    tint: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
     }
 
     // screen_width() -> f64
     {
         let ctx = ctx.clone();
         engine.register_fn("screen_width", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.screen_width as f64
         });
     }
@@ -1303,7 +2226,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("screen_height", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.screen_height as f64
         });
     }
@@ -1312,14 +2235,20 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("find_nearest_interactable", move || -> Dynamic {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             let world = unsafe { c.world_ref() };
             match crate::engine::find_nearest_interactable(world) {
                 Some(nearest) => {
                     let mut map = Map::new();
-                    map.insert("entity".into(), Dynamic::from(nearest.entity_id.raw() as i64));
+                    map.insert(
+                        "entity".into(),
+                        Dynamic::from(nearest.entity_id.raw() as i64),
+                    );
                     map.insert("prompt_text".into(), Dynamic::from(nearest.prompt_text));
-                    map.insert("interaction_type".into(), Dynamic::from(nearest.interaction_type));
+                    map.insert(
+                        "interaction_type".into(),
+                        Dynamic::from(nearest.interaction_type),
+                    );
                     map.insert("distance".into(), Dynamic::from(nearest.distance));
                     Dynamic::from(map)
                 }
@@ -1332,7 +2261,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("measure_text", move |text: &str, size: f64| -> Map {
-            drop(ctx.lock().unwrap());
+            drop(crate::lock_or_recover(&ctx));
             // Approximate text width: average character width ~0.6 * font_size
             let char_width = size * 0.6;
             let width = text.len() as f64 * char_width;
@@ -1346,44 +2275,56 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // move_character(entity_id, dx, dy, dz) -> Map #{x, y, z, grounded} or ()
     {
         let ctx = ctx.clone();
-        engine.register_fn("move_character", move |entity_id: i64, dx: f64, dy: f64, dz: f64| -> Dynamic {
-            if entity_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
-            let physics = unsafe { c.physics_ref() };
-            let physics = match physics {
-                Some(p) => p,
-                None => return Dynamic::UNIT,
-            };
-            let world = unsafe { c.world_ref() };
-            let eid = EntityId::from_raw(entity_id as u64);
-
-            // Read entity's current ECS position (freshest data, sees set_position from same frame)
-            let current_pos = match world.get_transform(eid) {
-                Some(t) => [t.position.x, t.position.y, t.position.z],
-                None => return Dynamic::UNIT,
-            };
-
-            let dt = c.delta_time as f32;
-            match physics.move_character_shape(eid, current_pos, [dx as f32, dy as f32, dz as f32], dt) {
-                Some(result) => {
-                    let mut map = Map::new();
-                    map.insert("x".into(), Dynamic::from(result.position[0] as f64));
-                    map.insert("y".into(), Dynamic::from(result.position[1] as f64));
-                    map.insert("z".into(), Dynamic::from(result.position[2] as f64));
-                    map.insert("grounded".into(), Dynamic::from(result.grounded));
-                    Dynamic::from(map)
+        engine.register_fn(
+            "move_character",
+            move |entity_id: i64, dx: f64, dy: f64, dz: f64| -> Dynamic {
+                if entity_id < 0 {
+                    return Dynamic::UNIT;
                 }
-                None => Dynamic::UNIT,
-            }
-        });
+                let c = crate::lock_or_recover(&ctx);
+                let physics = unsafe { c.physics_ref() };
+                let physics = match physics {
+                    Some(p) => p,
+                    None => return Dynamic::UNIT,
+                };
+                let world = unsafe { c.world_ref() };
+                let eid = EntityId::from_raw(entity_id as u64);
+
+                // Read entity's current ECS position (freshest data, sees set_position from same frame)
+                let current_pos = match world.get_transform(eid) {
+                    Some(t) => [t.position.x, t.position.y, t.position.z],
+                    None => return Dynamic::UNIT,
+                };
+
+                let dt = c.delta_time as f32;
+                match physics.move_character_shape(
+                    eid,
+                    current_pos,
+                    [dx as f32, dy as f32, dz as f32],
+                    dt,
+                ) {
+                    Some(result) => {
+                        let mut map = Map::new();
+                        map.insert("x".into(), Dynamic::from(result.position[0] as f64));
+                        map.insert("y".into(), Dynamic::from(result.position[1] as f64));
+                        map.insert("z".into(), Dynamic::from(result.position[2] as f64));
+                        map.insert("grounded".into(), Dynamic::from(result.grounded));
+                        Dynamic::from(map)
+                    }
+                    None => Dynamic::UNIT,
+                }
+            },
+        );
     }
 
     // get_collider_extents(entity_id) -> Map or ()
     {
         let ctx = ctx.clone();
         engine.register_fn("get_collider_extents", move |entity_id: i64| -> Dynamic {
-            if entity_id < 0 { return Dynamic::UNIT; }
-            let c = ctx.lock().unwrap();
+            if entity_id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = crate::lock_or_recover(&ctx);
             let physics = unsafe { c.physics_ref() };
             let physics = match physics {
                 Some(p) => p,
@@ -1406,7 +2347,10 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     map.insert("radius".into(), Dynamic::from(radius as f64));
                     Dynamic::from(map)
                 }
-                Some(flint_physics::ColliderExtents::Capsule { radius, half_height }) => {
+                Some(flint_physics::ColliderExtents::Capsule {
+                    radius,
+                    half_height,
+                }) => {
                     let mut map = Map::new();
                     map.insert("shape".into(), Dynamic::from("capsule".to_string()));
                     map.insert("radius".into(), Dynamic::from(radius as f64));
@@ -1428,14 +2372,15 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("load_ui", move |layout_path: &str| -> i64 {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             // Resolve relative to project root (scene's parent's parent)
             let scene_dir = if c.current_scene_path.is_empty() {
                 std::path::PathBuf::from(".")
             } else {
                 let p = std::path::Path::new(&c.current_scene_path);
                 // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
-                let root = p.parent()
+                let root = p
+                    .parent()
                     .and_then(|dir| dir.parent())
                     .unwrap_or(std::path::Path::new("."));
                 if root.as_os_str().is_empty() {
@@ -1452,7 +2397,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("unload_ui", move |handle: i64| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.unload(handle);
         });
     }
@@ -1461,7 +2406,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_set_text", move |element_id: &str, text: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.set_text(element_id, text);
         });
     }
@@ -1470,7 +2415,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_show", move |element_id: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.show(element_id);
         });
     }
@@ -1479,7 +2424,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_hide", move |element_id: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.hide(element_id);
         });
     }
@@ -1488,7 +2433,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_set_visible", move |element_id: &str, visible: bool| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.set_visible(element_id, visible);
         });
     }
@@ -1496,46 +2441,57 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     // ui_set_color(element_id, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("ui_set_color", move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.ui_system.set_color(element_id, r as f32, g as f32, b as f32, a as f32);
-        });
+        engine.register_fn(
+            "ui_set_color",
+            move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.ui_system
+                    .set_color(element_id, r as f32, g as f32, b as f32, a as f32);
+            },
+        );
     }
 
     // ui_set_bg_color(element_id, r, g, b, a)
     {
         let ctx = ctx.clone();
-        engine.register_fn("ui_set_bg_color", move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
-            let mut c = ctx.lock().unwrap();
-            c.ui_system.set_bg_color(element_id, r as f32, g as f32, b as f32, a as f32);
-        });
+        engine.register_fn(
+            "ui_set_bg_color",
+            move |element_id: &str, r: f64, g: f64, b: f64, a: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.ui_system
+                    .set_bg_color(element_id, r as f32, g as f32, b as f32, a as f32);
+            },
+        );
     }
 
     // ui_set_style(element_id, prop, val)
     {
         let ctx = ctx.clone();
-        engine.register_fn("ui_set_style", move |element_id: &str, prop: &str, val: Dynamic| {
-            let mut c = ctx.lock().unwrap();
-            let style_val = if val.is_float() {
-                StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
-            } else if val.is_int() {
-                StyleValue::Float(val.as_int().unwrap_or(0) as f32)
-            } else if val.is_string() {
-                StyleValue::String(val.into_string().unwrap_or_default())
-            } else if val.is_bool() {
-                StyleValue::Bool(val.as_bool().unwrap_or(false))
-            } else {
-                return;
-            };
-            c.ui_system.set_style(element_id, prop, style_val);
-        });
+        engine.register_fn(
+            "ui_set_style",
+            move |element_id: &str, prop: &str, val: Dynamic| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let style_val = if val.is_float() {
+                    StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
+                } else if val.is_int() {
+                    StyleValue::Float(val.as_int().unwrap_or(0) as f32)
+                } else if val.is_string() {
+                    StyleValue::String(val.into_string().unwrap_or_default())
+                } else if val.is_bool() {
+                    StyleValue::Bool(val.as_bool().unwrap_or(false))
+                } else {
+                    return;
+                };
+                c.ui_system.set_style(element_id, prop, style_val);
+            },
+        );
     }
 
     // ui_reset_style(element_id)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_reset_style", move |element_id: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.reset_style(element_id);
         });
     }
@@ -1544,7 +2500,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_set_class", move |element_id: &str, class: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.ui_system.set_class(element_id, class);
         });
     }
@@ -1553,7 +2509,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_exists", move |element_id: &str| -> bool {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.ui_system.exists(element_id)
         });
     }
@@ -1562,7 +2518,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     {
         let ctx = ctx.clone();
         engine.register_fn("ui_get_rect", move |element_id: &str| -> Dynamic {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             let sw = c.screen_width;
             let sh = c.screen_height;
             match c.ui_system.get_rect(element_id, sw, sh) {
@@ -1587,7 +2543,7 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("push_state", move |name: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::PushState {
                 name: name.to_string(),
             });
@@ -1598,7 +2554,7 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("pop_state", move || {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::PopState);
         });
     }
@@ -1607,7 +2563,7 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("replace_state", move |name: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::ReplaceState {
                 name: name.to_string(),
             });
@@ -1618,7 +2574,7 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("current_state", move || -> String {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             if c.state_machine.is_null() {
                 return "playing".to_string();
             }
@@ -1631,7 +2587,7 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("state_stack", move || -> rhai::Array {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             if c.state_machine.is_null() {
                 return vec![Dynamic::from("playing".to_string())];
             }
@@ -1647,14 +2603,18 @@ fn register_state_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("register_state", move |name: &str, config: Map| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             if c.state_machine.is_null() {
                 return;
             }
             let sm = unsafe { &mut *c.state_machine };
 
             let policy = |key: &str| -> flint_runtime::SystemPolicy {
-                match config.get(key).and_then(|v| v.clone().into_string().ok()).as_deref() {
+                match config
+                    .get(key)
+                    .and_then(|v| v.clone().into_string().ok())
+                    .as_deref()
+                {
                     Some("pause") | Some("Pause") => flint_runtime::SystemPolicy::Pause,
                     Some("hidden") | Some("Hidden") => flint_runtime::SystemPolicy::Hidden,
                     _ => flint_runtime::SystemPolicy::Run,
@@ -1689,7 +2649,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("load_scene", move |path: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::LoadScene {
                 path: path.to_string(),
             });
@@ -1700,7 +2660,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("reload_scene", move || {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::ReloadScene);
         });
     }
@@ -1709,7 +2669,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("current_scene", move || -> String {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.current_scene_path.clone()
         });
     }
@@ -1718,9 +2678,9 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("complete_transition", move || {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::FireEvent {
-                name: "__transition_complete".to_string(),
+                name: TRANSITION_COMPLETE.to_string(),
                 data: toml::Value::Table(toml::map::Map::new()),
             });
         });
@@ -1730,7 +2690,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("transition_progress", move || -> f64 {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.transition_progress
         });
     }
@@ -1739,7 +2699,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("is_transitioning", move || -> bool {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.transition_progress >= 0.0
         });
     }
@@ -1748,7 +2708,7 @@ fn register_scene_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("transition_phase", move || -> String {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             c.transition_phase.clone()
         });
     }
@@ -1761,7 +2721,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_set", move |key: &str, val: Dynamic| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return;
             }
@@ -1776,7 +2736,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_get", move |key: &str| -> Dynamic {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return Dynamic::UNIT;
             }
@@ -1792,7 +2752,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_has", move |key: &str| -> bool {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return false;
             }
@@ -1805,7 +2765,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_remove", move |key: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return;
             }
@@ -1818,7 +2778,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_clear", move || {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return;
             }
@@ -1831,7 +2791,7 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_keys", move || -> rhai::Array {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return vec![];
             }
@@ -1848,13 +2808,13 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_save", move |path: &str| {
-            let c = ctx.lock().unwrap();
+            let c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return;
             }
             let store = unsafe { &*c.persistent_store };
             if let Err(e) = store.save_to_file(std::path::Path::new(path)) {
-                eprintln!("[persist] save error: {}", e);
+                tracing::warn!("save error: {}", e);
             }
         });
     }
@@ -1863,13 +2823,13 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_load", move |path: &str| {
-            let mut c = ctx.lock().unwrap();
+            let mut c = crate::lock_or_recover(&ctx);
             if c.persistent_store.is_null() {
                 return;
             }
             let store = unsafe { &mut *c.persistent_store };
             if let Err(e) = store.load_from_file(std::path::Path::new(path)) {
-                eprintln!("[persist] load error: {}", e);
+                tracing::warn!("load error: {}", e);
             }
         });
     }
@@ -1939,6 +2899,730 @@ fn map_to_toml_from_dynamic(val: &Dynamic) -> toml::Value {
         return map_to_toml(&map);
     }
     toml::Value::String(val.to_string())
+}
+
+// ─── Terrain API ──────────────────────────────────────────
+
+fn register_terrain_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // terrain_height(x: f64, z: f64) -> f64
+    // Returns the world-space Y height of the terrain at (x, z), or 0.0 if no terrain is loaded.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("terrain_height", move |x: f64, z: f64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            if let Some(ref height_fn) = c.terrain_height_fn {
+                height_fn(x as f32, z as f32) as f64
+            } else {
+                0.0
+            }
+        });
+    }
+}
+
+// ─── Sprite API ───────────────────────────────────────────
+
+fn register_sprite_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // set_sprite_source_rect(entity_id, x, y, w, h) — set source rectangle in pixels
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_source_rect",
+            move |id: i64, x: f64, y: f64, w: f64, h: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut(comp::SPRITE) {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert(
+                                "source_rect".to_string(),
+                                toml::Value::Array(vec![
+                                    toml::Value::Float(x),
+                                    toml::Value::Float(y),
+                                    toml::Value::Float(w),
+                                    toml::Value::Float(h),
+                                ]),
+                            );
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_flip(entity_id, flip_x, flip_y)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_flip",
+            move |id: i64, flip_x: bool, flip_y: bool| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut(comp::SPRITE) {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert("flip_x".to_string(), toml::Value::Boolean(flip_x));
+                            table.insert("flip_y".to_string(), toml::Value::Boolean(flip_y));
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_tint(entity_id, r, g, b, a)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_sprite_tint",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(components) = world.get_components_mut(eid) {
+                    if let Some(sprite) = components.get_mut(comp::SPRITE) {
+                        if let Some(table) = sprite.as_table_mut() {
+                            table.insert(
+                                "tint".to_string(),
+                                toml::Value::Array(vec![
+                                    toml::Value::Float(r),
+                                    toml::Value::Float(g),
+                                    toml::Value::Float(b),
+                                    toml::Value::Float(a),
+                                ]),
+                            );
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    // set_sprite_layer(entity_id, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_sprite_layer", move |id: i64, layer: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                if let Some(sprite) = components.get_mut(comp::SPRITE) {
+                    if let Some(table) = sprite.as_table_mut() {
+                        table.insert("layer".to_string(), toml::Value::Integer(layer));
+                    }
+                }
+            }
+        });
+    }
+
+    // set_sprite_visible(entity_id, visible)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_sprite_visible", move |id: i64, visible: bool| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                if let Some(sprite) = components.get_mut(comp::SPRITE) {
+                    if let Some(table) = sprite.as_table_mut() {
+                        table.insert("visible".to_string(), toml::Value::Boolean(visible));
+                    }
+                }
+            }
+        });
+    }
+
+    // get_sprite_layer(entity_id) -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_sprite_layer", move |id: i64| -> i64 {
+            if id < 0 {
+                return 0;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components(eid) {
+                if let Some(sprite) = components.get(comp::SPRITE) {
+                    return sprite
+                        .get("layer")
+                        .and_then(|v| v.as_integer())
+                        .unwrap_or(0);
+                }
+            }
+            0
+        });
+    }
+}
+
+// ─── Sprite Animation API ──────────────────────────────────────────
+
+fn register_sprite_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // sprite_play(entity_id, clip_name) — start playing a sprite animation clip
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_play", move |id: i64, clip_name: String| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field(
+                    comp::SPRITE_ANIMATOR,
+                    "clip",
+                    toml::Value::String(clip_name),
+                );
+                components.set_field(comp::SPRITE_ANIMATOR, "playing", toml::Value::Boolean(true));
+            }
+        });
+    }
+
+    // sprite_stop(entity_id) — stop sprite animation
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_stop", move |id: i64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field(
+                    comp::SPRITE_ANIMATOR,
+                    "playing",
+                    toml::Value::Boolean(false),
+                );
+            }
+        });
+    }
+
+    // sprite_set_speed(entity_id, speed) — set animation playback speed
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_set_speed", move |id: i64, speed: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components_mut(eid) {
+                components.set_field(comp::SPRITE_ANIMATOR, "speed", toml::Value::Float(speed));
+            }
+        });
+    }
+
+    // sprite_is_playing(entity_id) -> bool — check if sprite animation is playing
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("sprite_is_playing", move |id: i64| -> bool {
+            if id < 0 {
+                return false;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(components) = world.get_components(eid) {
+                if let Some(sa) = components.get(comp::SPRITE_ANIMATOR) {
+                    return sa.get("playing").and_then(|v| v.as_bool()).unwrap_or(false);
+                }
+            }
+            false
+        });
+    }
+}
+
+// ─── Touch API ────────────────────────────────────────────
+
+fn register_touch_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // touch_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_count", move || -> i64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touches.len() as i64
+        });
+    }
+
+    // touch_x(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_x", move |id: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touches
+                .iter()
+                .find(|(tid, _, _)| *tid == id)
+                .map(|(_, x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // touch_y(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_y", move |id: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touches
+                .iter()
+                .find(|(tid, _, _)| *tid == id)
+                .map(|(_, _, y)| *y)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // is_touching(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_touching", move |id: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touches.iter().any(|(tid, _, _)| *tid == id)
+        });
+    }
+
+    // touch_just_started(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_just_started", move |id: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_just_started
+                .iter()
+                .any(|(tid, _, _)| *tid == id)
+        });
+    }
+
+    // touch_just_ended(id: i64) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_just_ended", move |id: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touch_just_ended.iter().any(|tid| *tid == id)
+        });
+    }
+
+    // tap_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_count", move || -> i64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touch_taps.len() as i64
+        });
+    }
+
+    // tap_x(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_x", move |index: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_taps
+                .get(index as usize)
+                .map(|(x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // tap_y(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("tap_y", move |index: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_taps
+                .get(index as usize)
+                .map(|(_, y)| *y)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // swipe_count() -> i64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_count", move || -> i64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touch_swipes.len() as i64
+        });
+    }
+
+    // swipe_direction(index: i64) -> String
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_direction", move |index: i64| -> String {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_swipes
+                .get(index as usize)
+                .map(|(dir, _, _)| dir.clone())
+                .unwrap_or_default()
+        });
+    }
+
+    // swipe_x(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_x", move |index: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_swipes
+                .get(index as usize)
+                .map(|(_, x, _)| *x)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // swipe_y(index: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("swipe_y", move |index: i64| -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_swipes
+                .get(index as usize)
+                .map(|(_, _, y)| *y)
+                .unwrap_or(-1.0)
+        });
+    }
+
+    // is_swipe(direction: &str) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_swipe", move |direction: &str| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input
+                .touch_swipes
+                .iter()
+                .any(|(dir, _, _)| dir == direction)
+        });
+    }
+}
+
+// ─── Camera 2D API (follow, shake) ──────────────────────
+
+fn register_camera_2d_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // camera_follow(entity_id, offset_x, offset_y, speed, deadzone_w, deadzone_h)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "camera_follow",
+            move |entity_id: i64,
+                  offset_x: f64,
+                  offset_y: f64,
+                  speed: f64,
+                  deadzone_w: f64,
+                  deadzone_h: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let dt = c.delta_time as f32;
+                if dt <= 0.0 {
+                    return;
+                }
+
+                // Read target entity position
+                let (target_x, target_y) = {
+                    let world = unsafe { c.world_ref() };
+                    match world.get_transform(flint_core::EntityId::from_raw(entity_id as u64)) {
+                        Some(t) => (
+                            t.position.x + offset_x as f32,
+                            t.position.y + offset_y as f32,
+                        ),
+                        None => return,
+                    }
+                };
+
+                // Initialize follow position on first call
+                if !c.camera_follow.initialized {
+                    c.camera_follow.current_x = target_x;
+                    c.camera_follow.current_y = target_y;
+                    c.camera_follow.initialized = true;
+                }
+
+                // Deadzone: only track when target is outside deadzone rectangle
+                let dx = target_x - c.camera_follow.current_x;
+                let dy = target_y - c.camera_follow.current_y;
+                let half_w = deadzone_w as f32 * 0.5;
+                let half_h = deadzone_h as f32 * 0.5;
+
+                // Compute tracking target — nearest edge of deadzone
+                let track_x = if dx.abs() > half_w {
+                    target_x - dx.signum() * half_w
+                } else {
+                    c.camera_follow.current_x
+                };
+                let track_y = if dy.abs() > half_h {
+                    target_y - dy.signum() * half_h
+                } else {
+                    c.camera_follow.current_y
+                };
+
+                // Frame-rate-independent exponential smoothing
+                let t = 1.0 - (-(speed as f32) * dt).exp();
+                c.camera_follow.current_x += (track_x - c.camera_follow.current_x) * t;
+                c.camera_follow.current_y += (track_y - c.camera_follow.current_y) * t;
+
+                // Advance shake
+                let mut shake_offset_x = 0.0f32;
+                let mut shake_offset_y = 0.0f32;
+                if c.shake.amplitude > 0.001 {
+                    c.shake.phase += dt;
+                    c.shake.amplitude *= (-(c.shake.decay) * dt).exp();
+                    let freq = c.shake.frequency;
+                    shake_offset_x = c.shake.amplitude * (freq * c.shake.phase).sin();
+                    shake_offset_y = c.shake.amplitude * (freq * 1.37 * c.shake.phase).cos();
+                    if c.shake.amplitude < 0.001 {
+                        c.shake.amplitude = 0.0;
+                        c.shake.phase = 0.0;
+                    }
+                }
+
+                let final_x = c.camera_follow.current_x + shake_offset_x;
+                let final_y = c.camera_follow.current_y + shake_offset_y;
+
+                // Z=10 ensures all sprite layers (z_offset = layer*0.01) are in front of the camera
+                c.camera_position_override = Some([final_x, final_y, 10.0]);
+                c.camera_target_override = Some([final_x, final_y, -1.0]);
+            },
+        );
+    }
+
+    // camera_follow_position() -> #{x, y}
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_follow_position", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let mut map = Map::new();
+            map.insert("x".into(), Dynamic::from(c.camera_follow.current_x as f64));
+            map.insert("y".into(), Dynamic::from(c.camera_follow.current_y as f64));
+            map
+        });
+    }
+
+    // camera_follow_set(x, y) — teleport follow position
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_follow_set", move |x: f64, y: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.camera_follow.current_x = x as f32;
+            c.camera_follow.current_y = y as f32;
+            c.camera_follow.initialized = true;
+        });
+    }
+
+    // camera_shake(amplitude, frequency, decay)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "camera_shake",
+            move |amplitude: f64, frequency: f64, decay: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                // Stack: take max of current + new amplitude
+                let new_amp = (c.shake.amplitude + amplitude as f32).max(amplitude as f32);
+                c.shake.amplitude = new_amp;
+                c.shake.frequency = frequency as f32;
+                c.shake.decay = decay as f32;
+                // Don't reset phase — let it continue naturally
+            },
+        );
+    }
+
+    // camera_shake_stop()
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_shake_stop", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.shake.amplitude = 0.0;
+            c.shake.phase = 0.0;
+        });
+    }
+
+    // camera_apply_shake() — for manual camera control without camera_follow
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("camera_apply_shake", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            let dt = c.delta_time as f32;
+            if dt <= 0.0 || c.shake.amplitude < 0.001 {
+                return;
+            }
+
+            c.shake.phase += dt;
+            c.shake.amplitude *= (-(c.shake.decay) * dt).exp();
+            let freq = c.shake.frequency;
+            let shake_x = c.shake.amplitude * (freq * c.shake.phase).sin();
+            let shake_y = c.shake.amplitude * (freq * 1.37 * c.shake.phase).cos();
+
+            if c.shake.amplitude < 0.001 {
+                c.shake.amplitude = 0.0;
+                c.shake.phase = 0.0;
+            }
+
+            // Apply shake offset to existing camera override (or current camera position)
+            if let Some(pos) = c.camera_position_override.as_mut() {
+                pos[0] += shake_x;
+                pos[1] += shake_y;
+            } else {
+                let base = c.camera_position;
+                c.camera_position_override = Some([base[0] + shake_x, base[1] + shake_y, base[2]]);
+            }
+            if let Some(target) = c.camera_target_override.as_mut() {
+                target[0] += shake_x;
+                target[1] += shake_y;
+            }
+        });
+    }
+}
+
+// ─── Chunk Streaming API ────────────────────────────────
+
+fn register_chunk_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // load_chunk(path, offset_x, offset_y, chunk_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "load_chunk",
+            move |path: &str, offset_x: f64, offset_y: f64, chunk_id: &str| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::LoadChunk {
+                    path: path.to_string(),
+                    offset_x,
+                    offset_y,
+                    chunk_id: chunk_id.to_string(),
+                });
+            },
+        );
+    }
+
+    // unload_chunk(chunk_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("unload_chunk", move |chunk_id: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::UnloadChunk {
+                chunk_id: chunk_id.to_string(),
+            });
+        });
+    }
+
+    // is_chunk_loaded(chunk_id) -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_chunk_loaded", move |chunk_id: &str| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.loaded_chunk_ids.contains(chunk_id)
+        });
+    }
+}
+
+// ─── Screen UI API ──────────────────────────────────────
+
+fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // ui_set_value(entity_id, value) — set ui_fill.value
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_set_value", move |id: i64, value: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field(comp::UI_FILL, "value", toml::Value::Float(value));
+            }
+        });
+    }
+
+    // set_text(entity_id, text) — set ui_text.text
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_text", move |id: i64, text: &str| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field(comp::UI_TEXT, "text", toml::Value::String(text.to_string()));
+            }
+        });
+    }
+
+    // set_text_color(entity_id, r, g, b, a) — set ui_text.color
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_text_color",
+            move |id: i64, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                    let color = toml::Value::Array(vec![
+                        toml::Value::Float(r),
+                        toml::Value::Float(g),
+                        toml::Value::Float(b),
+                        toml::Value::Float(a),
+                    ]);
+                    comps.set_field(comp::UI_TEXT, "color", color);
+                }
+            },
+        );
+    }
+
+    // set_anchor(entity_id, anchor_name) — set screen_anchor.anchor
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_anchor", move |id: i64, anchor: &str| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field(
+                    comp::SCREEN_ANCHOR,
+                    "anchor",
+                    toml::Value::String(anchor.to_string()),
+                );
+            }
+        });
+    }
+
+    // set_anchor_offset(entity_id, x, y) — set screen_anchor.offset_x/y
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_anchor_offset", move |id: i64, x: f64, y: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
+                comps.set_field(comp::SCREEN_ANCHOR, "offset_x", toml::Value::Float(x));
+                comps.set_field(comp::SCREEN_ANCHOR, "offset_y", toml::Value::Float(y));
+            }
+        });
+    }
 }
 
 #[cfg(test)]

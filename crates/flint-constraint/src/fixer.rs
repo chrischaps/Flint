@@ -104,9 +104,12 @@ impl<'a> ConstraintFixer<'a> {
                 {
                     if let Some(ref auto_fix) = constraint.auto_fix {
                         if auto_fix.enabled {
-                            if let Some(action) =
-                                self.apply_fix(world, constraint, &violation.entity_name, &auto_fix.strategy)?
-                            {
+                            if let Some(action) = self.apply_fix(
+                                world,
+                                constraint,
+                                &violation.entity_name,
+                                &auto_fix.strategy,
+                            )? {
                                 all_actions.push(action);
                                 made_progress = true;
                             }
@@ -190,7 +193,10 @@ impl<'a> ConstraintFixer<'a> {
                 Ok(Some(FixAction {
                     constraint_name: constraint.name.clone(),
                     entity_name: entity_name.to_string(),
-                    description: format!("Added child '{}' with archetype '{}'", child_name, archetype),
+                    description: format!(
+                        "Added child '{}' with archetype '{}'",
+                        child_name, archetype
+                    ),
                     strategy: "add_child".to_string(),
                 }))
             }
@@ -342,7 +348,10 @@ mod tests {
             "door",
             toml::Value::Table({
                 let mut m = toml::map::Map::new();
-                m.insert("style".to_string(), toml::Value::String("hinged".to_string()));
+                m.insert(
+                    "style".to_string(),
+                    toml::Value::String("hinged".to_string()),
+                );
                 m.insert("locked".to_string(), toml::Value::Boolean(false));
                 m.insert("open_angle".to_string(), toml::Value::Float(90.0));
                 m

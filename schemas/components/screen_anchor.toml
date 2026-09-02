@@ -1,0 +1,4 @@
+[component.screen_anchor]
+anchor = { type = "string", default = "center", description = "Screen anchor point: top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right" }
+offset_x = { type = "f32", default = 0.0, description = "Horizontal offset from anchor point in world units" }
+offset_y = { type = "f32", default = 0.0, description = "Vertical offset from anchor point in world units" }

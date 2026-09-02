@@ -1,0 +1,74 @@
+[scene]
+name = "Upper Platforms Chunk"
+
+# These entities will be spawned with "upper_platforms_" prefix
+# and offset by (0, 15) when loaded
+
+[entities.ledge_left]
+archetype = "custom"
+
+[entities.ledge_left.transform]
+position = [-3, 2, 0]
+
+[entities.ledge_left.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 4.0
+height = 0.5
+tint = [0.6, 0.5, 0.3, 1.0]
+layer = 5
+
+[entities.ledge_left.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.ledge_left.collider]
+shape = "box"
+size = [4, 0.5, 1]
+friction = 0.8
+
+[entities.ledge_right]
+archetype = "custom"
+
+[entities.ledge_right.transform]
+position = [4, 4, 0]
+
+[entities.ledge_right.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 3.5
+height = 0.5
+tint = [0.55, 0.45, 0.25, 1.0]
+layer = 5
+
+[entities.ledge_right.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.ledge_right.collider]
+shape = "box"
+size = [3.5, 0.5, 1]
+friction = 0.8
+
+[entities.ledge_top]
+archetype = "custom"
+
+[entities.ledge_top.transform]
+position = [0, 7, 0]
+
+[entities.ledge_top.sprite]
+texture = "textures/placeholder.png"
+mode = "sprite2d"
+width = 5.0
+height = 0.5
+tint = [0.65, 0.55, 0.35, 1.0]
+layer = 5
+
+[entities.ledge_top.rigidbody]
+body_type = "static"
+mode_2d = true
+
+[entities.ledge_top.collider]
+shape = "box"
+size = [5, 0.5, 1]
+friction = 0.8

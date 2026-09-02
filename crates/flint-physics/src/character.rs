@@ -1,6 +1,7 @@
 //! Character controller using Rapier's kinematic character controller
 
 use crate::world::PhysicsWorld;
+use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::InputState;
@@ -20,16 +21,16 @@ pub struct CharacterController {
     /// Current vertical velocity for gravity/jumping
     vertical_velocity: f32,
     /// Whether the character is on the ground
-    pub grounded: bool,
+    pub(crate) grounded: bool,
     /// Remaining time in the jump input buffer (seconds). When the player
     /// presses jump, this is set to `JUMP_BUFFER_WINDOW` and ticks down each
     /// physics step. A jump executes whenever the character is grounded and
     /// this timer is still positive.
     jump_buffer: f32,
     /// Camera yaw (horizontal look angle in radians)
-    pub yaw: f32,
+    pub(crate) yaw: f32,
     /// Camera pitch (vertical look angle in radians)
-    pub pitch: f32,
+    pub(crate) pitch: f32,
 }
 
 impl Default for CharacterController {
@@ -104,7 +105,7 @@ impl CharacterController {
                 None => return,
             };
 
-            let cc_data = components.get("character_controller");
+            let cc_data = components.get(comp::CHARACTER_CONTROLLER);
             let speed = cc_data
                 .and_then(|v| v.get("move_speed"))
                 .and_then(|v| v.as_float())
@@ -151,8 +152,7 @@ impl CharacterController {
         );
 
         // Normalize horizontal movement
-        let horizontal_len =
-            (world_move.x * world_move.x + world_move.z * world_move.z).sqrt();
+        let horizontal_len = (world_move.x * world_move.x + world_move.z * world_move.z).sqrt();
         let horizontal = if horizontal_len > 0.001 {
             let speed_mult = if input.is_action_pressed("sprint") {
                 1.6
@@ -198,18 +198,12 @@ impl CharacterController {
             &physics.rigid_body_set,
             &physics.collider_set,
             &physics.query_pipeline,
-            physics
-                .collider_set
-                .get(collider_handle)
-                .unwrap()
-                .shape(),
-            physics
-                .rigid_body_set
-                .get(body_handle)
-                .unwrap()
-                .position(),
+            physics.collider_set.get(collider_handle).unwrap().shape(),
+            physics.rigid_body_set.get(body_handle).unwrap().position(),
             desired,
-            QueryFilter::default().exclude_rigid_body(body_handle),
+            QueryFilter::default()
+                .exclude_rigid_body(body_handle)
+                .exclude_sensors(),
             |_| {},
         );
 
@@ -239,7 +233,7 @@ impl CharacterController {
                     toml::Value::Float(pos.y as f64),
                     toml::Value::Float(pos.z as f64),
                 ]);
-                components.set_field("transform", "position", position_value);
+                components.set_field(comp::TRANSFORM, "position", position_value);
             }
         }
     }
@@ -251,14 +245,12 @@ impl CharacterController {
             None => return Vec3::new(0.0, 2.0, 0.0),
         };
 
-        let transform = world
-            .get_transform(entity_id)
-            .unwrap_or_default();
+        let transform = world.get_transform(entity_id).unwrap_or_default();
 
         // Read eye height from character_controller component (default: height * 0.85)
         let eye_offset = world
             .get_components(entity_id)
-            .and_then(|c| c.get("character_controller"))
+            .and_then(|c| c.get(comp::CHARACTER_CONTROLLER))
             .and_then(|v| v.get("height"))
             .and_then(|v| v.as_float())
             .map(|h| h as f32 * 0.85)
