@@ -1263,6 +1263,156 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
             }
         });
     }
+
+    // ── Animation layers ──
+    // All of these read-modify-write `animator.layers`; slots below `index`
+    // are padded with inactive (empty-clip) entries so indices stay stable.
+
+    // set_anim_layer(entity_id, index, clip, weight)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_anim_layer",
+            move |entity_id: i64, index: i64, clip: &str, weight: f64| {
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                edit_anim_layer(world, entity_id, index, |t| {
+                    t.insert("clip".into(), toml::Value::String(clip.to_string()));
+                    t.insert("mode".into(), toml::Value::String("additive".into()));
+                    t.insert("mask".into(), toml::Value::String(String::new()));
+                    flint_animation::layer_edit::set_weight(t, weight);
+                });
+            },
+        );
+    }
+
+    // set_anim_layer_ex(entity_id, index, clip, weight, mode, mask)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_anim_layer_ex",
+            move |entity_id: i64, index: i64, clip: &str, weight: f64, mode: &str, mask: &str| {
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                edit_anim_layer(world, entity_id, index, |t| {
+                    t.insert("clip".into(), toml::Value::String(clip.to_string()));
+                    t.insert("mode".into(), toml::Value::String(mode.to_string()));
+                    t.insert("mask".into(), toml::Value::String(mask.to_string()));
+                    flint_animation::layer_edit::set_weight(t, weight);
+                });
+            },
+        );
+    }
+
+    // set_anim_layer_weight(entity_id, index, weight)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_anim_layer_weight",
+            move |entity_id: i64, index: i64, weight: f64| {
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                edit_anim_layer(world, entity_id, index, |t| {
+                    flint_animation::layer_edit::set_weight(t, weight);
+                });
+            },
+        );
+    }
+
+    // clear_anim_layer(entity_id, index) — leaves an inactive slot
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_anim_layer", move |entity_id: i64, index: i64| {
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            edit_anim_layer(world, entity_id, index, |t| {
+                t.insert("clip".into(), toml::Value::String(String::new()));
+                t.insert("fade_duration".into(), toml::Value::Float(0.0));
+            });
+        });
+    }
+
+    // fade_anim_layer(entity_id, index, weight, duration) — ramp a layer's
+    // weight over `duration` seconds (the engine writes the ramped weight
+    // back each frame; any set_anim_layer_weight cancels the ramp)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "fade_anim_layer",
+            move |entity_id: i64, index: i64, weight: f64, duration: f64| {
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                edit_anim_layer(world, entity_id, index, |t| {
+                    flint_animation::layer_edit::fade_weight(t, weight, duration);
+                });
+            },
+        );
+    }
+
+    // ── Sequences (*.sequence.toml) ──
+    // Both just write `animator.sequence`; the animation system follows
+    // the edge next frame (and clears the field when a non-looping
+    // sequence finishes, so replaying the same name works).
+
+    // play_sequence(entity_id, name)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("play_sequence", move |entity_id: i64, name: &str| {
+            if entity_id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(entity_id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                comps.set_field(
+                    comp::ANIMATOR,
+                    "sequence",
+                    toml::Value::String(name.to_string()),
+                );
+                comps.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+            }
+        });
+    }
+
+    // stop_sequence(entity_id)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("stop_sequence", move |entity_id: i64| {
+            if entity_id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(entity_id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                comps.set_field(
+                    comp::ANIMATOR,
+                    "sequence",
+                    toml::Value::String(String::new()),
+                );
+            }
+        });
+    }
+}
+
+/// Read-modify-write one entry of `animator.layers` via the shared
+/// `flint_animation::layer_edit` helper (legacy-field migration + slot
+/// padding live there so the sequence runner behaves identically).
+fn edit_anim_layer(
+    world: &mut flint_ecs::FlintWorld,
+    entity_id: i64,
+    index: i64,
+    edit: impl FnOnce(&mut toml::map::Map<String, toml::Value>),
+) {
+    if entity_id < 0 || index < 0 {
+        return;
+    }
+    let eid = EntityId::from_raw(entity_id as u64);
+    let Some(comps) = world.get_components_mut(eid) else {
+        return;
+    };
+    flint_animation::layer_edit::edit_layer_table(comps, index as usize, edit);
 }
 
 // ─── Physics / Raycast API ───────────────────────────────

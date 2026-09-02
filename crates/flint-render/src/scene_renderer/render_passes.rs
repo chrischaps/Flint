@@ -782,9 +782,9 @@ impl SceneRenderer {
             }
         }
 
-        // Skeleton overlay pass (bone lines, always uses line pipeline)
+        // Skeleton overlay pass (bone lines, drawn on top of everything — no depth test)
         if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
-            render_pass.set_pipeline(&self.pipeline.line_pipeline);
+            render_pass.set_pipeline(&self.pipeline.skeleton_line_pipeline);
             for draw in &self.skeleton_overlay_draws {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
