@@ -247,6 +247,10 @@ position = [0, 0, 0]
 | `delta_time()` | `f64` | Seconds since last frame |
 | `play_sound(name)` | --- | Play a sound effect |
 | `play_clip(id, clip)` | --- | Play an animation clip |
+| `set_anim_layer(id, idx, clip, w)` | --- | Play a clip on an animation layer |
+| `set_anim_layer_weight(id, idx, w)` | --- | Set a layer's weight instantly |
+| `fade_anim_layer(id, idx, w, secs)` | --- | Ramp a layer's weight over `secs` |
+| `play_sequence(id, name)` / `stop_sequence(id)` | --- | Drive the animator from `animations/*.sequence.toml` (cues → `on_sequence_cue`) |
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
 | `spawn_entity(name)` | `i64` | Create a new entity |

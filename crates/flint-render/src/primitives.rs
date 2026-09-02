@@ -510,6 +510,18 @@ pub fn generate_skeleton_lines(
     bone_world_positions: &[[f32; 3]],
     bone_parents: &[Option<usize>],
 ) -> Mesh {
+    let yellow = vec![[1.0, 1.0, 0.0, 1.0]; bone_world_positions.len()];
+    generate_skeleton_lines_colored(bone_world_positions, bone_parents, &yellow)
+}
+
+/// Like [`generate_skeleton_lines`], but each bone line takes the colour
+/// of its child joint (`joint_colors[i]`, RGBA). Missing entries fall back
+/// to yellow. Lets callers paint "which layer drives this bone".
+pub fn generate_skeleton_lines_colored(
+    bone_world_positions: &[[f32; 3]],
+    bone_parents: &[Option<usize>],
+    joint_colors: &[[f32; 4]],
+) -> Mesh {
     let yellow = [1.0, 1.0, 0.0, 1.0];
     let red = [1.0, 0.2, 0.2, 1.0];
     let green = [0.2, 1.0, 0.2, 1.0];
@@ -519,22 +531,25 @@ pub fn generate_skeleton_lines(
     let mut indices = Vec::new();
     let mut idx = 0u32;
 
-    let axis_len = 0.05;
+    let axis_len = 0.025;
+    let ring_radius = 0.005;
+    let ring_segments = 12u32;
 
     for (i, pos) in bone_world_positions.iter().enumerate() {
-        // Bone-to-parent line (yellow)
+        let bone_color = joint_colors.get(i).copied().unwrap_or(yellow);
+        // Bone-to-parent line
         if let Some(parent) = bone_parents[i] {
             let parent_pos = bone_world_positions[parent];
             verts.push(Vertex {
                 position: parent_pos,
                 normal: [0.0, 1.0, 0.0],
-                color: yellow,
+                color: bone_color,
                 uv: [0.0, 0.0],
             });
             verts.push(Vertex {
                 position: *pos,
                 normal: [0.0, 1.0, 0.0],
-                color: yellow,
+                color: bone_color,
                 uv: [0.0, 0.0],
             });
             indices.push(idx);
@@ -568,6 +583,29 @@ pub fn generate_skeleton_lines(
             indices.push(idx);
             indices.push(idx + 1);
             idx += 2;
+        }
+
+        // Small wire sphere (three axis-aligned rings) marking the joint
+        for plane in 0..3 {
+            let first = idx;
+            for k in 0..ring_segments {
+                let a = k as f32 / ring_segments as f32 * std::f32::consts::TAU;
+                let (c, s) = (a.cos() * ring_radius, a.sin() * ring_radius);
+                let offset = match plane {
+                    0 => [0.0, c, s],
+                    1 => [c, 0.0, s],
+                    _ => [c, s, 0.0],
+                };
+                verts.push(Vertex {
+                    position: [pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]],
+                    normal: [0.0, 1.0, 0.0],
+                    color: bone_color,
+                    uv: [0.0, 0.0],
+                });
+                indices.push(first + k);
+                indices.push(first + (k + 1) % ring_segments);
+            }
+            idx += ring_segments;
         }
     }
 

@@ -3,28 +3,28 @@
 //! tick (scripts, music session, transitions), render, the egui HUD pass,
 //! and the stats overlay.
 
-use super::PlayerApp;
 use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
+use super::scene_loading;
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
+use super::PlayerApp;
 use super::TransitionPhase;
-use super::scene_loading;
 #[cfg(feature = "debug-hud")]
 use super::{
     CAMERA_TUNING_COMPONENT, DEAD_CALM_COMPONENT, GRASS_DEBUG_PANEL, RAFT_VISITOR_COMPONENT,
     REALITY_COMPONENT, TIME_OF_DAY_COMPONENT, WEATHER_COMPONENT,
 };
-use flint_core::Vec3 as FlintVec3;
-use std::collections::HashSet;
 #[cfg(feature = "debug-hud")]
 use flint_core::components as comp;
+use flint_core::Vec3 as FlintVec3;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
 use flint_render::{GrassEntityPosition, ParticleDrawData, ParticleInstanceGpu};
 use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
+use std::collections::HashSet;
 
 impl PlayerApp {
     pub(super) fn render(&mut self) {
@@ -678,7 +678,6 @@ impl PlayerApp {
             game_events.push(flint_runtime::GameEvent::ActionReleased(action));
         }
         game_events
-
     }
 
     fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
@@ -819,7 +818,11 @@ impl PlayerApp {
         self.draw_commands = commands;
     }
 
-    fn tick_av_systems(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
+    fn tick_av_systems(
+        &mut self,
+        config: &StateConfig,
+        game_events: &Vec<flint_runtime::GameEvent>,
+    ) {
         // Audio triggers from game events (skip when paused)
         if config.audio == SystemPolicy::Run {
             self.audio.process_events(&game_events, &self.world);
@@ -839,6 +842,18 @@ impl PlayerApp {
             if !sprite_events.is_empty() {
                 self.script
                     .call_sprite_anim_ends(&mut self.world, &sprite_events);
+            }
+
+            // Deliver animation sequence cues to the owning entity's script
+            let cues = self.animation.drain_sequence_cues();
+            if !cues.is_empty() {
+                for cue in &cues {
+                    println!(
+                        "[sequence] {:?} '{}' cue '{}' at {:.2}s",
+                        cue.entity_id, cue.sequence, cue.cue, cue.time
+                    );
+                }
+                self.script.call_sequence_cues(&mut self.world, &cues);
             }
         }
 
@@ -1010,7 +1025,6 @@ impl PlayerApp {
             );
         }
     }
-
 
     fn render_hud(&mut self, target_view: &wgpu::TextureView) {
         // Lazy-load any sprite textures referenced by draw commands

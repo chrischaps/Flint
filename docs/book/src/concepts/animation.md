@@ -152,31 +152,186 @@ each press re-triggers the same clip from the top.
 > blend path, so a clip that previews correctly can still be broken in play.
 > Verify crossfades in `flint play`.
 
-### Additive Layers
+### Animation Layers
 
-An additive layer runs a second clip on its own clock and composes it *onto*
-the base pose, as a delta from rest, on keyed joints only:
+Layers run extra clips on their own clocks and compose them onto the base
+pose, **in array order, after any crossfade**. Each layer has a weight, a
+mode, and an optional bone mask:
 
 ```toml
-[entities.character.animator]
-clip = "idle"
-layer_clip = "breathe"     # loops independently
-layer_weight = 1.0         # live dial: 0 = off
+[entities.starthing.animator]
+clip = "WalkCycle"
+layers = [
+  { clip = "StarCower", weight = 1.0, mode = "additive", mask = "head" },
+]
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `layer_clip` | string | "" | Additive layer clip |
-| `layer_weight` | f32 | 1.0 | Layer strength (0 = off) |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `clip` | string | "" | Clip to play on this layer (empty = inactive slot; indices stay stable) |
+| `weight` | f32 | 1.0 | Live dial, 0 = off |
+| `mode` | string | "additive" | `additive` or `override` (see below) |
+| `mask` | string | "" | Root joint name; the layer only touches that joint and its descendants |
+| `speed` | f32 | 1.0 | Multiplier on the entity's base speed |
 
-Because the layer only touches joints it actually keys, a breathing or
-weight-shift layer authored on the spine leaves the legs entirely to the base
-clip. And because it is composed after blending, **the layer survives base
-crossfades** — the character keeps breathing through the transition from idle
-to walk rather than holding its breath for 0.3 seconds.
+**Additive** layers contribute each keyed joint's *delta from rest*, scaled
+by weight. They suit overlays authored as "rest plus a gesture" — a breathing
+chest, the starthing's cowering star-arms. **Override** layers blend each
+keyed joint *toward the clip's pose* by weight — "upper body aims while the
+legs keep walking", usually paired with a mask like `mask = "spine"`.
 
-`layer_weight` is a live dial, so fading a layer in and out is a single field
-write.
+Either way a layer only touches joints its clip actually keys (composing
+identity onto an un-keyed joint would corrupt one whose rest rotation is not
+identity), and because layers are composed after blending, **they survive
+base crossfades** — the character keeps breathing through the transition from
+idle to walk rather than holding its breath for 0.3 seconds.
+
+Layers are ordered: an additive layer under an override is replaced where the
+override keys; an additive layer on top of an override adds to it.
+
+The older single-layer fields still work and are treated as `layers[0]`:
+
+```toml
+layer_clip = "breathe"     # legacy alias for layers = [{ clip = "breathe", weight = ... }]
+layer_weight = 1.0
+```
+
+When `layers` is non-empty it wins and the legacy pair is ignored. The script
+API (`set_anim_layer` & co.) migrates the legacy pair into `layers[0]` the
+first time it touches an entity.
+
+#### Previewing layers
+
+`flint edit <model.gltf>` has a **Layers** stack under the timeline: add rows,
+pick a clip per layer, drag weights (they work while paused), flip
+Add/Over, choose a mask joint, and solo/mute rows. The **Skeleton colour**
+combo under *View* paints the armature overlay and the node tree:
+
+- **Last writer** — yellow = base clip, one colour per layer, grey = rest pose
+- **L*n* weight** — grey → layer colour by the weight that layer applied
+- **L*n* mask** / **L*n* keyed joints** — which bones the mask / clip reaches
+
+Hover a joint in the node tree for a per-layer breakdown. The same setup can
+be rendered headlessly:
+
+```bash
+flint edit models/starthing.gltf --render out.png --clip WalkCycle --layer StarCower:1.0:head
+# --layer clip[:weight[:mask[:mode]]], repeatable, in order
+```
+
+#### Layer fades
+
+A layer's `weight` is a live dial, so a script that sets it pops the pose. To
+ramp instead, set `fade_target` and `fade_duration` on the layer table (or call
+`fade_anim_layer(entity, index, weight, seconds)`). The engine owns the weight
+while the ramp runs: it writes the ramped value back to `layers[i].weight`
+every frame and zeroes `fade_duration` when it arrives, so the next
+`sync_from_world` doesn't re-arm it — the same contract as `blend_target`. Any
+plain `set_anim_layer_weight` cancels a ramp in flight. The previewer's Layers
+row shows `→ target (seconds left)` while a fade runs.
+
+### Sequences
+
+A `*.sequence.toml` is a list of timestamped animator events — everything the
+script API can do to an `animator`, written down with times so it can be
+played, scrubbed and rendered identically in the previewer and the player:
+
+```toml
+name = "starthing_showcase"
+# duration = 6.0   # optional; default = last event time + its transition
+loop = false
+
+[[events]]
+time = 0.0
+kind = "blend"            # crossfade the base clip (duration 0 = hard cut)
+clip = "BreathingIdle"
+duration = 0.0
+
+[[events]]
+time = 1.5
+kind = "blend"
+clip = "WalkCycle"
+duration = 0.4
+
+[[events]]
+time = 2.5
+kind = "layer"            # set a layer slot; omitted keys keep their value
+index = 0
+clip = "StarCower"
+mode = "additive"
+mask = "head"
+weight = 1.0
+fade = 0.3                # ramp the weight over 0.3 s (omit = instant)
+
+[[events]]
+time = 4.0
+kind = "speed"
+value = 1.3
+
+[[events]]
+time = 5.5
+kind = "layer"
+index = 0
+weight = 0.0
+fade = 0.4
+
+[[events]]
+time = 6.0
+kind = "cue"              # named marker for scripts
+name = "done"
+```
+
+Event kinds: `blend { clip, duration }`, `layer { index, clip?, weight?, fade,
+mode?, mask? }`, `speed { value }`, `cue { name }`. Events are sorted by time
+(stable, so same-time events keep authored order) and each fires exactly once
+when the playhead reaches its time. A looping sequence wraps at `duration` and
+re-arms every event, including those at `t = 0`. Sequences run before the
+skeletal tier each frame, so their writes land the same frame.
+
+Base-clip changes always go through `blend_target` (a tracked skeletal entity
+never re-reads `clip`); a `duration` of 0 is clamped to 1 ms because the
+crossfade path ignores non-positive durations.
+
+#### Previewing a sequence
+
+```bash
+flint edit models/starthing.gltf --sequence animations/starthing_showcase.sequence.toml
+flint edit models/starthing.gltf --sequence animations/starthing_showcase.sequence.toml \
+    --render t3.png --anim-time 3.0        # headless: pose at t = 3 s
+```
+
+The bottom panel gains a **Sequence** section: play/pause (P), **Restart**
+(R / Home), a **Loop** toggle (`--sequence-loop` sets it from the CLI; ticking it after the end restarts), a seek slider, and a marker strip with one tick per
+event (orange = blend, layer colour = layer, grey = speed, cyan = cue; dim =
+not yet fired; hover for details, click to seek). Seeking and `--anim-time`
+both **replay** the sequence from `t = 0` in 1/120 s steps after restoring the
+animator to its pre-sequence state, so the pose at any time is deterministic —
+rendering the same `--anim-time` twice yields identical pixels. Cues fired
+during playback print `[sequence] cue '<name>' at <t>s`.
+
+#### Sequences at runtime
+
+The player loads every `*.sequence.toml` from the scene's `animations/`
+directory (or `../animations/`) and registers it by `name`. Scripts start one
+with `play_sequence(entity, name)` and stop it with `stop_sequence(entity)`;
+both just write `animator.sequence`, so a scene can also autoplay one:
+
+```toml
+[entities.hero.animator]
+clip = "Idle"
+playing = true
+sequence = "intro_bow"
+```
+
+When a non-looping sequence ends the engine clears `animator.sequence`, so
+`play_sequence` with the same name is a fresh start. Cues reach the owning
+entity's script:
+
+```rust
+fn on_sequence_cue(sequence, cue) {
+    if cue == "done" { play_sequence(self_entity(), "idle_loop"); }
+}
+```
 
 ### Rest Poses
 
@@ -209,8 +364,9 @@ The `animator` component controls playback for both tiers:
 | `speed` | f32 | 1.0 | Playback speed (-10.0 to 10.0) |
 | `blend_target` | string | "" | Clip to crossfade into (cleared by the engine when the fade completes) |
 | `blend_duration` | f32 | 0.3 | Crossfade duration in seconds |
-| `layer_clip` | string | "" | Additive layer clip |
-| `layer_weight` | f32 | 1.0 | Additive layer strength (0 = off) |
+| `layers` | array of tables | [] | Animation layers `{ clip, weight, mode, mask, speed }`, composed in order |
+| `layer_clip` | string | "" | Legacy alias for `layers[0]` (additive, unmasked) |
+| `layer_weight` | f32 | 1.0 | Legacy alias for `layers[0].weight` |
 
 ## Architecture
 
@@ -231,6 +387,13 @@ Animations can be controlled from [Rhai scripts](scripting.md) by writing direct
 | `stop_clip(entity_id)` | Stop the current animation |
 | `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
 | `set_anim_speed(entity_id, speed)` | Set animation playback speed |
+| `set_anim_layer(entity_id, index, clip, weight)` | Play `clip` on a layer (additive, unmasked) |
+| `set_anim_layer_ex(entity_id, index, clip, weight, mode, mask)` | Same with `"additive"`/`"override"` and a root-joint mask |
+| `set_anim_layer_weight(entity_id, index, weight)` | Set a layer's weight instantly (cancels a fade) |
+| `fade_anim_layer(entity_id, index, weight, seconds)` | Ramp a layer's weight over `seconds` |
+| `clear_anim_layer(entity_id, index)` | Leave an inactive slot |
+| `play_sequence(entity_id, name)` / `stop_sequence(entity_id)` | Drive the animator from a `*.sequence.toml` |
+| `on_sequence_cue(sequence, cue)` | Callback: a sequence passed a `cue` event |
 
 ```rust
 // In a Rhai script:

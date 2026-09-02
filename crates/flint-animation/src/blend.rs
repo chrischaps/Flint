@@ -12,26 +12,28 @@ use crate::skeleton::JointPose;
 /// `weight` of 0.0 = fully `a`, 1.0 = fully `b`.
 pub fn blend_poses(a: &[JointPose], b: &[JointPose], weight: f32, out: &mut [JointPose]) {
     let count = a.len().min(b.len()).min(out.len());
+    for i in 0..count {
+        out[i] = blend_joint(&a[i], &b[i], weight);
+    }
+}
+
+/// Blend a single joint pose: lerp translation/scale, slerp rotation.
+/// `weight` of 0.0 = fully `a`, 1.0 = fully `b`.
+pub fn blend_joint(a: &JointPose, b: &JointPose, weight: f32) -> JointPose {
     let w = weight.clamp(0.0, 1.0);
     let iw = 1.0 - w;
-
-    for i in 0..count {
-        // Translation: lerp
-        out[i].translation = [
-            a[i].translation[0] * iw + b[i].translation[0] * w,
-            a[i].translation[1] * iw + b[i].translation[1] * w,
-            a[i].translation[2] * iw + b[i].translation[2] * w,
-        ];
-
-        // Scale: lerp
-        out[i].scale = [
-            a[i].scale[0] * iw + b[i].scale[0] * w,
-            a[i].scale[1] * iw + b[i].scale[1] * w,
-            a[i].scale[2] * iw + b[i].scale[2] * w,
-        ];
-
-        // Rotation: slerp
-        out[i].rotation = quat_slerp(&a[i].rotation, &b[i].rotation, w);
+    JointPose {
+        translation: [
+            a.translation[0] * iw + b.translation[0] * w,
+            a.translation[1] * iw + b.translation[1] * w,
+            a.translation[2] * iw + b.translation[2] * w,
+        ],
+        scale: [
+            a.scale[0] * iw + b.scale[0] * w,
+            a.scale[1] * iw + b.scale[1] * w,
+            a.scale[2] * iw + b.scale[2] * w,
+        ],
+        rotation: quat_slerp(&a.rotation, &b.rotation, w),
     }
 }
 
@@ -88,7 +90,7 @@ pub fn additive_blend(
 }
 
 /// Quaternion slerp with shortest-path correction
-fn quat_slerp(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
+pub(crate) fn quat_slerp(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
     let mut dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
 
     // Ensure shortest path
@@ -122,7 +124,7 @@ fn quat_slerp(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
-fn quat_normalize(q: &[f32; 4]) -> [f32; 4] {
+pub(crate) fn quat_normalize(q: &[f32; 4]) -> [f32; 4] {
     let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
     if len < 1e-10 {
         return [0.0, 0.0, 0.0, 1.0];
@@ -130,11 +132,11 @@ fn quat_normalize(q: &[f32; 4]) -> [f32; 4] {
     [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
 }
 
-fn quat_conjugate(q: &[f32; 4]) -> [f32; 4] {
+pub(crate) fn quat_conjugate(q: &[f32; 4]) -> [f32; 4] {
     [-q[0], -q[1], -q[2], q[3]]
 }
 
-fn quat_mul(a: &[f32; 4], b: &[f32; 4]) -> [f32; 4] {
+pub(crate) fn quat_mul(a: &[f32; 4], b: &[f32; 4]) -> [f32; 4] {
     // Hamilton product: (x,y,z,w)
     [
         a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],

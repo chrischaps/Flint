@@ -9,7 +9,10 @@ use anyhow::{Context, Result};
 use flint_animation::node_clip::NodeClip;
 use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
-use flint_animation::AnimationSystem;
+use flint_animation::{
+    AnimLayer, AnimationSystem, LayerContribution, LayerMode, SequenceStep, WRITER_BASE,
+    WRITER_REST,
+};
 use flint_core::components as comp;
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
@@ -91,6 +94,20 @@ pub struct PreviewArgs {
     #[arg(long)]
     pub anim_time: Option<f32>,
 
+    /// Add an animation layer: `clip[:weight[:mask[:mode]]]` (repeatable, in order)
+    #[arg(long = "layer")]
+    pub layers: Vec<String>,
+
+    /// Play a `*.sequence.toml` of timestamped animator events (blend /
+    /// layer / speed / cue). With --render, --anim-time samples the
+    /// sequence by deterministic replay.
+    #[arg(long)]
+    pub sequence: Option<String>,
+
+    /// Loop the --sequence regardless of its `loop` setting
+    #[arg(long)]
+    pub sequence_loop: bool,
+
     /// Start with auto-orbit enabled
     #[arg(long)]
     pub auto_orbit: bool,
@@ -111,6 +128,281 @@ pub fn run(args: PreviewArgs) -> Result<()> {
 struct AnimationInfo {
     clip_names: Vec<String>,
     current_clip_index: usize,
+    /// Skeletal clips only (the ones a layer can play)
+    skeletal_clip_names: Vec<String>,
+    /// Joint names of the first skeleton (mask targets, overlay labels)
+    joint_names: Vec<String>,
+}
+
+/// One event marker on the sequence timeline
+#[derive(Clone)]
+struct SequenceMarker {
+    time: f64,
+    label: String,
+    kind: &'static str,
+    /// Layer index for `layer` events (colours the marker like the stack)
+    layer: Option<usize>,
+}
+
+/// The sequence loaded by `--sequence`, plus what seeking needs
+#[derive(Clone)]
+struct SequenceUi {
+    name: String,
+    duration: f64,
+    markers: Vec<SequenceMarker>,
+    /// Animator table before the sequence wrote anything — restored
+    /// before every replay so seeks are deterministic.
+    initial_animator: toml::Value,
+}
+
+/// Load `--sequence`, register it, snapshot the animator and start it.
+/// The snapshot is taken here, after `--clip`/`--layer` were written.
+fn attach_sequence(
+    path: &str,
+    animation: &mut AnimationSystem,
+    world: &FlintWorld,
+    entity_id: EntityId,
+    force_loop: bool,
+) -> Option<SequenceUi> {
+    let seq = match flint_animation::load_sequence_from_file(Path::new(path)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to load sequence '{}': {:?}", path, e);
+            return None;
+        }
+    };
+    let known = animation.skeletal_clip_names();
+    for ev in &seq.events {
+        let clip = match &ev.step {
+            SequenceStep::Blend { clip, .. } => Some(clip.as_str()),
+            SequenceStep::Layer { clip, .. } => clip.as_deref(),
+            _ => None,
+        };
+        if let Some(c) = clip {
+            if !known.iter().any(|k| k == c) {
+                tracing::warn!(
+                    "Sequence '{}' references unknown clip '{}' at {:.2}s; available: {}",
+                    seq.name,
+                    c,
+                    ev.time,
+                    known.join(", ")
+                );
+            }
+        }
+    }
+    let markers = seq
+        .events
+        .iter()
+        .map(|ev| SequenceMarker {
+            time: ev.time,
+            label: ev.step.label(),
+            kind: ev.step.kind(),
+            layer: match &ev.step {
+                SequenceStep::Layer { index, .. } => Some(*index),
+                _ => None,
+            },
+        })
+        .collect();
+    let ui = SequenceUi {
+        name: seq.name.clone(),
+        duration: seq.resolved_duration(),
+        markers,
+        initial_animator: world
+            .get_components(entity_id)
+            .and_then(|c| c.get(comp::ANIMATOR))
+            .cloned()
+            .unwrap_or(toml::Value::Table(Default::default())),
+    };
+    println!(
+        "Sequence '{}': {:.2}s, {} events",
+        ui.name,
+        ui.duration,
+        ui.markers.len()
+    );
+    animation.add_sequence(seq);
+    animation.play_sequence(entity_id, &ui.name);
+    if force_loop {
+        animation.set_sequence_loop_override(&entity_id, Some(true));
+    }
+    Some(ui)
+}
+
+/// Restore the pre-sequence animator and replay to `t`.
+fn seek_sequence_in_world(
+    seq: &SequenceUi,
+    animation: &mut AnimationSystem,
+    world: &mut FlintWorld,
+    entity_id: EntityId,
+    t: f64,
+) -> usize {
+    let _ = world.set_component(entity_id, comp::ANIMATOR, seq.initial_animator.clone());
+    animation.seek_sequence(world, entity_id, t, 1.0 / 120.0)
+}
+
+/// Marker colour by event kind (layers reuse the stack palette)
+fn marker_color(kind: &str, layer: Option<usize>) -> egui::Color32 {
+    match kind {
+        "blend" => egui::Color32::from_rgb(255, 160, 60),
+        "layer" => to_color32(layer_color(layer.unwrap_or(0))),
+        "speed" => egui::Color32::from_gray(170),
+        _ => egui::Color32::from_rgb(80, 220, 230),
+    }
+}
+
+/// Parse a `--layer clip[:weight[:mask[:mode]]]` spec.
+fn parse_layer_spec(spec: &str) -> AnimLayer {
+    let mut parts = spec.split(':');
+    let mut layer = AnimLayer::new(parts.next().unwrap_or("").trim(), 1.0);
+    if let Some(w) = parts.next().and_then(|w| w.trim().parse::<f32>().ok()) {
+        layer.weight = w.clamp(0.0, 1.0);
+    }
+    if let Some(m) = parts.next() {
+        layer.mask = m.trim().to_string();
+    }
+    if let Some(mode) = parts.next() {
+        layer.mode = LayerMode::parse(mode);
+    }
+    layer
+}
+
+/// Write a layer list to the preview entity's animator component.
+fn write_layers_to_world(world: &mut FlintWorld, entity_id: EntityId, layers: &[AnimLayer]) {
+    if let Some(components) = world.get_components_mut(entity_id) {
+        components.set_field(
+            comp::ANIMATOR,
+            "layers",
+            toml::Value::Array(layers.iter().map(AnimLayer::to_toml).collect()),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Layer visualisation
+// ---------------------------------------------------------------------------
+
+/// How the skeleton overlay / node tree colour joints by layer activity.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum LayerViz {
+    #[default]
+    Off,
+    /// Colour each bone by the last thing that wrote it (base / layer n / rest)
+    LastWriter,
+    /// Grey → layer colour by the weight layer `n` applied to the bone
+    Weight(usize),
+    /// Green inside layer `n`'s mask, grey outside
+    Mask(usize),
+    /// Cyan where layer `n`'s clip keys the bone
+    Keyed(usize),
+}
+
+impl LayerViz {
+    fn label(&self) -> String {
+        match self {
+            LayerViz::Off => "Plain".into(),
+            LayerViz::LastWriter => "Last writer".into(),
+            LayerViz::Weight(i) => format!("L{} weight", i + 1),
+            LayerViz::Mask(i) => format!("L{} mask", i + 1),
+            LayerViz::Keyed(i) => format!("L{} keyed joints", i + 1),
+        }
+    }
+}
+
+const BASE_COLOR: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
+const REST_COLOR: [f32; 4] = [0.4, 0.4, 0.4, 1.0];
+const LAYER_PALETTE: [[f32; 4]; 6] = [
+    [0.2, 0.8, 1.0, 1.0],
+    [1.0, 0.4, 0.8, 1.0],
+    [0.4, 1.0, 0.4, 1.0],
+    [1.0, 0.6, 0.2, 1.0],
+    [0.7, 0.5, 1.0, 1.0],
+    [1.0, 1.0, 0.4, 1.0],
+];
+
+fn layer_color(index: usize) -> [f32; 4] {
+    LAYER_PALETTE[index % LAYER_PALETTE.len()]
+}
+
+fn to_color32(c: [f32; 4]) -> egui::Color32 {
+    egui::Color32::from_rgb(
+        (c[0] * 255.0) as u8,
+        (c[1] * 255.0) as u8,
+        (c[2] * 255.0) as u8,
+    )
+}
+
+fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        1.0,
+    ]
+}
+
+/// Per-joint overlay colour for a visualisation mode.
+fn joint_viz_color(viz: LayerViz, joint: usize, contrib: Option<&LayerContribution>) -> [f32; 4] {
+    let Some(c) = contrib else {
+        return BASE_COLOR;
+    };
+    match viz {
+        LayerViz::Off => BASE_COLOR,
+        LayerViz::LastWriter => match c.last_writer.get(joint).copied() {
+            Some(WRITER_REST) | None => REST_COLOR,
+            Some(WRITER_BASE) => BASE_COLOR,
+            Some(n) => layer_color(n as usize - 1),
+        },
+        LayerViz::Weight(li) => mix(REST_COLOR, layer_color(li), c.weight(li, joint)),
+        LayerViz::Mask(li) => {
+            if c.in_mask(li, joint) {
+                [0.3, 1.0, 0.3, 1.0]
+            } else {
+                REST_COLOR
+            }
+        }
+        LayerViz::Keyed(li) => {
+            if c.is_keyed(li, joint) {
+                [0.2, 1.0, 1.0, 1.0]
+            } else {
+                REST_COLOR
+            }
+        }
+    }
+}
+
+/// Tooltip text describing what drives a joint.
+fn joint_viz_tooltip(
+    joint: usize,
+    contrib: Option<&LayerContribution>,
+    layers: &[AnimLayer],
+) -> String {
+    let Some(c) = contrib else {
+        return String::new();
+    };
+    let mut lines = Vec::new();
+    match c.last_writer.get(joint).copied() {
+        Some(WRITER_REST) | None => lines.push("rest pose (nothing keys this joint)".to_string()),
+        Some(WRITER_BASE) => lines.push("base clip".to_string()),
+        Some(n) => lines.push(format!("last written by L{}", n)),
+    }
+    for (li, layer) in layers.iter().enumerate() {
+        if !layer.is_active() {
+            continue;
+        }
+        let keyed = c.is_keyed(li, joint);
+        let masked = c.in_mask(li, joint);
+        let w = c.weight(li, joint);
+        lines.push(format!(
+            "L{} {} ({}): {}{}w={:.2}",
+            li + 1,
+            layer.clip,
+            layer.mode.as_str(),
+            if keyed { "keyed, " } else { "not keyed, " },
+            if masked { "" } else { "masked out, " },
+            w
+        ));
+    }
+    lines.join("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +516,11 @@ fn register_animation_data(
     entity_id: EntityId,
     requested_clip: Option<&str>,
     anim_speed: f32,
+    initial_layers: &[String],
 ) -> (Option<AnimationInfo>, HashMap<EntityId, String>) {
     let mut all_clip_names: Vec<String> = Vec::new();
+    let mut skeletal_clip_names: Vec<String> = Vec::new();
+    let mut joint_names: Vec<String> = Vec::new();
     let mut skeletal_entity_assets: HashMap<EntityId, String> = HashMap::new();
 
     for loaded in &load_result.models {
@@ -234,6 +529,9 @@ fn register_animation_data(
             if let Some(ref import_result) = loaded.import_result {
                 for imported_skel in &import_result.skeletons {
                     let skeleton = Skeleton::from_imported(imported_skel);
+                    if joint_names.is_empty() {
+                        joint_names = skeleton.joint_names.clone();
+                    }
                     animation.add_skeleton(loaded.entity_id, skeleton);
                 }
                 for imported_clip in &import_result.skeletal_clips {
@@ -246,6 +544,7 @@ fn register_animation_data(
                     );
 
                     all_clip_names.push(clip.name.clone());
+                    skeletal_clip_names.push(clip.name.clone());
                     animation.add_skeletal_clip(clip);
                 }
 
@@ -323,9 +622,29 @@ fn register_animation_data(
         );
     }
 
+    // Initial layers from --layer specs
+    let layers: Vec<AnimLayer> = initial_layers.iter().map(|s| parse_layer_spec(s)).collect();
+    if !layers.is_empty() {
+        for l in &layers {
+            if !skeletal_clip_names.contains(&l.clip) {
+                tracing::warn!(
+                    "Layer clip '{}' not found; available: {}",
+                    l.clip,
+                    skeletal_clip_names.join(", ")
+                );
+            }
+        }
+        write_layers_to_world(world, entity_id, &layers);
+    }
+
+    skeletal_clip_names.sort();
+    skeletal_clip_names.dedup();
+
     let info = AnimationInfo {
         clip_names: all_clip_names,
         current_clip_index,
+        skeletal_clip_names,
+        joint_names,
     };
 
     (Some(info), skeletal_entity_assets)
@@ -425,8 +744,11 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
         &config,
     );
 
-    // Animation support for --anim-time
-    if let Some(anim_time) = args.anim_time {
+    // Animation support for --anim-time / --layer / --sequence
+    if let Some(anim_time) = args
+        .anim_time
+        .or_else(|| (!args.layers.is_empty() || args.sequence.is_some()).then_some(0.0))
+    {
         if !args.no_animate {
             let mut animation = AnimationSystem::new();
             let (anim_info, skeletal_entity_assets) = register_animation_data(
@@ -436,6 +758,7 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
                 entity_id,
                 args.clip.as_deref(),
                 args.anim_speed,
+                &args.layers,
             );
 
             if anim_info.is_some() {
@@ -444,12 +767,32 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
                 animation.sync_skeletal_from_world(&world);
                 animation.sync_node_from_world(&world);
 
-                // Use update() which handles all three tiers
-                let _ = flint_runtime::RuntimeSystem::update(
-                    &mut animation,
-                    &mut world,
-                    anim_time as f64,
-                );
+                let sequence = args.sequence.as_deref().and_then(|p| {
+                    attach_sequence(p, &mut animation, &world, entity_id, args.sequence_loop)
+                });
+                if let Some(seq) = &sequence {
+                    let eid = entity_id;
+                    // Deterministic replay: sequence + skeletal tiers stepped
+                    // together, not one big dt.
+                    let fired = seek_sequence_in_world(
+                        seq,
+                        &mut animation,
+                        &mut world,
+                        eid,
+                        anim_time as f64,
+                    );
+                    println!(
+                        "Sampled sequence '{}' at t={:.3}s ({} events fired)",
+                        seq.name, anim_time, fired
+                    );
+                } else {
+                    // Use update() which handles all three tiers
+                    let _ = flint_runtime::RuntimeSystem::update(
+                        &mut animation,
+                        &mut world,
+                        anim_time as f64,
+                    );
+                }
 
                 // Upload bone matrices
                 for (eid, asset) in &skeletal_entity_assets {
@@ -618,6 +961,10 @@ fn run_interactive(args: PreviewArgs) -> Result<()> {
         frame_times: VecDeque::new(),
         fps: 0.0,
         last_fps_update: Instant::now(),
+        layer_viz: LayerViz::Off,
+        solo_layer: None,
+        muted_layers: Vec::new(),
+        sequence: None,
     };
     app.orbit.auto_orbit = auto_orbit;
 
@@ -646,6 +993,14 @@ struct PreviewApp {
     anim_paused: bool,
     /// Accumulated playback time for window title display
     anim_time_accumulator: f64,
+    /// How the skeleton overlay / node tree colour joints by layer
+    layer_viz: LayerViz,
+    /// Previewer solo: every other layer is muted at runtime
+    solo_layer: Option<usize>,
+    /// Per-layer mute toggles (runtime only, never written to the animator)
+    muted_layers: Vec<bool>,
+    /// `--sequence` playback (timeline, seek snapshot)
+    sequence: Option<SequenceUi>,
 
     // egui overlay
     egui_ctx: egui::Context,
@@ -731,9 +1086,19 @@ impl PreviewApp {
                             eid,
                             self.args.clip.as_deref(),
                             self.args.anim_speed,
+                            &self.args.layers,
                         );
                         self.anim_info = info;
                         self.skeletal_entity_assets = skel_assets;
+                        if let Some(p) = self.args.sequence.clone() {
+                            self.sequence = attach_sequence(
+                                &p,
+                                &mut self.animation,
+                                &state.world,
+                                eid,
+                                self.args.sequence_loop,
+                            );
+                        }
                     }
                 }
             }
@@ -770,7 +1135,10 @@ impl PreviewApp {
                 info.clip_names.len(),
                 info.clip_names.join(", ")
             );
-            println!("  Tab=toggle UI  P=play/pause  [/]=prev/next clip  +/-=speed  0=reset speed");
+            println!("  Tab=toggle UI  P=play/pause  ,/.=prev/next clip  +/-=speed  0=reset speed");
+            if self.args.sequence.is_some() {
+                println!("  R=restart sequence  Home=seek to 0  (Loop checkbox / --sequence-loop)");
+            }
         }
     }
 
@@ -780,6 +1148,9 @@ impl PreviewApp {
         self.anim_info = None;
         self.anim_paused = false;
         self.anim_time_accumulator = 0.0;
+        self.solo_layer = None;
+        self.muted_layers.clear();
+        self.sequence = None;
 
         if self.args.no_animate {
             return;
@@ -794,9 +1165,19 @@ impl PreviewApp {
                 eid,
                 None, // No clip preference on reload/drop
                 self.args.anim_speed,
+                &self.args.layers,
             );
             self.anim_info = info;
             self.skeletal_entity_assets = skel_assets;
+            self.sequence = self.args.sequence.clone().and_then(|p| {
+                attach_sequence(
+                    &p,
+                    &mut self.animation,
+                    &state.world,
+                    eid,
+                    self.args.sequence_loop,
+                )
+            });
         }
     }
 
@@ -1030,7 +1411,7 @@ impl PreviewApp {
                 })
                 .unwrap_or(1.0);
 
-            let title = format!(
+            let mut title = format!(
                 "Flint Preview \u{2014} {} | {} {} ({}/{}) [{:.1}x]",
                 model_name,
                 status,
@@ -1039,6 +1420,20 @@ impl PreviewApp {
                 info.clip_names.len(),
                 speed,
             );
+            if let Some(seq) = &self.sequence {
+                let t = self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.entity_id)
+                    .and_then(|eid| self.animation.sequence_state(&eid))
+                    .map(|rt| rt.time)
+                    .unwrap_or(0.0);
+                title.push_str(&format!(
+                    " | seq {} {:.1}/{:.1}s",
+                    seq.name, t, seq.duration
+                ));
+            }
             window.set_title(&title);
         } else {
             let title = if model_name.is_empty() {
@@ -1047,6 +1442,73 @@ impl PreviewApp {
                 format!("Flint Preview \u{2014} {}", model_name)
             };
             window.set_title(&title);
+        }
+    }
+
+    /// Seek the `--sequence` to `t` by replay, then re-pose.
+    fn seek_sequence_to(&mut self, t: f64) {
+        let Some(seq) = self.sequence.clone() else {
+            return;
+        };
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(eid) = state.entity_id {
+                seek_sequence_in_world(&seq, &mut self.animation, &mut state.world, eid, t);
+            }
+        }
+        self.recompute_pose_now();
+    }
+
+    /// Push solo/mute flags into the animation system as runtime mutes.
+    fn apply_layer_mutes(&mut self) {
+        let Some(eid) = self.state.lock().ok().and_then(|s| s.entity_id) else {
+            return;
+        };
+        let layer_count = self
+            .animation
+            .skeletal_layers(&eid)
+            .map(|l| l.len())
+            .unwrap_or(0)
+            .max(self.muted_layers.len());
+        self.animation.clear_skeletal_layer_mutes(&eid);
+        for li in 0..layer_count {
+            let muted = self.muted_layers.get(li).copied().unwrap_or(false)
+                || self.solo_layer.is_some_and(|s| s != li);
+            if muted {
+                self.animation.set_skeletal_layer_mute(eid, li, true);
+            }
+        }
+    }
+
+    /// Re-pose the skeleton at the current time (dt = 0), upload bone
+    /// matrices and rebuild the overlay. Lets layer dials and scrubbing
+    /// take effect immediately while playback is paused.
+    fn recompute_pose_now(&mut self) {
+        if let Ok(state) = self.state.lock() {
+            self.animation.sync_skeletal_from_world(&state.world);
+        }
+        self.apply_layer_mutes();
+        self.animation.advance_skeletal(0.0);
+        if let Ok(mut state) = self.state.lock() {
+            self.animation.write_back_skeletal(&mut state.world);
+        }
+        self.upload_bone_matrices();
+        self.update_skeleton_overlay_from_model();
+    }
+
+    /// Upload every skinned entity's bone matrices to the renderer.
+    fn upload_bone_matrices(&mut self) {
+        if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
+            for (entity_id, asset_name) in &self.skeletal_entity_assets {
+                if let Some(matrices) = self.animation.bone_matrices(entity_id) {
+                    renderer.update_bone_matrices(
+                        &ctx.device,
+                        &ctx.queue,
+                        *entity_id,
+                        asset_name,
+                        matrices,
+                    );
+                }
+            }
         }
     }
 
@@ -1067,10 +1529,13 @@ impl PreviewApp {
         // Prefer the live animated pose when the animation system owns a skeleton
         // for this entity; fall back to the rest pose baked into the import.
         let entity_id = self.state.lock().ok().and_then(|s| s.entity_id);
-        if let Some(skel) = entity_id.and_then(|eid| self.animation.skeleton(&eid)) {
-            let mesh = skeleton_overlay_mesh(skel);
-            renderer.set_skeleton_overlay(&context.device, &mesh);
-            return;
+        if let Some(eid) = entity_id {
+            if let Some(skel) = self.animation.skeleton(&eid) {
+                let contrib = self.animation.skeletal_layer_contribution(&eid);
+                let mesh = skeleton_overlay_mesh(skel, self.layer_viz, contrib);
+                renderer.set_skeleton_overlay(&context.device, &mesh);
+                return;
+            }
         }
 
         let state_guard = self.state.lock().ok();
@@ -1163,6 +1628,59 @@ impl PreviewApp {
             .map(|i| i.current_clip_index)
             .unwrap_or(0);
         let has_anim = self.anim_info.is_some();
+
+        // Snapshot layer state
+        let skeletal_clip_names: Vec<String> = self
+            .anim_info
+            .as_ref()
+            .map(|i| i.skeletal_clip_names.clone())
+            .unwrap_or_default();
+        let joint_names: Vec<String> = self
+            .anim_info
+            .as_ref()
+            .map(|i| i.joint_names.clone())
+            .unwrap_or_default();
+        let preview_eid = self.state.lock().ok().and_then(|s| s.entity_id);
+        let layers: Vec<AnimLayer> = preview_eid
+            .and_then(|eid| self.animation.skeletal_layers(&eid))
+            .map(|l| l.to_vec())
+            .unwrap_or_default();
+        let contrib: Option<LayerContribution> = preview_eid
+            .and_then(|eid| self.animation.skeletal_layer_contribution(&eid))
+            .cloned();
+        let layer_viz = self.layer_viz;
+        let solo_layer = self.solo_layer;
+        let muted_layers = self.muted_layers.clone();
+        let has_skeleton = !joint_names.is_empty();
+        // In-flight weight ramps per layer: (target, seconds left)
+        let layer_fades: Vec<Option<(f32, f32)>> = (0..layers.len())
+            .map(|li| preview_eid.and_then(|eid| self.animation.skeletal_layer_fade(&eid, li)))
+            .collect();
+        // Sequence snapshot: (ui, time, playing, looping, fired flags)
+        let seq_snapshot: Option<(SequenceUi, f64, bool, bool, Vec<bool>)> =
+            self.sequence.as_ref().and_then(|seq| {
+                let rt = preview_eid.and_then(|eid| self.animation.sequence_state(&eid))?;
+                let fired = (0..seq.markers.len()).map(|i| rt.fired(i)).collect();
+                Some((seq.clone(), rt.time, rt.playing, rt.looping(), fired))
+            });
+        // Joint name -> (colour, tooltip) for the node tree
+        let joint_annot: HashMap<String, (egui::Color32, String)> = if layer_viz != LayerViz::Off {
+            joint_names
+                .iter()
+                .enumerate()
+                .map(|(j, name)| {
+                    (
+                        name.clone(),
+                        (
+                            to_color32(joint_viz_color(layer_viz, j, contrib.as_ref())),
+                            joint_viz_tooltip(j, contrib.as_ref(), &layers),
+                        ),
+                    )
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
 
         // Get playback time and clip duration from animation system
         let (anim_time, anim_duration, anim_speed) = if has_anim {
@@ -1262,6 +1780,13 @@ impl PreviewApp {
         let mut new_clip_index: Option<usize> = None;
         let mut new_speed: Option<f64> = None;
         let mut scrub_time: Option<f64> = None;
+        let mut new_layers: Option<Vec<AnimLayer>> = None;
+        let mut new_solo: Option<Option<usize>> = None;
+        let mut new_mutes: Option<Vec<bool>> = None;
+        let mut new_layer_viz: Option<LayerViz> = None;
+        let mut seq_seek: Option<f64> = None;
+        let mut seq_restart = false;
+        let mut seq_loop: Option<bool> = None;
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // ── Left panel: model info ──
@@ -1329,11 +1854,13 @@ impl PreviewApp {
                         egui::CollapsingHeader::new("Node Hierarchy")
                             .default_open(true)
                             .show(ui, |ui| {
-                                egui::ScrollArea::vertical()
+                                egui::ScrollArea::both()
                                     .max_height(200.0)
+                                    .auto_shrink([false, true])
                                     .show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
                                         for &root_idx in &root_nodes {
-                                            render_node_tree(ui, &node_data, root_idx, 0);
+                                            render_node_tree(ui, &node_data, root_idx, 0, &joint_annot);
                                         }
                                     });
                             });
@@ -1432,6 +1959,59 @@ impl PreviewApp {
                                 new_skeleton = Some(sk);
                             }
 
+                            // Skeleton colouring by layer activity
+                            if has_skeleton {
+                                let mut viz_modes = vec![LayerViz::Off, LayerViz::LastWriter];
+                                for li in 0..layers.len() {
+                                    viz_modes.push(LayerViz::Weight(li));
+                                    viz_modes.push(LayerViz::Mask(li));
+                                    viz_modes.push(LayerViz::Keyed(li));
+                                }
+                                let mut sel = layer_viz;
+                                egui::ComboBox::from_label("Skeleton colour")
+                                    .selected_text(sel.label())
+                                    .show_ui(ui, |ui| {
+                                        for &m in &viz_modes {
+                                            ui.selectable_value(&mut sel, m, m.label());
+                                        }
+                                    });
+                                if sel != layer_viz {
+                                    new_layer_viz = Some(sel);
+                                }
+                                if layer_viz != LayerViz::Off {
+                                    ui.horizontal_wrapped(|ui| {
+                                        let swatch = |ui: &mut egui::Ui, c: [f32; 4], label: &str| {
+                                            ui.colored_label(to_color32(c), "\u{25a0}");
+                                            ui.label(label);
+                                        };
+                                        match layer_viz {
+                                            LayerViz::LastWriter => {
+                                                swatch(ui, BASE_COLOR, "base");
+                                                for (li, l) in layers.iter().enumerate() {
+                                                    if l.is_active() {
+                                                        swatch(ui, layer_color(li), &format!("L{}", li + 1));
+                                                    }
+                                                }
+                                                swatch(ui, REST_COLOR, "rest");
+                                            }
+                                            LayerViz::Weight(li) => {
+                                                swatch(ui, REST_COLOR, "0");
+                                                swatch(ui, layer_color(li), "1");
+                                            }
+                                            LayerViz::Mask(_) => {
+                                                swatch(ui, [0.3, 1.0, 0.3, 1.0], "in mask");
+                                                swatch(ui, REST_COLOR, "outside");
+                                            }
+                                            LayerViz::Keyed(_) => {
+                                                swatch(ui, [0.2, 1.0, 1.0, 1.0], "keyed");
+                                                swatch(ui, REST_COLOR, "not keyed");
+                                            }
+                                            LayerViz::Off => {}
+                                        }
+                                    });
+                                }
+                            }
+
                             // Grid
                             let mut gr = current_grid;
                             ui.checkbox(&mut gr, "Show grid");
@@ -1515,6 +2095,355 @@ impl PreviewApp {
                             let frame = (anim_time * 30.0) as u32;
                             let total_frames = (anim_duration * 30.0) as u32;
                             ui.label(format!("Frame: {} / {}", frame, total_frames));
+                        }
+
+                        // ── Sequence ──
+                        if let Some((seq, seq_time, seq_playing, seq_looping, fired)) =
+                            &seq_snapshot
+                        {
+                            let header = format!("Sequence: {}", seq.name);
+                            egui::CollapsingHeader::new(header)
+                                .id_salt("anim_sequence")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let btn = if anim_paused || !seq_playing {
+                                            "\u{25b6}"
+                                        } else {
+                                            "\u{23f8}"
+                                        };
+                                        if ui.button(btn).on_hover_text("Play / pause (P)").clicked() {
+                                            if !seq_playing && anim_paused {
+                                                // Finished: restart and play
+                                                seq_restart = true;
+                                            }
+                                            new_anim_paused = Some(!anim_paused);
+                                        }
+                                        if ui.button("\u{23ee} Restart").on_hover_text("R").clicked() {
+                                            seq_restart = true;
+                                        }
+                                        ui.monospace(format!("{:6.2}s / {:.2}s", seq_time, seq.duration));
+                                        let mut lp = *seq_looping;
+                                        if ui.checkbox(&mut lp, "Loop").changed() {
+                                            seq_loop = Some(lp);
+                                        }
+                                        if !seq_playing {
+                                            ui.weak("(finished)");
+                                        }
+                                    });
+
+                                    // Seek slider — seeking replays from 0, so pause
+                                    if seq.duration > 0.0 {
+                                        let mut t = *seq_time;
+                                        let slider = egui::Slider::new(&mut t, 0.0..=seq.duration)
+                                            .show_value(false)
+                                            .trailing_fill(true);
+                                        let resp = ui.add_sized(
+                                            [ui.available_width(), 18.0],
+                                            slider,
+                                        );
+                                        if resp.dragged() || resp.changed() {
+                                            seq_seek = Some(t);
+                                            if !anim_paused {
+                                                new_anim_paused = Some(true);
+                                            }
+                                        }
+
+                                        // Event markers under the slider
+                                        let strip_h = 30.0;
+                                        let (rect, resp) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), strip_h),
+                                            egui::Sense::click(),
+                                        );
+                                        let painter = ui.painter_at(rect);
+                                        let pad = 8.0;
+                                        let x_of = |t: f64| {
+                                            rect.left()
+                                                + pad
+                                                + (t / seq.duration) as f32 * (rect.width() - 2.0 * pad)
+                                        };
+                                        painter.line_segment(
+                                            [
+                                                egui::pos2(rect.left() + pad, rect.top() + 1.0),
+                                                egui::pos2(rect.right() - pad, rect.top() + 1.0),
+                                            ],
+                                            egui::Stroke::new(1.0, egui::Color32::from_gray(70)),
+                                        );
+                                        let hover = resp.hover_pos();
+                                        let mut hover_label: Option<String> = None;
+                                        let mut hover_best = f32::MAX;
+                                        for (i, m) in seq.markers.iter().enumerate() {
+                                            let x = x_of(m.time);
+                                            let mut col = marker_color(m.kind, m.layer);
+                                            if !fired.get(i).copied().unwrap_or(false) {
+                                                col = col.gamma_multiply(0.45);
+                                            }
+                                            painter.line_segment(
+                                                [
+                                                    egui::pos2(x, rect.top()),
+                                                    egui::pos2(x, rect.top() + 10.0),
+                                                ],
+                                                egui::Stroke::new(2.0, col),
+                                            );
+                                            // Alternate label rows so neighbours don't collide
+                                            let row = (i % 2) as f32;
+                                            let short: String = m.label.chars().take(14).collect();
+                                            painter.text(
+                                                egui::pos2(x + 2.0, rect.top() + 10.0 + row * 9.0),
+                                                egui::Align2::LEFT_TOP,
+                                                short,
+                                                egui::FontId::monospace(8.5),
+                                                col,
+                                            );
+                                            if let Some(h) = hover {
+                                                let d = (h.x - x).abs();
+                                                if d < 8.0 && d < hover_best {
+                                                    hover_best = d;
+                                                    hover_label = Some(format!("{:.2}s  {}", m.time, m.label));
+                                                }
+                                            }
+                                        }
+                                        // Playhead
+                                        let px = x_of(*seq_time);
+                                        painter.line_segment(
+                                            [
+                                                egui::pos2(px, rect.top() - 2.0),
+                                                egui::pos2(px, rect.bottom()),
+                                            ],
+                                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                                        );
+                                        if let Some(label) = hover_label {
+                                            resp.clone().on_hover_text(label);
+                                        }
+                                        if resp.clicked() {
+                                            if let Some(h) = hover {
+                                                let frac = ((h.x - rect.left() - pad)
+                                                    / (rect.width() - 2.0 * pad))
+                                                    .clamp(0.0, 1.0);
+                                                seq_seek = Some(frac as f64 * seq.duration);
+                                                if !anim_paused {
+                                                    new_anim_paused = Some(true);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Now / next readout
+                                    let last = fired.iter().rposition(|f| *f);
+                                    let next = fired.iter().position(|f| !*f);
+                                    ui.horizontal(|ui| {
+                                        match last.and_then(|i| seq.markers.get(i)) {
+                                            Some(m) => ui.label(format!("Now: {}", m.label)),
+                                            None => ui.weak("Now: (start)"),
+                                        };
+                                        ui.separator();
+                                        match next.and_then(|i| seq.markers.get(i)) {
+                                            Some(m) => ui.label(format!(
+                                                "Next: {} in {:.2}s",
+                                                m.label,
+                                                (m.time - seq_time).max(0.0)
+                                            )),
+                                            None => ui.weak("Next: (end)"),
+                                        };
+                                    });
+                                });
+                        }
+
+                        // ── Layer stack ──
+                        if has_skeleton {
+                            let active = layers.iter().filter(|l| l.is_active()).count();
+                            let header = if active > 0 {
+                                format!("Layers ({} active)", active)
+                            } else {
+                                "Layers".to_string()
+                            };
+                            egui::CollapsingHeader::new(header)
+                                .id_salt("anim_layers")
+                                .default_open(!layers.is_empty())
+                                .show(ui, |ui| {
+                                    let mut edited = layers.clone();
+                                    let mut mutes = muted_layers.clone();
+                                    mutes.resize(edited.len(), false);
+                                    let mut solo = solo_layer;
+                                    let mut changed = false;
+                                    let mut remove: Option<usize> = None;
+
+                                    egui::Grid::new("layer_grid")
+                                        .num_columns(8)
+                                        .spacing([6.0, 4.0])
+                                        .show(ui, |ui| {
+                                            for (li, layer) in edited.iter_mut().enumerate() {
+                                                // Swatch + index
+                                                ui.horizontal(|ui| {
+                                                    ui.colored_label(to_color32(layer_color(li)), "\u{25a0}");
+                                                    ui.label(format!("L{}", li + 1));
+                                                });
+
+                                                // Clip
+                                                let shown = if layer.clip.is_empty() {
+                                                    "(none)".to_string()
+                                                } else {
+                                                    layer.clip.clone()
+                                                };
+                                                egui::ComboBox::from_id_salt(("layer_clip", li))
+                                                    .selected_text(shown)
+                                                    .width(140.0)
+                                                    .show_ui(ui, |ui| {
+                                                        if ui
+                                                            .selectable_label(layer.clip.is_empty(), "(none)")
+                                                            .clicked()
+                                                        {
+                                                            layer.clip.clear();
+                                                            changed = true;
+                                                        }
+                                                        for name in &skeletal_clip_names {
+                                                            if ui
+                                                                .selectable_label(&layer.clip == name, name)
+                                                                .clicked()
+                                                            {
+                                                                layer.clip = name.clone();
+                                                                changed = true;
+                                                            }
+                                                        }
+                                                    });
+
+                                                // Weight
+                                                let mut w = layer.weight;
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(&mut w, 0.0..=1.0)
+                                                            .show_value(true)
+                                                            .fixed_decimals(2),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    layer.weight = w;
+                                                    changed = true;
+                                                }
+                                                if let Some(Some((target, left))) = layer_fades.get(li) {
+                                                    ui.weak(format!("\u{2192} {:.2} ({:.1}s)", target, left))
+                                                        .on_hover_text("Weight ramp in flight (fade_target / seconds left)");
+                                                }
+
+                                                // Mode
+                                                let mut mode = layer.mode;
+                                                ui.horizontal(|ui| {
+                                                    ui.selectable_value(&mut mode, LayerMode::Additive, "Add")
+                                                        .on_hover_text("Additive: delta from rest pose × weight");
+                                                    ui.selectable_value(&mut mode, LayerMode::Override, "Over")
+                                                        .on_hover_text("Override: blend keyed joints toward the clip by weight");
+                                                });
+                                                if mode != layer.mode {
+                                                    layer.mode = mode;
+                                                    changed = true;
+                                                }
+
+                                                // Mask
+                                                let mask_shown = if layer.mask.is_empty() {
+                                                    "(all keyed)".to_string()
+                                                } else {
+                                                    layer.mask.clone()
+                                                };
+                                                egui::ComboBox::from_id_salt(("layer_mask", li))
+                                                    .selected_text(mask_shown)
+                                                    .width(120.0)
+                                                    .show_ui(ui, |ui| {
+                                                        if ui
+                                                            .selectable_label(layer.mask.is_empty(), "(all keyed)")
+                                                            .clicked()
+                                                        {
+                                                            layer.mask.clear();
+                                                            changed = true;
+                                                        }
+                                                        for name in &joint_names {
+                                                            if ui
+                                                                .selectable_label(&layer.mask == name, name)
+                                                                .clicked()
+                                                            {
+                                                                layer.mask = name.clone();
+                                                                changed = true;
+                                                            }
+                                                        }
+                                                    })
+                                                    .response
+                                                    .on_hover_text("Limit this layer to a joint subtree");
+
+                                                // Solo / mute
+                                                ui.horizontal(|ui| {
+                                                    let is_solo = solo == Some(li);
+                                                    if ui
+                                                        .selectable_label(is_solo, "S")
+                                                        .on_hover_text("Solo: hear only this layer")
+                                                        .clicked()
+                                                    {
+                                                        solo = if is_solo { None } else { Some(li) };
+                                                    }
+                                                    let mut m = mutes[li];
+                                                    if ui
+                                                        .selectable_label(m, "M")
+                                                        .on_hover_text("Mute this layer (weight is kept)")
+                                                        .clicked()
+                                                    {
+                                                        m = !m;
+                                                        mutes[li] = m;
+                                                    }
+                                                });
+
+                                                // Time readout
+                                                ui.monospace(format!("{:.2}s", layer.time));
+
+                                                // Remove
+                                                if ui.small_button("\u{2715}").on_hover_text("Remove layer").clicked() {
+                                                    remove = Some(li);
+                                                }
+                                                ui.end_row();
+                                            }
+                                        });
+
+                                    if let Some(i) = remove {
+                                        edited.remove(i);
+                                        mutes.remove(i);
+                                        solo = match solo {
+                                            Some(s) if s == i => None,
+                                            Some(s) if s > i => Some(s - 1),
+                                            other => other,
+                                        };
+                                        changed = true;
+                                    }
+
+                                    ui.horizontal(|ui| {
+                                        if ui.button("+ Add layer").clicked() {
+                                            let mut l = AnimLayer::default();
+                                            // Default to the first clip that isn't the base clip
+                                            let base = anim_clip_names.get(anim_clip_index).cloned().unwrap_or_default();
+                                            l.clip = skeletal_clip_names
+                                                .iter()
+                                                .find(|n| **n != base)
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            edited.push(l);
+                                            mutes.push(false);
+                                            changed = true;
+                                        }
+                                        if !edited.is_empty() && ui.button("Clear all").clicked() {
+                                            edited.clear();
+                                            mutes.clear();
+                                            solo = None;
+                                            changed = true;
+                                        }
+                                        ui.label("Composed in order after the base clip.");
+                                    });
+
+                                    if changed {
+                                        new_layers = Some(edited);
+                                    }
+                                    if solo != solo_layer {
+                                        new_solo = Some(solo);
+                                    }
+                                    if mutes != muted_layers {
+                                        new_mutes = Some(mutes);
+                                    }
+                                });
                         }
 
                         ui.add_space(2.0);
@@ -1664,43 +2593,98 @@ impl PreviewApp {
                 }
             }
         }
+        let mut repose = false;
         if let Some(t) = scrub_time {
             if let Ok(state) = self.state.lock() {
                 if let Some(eid) = state.entity_id {
                     self.animation.set_skeletal_playback_time(&eid, t);
                     self.animation.set_node_playback_time(&eid, t);
-                    // Advance with dt=0 to recompute bone matrices at the new time
-                    self.animation.advance_skeletal(0.0);
                 }
             }
-            // Upload bone matrices after scrub
-            if let (Some(renderer), Some(ctx)) = (&mut self.scene_renderer, &self.render_context) {
-                for (entity_id, asset_name) in &self.skeletal_entity_assets {
-                    if let Some(matrices) = self.animation.bone_matrices(entity_id) {
-                        renderer.update_bone_matrices(
-                            &ctx.device,
-                            &ctx.queue,
-                            *entity_id,
-                            asset_name,
-                            matrices,
-                        );
+            repose = true;
+        }
+        if let Some(layers) = new_layers {
+            if let Ok(mut state) = self.state.lock() {
+                if let Some(eid) = state.entity_id {
+                    write_layers_to_world(&mut state.world, eid, &layers);
+                }
+            }
+            self.muted_layers.resize(layers.len(), false);
+            repose = true;
+        }
+        if let Some(solo) = new_solo {
+            self.solo_layer = solo;
+            repose = true;
+        }
+        if let Some(mutes) = new_mutes {
+            self.muted_layers = mutes;
+            repose = true;
+        }
+        if let Some(viz) = new_layer_viz {
+            self.layer_viz = viz;
+            if viz != LayerViz::Off {
+                if let Some(renderer) = &mut self.scene_renderer {
+                    renderer.debug_state_mut().show_skeleton = true;
+                }
+            }
+            self.update_skeleton_overlay_from_model();
+        }
+        if let Some(lp) = seq_loop {
+            if let Some(eid) = self.state.lock().ok().and_then(|s| s.entity_id) {
+                self.animation.set_sequence_loop_override(&eid, Some(lp));
+                // Turning loop on after the end: pick up from the top
+                if lp
+                    && self
+                        .animation
+                        .sequence_state(&eid)
+                        .is_some_and(|rt| !rt.playing)
+                {
+                    seq_restart = true;
+                    if self.anim_paused {
+                        self.anim_paused = false;
+                        if let Ok(mut state) = self.state.lock() {
+                            if let Some(c) = state.world.get_components_mut(eid) {
+                                c.set_field(comp::ANIMATOR, "playing", toml::Value::Boolean(true));
+                            }
+                        }
                     }
                 }
             }
             self.update_skeleton_overlay_from_model();
+        }
+        if seq_restart {
+            self.seek_sequence_to(0.0);
+            repose = false;
+        } else if let Some(t) = seq_seek {
+            self.seek_sequence_to(t);
+            repose = false;
+        }
+        if repose {
+            // dt = 0 re-pose so dials and scrubs show immediately, even paused
+            self.recompute_pose_now();
         }
     }
 }
 
 /// Recursively render a node tree in the UI
 /// Build the armature overlay from a skeleton's current model-space joint globals.
-fn skeleton_overlay_mesh(skel: &Skeleton) -> flint_render::Mesh {
+fn skeleton_overlay_mesh(
+    skel: &Skeleton,
+    viz: LayerViz,
+    contrib: Option<&LayerContribution>,
+) -> flint_render::Mesh {
     let positions: Vec<[f32; 3]> = skel
         .global_matrices
         .iter()
         .map(|g| [g[3][0], g[3][1], g[3][2]])
         .collect();
-    flint_render::generate_skeleton_lines(&positions, &skel.parents)
+    if viz == LayerViz::Off {
+        return flint_render::generate_skeleton_lines(&positions, &skel.parents);
+    }
+    let colors: Vec<[f32; 4]> = (0..positions.len())
+        .map(|j| joint_viz_color(viz, j, contrib))
+        .collect();
+    flint_render::generate_skeleton_lines_colored(&positions, &skel.parents, &colors)
 }
 
 /// Invert a row-major 4x4 matrix (for extracting world transforms from inverse bind matrices).
@@ -1767,6 +2751,7 @@ fn render_node_tree(
     nodes: &[(String, Vec<usize>, bool)],
     node_idx: usize,
     depth: usize,
+    joint_annot: &HashMap<String, (egui::Color32, String)>,
 ) {
     if node_idx >= nodes.len() {
         return;
@@ -1778,21 +2763,31 @@ fn render_node_tree(
         name.clone()
     };
     let icon = if *has_mesh { "\u{25a0} " } else { "\u{25cb} " };
-    let label = format!("{}{}", icon, display_name);
+    let annot = joint_annot.get(name);
+    let label = match annot {
+        Some((color, _)) => egui::RichText::new(format!("{}{}", icon, display_name)).color(*color),
+        None => egui::RichText::new(format!("{}{}", icon, display_name)),
+    };
 
     if children.is_empty() {
         ui.indent(format!("node_{}", node_idx), |ui| {
-            ui.label(label);
+            let r = ui.label(label);
+            if let Some((_, tip)) = annot {
+                r.on_hover_text(tip);
+            }
         });
     } else {
-        egui::CollapsingHeader::new(label)
+        let r = egui::CollapsingHeader::new(label)
             .id_salt(format!("node_{}", node_idx))
             .default_open(depth < 2)
             .show(ui, |ui| {
                 for &child_idx in children {
-                    render_node_tree(ui, nodes, child_idx, depth + 1);
+                    render_node_tree(ui, nodes, child_idx, depth + 1, joint_annot);
                 }
             });
+        if let Some((_, tip)) = annot {
+            r.header_response.on_hover_text(tip);
+        }
     }
 }
 
@@ -1866,6 +2861,17 @@ impl ApplicationHandler for PreviewApp {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::KeyR) => {
+                            if self.sequence.is_some() {
+                                self.seek_sequence_to(0.0);
+                                println!("Sequence restarted");
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::Home) => {
+                            if self.sequence.is_some() {
+                                self.seek_sequence_to(0.0);
                             }
                         }
                         PhysicalKey::Code(KeyCode::Period) => {
@@ -2035,6 +3041,40 @@ impl ApplicationHandler for PreviewApp {
                     self.update_title();
                 }
 
+                // Animation update
+                if self.anim_info.is_some() && !self.anim_paused {
+                    if self.sequence.is_some() {
+                        // Sequence writes animator fields; run it before the
+                        // skeletal sync so they land this frame.
+                        if let Ok(mut state) = self.state.lock() {
+                            self.animation.sync_sequences_from_world(&state.world);
+                            self.animation.advance_sequences(&mut state.world, dt_secs);
+                        }
+                        for cue in self.animation.drain_sequence_cues() {
+                            println!("[sequence] cue '{}' at {:.2}s", cue.cue, cue.time);
+                        }
+                    }
+                    if let Ok(state) = self.state.lock() {
+                        // Sync from world picks up component changes (clip switches, speed, layers, etc.)
+                        self.animation.sync_property_from_world(&state.world);
+                        self.animation.sync_skeletal_from_world(&state.world);
+                        self.animation.sync_node_from_world(&state.world);
+                    }
+                    self.apply_layer_mutes();
+                    if let Ok(mut state) = self.state.lock() {
+                        // Advance all animation tiers
+                        self.animation
+                            .advance_property_and_write(&mut state.world, dt_secs);
+                        self.animation.advance_skeletal(dt_secs);
+                        // Retire finished blends/fades or they re-arm next frame
+                        self.animation.write_back_skeletal(&mut state.world);
+                        self.animation
+                            .advance_node_and_apply(&mut state.world, dt_secs);
+
+                        self.anim_time_accumulator += dt_secs;
+                    }
+                }
+
                 let context = match &self.render_context {
                     Some(c) => c,
                     None => return,
@@ -2044,25 +3084,9 @@ impl ApplicationHandler for PreviewApp {
                     None => return,
                 };
 
-                // Animation update
-                if self.anim_info.is_some() && !self.anim_paused {
-                    if let Ok(mut state) = self.state.lock() {
-                        // Sync from world picks up component changes (clip switches, speed, etc.)
-                        self.animation.sync_property_from_world(&state.world);
-                        self.animation.sync_skeletal_from_world(&state.world);
-                        self.animation.sync_node_from_world(&state.world);
-
-                        // Advance all animation tiers
-                        self.animation
-                            .advance_property_and_write(&mut state.world, dt_secs);
-                        self.animation.advance_skeletal(dt_secs);
-                        self.animation
-                            .advance_node_and_apply(&mut state.world, dt_secs);
-
-                        self.anim_time_accumulator += dt_secs;
-                    }
-
-                    // Upload bone matrices for skinned meshes
+                // Bone upload + overlay run every frame (cheap) so a paused
+                // pose still reflects layer dials after a dt=0 re-pose.
+                if self.anim_info.is_some() {
                     for (entity_id, asset_name) in &self.skeletal_entity_assets {
                         if let Some(matrices) = self.animation.bone_matrices(entity_id) {
                             renderer.update_bone_matrices(
@@ -2077,14 +3101,12 @@ impl ApplicationHandler for PreviewApp {
 
                     // Keep the armature overlay in step with the animated pose
                     if renderer.debug_state().show_skeleton {
-                        if let Some(skel) = self
-                            .skeletal_entity_assets
-                            .keys()
-                            .next()
-                            .and_then(|eid| self.animation.skeleton(eid))
-                        {
-                            let mesh = skeleton_overlay_mesh(skel);
-                            renderer.set_skeleton_overlay(&context.device, &mesh);
+                        if let Some(eid) = self.skeletal_entity_assets.keys().next() {
+                            if let Some(skel) = self.animation.skeleton(eid) {
+                                let contrib = self.animation.skeletal_layer_contribution(eid);
+                                let mesh = skeleton_overlay_mesh(skel, self.layer_viz, contrib);
+                                renderer.set_skeleton_overlay(&context.device, &mesh);
+                            }
                         }
                     }
                 }

@@ -135,6 +135,22 @@ pub struct EditArgs {
     #[arg(long)]
     pub anim_speed: Option<f32>,
 
+    /// Add an animation layer `clip[:weight[:mask[:mode]]]` (model, repeatable)
+    #[arg(long = "layer")]
+    pub layers: Vec<String>,
+
+    /// Play a `*.sequence.toml` of timestamped animator events (model)
+    #[arg(long)]
+    pub sequence: Option<String>,
+
+    /// Sample animation at a time in seconds (model, with --render)
+    #[arg(long)]
+    pub anim_time: Option<f32>,
+
+    /// Loop the --sequence regardless of its `loop` setting (model)
+    #[arg(long)]
+    pub sequence_loop: bool,
+
     /// Render to a PNG file instead of opening a window (model)
     #[arg(long)]
     pub render: Option<String>,
@@ -218,7 +234,10 @@ pub fn run(args: EditArgs) -> Result<()> {
                 no_animate: args.no_animate,
                 clip: args.clip,
                 anim_speed: args.anim_speed.unwrap_or(1.0),
-                anim_time: None,
+                anim_time: args.anim_time,
+                layers: args.layers,
+                sequence: args.sequence,
+                sequence_loop: args.sequence_loop,
                 auto_orbit: args.auto_orbit,
             })
         }

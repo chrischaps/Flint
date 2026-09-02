@@ -594,6 +594,55 @@ pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut Anima
     }
 }
 
+/// Load `.sequence.toml` files from the `animations/` directory next to the scene
+/// (or one level up). Sequences are referenced by `name` from `animator.sequence`.
+pub(super) fn load_sequences_from_world(scene_path: &str, animation: &mut AnimationSystem) {
+    let Some(anim_dir) = resolve_animations_dir(scene_path) else {
+        return;
+    };
+    let entries = match std::fs::read_dir(&anim_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".sequence.toml"))
+        {
+            match flint_animation::load_sequence_from_file(&path) {
+                Ok(seq) => {
+                    println!(
+                        "Loaded sequence: {} ({:.1}s, {} events)",
+                        seq.name,
+                        seq.resolved_duration(),
+                        seq.events.len()
+                    );
+                    animation.add_sequence(seq);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load sequence '{}': {:?}", path.display(), e);
+                }
+            }
+        }
+    }
+}
+
+/// `<scene_dir>/animations/`, falling back to `<scene_dir>/../animations/`
+/// for projects that keep scenes in a subdirectory.
+fn resolve_animations_dir(scene_path: &str) -> Option<std::path::PathBuf> {
+    let scene_dir = Path::new(scene_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let local = scene_dir.join("animations");
+    if local.is_dir() {
+        return Some(local);
+    }
+    let up = scene_dir.parent()?.join("animations");
+    up.is_dir().then_some(up)
+}
+
 /// Load `.sprite.toml` files from the `animations/` directory next to the scene.
 /// Each file can define multiple sprite animation clips under `[animation.NAME]` sections.
 pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mut AnimationSystem) {

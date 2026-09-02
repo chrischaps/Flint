@@ -252,6 +252,15 @@ impl ScriptSystem {
         self.engine.call_sprite_anim_ends(world, events);
     }
 
+    /// Call on_sequence_cue(sequence, cue) for cues animation sequences passed
+    pub fn call_sequence_cues(
+        &mut self,
+        world: &mut FlintWorld,
+        cues: &[flint_animation::SequenceCueEvent],
+    ) {
+        self.engine.call_sequence_cues(world, cues);
+    }
+
     /// Call on_scene_exit() for all scripts that define it
     pub fn call_scene_exits(&mut self, world: &mut FlintWorld) {
         self.engine.call_scene_exits(world);
