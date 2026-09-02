@@ -16,6 +16,13 @@ pub fn edit_layer_table(
     index: usize,
     edit: impl FnOnce(&mut toml::map::Map<String, toml::Value>),
 ) {
+    // Layer IDs are serialized in u8 metadata elsewhere, so anything at or
+    // above the u8 limit cannot be represented without overflowing the runtime
+    // bookkeeping and growing the slots unboundedly.
+    if index >= u8::MAX as usize {
+        return;
+    }
+
     let animator = comps
         .get(comp::ANIMATOR)
         .cloned()

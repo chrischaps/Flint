@@ -684,6 +684,25 @@ name = "done"
     }
 
     #[test]
+    fn rejects_out_of_range_layer_index() {
+        let (mut world, id) = world_with_animator();
+        {
+            let mut comps = world.get_components_mut(id).unwrap();
+            comps.set_field(
+                comp::ANIMATOR,
+                "layers",
+                toml::Value::Array(vec![toml::Value::Table(Default::default())]),
+            );
+            layer_edit::edit_layer_table(&mut comps, u8::MAX as usize, |_| {
+                panic!("out-of-range layer index should be rejected");
+            });
+        }
+        let a = animator(&world, id);
+        let layers = a.get("layers").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(layers.len(), 1);
+    }
+
+    #[test]
     fn events_fire_once_and_write_animator_fields() {
         let seq = load_sequence_from_str(EXAMPLE, "test").unwrap();
         let (mut world, id) = world_with_animator();
