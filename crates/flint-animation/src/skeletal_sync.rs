@@ -538,12 +538,12 @@ impl SkeletalSync {
                 // for inactive layers so the previewer can show them.
                 if contrib.mask_keys[li] != layer.mask || contrib.mask_bits[li].len() != joint_count
                 {
-contrib.mask_bits[li] = match layer.mask.as_str() {
-    "" => vec![true; joint_count],
-    root => skeleton
-        .subtree_mask(root)
-        .unwrap_or_else(|| vec![false; joint_count]),
-};
+                    contrib.mask_bits[li] = match layer.mask.as_str() {
+                        "" => vec![true; joint_count],
+                        root => skeleton
+                            .subtree_mask(root)
+                            .unwrap_or_else(|| vec![false; joint_count]),
+                    };
                     contrib.mask_keys[li] = layer.mask.clone();
                 }
                 let Some(layer_clip) = self.clips.get(&layer.clip) else {
@@ -605,7 +605,8 @@ contrib.mask_bits[li] = match layer.mask.as_str() {
                                         continue;
                                     }
                                     for (c, v) in value.iter().take(3).enumerate() {
-                                        let denom = rest.scale[c].abs().max(1e-6).copysign(rest.scale[c]);
+                                        let denom =
+                                            rest.scale[c].abs().max(1e-6).copysign(rest.scale[c]);
                                         let ratio = v / denom;
                                         pose.scale[c] *= 1.0 + (ratio - 1.0) * w;
                                     }

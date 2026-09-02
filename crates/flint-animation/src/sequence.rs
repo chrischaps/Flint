@@ -431,29 +431,27 @@ impl SequenceSync {
             let duration = seq.resolved_duration();
 
             if rt.looping() && duration > 0.0 {
-                while rt.time >= duration {
-                    rt.time -= duration;
-                    rt.fired.iter_mut().for_each(|f| *f = false);
+                // Fire the tail of the current pass (everything up to
+                // `duration`), then wrap and fire from zero. Repeat while
+                // the frame still overruns, so a large `dt` neither skips
+                // events nor delays the next pass by a frame.
+                loop {
+                    let limit = rt.time.min(duration);
                     for (i, ev) in seq.events.iter().enumerate() {
                         if rt.fired[i] {
                             continue;
                         }
-                        if ev.time > rt.time {
+                        if ev.time > limit {
                             break;
                         }
                         rt.fired[i] = true;
                         Self::apply_step(world, entity_id, &seq.name, ev, &mut self.fired_cues);
                     }
-                }
-                for (i, ev) in seq.events.iter().enumerate() {
-                    if rt.fired[i] {
-                        continue;
-                    }
-                    if ev.time > rt.time {
+                    if rt.time < duration {
                         break;
                     }
-                    rt.fired[i] = true;
-                    Self::apply_step(world, entity_id, &seq.name, ev, &mut self.fired_cues);
+                    rt.time -= duration;
+                    rt.fired.iter_mut().for_each(|f| *f = false);
                 }
             } else {
                 for (i, ev) in seq.events.iter().enumerate() {
@@ -692,10 +690,11 @@ name = "done"
         )
         .unwrap();
         let (mut world, id) = world_with_animator();
-        world
-            .get_components_mut(id)
-            .unwrap()
-            .set_field(comp::ANIMATOR, "sequence", "instant".into());
+        world.get_components_mut(id).unwrap().set_field(
+            comp::ANIMATOR,
+            "sequence",
+            "instant".into(),
+        );
         let mut sync = SequenceSync::new();
         sync.add_sequence(seq);
         sync.sync_from_world(&world);
@@ -822,10 +821,45 @@ name = "done"
         sync.advance(&mut world, 2.5);
 
         let cues: Vec<_> = sync.drain_cues().iter().map(|c| c.cue.clone()).collect();
-        assert_eq!(cues, vec!["start", "step", "start"]);
+        assert_eq!(cues, vec!["start", "step", "start", "step", "start"]);
         let rt = sync.state(&id).unwrap();
         assert!(rt.playing);
         assert!((rt.time - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn loop_wrap_fires_tail_events_before_wrapping() {
+        let seq = load_sequence_from_str(
+            r#"
+            name = "p"
+            loop = true
+            duration = 1.0
+
+            [[events]]
+            time = 0.0
+            kind = "cue"
+            name = "start"
+
+            [[events]]
+            time = 0.8
+            kind = "cue"
+            name = "tail"
+            "#,
+            "test",
+        )
+        .unwrap();
+        let (mut world, id) = world_with_animator();
+        let mut sync = SequenceSync::new();
+        sync.add_sequence(seq);
+        sync.play(id, "p");
+
+        sync.advance(&mut world, 0.5);
+        sync.advance(&mut world, 0.6);
+
+        let cues: Vec<_> = sync.drain_cues().iter().map(|c| c.cue.clone()).collect();
+        assert_eq!(cues, vec!["start", "tail", "start"]);
+        let rt = sync.state(&id).unwrap();
+        assert!((rt.time - 0.1).abs() < 1e-9);
     }
 
     #[test]
