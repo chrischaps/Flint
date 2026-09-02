@@ -605,7 +605,8 @@ contrib.mask_bits[li] = match layer.mask.as_str() {
                                         continue;
                                     }
                                     for (c, v) in value.iter().take(3).enumerate() {
-                                        let ratio = v / rest.scale[c].abs().max(1e-6);
+                                        let denom = rest.scale[c].abs().max(1e-6).copysign(rest.scale[c]);
+                                        let ratio = v / denom;
                                         pose.scale[c] *= 1.0 + (ratio - 1.0) * w;
                                     }
                                 }
@@ -1067,6 +1068,15 @@ mod tests {
             .unwrap();
         step(&mut sync, &mut world, 0.05);
         assert_eq!(sync.layers(&eid).unwrap()[0].weight, 0.25);
+    }
+
+    #[test]
+    fn negative_rest_scale_keeps_denominator_sign() {
+        let rest = -1.0_f32;
+        let denom = rest.abs().max(1e-6).copysign(rest);
+        assert_eq!(denom, -1.0);
+        let sampled = -2.0_f32;
+        assert_eq!(sampled / denom, 2.0);
     }
 
     /// A clip that doesn't key a joint must leave it at REST, not at

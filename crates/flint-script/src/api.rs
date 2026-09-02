@@ -1278,7 +1278,9 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
                 let world = unsafe { c.world_mut() };
                 edit_anim_layer(world, entity_id, index, |t| {
                     t.insert("clip".into(), toml::Value::String(clip.to_string()));
-                    t.insert("weight".into(), toml::Value::Float(weight));
+                    t.insert("mode".into(), toml::Value::String("additive".into()));
+                    t.insert("mask".into(), toml::Value::String(String::new()));
+                    flint_animation::layer_edit::set_weight(t, weight);
                 });
             },
         );
@@ -1294,9 +1296,9 @@ fn register_animation_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
                 let world = unsafe { c.world_mut() };
                 edit_anim_layer(world, entity_id, index, |t| {
                     t.insert("clip".into(), toml::Value::String(clip.to_string()));
-                    t.insert("weight".into(), toml::Value::Float(weight));
                     t.insert("mode".into(), toml::Value::String(mode.to_string()));
                     t.insert("mask".into(), toml::Value::String(mask.to_string()));
+                    flint_animation::layer_edit::set_weight(t, weight);
                 });
             },
         );

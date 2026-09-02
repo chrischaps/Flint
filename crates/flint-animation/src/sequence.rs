@@ -486,23 +486,23 @@ impl SequenceSync {
                         }
                         self.last_seen.insert(entity_id, String::new());
                     }
-                }
-            } else if duration <= 0.0 && !rt.looping() {
-                rt.time = 0.0;
-                rt.playing = false;
-                if self
-                    .last_seen
-                    .get(&entity_id)
-                    .is_some_and(|s| !s.is_empty())
-                {
-                    if let Some(comps) = world.get_components_mut(entity_id) {
-                        comps.set_field(
-                            comp::ANIMATOR,
-                            "sequence",
-                            toml::Value::String(String::new()),
-                        );
+                } else if duration <= 0.0 && !rt.looping() {
+                    rt.time = 0.0;
+                    rt.playing = false;
+                    if self
+                        .last_seen
+                        .get(&entity_id)
+                        .is_some_and(|s| !s.is_empty())
+                    {
+                        if let Some(comps) = world.get_components_mut(entity_id) {
+                            comps.set_field(
+                                comp::ANIMATOR,
+                                "sequence",
+                                toml::Value::String(String::new()),
+                            );
+                        }
+                        self.last_seen.insert(entity_id, String::new());
                     }
-                    self.last_seen.insert(entity_id, String::new());
                 }
             }
         }

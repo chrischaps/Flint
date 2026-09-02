@@ -2113,11 +2113,13 @@ impl PreviewApp {
                                             "\u{23f8}"
                                         };
                                         if ui.button(btn).on_hover_text("Play / pause (P)").clicked() {
-                                            if !seq_playing && anim_paused {
-                                                // Finished: restart and play
+                                            if !seq_playing {
+                                                // Finished or stopped: restart and leave the animation unpaused.
                                                 seq_restart = true;
+                                                new_anim_paused = Some(false);
+                                            } else {
+                                                new_anim_paused = Some(!anim_paused);
                                             }
-                                            new_anim_paused = Some(!anim_paused);
                                         }
                                         if ui.button("\u{23ee} Restart").on_hover_text("R").clicked() {
                                             seq_restart = true;
@@ -2318,6 +2320,8 @@ impl PreviewApp {
                                                     .changed()
                                                 {
                                                     layer.weight = w;
+                                                    layer.fade_duration = 0.0;
+                                                    layer.fade_target = w;
                                                     changed = true;
                                                 }
                                                 if let Some(Some((target, left))) = layer_fades.get(li) {
