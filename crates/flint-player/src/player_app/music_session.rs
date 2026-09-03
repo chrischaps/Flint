@@ -123,6 +123,83 @@ pub struct MusicSession {
     /// Component's `quit_on_finish`: when the session ends on its own the
     /// player exits instead of idling in the post-session neutral world.
     quit_on_finish: bool,
+    /// Armed only when no gamepad was visible at session start.
+    #[cfg(feature = "debug-hud")]
+    debug_keys: Option<DebugKeyInput>,
+}
+
+/// Debug keyboard input (P5, 2026-08-27, `debug-hud` builds only): when a
+/// session starts with NO gamepad visible, arrows = lean and Space = pulse
+/// feed the session's ordinary input channel, stamped through the same
+/// ClockBridge arithmetic as the capture thread (compensated clock sample,
+/// monotonic-guarded). A stand-in for seam/feedback iteration when no pad is
+/// at hand — digital lean at a fixed radius, frame-quantized stamps, no
+/// keyboard-specific calibration — never an [H] feel surface. Covers the
+/// prototype verbs only (lean + pulse); sway/pressure/flick stay silent.
+#[cfg(feature = "debug-hud")]
+struct DebugKeyInput {
+    tx: std::sync::mpsc::Sender<InputEvent>,
+    bridge: flint_music::ClockBridge,
+    offset_samples: i64,
+    last_sample: i64,
+    last_lean: (f64, f64),
+}
+
+/// Digital lean radius: matches the chart's authored target radii (~0.8–0.85)
+/// so a held arrow scores like a landed lean rather than a rail-pinned one.
+#[cfg(feature = "debug-hud")]
+const KEY_LEAN_R: f64 = 0.85;
+
+#[cfg(feature = "debug-hud")]
+impl DebugKeyInput {
+    fn feed(&mut self, input: &InputState) {
+        use winit::keyboard::KeyCode;
+        let mut x: f64 = 0.0;
+        let mut y: f64 = 0.0;
+        if input.is_key_down(KeyCode::ArrowRight) {
+            x += 1.0;
+        }
+        if input.is_key_down(KeyCode::ArrowLeft) {
+            x -= 1.0;
+        }
+        if input.is_key_down(KeyCode::ArrowUp) {
+            y += 1.0;
+        }
+        if input.is_key_down(KeyCode::ArrowDown) {
+            y -= 1.0;
+        }
+        let mag = (x * x + y * y).sqrt();
+        if mag > 0.0 {
+            x = x / mag * KEY_LEAN_R;
+            y = y / mag * KEY_LEAN_R;
+        }
+        let pulse = input.is_key_just_pressed(KeyCode::Space);
+        let lean_dirty = (x, y) != self.last_lean;
+        if !lean_dirty && !pulse {
+            return;
+        }
+        let Some(clock_sample) = self.bridge.sample_at(Instant::now()) else {
+            return; // bridge not fed yet (session preroll warm-up)
+        };
+        // Same monotonic guard as the capture thread: a bridge refit can
+        // step the mapping backwards by a hair; judgment requires
+        // nondecreasing stamps.
+        let sample = (clock_sample - self.offset_samples).max(self.last_sample);
+        self.last_sample = sample;
+        if lean_dirty {
+            let _ = self
+                .tx
+                .send(InputEvent::Lean(flint_music::LeanSample { sample, x, y }));
+            self.last_lean = (x, y);
+        }
+        if pulse {
+            let _ = self.tx.send(InputEvent::Pulse(flint_music::PulseEvent {
+                sample,
+                kind: "pulse".into(),
+                direction: None,
+            }));
+        }
+    }
 }
 
 /// A string field of the component; empty/whitespace counts as absent.
@@ -231,8 +308,40 @@ impl MusicSession {
                 .map_err(|e| anyhow!("music_session component: {e}"))?,
             None => flint_input_capture::VerbMap::default(),
         };
-        for n in flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples) {
-            println!("[music] {n}");
+        // Debug keyboard fallback (debug-hud builds): with no pad visible,
+        // arm arrows/Space instead of spawning capture — the session gets a
+        // live receiver either way, so the NO INPUT diagnostics stay honest.
+        #[cfg(feature = "debug-hud")]
+        let debug_keys = match flint_input_capture::connected_gamepads() {
+            Ok(pads) if pads.is_empty() => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let bridge = session.bridge();
+                session.set_input(rx, Box::new(()));
+                println!(
+                    "[music] *** NO GAMEPADS VISIBLE — debug KEYBOARD input armed \
+                     (debug-hud build): arrows = lean, Space = pulse. Prototype \
+                     verbs only; not a feel surface."
+                );
+                Some(DebugKeyInput {
+                    tx,
+                    bridge,
+                    offset_samples,
+                    last_sample: i64::MIN,
+                    last_lean: (0.0, 0.0),
+                })
+            }
+            _ => None,
+        };
+        #[cfg(feature = "debug-hud")]
+        let attach_pad = debug_keys.is_none();
+        #[cfg(not(feature = "debug-hud"))]
+        let attach_pad = true;
+        if attach_pad {
+            for n in
+                flint_input_capture::attach_session_input(&mut session, verb_map, offset_samples)
+            {
+                println!("[music] {n}");
+            }
         }
 
         Ok(Some(Self {
@@ -244,6 +353,8 @@ impl MusicSession {
             max_confirmed_skew_ms: 0.0,
             last_skew_check: Instant::now(),
             quit_on_finish,
+            #[cfg(feature = "debug-hud")]
+            debug_keys,
         }))
     }
 
@@ -253,6 +364,15 @@ impl MusicSession {
         if self.pulse_release_pending {
             input.process_gamepad_button_up(GAMEPAD_SLOT, PULSE_BUTTON);
             self.pulse_release_pending = false;
+        }
+
+        // Debug keyboard stand-in: synthesize this frame's events BEFORE the
+        // drain so they judge on this tick. The events then round-trip into
+        // InputState through the ordinary down-sample tap below, exactly
+        // like gamepad events.
+        #[cfg(feature = "debug-hud")]
+        if let Some(dk) = self.debug_keys.as_mut() {
+            dk.feed(input);
         }
 
         // Split borrows: the tap closure feeds InputState and the evidence
@@ -333,6 +453,13 @@ impl MusicSession {
         self.session.visual_frame()
     }
 
+    /// Debug: force the full reintegration on the next tick (F9; ADR 0064
+    /// follow-up) — seam iteration without playing to a fail.
+    #[cfg(feature = "debug-hud")]
+    pub fn debug_force_fail(&mut self) {
+        self.session.debug_force_fail();
+    }
+
     /// Debug-guide snapshot for the Music Guide panel (ADR 0035).
     #[cfg(feature = "debug-hud")]
     pub fn guide_frame(&self, horizon_beats: f64) -> flint_music::chart_session::GuideFrame {
@@ -357,7 +484,25 @@ impl MusicSession {
     /// depends on flint-music.
     pub fn conducted_snapshot(&self) -> flint_script::ConductedSnapshot {
         let vf = self.session.visual_frame();
+        // Next-window telegraph (P5 immediate-feedback pass): the nearest
+        // unconsumed judgment window inside a short horizon, so the scene
+        // can telegraph that input is expected. Read-only guide-frame query,
+        // per-frame cost is a filter over the window list — cheap.
+        let (next_pulse_beats, pulse_window_open) = {
+            let gf = self.session.guide_frame(16.0);
+            let beats = gf
+                .windows
+                .iter()
+                .map(|w| w.beats_until)
+                .fold(f64::INFINITY, f64::min);
+            (
+                if beats.is_finite() { beats } else { 1e6 },
+                gf.windows.iter().any(|w| w.open_now),
+            )
+        };
         flint_script::ConductedSnapshot {
+            next_pulse_beats,
+            pulse_window_open,
             lean: [vf.lean[0] as f64, vf.lean[1] as f64],
             sway: [vf.sway[0] as f64, vf.sway[1] as f64],
             pressure_l: vf.pressure_l as f64,

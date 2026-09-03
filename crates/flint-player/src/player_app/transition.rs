@@ -370,6 +370,7 @@ impl PlayerApp {
                 self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
+                self.scene_preload_audio = scene_file.scene.preload_audio;
             }
             Err(e) => {
                 tracing::error!("Failed to load scene '{}': {:?}", new_scene_path, e);
@@ -545,7 +546,12 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Physics init failed: {:?}", e));
 
-        load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
+        load_audio_from_world(
+            &self.world,
+            &mut self.audio,
+            &self.scene_path,
+            self.scene_preload_audio,
+        );
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));

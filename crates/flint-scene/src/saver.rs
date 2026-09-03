@@ -32,6 +32,7 @@ pub fn world_to_scene_file(world: &FlintWorld, name: impl Into<String>) -> Scene
             version: "1.0".to_string(),
             description: None,
             input_config: None,
+            preload_audio: true,
         },
         camera: None,
         environment: None,

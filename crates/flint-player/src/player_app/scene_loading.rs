@@ -418,8 +418,15 @@ pub(super) fn register_node_animation_data(
     }
 }
 
-/// Load audio files referenced by audio_source components and preload all .ogg files from audio/
-pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem, scene_path: &str) {
+/// Load audio files referenced by audio_source components and (unless the
+/// scene opts out via `[scene] preload_audio = false`) preload every audio
+/// file from audio/ for script-triggered sounds.
+pub(super) fn load_audio_from_world(
+    world: &FlintWorld,
+    audio: &mut AudioSystem,
+    scene_path: &str,
+    preload_all: bool,
+) {
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
@@ -468,7 +475,13 @@ pub(super) fn load_audio_from_world(world: &FlintWorld, audio: &mut AudioSystem,
         }
     }
 
-    // Preload all audio files from the audio/ directory (for script-triggered sounds)
+    // Preload all audio files from the audio/ directory (for script-triggered
+    // sounds). Scenes with no audio can skip this — decoding a large stem
+    // library dominates their load time.
+    if !preload_all {
+        tracing::info!("Scene opts out of audio preload (preload_audio = false)");
+        return;
+    }
     for dir in &search_dirs {
         let audio_dir = dir.join("audio");
         if audio_dir.is_dir() {

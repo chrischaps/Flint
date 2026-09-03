@@ -320,6 +320,13 @@ pub struct SceneMetadata {
     pub description: Option<String>,
     #[serde(default)]
     pub input_config: Option<String>,
+    /// When false, the player skips the blanket preload of every file under
+    /// `audio/` at scene load (a silent scene starts instantly). Sounds named
+    /// by `audio_source` components still load, and music-session stems load
+    /// through their own resolver — this gates only the script-triggered-
+    /// sound convenience preload. Default true = original behavior.
+    #[serde(default = "default_true")]
+    pub preload_audio: bool,
 }
 
 fn default_version() -> String {
@@ -374,6 +381,7 @@ impl SceneFile {
                 version: default_version(),
                 description: None,
                 input_config: None,
+                preload_audio: true,
             },
             camera: None,
             environment: None,

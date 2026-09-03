@@ -934,6 +934,9 @@ mod tests {
                 set_field(me, "probe", "swx", sw.x);
                 set_field(me, "probe", "pl", conducted_pressure_l());
                 set_field(me, "probe", "pr", conducted_pressure_r());
+                let np = conducted_next_pulse();
+                set_field(me, "probe", "npb", np.beats);
+                set_field(me, "probe", "np_open", if np.open { 1.0 } else { 0.0 });
                 let cues = conducted_cues();
                 set_field(me, "probe", "ncues", cues.len().to_float());
                 if cues.len() > 0 {
@@ -967,6 +970,8 @@ mod tests {
                 target: [0.1, 0.75],
                 next_target: [0.3, -0.4],
                 next_target_beats: 2.5,
+                next_pulse_beats: 1.75,
+                pulse_window_open: true,
                 coherence: 0.625,
                 beat_phase: 0.5,
                 bar_phase: 0.125,
@@ -1021,6 +1026,8 @@ mod tests {
         assert_eq!(probe_float(&world, id, "swx"), 0.6);
         assert_eq!(probe_float(&world, id, "pl"), 0.15);
         assert_eq!(probe_float(&world, id, "pr"), 0.85);
+        assert_eq!(probe_float(&world, id, "npb"), 1.75);
+        assert_eq!(probe_float(&world, id, "np_open"), 1.0);
         assert_eq!(probe_float(&world, id, "ncues"), 1.0);
         assert_eq!(probe_float(&world, id, "cue_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "cdepth"), 0.7);
@@ -1047,6 +1054,9 @@ mod tests {
                 let nt = conducted_next_target();
                 set_field(me, "probe", "ntx", nt.x + nt.y);
                 set_field(me, "probe", "ntb", nt.beats);
+                let np = conducted_next_pulse();
+                set_field(me, "probe", "npb", np.beats);
+                set_field(me, "probe", "np_open", if np.open { 1.0 } else { 0.0 });
                 set_field(me, "probe", "npulses", conducted_pulses().len().to_float());
                 set_field(me, "probe", "sec_ok",
                     if conducted_section() == "" { 1.0 } else { 0.0 });
@@ -1071,6 +1081,12 @@ mod tests {
             1e6,
             "sentinel: nothing inbound"
         );
+        assert_eq!(
+            probe_float(&world, id, "npb"),
+            1e6,
+            "sentinel: no window inbound"
+        );
+        assert_eq!(probe_float(&world, id, "np_open"), 0.0);
         assert_eq!(probe_float(&world, id, "npulses"), 0.0);
         assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "preroll"), 0.0);

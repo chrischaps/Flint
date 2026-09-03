@@ -84,6 +84,8 @@ pub fn run(args: PlayArgs) -> Result<()> {
         scene_file.scene.input_config.clone(),
     );
 
+    app.scene_preload_audio = scene_file.scene.preload_audio;
+
     // Apply initial mixer bus volumes from CLI
     app.audio
         .set_bus_volume(flint_player::Bus::Music, args.music_volume);

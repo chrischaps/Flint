@@ -85,6 +85,21 @@ fn register_conducted_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
         });
     }
 
+    // conducted_next_pulse() -> Map #{beats, open}: suite beats until the
+    // next unconsumed judgment window's anchor (any kind) and whether that
+    // window is open right now (P5 immediate-feedback pass). beats = 1e6
+    // when nothing is upcoming (and in the neutral no-session state).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("conducted_next_pulse", move || -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let mut map = Map::new();
+            map.insert("beats".into(), Dynamic::from(c.conducted.next_pulse_beats));
+            map.insert("open".into(), Dynamic::from(c.conducted.pulse_window_open));
+            map
+        });
+    }
+
     // Scalar getters, all f64 (Rhai has no implicit numeric coercion).
     macro_rules! scalar_getter {
         ($name:literal, $field:ident) => {{

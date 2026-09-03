@@ -415,6 +415,7 @@ impl ChartCore {
         self.reintegrator.rewind_beats = self.ladder.config().seam_rewind_beats;
         self.reintegrator.rewind_drop_st = self.ladder.config().seam_rewind_drop_st;
         self.reintegrator.pickup_beats = self.ladder.config().seam_pickup_beats;
+        self.reintegrator.lead_in_beats = self.ladder.config().seam_lead_in_beats;
     }
 
     /// Feed one suite-stamped event to judgment (non-positive-time events are
@@ -1765,6 +1766,14 @@ impl ChartSession {
 
     /// Debug-guide snapshot at the current position (ADR 0035) — dev
     /// overlays only, never the player-facing world.
+    /// Debug: force the full reintegration (rewind → seam → reassembly) on
+    /// the next tick, bypassing arming and the coherence hold. Dev surface
+    /// only (the guide-frame contract); the seam machinery runs exactly as
+    /// in a real fail. No-op while a seam is already in flight.
+    pub fn debug_force_fail(&mut self) {
+        self.core.reintegrator.debug_force_fail();
+    }
+
     pub fn guide_frame(&self, horizon_beats: f64) -> GuideFrame {
         self.core.guide_frame(self.session.now(), horizon_beats)
     }

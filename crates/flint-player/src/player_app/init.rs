@@ -97,6 +97,7 @@ impl PlayerApp {
             pp_debug_freeze: false,
             music_pp_base: None,
             music_pp_restore: None,
+            scene_preload_audio: true,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -434,7 +435,12 @@ impl PlayerApp {
             .context("Failed to initialize physics")?;
 
         // Initialize audio
-        load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
+        load_audio_from_world(
+            &self.world,
+            &mut self.audio,
+            &self.scene_path,
+            self.scene_preload_audio,
+        );
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));

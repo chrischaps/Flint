@@ -489,6 +489,24 @@ impl PlayerApp {
                                     "no music session running — nothing to map",
                                 );
                             }
+                            // Debug force-fail: trigger the full
+                            // reintegration (rewind → seam → reassembly)
+                            // without having to play to a fail — seam
+                            // iteration must not depend on first clearing
+                            // the arming threshold (ADR 0064 follow-up).
+                            #[cfg(feature = "debug-hud")]
+                            KeyCode::F9 => {
+                                if let Some(ms) = self.music_session.as_mut() {
+                                    ms.debug_force_fail();
+                                    println!(
+                                        "[music] DEBUG: full-fail forced — rewind incoming"
+                                    );
+                                } else {
+                                    println!(
+                                        "[music] no music session running — nothing to fail"
+                                    );
+                                }
+                            }
                             // Rendering & Effects menu (ADR 0053): the
                             // one home for every render/post debug
                             // control the old F1/F4-F10/F12 keys used to
