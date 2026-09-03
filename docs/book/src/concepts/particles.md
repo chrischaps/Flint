@@ -56,7 +56,27 @@ The `shape` field controls where new particles spawn relative to the emitter:
 | `point` | (none) | All particles spawn at the emitter origin |
 | `sphere` | `shape_radius` | Random position within a sphere |
 | `cone` | `shape_angle`, `shape_radius` | Particles emit in a cone around `direction` |
-| `box` | `shape_extents` | Random position within an axis-aligned box |
+| `box` | `shape_extents`, `shape_axis_u`, `shape_axis_v` | Random position within a box. Axis-aligned by default; give `shape_axis_u` and `shape_axis_v` world directions to orient it (see below) |
+
+Every shape is translated by `shape_offset` before the emitter position is applied, so a trail can spawn a little behind the entity that owns it.
+
+### Oriented Boxes
+
+A box emitter can be rotated without rotating the entity (ADR 0061, prologue flight trails). `shape_extents.x` runs along `shape_axis_u`, `shape_extents.y` along `shape_axis_v`, and `shape_extents.z` along their cross product. The two axes are normalised and orthogonalised for you; if either is zero, or they are parallel, the box falls back to axis-aligned. Because both axes are live fields, a script can point the spawn slab along an entity's lateral motion every frame:
+
+```rhai
+fn on_update() {
+    let me = self_entity();
+    let p = get_position(me);
+    let last = get_field(me, "trail_state", "last_pos");   // your own component
+    let dx = p.x - last.x;
+    let dz = p.z - last.z;
+    if dx * dx + dz * dz > 0.0001 {
+        set_field(me, "particle_emitter", "shape_axis_u", [dx, 0.0, dz]);
+    }
+    set_field(me, "trail_state", "last_pos", #{ x: p.x, y: p.y, z: p.z });
+}
+```
 
 ## Blend Modes
 
@@ -132,11 +152,22 @@ For periodic bursts (fountain, heartbeat), set `looping = true` with a `duration
 | `shape_radius` | f32 | 0.5 | Radius for sphere/cone shapes |
 | `shape_angle` | f32 | 30.0 | Half-angle for cone shape (degrees) |
 | `shape_extents` | vec3 | [0.5,0.5,0.5] | Half-extents for box shape |
-| `world_space` | bool | true | Particles detach from emitter transform |
+| `shape_offset` | vec3 | [0,0,0] | Spawn-region translation relative to the emitter position |
+| `shape_axis_u` | vec3 | [0,0,0] | Box orientation: `extents.x` runs along this world direction (zero = axis-aligned) |
+| `shape_axis_v` | vec3 | [0,0,0] | Box orientation: `extents.y` along this direction, `extents.z` along `u x v` (zero = axis-aligned) |
+| `world_space` | bool | true | `true`: particles detach and stay where they were born. `false`: particles are simulated relative to the emitter and ride with it (resolved to world space when the instance buffer is packed) |
 | `duration` | f32 | 0.0 | Emitter duration (0 = infinite) |
 | `looping` | bool | true | Loop when duration expires |
 | `playing` | bool | false | Current playback state |
 | `autoplay` | bool | true | Start emitting on scene load |
+
+### Live Fields
+
+The particle system re-reads the component every frame, so a script can retune a running emitter with `set_field`. These fields take effect on the next frame without restarting the emitter:
+
+`emission_rate`, `gravity`, `damping`, `size_start`, `size_end`, `color_start`, `color_end`, `blend_mode`, `texture`, `direction`, `spread`, `speed_min`, `speed_max`, `lifetime_min`, `lifetime_max`, `stretch`, `shape`, `shape_offset`, `shape_axis_u`, `shape_axis_v`.
+
+Everything else (`max_particles`, the sprite-sheet layout, `duration`, `looping`, `world_space`) is read when the emitter is created. Changing `playing` or `autoplay` starts or stops it, and a start resets the emitter clock.
 
 ## Scripting Integration
 

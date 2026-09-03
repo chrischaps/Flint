@@ -46,6 +46,10 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `on_action` | `fn on_action(action_name)` | When an input action fires (e.g., `"jump"`, `"interact"`) |
 | `on_interact` | `fn on_interact()` | When the player presses Interact near this entity |
 | `on_draw_ui` | `fn on_draw_ui()` | Every frame after `on_update`, for 2D HUD draw commands |
+| `on_collision_exit` | `fn on_collision_exit(other_id)` | When a contact with another entity ends |
+| `on_scene_enter` / `on_scene_exit` | `fn on_scene_enter()` | Around scene transitions (see [Scene Transition API](#scene-transition-api)) |
+| `on_sequence_cue` | `fn on_sequence_cue(sequence, cue)` | An animation sequence passed a `cue` event (see [Animation](animation.md#sequences)) |
+| `on_animation_end` | `fn on_animation_end(clip)` | A `once` sprite clip finished (see [2D Sprites](sprites-2d.md)) |
 
 The `on_interact` callback is sugar for the common pattern of proximity-based interaction. It automatically checks the entity's `interactable` component for `range` (default 3.0) and `enabled` (default true) before firing.
 
@@ -250,6 +254,9 @@ Physics functions provide raycasting and camera access for combat, line-of-sight
 | `set_camera_position(x, y, z)` | --- | Override camera position from script |
 | `set_camera_target(x, y, z)` | --- | Override camera look-at target from script |
 | `set_camera_fov(fov)` | --- | Override camera field of view (degrees) from script |
+| `set_camera_orthographic(enabled)` | --- | Switch the camera between orthographic and perspective projection |
+| `set_camera_ortho_height(height)` | --- | Orthographic half-height in world units |
+| `set_camera_roll(radians)` | --- | Roll the camera about its view axis (ADR 0022, camera roll override) |
 
 The `raycast()` function automatically excludes the calling entity's collider from results. On a hit, it returns a map with these fields:
 
@@ -302,6 +309,40 @@ fn fire_weapon() {
 }
 ```
 
+#### 2D Physics
+
+For sprite games the physics world is a flat plane. These mirror the 3D calls above:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `set_velocity_2d(id, vx, vy)` | --- | Set a 2D body's velocity (deferred command, applied after the script batch) |
+| `get_velocity_2d(id)` | `Map` or `()` | Current velocity as `#{vx, vy}`, or `()` if the entity has no 2D body |
+| `overlap_rect(x, y, w, h)` | `Array` | IDs of every entity whose collider overlaps the rectangle |
+| `raycast_2d(ox, oy, dx, dy, max_dist)` | `Map` or `()` | `#{entity, distance, point_x, point_y, normal_x, normal_y}` or `()` |
+
+#### 2D Camera
+
+A follow camera with deadzone and smoothing, plus a stackable shake. All positions are world units on the sprite plane; the camera sits at `z = 10` looking down `-z` so every sprite layer stays in front of it.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `camera_follow(id, offset_x, offset_y, speed, deadzone_w, deadzone_h)` | --- | Track an entity each frame: the camera only moves when the target leaves the deadzone rectangle, then eases toward it with frame-rate-independent smoothing at `speed`. Applies any active shake |
+| `camera_follow_position()` | `Map` | Current smoothed follow position as `#{x, y}` |
+| `camera_follow_set(x, y)` | --- | Teleport the follow position (use on scene enter or respawn to avoid a long ease) |
+| `camera_shake(amplitude, frequency, decay)` | --- | Start or stack a shake. Amplitude takes the max of current and new; frequency in Hz; amplitude decays exponentially at `decay` per second |
+| `camera_shake_stop()` | --- | Cancel the shake immediately |
+| `camera_apply_shake()` | --- | Advance and apply the shake to a camera you position yourself with `set_camera_position` (not needed when `camera_follow` is in use) |
+
+#### Chunks
+
+Large 2D worlds stream in `.chunk.toml` files at runtime:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `load_chunk(path, offset_x, offset_y, chunk_id)` | --- | Load a chunk file, translating its entities by the offset, under a name you choose |
+| `unload_chunk(chunk_id)` | --- | Despawn every entity that chunk loaded |
+| `is_chunk_loaded(chunk_id)` | `bool` | Whether that chunk is currently resident |
+
 ### Spline API
 
 Query spline entities for path-following, track layouts, and procedural placement:
@@ -310,6 +351,8 @@ Query spline entities for path-following, track layouts, and procedural placemen
 |----------|---------|-------------|
 | `spline_closest_point(spline_id, x, y, z)` | `Map` or `()` | Nearest point on spline to query position. Returns `#{t, x, y, z, dist_sq}` |
 | `spline_sample_at(spline_id, t)` | `Map` or `()` | Sample spline at parameter `t` (0.0--1.0). Returns `#{x, y, z, fwd_x, fwd_y, fwd_z, right_x, right_y, right_z}` |
+| `spline_is_gap(spline_id, t)` | `bool` | Whether `t` falls inside one of the spline's authored gaps (`gap_starts` / `gap_ends` in `spline_data`; ranges may wrap past 1.0) |
+| `spline_gap_at(spline_id, t)` | `Map` or `()` | The gap containing `t` as `#{start_t, end_t}`, or `()` if `t` is on solid track |
 
 The `t` parameter wraps for closed splines. The returned forward and right vectors are normalized and can be used for orientation.
 
@@ -340,6 +383,9 @@ Control the HDR post-processing pipeline at runtime from scripts:
 | `set_fog_color(r, g, b)` | Set fog color (linear 0--1) |
 | `set_render_mode(mode, mix)` | Stylized render mode (see below) |
 | `set_render_mode_params(x, y, z, w)` | Per-mode tuning parameters |
+| `set_desaturation(amount)` | Desaturate toward ash grey (0 = full colour, 1 = grey; ADR 0021) |
+| `set_dof(strength)` | Depth-of-field defocus strength (0 = sharp, 1 = full blur) |
+| `set_dof_focus(distance, range)` | Focus plane distance and half-width, in view metres |
 
 These overrides are applied each frame and combine with the scene's `[post_process]` baseline settings. Useful for dynamic effects like speed vignetting, boost bloom, or exposure flashes.
 
@@ -349,6 +395,42 @@ it is cleared the frame your script stops calling it, so a crashed or
 hot-reloaded script cannot strand the world inside an effect. Call it every
 frame the effect is active. See
 [Post-Processing: Render Modes](post-processing.md#render-modes).
+
+### Conducted Parameters API
+
+When a scene carries a [`music_session`](music-sessions.md) component, the player fills a per-frame snapshot of the session's state and exposes it to every script through these getters (ADR 0020, conducted-parameters script surface). Without a session every getter returns a neutral value: a clean, settled world with `coherence` and `reassembly` at `1.0`, zero lean, and `1e6` beats until anything upcoming. Bindings written as `1 - conducted_coherence()` therefore show nothing when no music is running, and scripts never need to test for a session.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `conducted_lean()` | `#{x, y}` | The player's lean, both axes in `[-1, 1]` |
+| `conducted_target()` | `#{x, y}` | The chart's current lean target |
+| `conducted_next_target()` | `#{x, y, beats}` | The next authored lean key and suite beats until its anchor (ADR 0023). `beats = 1e6` and `x`/`y` = the current target when nothing is upcoming |
+| `conducted_next_pulse()` | `#{beats, open}` | Suite beats until the next judgment window's anchor, and whether that window is open right now (a press would land) |
+| `conducted_sway()` | `#{x, y}` | Right-stick sway (zeros under the prototype input map) |
+| `conducted_pressure_l()` / `conducted_pressure_r()` | `f64` | Trigger depths in `[0, 1]` (zeros under the prototype map) |
+| `conducted_coherence()` | `f64` | The coherence integrator, `1.0` = fully in step |
+| `conducted_beat()` | `f64` | Suite beats from zero, accumulated across tempo changes |
+| `conducted_beat_phase()` / `conducted_bar_phase()` | `f64` | `0..1` within the current beat / bar |
+| `conducted_bar()` | `i64` | Current bar number |
+| `conducted_section()` | `String` | Current section name, `""` when none |
+| `conducted_pulses()` | `Array` | Pulses judged this frame, each `#{age, err_ms, kind}` with `kind` one of `"hit"`, `"miss"`, `"spurious"`. Empty most frames |
+| `conducted_cues()` | `Array` | Chart cues fired this frame, each `#{name, age, params}` (ADR 0033). `params` is the cue's flat table as floats, strings and bools; nested tables are dropped |
+| `conducted_desaturate()` / `conducted_blur()` / `conducted_chromatic()` | `f64` | Ladder visual ramps, `0` = clean |
+| `conducted_reassembly()` | `f64` | `1` in normal play, `0` rising to `1` while re-gathering after a full fail |
+| `conducted_rewind()` | `f64` | Rewind-interlude progress, `0` = not rewinding |
+| `conducted_no_input()` | `bool` | The session has seen no input since the bar-2 check |
+| `conducted_preroll()` | `bool` | Still in the count-in; the world should stay untouched |
+
+All scalars are `f64`, so compare and multiply with float literals. A typical binding reads the snapshot in `on_update` and writes a post-process override:
+
+```rhai
+fn on_update() {
+    let grey = conducted_desaturate();
+    set_desaturation(grey);
+    let p = conducted_next_pulse();
+    if p.open { set_vignette(0.4); } else { set_vignette(0.2); }
+}
+```
 
 ### Audio Filter API
 
@@ -434,6 +516,16 @@ Load and manipulate TOML-defined UI documents at runtime:
 | `ui_exists(element_id)` | `bool` | Check if a UI element exists |
 | `ui_get_rect(element_id)` | `Map` | Get resolved position/size as `#{x, y, width, height}` |
 
+Older scenes place HUD elements as entities with `screen_anchor`, `ui_text` and `ui_fill` components instead of a UI document. Those are driven with entity-level setters:
+
+| Function | Description |
+|----------|-------------|
+| `set_text(entity_id, text)` | Write `ui_text.text` |
+| `set_text_color(entity_id, r, g, b, a)` | Write `ui_text.color` |
+| `ui_set_value(entity_id, value)` | Write `ui_fill.value` (a 0--1 bar fill) |
+| `set_anchor(entity_id, anchor)` | Write `screen_anchor.anchor` (`"top-left"` through `"bottom-right"`) |
+| `set_anchor_offset(entity_id, x, y)` | Write `screen_anchor.offset_x` / `offset_y` |
+
 UI documents are defined with paired `.ui.toml` (layout) and `.style.toml` (styling) files, following an HTML/CSS/JS-like separation of concerns. See [File Formats](../formats/overview.md) for the format specification.
 
 ### UI Draw API
@@ -446,12 +538,16 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 |----------|-------------|
 | `draw_text(x, y, text, size, r, g, b, a)` | Draw text at position |
 | `draw_text_ex(x, y, text, size, r, g, b, a, layer)` | Draw text with explicit layer |
+| `draw_text_stroked(x, y, text, size, r, g, b, a, stroke_r, stroke_g, stroke_b, stroke_a, stroke_width)` | Text with an outline stroke behind it |
 | `draw_rect(x, y, w, h, r, g, b, a)` | Draw filled rectangle |
 | `draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)` | Filled rectangle with corner rounding and layer |
 | `draw_rect_outline(x, y, w, h, r, g, b, a, thickness)` | Rectangle outline |
 | `draw_circle(x, y, radius, r, g, b, a)` | Draw filled circle |
+| `draw_circle_ex(x, y, radius, r, g, b, a, layer)` | Filled circle with explicit layer |
 | `draw_circle_outline(x, y, radius, r, g, b, a, thickness)` | Circle outline |
+| `draw_circle_outline_ex(x, y, radius, r, g, b, a, thickness, layer)` | Circle outline with explicit layer |
 | `draw_line(x1, y1, x2, y2, r, g, b, a, thickness)` | Draw a line segment |
+| `draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)` | Line segment with explicit layer |
 | `draw_sprite(x, y, w, h, name)` | Draw a sprite image |
 | `draw_sprite_ex(x, y, w, h, name, u0, v0, u1, v1, r, g, b, a, layer)` | Sprite with custom UV coordinates, tint, and layer |
 
@@ -481,6 +577,18 @@ Coordinates are in **egui logical points**, not physical pixels. On high-DPI dis
 #### Sprite Loading
 
 Sprite names map to image files in the `sprites/` directory (without extension). Supported formats: PNG, JPG, BMP, TGA. Textures are lazy-loaded on first use and cached for subsequent frames.
+
+### Sprite API
+
+Runtime control of the `sprite` component on 2D entities (see [2D Sprites](sprites-2d.md) for the component and clip formats):
+
+| Function | Description |
+|----------|-------------|
+| `set_sprite_source_rect(entity_id, x, y, w, h)` | Source rectangle in texture pixels (manual atlas frames) |
+| `set_sprite_flip(entity_id, flip_x, flip_y)` | Mirror horizontally / vertically |
+| `set_sprite_tint(entity_id, r, g, b, a)` | Multiply colour |
+| `set_sprite_visible(entity_id, visible)` | Show or hide without removing the component |
+| `set_sprite_layer(entity_id, layer)` / `get_sprite_layer(entity_id)` | Draw-order layer (integer; higher draws in front) |
 
 ### Data-Driven UI System
 
@@ -785,7 +893,8 @@ events ────► ScriptEngine.process_events()
                 │                    │
                 ▼                    ▼
         ECS reads/writes      ScriptCommands
-        (via ScriptCallContext)  (PlaySound, FireEvent, Log)
+        (via ScriptCallContext)  (PlaySound, FireEvent, Log,
+                                  LoadScene, LoadChunk, SetVelocity2D, ...)
                                      │
 on_draw_ui ► ScriptEngine            ▼
                 │              PlayerApp processes
@@ -800,6 +909,8 @@ on_draw_ui ► ScriptEngine            ▼
 ```
 
 Each entity gets its own Rhai `Scope`, preserving persistent variables between frames. The `Engine` is shared across all entities. World access happens through a `ScriptCallContext` that holds a raw pointer to the `FlintWorld` --- valid only during the call batch, cleared immediately after.
+
+The context also carries the per-frame inputs the host fills before each batch: the `InputState` snapshot (actions, mouse, touch, swipes), the `ConductedSnapshot` from the music session (neutral when there is none), the set of loaded chunk IDs, and the camera follow / shake state. Setters such as `set_vignette` or `set_camera_roll` write `Option` overrides on the context that the player applies after the batch; `ScriptCommand` is the deferred-effect channel for anything that needs the world mutably (spawning, scene loads, chunk loads, 2D velocity). Chart cue parameters cross the boundary as a small `CueParam` enum (`Number`, `Text`, `Flag`) so `flint-script` never depends on `flint-music`.
 
 ## Example: Combat HUD
 

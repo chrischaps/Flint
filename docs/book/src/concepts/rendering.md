@@ -1,6 +1,6 @@
 # Rendering
 
-Flint uses wgpu 23 for cross-platform GPU rendering, providing physically-based rendering (PBR) with a Cook-Torrance BRDF, cascaded shadow mapping, and full glTF mesh support.
+Flint uses wgpu 23 for cross-platform GPU rendering, providing physically-based rendering (PBR) with a Cook-Torrance BRDF, cascaded shadow mapping, optional 4x MSAA, and full glTF mesh support.
 
 ## PBR Shading
 
@@ -13,11 +13,13 @@ The renderer implements a metallic-roughness PBR workflow based on the Cook-Torr
 
 Materials are defined in scene TOML via the `material` component, matching the fields in `schemas/components/material.toml`.
 
+Diffuse shading is Lambert by default, but the scene can blend toward Oren-Nayar, soften the terminator with diffuse wrap, and add a Charlie-sheen rim through the `[environment]` block. Those levers, the light component, and area lights are documented on the [Lighting](lighting.md) page.
+
 ## Shadow Mapping
 
-Directional lights cast shadows via cascaded shadow maps. Multiple shadow cascades cover different distance ranges from the camera, giving high-resolution shadows close up and broader coverage at distance.
+Directional lights cast shadows via cascaded shadow maps. Multiple shadow cascades cover different distance ranges from the camera, giving high-resolution shadows close up and broader coverage at distance. A directional light with a non-zero `angular_size` gets contact-hardening PCSS shadows instead of the fixed PCF kernel.
 
-Toggle shadows at runtime with **F4**.
+Shadows are toggled at runtime from the Rendering & Effects menu (**F4**), which also offers the shadow-map resolution (512 to 4096). Headlessly, use `--no-shadows` and `--shadow-resolution`. See [Lighting](lighting.md#shadows) for details.
 
 ## Camera Modes
 
@@ -25,10 +27,10 @@ The renderer supports two camera modes that share the same view/projection math:
 
 | Mode | Usage | Controls |
 |------|-------|----------|
-| **Orbit** | Scene viewer (`serve`) | Left-drag to orbit, right-drag to pan, scroll to zoom |
-| **First-person** | Player (`play`) | WASD to move, mouse to look, Space to jump, Shift to sprint |
+| **Orbit** | Scene viewer (`flint edit`) | Left-drag to orbit, right-drag to pan, scroll or Q/E to zoom, WASD to orbit by key |
+| **First-person** | Player (`flint play`) | WASD to move, mouse to look, Space to jump, Shift to sprint |
 
-The camera mode is determined by the entry point: `serve` uses orbit, `play` uses first-person. Both produce the same view and projection matrices.
+The camera mode is determined by the entry point: `edit` uses orbit, `play` uses first-person. Both produce the same view and projection matrices. A scene's `[camera]` block seeds the orbit camera in the viewer and the framing in `flint render`; in the viewer, **Space** returns to that authored framing.
 
 ## glTF Mesh Rendering
 
@@ -42,15 +44,15 @@ For skeletal animation, the renderer provides a separate GPU pipeline that appli
 
 1. `flint-import` extracts joint indices and weights from glTF skins alongside the mesh data
 2. `flint-animation` evaluates keyframes and computes bone matrices each frame (local pose -> global hierarchy -> inverse bind matrix)
-3. The renderer uploads bone matrices to a storage buffer and applies them in the vertex shader
+3. The renderer uploads bone matrices to a **per-entity** storage buffer and applies them in the vertex shader
 
 **Key types:**
 
 - `SkinnedVertex` --- extends the standard vertex with `joint_indices: [u32; 4]` and `joint_weights: [f32; 4]` (6 attributes total vs. 4 for static geometry)
-- `GpuSkinnedMesh` --- holds the vertex/index buffers, material, and a bone matrix storage buffer with its bind group
+- `GpuSkinnedMesh` --- holds the vertex/index buffers and material for a skinned asset
 - Skinned pipeline uses bind groups 0--3: transform, material, lights, and bones (storage buffer, read-only, vertex-visible)
 
-Skinned meshes also cast shadows through a dedicated `vs_skinned_shadow` shader entry point that applies bone transforms before depth rendering.
+Bone buffers are keyed by entity, not by asset. Two entities that instance the same skinned model animate independently; before this change every instance showed whichever skeleton uploaded last. Skinned meshes also cast shadows through a dedicated `vs_skinned_shadow` shader entry point that applies bone transforms before depth rendering, and both wireframe debug modes draw them posed, using a per-draw unique-edge index buffer.
 
 ## Billboard Sprites
 
@@ -102,13 +104,17 @@ fullbright = true
 
 Billboard sprites use a **separate pipeline** rather than extending the PBR pipeline. This keeps the PBR shaders clean and allows sprites to opt out of lighting entirely (`fullbright = true`). The `discard`-based alpha approach is simple and avoids the significant complexity of order-independent transparency, at the cost of no partial transparency (pixels are either fully opaque or fully transparent).
 
+## MSAA
+
+Every scene pipeline (PBR, skinned, sky, skybox, ocean, terrain, grass, particles, billboards, 2D sprites) takes a sample count, so the scene passes can run at 4x MSAA (ADR 0058). Post-processing, shadow and blit passes stay single-sample, and depth-reading effects consume a sample-0 depth resolve. Enable it with `flint render --msaa 4` or `flint-player --msaa 4`; the default is 1 so headless pixel gates stay single-sample.
+
 ## Post-Processing
 
-The renderer includes an HDR post-processing pipeline that applies bloom, tonemapping, and vignette as a final pass. See [Post-Processing](post-processing.md) for full details.
+The renderer includes an HDR post-processing pipeline that applies bloom, SSAO, fog, volumetric light, depth of field, Kuwahara, color grade, film grain, tonemapping, vignette, FXAA and render modes as fullscreen passes. See [Post-Processing](post-processing.md) for full details.
 
-When post-processing is active, all scene pipelines (PBR, skinned, billboard, particle, skybox) render to an `Rgba16Float` HDR intermediate buffer. A composite fullscreen pass then applies exposure, ACES tonemapping, gamma correction, and optional vignette to produce the final sRGB output.
+When post-processing is active, all scene pipelines render to an `Rgba16Float` HDR intermediate buffer. A composite fullscreen pass then applies exposure, ACES tonemapping and the rest of the chain to produce the final sRGB output.
 
-Configure post-processing per-scene via the `[post_process]` TOML block, or override with CLI flags (`--no-postprocess`, `--bloom-intensity`, `--bloom-threshold`, `--exposure`).
+Configure post-processing per-scene via the `[post_process]` TOML block, override with `flint render` flags (`--no-postprocess`, `--bloom-intensity`, `--exposure`, `--dof`, `--grade-gain`, and the rest of the set listed on the post-processing page), or tune it live from the F4 menu.
 
 ## PBR Materials
 
@@ -118,22 +124,26 @@ Configure post-processing per-scene via the `[post_process]` TOML block, or over
 
 ## Debug Visualization
 
-The renderer provides six debug visualization modes, cycled with **F1**:
+The renderer provides eight shading modes, selected from the **Shading** combo in the Rendering & Effects menu (F4) or with `--debug-mode` headlessly:
 
-| Mode | Description |
-|------|-------------|
-| **PBR** | Standard Cook-Torrance shading (default) |
-| **Wireframe** | Edge lines only, no fill |
-| **Normals** | World-space surface normals mapped to RGB |
-| **Depth** | Linearized depth as grayscale |
-| **UV Checker** | UV coordinates as a procedural checkerboard |
-| **Unlit** | Albedo color only, no lighting |
-| **Metal/Rough** | Metallic (red channel) and roughness (green channel) |
+| Mode | `--debug-mode` | Description |
+|------|----------------|-------------|
+| **PBR** | (default) | Standard Cook-Torrance shading |
+| **Wireframe overlay** | `--wireframe-overlay` | Edge lines drawn over solid PBR shading |
+| **Wireframe** | `wireframe` | Edge lines only, no fill |
+| **Normals** | `normals` | World-space surface normals mapped to RGB |
+| **Depth** | `depth` | Linearized depth as grayscale |
+| **UV Checker** | `uv` | UV coordinates as a procedural checkerboard |
+| **Unlit** | `unlit` | Albedo color only, no lighting |
+| **Metal/Rough** | `metalrough` | Metallic (red channel) and roughness (green channel) |
 
-Additional debug overlays:
+Both wireframe modes draw skinned meshes in their animated pose; rigged models used to get no lines at all in the overlay and vanished in wireframe-only.
 
-- **Wireframe overlay** (F2 in viewer, `--wireframe-overlay` in render) --- draws edges on top of solid shading
-- **Normal arrows** (F3 in viewer, `--show-normals` in render) --- draws face-normal direction arrows
+Additional overlays:
+
+- **Normal arrows** (F3 in the viewer, `--show-normals` in render) --- draws face-normal direction arrows
+- **Skeleton overlay** (model previewer) --- draws the armature over a rigged model, following the animated pose, with a colour mode that paints joints by last writer, layer weight, mask, or keyed joints. See [Animation](animation.md).
+- **Render stats** (F2 in the viewer and the player) --- frame time, draw counts, resolution
 
 ![Wireframe debug mode](../images/debug-wireframe.png)
 
@@ -147,11 +157,12 @@ Additional debug overlays:
 
 The renderer operates in two modes:
 
-**Viewer mode** (`flint serve --watch`) opens an interactive window with:
-- Real-time PBR rendering
+**Viewer mode** (`flint edit scene.toml --watch`) opens an interactive window with:
+- Real-time PBR rendering, with the scene's `[post_process]` block applied on load
 - egui inspector panel (entity tree, component editor, constraint overlay)
 - Hot-reload: edit the scene TOML and the viewer updates automatically
-- Debug rendering modes (cycle with **F1**)
+- The Rendering & Effects menu (**F4**) for every render and post toggle, shading mode, shadows, lighting levers and FOV
+- Auto-orbit turntable (**O**, with `[` / `]` for speed) and `--auto-orbit` to start in it
 
 **Headless mode** (`flint render`) renders to a PNG file without opening a window --- useful for CI pipelines and automated screenshots:
 
@@ -165,6 +176,7 @@ The rendering stack uses winit 0.30's `ApplicationHandler` trait pattern (not th
 
 ## Further Reading
 
+- [Lighting](lighting.md) --- the light component, shadows, area lights, and the `[environment]` shading levers
 - [The Scene Viewer](../getting-started/viewing.md) --- getting started with the viewer
 - [Scripting](scripting.md) --- UI draw API for script-driven HUD overlays
 - [Schemas](schemas.md) --- sprite component schema definition

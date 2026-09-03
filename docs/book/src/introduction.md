@@ -26,7 +26,7 @@ Every scene is a TOML file you can read, diff, and version. Every operation is a
 
 ![Wireframe debug visualization](images/debug-wireframe.png)
 
-*Wireframe debug mode (F1) reveals mesh topology — one of seven built-in debug visualizations for inspecting geometry, normals, depth, UVs, and material properties.*
+*Wireframe debug mode reveals mesh topology — one of eight built-in shading modes (chosen from the F4 Rendering & Effects menu, or `--debug-mode` headlessly) for inspecting geometry, normals, depth, UVs, and material properties.*
 
 ## What It Looks Like
 
@@ -48,7 +48,7 @@ flint query "entities where archetype == 'door'" --scene levels/tavern.scene.tom
 flint validate levels/tavern.scene.toml --fix --dry-run
 
 # See it in 3D with PBR rendering
-flint serve levels/tavern.scene.toml --watch
+flint edit levels/tavern.scene.toml --watch
 
 # Walk around in first person
 flint play levels/tavern.scene.toml

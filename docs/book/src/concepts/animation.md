@@ -107,7 +107,9 @@ glTF file (.glb)
 
 1. **Import** --- `flint-import` extracts the skeleton (joint hierarchy, inverse bind matrices) and animation clips (per-joint keyframe channels) from glTF files
 2. **Evaluate** --- each frame, `flint-animation` samples the current clip time to produce local joint poses, walks the bone hierarchy to compute global transforms, and multiplies by inverse bind matrices to get final bone matrices
-3. **Render** --- bone matrices are uploaded to a GPU storage buffer. The skinned vertex shader transforms each vertex by its weighted bone influences
+3. **Render** --- bone matrices are uploaded to a per-entity GPU storage buffer. The skinned vertex shader transforms each vertex by its weighted bone influences. Because each entity owns its buffer, two entities instancing the same skinned asset animate independently: a crowd of the same model no longer shows whichever skeleton uploaded last.
+
+The importer handles all three glTF interpolation modes. `CUBICSPLINE` samplers store three outputs per timestamp (`in_tangent`, `value`, `out_tangent`) and are consumed as triples; a sampler with fewer than `3 x timestamps` outputs warns and degrades to `LINEAR`. Rotation tracks are also made hemisphere-continuous at clip load: Blender exports adjacent keys as `q` then `-q` on large joint rotations, and the Hermite curve between them would collapse through zero and snap the joint. Such keys (value and both tangents) are negated so the curve stays on one side of the sphere.
 
 ### Skinned Vertices
 
@@ -171,8 +173,12 @@ layers = [
 | `clip` | string | "" | Clip to play on this layer (empty = inactive slot; indices stay stable) |
 | `weight` | f32 | 1.0 | Live dial, 0 = off |
 | `mode` | string | "additive" | `additive` or `override` (see below) |
-| `mask` | string | "" | Root joint name; the layer only touches that joint and its descendants |
+| `mask` | string | "" | Root joint name; the layer only touches that joint and its descendants. **A name that is not in the skeleton masks out every joint**, so a typo makes the layer contribute nothing rather than everything |
 | `speed` | f32 | 1.0 | Multiplier on the entity's base speed |
+| `fade_target` | f32 | --- | Weight to ramp toward (see the fade section below) |
+| `fade_duration` | f32 | 0.0 | Seconds for the ramp; the engine zeroes it when the ramp lands |
+
+Layer indices run from `0` to `254`; the script API silently ignores anything at `255` or above (layer IDs travel as a byte in runtime bookkeeping).
 
 **Additive** layers contribute each keyed joint's *delta from rest*, scaled
 by weight. They suit overlays authored as "rest plus a gesture" — a breathing
@@ -284,9 +290,17 @@ name = "done"
 Event kinds: `blend { clip, duration }`, `layer { index, clip?, weight?, fade,
 mode?, mask? }`, `speed { value }`, `cue { name }`. Events are sorted by time
 (stable, so same-time events keep authored order) and each fires exactly once
-when the playhead reaches its time. A looping sequence wraps at `duration` and
-re-arms every event, including those at `t = 0`. Sequences run before the
+when the playhead reaches its time. Sequences run before the
 skeletal tier each frame, so their writes land the same frame.
+
+A looping sequence fires everything up to `min(time, duration)`, then wraps,
+re-arms every event (including those at `t = 0`) and fires from zero again,
+repeating while the frame still overruns. A large `dt` therefore neither skips
+events nor delays the next pass by a frame: a 1 s loop with a cue at 0.8 s,
+advanced by 0.5 then 0.6, fires `start, tail, start`. A looping sequence whose
+resolved duration is zero is rejected at load (`looping sequence has zero
+duration`); a non-looping one with only `t = 0` events fires them and completes
+on its first advance.
 
 Base-clip changes always go through `blend_target` (a tracked skeletal entity
 never re-reads `clip`); a `duration` of 0 is clamped to 1 ms because the
@@ -364,7 +378,8 @@ The `animator` component controls playback for both tiers:
 | `speed` | f32 | 1.0 | Playback speed (-10.0 to 10.0) |
 | `blend_target` | string | "" | Clip to crossfade into (cleared by the engine when the fade completes) |
 | `blend_duration` | f32 | 0.3 | Crossfade duration in seconds |
-| `layers` | array of tables | [] | Animation layers `{ clip, weight, mode, mask, speed }`, composed in order |
+| `layers` | array of tables | [] | Animation layers `{ clip, weight, mode, mask, speed, fade_target, fade_duration }`, composed in order |
+| `sequence` | string | "" | Name of a `*.sequence.toml` from the scene's `animations/` directory driving this animator. Set by `play_sequence()`, cleared by the engine when a non-looping sequence finishes |
 | `layer_clip` | string | "" | Legacy alias for `layers[0]` (additive, unmasked) |
 | `layer_weight` | f32 | 1.0 | Legacy alias for `layers[0].weight` |
 

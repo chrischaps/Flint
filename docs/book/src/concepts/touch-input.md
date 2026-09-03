@@ -117,6 +117,17 @@ Touch state is accessible from [Rhai scripts](scripting.md) via these functions:
 | `tap_x(index)` | `f64` | Normalized X position of tap at index |
 | `tap_y(index)` | `f64` | Normalized Y position of tap at index |
 
+### Swipe Detection
+
+A swipe is a touch that travelled far enough, fast enough, before lifting. The engine classifies it into one of four directions; the position reported is where the swipe started.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `swipe_count()` | `i64` | Number of swipes detected this frame |
+| `swipe_direction(index)` | `String` | `"up"`, `"down"`, `"left"` or `"right"` (empty if out of range) |
+| `swipe_x(index)` / `swipe_y(index)` | `f64` | Normalized start position of the swipe (`-1.0` if out of range) |
+| `is_swipe(direction)` | `bool` | Whether any swipe in that direction happened this frame |
+
 ### Example: Touch-Driven Movement
 
 ```rust

@@ -16,10 +16,22 @@ The listener position and orientation are updated each frame to match the first-
 
 Non-spatial sounds play on the main audio track at constant volume regardless of listener position. Set `spatial = false` on an `audio_source` to use this mode --- useful for background music, ambient atmosphere, and UI sounds.
 
+## Preloading
+
+At scene load the player loads every file named by an `audio_source` component, then preloads every audio file it finds under `audio/` (searching the scene directory, then its parent, the game root) so that `play_sound("name")` from a script never stalls on decode. A scene with a large stem library pays for that in load time. Opt out per scene:
+
+```toml
+[scene]
+name = "Silent Corridor"
+preload_audio = false
+```
+
+With `preload_audio = false` only `audio_source` files load, and [music sessions](music-sessions.md) resolve their stems through their own path. The default is `true` (ADR 0066, scene audio preload opt-out).
+
 ## Mixer Buses
 
-Every sound routes through one of two buses — `music` and `sfx` — both children
-of Kira's main track:
+Every ordinary sound routes through one of two buses — `music` and `sfx` — both children
+of Kira's main track. (A running [music session](music-sessions.md) adds its own six-bus stem mixer on the same device; that mixer is owned by `flint-music`, not by `audio_source`, and is described on its own page.)
 
 ```
 main  ──┬── music     (audio_source.bus = "music")
@@ -52,6 +64,14 @@ entire mix — score included — which is what you want when the effect is
 "something is between you and the world" rather than "the sfx got quieter".
 
 One-shots (`play_sound`, `play_sound_at`) are always sfx.
+
+## Music Sessions
+
+A scene that carries a `music_session` component turns the audio engine into the host for a rhythm-driven chart: `flint-music` opens a `ChartSession` on the **same** Kira manager the ordinary buses use (ADR 0017, shared audio manager), so the world's sounds and the suite's stems mix together and one master low-pass muffles both. For the length of the session the gamepad is handed to a 1 kHz capture thread that stamps every stick and button event with the audio clock (ADR 0018, gamepad handoff).
+
+> **While a session is active, only the lean stick and the pulse button reach `InputState`.** Every other gamepad control is consumed by the capture thread; keyboard input still flows through winit as normal. Scripts that need the pad for anything else during a chart should read the [conducted parameters](scripting.md#conducted-parameters-api) instead.
+
+The component, its configuration files, the ladder and reintegration mechanics, and the seven `flint` subcommands that go with it are on the [Music Sessions](music-sessions.md) page.
 
 ## Audio Schemas
 

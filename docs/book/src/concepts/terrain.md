@@ -123,6 +123,65 @@ Higher values produce finer detail but may show visible tiling at a distance. Fu
 | `metallic` | f32 | 0.0 | PBR metallic value for terrain surface |
 | `roughness` | f32 | 0.85 | PBR roughness value for terrain surface |
 
+## Grass
+
+Terrain can carry a GPU-instanced grass layer. Blades are scattered by a compute shader, drawn as crossed quads with wind sway and bend-on-contact, and cast into the two nearest shadow cascades. Nothing is authored by hand: density comes from the splat map, so grass grows exactly where the grass layer is painted.
+
+![Rolling meadow with instanced grass](../images/grass-meadow.png)
+
+*The Rolling Meadow demo: stylised grass driven by the splat map's red channel, with golden-hour lighting.*
+
+Grass is a block of dotted keys on the same `terrain` component:
+
+```toml
+[entities.ground.terrain]
+heightmap = "terrain/heightmap.png"
+splat_map = "terrain/splatmap.png"
+width = 384.0
+depth = 384.0
+"grass.enabled" = true
+"grass.density" = 50.0
+"grass.max_distance" = 100.0
+"grass.fade_start" = 70.0
+"grass.blade_height" = 0.43
+"grass.color_base" = [0.12, 0.42, 0.08]
+"grass.color_tip" = [0.35, 0.72, 0.18]
+"grass.wind_direction" = [0.8, 0.0, 0.6]
+"grass.wind_strength" = 0.09
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `grass.enabled` | bool | false | Turn the grass layer on |
+| `grass.density` | f32 | 8.0 | Blades per square metre |
+| `grass.max_distance` | f32 | 80.0 | Distance from the camera at which grass stops |
+| `grass.fade_start` | f32 | 60.0 | Distance where probabilistic thinning begins |
+| `grass.blade_width` | f32 | 0.08 | Blade width in metres |
+| `grass.blade_height` | f32 | 0.4 | Base blade height in metres |
+| `grass.height_variation` | f32 | 0.3 | Random height scale, 0 to 1 |
+| `grass.color_base` | vec3 | [0.15, 0.45, 0.1] | Colour at the root, linear RGB |
+| `grass.color_tip` | vec3 | [0.3, 0.7, 0.15] | Colour at the tip |
+| `grass.color_dry` | vec3 | [0.55, 0.5, 0.2] | Dry tint mixed in per blade |
+| `grass.dry_amount` | f32 | 0.15 | How much of the field is dry, 0 to 1 |
+| `grass.wind_direction` | vec3 | [1.0, 0.0, 0.3] | Wind direction in the XZ plane |
+| `grass.wind_speed` | f32 | 1.0 | Sway frequency multiplier |
+| `grass.wind_strength` | f32 | 0.15 | Maximum sway displacement in metres |
+| `grass.bend_radius` | f32 | 2.0 | Radius around an entity within which blades bend away |
+| `grass.bend_strength` | f32 | 0.8 | How far they bend, 0 to 1 |
+| `grass.density_source` | string | "splat" | `splat` reads the splat map; `map` is reserved for a dedicated density texture |
+| `grass.density_layer` | i32 | 0 | Which splat channel drives density (0 = R, 1 = G, 2 = B, 3 = A) |
+| `grass.density_threshold` | f32 | 0.1 | Minimum splat weight before a blade may spawn |
+
+How it works, per frame:
+
+1. A **compute pass** walks a grid whose spacing is `1 / sqrt(density)`, samples the splat map's `density_layer` at each cell, skips cells under `density_threshold`, applies a probabilistic falloff between `fade_start` and `max_distance`, and writes a 32-byte instance (position on the heightmap, rotation, height scale, packed tint) into a storage buffer.
+2. A **render pass** draws one shared blade mesh per instance. The vertex shader sways blades by a time-driven wind term and pushes them away from up to eight entity positions within `bend_radius`; the fragment shader blends `color_base` to `color_tip` along the blade, mixes in `color_dry`, and shades with the same lighting levers and PCSS shadows as other geometry. The player feeds the camera position as the bend entity.
+3. The **shadow pass** renders the instances into the nearest two cascades, so grass darkens the ground under it.
+
+The pipeline participates in MSAA when the player runs with `--msaa 4`, and grass appears in `flint render` snapshots at time zero, so the wind is frozen but the field is fully populated.
+
+The **Grass Debug** panel (`F3` in the player, see [Debug Panels](../guides/debug-panels.md)) exposes every field above live and can commit them back to the scene file, which is how the meadow demo's numbers were found.
+
 ## Physics Collision
 
 Terrain automatically gets a **trimesh physics collider** via Rapier. The mesh geometry is exported as vertices and triangle indices, then registered as a fixed (immovable) rigid body. This means:
@@ -181,7 +240,7 @@ Terrain is fully cleared and reloaded during [scene transitions](scripting.md). 
 The terrain system is split across crates to maintain clean dependency boundaries:
 
 - **`flint-terrain`** --- pure data crate (no GPU dependency). Generates chunked mesh geometry from heightmap data. Outputs raw positions, normals, UVs, and indices.
-- **`flint-render`** --- `TerrainPipeline` and `terrain_shader.wgsl`. Assembles GPU vertex buffers from terrain data, handles splat-map texture blending and PBR lighting.
+- **`flint-render`** --- `TerrainPipeline` and `terrain_shader.wgsl`. Assembles GPU vertex buffers from terrain data, handles splat-map texture blending and PBR lighting. `GrassPipeline` with `grass_compute.wgsl` and `grass_render.wgsl` owns the grass layer; `flint-terrain` only holds its `GrassConfig`.
 - **`flint-physics`** --- reuses existing `register_static_trimesh()` for collision. No terrain-specific physics code needed.
 - **`flint-script`** --- `terrain_height(x, z)` Rhai function via callback pattern.
 
@@ -190,7 +249,7 @@ This separation means `flint-terrain` can be used independently for tools, CLI c
 ## Limitations
 
 - **One terrain per scene** --- currently only the first terrain entity is loaded
-- **No LOD** --- all chunks render at full resolution regardless of distance
+- **No mesh LOD** --- all chunks render at full resolution regardless of distance (chunks outside the camera frustum are culled; grass thins with distance)
 - **No runtime deformation** --- terrain is static after loading
 - **CPU-side simulation** --- no GPU compute for terrain generation
 - **Fixed PBR parameters** --- metallic and roughness are uniform across the entire terrain surface

@@ -1,17 +1,10 @@
 # Roadmap
 
-Flint has a solid foundation — PBR rendering, physics, audio, animation, scripting, particles, post-processing, AI asset generation, and a shipped Doom-style FPS demo. The roadmap now focuses on the features needed to ship production games.
+Flint has a solid foundation — PBR rendering, physics, audio, animation layers, scripting, particles, terrain and grass, ocean and sky, post-processing, music sessions, AI asset generation, and shipped game projects (a Doom-style FPS, FlintKart, Starchild). The roadmap now focuses on the features needed to ship production games.
 
-## Visual Scene Tweaking
+## ~~Visual Scene Tweaking~~ Done
 
-**Priority: High**
-
-Flint's core thesis is that scenes are *authored* by AI agents and code — not by dragging objects around a viewport. But AI-generated layouts often need human nudges: a light that's slightly too far left, a prop that clips through a wall, a rotation that's five degrees off. The goal isn't a full scene editor — it's a lightweight adjustment layer on top of the CLI-first workflow.
-
-- Translate / rotate / scale gizmos for fine-tuning positions
-- Property inspector for tweaking component values in-place
-- Changes write back to the scene TOML (preserving AI-authored structure)
-- Undo / redo for safe experimentation
+Flint's core thesis is that scenes are *authored* by AI agents and code — not by dragging objects around a viewport. But AI-generated layouts often need human nudges. `flint edit` now provides that adjustment layer: translate / rotate / scale gizmos (W/E/R), a property inspector, TOML write-back that preserves the authored structure, undo / redo, and the F4 Rendering & Effects menu for tuning post-processing and lighting levers live before committing them to the scene file.
 
 ## Frustum Culling & Level of Detail
 
@@ -23,6 +16,11 @@ Without visibility culling, every object renders every frame regardless of wheth
 - Frustum culling (skip off-screen objects entirely)
 - Mesh LOD switching by camera distance
 - Optional texture streaming for large worlds
+
+> Partly delivered. The renderer extracts a camera frustum every frame
+> (`flint-render/src/frustum.rs`) and culls terrain chunks by AABB against it;
+> grass has its own distance fade. Entity meshes are still drawn
+> unconditionally, so per-object culling and LOD remain open.
 
 ## Navigation Mesh & Pathfinding
 
@@ -87,17 +85,9 @@ Data-driven UI with layout/style/logic separation. Structure defined in `.ui.tom
 - Multi-document support with handle-based load/unload
 - Layout caching with automatic invalidation on screen resize
 
-## Terrain System
+## ~~Terrain System~~ Done
 
-**Priority: Medium-High**
-
-The engine excels at interior scenes — taverns, dungeons, arenas — but has no solution for outdoor environments. Height-field terrain is the single biggest genre-unlocking feature missing: open-world, exploration, RTS, and large-scale games all depend on it.
-
-- Height-field terrain with chunk-based rendering
-- Material splatting (blend grass, dirt, rock, snow by painted weight maps)
-- Chunk LOD for draw-distance scaling
-- Collision mesh generation for physics and character controller
-- Script API: `get_terrain_height(x, z)` for grounding NPCs and objects
+Height-field terrain shipped with chunked rendering, RGBA splat-map blending, collision, a `terrain_height(x, z)` script query, a GPU grass system placed by splat density, and the `flint edit` terrain editor. See [Terrain](concepts/terrain.md). Chunk LOD by distance is the one bullet still open and folds into the culling / LOD item above.
 
 ## Audio Environment Zones
 
@@ -161,19 +151,23 @@ The 2D overlay draws in screen-space, but there's no way to visualize 3D informa
 - Script API: `debug_line(from, to, color)`, `debug_box(center, size, color)`, `debug_sphere(center, radius, color)`, `debug_ray(origin, dir, length, color)`
 - Wireframe overlay rendered after scene, before HUD
 - Auto-clear each frame (immediate-mode, like the 2D draw API)
-- Toggle with a debug key (e.g. F10) — zero overhead when disabled
+- Toggle from the F4 Rendering & Effects menu — the per-feature F-keys were retired (ADR 0053) and the bare F-key space is spoken for
 - Optional built-in modes: visualize physics colliders, trigger volumes, nav meshes
+
+> The skeleton overlay in the model previewer and the wireframe debug modes
+> (which now include skinned meshes) are the first pieces of this; a
+> script-driven 3D line API is still open.
 
 ## Performance Profiler Overlay
 
 **Priority: Medium**
 
-Targeted optimization requires knowing where time is spent. Currently there's no visibility into the frame budget breakdown.
+Targeted optimization requires knowing where time is spent. F2 already shows frame time, FPS, draw stats and resolution in the player and viewer; what is missing is the breakdown.
 
-- In-engine overlay: frame time, draw calls, triangle count, memory
 - Per-system breakdown (render vs physics vs scripts vs audio)
+- Triangle count and memory alongside the existing draw stats
 - Frame time graph with spike detection
-- Toggle with a debug key (e.g. F9)
+- Lives on the existing F2 stats overlay or as an F4 menu section (F9 is taken by the music-session force-fail)
 
 ## Further Horizon
 

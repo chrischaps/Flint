@@ -97,7 +97,7 @@ style = "hinged"
 locked = false
 ```
 
-When you create an entity with `--archetype door`, Flint ensures it has the required components and fills in defaults for any missing values.
+When you create an entity with `--archetype door`, Flint ensures it has the required components and fills in defaults for any missing values. The scene loader does the same at load time: archetype defaults go in first, then the authored fields, then any component-schema `default` for a field the author left out (see [Scenes](scenes.md#loading-and-saving)).
 
 Archetypes are not rigid types --- an entity can have components beyond what its archetype specifies. The archetype defines the *minimum* set.
 

@@ -89,15 +89,19 @@ Flint uses an **edit -> validate -> play** loop:
 
 ## Architecture
 
-23-crate Cargo workspace:
+26-crate Cargo workspace (plus `tools/arch-analyzer`, a syn-based dependency/metrics extractor feeding the `tools/arch-viewer` web graph; neither is a default member):
 
 ```
-flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, validate, asset, render, gen, prefab
+flint-cli           CLI binary (clap). Commands: init, entity, scene, query, schema, edit, play, validate, asset, render, gen, prefab,
+  │                 validate-suite, play-suite, calibrate, play-chart, replay-chart, render-suite, spike-rumble
   ├── flint-asset-gen AI asset generation: pluggable providers (Flux, Meshy, ElevenLabs, Mock)
   ├── flint-procgen   Procedural generation: Generator trait, registry, specs, GLB export
   └── flint-procgen-ai AI-assisted procgen: ProcGenAgent trait, spec creation/refinement
 flint-android       Android entry point (NativeActivity, APK asset extraction)
 flint-player        Standalone player (game loop, physics, audio, animation, scripting, egui HUD)
+  ├── flint-music    Rhythm sessions: suite manifests, charts, tempo maps, ladder/seam/reintegration, replay, offline render
+  ├── flint-input-capture 1 kHz gamepad capture thread (gilrs XInput) stamped against the audio clock; verb maps
+  ├── flint-debug-ui DebugPanel trait + F3/F4 panel roster (Rendering & Effects, ocean, sky, camera, grass...); optional via debug-hud
   ├── flint-script   Rhai scripting with hot-reload
   ├── flint-particles GPU-instanced particle system
   ├── flint-animation Property tween + skeletal animation

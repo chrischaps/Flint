@@ -23,11 +23,20 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 |------|-------------|---------|
 | `bool` | Boolean | `true` / `false` |
 | `i32` | 32-bit integer | `42` |
+| `i64` | 64-bit integer | `1700000000` |
 | `f32` | 32-bit float | `3.14` |
+| `f64` | 64-bit float | `3.14159265` |
 | `string` | Text string | `"hello"` |
+| `vec2` | 2D vector, validated as an array of floats | `[0.5, 1.0]` |
 | `vec3` | 3D vector (array of 3 floats) | `[1.0, 2.0, 3.0]` |
+| `vec4` | 4D vector, validated as an array of floats | `[1.0, 0.5, 0.2, 1.0]` |
+| `color` | RGB or RGBA color | `[1.0, 0.8, 0.6]` |
+| `transform` | Nested position / rotation / scale table | see [Transform](#transform) |
 | `enum` | One of a set of string values | `"hinged"` |
+| `array` | List of a given `element` type | `["a", "b"]` |
 | `entity_ref` | Reference to another entity by name | `"main_hall"` |
+
+`vec2` and `vec4` have no dedicated variant; the parser maps them to a float array so validation reports a bad value as "expected float array" rather than misreporting the field as a string. Any type name the parser does not recognise falls back to `string`.
 
 ### Field Constraints
 
@@ -38,10 +47,12 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 required_key = { type = "entity_ref", optional = true }
 ```
 
-- `default` --- value used when not explicitly set
+- `default` --- value used when not explicitly set. Defaults are consumed in two places: `flint entity create` writes them into the new entity, and the scene loader fills them into any component the entity lists but leaves partially specified (see [Scenes: loading](scenes.md#loading-and-saving)). Scripts can therefore rely on a schema default existing at runtime.
 - `min` / `max` --- numeric range bounds
 - `optional` --- whether the field can be omitted (defaults to false)
 - `values` --- valid options for enum types
+
+Validation runs in two modes. At scene load it is advisory: a field that fails its constraints is logged as a warning and the scene still loads. Under `flint validate` it is authoritative and the command reports every failure.
 
 ## Built-in Components
 

@@ -255,7 +255,7 @@ source = "bartender.rhai"
 flint validate levels/tavern.scene.toml
 
 # View in the scene viewer with hot-reload
-flint serve levels/tavern.scene.toml --watch
+flint edit levels/tavern.scene.toml --watch
 
 # Walk through the tavern in first person
 flint play levels/tavern.scene.toml

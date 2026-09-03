@@ -1,6 +1,6 @@
 # File Formats
 
-All Flint data formats use TOML. This page provides a complete reference for every file type.
+All Flint data formats use TOML (session recordings are JSON Lines). This page is the reference for every file type the engine reads or writes. Procgen specs (`.procgen.toml`) and terrain files (`.terrain.toml`) are covered on their own pages: [Procedural Generation](../concepts/procgen.md) and [Terrain](../concepts/terrain.md).
 
 ## Scene Files (`.scene.toml`)
 
@@ -10,7 +10,13 @@ The primary data format. Each scene file contains metadata and a collection of n
 [scene]
 name = "Scene Name"
 version = "1.0"
+description = "Optional one-line description"
 input_config = "custom_input.toml"  # Optional input binding config
+preload_audio = true                # Optional; false skips the blanket audio/ preload
+
+[camera]                            # Optional authored framing
+position = [0, 4, 12]
+target = [0, 1, 0]
 
 [entities.<name>]
 archetype = "<archetype>"
@@ -20,28 +26,128 @@ parent = "<parent_name>"          # Optional parent entity
 field = value
 ```
 
-Scenes may also include optional top-level blocks for post-processing and environment settings:
+| `[scene]` key | Type | Default | Description |
+|---------------|------|---------|-------------|
+| `name` | string | (required) | Human-readable scene name |
+| `version` | string | `"1.0"` | Format version |
+| `description` | string | (none) | Free-text description |
+| `input_config` | string | (none) | Game-level input binding overlay (see [Input Configuration](#input-configuration-configinputtoml-flintinput_game_idtoml)) |
+| `preload_audio` | bool | `true` | When `false`, the player skips preloading every file under `audio/` at scene load so a scene with a large audio folder starts instantly. Sounds named by `audio_source` components and music-session stems still load through their own paths; this only gates the convenience preload for script-triggered sounds. |
+
+Scenes may also include optional top-level `[camera]`, `[environment]` and `[post_process]` blocks, and a `[prefabs]` section (see [Prefab Templates](#prefab-templates-prefabsprefabtoml)).
+
+### `[camera]`
+
+The authored framing. `flint render` starts from it when no camera flags are given, and the scene viewer seeds its orbit camera from it (**Space** returns to it). Absent, both fall back to an automatic framing.
+
+```toml
+[camera]
+projection = "perspective"   # or "orthographic"
+position = [0, 4, 12]
+target = [0, 1, 0]
+fov = 60.0                   # perspective only
+near = 0.1
+far = 500.0
+# ortho_height = 10.0        # orthographic only: half-height in world units
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `projection` | string | `"perspective"` | `"perspective"` or `"orthographic"` |
+| `ortho_height` | f32 | `0` | Orthographic half-height in world units (orthographic only) |
+| `position` | `[f32; 3]` | (auto) | Camera position |
+| `target` | `[f32; 3]` | (auto) | Look-at point |
+| `fov` | f32 | (renderer default) | Vertical field of view in degrees (perspective only) |
+| `near` | f32 | (renderer default) | Near clipping plane |
+| `far` | f32 | (renderer default) | Far clipping plane |
+
+### `[environment]`
+
+Skybox and the scene-wide shading levers. Every lever is optional and its absence means "exactly the legacy shading" (see [Lighting](../concepts/lighting.md)). Fog is **not** here; it lives in `[post_process]`.
+
+```toml
+[environment]
+skybox = "textures/dusk_panorama.png"
+ambient_sky = [0.35, 0.40, 0.50]
+ambient_ground = [0.18, 0.14, 0.10]
+diffuse_wrap = 0.3
+oren_nayar = 0.7
+sheen_color = [1.0, 0.9, 0.8]
+sheen_strength = 0.15
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `skybox` | string | (none) | Equirectangular panorama image for the skybox |
+| `ambient_sky` | `[f32; 3]` | renderer default | Hemisphere ambient colour from above (linear) |
+| `ambient_ground` | `[f32; 3]` | renderer default | Hemisphere ambient colour from below (linear) |
+| `diffuse_wrap` | f32 | `0` | Diffuse terminator wrap; `0` = physically sharp, `0.2`–`0.5` = soft matte |
+| `oren_nayar` | f32 | `0` | Blend from Lambert toward Oren-Nayar diffuse (0–1); sigma comes from material roughness |
+| `sheen_color` | `[f32; 3]` | `[1, 1, 1]` | Charlie-sheen rim tint (linear); only matters with a non-zero strength |
+| `sheen_strength` | f32 | `0` | Charlie-sheen rim strength; keep at or below about `0.3` |
+
+### `[post_process]`
+
+Configures the HDR post-processing pipeline. Every key is optional. See [Post-Processing](../concepts/post-processing.md) for what each effect does and the matching `flint render` flags.
 
 ```toml
 [post_process]
 bloom_enabled = true
 bloom_intensity = 0.04
-bloom_threshold = 1.0
-vignette_enabled = true
-vignette_intensity = 0.3
-exposure = 1.0
-
-[environment]
-ambient_color = [0.1, 0.1, 0.15]
-ambient_intensity = 0.3
-fog_enabled = false
-fog_color = [0.5, 0.5, 0.6]
-fog_density = 0.02
+ssao_samples = 16
+dof_strength = 0.5
+dof_focus_distance = 8.0
+film_grain = 0.03
+grade_gain = [1.04, 1.0, 0.94]
+fxaa = false
 ```
 
-The `[post_process]` block configures the HDR post-processing pipeline (see [Post-Processing](../concepts/post-processing.md)). The `[environment]` block sets ambient lighting and fog parameters.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `bloom_enabled` | bool | `true` | Bloom pass |
+| `bloom_intensity` | f32 | `0.04` | Bloom strength |
+| `bloom_threshold` | f32 | `1.0` | Brightness above which pixels bloom |
+| `vignette_enabled` | bool | `false` | Edge darkening |
+| `vignette_intensity` | f32 | `0.3` | Vignette strength |
+| `vignette_smoothness` | f32 | `2.0` | Vignette falloff curve |
+| `exposure` | f32 | `1.0` | Exposure multiplier before tone mapping |
+| `ssao_enabled` | bool | `true` | Screen-space ambient occlusion |
+| `ssao_radius` | f32 | `0.5` | SSAO sample radius (world units) |
+| `ssao_intensity` | f32 | `1.0` | SSAO darkening strength |
+| `ssao_samples` | u32 | `64` | Hemisphere samples per pixel, 1–64. The heaviest per-pixel cost in the stack; `16` is ~4x cheaper and usually indistinguishable on matte scenes |
+| `fog_enabled` | bool | `false` | Distance fog |
+| `fog_color` | `[f32; 3]` | `[0.7, 0.75, 0.82]` | Fog colour |
+| `fog_density` | f32 | `0.02` | Exponential fog density |
+| `fog_start` | f32 | `5.0` | Distance at which fog begins |
+| `fog_end` | f32 | `100.0` | Distance at which fog saturates |
+| `fog_height_enabled` | bool | `false` | Height-based fog |
+| `fog_height_falloff` | f32 | `0.1` | How quickly height fog thins with altitude |
+| `fog_height_origin` | f32 | `0.0` | World Y where height fog is densest |
+| `dither_enabled` | bool | `false` | Ordered dither |
+| `dither_intensity` | f32 | `0.03` | Dither strength |
+| `volumetric_enabled` | bool | `false` | Volumetric light (god rays) |
+| `volumetric_samples` | u32 | `32` | Ray-march steps |
+| `volumetric_density` | f32 | `1.0` | Scattering density |
+| `volumetric_max_distance` | f32 | `100.0` | Ray-march cut-off |
+| `volumetric_decay` | f32 | `0.98` | Per-step energy decay |
+| `chromatic_aberration` | f32 | `0` | Colour-fringe amount at the frame edge |
+| `radial_blur` | f32 | `0` | Zoom-blur amount from the frame centre |
+| `desaturate` | f32 | `0` | Drain toward ash-grey; `0` = full colour, `1` = fully drained |
+| `dof_strength` | f32 | `0` | Depth-of-field defocus; `0` = sharp |
+| `dof_focus_distance` | f32 | `10.0` | Focus plane distance in view metres |
+| `dof_focus_range` | f32 | `5.0` | Half-width of the in-focus band in view metres |
+| `kuwahara_enabled` | bool | `false` | Anisotropic Kuwahara (painterly) pre-pass |
+| `kuwahara_radius` | u32 | `4` | Filter radius in pixels |
+| `kuwahara_sharpness` | f32 | `8.0` | Sector weighting sharpness |
+| `kuwahara_hardness` | f32 | `8.0` | Sector edge hardness |
+| `kuwahara_anisotropy` | f32 | `1.0` | `0` = isotropic, `1` = fully anisotropic |
+| `film_grain` | f32 | `0` | Animated grain; `0.02`–`0.05` is subtle |
+| `grade_lift` | `[f32; 3]` | `[0, 0, 0]` | Per-channel add after ACES tone mapping |
+| `grade_gamma` | `[f32; 3]` | `[1, 1, 1]` | Per-channel midtone curve |
+| `grade_gain` | `[f32; 3]` | `[1, 1, 1]` | Per-channel multiply |
+| `fxaa` | bool | `false` | FXAA pass on the final composite. Off by default so headless pixel-diff gates stay single-path |
 
-Scenes are loaded by `flint-scene` and can be edited with `flint entity create`, `flint entity delete`, or by hand. The `serve --watch` viewer reloads automatically when the file changes.
+Scenes are loaded by `flint-scene` and can be edited with `flint entity create`, `flint entity delete`, or by hand. At load, each authored component is validated against its schema (warnings only) and any schema field with a `default` that the entity did not set is filled in (see [Scenes](../concepts/scenes.md)). The `flint edit --watch` viewer reloads automatically when the file changes.
 
 ## Component Schemas (`schemas/components/*.toml`)
 
@@ -55,7 +161,7 @@ description = "Human-readable description"
 field_name = { type = "<type>", default = <value>, description = "..." }
 ```
 
-Supported field types: `bool`, `i32`, `f32`, `string`, `vec3`, `enum`, `entity_ref`, `array`.
+Supported field types: `bool`, `i32`, `i64`, `f32`, `f64`, `string`, `vec2`, `vec3`, `vec4`, `color`, `transform`, `enum`, `entity_ref`, `array`. `vec2` and `vec4` are validated as float arrays. Schema `default` values are applied at scene load for every listed component that omits the field (see [Schemas](../concepts/schemas.md)).
 
 Key component schemas: `transform`, `material`, `door`, `bounds`, `rigidbody`, `collider`, `character_controller`, `audio_source`, `audio_listener`, `audio_trigger`, `animator`, `skeleton`, `script`, `interactable`, `sprite`, `asset_def`.
 
@@ -122,6 +228,52 @@ value = [0.0, 90.0, 0.0]
 time = 0.0
 event_name = "door_start"
 ```
+
+`CubicSpline` tracks read `in_tangent` / `out_tangent` on each keyframe; the glTF importer fills them from `CUBICSPLINE` samplers.
+
+## Animation Sequences (`animations/*.sequence.toml`)
+
+An ordered list of timestamped animator events: crossfade the base clip, set a layer, change speed, or raise a named cue for the entity's script. The player loads every sequence in the scene's `animations/` directory; scripts start one with `play_sequence(entity, name)`, and the model previewer plays one with `flint edit model.glb --sequence <file>`. See [Animation: Sequences](../concepts/animation.md#sequences).
+
+```toml
+name = "intro_bow"
+loop = false                       # Optional; default false
+# duration = 6.0                   # Optional; default = last event time + its transition
+
+[[events]]
+time = 0.0
+kind = "blend"                     # blend | layer | speed | cue
+clip = "walk"
+duration = 0.3                     # Crossfade seconds; 0 = hard cut
+
+[[events]]
+time = 1.0
+kind = "layer"
+index = 0                          # Layer slot (0..254)
+clip = "wave"                      # Omitted fields keep their current value
+weight = 1.0
+fade = 0.25                        # Ramp the weight over this many seconds
+mode = "additive"                  # additive | override
+mask = "spine"                     # Root joint of the affected subtree
+
+[[events]]
+time = 2.5
+kind = "speed"
+value = 0.5
+
+[[events]]
+time = 4.0
+kind = "cue"
+name = "done"                      # Delivered to on_sequence_cue(sequence, cue)
+```
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `name` | string | Sequence name, as used by `play_sequence` |
+| `loop` | bool | Wrap at `duration` and fire events again from `t = 0` |
+| `duration` | f64 | Explicit length in seconds. A looping sequence whose resolved duration is `0` is a load error |
+| `events[].time` | f64 | Seconds from the start |
+| `events[].kind` | string | `blend` (`clip`, `duration`), `layer` (`index`, `clip`, `weight`, `fade`, `mode`, `mask`), `speed` (`value`), `cue` (`name`) |
 
 ## Asset Sidecars (`assets/**/*.asset.toml`)
 
@@ -377,6 +529,23 @@ gamepad = "any"
 ```
 
 Binding types: `key`, `mouse_button`, `mouse_delta`, `mouse_wheel`, `gamepad_button`, `gamepad_axis`. Action kinds: `button` (discrete), `axis1d` (analog). Gamepad selector: `"any"` or a numeric index. User overrides are written automatically when bindings are remapped at runtime.
+
+## Music Session Files
+
+The rhythm system ([Music Sessions](../concepts/music-sessions.md)) has its own family of files. All carry `schema_version = 0`. The full grammar lives with the `flint-music` crate; this is the map.
+
+| File | Purpose |
+|------|---------|
+| `*.suite.toml` | Suite manifest: `[suite]` id and title, `[audio] sample_rate`, `[[tempo]]` anchors (`sample`, `bpm`, `time_signature`), `[[sections]]` (`name`, `start_sample`, `pulse_window_ms`), `[reintegration]` (`re_entry_sections`, `lead_bus`, `reassembly_bars`), and one `[buses.<name>]` per fixed bus (`foundation`, `harmony`, `world_voice`, `home_theme`, `child_motif`, `texture`) with `file` or `silent = true`. Optional `[[degraded_alternates]]`. Checked by `flint validate-suite`. |
+| `*.chart.toml` | Beatmap: `suite` id, `[[curves]]` (`channel` ∈ `lean`, `sway`, `pressure_l`, `pressure_r`; `beat`; `value`; `interp` ∈ `linear`, `hold`, `smooth`), `[[pulses]]` (`beat`, `kind` ∈ `pulse`, `press`, `flick`, optional `window_ms`, `strength`, `direction`), `[[cues]]` (`beat`, `cue`, optional `params`), `[[intensity]]` (`beat`, `value`). |
+| `*.events.toml` | Offline event script for `flint render-suite`: `[[events]]` with `at = "bar:N"` or `"beat:N"`, `bus`, `action` ∈ `set_gain` (`db`, `ramp_ms`), `set_lpf` (`hz`, `ramp_ms`), `set_detune` (`semitones`, `ramp_ms`), `marker` (`label`). |
+| `*.session.jsonl` | Recorded input session (`flint play-chart --record`): one JSON object per line, a `header` (suite, chart, sample rate, latency and calibration offsets, config snapshots) followed by `lean` (`sample`, `x`, `y`) and `pulse` (`sample`, `kind`) events stamped in suite samples. Replayed by `flint replay-chart --session`. |
+| `config/coherence.toml` | Coherence integrator tuning (`--config`) |
+| `config/ladder.toml` | Disintegration ladder: rungs, hysteresis, per-rung audio and visual params, and the `[seam]` table (`lead_in_beats` 0–8, default 0) (`--ladder`) |
+| `config/gradient.toml` | Error-driven audio gradient (`--gradient`) |
+| `config/haptics.toml` | Rumble entrainment (`--haptics`) |
+| `logs/latency/calibration-*.toml` | Written by `flint calibrate`; the median tap offset feeds later sessions. `flint spike-rumble` writes its timing report beside it |
+| `logs/sessions/*.session.jsonl`, `logs/judgment/*.jsonl` | Default locations for recorded sessions and replay judgment logs |
 
 ## Configuration (`~/.flint/config.toml`, `.flint/config.toml`)
 

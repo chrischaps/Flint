@@ -142,7 +142,7 @@ Everything is readable, editable, and diffable. You can modify this file directl
 Launch the hot-reload viewer:
 
 ```bash
-flint serve my-tavern/levels/tavern.scene.toml --watch --schemas my-tavern/schemas
+flint edit my-tavern/levels/tavern.scene.toml --watch --schemas my-tavern/schemas
 ```
 
 A window opens showing your scene as colored boxes:
