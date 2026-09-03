@@ -134,6 +134,15 @@ Animation functions write directly to the `animator` component on the target ent
 | `stop_clip(entity_id)` | Stop the current animation |
 | `blend_to(entity_id, clip, duration)` | Crossfade to another clip over the given duration |
 | `set_anim_speed(entity_id, speed)` | Set animation playback speed |
+| `set_anim_layer(entity_id, index, clip, weight)` | Play `clip` on layer `index` (additive, unmasked) at `weight` |
+| `set_anim_layer_ex(entity_id, index, clip, weight, mode, mask)` | Same, with `"additive"`/`"override"` and a root-joint mask |
+| `set_anim_layer_weight(entity_id, index, weight)` | Set a layer's weight instantly (cancels a fade) |
+| `fade_anim_layer(entity_id, index, weight, seconds)` | Ramp a layer's weight over `seconds` (engine writes the ramp back each frame) |
+| `play_sequence(entity_id, name)` | Play a `*.sequence.toml` (timestamped blend/layer/speed/cue events) on this animator |
+| `stop_sequence(entity_id)` | Stop the active sequence |
+| `clear_anim_layer(entity_id, index)` | Deactivate a layer (slot kept so indices stay stable) |
+
+Weights are floats — write `0.5`, never `0` (Rhai does not coerce ints).
 
 ### Coordinate System
 

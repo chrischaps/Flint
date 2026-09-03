@@ -121,6 +121,12 @@ pub struct ConductedSnapshot {
     pub next_target: [f64; 2],
     /// Suite beats until that key's anchor; 1e6 = nothing upcoming.
     pub next_target_beats: f64,
+    /// Suite beats until the next unconsumed judgment window's anchor beat
+    /// (any kind); 1e6 = nothing upcoming. Lets the world telegraph that
+    /// input is expected (P5 immediate-feedback pass).
+    pub next_pulse_beats: f64,
+    /// True while that window is open right now (a press would land).
+    pub pulse_window_open: bool,
     pub coherence: f64,
     /// 0..1 within the current beat / bar (0 at the boundary).
     pub beat_phase: f64,
@@ -157,6 +163,8 @@ impl Default for ConductedSnapshot {
             cues: Vec::new(),
             next_target: [0.0; 2],
             next_target_beats: 1e6,
+            next_pulse_beats: 1e6,
+            pulse_window_open: false,
             coherence: 1.0,
             beat_phase: 0.0,
             bar_phase: 0.0,

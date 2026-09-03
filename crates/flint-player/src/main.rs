@@ -107,6 +107,7 @@ fn main() -> Result<()> {
     );
 
     app.msaa_sample_count = args.msaa;
+    app.scene_preload_audio = scene_file.scene.preload_audio;
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
     app.audio

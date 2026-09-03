@@ -4,7 +4,7 @@ use crate::format::SceneFile;
 use crate::prefab;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
-use flint_schema::SchemaRegistry;
+use flint_schema::{validate_component_data, SchemaRegistry};
 use std::fs;
 use std::path::Path;
 
@@ -118,7 +118,28 @@ fn populate_world(
 
         // Set component data
         for (comp_name, comp_data) in &entity_def.components {
+            // Validate against schema (warn, don't fail)
+            if let Some(schema) = registry.get_component(comp_name) {
+                if let Err(e) = validate_component_data(schema, comp_data) {
+                    tracing::warn!("[scene] entity '{}' component '{}': {}", name, comp_name, e);
+                }
+            }
             world.merge_component(id, comp_name, comp_data.clone())?;
+        }
+
+        // Apply component schema defaults for missing fields
+        for comp_name in entity_def.components.keys() {
+            if let Some(schema) = registry.get_component(comp_name) {
+                if let Some(components) = world.get_components_mut(id) {
+                    for (field_name, field_schema) in &schema.fields {
+                        if let Some(default) = &field_schema.default {
+                            if components.get_field(comp_name, field_name).is_none() {
+                                components.set_field(comp_name, field_name, default.clone());
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Set parent relationship

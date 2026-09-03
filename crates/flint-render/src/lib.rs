@@ -60,7 +60,8 @@ pub use postprocess::{
 };
 pub use primitives::{
     create_box_mesh, create_plane_mesh, generate_normal_arrows, generate_skeleton_lines,
-    triangles_to_wireframe_indices, Mesh, SkinnedMesh, SkinnedVertex, Vertex,
+    generate_skeleton_lines_colored, triangles_to_wireframe_indices, Mesh, SkinnedMesh,
+    SkinnedVertex, Vertex,
 };
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{ArchetypeVisual, LightingLevers, RendererConfig, SceneRenderer};

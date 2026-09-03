@@ -14,3 +14,4 @@ pub const ON_DRAW_UI: &str = "on_draw_ui";
 pub const ON_SCENE_EXIT: &str = "on_scene_exit";
 pub const ON_SCENE_ENTER: &str = "on_scene_enter";
 pub const ON_ANIMATION_END: &str = "on_animation_end";
+pub const ON_SEQUENCE_CUE: &str = "on_sequence_cue";

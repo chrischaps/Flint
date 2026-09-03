@@ -166,6 +166,11 @@ pub struct PlayerApp {
     music_pp_base: Option<music_session::LadderPostBase>,
     music_pp_restore: Option<music_session::LadderPostBase>,
 
+    /// `[scene] preload_audio` — false skips the blanket audio/ preload
+    /// (silent scenes start instantly); audio_source + session stems
+    /// unaffected. Set from the scene file before startup, like msaa.
+    pub scene_preload_audio: bool,
+
     // Input config layering + remap persistence
     input_config_override: Option<String>,
     scene_input_config: Option<String>,

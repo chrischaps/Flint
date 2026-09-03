@@ -4,15 +4,15 @@
 //! path calls (`load_pending_sprites`) live here with the rest of the
 //! loading surface.
 
-use super::PlayerApp;
 use super::input_config::resolve_input_paths;
 use super::scene_loading;
 use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_particle_textures_from_world, load_scripts_from_world, load_sprite_animations_from_world,
-    load_terrain_from_world_inner, register_node_animation_data, register_skeletal_data,
-    resolve_procgen_assets,
+    load_particle_textures_from_world, load_scripts_from_world, load_sequences_from_world,
+    load_sprite_animations_from_world, load_terrain_from_world_inner, register_node_animation_data,
+    register_skeletal_data, resolve_procgen_assets,
 };
+use super::PlayerApp;
 use super::TransitionPhase;
 use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
@@ -97,6 +97,7 @@ impl PlayerApp {
             pp_debug_freeze: false,
             music_pp_base: None,
             music_pp_restore: None,
+            scene_preload_audio: true,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -434,7 +435,12 @@ impl PlayerApp {
             .context("Failed to initialize physics")?;
 
         // Initialize audio
-        load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
+        load_audio_from_world(
+            &self.world,
+            &mut self.audio,
+            &self.scene_path,
+            self.scene_preload_audio,
+        );
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
@@ -446,6 +452,7 @@ impl PlayerApp {
         // Initialize animation
         load_animations_from_world(&self.scene_path, &mut self.animation);
         load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
+        load_sequences_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));

@@ -93,6 +93,23 @@ impl Skeleton {
         self.joint_names.len()
     }
 
+    /// Index of a joint by name
+    pub fn joint_index(&self, name: &str) -> Option<usize> {
+        self.joint_names.iter().position(|n| n == name)
+    }
+
+    /// Per-joint mask that is `true` for `root_name` and every joint
+    /// beneath it. `None` if the joint doesn't exist. A single forward
+    /// pass suffices because joints are topologically ordered.
+    pub fn subtree_mask(&self, root_name: &str) -> Option<Vec<bool>> {
+        let root = self.joint_index(root_name)?;
+        let mut mask = vec![false; self.joint_count()];
+        for i in 0..mask.len() {
+            mask[i] = i == root || self.parents[i].map(|p| mask[p]).unwrap_or(false);
+        }
+        Some(mask)
+    }
+
     /// Compute final bone matrices by walking the hierarchy root-to-leaf.
     ///
     /// glTF guarantees that joint arrays are in topological order (parents before children),
@@ -320,5 +337,30 @@ mod tests {
         };
         let skel = Skeleton::from_imported(&imported);
         assert_eq!(skel.local_poses[0].translation, [0.13, 0.0, -0.05]);
+    }
+
+    #[test]
+    fn subtree_mask_includes_root_and_descendants_only() {
+        let skel = Skeleton {
+            joint_names: vec![
+                "root".into(),
+                "hips".into(),
+                "head".into(),
+                "star".into(),
+                "leg".into(),
+            ],
+            parents: vec![None, Some(0), Some(1), Some(2), Some(1)],
+            inverse_bind_matrices: vec![IDENTITY_4X4; 5],
+            local_poses: vec![JointPose::default(); 5],
+            rest_poses: vec![JointPose::default(); 5],
+            bone_matrices: vec![IDENTITY_4X4; 5],
+            global_matrices: vec![IDENTITY_4X4; 5],
+        };
+        assert_eq!(
+            skel.subtree_mask("head").unwrap(),
+            vec![false, false, true, true, false]
+        );
+        assert_eq!(skel.subtree_mask("root").unwrap(), vec![true; 5]);
+        assert!(skel.subtree_mask("nope").is_none());
     }
 }

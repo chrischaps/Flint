@@ -248,6 +248,7 @@ mod tests {
                 version: default_version(),
                 description: None,
                 input_config: None,
+                preload_audio: true,
             },
             camera: None,
             environment: None,

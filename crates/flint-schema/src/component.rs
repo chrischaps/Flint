@@ -169,6 +169,11 @@ fn parse_field_type(
         "f64" => FieldType::F64,
         "string" => FieldType::String,
         "vec3" => FieldType::Vec3,
+        // vec2/vec4 have no dedicated variant; validate as a float array so
+        // schema-driven validation doesn't misreport them as strings.
+        "vec2" | "vec4" => FieldType::Array {
+            element: Box::new(FieldType::F32),
+        },
         "transform" => FieldType::Transform,
         "color" => FieldType::Color,
         "enum" => FieldType::Enum {

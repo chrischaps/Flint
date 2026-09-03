@@ -9,5 +9,7 @@ loop = { type = "bool", default = true }
 speed = { type = "f32", default = 1.0, min = -10.0, max = 10.0 }
 blend_target = { type = "string", default = "", description = "Clip to crossfade into" }
 blend_duration = { type = "f32", default = 0.3, min = 0.0, max = 10.0, description = "Crossfade duration in seconds" }
-layer_clip = { type = "string", default = "", description = "Additive layer clip: loops on its own clock, composed onto the base pose (delta from rest, keyed joints only); survives crossfades" }
-layer_weight = { type = "f32", default = 1.0, min = 0.0, max = 1.0, description = "Additive layer strength (live dial: 0 = off)" }
+layers = { type = "array", element = "table", default = [], description = "Animation layers composed in order after base + crossfade. Each entry: { clip, weight = 1.0, mode = \"additive\"|\"override\", mask = \"<root joint>\", speed = 1.0, fade_target, fade_duration }. Setting fade_duration > 0 ramps weight toward fade_target over that many seconds (the engine writes the ramped weight back each frame and zeroes fade_duration when done). Additive adds each keyed joint's delta-from-rest; override blends keyed joints toward the clip. mask limits a layer to a joint subtree. Legacy layer_clip/layer_weight act as layers[0] when this is empty." }
+sequence = { type = "string", default = "", description = "Name of a *.sequence.toml (from the scene's animations/ dir) to drive this animator. Set by play_sequence(); cleared by the engine when a non-looping sequence finishes." }
+layer_clip = { type = "string", default = "", description = "Legacy alias for layers[0] (additive, unmasked): loops on its own clock, composed onto the base pose; survives crossfades" }
+layer_weight = { type = "f32", default = 1.0, min = 0.0, max = 1.0, description = "Legacy alias for layers[0].weight (live dial: 0 = off)" }

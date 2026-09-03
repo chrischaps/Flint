@@ -130,6 +130,14 @@ pub struct LadderConfig {
     /// pickup that telegraphs when to come back in. Beats are measured at
     /// the re-entry tempo. 0 disables.
     pub seam_pickup_beats: f64,
+    /// Lead-in: the ensemble re-enters this many beats BEFORE the checkpoint
+    /// downbeat, playing the pickup into the phrase at full lock — "3, 4,
+    /// go" — so the player gets prep time before content resumes (P5, Chris,
+    /// 2026-08-26). Beats at the re-entry tempo; judgment windows inside the
+    /// lead-in re-open. 0 (default) = enter exactly on the checkpoint
+    /// downbeat, byte-identical to the pre-lead-in behavior. Clamped so it
+    /// never reaches before suite sample 0.
+    pub seam_lead_in_beats: f64,
     /// The ladder arms when coherence first reaches this (sessions open at a
     /// neutral value inside rung territory; the world can only come apart
     /// after it has first cohered). Measured on real engaged play: coherence
@@ -234,6 +242,7 @@ impl Default for LadderConfig {
             seam_rewind_beats: 2.0,
             seam_rewind_drop_st: -30.0,
             seam_pickup_beats: 2.0,
+            seam_lead_in_beats: 0.0,
             arm_above: 0.80,
             alternate_xfade_ms: 250.0,
         }
@@ -366,6 +375,10 @@ impl LadderConfig {
             .and_then(|t| t.get("pickup_beats"))
             .and_then(toml_f64)
             .unwrap_or(d_all.seam_pickup_beats);
+        let seam_lead_in_beats = seam_t
+            .and_then(|t| t.get("lead_in_beats"))
+            .and_then(toml_f64)
+            .unwrap_or(d_all.seam_lead_in_beats);
         let arm_above = root
             .get("arm_above")
             .and_then(toml_f64)
@@ -382,6 +395,7 @@ impl LadderConfig {
             seam_rewind_beats,
             seam_rewind_drop_st,
             seam_pickup_beats,
+            seam_lead_in_beats,
             arm_above,
             alternate_xfade_ms,
         };
@@ -474,6 +488,12 @@ impl LadderConfig {
                 self.seam_pickup_beats
             ));
         }
+        if !(0.0..=8.0).contains(&self.seam_lead_in_beats) {
+            return err(format!(
+                "seam.lead_in_beats {} out of range (0..8)",
+                self.seam_lead_in_beats
+            ));
+        }
         if !(0.0..=1.0).contains(&self.arm_above) || self.arm_above <= self.full_fail.enter_below {
             return err(format!(
                 "arm_above {} must be in 0..1 and above full_fail.enter_below {}",
@@ -503,6 +523,7 @@ impl LadderConfig {
                 "rewind_beats": self.seam_rewind_beats,
                 "rewind_drop_semitones": self.seam_rewind_drop_st,
                 "pickup_beats": self.seam_pickup_beats,
+                "lead_in_beats": self.seam_lead_in_beats,
             },
             "arm_above": self.arm_above,
             "rungs": self.rungs.iter().map(|r| {

@@ -33,6 +33,7 @@ pub struct ScriptInstance {
     pub has_on_scene_exit: bool,
     pub has_on_scene_enter: bool,
     pub has_on_animation_end: bool,
+    pub has_on_sequence_cue: bool,
     pub init_called: bool,
 }
 
@@ -51,6 +52,7 @@ impl ScriptInstance {
         let has_on_scene_exit = has_function(&ast, cb::ON_SCENE_EXIT);
         let has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
         let has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
+        let has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
 
         Self {
             ast,
@@ -68,6 +70,7 @@ impl ScriptInstance {
             has_on_scene_exit,
             has_on_scene_enter,
             has_on_animation_end,
+            has_on_sequence_cue,
             init_called: false,
         }
     }
@@ -87,6 +90,7 @@ impl ScriptInstance {
         self.has_on_scene_exit = has_function(&ast, cb::ON_SCENE_EXIT);
         self.has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
         self.has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
+        self.has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -513,6 +517,39 @@ impl ScriptEngine {
         }
     }
 
+    /// Call on_sequence_cue(sequence_name, cue_name) on the owning entity's
+    /// script for every cue an animation sequence passed this frame.
+    pub fn call_sequence_cues(
+        &mut self,
+        world: &mut FlintWorld,
+        cues: &[flint_animation::SequenceCueEvent],
+    ) {
+        if cues.is_empty() {
+            return;
+        }
+
+        let _world_scope = WorldScope::new(&self.ctx, world);
+
+        for cue in cues {
+            if let Some(script) = self.scripts.get_mut(&cue.entity_id) {
+                if script.has_on_sequence_cue {
+                    {
+                        let mut c = crate::lock_or_recover(&self.ctx);
+                        c.current_entity = cue.entity_id;
+                    }
+                    if let Err(e) = self.engine.call_fn::<()>(
+                        &mut script.scope,
+                        &script.ast,
+                        cb::ON_SEQUENCE_CUE,
+                        (cue.sequence.clone(), cue.cue.clone()),
+                    ) {
+                        tracing::warn!("on_sequence_cue error ({}): {}", script.source_path, e);
+                    }
+                }
+            }
+        }
+    }
+
     /// Call on_animation_end(clip_name) for entities whose sprite animation completed.
     pub fn call_sprite_anim_ends(
         &mut self,
@@ -897,6 +934,9 @@ mod tests {
                 set_field(me, "probe", "swx", sw.x);
                 set_field(me, "probe", "pl", conducted_pressure_l());
                 set_field(me, "probe", "pr", conducted_pressure_r());
+                let np = conducted_next_pulse();
+                set_field(me, "probe", "npb", np.beats);
+                set_field(me, "probe", "np_open", if np.open { 1.0 } else { 0.0 });
                 let cues = conducted_cues();
                 set_field(me, "probe", "ncues", cues.len().to_float());
                 if cues.len() > 0 {
@@ -930,6 +970,8 @@ mod tests {
                 target: [0.1, 0.75],
                 next_target: [0.3, -0.4],
                 next_target_beats: 2.5,
+                next_pulse_beats: 1.75,
+                pulse_window_open: true,
                 coherence: 0.625,
                 beat_phase: 0.5,
                 bar_phase: 0.125,
@@ -984,6 +1026,8 @@ mod tests {
         assert_eq!(probe_float(&world, id, "swx"), 0.6);
         assert_eq!(probe_float(&world, id, "pl"), 0.15);
         assert_eq!(probe_float(&world, id, "pr"), 0.85);
+        assert_eq!(probe_float(&world, id, "npb"), 1.75);
+        assert_eq!(probe_float(&world, id, "np_open"), 1.0);
         assert_eq!(probe_float(&world, id, "ncues"), 1.0);
         assert_eq!(probe_float(&world, id, "cue_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "cdepth"), 0.7);
@@ -1010,6 +1054,9 @@ mod tests {
                 let nt = conducted_next_target();
                 set_field(me, "probe", "ntx", nt.x + nt.y);
                 set_field(me, "probe", "ntb", nt.beats);
+                let np = conducted_next_pulse();
+                set_field(me, "probe", "npb", np.beats);
+                set_field(me, "probe", "np_open", if np.open { 1.0 } else { 0.0 });
                 set_field(me, "probe", "npulses", conducted_pulses().len().to_float());
                 set_field(me, "probe", "sec_ok",
                     if conducted_section() == "" { 1.0 } else { 0.0 });
@@ -1034,6 +1081,12 @@ mod tests {
             1e6,
             "sentinel: nothing inbound"
         );
+        assert_eq!(
+            probe_float(&world, id, "npb"),
+            1e6,
+            "sentinel: no window inbound"
+        );
+        assert_eq!(probe_float(&world, id, "np_open"), 0.0);
         assert_eq!(probe_float(&world, id, "npulses"), 0.0);
         assert_eq!(probe_float(&world, id, "sec_ok"), 1.0);
         assert_eq!(probe_float(&world, id, "preroll"), 0.0);

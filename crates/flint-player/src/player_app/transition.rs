@@ -4,13 +4,13 @@
 //! transition executor (teardown ordering per ADR 0017: music session
 //! stops before `audio.clear()`).
 
-use super::PlayerApp;
 use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
-    load_scripts_from_world, load_sprite_animations_from_world, load_terrain_from_world_inner,
-    register_node_animation_data, register_skeletal_data, resolve_procgen_assets,
-    resolve_scene_path,
+    load_scripts_from_world, load_sequences_from_world, load_sprite_animations_from_world,
+    load_terrain_from_world_inner, register_node_animation_data, register_skeletal_data,
+    resolve_procgen_assets, resolve_scene_path,
 };
+use super::PlayerApp;
 use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader;
@@ -370,6 +370,7 @@ impl PlayerApp {
                 self.scene_camera = scene_file.camera.clone();
                 self.scene_post_process = scene_file.post_process.clone();
                 self.scene_input_config = scene_file.scene.input_config.clone();
+                self.scene_preload_audio = scene_file.scene.preload_audio;
             }
             Err(e) => {
                 tracing::error!("Failed to load scene '{}': {:?}", new_scene_path, e);
@@ -488,10 +489,9 @@ impl PlayerApp {
 
             // Apply post-process config
             if let Some(pp_def) = &self.scene_post_process {
-                renderer
-                    .set_post_process_config(super::scene_loading::post_process_config_from_def(
-                        pp_def,
-                    ));
+                renderer.set_post_process_config(
+                    super::scene_loading::post_process_config_from_def(pp_def),
+                );
                 renderer.ensure_kuwahara_resources(&context.device, &context.queue);
                 renderer.ensure_fxaa_resources(&context.device);
             }
@@ -546,7 +546,12 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Physics init failed: {:?}", e));
 
-        load_audio_from_world(&self.world, &mut self.audio, &self.scene_path);
+        load_audio_from_world(
+            &self.world,
+            &mut self.audio,
+            &self.scene_path,
+            self.scene_preload_audio,
+        );
         self.audio
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Audio init failed: {:?}", e));
@@ -559,6 +564,7 @@ impl PlayerApp {
 
         load_animations_from_world(&self.scene_path, &mut self.animation);
         load_sprite_animations_from_world(&self.scene_path, &mut self.animation);
+        load_sequences_from_world(&self.scene_path, &mut self.animation);
         self.animation
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));

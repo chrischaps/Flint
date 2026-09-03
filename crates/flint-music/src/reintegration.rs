@@ -104,6 +104,16 @@ pub struct Reintegrator {
     /// up from `rewind_drop_st` to full speed, arriving on the re-entry
     /// downbeat. 0 disables.
     pub pickup_beats: f64,
+    /// Lead-in: shift the re-entry point this many beats BEFORE the
+    /// checkpoint downbeat, so the ensemble re-enters on the pickup into the
+    /// phrase — "3, 4, go" (P5, Chris). Beats at the re-entry tempo; clamped
+    /// at suite sample 0. 0 = enter on the downbeat (pre-lead-in behavior,
+    /// arithmetic untouched).
+    pub lead_in_beats: f64,
+    /// Debug: force the next Playing tick to trigger reintegration,
+    /// bypassing arming and the hold (set via [`Self::debug_force_fail`];
+    /// dev surfaces only — nothing on a deterministic path sets it).
+    force_fail: bool,
     phase: Phase,
     /// Raw sample when coherence first went below the full-fail threshold.
     below_since: Option<i64>,
@@ -117,8 +127,21 @@ impl Reintegrator {
             rewind_beats: 2.0,
             rewind_drop_st: -30.0,
             pickup_beats: 2.0,
+            lead_in_beats: 0.0,
+            force_fail: false,
             phase: Phase::Playing,
             below_since: None,
+        }
+    }
+
+    /// Debug: trigger the full reintegration (rewind → seam → reassembly) on
+    /// the next Playing tick, regardless of arming or the coherence hold.
+    /// A no-op while a seam is already in flight. Dev surface for iterating
+    /// on seam recovery without playing to a fail; the seam machinery runs
+    /// exactly as in a real fail.
+    pub fn debug_force_fail(&mut self) {
+        if matches!(self.phase, Phase::Playing) {
+            self.force_fail = true;
         }
     }
 
@@ -170,6 +193,16 @@ impl Reintegrator {
                 // `exit_above`: under neglect the value saw-tooths (miss
                 // impulses down, tracking integrator back up), and a peak
                 // poking over the enter threshold must not save the world.
+                if self.force_fail {
+                    self.force_fail = false;
+                    self.trigger(session, driver, events)?;
+                    self.below_since = None;
+                    return Ok(SeqTick {
+                        params: ladder.full_fail_params(),
+                        reassembly: 1.0,
+                        rewind: 0.0,
+                    });
+                }
                 let ff = ladder.config().full_fail;
                 if ladder.armed() && coherence < ff.enter_below {
                     let since = *self.below_since.get_or_insert(raw);
@@ -270,11 +303,25 @@ impl Reintegrator {
         let sample_rate = session.conductor.tempo().sample_rate() as f64;
         let now_suite = session.clock_sample();
 
-        let re_entry = session
+        let checkpoint = session
             .conductor
             .previous_re_entry(now_suite, &self.decl)
             .map(|s| s.start_sample)
             .unwrap_or(0);
+        // Lead-in ("3, 4, go"): everything re-enters `lead_in_beats` before
+        // the checkpoint downbeat — full ensemble, sample-locked, judgment
+        // windows in the lead-in re-opened — giving the player prep time
+        // into the phrase. The reassembly span below stays anchored to the
+        // checkpoint bar, so the ramp's musical length is unchanged.
+        let re_entry = if self.lead_in_beats > 0.0 && checkpoint > 0 {
+            let entry_beat = session.conductor.position_at_sample(checkpoint).beat;
+            session
+                .conductor
+                .sample_at_beat((entry_beat - self.lead_in_beats).max(0.0))
+                .max(0)
+        } else {
+            checkpoint
+        };
 
         // Seam on a bar line with enough lead for fade + command delivery
         // plus the rewind gesture: grid continuity comes free — section
@@ -320,8 +367,9 @@ impl Reintegrator {
             }
         }
 
-        // Reassembly span, measured on the post-seam timeline.
-        let entry_bar = session.conductor.position_at_sample(re_entry).bar;
+        // Reassembly span, measured on the post-seam timeline (anchored to
+        // the checkpoint bar — the phrase start — not the lead-in point).
+        let entry_bar = session.conductor.position_at_sample(checkpoint).bar;
         let end = session
             .conductor
             .sample_at_bar(entry_bar + self.decl.reassembly_bars, 0.0);
