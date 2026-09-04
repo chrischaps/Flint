@@ -1,5 +1,5 @@
 [component.particle_emitter]
-description = "GPU-instanced particle emitter with configurable shape, lifetime, and visual properties"
+description = "Inline GPU-instanced particle emitter. For multi-emitter effects with curves, forces, bursts and sub-emitters, author a *.particles.toml asset and use particle_effect instead (ADR 0068)"
 
 [component.particle_emitter.fields]
 emission_rate = { type = "f32", default = 10.0, min = 0.0, max = 10000.0, description = "Particles emitted per second (0 = burst-only)" }
@@ -12,7 +12,7 @@ speed_max = { type = "f32", default = 3.0, min = 0.0, max = 100.0, description =
 direction = { type = "vec3", default = [0, 1, 0], description = "Base emission direction (local space)" }
 spread = { type = "f32", default = 15.0, min = 0.0, max = 180.0, description = "Random deviation angle in degrees" }
 gravity = { type = "vec3", default = [0, -9.81, 0], description = "Acceleration applied each frame (world space)" }
-damping = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Velocity decay per second" }
+damping = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Exponential velocity decay per second (frame-rate independent)" }
 size_start = { type = "f32", default = 0.1, min = 0.0, max = 10.0, description = "Particle size at birth" }
 size_end = { type = "f32", default = 0.0, min = 0.0, max = 10.0, description = "Particle size at death" }
 color_start = { type = "vec4", default = [1.0, 1.0, 1.0, 1.0], description = "RGBA color at birth" }
@@ -22,9 +22,9 @@ stretch = { type = "f32", default = 0.0, min = 0.0, max = 1.0, description = "Ve
 frames_x = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet columns" }
 frames_y = { type = "i32", default = 1, min = 1, max = 64, description = "Sprite sheet rows" }
 animate_frames = { type = "bool", default = false, description = "Auto-advance frames over lifetime" }
-blend_mode = { type = "string", default = "alpha", description = "Blend mode: alpha or additive" }
+blend_mode = { type = "string", default = "alpha", description = "Blend mode: alpha, additive, premultiplied or multiply" }
 shape = { type = "string", default = "point", description = "Emission shape: point, sphere, cone, box" }
-shape_radius = { type = "f32", default = 0.5, min = 0.0, max = 100.0, description = "Radius for sphere/cone shapes" }
+shape_radius = { type = "f32", default = 0.5, min = 0.0, max = 100.0, description = "Radius for the sphere shape, or the spawn disc of a cone (cones spawn from a point unless set)" }
 shape_angle = { type = "f32", default = 30.0, min = 0.0, max = 180.0, description = "Half-angle for cone shape in degrees" }
 shape_offset = { type = "vec3", default = [0, 0, 0], description = "Spawn-region translation relative to the emitter position" }
 shape_axis_u = { type = "vec3", default = [0, 0, 0], description = "Box orientation: extents.x runs along this world direction (zero = axis-aligned)" }
@@ -35,3 +35,17 @@ duration = { type = "f32", default = 0.0, min = 0.0, max = 3600.0, description =
 looping = { type = "bool", default = true, description = "Loop emitter when duration expires" }
 playing = { type = "bool", default = false, description = "Current playback state" }
 autoplay = { type = "bool", default = true, description = "Start emitting on scene load" }
+local_axes = { type = "bool", default = false, description = "Rotate direction, shape_offset and shape axes with the entity's world rotation and scale distances by its scale (default off keeps world-space axes, ADR 0061)" }
+sort = { type = "string", default = "none", description = "Draw order within the emitter: none, back_to_front, youngest_first, oldest_first" }
+frame_rate = { type = "f32", default = 0.0, min = 0.0, max = 240.0, description = "Sprite-sheet frames per second (0 = follow animate_frames)" }
+random_start_frame = { type = "bool", default = false, description = "Each particle starts on a random sprite-sheet frame" }
+rotation_min = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Minimum initial rotation in degrees" }
+rotation_max = { type = "f32", default = 360.0, min = -3600.0, max = 3600.0, description = "Maximum initial rotation in degrees" }
+angular_velocity_min = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Minimum spin in degrees per second" }
+angular_velocity_max = { type = "f32", default = 0.0, min = -3600.0, max = 3600.0, description = "Maximum spin in degrees per second" }
+inherit_velocity = { type = "f32", default = 0.0, min = -10.0, max = 10.0, description = "Fraction of the emitter's own velocity added to new particles" }
+emission_per_meter = { type = "f32", default = 0.0, min = 0.0, max = 1000.0, description = "Particles spawned per metre the emitter moves (trails), in addition to emission_rate" }
+start_delay = { type = "f32", default = 0.0, min = 0.0, max = 3600.0, description = "Seconds to wait after play before emitting" }
+soft_distance = { type = "f32", default = 0.0, min = 0.0, max = 100.0, description = "Depth-fade distance for soft particles (0 = off; reserved for the soft-particle pass)" }
+fade_near = { type = "f32", default = 0.0, min = 0.0, max = 10000.0, description = "Camera distance below which particles fade out (0 = off; reserved)" }
+fade_far = { type = "f32", default = 0.0, min = 0.0, max = 10000.0, description = "Camera distance above which particles fade out (0 = off; reserved)" }

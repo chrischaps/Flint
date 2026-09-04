@@ -1,0 +1,29 @@
+# Sparks — bursts of hot, velocity-stretched streaks that arc under gravity.
+# Created by `flint edit <file> --preset sparks`; edit freely.
+
+name = "sparks"
+
+[[emitters]]
+name = "sparks"
+emission_rate = 0.0
+max_particles = 128
+lifetime = [0.6, 1.4]
+speed = [3.0, 6.0]
+direction = [0, 1, 0]
+spread = 40.0
+gravity = [0, -9.81, 0]
+damping = 0.4
+blend_mode = "additive"
+stretch = 0.02
+size = { start = [0.03, 0.03], end = [0.0, 0.0] }
+color = { keys = [ { t = 0.0, v = [1.0, 0.95, 0.6, 1.0] }, { t = 0.4, v = [1.0, 0.6, 0.15, 1.0] }, { t = 1.0, v = [0.8, 0.15, 0.0, 0.0] } ] }
+duration = 1.5
+looping = true
+
+[[emitters.bursts]]
+time = 0.0
+count = [24, 40]
+
+[[emitters.forces]]
+kind = "drag"
+coefficient = 0.15

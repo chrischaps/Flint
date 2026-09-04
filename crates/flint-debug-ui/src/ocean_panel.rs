@@ -5,31 +5,12 @@
 //! (`ocean_height`) both pick them up on the next frame — one source of
 //! truth, three consumers.
 
+use crate::widgets::drag_f32;
 use crate::DebugPanel;
 use flint_core::ocean::OceanParams;
 use flint_core::toml_util::{toml_color, toml_f32};
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
-
-fn drag_f32(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut f32,
-    speed: f64,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let before = *value;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::DragValue::new(value)
-                .speed(speed)
-                .range(range)
-                .max_decimals(3),
-        );
-    });
-    *value != before
-}
 
 fn drag_i64(
     ui: &mut egui::Ui,

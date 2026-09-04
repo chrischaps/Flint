@@ -2,8 +2,10 @@
 
 mod extract;
 mod helpers;
+mod particles;
 mod render_passes;
 
+pub use particles::load_particle_textures;
 use render_passes::RenderPhase;
 
 use helpers::{identity_matrix, mat4_inv_transpose};
@@ -18,7 +20,7 @@ use crate::grass_pipeline::{
     GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
     GrassRenderUniforms, MAX_GRASS_ENTITIES,
 };
-use crate::particle_pipeline::{ParticleDrawCall, ParticleDrawData, ParticlePipeline};
+use crate::particle_pipeline::{ParticleDrawCall, ParticlePipeline};
 use crate::pipeline::{
     BlendMode, DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline,
     SpotLight, TransformUniforms, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
@@ -41,6 +43,10 @@ use flint_import::ImportResult;
 use std::collections::HashMap;
 use std::path::Path;
 use wgpu::util::DeviceExt;
+
+/// Default main-pass clear colour (linear RGBA), matching the historical
+/// dark slate background.
+pub const DEFAULT_CLEAR_COLOR: [f32; 4] = [0.1, 0.1, 0.15, 1.0];
 
 /// Visual representation for an archetype
 #[derive(Clone)]
@@ -240,9 +246,17 @@ pub struct SceneRenderer {
     /// the game clock — the same clock scripts see via total_time(), which is
     /// what keeps script-side ocean_height() queries in sync with the GPU.
     pub ocean_time: f64,
-    // Particles
+    // Particles (ADR 0068)
     particle_pipeline: Option<ParticlePipeline>,
     particle_draws: Vec<ParticleDrawCall>,
+    /// Texture bind groups keyed by texture-cache name ("" = white).
+    particle_texture_bind_groups: HashMap<String, std::sync::Arc<wgpu::BindGroup>>,
+    /// Reused CPU staging for the per-frame instance upload.
+    particle_upload_scratch: Vec<flint_particles::ParticleInstance>,
+    /// Editor/gizmo line overlay, drawn on top regardless of debug mode.
+    debug_overlay_draws: Vec<DrawCall>,
+    /// Main-pass clear colour (linear RGBA).
+    clear_color: [f32; 4],
     // 2D sprites
     sprite2d_pipeline: Option<Sprite2dPipeline>,
     sprite2d_batches: Vec<crate::sprite2d_pipeline::Sprite2dBatch>,
@@ -459,6 +473,10 @@ impl SceneRenderer {
             ocean_time: 0.0,
             particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
+            particle_texture_bind_groups: HashMap::new(),
+            particle_upload_scratch: Vec::new(),
+            debug_overlay_draws: Vec::new(),
+            clear_color: DEFAULT_CLEAR_COLOR,
             sprite2d_pipeline: Some(sprite2d_pipeline),
             sprite2d_batches: Vec::new(),
             sample_count,
@@ -680,101 +698,6 @@ impl SceneRenderer {
         self.ocean_grab_color = Some(color);
         self.ocean_grab_depth = Some(depth);
         self.ocean_grab_size = (width, height);
-    }
-
-    /// Upload particle instance data from the simulation and create draw calls.
-    /// Called each frame after ParticleSystem::update().
-    pub fn update_particles(&mut self, device: &wgpu::Device, draw_data: Vec<ParticleDrawData>) {
-        self.particle_draws.clear();
-
-        let pp = match &self.particle_pipeline {
-            Some(pp) => pp,
-            None => return,
-        };
-
-        for data in &draw_data {
-            if data.instances.is_empty() {
-                continue;
-            }
-
-            // Create storage buffer with instance data
-            let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Particle Instance Buffer"),
-                contents: bytemuck::cast_slice(data.instances),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-
-            // Create instance bind group
-            let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &pp.instance_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: instance_buffer.as_entire_binding(),
-                }],
-                label: Some("Particle Instance Bind Group"),
-            });
-
-            // Resolve texture (use white fallback if none specified)
-            let texture_bind_group = if !data.texture.is_empty() {
-                if let Some(tc) = &self.texture_cache {
-                    if let Some(tex) = tc.get(data.texture) {
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            layout: &pp.texture_bind_group_layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(&tex.view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::Sampler(&tex.sampler),
-                                },
-                            ],
-                            label: Some("Particle Texture Bind Group"),
-                        })
-                    } else {
-                        self.create_white_particle_texture_bind_group(device, pp)
-                    }
-                } else {
-                    self.create_white_particle_texture_bind_group(device, pp)
-                }
-            } else {
-                self.create_white_particle_texture_bind_group(device, pp)
-            };
-
-            self.particle_draws.push(ParticleDrawCall {
-                instance_buffer,
-                instance_count: data.instances.len() as u32,
-                texture_bind_group,
-                instance_bind_group,
-                additive: data.additive,
-            });
-        }
-    }
-
-    fn create_white_particle_texture_bind_group(
-        &self,
-        device: &wgpu::Device,
-        pp: &ParticlePipeline,
-    ) -> wgpu::BindGroup {
-        if let Some(tc) = &self.texture_cache {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &pp.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&tc.default_white.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&tc.default_white.sampler),
-                    },
-                ],
-                label: Some("Particle White Texture Bind Group"),
-            })
-        } else {
-            panic!("TextureCache required for particle rendering");
-        }
     }
 
     /// Load terrain chunks and create GPU resources for terrain rendering.
@@ -1645,6 +1568,9 @@ impl SceneRenderer {
         self.wireframe_overlay_draws.clear();
         self.normal_arrow_draws.clear();
         self.skeleton_overlay_draws.clear();
+        self.debug_overlay_draws.clear();
+        self.particle_draws.clear();
+        self.particle_texture_bind_groups.clear();
         self.bitmap_font_cache.clear();
     }
 
@@ -1721,6 +1647,7 @@ impl SceneRenderer {
 
         let billboard_pipeline = BillboardPipeline::new(device, scene_format, sample_count);
         let sprite2d_pipeline = Sprite2dPipeline::new(device, scene_format, sample_count);
+        let particle_pipeline = ParticlePipeline::new(device, scene_format, sample_count);
         let skybox_pipeline = SkyboxPipeline::new(device, scene_format, sample_count);
 
         let ocean_resources = Self::create_ocean_resources(
@@ -1826,8 +1753,14 @@ impl SceneRenderer {
             ocean_grab_this_frame: false,
             ocean_camera_near_far: (0.1, 1000.0),
             ocean_time: 0.0,
-            particle_pipeline: None, // No particles in headless mode
+            // Headless particles (ADR 0068): zero instances until a caller
+            // steps a ParticleSystem, so existing pixel gates are unchanged.
+            particle_pipeline: Some(particle_pipeline),
             particle_draws: Vec::new(),
+            particle_texture_bind_groups: HashMap::new(),
+            particle_upload_scratch: Vec::new(),
+            debug_overlay_draws: Vec::new(),
+            clear_color: DEFAULT_CLEAR_COLOR,
             sprite2d_pipeline: Some(sprite2d_pipeline),
             sprite2d_batches: Vec::new(),
             sample_count,
@@ -3569,6 +3502,12 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
+        let clear_color = wgpu::Color {
+            r: self.clear_color[0] as f64,
+            g: self.clear_color[1] as f64,
+            b: self.clear_color[2] as f64,
+            a: self.clear_color[3] as f64,
+        };
         let view_proj = camera.view_projection_matrix();
         self.camera_frustum = Some(crate::frustum::Frustum::from_view_projection(&view_proj));
 
@@ -3696,12 +3635,7 @@ impl SceneRenderer {
                     view: pass_color_view,
                     resolve_target: pass_resolve_target,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.15,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -3737,12 +3671,7 @@ impl SceneRenderer {
                         view: pass_color_view,
                         resolve_target: pass_resolve_target,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.1,
-                                g: 0.1,
-                                b: 0.15,
-                                a: 1.0,
-                            }),
+                            load: wgpu::LoadOp::Clear(clear_color),
                             store: wgpu::StoreOp::Store,
                         },
                     })],

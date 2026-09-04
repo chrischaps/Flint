@@ -34,6 +34,7 @@ pub const AUDIO_TRIGGER: &str = "audio_trigger";
 
 // --- Particles ---
 pub const PARTICLE_EMITTER: &str = "particle_emitter";
+pub const PARTICLE_EFFECT: &str = "particle_effect";
 
 // --- Terrain ---
 pub const TERRAIN: &str = "terrain";

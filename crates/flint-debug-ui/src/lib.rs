@@ -2,16 +2,21 @@ mod camera_panel;
 mod dead_calm_panel;
 mod grass_panel;
 mod ocean_panel;
+mod particles_panel;
 mod reality_panel;
 mod render_panel;
 mod tod_panel;
 mod visitor_panel;
 mod weather_panel;
+pub mod widgets;
 
 pub use camera_panel::{CameraDebugPanel, CameraPanelConfig};
 pub use dead_calm_panel::DeadCalmDebugPanel;
 pub use grass_panel::GrassDebugPanel;
 pub use ocean_panel::{OceanDebugPanel, OceanPanelConfig};
+pub use particles_panel::{
+    EmitterRow, ParticlePanelAction, ParticlesDebugPanel, PARTICLES_DEBUG_PANEL,
+};
 pub use reality_panel::{RealityDebugPanel, RealityPanelConfig};
 pub use render_panel::{RenderDebugPanel, RenderPanelFlags, RENDER_DEBUG_PANEL};
 pub use tod_panel::{TimeOfDayDebugPanel, TimeOfDayPanelConfig};
@@ -73,6 +78,7 @@ fn panel_weight(name: &str) -> u32 {
         "Grass Debug" => 22,
         "Reality" => 20,
         "Weather" => 15,
+        "Particles" => 14,
         "Day / Time" => 10,
         _ => 6,
     }

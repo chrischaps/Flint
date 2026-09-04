@@ -11,3 +11,5 @@ flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 toml = { workspace = true }
 bytemuck = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }

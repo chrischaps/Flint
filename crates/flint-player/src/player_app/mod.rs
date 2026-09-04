@@ -11,18 +11,17 @@ mod input_config;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
-mod transition;
 pub(crate) mod scene_loading;
 mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
+mod transition;
 
 #[cfg(target_os = "android")]
 use events::AndroidGamepadTracker;
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
-use transition::TransitionPhase;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
@@ -33,6 +32,7 @@ use flint_script::ScriptSystem;
 use gilrs::Gilrs;
 use std::collections::HashMap;
 use std::sync::Arc;
+use transition::TransitionPhase;
 use winit::window::Window;
 
 // Component-name conventions shared by the debug panels (debug_panels.rs)
@@ -197,6 +197,9 @@ pub struct PlayerApp {
     // Debug overlay panels (F3 toggle)
     #[cfg(feature = "debug-hud")]
     debug_panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+    /// F3 Particles panel toggle: when false the sim still runs but nothing
+    /// is uploaded to the renderer (ADR 0068).
+    particles_render_enabled: bool,
 
     // Rendering stats overlay (F2 toggle)
     show_stats: bool,

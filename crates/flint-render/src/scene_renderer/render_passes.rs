@@ -637,8 +637,12 @@ impl SceneRenderer {
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
-        // Update skeleton overlay transforms
-        for draw in &self.skeleton_overlay_draws {
+        // Update skeleton + debug overlay transforms
+        for draw in self
+            .skeleton_overlay_draws
+            .iter()
+            .chain(self.debug_overlay_draws.iter())
+        {
             let uniforms = TransformUniforms {
                 view_proj,
                 model: draw.model,
@@ -785,7 +789,24 @@ impl SceneRenderer {
         // Skeleton overlay pass (bone lines, drawn on top of everything — no depth test)
         if self.debug_state.show_skeleton && phase.draws_ocean_and_after() {
             render_pass.set_pipeline(&self.pipeline.skeleton_line_pipeline);
+            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
             for draw in &self.skeleton_overlay_draws {
+                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            }
+        }
+
+        // Editor/gizmo overlay (ADR 0068): same line pipeline, never gated
+        // behind the skeleton toggle.
+        if !self.debug_overlay_draws.is_empty() && phase.draws_ocean_and_after() {
+            render_pass.set_pipeline(&self.pipeline.skeleton_line_pipeline);
+            // The particle pass may have left its texture bind group at slot 2.
+            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+            for draw in &self.debug_overlay_draws {
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
@@ -1190,34 +1211,25 @@ impl SceneRenderer {
             }
         }
 
-        // Particle systems (after billboards + transparent, before wireframe overlay)
-        // Alpha-blended particles first, then additive
+        // Particle systems (after billboards + transparent, before wireframe overlay).
+        // Draws arrive pre-sorted (order-dependent blends far-to-near, additive
+        // last) and all index one shared instance buffer (ADR 0068).
         if let Some(pp) = &self.particle_pipeline {
             if !self.particle_draws.is_empty() {
                 render_pass
                     .set_index_buffer(pp.quad_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_bind_group(0, &pp.uniform_bind_group, &[]);
+                render_pass.set_bind_group(1, pp.instance_bind_group(), &[]);
 
-                // Alpha pass
-                render_pass.set_pipeline(&pp.alpha_pipeline);
+                let mut current: Option<flint_particles::ParticleBlendMode> = None;
                 for draw in &self.particle_draws {
-                    if draw.additive {
-                        continue;
+                    if current != Some(draw.blend) {
+                        render_pass.set_pipeline(pp.pipeline(draw.blend));
+                        current = Some(draw.blend);
                     }
-                    render_pass.set_bind_group(1, &draw.instance_bind_group, &[]);
-                    render_pass.set_bind_group(2, &draw.texture_bind_group, &[]);
-                    render_pass.draw_indexed(0..6, 0, 0..draw.instance_count);
-                }
-
-                // Additive pass
-                render_pass.set_pipeline(&pp.additive_pipeline);
-                for draw in &self.particle_draws {
-                    if !draw.additive {
-                        continue;
-                    }
-                    render_pass.set_bind_group(1, &draw.instance_bind_group, &[]);
-                    render_pass.set_bind_group(2, &draw.texture_bind_group, &[]);
-                    render_pass.draw_indexed(0..6, 0, 0..draw.instance_count);
+                    render_pass.set_bind_group(2, draw.texture_bind_group.as_ref(), &[]);
+                    let first = draw.first_instance;
+                    render_pass.draw_indexed(0..6, 0, first..first + draw.instance_count);
                 }
             }
         }

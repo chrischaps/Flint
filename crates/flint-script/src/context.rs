@@ -219,6 +219,23 @@ pub enum ScriptCommand {
         entity_id: i64,
         count: i64,
     },
+    /// Spawn a detached one-shot instance of a registered particle effect
+    /// (ADR 0068). `handle` is the id `play_effect` returned to the script.
+    PlayEffect {
+        handle: u64,
+        name: String,
+        position: (f64, f64, f64),
+    },
+    /// Stop emission on a detached effect; particles in flight finish.
+    StopEffect {
+        handle: u64,
+    },
+    /// Tune a detached effect: `emission_scale`, `scale`, `playing`, `x`/`y`/`z`.
+    SetEffectParam {
+        handle: u64,
+        param: String,
+        value: f64,
+    },
     LoadScene {
         path: String,
     },

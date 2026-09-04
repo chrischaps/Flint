@@ -1908,6 +1908,9 @@ fn register_event_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
 
 // ─── Particle API ─────────────────────────────────────────
 
+/// Monotonic handle source for `play_effect` (starts at 1 so 0 means "none").
+static NEXT_EFFECT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // emit_burst(entity_id, count) — fire N particles immediately
     {
@@ -1951,6 +1954,54 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
                 );
             }
         });
+    }
+
+    // play_effect(name, x, y, z) -> handle — spawn a detached one-shot
+    // instance of a `particles/<name>.particles.toml` effect (ADR 0068).
+    // Returns 0 when the command could not be queued.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "play_effect",
+            move |name: &str, x: f64, y: f64, z: f64| -> i64 {
+                let handle = NEXT_EFFECT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::PlayEffect {
+                    handle,
+                    name: name.to_string(),
+                    position: (x, y, z),
+                });
+                handle as i64
+            },
+        );
+    }
+
+    // stop_effect(handle) — stop emission; particles already alive finish
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("stop_effect", move |handle: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::StopEffect {
+                handle: handle.max(0) as u64,
+            });
+        });
+    }
+
+    // set_effect_param(handle, param, value) — emission_scale | scale |
+    // playing (> 0.5) | x | y | z
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_effect_param",
+            move |handle: i64, param: &str, value: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::SetEffectParam {
+                    handle: handle.max(0) as u64,
+                    param: param.to_string(),
+                    value,
+                });
+            },
+        );
     }
 
     // set_emission_rate(entity_id, rate) — update emission rate in ECS

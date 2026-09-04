@@ -350,6 +350,16 @@ pub struct ViewerApp {
     // input cancels — same convention as the model/procgen previewers).
     auto_orbit: bool,
     auto_orbit_speed: f32,
+
+    // Live particles (ADR 0068): the viewer steps the same ParticleSystem the
+    // player uses, so inspector edits to particle_emitter / particle_effect
+    // components show immediately. Controls live in the F4 menu.
+    particles: flint_particles::ParticleSystem,
+    show_particles: bool,
+    particles_paused: bool,
+    particle_speed: f32,
+    particle_alive: usize,
+    last_particle_tick: Instant,
 }
 
 /// Rendering & Effects menu interactions that need `&mut self` side effects
@@ -359,6 +369,10 @@ pub struct ViewerApp {
 struct RenderMenuActions {
     authored_post_clicked: bool,
     dof_follow: Option<bool>,
+    particles_show: Option<bool>,
+    particles_pause: Option<bool>,
+    particles_speed: Option<f32>,
+    particles_restart: bool,
 }
 
 impl ViewerApp {
@@ -406,6 +420,12 @@ impl ViewerApp {
             render_panel_open: false,
             auto_orbit: false,
             auto_orbit_speed: 0.5,
+            particles: flint_particles::ParticleSystem::new(),
+            show_particles: true,
+            particles_paused: false,
+            particle_speed: 1.0,
+            particle_alive: 0,
+            last_particle_tick: Instant::now(),
         }
     }
 
@@ -453,6 +473,12 @@ impl ViewerApp {
             render_panel_open: false,
             auto_orbit: false,
             auto_orbit_speed: 0.5,
+            particles: flint_particles::ParticleSystem::new(),
+            show_particles: true,
+            particles_paused: false,
+            particle_speed: 1.0,
+            particle_alive: 0,
+            last_particle_tick: Instant::now(),
         }
     }
 
@@ -582,6 +608,21 @@ impl ViewerApp {
                 &config,
             );
             scene_renderer.update_from_world(&state.world, &render_context.device);
+
+            // Particles (ADR 0068): effects next to the scene, then textures.
+            flint_particles::load_particle_effects_from_world(
+                &state.scene_path,
+                &mut self.particles,
+            );
+            self.particles.sync.sync_from_world(&state.world);
+            let dirs = flint_particles::texture_search_dirs(&state.scene_path);
+            flint_render::load_particle_textures(
+                &mut scene_renderer,
+                &render_context.device,
+                &render_context.queue,
+                &self.particles.sync,
+                &dirs,
+            );
         }
 
         // Apply the scene's authored [post_process] block (DoF, vignette,
@@ -668,6 +709,9 @@ impl ViewerApp {
         // state (after DoF follow so the mirror shows the followed focus).
         self.sync_render_panel();
 
+        // Particles: step, pack, upload (ADR 0068)
+        self.tick_particles();
+
         // Render the 3D scene
         {
             let context = self.render_context.as_ref().unwrap();
@@ -686,6 +730,18 @@ impl ViewerApp {
         }
         if let Some(on) = menu_actions.dof_follow {
             self.set_dof_follow(on);
+        }
+        if let Some(show) = menu_actions.particles_show {
+            self.show_particles = show;
+        }
+        if let Some(paused) = menu_actions.particles_pause {
+            self.particles_paused = paused;
+        }
+        if let Some(speed) = menu_actions.particles_speed {
+            self.particle_speed = speed;
+        }
+        if menu_actions.particles_restart {
+            self.particles.sync.restart_all();
         }
 
         // Process gizmo interaction
@@ -718,6 +774,35 @@ impl ViewerApp {
         }
 
         output.present();
+    }
+
+    /// Advance the particle simulation by real time (scaled), then pack and
+    /// upload. Runs every frame so inspector edits show live; paused keeps
+    /// the last frame on screen.
+    fn tick_particles(&mut self) {
+        let now = Instant::now();
+        let dt = (now - self.last_particle_tick).as_secs_f32().min(0.1);
+        self.last_particle_tick = now;
+        let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer)
+        else {
+            return;
+        };
+        if !self.show_particles {
+            renderer.update_particles(&context.device, &context.queue, &[]);
+            return;
+        }
+        {
+            let state = self.state.lock().unwrap();
+            if self.particles_paused {
+                // Still pick up component edits so a paused frame reflects them.
+                self.particles.sync.sync_from_world(&state.world);
+            } else {
+                self.particles.step(&state.world, dt * self.particle_speed);
+            }
+        }
+        self.particle_alive = self.particles.sync.total_alive();
+        self.particles.pack(Some(self.camera.position_array()));
+        renderer.update_particles_from(&context.device, &context.queue, &self.particles.sync);
     }
 
     /// View depth of the DoF focus entity along the camera forward axis, as
@@ -916,9 +1001,25 @@ impl ViewerApp {
             let mut pitch_delta = 0.0f32;
             let mut zoom_factor = 1.0f32;
 
-            // Auto-orbit turntable: continuous yaw until manual orbit input
+            // Auto-orbit turntable: continuous yaw until manual orbit input.
+            // While it runs, the orbit centre eases onto the selected entity
+            // so the thing you picked stays framed instead of drifting out.
             if self.auto_orbit {
                 yaw_delta += self.auto_orbit_speed * dt;
+                if let Some(id) = self.scene_tree.selected_entity() {
+                    let focus = self
+                        .state
+                        .lock()
+                        .ok()
+                        .and_then(|st| st.world.get_world_position(id));
+                    if let Some(p) = focus {
+                        let t = 1.0 - (-6.0 * dt).exp();
+                        self.camera.target.x = lerp(self.camera.target.x, p.x, t);
+                        self.camera.target.y = lerp(self.camera.target.y, p.y, t);
+                        self.camera.target.z = lerp(self.camera.target.z, p.z, t);
+                        self.camera.update_orbit();
+                    }
+                }
             }
 
             if self.held_orbit_keys.contains(&KeyCode::KeyA) {
@@ -982,6 +1083,29 @@ impl ViewerApp {
         };
         let has_scene_post = self.state.lock().unwrap().scene_post.is_some();
         let scene_post_enabled = self.scene_post_enabled;
+        let show_particles = self.show_particles;
+        let particles_paused = self.particles_paused;
+        let particle_speed = self.particle_speed;
+        let particle_alive = self.particle_alive;
+        let particle_instances = self.particles.sync.instance_count();
+        let particle_emitters = self.particles.sync.emitter_count();
+        let particle_effects: Vec<(String, String)> = {
+            let st = self.state.lock().unwrap();
+            self.particles
+                .sync
+                .instances()
+                .filter_map(|(key, inst)| match (&inst.source, key) {
+                    (
+                        flint_particles::EffectSource::Asset(fx),
+                        flint_particles::InstanceKey::Entity(id),
+                    ) => Some((
+                        st.world.get_name(id).unwrap_or("?").to_string(),
+                        fx.name.clone(),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        };
 
         // Extract references to disjoint fields to satisfy the borrow checker
         let window = match &self.window {
@@ -1207,6 +1331,45 @@ impl ViewerApp {
                                     _ => {
                                         ui.label("No focus target — select an entity.");
                                     }
+                                }
+                            });
+                        // Particles (ADR 0068): the viewer simulates live.
+                        egui::CollapsingHeader::new("Particles")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                let mut show = show_particles;
+                                if ui.checkbox(&mut show, "Simulate & draw").changed() {
+                                    menu_actions.particles_show = Some(show);
+                                }
+                                let mut paused = particles_paused;
+                                if ui.checkbox(&mut paused, "Pause").changed() {
+                                    menu_actions.particles_pause = Some(paused);
+                                }
+                                let mut speed = particle_speed;
+                                if ui
+                                    .add(egui::Slider::new(&mut speed, 0.0..=4.0).text("Speed"))
+                                    .changed()
+                                {
+                                    menu_actions.particles_speed = Some(speed);
+                                }
+                                if ui.button("Restart all").clicked() {
+                                    menu_actions.particles_restart = true;
+                                }
+                                ui.label(format!(
+                                    "{} alive · {} instance{} · {} emitter{}",
+                                    particle_alive,
+                                    particle_instances,
+                                    if particle_instances == 1 { "" } else { "s" },
+                                    particle_emitters,
+                                    if particle_emitters == 1 { "" } else { "s" },
+                                ));
+                                for (entity, fx) in &particle_effects {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("{entity} → {fx}"));
+                                        ui.weak(format!(
+                                            "flint edit particles/{fx}.particles.toml"
+                                        ));
+                                    });
                                 }
                             });
                     });
@@ -1745,6 +1908,23 @@ impl ViewerApp {
                             &config,
                         );
                         renderer.update_from_world(&state.world, &context.device);
+
+                        // Particles: effects may have changed on disk too
+                        // (the watcher covers the scene dir recursively).
+                        self.particles.clear();
+                        flint_particles::load_particle_effects_from_world(
+                            &state.scene_path,
+                            &mut self.particles,
+                        );
+                        self.particles.sync.sync_from_world(&state.world);
+                        let dirs = flint_particles::texture_search_dirs(&state.scene_path);
+                        flint_render::load_particle_textures(
+                            renderer,
+                            &context.device,
+                            &context.queue,
+                            &self.particles.sync,
+                            &dirs,
+                        );
 
                         // Re-derive the authored post-process so [post_process]
                         // edits hot-reload like the rest of the scene.

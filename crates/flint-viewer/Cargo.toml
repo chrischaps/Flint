@@ -11,6 +11,7 @@ flint-ecs = { workspace = true }
 flint-scene = { workspace = true }
 flint-schema = { workspace = true }
 flint-render = { workspace = true }
+flint-particles = { workspace = true }
 flint-debug-ui = { workspace = true }
 flint-import = { workspace = true }
 flint-constraint = { workspace = true }

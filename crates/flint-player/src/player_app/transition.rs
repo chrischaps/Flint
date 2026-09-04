@@ -569,6 +569,7 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
 
+        flint_particles::load_particle_effects_from_world(&self.scene_path, &mut self.particles);
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));

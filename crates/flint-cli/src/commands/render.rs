@@ -208,6 +208,12 @@ pub struct RenderArgs {
     #[arg(long)]
     pub grain_time: Option<f32>,
 
+    /// Simulate particle emitters and effects for N seconds at a fixed
+    /// 1/60 s step before capturing (deterministic: same value, same
+    /// pixels). Default: no particles, so existing snapshots are unchanged
+    #[arg(long)]
+    pub particle_time: Option<f32>,
+
     /// Color grade lift as R,G,B (per-channel add post-ACES; neutral 0,0,0)
     #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub grade_lift: Option<[f32; 3]>,
@@ -537,6 +543,34 @@ pub fn run(args: RenderArgs) -> Result<()> {
     renderer.aspect_ratio = camera.aspect;
 
     renderer.update_from_world(&world, &ctx.device);
+
+    // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
+    // at a given --particle-time is reproducible run to run.
+    if let Some(seconds) = args.particle_time {
+        use flint_runtime::RuntimeSystem;
+        let mut particles = flint_particles::ParticleSystem::new();
+        flint_particles::load_particle_effects_from_world(&args.scene, &mut particles);
+        particles
+            .initialize(&mut world)
+            .context("Failed to initialize particles")?;
+        let dirs = flint_particles::texture_search_dirs(&args.scene);
+        flint_render::load_particle_textures(
+            &mut renderer,
+            &ctx.device,
+            &ctx.queue,
+            &particles.sync,
+            &dirs,
+        );
+        particles.simulate_to(&world, seconds.max(0.0), 1.0 / 60.0);
+        particles.pack(Some(camera.position_array()));
+        renderer.update_particles_from(&ctx.device, &ctx.queue, &particles.sync);
+        println!(
+            "Particles: {} alive across {} emitter(s) at t = {:.2}s",
+            particles.sync.total_alive(),
+            particles.sync.emitter_count(),
+            seconds
+        );
+    }
 
     // Render
     renderer.render_to(

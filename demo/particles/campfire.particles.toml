@@ -1,0 +1,105 @@
+# Campfire — three emitters that only make sense together.
+#
+# Reference this from a scene with:
+#
+#   [entities.fire.particle_effect]
+#   effect = "campfire"
+#
+# Open it in the editor with `flint edit demo/particles/campfire.particles.toml`
+# or snapshot it headlessly with `--render out.png --anim-time 1.5`.
+
+name = "campfire"
+seed = 7
+
+# ------------------------------------------------------------------
+#  Flames: a tight additive cone, tumbling as they rise
+# ------------------------------------------------------------------
+[[emitters]]
+name = "flames"
+emission_rate = 40.0
+max_particles = 200
+lifetime = [0.3, 0.8]
+speed = [1.5, 3.0]
+direction = [0, 1, 0]
+spread = 20.0
+gravity = [0, 2.0, 0]
+blend_mode = "additive"
+sort = "none"
+size = { keys = [ { t = 0.0, v = [0.12, 0.12] }, { t = 0.3, v = [0.16, 0.2] }, { t = 1.0, v = [0.02, 0.02] } ], interp = "smooth" }
+size_scale = [0.8, 1.2]
+color = { keys = [ { t = 0.0, v = [1.0, 0.7, 0.1, 0.9] }, { t = 0.6, v = [1.0, 0.25, 0.0, 0.7] }, { t = 1.0, v = [0.4, 0.0, 0.0, 0.0] } ] }
+angular_velocity = [-90, 90]
+
+[emitters.shape]
+kind = "cone"
+radius = 0.15
+angle = 10.0
+
+[[emitters.forces]]
+kind = "noise"
+strength = 1.2
+frequency = 0.8
+speed = 0.5
+
+# ------------------------------------------------------------------
+#  Embers: repeating bursts that drift up, each popping into a puff
+# ------------------------------------------------------------------
+[[emitters]]
+name = "embers"
+emission_rate = 0.0
+max_particles = 64
+lifetime = [1.0, 2.5]
+speed = [1.0, 2.0]
+spread = 35.0
+gravity = [0, 0.8, 0]
+damping = 0.6
+blend_mode = "additive"
+size = { start = [0.03, 0.03], end = [0.0, 0.0] }
+color = { start = [1.0, 0.6, 0.2, 1.0], end = [1.0, 0.2, 0.0, 0.0] }
+on_death = { emitter = "puff", count = 1, inherit_velocity = 0.2 }
+
+[[emitters.bursts]]
+time = 0.0
+count = [3, 6]
+cycles = 0          # 0 = repeat forever
+interval = 1.5
+
+# ------------------------------------------------------------------
+#  Puff: rate 0 — only ever fed by dying embers
+# ------------------------------------------------------------------
+[[emitters]]
+name = "puff"
+emission_rate = 0.0
+max_particles = 64
+lifetime = 0.4
+speed = 0.2
+gravity = [0, 0.3, 0]
+blend_mode = "alpha"
+sort = "back_to_front"
+color = { start = [0.5, 0.5, 0.5, 0.3], end = [0.5, 0.5, 0.5, 0.0] }
+size = { start = [0.05, 0.05], end = [0.2, 0.2] }
+
+# ------------------------------------------------------------------
+#  Smoke: slow, soft, sorted wisps above the flames
+# ------------------------------------------------------------------
+[[emitters]]
+name = "smoke"
+emission_rate = 6.0
+max_particles = 80
+lifetime = [2.0, 4.0]
+speed = [0.3, 0.7]
+spread = 25.0
+gravity = [0, 0.4, 0]
+damping = 0.3
+blend_mode = "alpha"
+sort = "back_to_front"
+shape_offset = [0, 0.8, 0]
+size = { start = [0.15, 0.15], end = [0.7, 0.7] }
+color = { keys = [ { t = 0.0, v = [0.35, 0.35, 0.35, 0.0] }, { t = 0.15, v = [0.4, 0.4, 0.4, 0.25] }, { t = 1.0, v = [0.6, 0.6, 0.6, 0.0] } ] }
+angular_velocity = [-15, 15]
+
+[[emitters.forces]]
+kind = "noise"
+strength = 0.4
+frequency = 0.5
+speed = 0.2

@@ -48,6 +48,12 @@ pub struct Camera {
     /// When > 0, `orthographic_matrix()` uses this directly instead of
     /// deriving from `distance * tan(fov/2)`. Set to 0.0 to use the legacy formula.
     pub ortho_height: f32,
+
+    /// Clip-space (NDC) offset applied after projection, so the look-at point
+    /// can land off the window centre — editors use it to centre the target
+    /// in the part of the window their side panels leave visible. `[0, 0]`
+    /// is a plain projection.
+    pub ndc_offset: [f32; 2],
 }
 
 impl Default for Camera {
@@ -66,6 +72,7 @@ impl Default for Camera {
             mode: CameraMode::Orbit,
             orthographic: false,
             ortho_height: 0.0,
+            ndc_offset: [0.0, 0.0],
         }
     }
 }
@@ -160,11 +167,21 @@ impl Camera {
 
     /// Get the projection matrix (4x4, column-major)
     pub fn projection_matrix(&self) -> [[f32; 4]; 4] {
-        if self.orthographic {
+        let mut m = if self.orthographic {
             self.orthographic_matrix()
         } else {
             self.perspective_matrix()
+        };
+        // clip.x += ox * clip.w (likewise y): a pure screen-space shift that
+        // is valid for both projections because it rides the w row.
+        let [ox, oy] = self.ndc_offset;
+        if ox != 0.0 || oy != 0.0 {
+            for col in m.iter_mut() {
+                col[0] += ox * col[3];
+                col[1] += oy * col[3];
+            }
         }
+        m
     }
 
     fn perspective_matrix(&self) -> [[f32; 4]; 4] {

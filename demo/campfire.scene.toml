@@ -1,0 +1,95 @@
+[scene]
+name = "Campfire Effect"
+version = "1.0"
+description = "A particle_effect entity referencing demo/particles/campfire.particles.toml, beside an inline sparks emitter for comparison"
+
+[camera]
+position = [3.2, 2.0, 4.0]
+target = [0, 0.9, 0]
+fov = 50.0
+
+# ------------------------------------------------------------
+#  Ground and a ring of stones so the fire has somewhere to sit
+# ------------------------------------------------------------
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, -0.05, 0]
+scale = [6, 0.1, 6]
+[entities.ground.material]
+roughness = 0.95
+
+[entities.stone_a]
+archetype = "furniture"
+[entities.stone_a.transform]
+position = [0.55, 0.08, 0.0]
+rotation = [0, 20, 0]
+scale = [0.25, 0.16, 0.2]
+[entities.stone_a.material]
+roughness = 0.9
+
+[entities.stone_b]
+archetype = "furniture"
+[entities.stone_b.transform]
+position = [-0.5, 0.08, 0.25]
+rotation = [0, -35, 0]
+scale = [0.22, 0.16, 0.24]
+[entities.stone_b.material]
+roughness = 0.9
+
+[entities.stone_c]
+archetype = "furniture"
+[entities.stone_c.transform]
+position = [0.05, 0.08, -0.55]
+rotation = [0, 60, 0]
+scale = [0.26, 0.14, 0.2]
+[entities.stone_c.material]
+roughness = 0.9
+
+# ------------------------------------------------------------
+#  The effect: flames + embers + puffs + smoke from one asset
+# ------------------------------------------------------------
+[entities.fire]
+[entities.fire.transform]
+position = [0, 0.15, 0]
+[entities.fire.particle_effect]
+effect = "campfire"
+
+# ------------------------------------------------------------
+#  A legacy inline emitter for side-by-side comparison
+# ------------------------------------------------------------
+[entities.sparks]
+[entities.sparks.transform]
+position = [1.6, 0.2, -0.6]
+[entities.sparks.particle_emitter]
+emission_rate = 0.0
+burst_count = 30
+max_particles = 60
+lifetime_min = 0.8
+lifetime_max = 1.6
+speed_min = 2.0
+speed_max = 4.0
+direction = [0, 1, 0]
+spread = 40.0
+gravity = [0, -9.81, 0]
+size_start = 0.03
+size_end = 0.0
+color_start = [1.0, 0.9, 0.5, 1.0]
+color_end = [1.0, 0.4, 0.0, 0.0]
+blend_mode = "additive"
+stretch = 0.02
+duration = 1.5
+looping = true
+
+[lights.sun]
+type = "directional"
+direction = [-0.4, -1.0, -0.3]
+color = [0.55, 0.6, 0.75]
+intensity = 0.6
+
+[lights.fire_glow]
+type = "point"
+position = [0, 0.6, 0]
+color = [1.0, 0.55, 0.2]
+intensity = 6.0
+range = 6.0

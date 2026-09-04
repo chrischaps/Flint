@@ -22,7 +22,7 @@ use flint_core::components as comp;
 use flint_core::Vec3 as FlintVec3;
 #[cfg(feature = "debug-hud")]
 use flint_debug_ui::DebugPanel as _;
-use flint_render::{GrassEntityPosition, ParticleDrawData, ParticleInstanceGpu};
+use flint_render::GrassEntityPosition;
 use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
 use std::collections::HashSet;
 
@@ -155,6 +155,74 @@ impl PlayerApp {
                     }
                 }
                 panel.clear_dirty();
+            }
+        }
+
+        // Particles panel (ADR 0068): live-mirror counts while clean, apply
+        // play/stop/burst/budget/draw actions when dirty.
+        #[cfg(feature = "debug-hud")]
+        for panel in &mut self.debug_panels {
+            if panel.name() != flint_debug_ui::PARTICLES_DEBUG_PANEL {
+                continue;
+            }
+            let Some(pp) = panel
+                .as_any_mut()
+                .downcast_mut::<flint_debug_ui::ParticlesDebugPanel>()
+            else {
+                continue;
+            };
+            if flint_debug_ui::DebugPanel::is_dirty(pp) {
+                for action in pp.take_actions() {
+                    use flint_debug_ui::ParticlePanelAction as A;
+                    match action {
+                        A::Play(id) => self.particles.sync.set_playing(id, true),
+                        A::Stop(id) => self.particles.sync.set_playing(id, false),
+                        A::Burst(id, n) => self.particles.sync.queue_burst(id, n),
+                        A::StopDetached(h) => self.particles.sync.stop_effect(h),
+                        A::RestartAll => self.particles.sync.restart_all(),
+                        A::SetBudget(b) => self.particles.sync.set_budget(b as usize),
+                        A::SetRender(on) => self.particles_render_enabled = on,
+                    }
+                }
+                flint_debug_ui::DebugPanel::clear_dirty(pp);
+            } else {
+                let rows: Vec<flint_debug_ui::EmitterRow> = self
+                    .particles
+                    .sync
+                    .instances()
+                    .map(|(key, inst)| {
+                        let (entity_id, handle, label) = match key {
+                            flint_particles::InstanceKey::Entity(id) => (
+                                Some(id),
+                                0,
+                                self.world.get_name(id).unwrap_or("?").to_string(),
+                            ),
+                            flint_particles::InstanceKey::Detached(h) => {
+                                (None, h, format!("effect #{h}"))
+                            }
+                        };
+                        let effect = match &inst.source {
+                            flint_particles::EffectSource::Asset(fx) => Some(fx.name.clone()),
+                            flint_particles::EffectSource::Inline => None,
+                        };
+                        flint_debug_ui::EmitterRow {
+                            entity_id,
+                            handle,
+                            label,
+                            effect,
+                            emitters: inst.emitters.len(),
+                            alive: inst.alive(),
+                            capacity: inst.capacity(),
+                            playing: inst.any_emitter_playing(),
+                        }
+                    })
+                    .collect();
+                pp.refresh(
+                    rows,
+                    self.particles.sync.total_alive(),
+                    self.particles.sync.budget() as u32,
+                );
+                pp.render_enabled = self.particles_render_enabled;
             }
         }
 
@@ -945,22 +1013,18 @@ impl PlayerApp {
             renderer.update_from_world(&self.world, &context.device);
         }
 
-        // Upload particle instance data to GPU
+        // Pack (camera-sorted) and upload particle instances (ADR 0068)
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
-            let sync_draw_data = self.particles.sync.draw_data();
-            let render_draw_data: Vec<ParticleDrawData<'_>> = sync_draw_data
-                .iter()
-                .map(|d| {
-                    let gpu_instances: &[ParticleInstanceGpu] =
-                        bytemuck::cast_slice(bytemuck::cast_slice::<_, u8>(d.instances));
-                    ParticleDrawData {
-                        instances: gpu_instances,
-                        texture: d.texture,
-                        additive: d.blend_mode == flint_particles::ParticleBlendMode::Additive,
-                    }
-                })
-                .collect();
-            renderer.update_particles(&context.device, render_draw_data);
+            if self.particles_render_enabled {
+                self.particles.pack(Some(self.camera.position_array()));
+                renderer.update_particles_from(
+                    &context.device,
+                    &context.queue,
+                    &self.particles.sync,
+                );
+            } else {
+                renderer.update_particles(&context.device, &context.queue, &[]);
+            }
         }
 
         // Update grass time and entity positions for bend-on-contact

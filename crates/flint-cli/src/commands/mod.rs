@@ -9,6 +9,7 @@ pub mod gen;
 pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod init;
+pub mod particle_edit;
 pub mod play;
 pub mod play_chart;
 pub mod play_chart_window;

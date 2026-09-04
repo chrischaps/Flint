@@ -14,6 +14,26 @@ use super::{
 use flint_core::components as comp;
 
 impl PlayerApp {
+    /// Create the Particles panel when the scene has any `particle_emitter`
+    /// or `particle_effect` entity (ADR 0068). Rows are refreshed each frame
+    /// by the drain in `frame.rs`.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn create_particles_debug_panel(&mut self) {
+        let has_any = !self
+            .world
+            .entities_with_component(comp::PARTICLE_EMITTER)
+            .is_empty()
+            || !self
+                .world
+                .entities_with_component(comp::PARTICLE_EFFECT)
+                .is_empty();
+        if !has_any {
+            return;
+        }
+        self.debug_panels
+            .push(Box::new(flint_debug_ui::ParticlesDebugPanel::new()));
+    }
+
     /// Create the ocean tuning panel if the scene has an `ocean` component.
     #[cfg(feature = "debug-hud")]
     pub(super) fn create_ocean_debug_panel(&mut self) {

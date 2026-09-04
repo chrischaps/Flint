@@ -115,6 +115,7 @@ impl PlayerApp {
             terrain: None,
             #[cfg(feature = "debug-hud")]
             debug_panels: Vec::new(),
+            particles_render_enabled: true,
             show_stats: false,
             stats_frame_times: std::collections::VecDeque::new(),
             procgen_resolver: flint_procgen::ProcGenResolver::new(),
@@ -457,7 +458,9 @@ impl PlayerApp {
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Animation init failed: {:?}", e));
 
-        // Initialize particles
+        // Initialize particles: register `particles/*.particles.toml` first so
+        // `particle_effect` components resolve on the first sync.
+        flint_particles::load_particle_effects_from_world(&self.scene_path, &mut self.particles);
         self.particles
             .initialize(&mut self.world)
             .unwrap_or_else(|e| tracing::warn!("Particles init failed: {:?}", e));
@@ -522,6 +525,7 @@ impl PlayerApp {
             self.create_visitor_debug_panel();
             self.create_dead_calm_debug_panel();
             self.create_camera_debug_panel();
+            self.create_particles_debug_panel();
             // Rendering & Effects (ADR 0053): unconditional — every scene has
             // a renderer to tune. Registered closed; F4 summons it. show_freeze
             // is true here because player scripts drive post fields.
@@ -633,7 +637,7 @@ impl PlayerApp {
             return;
         };
         load_particle_textures_from_world(
-            &self.world,
+            &self.particles,
             renderer,
             &context.device,
             &context.queue,

@@ -1,0 +1,36 @@
+# Smoke — slow, soft, depth-sorted wisps that fade in, swell and thin out.
+# Created by `flint edit <file> --preset smoke`; edit freely.
+
+name = "smoke"
+
+[[emitters]]
+name = "smoke"
+emission_rate = 8.0
+max_particles = 128
+lifetime = [2.5, 4.5]
+speed = [0.3, 0.7]
+direction = [0, 1, 0]
+spread = 25.0
+gravity = [0, 0.35, 0]
+damping = 0.3
+blend_mode = "alpha"
+sort = "back_to_front"
+size = { start = [0.2, 0.2], end = [0.9, 0.9] }
+size_scale = [0.8, 1.25]
+color = { keys = [ { t = 0.0, v = [0.35, 0.35, 0.37, 0.0] }, { t = 0.15, v = [0.42, 0.42, 0.45, 0.28] }, { t = 1.0, v = [0.62, 0.62, 0.65, 0.0] } ] }
+angular_velocity = [-15, 15]
+
+[emitters.shape]
+kind = "sphere"
+radius = 0.15
+
+[[emitters.forces]]
+kind = "noise"
+strength = 0.4
+frequency = 0.5
+speed = 0.2
+
+[[emitters.forces]]
+kind = "wind"
+velocity = [0.3, 0.0, 0.0]
+strength = 0.3
