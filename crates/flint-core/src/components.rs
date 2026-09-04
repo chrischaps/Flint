@@ -25,6 +25,7 @@ pub const SPRITE_ANIMATOR: &str = "sprite_animator";
 // --- Physics ---
 pub const RIGIDBODY: &str = "rigidbody";
 pub const COLLIDER: &str = "collider";
+pub const JOINT: &str = "joint";
 pub const CHARACTER_CONTROLLER: &str = "character_controller";
 pub const PLAYER: &str = "player";
 

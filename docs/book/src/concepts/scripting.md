@@ -73,7 +73,10 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_position(id)` | `Map` | Get entity position as `#{x, y, z}` |
 | `set_position(id, x, y, z)` | --- | Set entity position |
 | `get_rotation(id)` | `Map` | Get entity rotation (euler degrees) as `#{x, y, z}` |
-| `set_rotation(id, x, y, z)` | --- | Set entity rotation (euler degrees) |
+| `set_rotation(id, x, y, z)` | --- | Set entity rotation (euler degrees); clears any `rotation_quat` |
+| `get_rotation_quat(id)` | `Map` | The rotation the entity renders with, as `#{x, y, z, w}` (`rotation_quat` if present, else the euler angles converted) |
+| `set_rotation_quat(id, x, y, z, w)` | --- | Set the rotation as a quaternion (normalised); euler `rotation` is zeroed |
+| `rotate_local(id, x, y, z)` | --- | Compose a rotation (euler degrees) about the entity's own axes onto its current orientation, rest quaternion included (ADR 0069) |
 | `distance(a, b)` | `f64` | Euclidean distance between two entities |
 | `set_parent(child_id, parent_id)` | --- | Set an entity's parent in the hierarchy |
 | `get_parent(id)` | `i64` | Get the parent entity ID (`-1` if none) |
@@ -249,6 +252,9 @@ Physics functions provide raycasting and camera access for combat, line-of-sight
 | `raycast(ox, oy, oz, dx, dy, dz, max_dist)` | `Map` or `()` | Cast a ray from origin in direction. Returns hit info or `()` if nothing hit |
 | `move_character(id, dx, dy, dz)` | `Map` or `()` | Collision-corrected kinematic movement. Returns `#{x, y, z, grounded}` |
 | `get_collider_extents(id)` | `Map` or `()` | Collider shape dimensions (see below) |
+| `set_joint_target(id, value)` | --- | Write `joint.motor_target` (degrees for hinge/spherical, metres for prismatic); applied on the next fixed step (ADR 0069) |
+| `get_joint_target(id)` | `f64` | Read `joint.motor_target` |
+| `get_joint_position(id)` | `f64` or `()` | Simulated joint coordinate from the rest pose: hinge angle in degrees or prismatic displacement in metres |
 | `get_camera_position()` | `Map` | Camera world position as `#{x, y, z}` |
 | `get_camera_direction()` | `Map` | Camera forward vector as `#{x, y, z}` |
 | `set_camera_position(x, y, z)` | --- | Override camera position from script |

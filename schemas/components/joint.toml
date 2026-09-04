@@ -1,0 +1,18 @@
+# Physics joint (ADR 0069). Attaches this entity's rigidbody to another body
+# with a Rapier impulse joint. The jointed entity should be a dynamic body; the
+# parent is usually kinematic (script-posed) or static. Anchors and axes are in
+# this entity's local frame; every entity on the physics chain must have unit
+# scale. Angles are degrees, distances metres; the engine converts for Rapier.
+[component.joint]
+type = { type = "enum", values = ["hinge", "prismatic", "spherical", "fixed"], default = "hinge", description = "Joint kind: hinge (one rotation axis), prismatic (one slide axis), spherical (ball), fixed (welded)" }
+parent = { type = "string", default = "", description = "Entity name the joint attaches to; empty uses the transform parent" }
+anchor = { type = "vec3", default = [0, 0, 0], description = "Pivot point in this entity's local frame" }
+axis = { type = "vec3", default = [1, 0, 0], description = "Hinge rotation axis or prismatic slide axis, local frame" }
+limits = { type = "vec2", default = [0, 0], description = "[min, max] in degrees (hinge/spherical) or metres (prismatic); min >= max means free" }
+motor_target = { type = "f32", default = 0.0, description = "Position target in degrees or metres, measured from the rest pose; scripts write this each frame" }
+motor_stiffness = { type = "f32", default = 0.0, min = 0.0, description = "Spring stiffness pulling toward motor_target; 0 with 0 damping disables the motor" }
+motor_damping = { type = "f32", default = 0.0, min = 0.0, description = "Motor damping (settle speed)" }
+motor_max_force = { type = "f32", default = 0.0, min = 0.0, description = "Maximum motor force/torque; 0 = unlimited" }
+motor_model = { type = "enum", values = ["acceleration", "force"], default = "acceleration", description = "acceleration = mass independent gains; force = raw spring gains" }
+motor_axis = { type = "enum", values = ["x", "y", "z"], default = "x", description = "Spherical joints only: which angular axis the motor and limits act on" }
+contacts_enabled = { type = "bool", default = false, description = "Let the two jointed bodies collide with each other" }

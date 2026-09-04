@@ -10,6 +10,9 @@ pub mod character;
 pub mod sync;
 pub mod world;
 
+#[cfg(test)]
+mod joint_tests;
+
 use character::CharacterController;
 use flint_core::components as comp;
 use flint_core::{EntityId, Result, Vec3};
@@ -44,6 +47,7 @@ pub enum ColliderExtents {
     Box { half_extents: [f32; 3] },
     Sphere { radius: f32 },
     Capsule { radius: f32, half_height: f32 },
+    Cylinder { radius: f32, half_height: f32 },
 }
 
 /// Physics system implementing RuntimeSystem for the game loop
@@ -156,6 +160,17 @@ impl PhysicsSystem {
         })
     }
 
+    /// Current joint coordinate of an entity's joint (hinge degrees or
+    /// prismatic metres), or `None` when it has no hinge/prismatic joint.
+    pub fn joint_position(&self, entity_id: EntityId) -> Option<f32> {
+        self.sync.joint_position(entity_id, &self.physics_world)
+    }
+
+    /// Number of live impulse joints (diagnostics)
+    pub fn joint_count(&self) -> usize {
+        self.physics_world.impulse_joint_count()
+    }
+
     /// Query an entity's collider shape dimensions.
     pub fn get_entity_collider_extents(&self, entity_id: EntityId) -> Option<ColliderExtents> {
         let collider_handle = *self.sync.collider_map.get(&entity_id)?;
@@ -175,6 +190,11 @@ impl PhysicsSystem {
             Some(ColliderExtents::Capsule {
                 radius: capsule.radius,
                 half_height: capsule.half_height(),
+            })
+        } else if let Some(cyl) = shape.as_cylinder() {
+            Some(ColliderExtents::Cylinder {
+                radius: cyl.radius,
+                half_height: cyl.half_height,
             })
         } else {
             None
@@ -257,9 +277,14 @@ impl PhysicsSystem {
 
     /// Remove a single entity from the physics world (for chunk unloading).
     pub fn remove_entity(&mut self, entity_id: EntityId) {
-        // Remove rigid body (which also removes attached colliders in Rapier)
+        // Remove rigid body (which also removes attached colliders and joints in Rapier)
         if let Some(body_handle) = self.sync.body_map.remove(&entity_id) {
+            self.sync
+                .forget_joints_of_body(body_handle, &self.physics_world);
             self.physics_world.remove_rigid_body(body_handle);
+        } else if let Some(joint_handle) = self.sync.joint_map.remove(&entity_id) {
+            self.physics_world.remove_impulse_joint(joint_handle);
+            self.sync.joint_cache.remove(&entity_id);
         }
         // Remove standalone collider if any
         if let Some(collider_handle) = self.sync.collider_map.remove(&entity_id) {
@@ -346,8 +371,9 @@ impl PhysicsSystem {
 
 impl RuntimeSystem for PhysicsSystem {
     fn initialize(&mut self, world: &mut FlintWorld) -> Result<()> {
-        // Initial sync of all entities with physics components
+        // Initial sync of all entities with physics components, then joints
         self.sync.sync_to_rapier(world, &mut self.physics_world);
+        self.sync.sync_joints(world, &mut self.physics_world);
 
         // Find the player entity (entity with character_controller component)
         for entity in world.all_entities() {
@@ -363,8 +389,9 @@ impl RuntimeSystem for PhysicsSystem {
     }
 
     fn fixed_update(&mut self, world: &mut FlintWorld, dt: f64) -> Result<()> {
-        // Sync any new entities to Rapier
+        // Sync any new entities to Rapier, then any joints whose bodies now exist
         self.sync.sync_to_rapier(world, &mut self.physics_world);
+        self.sync.sync_joints(world, &mut self.physics_world);
 
         // Update kinematic bodies from ECS transforms (e.g., animated doors)
         self.sync
@@ -373,6 +400,10 @@ impl RuntimeSystem for PhysicsSystem {
         // Update sensor flags (e.g., dead enemies become non-solid)
         self.sync
             .update_sensor_flags(world, &mut self.physics_world);
+
+        // Push script-written joint targets / limits into Rapier
+        self.sync
+            .update_joint_targets(world, &mut self.physics_world);
 
         // Step physics
         self.physics_world.step(dt as f32);

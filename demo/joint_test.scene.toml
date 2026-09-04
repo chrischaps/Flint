@@ -1,0 +1,231 @@
+# ================================================================
+#  JOINT TEST BENCH (ADR 0069)
+# ================================================================
+#
+#  Four small rigs exercising the physics joints and world-space
+#  child bodies:
+#
+#    pendulum   hinge      static anchor, dynamic bob 2 m out on +X,
+#                          swinging in the XY plane
+#    slider     prismatic  kinematic base the script slowly yaws with
+#                          rotate_local(); sprung block above it whose
+#                          motor target flips every 2 s
+#    pod        spherical  static base, dynamic pod hanging below on a
+#                          ball joint, Z motor driven by a sine
+#    wheel      cylinder   dynamic cylinder collider laid on its side
+#                          with collider.rotation, dropped on the floor
+#
+#  Every jointed body is a transform CHILD of its parent so it is
+#  authored in local space and simulated in world space.
+#
+#  Launch:  cargo run --bin flint -- play demo/joint_test.scene.toml
+#  Render:  cargo run --bin flint -- render demo/joint_test.scene.toml \
+#             --output renders/joint_test.png --schemas schemas
+# ================================================================
+
+[scene]
+name = "Joint Test Bench"
+version = "1.0"
+description = "Hinge pendulum, sprung prismatic slider, gimballed pod, cylinder wheel"
+
+[camera]
+position = [0, 4.5, 12]
+target = [0, 3.0, 0]
+fov = 50.0
+
+# ------------------------------------------------------------
+#  Floor
+# ------------------------------------------------------------
+[entities.floor]
+[entities.floor.transform]
+position = [0, -0.1, 0]
+[entities.floor.bounds]
+min = [-10, -0.1, -8]
+max = [10, 0.0, 8]
+[entities.floor.material]
+color = [0.22, 0.24, 0.27, 1.0]
+roughness = 0.9
+[entities.floor.rigidbody]
+body_type = "static"
+[entities.floor.collider]
+shape = "box"
+size = [20, 0.2, 16]
+friction = 0.8
+
+# ------------------------------------------------------------
+#  Pendulum: hinge about Z, bob swings down from horizontal
+# ------------------------------------------------------------
+[entities.pendulum_anchor]
+[entities.pendulum_anchor.transform]
+position = [-4, 5, 0]
+[entities.pendulum_anchor.bounds]
+min = [-0.15, -0.15, -0.15]
+max = [0.15, 0.15, 0.15]
+[entities.pendulum_anchor.material]
+color = [0.85, 0.85, 0.8, 1.0]
+metallic = 0.6
+roughness = 0.35
+[entities.pendulum_anchor.rigidbody]
+body_type = "static"
+[entities.pendulum_anchor.collider]
+shape = "box"
+size = [0.3, 0.3, 0.3]
+
+[entities.pendulum_bob]
+parent = "pendulum_anchor"
+[entities.pendulum_bob.transform]
+position = [2, 0, 0]
+[entities.pendulum_bob.bounds]
+min = [-0.3, -0.3, -0.3]
+max = [0.3, 0.3, 0.3]
+[entities.pendulum_bob.material]
+color = [0.9, 0.35, 0.2, 1.0]
+roughness = 0.5
+[entities.pendulum_bob.rigidbody]
+body_type = "dynamic"
+mass = 2.0
+[entities.pendulum_bob.collider]
+shape = "sphere"
+size = [0.6, 0.6, 0.6]
+[entities.pendulum_bob.joint]
+type = "hinge"
+anchor = [-2, 0, 0]
+axis = [0, 0, 1]
+
+# ------------------------------------------------------------
+#  Slider: kinematic base yawed by script, sprung block on a
+#  vertical prismatic joint with a flipping motor target
+# ------------------------------------------------------------
+[entities.slider_base]
+[entities.slider_base.transform]
+position = [0, 3, 0]
+[entities.slider_base.bounds]
+min = [-0.6, -0.15, -0.6]
+max = [0.6, 0.15, 0.6]
+[entities.slider_base.material]
+color = [0.5, 0.55, 0.62, 1.0]
+metallic = 0.8
+roughness = 0.3
+[entities.slider_base.rigidbody]
+body_type = "kinematic"
+[entities.slider_base.collider]
+shape = "box"
+size = [1.2, 0.3, 1.2]
+
+[entities.slider_block]
+parent = "slider_base"
+[entities.slider_block.transform]
+position = [0, 1, 0]
+[entities.slider_block.bounds]
+min = [-0.3, -0.3, -0.3]
+max = [0.3, 0.3, 0.3]
+[entities.slider_block.material]
+color = [0.25, 0.7, 0.9, 1.0]
+roughness = 0.4
+[entities.slider_block.rigidbody]
+body_type = "dynamic"
+[entities.slider_block.collider]
+shape = "box"
+size = [0.6, 0.6, 0.6]
+[entities.slider_block.joint]
+type = "prismatic"
+axis = [0, 1, 0]
+limits = [-0.5, 0.5]
+motor_target = 0.0
+motor_stiffness = 200.0
+motor_damping = 10.0
+
+# ------------------------------------------------------------
+#  Pod: spherical joint under a static base, Z motor driven by
+#  the script (sine), limits keep it within 45 degrees
+# ------------------------------------------------------------
+[entities.gimbal_base]
+[entities.gimbal_base.transform]
+position = [4, 4.5, 0]
+[entities.gimbal_base.bounds]
+min = [-0.15, -0.15, -0.15]
+max = [0.15, 0.15, 0.15]
+[entities.gimbal_base.material]
+color = [0.85, 0.85, 0.8, 1.0]
+metallic = 0.6
+roughness = 0.35
+[entities.gimbal_base.rigidbody]
+body_type = "static"
+[entities.gimbal_base.collider]
+shape = "box"
+size = [0.3, 0.3, 0.3]
+
+[entities.gimbal_pod]
+parent = "gimbal_base"
+[entities.gimbal_pod.transform]
+position = [0, -1, 0]
+[entities.gimbal_pod.bounds]
+min = [-0.2, -0.45, -0.2]
+max = [0.2, 0.45, 0.2]
+[entities.gimbal_pod.material]
+color = [0.95, 0.8, 0.25, 1.0]
+roughness = 0.45
+[entities.gimbal_pod.rigidbody]
+body_type = "dynamic"
+[entities.gimbal_pod.collider]
+shape = "capsule"
+size = [0.4, 0.9, 0.4]
+[entities.gimbal_pod.joint]
+type = "spherical"
+anchor = [0, 1, 0]
+motor_axis = "z"
+limits = [-45, 45]
+motor_target = 0.0
+motor_stiffness = 60.0
+motor_damping = 6.0
+
+# ------------------------------------------------------------
+#  Wheel: cylinder collider on its side, dropped onto the floor
+# ------------------------------------------------------------
+[entities.wheel]
+[entities.wheel.transform]
+position = [-2.5, 1.5, 3]
+[entities.wheel.bounds]
+min = [-0.15, -0.5, -0.5]
+max = [0.15, 0.5, 0.5]
+[entities.wheel.material]
+color = [0.15, 0.15, 0.17, 1.0]
+roughness = 0.8
+[entities.wheel.rigidbody]
+body_type = "dynamic"
+angular_damping = 0.2
+[entities.wheel.collider]
+shape = "cylinder"
+size = [1.0, 0.3, 0.0]
+rotation = [0, 0, 90]
+friction = 0.9
+
+# ------------------------------------------------------------
+#  Bench controller
+# ------------------------------------------------------------
+[entities.bench]
+[entities.bench.transform]
+position = [0, 0, 0]
+[entities.bench.script]
+source = "joint_test.rhai"
+
+# ------------------------------------------------------------
+#  Lighting
+# ------------------------------------------------------------
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.light]
+type = "directional"
+direction = [-0.35, 0.71, 0.61]
+color = [1.0, 0.98, 0.94]
+intensity = 1.2
+
+[entities.fill]
+[entities.fill.transform]
+position = [-6, 6, 8]
+[entities.fill.light]
+type = "point"
+color = [0.6, 0.7, 1.0]
+intensity = 8.0
+range = 25.0

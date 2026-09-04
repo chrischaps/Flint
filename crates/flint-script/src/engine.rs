@@ -1720,6 +1720,164 @@ mod tests {
         );
     }
 
+    fn quat_dot(a: [f32; 4], b: [f32; 4]) -> f32 {
+        (0..4).map(|i| a[i] * b[i]).sum::<f32>().abs()
+    }
+
+    fn spawn_with_quat(world: &mut FlintWorld, name: &str, q: Option<[f32; 4]>) -> EntityId {
+        let id = world.spawn(name).unwrap();
+        let mut m = toml::map::Map::new();
+        m.insert(
+            "position".into(),
+            toml::Value::Array(vec![
+                toml::Value::Float(0.0),
+                toml::Value::Float(0.0),
+                toml::Value::Float(0.0),
+            ]),
+        );
+        if let Some(q) = q {
+            m.insert(
+                "rotation_quat".into(),
+                toml::Value::Array(q.iter().map(|c| toml::Value::Float(*c as f64)).collect()),
+            );
+        }
+        world
+            .set_component(id, "transform", toml::Value::Table(m))
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn rotate_local_composes_onto_identity() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "spinner", None);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                rotate_local(me, 0.0, 45.0, 0.0);
+                rotate_local(me, 0.0, 45.0, 0.0);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        let expected = flint_core::euler_deg_to_quat(0.0, 90.0, 0.0);
+        assert!(
+            quat_dot(t.effective_quat(), expected) > 0.9999,
+            "two 45° yaws should be 90°: {:?}",
+            t.rotation_quat
+        );
+    }
+
+    #[test]
+    fn rotate_local_composes_onto_rest_quaternion() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        // Rest pose leaned 15° about X (like a fork axis); drive 30° about its own X.
+        let rest = flint_core::euler_deg_to_quat(15.0, 0.0, 0.0);
+        let id = spawn_with_quat(&mut world, "fork", Some(rest));
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                rotate_local(self_entity(), 30.0, 0.0, 0.0);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        let expected = flint_core::euler_deg_to_quat(45.0, 0.0, 0.0);
+        assert!(
+            quat_dot(t.effective_quat(), expected) > 0.9999,
+            "rest 15° + 30° should be 45°: {:?}",
+            t.rotation_quat
+        );
+    }
+
+    #[test]
+    fn set_and_get_rotation_quat_round_trip() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "quat", None);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_rotation_quat(me, 0.0, 0.7071, 0.0, 0.7071);
+                let q = get_rotation_quat(me);
+                set_field(me, "probe", "y", q.y);
+                set_field(me, "probe", "w", q.w);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let comps = world.get_components(id).unwrap();
+        let y = comps
+            .get_field("probe", "y")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        let w = comps
+            .get_field("probe", "w")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        assert!((y - 0.70710677).abs() < 1e-4 && (w - 0.70710677).abs() < 1e-4);
+        let t = world.get_transform(id).unwrap();
+        assert!(t.rotation_quat.is_some());
+        assert_eq!(
+            t.rotation.y, 0.0,
+            "Euler zeroed when the quaternion is authoritative"
+        );
+    }
+
+    #[test]
+    fn set_joint_target_writes_motor_target() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "piston", None);
+        let mut j = toml::map::Map::new();
+        j.insert("type".into(), toml::Value::String("prismatic".into()));
+        world
+            .set_component(id, "joint", toml::Value::Table(j))
+            .unwrap();
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                set_joint_target(self_entity(), 0.25);
+                set_field(self_entity(), "probe", "t", get_joint_target(self_entity()));
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let comps = world.get_components(id).unwrap();
+        let t = comps
+            .get_field("joint", "motor_target")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        assert!((t - 0.25).abs() < 1e-9);
+        let probe = comps
+            .get_field("probe", "t")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        assert!((probe - 0.25).abs() < 1e-9);
+    }
+
     #[test]
     fn test_set_material_color_from_script() {
         let mut engine = ScriptEngine::new();

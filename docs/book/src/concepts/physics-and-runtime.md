@@ -29,16 +29,28 @@ The `flint-physics` crate wraps Rapier 3D and bridges it to Flint's TOML-based c
 
 ## Physics Schemas
 
-Three component schemas define physics properties:
+Four component schemas define physics properties:
 
 **Rigidbody** (`rigidbody.toml`) --- determines how an entity participates in physics:
 - `body_type`: `"static"` (immovable world geometry), `"dynamic"` (simulated), or `"kinematic"` (script-controlled)
-- `mass`, `gravity_scale`
+- `mass`, `gravity_scale`, `linear_damping`, `angular_damping`
+- `mode_2d`: lock to the XY plane (Z = 0, Z rotation only)
 
 **Collider** (`collider.toml`) --- defines the collision shape:
-- `shape`: `"box"`, `"sphere"`, or `"capsule"`
+- `shape`: `"box"`, `"sphere"`, `"capsule"`, `"cylinder"` (Y axis, `size = [diameter, height]`), or `"sprite"` (auto-sized from the `sprite` component)
 - `size`: dimensions of the collision volume
-- `friction`: surface friction coefficient
+- `friction`, `restitution`: surface response
+- `is_sensor`: detect overlaps without producing contacts
+- `offset`, `rotation`: collider pose relative to the entity (added to the `bounds` centre; `rotation = [0, 0, 90]` lays a cylinder on its side as a wheel)
+
+**Joint** (`joint.toml`) --- attaches this entity's body to another with a Rapier impulse joint (see [Joints](#joints)):
+- `type`: `"hinge"`, `"prismatic"`, `"spherical"`, or `"fixed"`
+- `parent`: entity name to attach to; empty uses the transform parent
+- `anchor`, `axis`: pivot and axis in this entity's local frame
+- `limits`: `[min, max]` in degrees (hinge/spherical) or metres (prismatic); `min >= max` means free
+- `motor_target`, `motor_stiffness`, `motor_damping`, `motor_max_force`, `motor_model`: a position motor that scripts retarget each frame
+- `motor_axis`: which angular axis a spherical joint's motor and limits act on
+- `contacts_enabled`: let the two jointed bodies collide
 
 **Character Controller** (`character_controller.toml`) --- first-person movement parameters:
 - `move_speed`, `jump_force`, `height`, `radius`, `camera_mode`
@@ -81,6 +93,79 @@ Then play the scene:
 ```bash
 flint play my_scene.scene.toml
 ```
+
+## Joints
+
+Joints (ADR 0069) connect a **dynamic** body to a parent body so that Rapier
+supplies the secondary motion --- overshoot, settle, bounce --- while scripts
+keep authoring the primary motion. The intended pattern is a hybrid: the root
+and most nodes stay kinematic and script-posed, and a few nodes (a folding
+rear section, a hydraulic piston, a driver pod on a gimbal) become dynamic
+bodies jointed to their kinematic parent. The script writes the joint's
+`motor_target` from its own state; physics supplies the rest.
+
+```toml
+[entities.rig]
+[entities.rig.transform]
+position = [0, 3, 0]
+[entities.rig.rigidbody]
+body_type = "kinematic"          # posed by script with rotate_local()
+[entities.rig.collider]
+shape = "box"
+size = [1.2, 0.3, 1.2]
+
+[entities.piston]
+parent = "rig"                   # authored in the rig's local frame
+[entities.piston.transform]
+position = [0, 1, 0]
+[entities.piston.rigidbody]
+body_type = "dynamic"
+[entities.piston.collider]
+shape = "box"
+size = [0.6, 0.6, 0.6]
+[entities.piston.joint]
+type = "prismatic"
+axis = [0, 1, 0]
+limits = [-0.5, 0.5]
+motor_stiffness = 200.0
+motor_damping = 10.0
+```
+
+```rhai
+// each frame: spring the piston toward the script's stroke, in metres
+set_joint_target(piston, stroke);
+let actual = get_joint_position(piston);   // simulated slide, metres
+```
+
+Rules that follow from the implementation:
+
+- **Bodies live in world space.** A rigidbody on a parented entity (including
+  the `root__Node__Child` entities a multi-node glTF model expands into) is
+  placed from its world matrix, and a dynamic body's simulated pose is written
+  back as a local `position` and `rotation_quat` against the parent's world
+  matrix. Kinematic bodies follow their world matrix every fixed step, so a
+  script posing the root drags jointed children along.
+- **Unit scale on the physics chain.** Anchors, axes and collider offsets are
+  entity-local only when every entity from the body up to the root has unit
+  scale. The engine warns once per entity otherwise.
+- **Units are degrees and metres in TOML.** Hinge and spherical targets and
+  limits are degrees, prismatic ones metres; the engine converts to Rapier's
+  radians internally. `motor_target = 0` is the rest pose the joint was
+  created in.
+- **The joint is created once**, when both bodies exist (a body added later is
+  picked up on the next fixed step), and retargeted in place afterwards: field
+  writes to `joint.*` are compared against the last push and only differences
+  reach Rapier. Removing either entity removes the joint.
+- **Script writes land next frame.** Scripts run after the fixed-physics loop,
+  so a target written this frame is applied on the next step.
+- `flint render` and the scene viewer do not simulate physics; a `joint`
+  component is inert there and the authored rest pose is what renders.
+
+`demo/joint_test.scene.toml` is the reference bench: a hinged pendulum, a
+sprung prismatic slider on a yawing kinematic base, a gimballed pod with a
+driven spherical motor, and a cylinder wheel.
+
+![Joint test bench at rest: pendulum anchor and bob on the left, slider base and block in the middle, gimbal base and pod on the right, wheel on the floor](../images/joint-test-bench.png)
 
 ## Raycasting
 
@@ -219,7 +304,8 @@ Bindings can be remapped at runtime through the `rebind_action()` API:
 The physics system handles several runtime updates beyond the core simulation:
 
 - **Sensor flag updates** --- when game logic marks an entity as dead, its collider can be set to a sensor (non-solid) so other entities pass through it
-- **Kinematic body sync** --- script-controlled position changes are written back to Rapier kinematic bodies each frame
+- **Kinematic body sync** --- script-controlled transforms (world matrix, `rotation_quat` honoured) are pushed to Rapier kinematic bodies each fixed step; dynamic bodies write back both `position` and `rotation_quat`
+- **Joint retargeting** --- changed `joint.motor_target` / gains / limits are pushed into the live impulse joint each fixed step and the child body is woken
 - **Collision event drain** --- the `ChannelEventCollector` collects collision and contact events each physics step; these are drained and dispatched as script callbacks (`on_collision`, `on_trigger_enter`, `on_trigger_exit`)
 
 ## Further Reading

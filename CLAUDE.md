@@ -112,7 +112,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
   ├── flint-animation Property tween + skeletal animation
   ├── flint-audio    Kira spatial audio
   ├── flint-terrain  Heightmap terrain with splat-map blending
-  ├── flint-physics  Rapier 3D (character controller, static bodies)
+  ├── flint-physics  Rapier 3D (character controller, static/kinematic/dynamic bodies, impulse joints)
   ├── flint-runtime  GameClock, InputState, InputConfig, EventBus, GameStateMachine, PersistentStore
   ├── flint-viewer   egui inspector with transform gizmos, undo/redo, TOML write-back
   ├── flint-import   glTF model importer
@@ -137,6 +137,7 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 - **All game UI is script-driven** -- no hardcoded HUD; `hud_controller` entity + `hud.rhai` pattern; engine provides draw primitives (`draw_text/rect/circle/line/sprite`), scripts compose UI
 - **Game project pattern** -- games in own repos with engine as git subtree at `engine/`; `--schemas engine/schemas --schemas schemas` for layered overrides
 - **Fixed-timestep physics** (1/60s) via accumulator; animation/particles run at variable rate
+- **Physics joints** (ADR 0069) -- `joint` component (hinge/prismatic/spherical/fixed) on a dynamic entity, attached to `joint.parent` or the transform parent. Bodies are placed from `get_world_matrix` and dynamic poses write back as local `position` + `rotation_quat`; unit scale is assumed on the physics chain. TOML units are degrees/metres, converted to Rapier radians at sync. Scripts drive `motor_target` via `set_joint_target` and pose rest-quaternion nodes with `rotate_local` / `set_rotation_quat` (`set_rotation` still deletes the quaternion). Bench: `demo/joint_test.scene.toml`
 - **Post-processing** -- HDR pipeline (`Rgba16Float`) with bloom, SSAO, fog, volumetric (god rays), Kuwahara (anisotropic painterly filter), vignette; `[post_process]` TOML block; F4 opens the Rendering & Effects debug menu in the player and viewer (all toggles + parameters, ADR 0053); when active, PBR shaders output linear HDR
 - **Scene transitions** -- `TransitionPhase` lifecycle with script-driven visuals; `PersistentStore` survives transitions; `GameStateMachine` pushdown automaton with per-system `SystemPolicy`
 - **Input system** -- TOML-based `InputConfig` with layered loading (built-in -> game -> user overrides -> CLI); keyboard/mouse/gamepad/touch unified via `Binding` enum

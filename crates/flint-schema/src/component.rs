@@ -165,8 +165,11 @@ fn parse_field_type(
         "bool" => FieldType::Bool,
         "i32" => FieldType::I32,
         "i64" => FieldType::I64,
-        "f32" => FieldType::F32,
+        // `float` / `int` are what most engine schemas write; without these
+        // arms they fell through to String and every numeric field warned.
+        "f32" | "float" => FieldType::F32,
         "f64" => FieldType::F64,
+        "int" => FieldType::I32,
         "string" => FieldType::String,
         "vec3" => FieldType::Vec3,
         // vec2/vec4 have no dedicated variant; validate as a float array so

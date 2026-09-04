@@ -7,6 +7,7 @@ use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
 use flint_core::components as comp;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::EntityId;
+use flint_core::{euler_deg_to_quat, quat_mul, quat_normalize};
 use rhai::{Dynamic, Engine, Map};
 use std::sync::{Arc, Mutex};
 
@@ -526,6 +527,130 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                         table.remove("rotation_quat");
                     }
                 }
+            }
+        });
+    }
+
+    // get_rotation_quat(id: i64) -> Map #{x, y, z, w}
+    // The rotation the entity renders with: `rotation_quat` when present,
+    // otherwise the Euler angles converted (ADR 0069).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_rotation_quat", move |id: i64| -> Map {
+            let mut map = Map::new();
+            if id < 0 {
+                return map;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
+                let q = transform.effective_quat();
+                map.insert("x".into(), Dynamic::from(q[0] as f64));
+                map.insert("y".into(), Dynamic::from(q[1] as f64));
+                map.insert("z".into(), Dynamic::from(q[2] as f64));
+                map.insert("w".into(), Dynamic::from(q[3] as f64));
+            }
+            map
+        });
+    }
+
+    // set_rotation_quat(id: i64, x: f64, y: f64, z: f64, w: f64)
+    // Writes the quaternion directly (normalised); the Euler `rotation` is
+    // zeroed because the quaternion takes precedence when present.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_rotation_quat",
+            move |id: i64, x: f64, y: f64, z: f64, w: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(comps) = world.get_components_mut(eid) {
+                    let q = quat_normalize(&[x as f32, y as f32, z as f32, w as f32]);
+                    write_rotation_quat(comps, q);
+                }
+            },
+        );
+    }
+
+    // rotate_local(id: i64, x_deg: f64, y_deg: f64, z_deg: f64)
+    // Composes a rotation about the entity's OWN axes onto its current
+    // orientation (rest quaternion included), so a node whose rest pose is
+    // leaned can be driven about its own hinge axis.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("rotate_local", move |id: i64, x: f64, y: f64, z: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            let Some(current) = world.get_transform(eid).map(|t| t.effective_quat()) else {
+                return;
+            };
+            let delta = euler_deg_to_quat(x as f32, y as f32, z as f32);
+            let q = quat_normalize(&quat_mul(&current, &delta));
+            if let Some(comps) = world.get_components_mut(eid) {
+                write_rotation_quat(comps, q);
+            }
+        });
+    }
+
+    // set_joint_target(id: i64, value: f64) — writes joint.motor_target
+    // (degrees for hinge/spherical, metres for prismatic); physics picks it
+    // up on the next fixed step.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_joint_target", move |id: i64, value: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                if comps.has(comp::JOINT) {
+                    comps.set_field(comp::JOINT, "motor_target", toml::Value::Float(value));
+                }
+            }
+        });
+    }
+
+    // get_joint_target(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_joint_target", move |id: i64| -> f64 {
+            if id < 0 {
+                return 0.0;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            world
+                .get_components(EntityId::from_raw(id as u64))
+                .and_then(|comps| comps.get_field(comp::JOINT, "motor_target"))
+                .and_then(flint_core::toml_util::toml_f64)
+                .unwrap_or(0.0)
+        });
+    }
+
+    // get_joint_position(id: i64) -> f64 or ()
+    // Simulated joint coordinate: hinge angle in degrees or prismatic
+    // displacement in metres, measured from the rest pose.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_joint_position", move |id: i64| -> Dynamic {
+            if id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let physics = unsafe { c.physics_ref() };
+            match physics.and_then(|p| p.joint_position(EntityId::from_raw(id as u64))) {
+                Some(v) => Dynamic::from(v as f64),
+                None => Dynamic::UNIT,
             }
         });
     }
@@ -1431,6 +1556,26 @@ fn edit_anim_layer(
 }
 
 // ─── Physics / Raycast API ───────────────────────────────
+
+/// Store a quaternion as the entity's rotation. The Euler `rotation` is
+/// zeroed so readers that only know Euler see a neutral value rather than a
+/// stale one; `to_matrix()` uses the quaternion whenever it is present.
+fn write_rotation_quat(comps: &mut flint_ecs::DynamicComponents, q: [f32; 4]) {
+    comps.set_field(
+        comp::TRANSFORM,
+        "rotation_quat",
+        toml::Value::Array(q.iter().map(|c| toml::Value::Float(*c as f64)).collect()),
+    );
+    comps.set_field(
+        comp::TRANSFORM,
+        "rotation",
+        toml::Value::Array(vec![
+            toml::Value::Float(0.0),
+            toml::Value::Float(0.0),
+            toml::Value::Float(0.0),
+        ]),
+    );
+}
 
 fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // raycast(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
@@ -2569,6 +2714,16 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 }) => {
                     let mut map = Map::new();
                     map.insert("shape".into(), Dynamic::from("capsule".to_string()));
+                    map.insert("radius".into(), Dynamic::from(radius as f64));
+                    map.insert("half_height".into(), Dynamic::from(half_height as f64));
+                    Dynamic::from(map)
+                }
+                Some(flint_physics::ColliderExtents::Cylinder {
+                    radius,
+                    half_height,
+                }) => {
+                    let mut map = Map::new();
+                    map.insert("shape".into(), Dynamic::from("cylinder".to_string()));
                     map.insert("radius".into(), Dynamic::from(radius as f64));
                     map.insert("half_height".into(), Dynamic::from(half_height as f64));
                     Dynamic::from(map)

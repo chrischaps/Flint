@@ -125,6 +125,34 @@ impl PhysicsWorld {
         );
     }
 
+    /// Insert an impulse joint between two bodies (`body1` = parent, `body2` = child)
+    pub fn insert_impulse_joint(
+        &mut self,
+        body1: RigidBodyHandle,
+        body2: RigidBodyHandle,
+        data: impl Into<GenericJoint>,
+    ) -> ImpulseJointHandle {
+        self.impulse_joint_set.insert(body1, body2, data, true)
+    }
+
+    /// Remove an impulse joint, waking its bodies
+    pub fn remove_impulse_joint(&mut self, handle: ImpulseJointHandle) {
+        self.impulse_joint_set.remove(handle, true);
+    }
+
+    /// Mutable access to an impulse joint (motor targets, limits)
+    pub fn get_impulse_joint_mut(
+        &mut self,
+        handle: ImpulseJointHandle,
+    ) -> Option<&mut ImpulseJoint> {
+        self.impulse_joint_set.get_mut(handle)
+    }
+
+    /// Number of live impulse joints
+    pub fn impulse_joint_count(&self) -> usize {
+        self.impulse_joint_set.len()
+    }
+
     /// Get a rigid body by handle
     pub fn get_rigid_body(&self, handle: RigidBodyHandle) -> Option<&RigidBody> {
         self.rigid_body_set.get(handle)
