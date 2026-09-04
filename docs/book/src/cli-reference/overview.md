@@ -206,6 +206,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
 | `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
 | `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
+| `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
 | `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
 | `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
 | `--grade-gain <r,g,b>` | `1,1,1` | Colour-grade gain (per-channel multiply) |
@@ -227,7 +228,8 @@ When no camera flags are given, the render starts from the scene's `[camera]` bl
 > with the values you want; for animation, note that skinned meshes render at
 > **bind pose** headlessly. To capture a posed frame of a rigged model, use the
 > model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
-> (optionally with `--clip`, `--layer` or `--sequence`).
+> (optionally with `--clip`, `--layer` or `--sequence`). Particles are the
+> exception: `--particle-time 2` steps every emitter before the capture.
 
 ## The `edit` Command
 
@@ -241,6 +243,7 @@ flint edit models/character.glb --watch        # Model previewer with file watch
 flint edit specs/oak_tree.procgen.toml         # Procgen previewer (mesh/texture)
 flint edit specs/stone_wall.procgen.toml       # Texture pipeline editor (if pipeline pattern)
 flint edit terrain.terrain.toml                # Terrain editor
+flint edit fx/fire.particles.toml              # Particle effect editor (created from --preset if missing)
 ```
 
 ### File Type Detection
@@ -251,6 +254,7 @@ flint edit terrain.terrain.toml                # Terrain editor
 | `.procgen.toml` (pipeline pattern) | Texture pipeline editor | Node graph for texture specs |
 | `.procgen.toml` (other) | Procgen previewer | Live preview of generated mesh/texture |
 | `.terrain.toml` | Terrain editor | Heightmap terrain editing |
+| `.particles.toml` | Particle effect editor | Emitters, curves, forces, bursts; scrub timeline; headless `--render` |
 | `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
 
 ### Common Flags
@@ -285,6 +289,28 @@ flint edit terrain.terrain.toml                # Terrain editor
 | `--anim-time <s>` | (none) | With `--render`: sample the animation (or replay the sequence) at this time |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
 
+### Particle Editor Flags
+
+The camera flags above (`--distance`, `--yaw`, `--pitch`, `--target`, `--fov`), `--render` and `--anim-time` apply to `.particles.toml` files too. In addition:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--preset <name>` | `sparks` | Preset written when the file does not exist yet: `fire`, `smoke`, `sparks`, `rain` |
+| `--anim-time <s>` | `1.0` | With `--render`: simulation time of the snapshot (fixed 1/120 s steps; deterministic) |
+
+### Particle Editor Controls
+
+| Input | Action |
+|-------|--------|
+| Space / R | Play-pause / restart |
+| Home / End, ← / → | Seek start / end, step (Shift: 0.1 s) |
+| L, `[` / `]` | Loop, halve / double speed |
+| O, G, X, B, H | Auto-orbit, grid, shape gizmos, backdrop, hide UI |
+| Ctrl+S, Ctrl+Z / Ctrl+Y, Ctrl+D, Delete, Ctrl+R | Save, undo / redo, duplicate emitter, delete emitter, reload |
+| Curve widgets | Drag keys; double-click adds; right-click removes; Shift-drag locks t |
+
+See the [Particle Editor guide](../guides/particle-editor.md).
+
 ### Scene Viewer Controls
 
 | Input | Action |
@@ -305,7 +331,7 @@ flint edit terrain.terrain.toml                # Terrain editor
 | Escape | Cancel gizmo drag / exit |
 | F2 | Toggle the render stats overlay |
 | F3 | Toggle normal arrows |
-| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, and DoF follow) |
+| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls) |
 
 The viewer applies the scene's `[post_process]` block on load; the F4 menu's "authored" switch flips between those values and the viewer defaults. The earlier F1 (debug mode), F2 (wireframe overlay) and F4 (shadows) keys were folded into the F4 menu.
 

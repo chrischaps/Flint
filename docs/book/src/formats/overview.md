@@ -275,6 +275,41 @@ name = "done"                      # Delivered to on_sequence_cue(sequence, cue)
 | `events[].time` | f64 | Seconds from the start |
 | `events[].kind` | string | `blend` (`clip`, `duration`), `layer` (`index`, `clip`, `weight`, `fade`, `mode`, `mask`), `speed` (`value`), `cue` (`name`) |
 
+## Particle Effects (`particles/*.particles.toml`)
+
+A named, reusable particle effect: one or more emitters simulated together, with multi-key curves, forces, a burst timeline and sub-emitters. The player and viewer load every effect in the scene's `particles/` directory (or `../particles/`); scenes reference one with a `particle_effect` component, scripts with `play_effect(name, x, y, z)`, and `flint edit fx.particles.toml` edits it. See [Particles](../concepts/particles.md).
+
+```toml
+name = "campfire"                  # defaults to the file stem
+seed = 7                           # base RNG seed (0 = per entity)
+
+[[emitters]]
+name = "flames"                    # required, unique within the effect
+emission_rate = 40.0
+lifetime = [0.3, 0.8]              # scalar or [min, max]
+speed = [1.5, 3.0]
+blend_mode = "additive"            # alpha | additive | premultiplied | multiply
+size = { keys = [ { t = 0.0, v = [0.12, 0.12] }, { t = 1.0, v = [0.02, 0.02] } ], interp = "smooth" }
+color = { start = [1.0, 0.7, 0.1, 0.9], end = [0.4, 0.0, 0.0, 0.0] }
+
+[emitters.shape]
+kind = "cone"                      # point | sphere | cone | box
+radius = 0.15
+angle = 10.0
+
+[[emitters.forces]]
+kind = "noise"                     # wind | drag | noise | vortex | attractor
+strength = 1.2
+
+[[emitters.bursts]]
+time = 0.0
+count = [3, 6]
+cycles = 0                         # 0 = repeat forever
+interval = 1.5
+```
+
+Unknown emitter keys are a load error. `on_death = { emitter = "puff", count = 1 }` spawns into a sibling emitter when a particle dies; `on_birth` does the same at spawn.
+
 ## Asset Sidecars (`assets/**/*.asset.toml`)
 
 Metadata files stored alongside imported assets in the catalog.

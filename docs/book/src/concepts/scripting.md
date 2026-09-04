@@ -364,6 +364,9 @@ The `t` parameter wraps for closed splines. The returned forward and right vecto
 | `start_emitter(entity_id)` | Start continuous emission |
 | `stop_emitter(entity_id)` | Stop emission (existing particles finish their lifetime) |
 | `set_emission_rate(entity_id, rate)` | Change emission rate dynamically |
+| `play_effect(name, x, y, z)` | Spawn a detached one-shot instance of a `particles/<name>.particles.toml` effect at a point; returns a handle |
+| `stop_effect(handle)` | Stop a detached effect's emission; particles in flight finish |
+| `set_effect_param(handle, param, value)` | Tune a detached effect: `emission_scale`, `scale`, `playing` (> 0.5), or `x` / `y` / `z` to move it |
 
 See [Particles](particles.md) for full component schema and recipes.
 

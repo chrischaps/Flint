@@ -79,7 +79,7 @@ The engine supports:
 - **Interactable entities** with HUD prompts, proximity detection, and scripted behaviors
 - **AI asset generation** with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, batch scene resolution, model validation, and build manifests
 - **Billboard sprites** with camera-facing quads and sprite sheet animation
-- **GPU particle system** with instanced rendering, per-emitter pooling, alpha/additive blending, and configurable emission shapes
+- **GPU particle system** with instanced rendering, reusable `*.particles.toml` effects (curves, forces, bursts, sub-emitters), four blend modes, a dedicated editor and deterministic headless snapshots
 - **Extensible input system** with config-driven bindings for keyboard, mouse, and gamepad with runtime rebinding
 - **Data-driven UI system** with TOML-defined layouts, style classes, anchor-based positioning, flow layouts, and runtime scripting API
 - **Game project architecture** for standalone games that include the engine as a git subtree

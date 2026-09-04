@@ -72,6 +72,7 @@ The viewer renders scenes with the same PBR pipeline used by the player:
 - Cascaded shadow mapping from directional lights
 - glTF mesh rendering with material support
 - The scene's `[post_process]` block, applied on load
+- Live particles: `particle_emitter` and `particle_effect` entities simulate in the viewer, so inspector edits show immediately
 - Render stats overlay (**F2**)
 - Normal arrows (**F3**)
 - The Rendering & Effects menu (**F4**)
@@ -85,6 +86,7 @@ Two controls are specific to the viewer:
 
 - **Authored post vs viewer default** --- swap between the scene's `[post_process]` block and the viewer's neutral look, to check what a scene's grading is actually doing
 - **DoF follow** --- the depth-of-field focus plane tracks the last selected entity, so you can pick a focus distance by clicking
+- **Particles** --- simulate/draw toggle, pause, speed and restart for the live particle simulation, plus each `particle_effect` entity's asset name
 
 See [Post-Processing](../concepts/post-processing.md#the-rendering--effects-menu-f4) for the full section list.
 

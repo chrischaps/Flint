@@ -55,6 +55,7 @@
 - [Building a Game Project](guides/building-a-game-project.md)
 - [Deploying to Android](guides/android.md)
 - [Debug Panels](guides/debug-panels.md)
+- [Particle Editor](guides/particle-editor.md)
 
 # Reference
 
