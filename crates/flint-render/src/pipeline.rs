@@ -293,6 +293,8 @@ pub struct RenderPipeline {
     pub outline_pipeline: wgpu::RenderPipeline,
     pub depth_prepass_pipeline: wgpu::RenderPipeline,
     pub transparent_alpha_pipeline: wgpu::RenderPipeline,
+    /// Back-face pass of the alpha pipeline (drawn first).
+    pub transparent_alpha_back_pipeline: wgpu::RenderPipeline,
     pub transparent_additive_pipeline: wgpu::RenderPipeline,
     pub transparent_multiply_pipeline: wgpu::RenderPipeline,
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
@@ -734,10 +736,14 @@ impl RenderPipeline {
                 cache: None,
             });
 
-        // Transparent alpha pipeline: standard alpha blending, no depth write, no backface cull
-        let transparent_alpha_pipeline =
+        // Alpha-blended meshes draw in two passes, back faces first (cull front) then
+        // front faces (cull back). Depth write stays off, but with no sort inside one
+        // mesh a single double-sided pass blends its own back faces over its front
+        // faces in index order, which shows as triangular patches on a translucent
+        // sphere. Two passes make every convex translucent object order-independent.
+        let make_transparent_alpha = |label: &str, cull_mode: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Transparent Alpha Pipeline"),
+                label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -759,7 +765,7 @@ impl RenderPipeline {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
+                    cull_mode,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     unclipped_depth: false,
                     conservative: false,
@@ -777,7 +783,12 @@ impl RenderPipeline {
                 },
                 multiview: None,
                 cache: None,
-            });
+            })
+        };
+        let transparent_alpha_back_pipeline =
+            make_transparent_alpha("Transparent Alpha Pipeline (back faces)", Some(wgpu::Face::Front));
+        let transparent_alpha_pipeline =
+            make_transparent_alpha("Transparent Alpha Pipeline (front faces)", Some(wgpu::Face::Back));
 
         // Transparent additive pipeline: src*SrcAlpha + dst*One
         let transparent_additive_pipeline =
@@ -899,6 +910,7 @@ impl RenderPipeline {
             outline_pipeline,
             depth_prepass_pipeline,
             transparent_alpha_pipeline,
+            transparent_alpha_back_pipeline,
             transparent_additive_pipeline,
             transparent_multiply_pipeline,
             transform_bind_group_layout,

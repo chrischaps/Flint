@@ -1161,7 +1161,8 @@ impl SceneRenderer {
             }
         }
 
-        // Transparent PBR entities (sorted back-to-front, depth write OFF)
+        // Transparent PBR entities (sorted back-to-front, depth write OFF; alpha
+        // blend draws back faces then front faces so a mesh cannot blend over itself)
         if !self.transparent_draws.is_empty() {
             // Re-bind lights for group 2 (may have been displaced by billboard binds)
             render_pass.set_bind_group(2, &self.light_bind_group, &[]);
@@ -1179,12 +1180,17 @@ impl SceneRenderer {
                         &self.pipeline.transparent_multiply_pipeline
                     }
                 };
-                render_pass.set_pipeline(pipeline);
                 render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                 render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                if draw.blend_mode == crate::pipeline::BlendMode::Alpha {
+                    // Back faces first so the front faces blend over them.
+                    render_pass.set_pipeline(&self.pipeline.transparent_alpha_back_pipeline);
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+                render_pass.set_pipeline(pipeline);
                 render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
             }
         }
@@ -1198,7 +1204,6 @@ impl SceneRenderer {
                         crate::pipeline::BlendMode::Additive => &sp.transparent_additive_pipeline,
                         crate::pipeline::BlendMode::Multiply => &sp.transparent_multiply_pipeline,
                     };
-                    render_pass.set_pipeline(pipeline);
                     render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
                     render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &self.light_bind_group, &[]);
@@ -1206,6 +1211,11 @@ impl SceneRenderer {
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     render_pass
                         .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    if draw.blend_mode == crate::pipeline::BlendMode::Alpha {
+                        render_pass.set_pipeline(&sp.transparent_alpha_back_pipeline);
+                        render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                    }
+                    render_pass.set_pipeline(pipeline);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }

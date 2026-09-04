@@ -61,6 +61,31 @@ The renderer currently uses binary alpha only — pixels are either fully opaque
 > underwater. What remains here is the *general* case: sorted alpha blending
 > and an `opacity` material field for glass, shields and smoke.
 
+### TODO: honour glTF material flags on import
+
+Added 2026-09-04 after the Trike driver pod (a translucent glb sphere) rendered
+with triangular patches. The alpha pass now draws blended meshes in two passes
+(back faces, then front faces), which fixes convex translucent objects, but the
+importer still throws away what the model says about itself:
+
+- `doubleSided` is not read (`flint-import/src/gltf_import.rs`, `ImportedMaterial`
+  in `types.rs` has no field for it). Every mesh renders as if double-sided in the
+  transparent pass and back-culled in the opaque pass, whatever the file asks for.
+  Add a `double_sided: bool` to `ImportedMaterial`, plumb it to the draw call, and
+  pick the cull mode per draw: single-sided blended meshes need only the front
+  pass; double-sided opaque meshes (foliage cards, cloth) need `cull_mode: None`.
+- `alphaCutoff` is imported (`gltf_import.rs` ~255) but `gpu_mesh.rs` hardcodes
+  `alpha_cutoff: 0.5` in all three material paths, so a model's cutoff never
+  reaches the shader. `emissiveFactor` / `KHR_materials_emissive_strength` are
+  not read at all.
+- `COLOR_0` vertex colours and `TANGENT` are not read (`use_vertex_color` is
+  hardcoded false for glTF; normal maps sample without a tangent frame).
+- Node `extras` are not read, so authoring tools cannot attach per-node metadata
+  (colliders, joints, gameplay tags) inside the asset.
+
+The rule to land: **a glb's own flags win, with the scene TOML able to override
+them**, the same way `material.color` already overrides `baseColorFactor`.
+
 ## Script Modules & Shared Code
 
 **Priority: High**
