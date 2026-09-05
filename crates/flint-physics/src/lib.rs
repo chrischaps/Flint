@@ -56,6 +56,10 @@ pub struct PhysicsSystem {
     pub(crate) sync: PhysicsSync,
     pub(crate) character: CharacterController,
     pub(crate) event_bus: EventBus,
+    /// Fixed steps this frame will run (set by the frame loop) and the index
+    /// of the step in progress, for even kinematic motion across the frame
+    frame_steps: usize,
+    step_in_frame: usize,
 }
 
 impl Default for PhysicsSystem {
@@ -71,7 +75,18 @@ impl PhysicsSystem {
             sync: PhysicsSync::new(),
             character: CharacterController::new(),
             event_bus: EventBus::new(),
+            frame_steps: 1,
+            step_in_frame: 0,
         }
+    }
+
+    /// Announce how many fixed steps the coming frame will run, so scripted
+    /// kinematic motion is spread evenly across them instead of landing on
+    /// the first step (see `PhysicsSync::update_kinematic_bodies`). Callers
+    /// that never announce get the old one-step-per-frame behaviour.
+    pub fn begin_frame_steps(&mut self, steps: usize) {
+        self.frame_steps = steps.max(1);
+        self.step_in_frame = 0;
     }
 
     /// Cast a ray and resolve the hit collider to an EntityId
@@ -393,9 +408,15 @@ impl RuntimeSystem for PhysicsSystem {
         self.sync.sync_to_rapier(world, &mut self.physics_world);
         self.sync.sync_joints(world, &mut self.physics_world);
 
-        // Update kinematic bodies from ECS transforms (e.g., animated doors)
-        self.sync
-            .update_kinematic_bodies(world, &mut self.physics_world);
+        // Update kinematic bodies from ECS transforms (e.g., animated doors),
+        // moving them an even share of the frame's motion per step
+        self.sync.update_kinematic_bodies(
+            world,
+            &mut self.physics_world,
+            self.step_in_frame,
+            self.frame_steps,
+        );
+        self.step_in_frame += 1;
 
         // Update sensor flags (e.g., dead enemies become non-solid)
         self.sync

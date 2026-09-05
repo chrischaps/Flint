@@ -70,6 +70,15 @@ impl GameClock {
         self.accumulator >= self.fixed_timestep
     }
 
+    /// Number of fixed steps the accumulator currently holds — how many
+    /// `should_fixed_update` / `consume_fixed_step` rounds this frame will run.
+    pub fn pending_fixed_steps(&self) -> usize {
+        if self.fixed_timestep <= 0.0 {
+            return 0;
+        }
+        (self.accumulator / self.fixed_timestep).floor().max(0.0) as usize
+    }
+
     /// Consume one fixed timestep from the accumulator
     pub fn consume_fixed_step(&mut self) {
         self.accumulator -= self.fixed_timestep;

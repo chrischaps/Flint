@@ -37,6 +37,10 @@ pub struct PhysicsSync {
     /// Start-of-step pose of every kinematic body, recorded when its next
     /// pose is set; gives the parent's exact step velocity for the projection
     kin_start: HashMap<RigidBodyHandle, Isometry<f32>>,
+    /// Pose of every kinematic body at the first fixed step of the current
+    /// frame; the scripted target is reached by interpolating from here across
+    /// the frame's steps (see `update_kinematic_bodies`)
+    kin_frame_start: HashMap<RigidBodyHandle, Isometry<f32>>,
 }
 
 impl PhysicsSync {
@@ -53,6 +57,7 @@ impl PhysicsSync {
         self.joint_cache.clear();
         self.warned.clear();
         self.kin_start.clear();
+        self.kin_frame_start.clear();
     }
 
     /// Push Flint entities with rigidbody/collider components into Rapier
@@ -298,9 +303,32 @@ impl PhysicsSync {
     /// Update kinematic bodies from ECS transforms each fixed step.
     /// This lets animated or scripted entities (doors, a vehicle root) move
     /// their colliders and drag any jointed dynamic children along.
-    pub fn update_kinematic_bodies(&mut self, world: &FlintWorld, physics: &mut PhysicsWorld) {
+    ///
+    /// Scripts pose kinematic bodies once per frame, but physics runs on a
+    /// fixed accumulator: a frame may run zero, one or several steps. Handing
+    /// the whole frame's motion to whichever step comes next makes the body's
+    /// step velocity swing between double and zero, and the joint solver
+    /// passes that swing straight into jointed children (a prismatic wheel
+    /// rings along its free axis in proportion to speed). This is step
+    /// `step_idx` of `frame_steps` in the frame: the target is interpolated
+    /// from the pose at the frame's first step so every step carries an even
+    /// share of the motion. `(0, 1)` is a lone step and reaches the target.
+    pub fn update_kinematic_bodies(
+        &mut self,
+        world: &FlintWorld,
+        physics: &mut PhysicsWorld,
+        step_idx: usize,
+        frame_steps: usize,
+    ) {
+        let steps = frame_steps.max(1);
+        let idx = step_idx.min(steps - 1);
+        let first_step = idx == 0;
+        let frac = (idx + 1) as f32 / steps as f32;
         let handles: Vec<(EntityId, RigidBodyHandle)> =
             self.body_map.iter().map(|(e, h)| (*e, *h)).collect();
+        if first_step {
+            self.kin_frame_start.clear();
+        }
 
         for (entity_id, body_handle) in handles {
             let body = match physics.get_rigid_body(body_handle) {
@@ -333,8 +361,15 @@ impl PhysicsSync {
                 // parent then flings its jointed children. Recompute from the
                 // current pose before each step.
                 body_mut.recompute_mass_properties_from_colliders(&physics.collider_set);
-                self.kin_start.insert(body_handle, *body_mut.position());
-                body_mut.set_next_kinematic_position(iso);
+                let cur = *body_mut.position();
+                self.kin_start.insert(body_handle, cur);
+                let start = *self.kin_frame_start.entry(body_handle).or_insert(cur);
+                let next = if frac >= 1.0 {
+                    iso
+                } else {
+                    start.lerp_slerp(&iso, frac)
+                };
+                body_mut.set_next_kinematic_position(next);
             }
         }
     }
@@ -1154,7 +1189,7 @@ mod tests {
         let mut physics = PhysicsWorld::new();
         let mut sync = PhysicsSync::new();
         sync.sync_to_rapier(&world, &mut physics);
-        sync.update_kinematic_bodies(&world, &mut physics);
+        sync.update_kinematic_bodies(&world, &mut physics, 0, 1);
         physics.step(1.0 / 60.0);
 
         let body = physics.get_rigid_body(sync.body_map[&child]).unwrap();

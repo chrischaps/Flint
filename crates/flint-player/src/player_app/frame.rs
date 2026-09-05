@@ -698,6 +698,8 @@ impl PlayerApp {
 
     fn tick_fixed_physics(&mut self, config: &StateConfig, has_fps_player: bool) {
         // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
+        self.physics
+            .begin_frame_steps(self.clock.pending_fixed_steps());
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
