@@ -571,28 +571,53 @@ impl PlayerApp {
 
         let has_fps_player = self.physics.has_player_entity();
 
-        // Fixed-timestep physics + FPS camera/listener follow
-        self.tick_fixed_physics(&config, has_fps_player);
-
-        // Physics + input events — scripts and audio both consume them
+        // Physics events from the previous frame's fixed steps + this frame's
+        // input events — scripts and audio both consume them. Drained before
+        // the scripts run, so a collision reaches scripts one frame after the
+        // step that produced it.
         let game_events = self.collect_game_events();
 
-        // Set state machine + persistent store + physics pointers for script
-        // access. The RAII guard must outlive every script call this frame —
+        // on_update runs BEFORE the fixed physics loop. Scripts pose kinematic
+        // bodies with this frame's delta_time, and PhysicsSystem::begin_frame
+        // spreads that motion over this frame's accumulator: the two must
+        // describe the same span of wall time. With physics first, the loop
+        // spread a pose written with the previous frame's delta over the
+        // current frame's accumulator, and whenever consecutive frame times
+        // disagreed (a maximized, GPU-bound window) the kinematic parent's
+        // step velocity swung by their ratio and jointed children rang.
+        //
+        // The state guard sets raw state-machine / store / physics pointers
+        // for script access and clears them on drop; it cannot overlap the
+        // physics tick's mutable borrow, so scripts get their own scope here
+        // and the later script calls (UI, sprite-anim-end callbacks) another
+        // below.
+        {
+            let _state_scope = self.script.state_scope(
+                &mut self.state_machine,
+                &mut self.persistent_store,
+                &self.physics,
+            );
+            self.script.set_current_scene(&self.scene_path);
+
+            // Script context (transition state, camera, input/events, conducted
+            // parameters — session tick above precedes set_conducted, which
+            // precedes provide_context/on_update: F4/ADR 0020 ordering), then
+            // on_update.
+            self.run_scripts(&config, &game_events);
+        }
+
+        // Fixed-timestep physics + FPS camera/listener follow, against the
+        // poses and joint targets the scripts just wrote
+        self.tick_fixed_physics(&config, has_fps_player);
+
+        // Script pointers again for every remaining script call this frame —
         // including the sprite-anim-end callbacks inside tick_av_systems —
-        // so it lives here, in tick's own scope, not in a sub-step.
+        // so the guard lives here, in tick's own scope, not in a sub-step.
         let _state_scope = self.script.state_scope(
             &mut self.state_machine,
             &mut self.persistent_store,
             &self.physics,
         );
-        self.script.set_current_scene(&self.scene_path);
-
-        // Script context (transition state, camera, input/events, conducted
-        // parameters — session tick above precedes set_conducted, which
-        // precedes provide_context/on_update: F4/ADR 0020 ordering), then
-        // on_update.
-        self.run_scripts(&config, &game_events);
 
         // Script camera overrides (chase cam etc.) + roll basis + listener
         self.apply_script_camera_overrides(has_fps_player);

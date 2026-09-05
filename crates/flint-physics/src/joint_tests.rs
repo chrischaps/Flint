@@ -856,3 +856,56 @@ fn prismatic_child_stays_put_when_frames_and_steps_disagree() {
         );
     }
 }
+
+#[test]
+fn prismatic_child_stays_put_under_ragged_frame_times() {
+    // Same rig as above with frame times that alternate between two rates,
+    // as a maximized GPU-bound window delivers. The player writes scripted
+    // poses BEFORE its fixed physics loop, so the motion a frame's steps
+    // spread matches the accumulator they spread it over. (Physics-first
+    // order spreads a pose written with the previous delta over the current
+    // accumulator; with these patterns the stroke hits its 0.15 m limit.)
+    for &(hz_a, hz_b) in &[(60.0f64, 60.0f64), (45.0, 75.0), (40.0, 90.0), (55.0, 65.0)] {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
+        let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+        let piston = body(&mut world, "piston", [0.0, 0.0, -0.5], "dynamic", "box", [0.1, 0.1, 0.1], 0.0);
+        world.set_parent(piston, base).unwrap();
+        joint(&mut world, piston, vec![
+            ("type", s("prismatic")),
+            ("axis", floats(&[0.0, 0.0, -1.0])),
+            ("limits", floats(&[-0.15, 0.15])),
+            ("motor_stiffness", f(200.0)),
+            ("motor_damping", f(10.0)),
+        ]);
+        sys.initialize(&mut world).unwrap();
+        for _ in 0..60 {
+            sys.fixed_update(&mut world, DT).unwrap();
+        }
+        let speed = 20.0;
+        let mut z = 0.0;
+        let mut acc = 0.0f64;
+        let mut worst_stroke: f32 = 0.0;
+        let frames = 240;
+        for frame in 0..frames {
+            let frame_dt = if frame % 2 == 0 { 1.0 / hz_a } else { 1.0 / hz_b };
+            // scripts-first order: clock tick, scripts, then physics
+            z -= speed * frame_dt;
+            world.set_field(base, "transform", "position", floats(&[0.0, 2.0, z])).unwrap();
+            acc += frame_dt;
+            sys.begin_frame(acc / DT);
+            while acc >= DT {
+                sys.fixed_update(&mut world, DT).unwrap();
+                acc -= DT;
+            }
+            if frame > frames / 4 {
+                let stroke = sys.joint_position(piston).expect("prismatic coordinate");
+                worst_stroke = worst_stroke.max(stroke.abs());
+            }
+        }
+        assert!(
+            worst_stroke < 0.01,
+            "{hz_a}/{hz_b} Hz alternating: piston stroke should stay near zero, worst {worst_stroke} m"
+        );
+    }
+}
