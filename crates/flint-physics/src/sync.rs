@@ -463,6 +463,13 @@ impl PhysicsSync {
             }
 
             let handle = physics.insert_impulse_joint(parent_handle, child_handle, joint);
+            // A jointed body must never sleep: Rapier does not wake a sleeping
+            // dynamic body when the kinematic body it is jointed to moves, so a
+            // scripted parent would drive off and leave the child behind.
+            if let Some(body) = physics.get_rigid_body_mut(child_handle) {
+                *body.activation_mut() = rapier3d::dynamics::RigidBodyActivation::cannot_sleep();
+                body.wake_up(true);
+            }
             self.joint_map.insert(entity_id, handle);
             self.joint_cache.insert(entity_id, params);
         }

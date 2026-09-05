@@ -358,3 +358,63 @@ fn remove_entity_drops_joint_from_either_end() {
         sys.fixed_update(&mut world, DT).unwrap();
     }
 }
+
+#[test]
+fn jointed_child_follows_kinematic_parent_after_resting() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    // A scripted (kinematic) base with a sprung hinge child that has nothing to
+    // do: after a few seconds Rapier would put the child to sleep, and moving
+    // the base would then leave it behind. Jointed bodies may not sleep.
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 2.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
+    let arm = body(
+        &mut world,
+        "arm",
+        [0.0, 0.0, 0.5],
+        "dynamic",
+        "box",
+        [0.1, 0.1, 0.1],
+        0.0,
+    );
+    world.set_parent(arm, base).unwrap();
+    joint(
+        &mut world,
+        arm,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, -0.5])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_stiffness", f(400.0)),
+            ("motor_damping", f(25.0)),
+        ],
+    );
+
+    sys.initialize(&mut world).unwrap();
+    for _ in 0..300 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    let before = world_pos(&world, arm);
+    assert!((before[2] - 0.5).abs() < 0.05, "arm at rest behind base: {before:?}");
+
+    // Script drives the base 3 m along +X.
+    world
+        .set_field(base, "transform", "position", floats(&[3.0, 2.0, 0.0]))
+        .unwrap();
+    for _ in 0..60 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    let after = world_pos(&world, arm);
+    assert!(
+        (after[0] - 3.0).abs() < 0.05 && (after[2] - 0.5).abs() < 0.05,
+        "arm should follow the kinematic base: {after:?}"
+    );
+}
