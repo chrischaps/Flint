@@ -34,6 +34,9 @@ pub struct PhysicsSync {
     pub(crate) joint_cache: HashMap<EntityId, JointParams>,
     /// Entities already warned about (non-unit scale, unresolved joint parent)
     warned: HashSet<EntityId>,
+    /// Start-of-step pose of every kinematic body, recorded when its next
+    /// pose is set; gives the parent's exact step velocity for the projection
+    kin_start: HashMap<RigidBodyHandle, Isometry<f32>>,
 }
 
 impl PhysicsSync {
@@ -49,6 +52,7 @@ impl PhysicsSync {
         self.joint_map.clear();
         self.joint_cache.clear();
         self.warned.clear();
+        self.kin_start.clear();
     }
 
     /// Push Flint entities with rigidbody/collider components into Rapier
@@ -321,7 +325,15 @@ impl PhysicsSync {
             let mode_2d = read_mode_2d(components);
             let iso = self.body_world_pose(world, entity_id, components, mode_2d);
 
-            if let Some(body_mut) = physics.get_rigid_body_mut(body_handle) {
+            if let Some(body_mut) = physics.rigid_body_set.get_mut(body_handle) {
+                // Rapier refreshes a body's world centre of mass only for
+                // active dynamic bodies, so a kinematic body's stays at its
+                // creation pose and the joint solver's lever arm (angvel x
+                // (anchor - com)) grows with every metre driven: a turning
+                // parent then flings its jointed children. Recompute from the
+                // current pose before each step.
+                body_mut.recompute_mass_properties_from_colliders(&physics.collider_set);
+                self.kin_start.insert(body_handle, *body_mut.position());
                 body_mut.set_next_kinematic_position(iso);
             }
         }
@@ -558,8 +570,12 @@ impl PhysicsSync {
     /// linear and angular axes are made exact, free axes keep the simulated
     /// coordinate (clamped to the joint's limits). Velocities are left alone
     /// so springs still overshoot and settle.
-    pub fn project_kinematic_joints(&self, physics: &mut PhysicsWorld) {
-        let mut updates: Vec<(RigidBodyHandle, Isometry<f32>)> = Vec::new();
+    ///
+    /// Reaching a limit also cancels the relative velocity into it, so a stop
+    /// is inelastic instead of trading impulses with Rapier's own limit
+    /// constraint step after step.
+    pub fn project_kinematic_joints(&mut self, physics: &mut PhysicsWorld, dt: f32) {
+        let mut updates: Vec<(RigidBodyHandle, Isometry<f32>, Option<na::Vector3<f32>>)> = Vec::new();
         for &handle in self.joint_map.values() {
             let Some(joint) = physics.impulse_joint_set.get(handle) else {
                 continue;
@@ -578,18 +594,49 @@ impl PhysicsSync {
             let f1 = b1.position() * data.local_frame1; // joint frame from the parent
             let f2 = b2.position() * data.local_frame2; // joint frame from the child
 
-            // Linear: child anchor offset in the parent's joint frame.
-            let mut o = f1.rotation.inverse() * (f2.translation.vector - f1.translation.vector);
+            // Linear: child anchor offset in the parent's joint frame. Locked
+            // axes go to zero; a free axis keeps its geometric coordinate,
+            // clamped to the limits.
+            let geom = f1.rotation.inverse() * (f2.translation.vector - f1.translation.vector);
+            // Parent step velocity from its own start and end poses, for the
+            // relative velocity at the anchor when a limit is hit.
+            let (v1, w1) = match self.kin_start.get(&joint.body1) {
+                Some(start) if dt > 0.0 => {
+                    let end = b1.position();
+                    let v = (end.translation.vector - start.translation.vector) / dt;
+                    let dq = end.rotation * start.rotation.inverse();
+                    (v, dq.scaled_axis() / dt)
+                }
+                _ => (na::Vector3::zeros(), na::Vector3::zeros()),
+            };
+            let rel_v = b2.linvel() - (v1 + w1.cross(&(f2.translation.vector - b1.translation())));
+            let rel_v_local = f1.rotation.inverse() * rel_v;
+            let mut o = na::Vector3::zeros();
+            let mut vel_fix = na::Vector3::zeros();
+            let mut fix_vel = false;
             let lin = [JointAxis::LinX, JointAxis::LinY, JointAxis::LinZ];
             let lin_mask = [JointAxesMask::LIN_X, JointAxesMask::LIN_Y, JointAxesMask::LIN_Z];
             for i in 0..3 {
                 if locked.contains(lin_mask[i]) {
-                    o[i] = 0.0;
-                } else if data.limit_axes.contains(lin_mask[i]) {
-                    let l = data.limits[lin[i] as usize];
-                    o[i] = o[i].clamp(l.min, l.max);
+                    continue;
                 }
+                let mut c = geom[i];
+                if data.limit_axes.contains(lin_mask[i]) {
+                    let l = data.limits[lin[i] as usize];
+                    let clamped = c.clamp(l.min, l.max);
+                    if clamped != c {
+                        vel_fix[i] = -rel_v_local[i];
+                        fix_vel = true;
+                    }
+                    c = clamped;
+                }
+                o[i] = c;
             }
+            let new_vel = if fix_vel {
+                Some(b2.linvel() + f1.rotation * vel_fix)
+            } else {
+                None
+            };
 
             // Angular: relative rotation of the child frame in the parent frame,
             // reduced to the twist about a single free axis, or identity when
@@ -630,13 +677,16 @@ impl PhysicsSync {
             let moved = (new_pose.translation.vector - cur.translation.vector).norm_squared()
                 > 1e-12
                 || new_pose.rotation.angle_to(&cur.rotation) > 1e-5;
-            if moved {
-                updates.push((joint.body2, new_pose));
+            if moved || new_vel.is_some() {
+                updates.push((joint.body2, new_pose, new_vel));
             }
         }
-        for (handle, pose) in updates {
+        for (handle, pose, vel) in updates {
             if let Some(body) = physics.get_rigid_body_mut(handle) {
                 body.set_position(pose, true);
+                if let Some(v) = vel {
+                    body.set_linvel(v, true);
+                }
             }
         }
     }

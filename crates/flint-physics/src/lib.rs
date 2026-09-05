@@ -482,7 +482,7 @@ impl RuntimeSystem for PhysicsSystem {
 
         // Sync transforms back from Rapier for dynamic bodies
         self.sync
-            .project_kinematic_joints(&mut self.physics_world);
+            .project_kinematic_joints(&mut self.physics_world, dt as f32);
         self.sync.sync_from_rapier(world, &self.physics_world);
 
         Ok(())

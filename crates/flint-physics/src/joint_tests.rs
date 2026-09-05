@@ -716,18 +716,21 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
     sys.initialize(&mut world).unwrap();
 
     let (mut x, mut z, mut yaw) = (0.0f64, 0.0f64, 0.0f64);
-    for i in 0..120 {
-        if i >= 30 {
-            yaw -= 1.0;
+    for i in 0..150 {
+        // Accelerate over the first second (to 18 m/s), then turn.
+        let step = 0.3 * ((i as f64 + 1.0) / 60.0).min(1.0);
+        if i >= 60 {
+            // Turn rate eases in over ten steps to 1 deg per step.
+            yaw -= ((i as f64 - 59.0) / 10.0).min(1.0);
         }
-        // Steering head swings 20 deg each way while turning.
-        let steer = if i >= 30 { 20.0 * ((i as f64) * 0.1).sin() } else { 0.0 };
+        // Steering head swings 20 deg each way while turning, from zero.
+        let steer = if i >= 60 { 20.0 * ((i as f64 - 60.0) * 0.1).sin() } else { 0.0 };
         world
             .set_field(head, "transform", "rotation", floats(&[0.0, steer, 0.0]))
             .unwrap();
         let (sy, cy) = (yaw.to_radians().sin(), yaw.to_radians().cos());
-        x += 0.3 * sy;
-        z -= 0.3 * cy;
+        x += step * sy;
+        z -= step * cy;
         world
             .set_field(root, "transform", "position", floats(&[x, 2.0, z]))
             .unwrap();
@@ -747,9 +750,14 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
         let d = [pt.position.x, pt.position.y + 0.12, pt.position.z + 0.45];
         let along = d[1] * -0.26 + d[2] * -0.97;
         let perp = (d[0].powi(2) + (d[1] - along * -0.26).powi(2) + (d[2] - along * -0.97).powi(2)).sqrt();
+        // The spring holds the piston near rest; the turn must not pump it
+        // along its axis (the drift used to walk it to the stroke limit).
+        // Within the stroke always; once accelerating stops (step 60) the
+        // spring must not be pumped to a stop by the turn.
+        let max_along = if i >= 60 { 0.14 } else { 0.16 };
         assert!(
-            perp < 0.02 && along.abs() < 0.16,
-            "piston left its slide: perp {perp} along {along} at step {i}"
+            perp < 0.02 && along.abs() < max_along,
+            "piston left its slide or was pumped along it: perp {perp} along {along} at step {i}"
         );
         let q = pt.rotation_quat.unwrap_or([0.0, 0.0, 0.0, 1.0]);
         let tilt = 2.0 * (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt().asin();
