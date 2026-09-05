@@ -60,6 +60,10 @@ pub struct PhysicsSystem {
     /// of the step in progress, for even kinematic motion across the frame
     frame_steps: usize,
     step_in_frame: usize,
+    /// Wall time since the last fixed step, in steps: `frame_steps` plus the
+    /// accumulator remainder. Kinematic targets are interpolated over this
+    /// span so each step moves an equal share of the scripted motion
+    frame_span: f32,
 }
 
 impl Default for PhysicsSystem {
@@ -77,6 +81,7 @@ impl PhysicsSystem {
             event_bus: EventBus::new(),
             frame_steps: 1,
             step_in_frame: 0,
+            frame_span: 1.0,
         }
     }
 
@@ -86,6 +91,23 @@ impl PhysicsSystem {
     /// that never announce get the old one-step-per-frame behaviour.
     pub fn begin_frame_steps(&mut self, steps: usize) {
         self.frame_steps = steps.max(1);
+        self.frame_span = self.frame_steps as f32;
+        self.step_in_frame = 0;
+    }
+
+    /// Like `begin_frame_steps`, from the clock's pending fixed time in steps
+    /// (`GameClock::pending_fixed_ratio`): the whole number of steps runs this
+    /// frame and the fraction is carried over. Kinematic bodies move
+    /// `1 / ratio` of the way to the scripted pose per step, so their step
+    /// velocity is the scripted wall-clock velocity whether a frame holds
+    /// several steps or a step spans several frames. The body trails the
+    /// scripted pose by the carried fraction (under one step); jointed
+    /// children are written back against the body's pose, so the trail is
+    /// invisible to the scene.
+    pub fn begin_frame(&mut self, pending_ratio: f64) {
+        let ratio = pending_ratio.max(0.0) as f32;
+        self.frame_steps = (ratio.floor() as usize).max(1);
+        self.frame_span = ratio.max(1.0);
         self.step_in_frame = 0;
     }
 
@@ -414,7 +436,7 @@ impl RuntimeSystem for PhysicsSystem {
             world,
             &mut self.physics_world,
             self.step_in_frame,
-            self.frame_steps,
+            self.frame_span,
         );
         self.step_in_frame += 1;
 

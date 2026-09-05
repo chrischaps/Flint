@@ -79,6 +79,18 @@ impl GameClock {
         (self.accumulator / self.fixed_timestep).floor().max(0.0) as usize
     }
 
+    /// Accumulated time in units of the fixed step, before this frame's
+    /// steps are consumed: `pending_fixed_steps()` plus the remainder that
+    /// will be carried into the next frame. Scripted kinematic motion is
+    /// spread over this span so its step velocity stays even when one step
+    /// covers several frames (see `PhysicsSystem::begin_frame`).
+    pub fn pending_fixed_ratio(&self) -> f64 {
+        if self.fixed_timestep <= 0.0 {
+            return 0.0;
+        }
+        (self.accumulator / self.fixed_timestep).max(0.0)
+    }
+
     /// Consume one fixed timestep from the accumulator
     pub fn consume_fixed_step(&mut self) {
         self.accumulator -= self.fixed_timestep;

@@ -771,73 +771,88 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
 #[test]
 fn prismatic_child_stays_put_when_frames_and_steps_disagree() {
     // Scripts pose a kinematic parent once per frame while physics runs on a
-    // fixed accumulator, so frames run 0, 1 or 2 steps. If a step takes the
-    // whole frame's motion the parent's step velocity alternates between
-    // double and zero, and a prismatic child whose free axis lies along the
-    // travel direction rings on its spring (the trike's front-wheel piston).
-    // With the frame's step count announced, the motion is shared evenly and
-    // the stroke stays near zero.
-    let mut world = FlintWorld::new();
-    let mut sys = PhysicsSystem::new();
+    // fixed accumulator, so a frame may run several steps (120/240 Hz) or a
+    // step may span several frames (61/90/144 Hz). If a step takes whatever
+    // motion accumulated since the last one, the parent's step velocity
+    // swings frame to frame and a prismatic child whose free axis lies along
+    // the travel direction rings on its spring (the trike's front-wheel
+    // piston). With the pending fixed time announced, every step carries an
+    // equal share and the stroke stays near zero. The child's written-back
+    // local pose must also stay at rest: the parent body trails the scripted
+    // pose by the accumulator remainder, and the writeback accounts for it.
+    for &hz in &[60.0f64, 61.0, 90.0, 120.0, 144.0, 240.0] {
+        let mut world = FlintWorld::new();
+        let mut sys = PhysicsSystem::new();
 
-    let base = body(
-        &mut world,
-        "base",
-        [0.0, 2.0, 0.0],
-        "kinematic",
-        "box",
-        [0.2, 0.2, 0.2],
-        0.0,
-    );
-    let piston = body(
-        &mut world,
-        "piston",
-        [0.0, 0.0, -0.5],
-        "dynamic",
-        "box",
-        [0.1, 0.1, 0.1],
-        0.0,
-    );
-    world.set_parent(piston, base).unwrap();
-    joint(
-        &mut world,
-        piston,
-        vec![
-            ("type", s("prismatic")),
-            ("axis", floats(&[0.0, 0.0, -1.0])),
-            ("limits", floats(&[-0.15, 0.15])),
-            ("motor_stiffness", f(200.0)),
-            ("motor_damping", f(10.0)),
-        ],
-    );
-    sys.initialize(&mut world).unwrap();
-    for _ in 0..60 {
-        sys.fixed_update(&mut world, DT).unwrap();
-    }
-
-    // Drive the base at 20 m/s along -Z: a 120 Hz display alternating frames
-    // of two steps and no steps (every frame moves the base 1/120 s of travel).
-    let speed = 20.0;
-    let frame_dt = 1.0 / 120.0;
-    let mut z = 0.0;
-    let mut worst: f32 = 0.0;
-    for frame in 0..240 {
-        z -= speed * frame_dt;
-        world
-            .set_field(base, "transform", "position", floats(&[0.0, 2.0, z]))
-            .unwrap();
-        let steps = if frame % 2 == 0 { 2 } else { 0 };
-        sys.begin_frame_steps(steps);
-        for _ in 0..steps {
+        let base = body(
+            &mut world,
+            "base",
+            [0.0, 2.0, 0.0],
+            "kinematic",
+            "box",
+            [0.2, 0.2, 0.2],
+            0.0,
+        );
+        let piston = body(
+            &mut world,
+            "piston",
+            [0.0, 0.0, -0.5],
+            "dynamic",
+            "box",
+            [0.1, 0.1, 0.1],
+            0.0,
+        );
+        world.set_parent(piston, base).unwrap();
+        joint(
+            &mut world,
+            piston,
+            vec![
+                ("type", s("prismatic")),
+                ("axis", floats(&[0.0, 0.0, -1.0])),
+                ("limits", floats(&[-0.15, 0.15])),
+                ("motor_stiffness", f(200.0)),
+                ("motor_damping", f(10.0)),
+            ],
+        );
+        sys.initialize(&mut world).unwrap();
+        for _ in 0..60 {
             sys.fixed_update(&mut world, DT).unwrap();
         }
-        if frame > 60 {
-            let stroke = sys.joint_position(piston).expect("prismatic coordinate");
-            worst = worst.max(stroke.abs());
+
+        // Drive the base at 20 m/s along -Z, one scripted pose per frame,
+        // with the frame loop's accumulator deciding the steps.
+        let speed = 20.0;
+        let frame_dt = 1.0 / hz;
+        let mut z = 0.0;
+        let mut acc = 0.0f64;
+        let mut worst_stroke: f32 = 0.0;
+        let mut worst_local: f32 = 0.0;
+        let frames = (hz * 4.0) as usize;
+        for frame in 0..frames {
+            z -= speed * frame_dt;
+            world
+                .set_field(base, "transform", "position", floats(&[0.0, 2.0, z]))
+                .unwrap();
+            acc += frame_dt;
+            sys.begin_frame(acc / DT);
+            while acc >= DT {
+                sys.fixed_update(&mut world, DT).unwrap();
+                acc -= DT;
+            }
+            if frame > frames / 4 {
+                let stroke = sys.joint_position(piston).expect("prismatic coordinate");
+                worst_stroke = worst_stroke.max(stroke.abs());
+                let local = world.get_transform(piston).unwrap().position;
+                worst_local = worst_local.max((local.z + 0.5).abs()).max(local.x.abs());
+            }
         }
+        assert!(
+            worst_stroke < 0.01,
+            "{hz} Hz: piston stroke should stay near zero under a steady parent, worst {worst_stroke} m"
+        );
+        assert!(
+            worst_local < 0.01,
+            "{hz} Hz: piston local pose should stay at rest, worst {worst_local} m off"
+        );
     }
-    assert!(
-        worst < 0.01,
-        "piston stroke should stay near zero under a steady parent, worst {worst} m"
-    );
 }

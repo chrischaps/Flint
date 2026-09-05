@@ -236,6 +236,43 @@ impl PhysicsSync {
         Isometry::from_parts(translation.into(), quat_to_na(quat))
     }
 
+    /// World matrix of `parent` for writing a child body back as a local pose.
+    /// The chain is composed from the nearest ancestor that has a Rapier body,
+    /// using that body's simulated pose rather than its ECS transform: a
+    /// kinematic ancestor trails its scripted pose by the accumulator
+    /// remainder (see `update_kinematic_bodies`), and the child's simulated
+    /// pose is relative to where the body is, not where the script put it.
+    /// Falls back to the ECS world matrix when no ancestor has a body.
+    fn parent_world_matrix(
+        &self,
+        world: &FlintWorld,
+        physics: &PhysicsWorld,
+        parent: EntityId,
+    ) -> Option<[[f32; 4]; 4]> {
+        let mut locals: Vec<[[f32; 4]; 4]> = Vec::new();
+        let mut cur = parent;
+        loop {
+            if let Some(body) = self.body_map.get(&cur).and_then(|h| physics.get_rigid_body(*h)) {
+                let lift = world
+                    .get_components(cur)
+                    .map(sprite_anchor_offset_y)
+                    .unwrap_or(0.0);
+                let mut iso = *body.position();
+                iso.translation.vector.y -= lift;
+                let mut mat = iso_to_mat4(&iso);
+                for local in locals.iter().rev() {
+                    mat = flint_core::mat4_mul(&mat, local);
+                }
+                return Some(mat);
+            }
+            locals.push(world.get_transform(cur)?.to_matrix());
+            match world.get_parent(cur) {
+                Some(p) => cur = p,
+                None => return world.get_world_matrix(parent),
+            }
+        }
+    }
+
     /// Write Rapier poses back to entity transforms (dynamic bodies only).
     /// A parented body is written as a local pose against the parent's world matrix.
     pub fn sync_from_rapier(&self, world: &mut FlintWorld, physics: &PhysicsWorld) {
@@ -266,7 +303,7 @@ impl PhysicsSync {
 
             let (mut local_pos, local_quat) = match world
                 .get_parent(*entity_id)
-                .and_then(|p| world.get_world_matrix(p))
+                .and_then(|p| self.parent_world_matrix(world, physics, p))
             {
                 Some(parent_world) => rigid_inverse_apply(&parent_world, world_pos, world_quat),
                 None => (world_pos, world_quat),
@@ -310,7 +347,7 @@ impl PhysicsSync {
     /// step velocity swing between double and zero, and the joint solver
     /// passes that swing straight into jointed children (a prismatic wheel
     /// rings along its free axis in proportion to speed). This is step
-    /// `step_idx` of `frame_steps` in the frame: the target is interpolated
+    /// `step_idx` within a frame spanning `frame_span` steps: the target is interpolated
     /// from the pose at the frame's first step so every step carries an even
     /// share of the motion. `(0, 1)` is a lone step and reaches the target.
     pub fn update_kinematic_bodies(
@@ -318,12 +355,17 @@ impl PhysicsSync {
         world: &FlintWorld,
         physics: &mut PhysicsWorld,
         step_idx: usize,
-        frame_steps: usize,
+        frame_span: f32,
     ) {
-        let steps = frame_steps.max(1);
-        let idx = step_idx.min(steps - 1);
-        let first_step = idx == 0;
-        let frac = (idx + 1) as f32 / steps as f32;
+        // `frame_span` is the wall time since the last step in steps: the
+        // frame's step count plus the accumulator remainder. Step `i` moves
+        // the body to `(i + 1) / span` of the way from its frame-start pose to
+        // the scripted pose, so every step covers the same share of the
+        // scripted motion; the remainder (under one step) is left for the
+        // next frame, where it is part of that frame's span.
+        let span = if frame_span.is_finite() { frame_span.max(1.0) } else { 1.0 };
+        let first_step = step_idx == 0;
+        let frac = ((step_idx + 1) as f32 / span).min(1.0);
         let handles: Vec<(EntityId, RigidBodyHandle)> =
             self.body_map.iter().map(|(e, h)| (*e, *h)).collect();
         if first_step {
@@ -934,6 +976,18 @@ fn apply_joint_params(joint: &mut GenericJoint, p: &JointParams) {
 // Small conversions
 // ----------------------------------------------------------------------
 
+/// Column-major `[col][row]` matrix of a rigid pose, matching `Transform::to_matrix`.
+fn iso_to_mat4(iso: &Isometry<f32>) -> [[f32; 4]; 4] {
+    let m = iso.to_homogeneous();
+    let mut out = [[0.0f32; 4]; 4];
+    for c in 0..4 {
+        for r in 0..4 {
+            out[c][r] = m[(r, c)];
+        }
+    }
+    out
+}
+
 fn quat_to_na(q: [f32; 4]) -> na::UnitQuaternion<f32> {
     na::UnitQuaternion::from_quaternion(na::Quaternion::new(q[3], q[0], q[1], q[2]))
 }
@@ -1189,7 +1243,7 @@ mod tests {
         let mut physics = PhysicsWorld::new();
         let mut sync = PhysicsSync::new();
         sync.sync_to_rapier(&world, &mut physics);
-        sync.update_kinematic_bodies(&world, &mut physics, 0, 1);
+        sync.update_kinematic_bodies(&world, &mut physics, 0, 1.0);
         physics.step(1.0 / 60.0);
 
         let body = physics.get_rigid_body(sync.body_map[&child]).unwrap();
