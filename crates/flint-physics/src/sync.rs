@@ -101,9 +101,22 @@ impl PhysicsSync {
             // World rigid pose (parent chain applied), sprite lift, 2D clamp
             let iso = self.body_world_pose(world, entity_id, components, mode_2d);
 
+            // `additional_mass` sets mass only: a body with no collider would
+            // keep zero angular inertia and could never be rotated, not by a
+            // joint, not by a motor. Give collider-less bodies the inertia of
+            // a 0.2 m solid sphere of that mass (I = 2/5 m r^2).
+            let builder = if components.get(comp::COLLIDER).is_none() {
+                let inertia = 0.4 * mass * 0.2 * 0.2;
+                builder.additional_mass_properties(MassProperties::new(
+                    point![0.0, 0.0, 0.0],
+                    mass,
+                    vector![inertia, inertia, inertia],
+                ))
+            } else {
+                builder.additional_mass(mass)
+            };
             let mut builder = builder
                 .position(iso)
-                .additional_mass(mass)
                 .linear_damping(linear_damping)
                 .angular_damping(angular_damping)
                 .gravity_scale(gravity_scale);

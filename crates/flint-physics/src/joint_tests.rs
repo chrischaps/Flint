@@ -418,3 +418,180 @@ fn jointed_child_follows_kinematic_parent_after_resting() {
         "arm should follow the kinematic base: {after:?}"
     );
 }
+
+#[test]
+fn hinged_child_turns_with_yawing_kinematic_parent() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    let base = body(
+        &mut world,
+        "base",
+        [0.0, 2.0, 0.0],
+        "kinematic",
+        "box",
+        [0.2, 0.2, 0.2],
+        0.0,
+    );
+    let arm = body(
+        &mut world,
+        "arm",
+        [0.0, 0.0, 1.0],
+        "dynamic",
+        "box",
+        [0.1, 0.1, 0.1],
+        0.0,
+    );
+    world.set_parent(arm, base).unwrap();
+    joint(
+        &mut world,
+        arm,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, -1.0])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_stiffness", f(400.0)),
+            ("motor_damping", f(25.0)),
+        ],
+    );
+
+    sys.initialize(&mut world).unwrap();
+    for _ in 0..30 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+
+    // Yaw the base 90 degrees over a second, 1.5 deg per step.
+    for i in 1..=60 {
+        world
+            .set_field(base, "transform", "rotation", floats(&[0.0, 1.5 * i as f64, 0.0]))
+            .unwrap();
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    for _ in 0..30 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    let p = world_pos(&world, arm);
+    // Yaw +90 about Y takes local +Z to world +X.
+    assert!(
+        (p[0] - 1.0).abs() < 0.1 && p[2].abs() < 0.1,
+        "arm should have swung round with the base: {p:?}"
+    );
+}
+
+#[test]
+fn hinged_child_turns_when_the_kinematic_parents_own_parent_yaws() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    // root (no body, script-yawed) -> base (kinematic) -> arm (hinge)
+    let root = world.spawn("root").unwrap();
+    world
+        .set_component(root, "transform", table(vec![("position", floats(&[0.0, 2.0, 0.0]))]))
+        .unwrap();
+    let base = body(&mut world, "base", [0.0, 0.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    world.set_parent(base, root).unwrap();
+    let arm = body(&mut world, "arm", [0.0, 0.0, 1.0], "dynamic", "box", [0.1, 0.1, 0.1], 0.0);
+    world.set_parent(arm, base).unwrap();
+    joint(
+        &mut world,
+        arm,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, -1.0])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_stiffness", f(400.0)),
+            ("motor_damping", f(25.0)),
+        ],
+    );
+
+    sys.initialize(&mut world).unwrap();
+    for _ in 0..30 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    for i in 1..=60 {
+        world
+            .set_field(root, "transform", "rotation", floats(&[0.0, 1.5 * i as f64, 0.0]))
+            .unwrap();
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    for _ in 0..30 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    let p = world_pos(&world, arm);
+    assert!(
+        (p[0] - 1.0).abs() < 0.1 && p[2].abs() < 0.1,
+        "arm should have swung round with the root: {p:?}"
+    );
+    // And the arm's own orientation should have yawed too: its local +Z now points world +X.
+    let m = world.get_world_matrix(arm).unwrap();
+    let fwd = [m[2][0], m[2][1], m[2][2]]; // column-major: local +Z in world
+    assert!(
+        fwd[0] > 0.95 && fwd[2].abs() < 0.2,
+        "arm should face world +X after the yaw: {fwd:?}"
+    );
+}
+
+#[test]
+fn collider_less_hinged_body_rotates_with_parent_and_motor() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    // A game may give a jointed node a rigidbody for mass alone (a collider on
+    // the chain would be hit by the vehicle's own ground ray). Without angular
+    // inertia such a body could never turn.
+    let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    // Hinge anchored at the arm's own origin, as a vehicle articulation is.
+    let arm = world.spawn("arm").unwrap();
+    world
+        .set_component(arm, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.3]))]))
+        .unwrap();
+    world
+        .set_component(
+            arm,
+            "rigidbody",
+            table(vec![("body_type", s("dynamic")), ("gravity_scale", f(0.0))]),
+        )
+        .unwrap();
+    world.set_parent(arm, base).unwrap();
+    joint(
+        &mut world,
+        arm,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, 0.0])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_stiffness", f(400.0)),
+            ("motor_damping", f(25.0)),
+        ],
+    );
+
+    sys.initialize(&mut world).unwrap();
+    for i in 1..=60 {
+        world
+            .set_field(base, "transform", "rotation", floats(&[0.0, 1.5 * i as f64, 0.0]))
+            .unwrap();
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    for _ in 0..30 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    let m = world.get_world_matrix(arm).unwrap();
+    let fwd = [m[2][0], m[2][1], m[2][2]];
+    assert!(
+        fwd[0] > 0.95 && fwd[2].abs() < 0.2,
+        "collider-less arm should yaw with its parent: {fwd:?}"
+    );
+
+    // The motor must be able to turn it about the hinge too.
+    world
+        .set_field(arm, "joint", "motor_target", f(-60.0))
+        .unwrap();
+    for _ in 0..60 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+    let angle = sys.joint_position(arm).expect("hinge angle");
+    assert!(
+        (angle + 60.0).abs() < 5.0,
+        "motor should drive the collider-less arm to -60 deg: {angle}"
+    );
+}
