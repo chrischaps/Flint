@@ -431,9 +431,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let c = crate::lock_or_recover(&ctx);
                 let world = unsafe { c.world_mut() };
                 if let Some(tv) = dynamic_to_toml(&val) {
-                    if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                        comps.set_field(comp, field, tv);
-                    }
+                    // World-level set_field maintains the component index, so a
+                    // component created here (rigidbody, collider, joint, ...)
+                    // is visible to systems that scan by component.
+                    let _ = world.set_field(EntityId::from_raw(id as u64), comp, field, tv);
                 }
             },
         );
