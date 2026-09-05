@@ -796,6 +796,8 @@ impl PlayerApp {
         // Script system: provide camera context, then run updates
         self.script
             .set_camera(self.camera.position_array(), self.camera.forward_vector());
+        self.script
+            .set_camera_view_proj(self.camera.view_projection_matrix());
         self.script.provide_context(
             &self.input,
             &game_events,
@@ -998,6 +1000,11 @@ impl PlayerApp {
                 }
             }
         }
+
+        // Two-bone IK (ADR 0070): pin chain tips to their targets now that
+        // scripts, physics and animation have all posed the world; the renderer
+        // reads world matrices on demand, so this is the last writer it sees.
+        self.animation.run_ik(&mut self.world);
 
         // Advance particle simulation (skip when paused)
         if config.particles == SystemPolicy::Run {

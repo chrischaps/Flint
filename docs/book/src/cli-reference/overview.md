@@ -56,6 +56,8 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
 | `--music-volume <f32>` | Initial gain for the `music` mixer bus |
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
+| `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
+| `--list-gpus` | Print available GPU adapters and exit |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
@@ -170,6 +172,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--output <path>` / `-o` | `render.png` | Output file path |
 | `--width <px>` | `1920` | Image width |
 | `--height <px>` | `1080` | Image height |
+| `--gpu <name>` | (high-perf) | GPU adapter to use (substring match); `--list-gpus` prints the names |
 | `--distance <f32>` | (auto) | Camera distance from target |
 | `--yaw <deg>` | (auto) | Horizontal camera angle |
 | `--pitch <deg>` | (auto) | Vertical camera angle |
@@ -257,7 +260,30 @@ flint edit fx/fire.particles.toml              # Particle effect editor (created
 | `.particles.toml` | Particle effect editor | Emitters, curves, forces, bursts; scrub timeline; headless `--render` |
 | `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
 
-### Common Flags
+### GPU Selection
+
+Both windowed (`play`, `flint-player`, editors) and headless (`render`)
+contexts choose their wgpu adapter through the same chain, first match wins:
+
+1. `--gpu <name>` on `play`, `render`, or `flint-player`
+2. `WGPU_ADAPTER_NAME=<name>` environment variable
+3. `WGPU_POWER_PREF=high|low|none` environment variable
+4. Default: high-performance adapter
+
+The name is a case-insensitive substring of the adapter name; if nothing
+matches, the engine warns with the available names and falls back to the
+power preference. `--list-gpus` prints every adapter with its type and backend.
+Run with `RUST_LOG=info` to see which adapter was picked:
+
+```
+INFO flint_render::gpu_select: GPU adapter: NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan, ...)
+```
+
+The default matters on dual-GPU laptops: before this, `PowerPreference::None`
+let the backend hand back whichever adapter enumerated first, usually the
+integrated GPU.
+
+## Common Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|

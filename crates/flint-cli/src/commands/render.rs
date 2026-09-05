@@ -14,6 +14,7 @@ use std::path::Path;
 #[derive(clap::Args)]
 pub struct RenderArgs {
     /// Path to scene file
+    #[arg(required_unless_present = "list_gpus", default_value = "")]
     pub scene: String,
 
     /// Output image path
@@ -229,9 +230,25 @@ pub struct RenderArgs {
     /// Enable the FXAA anti-aliasing pass
     #[arg(long)]
     pub fxaa: bool,
+    /// GPU adapter to use (case-insensitive substring of the adapter name,
+    /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
+    /// high-performance adapter. Use --list-gpus to see names.
+    #[arg(long)]
+    pub gpu: Option<String>,
+
+    /// List available GPU adapters and exit
+    #[arg(long)]
+    pub list_gpus: bool,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
+    if args.list_gpus {
+        for a in flint_render::list_adapters() {
+            println!("{a}");
+        }
+        return Ok(());
+    }
+    flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
     for dir in flint_schema::discover_schema_dirs(&args.scene) {
@@ -541,6 +558,9 @@ pub fn run(args: RenderArgs) -> Result<()> {
     renderer.scene_dir = Path::new(&args.scene).parent().map(|p| p.to_path_buf());
     renderer.ortho_height = camera.ortho_height;
     renderer.aspect_ratio = camera.aspect;
+
+    // Two-bone IK (ADR 0070): pose authored chains before the single frame.
+    flint_animation::IkPass::new().run(&mut world);
 
     renderer.update_from_world(&world, &ctx.device);
 

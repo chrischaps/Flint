@@ -2491,6 +2491,82 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // world_to_screen(x, y, z) -> #{x, y, depth, visible}
+    // Projects a world point with the camera the last frame rendered with.
+    // `visible` is false behind the near plane (x/y are then meaningless).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("world_to_screen", move |x: f64, y: f64, z: f64| -> Map {
+            let c = crate::lock_or_recover(&ctx);
+            let clip = project_clip(&c.camera_view_proj, [x as f32, y as f32, z as f32]);
+            let mut map = Map::new();
+            let visible = clip[3] > 1e-4;
+            if visible {
+                let (sx, sy) = clip_to_screen(clip, c.screen_width, c.screen_height);
+                map.insert("x".into(), Dynamic::from(sx as f64));
+                map.insert("y".into(), Dynamic::from(sy as f64));
+                map.insert("depth".into(), Dynamic::from(clip[3] as f64));
+            } else {
+                map.insert("x".into(), Dynamic::from(0.0_f64));
+                map.insert("y".into(), Dynamic::from(0.0_f64));
+                map.insert("depth".into(), Dynamic::from(clip[3] as f64));
+            }
+            map.insert("visible".into(), Dynamic::from(visible));
+            map
+        });
+    }
+
+    // draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)
+    // World-space debug line, projected onto the HUD layer. Clipped against
+    // the near plane so a segment that passes the camera still draws.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_3d",
+            move |x1: f64,
+                  y1: f64,
+                  z1: f64,
+                  x2: f64,
+                  y2: f64,
+                  z2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                let mut p = project_clip(&c.camera_view_proj, [x1 as f32, y1 as f32, z1 as f32]);
+                let mut q = project_clip(&c.camera_view_proj, [x2 as f32, y2 as f32, z2 as f32]);
+                const NEAR_W: f32 = 1e-3;
+                if p[3] <= NEAR_W && q[3] <= NEAR_W {
+                    return;
+                }
+                if p[3] <= NEAR_W || q[3] <= NEAR_W {
+                    // Move the behind-camera end onto the near plane (linear in clip space).
+                    let t = (NEAR_W - p[3]) / (q[3] - p[3]);
+                    let m = [
+                        p[0] + (q[0] - p[0]) * t,
+                        p[1] + (q[1] - p[1]) * t,
+                        p[2] + (q[2] - p[2]) * t,
+                        NEAR_W,
+                    ];
+                    if p[3] <= NEAR_W { p = m; } else { q = m; }
+                }
+                let (sx1, sy1) = clip_to_screen(p, c.screen_width, c.screen_height);
+                let (sx2, sy2) = clip_to_screen(q, c.screen_width, c.screen_height);
+                c.draw_commands.push(DrawCommand::Line {
+                    x1: sx1,
+                    y1: sy1,
+                    x2: sx2,
+                    y2: sy2,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    layer: 0,
+                });
+            },
+        );
+    }
+
     // draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)
     {
         let ctx = ctx.clone();
@@ -4085,4 +4161,21 @@ mod tests {
         let result: f64 = engine.eval("cos(0.0)").unwrap();
         assert!((result - 1.0).abs() < 1e-10);
     }
+}
+
+/// World point → clip space with a column-major view-projection (m[col][row]).
+fn project_clip(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 4] {
+    let mut out = [0.0f32; 4];
+    for (row, o) in out.iter_mut().enumerate() {
+        *o = m[0][row] * p[0] + m[1][row] * p[1] + m[2][row] * p[2] + m[3][row];
+    }
+    out
+}
+
+/// Clip space → HUD pixels (origin top-left, y down).
+fn clip_to_screen(clip: [f32; 4], w: f32, h: f32) -> (f32, f32) {
+    let inv_w = 1.0 / clip[3];
+    let nx = clip[0] * inv_w;
+    let ny = clip[1] * inv_w;
+    ((nx * 0.5 + 0.5) * w, (1.0 - (ny * 0.5 + 0.5)) * h)
 }

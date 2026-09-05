@@ -1553,6 +1553,7 @@ dependencies = [
  "flint-ecs",
  "flint-import",
  "flint-runtime",
+ "log",
  "serde",
  "toml",
 ]

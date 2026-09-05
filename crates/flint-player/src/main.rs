@@ -18,6 +18,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
 struct Args {
     /// Path to scene file
+    #[arg(required_unless_present = "list_gpus", default_value = "")]
     scene: String,
 
     /// Paths to schemas directories (can specify multiple)
@@ -43,6 +44,16 @@ struct Args {
     /// MSAA sample count for the scene passes: 1 (off) or 4 (ADR 0058)
     #[arg(long, default_value_t = 1)]
     msaa: u32,
+
+    /// GPU adapter to use (case-insensitive substring of the adapter name,
+    /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
+    /// high-performance adapter. Use --list-gpus to see names.
+    #[arg(long)]
+    gpu: Option<String>,
+
+    /// List available GPU adapters and exit
+    #[arg(long)]
+    list_gpus: bool,
 }
 
 fn main() -> Result<()> {
@@ -54,6 +65,13 @@ fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    if args.list_gpus {
+        for a in flint_render::list_adapters() {
+            println!("{a}");
+        }
+        return Ok(());
+    }
+    flint_render::set_gpu_override(args.gpu.clone());
 
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();

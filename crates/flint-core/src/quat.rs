@@ -136,6 +136,61 @@ pub fn rigid_inverse_apply(
     (Vec3::new(lp[0], lp[1], lp[2]), lq)
 }
 
+/// Shortest-arc rotation taking direction `a` onto direction `b` (both are
+/// normalised internally). Identity when they already agree; a half turn about
+/// any perpendicular axis when they are opposite.
+pub fn quat_from_two_vectors(a: [f32; 3], b: [f32; 3]) -> [f32; 4] {
+    let norm = |v: [f32; 3]| {
+        let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if len < 1e-10 {
+            None
+        } else {
+            Some([v[0] / len, v[1] / len, v[2] / len])
+        }
+    };
+    let (Some(a), Some(b)) = (norm(a), norm(b)) else {
+        return [0.0, 0.0, 0.0, 1.0];
+    };
+    let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    if d > 1.0 - 1e-6 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    if d < -1.0 + 1e-6 {
+        // Opposite: pick any axis perpendicular to `a`.
+        let helper = if a[0].abs() < 0.9 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [0.0, 1.0, 0.0]
+        };
+        let axis = [
+            a[1] * helper[2] - a[2] * helper[1],
+            a[2] * helper[0] - a[0] * helper[2],
+            a[0] * helper[1] - a[1] * helper[0],
+        ];
+        return quat_from_axis_angle(axis, std::f32::consts::PI);
+    }
+    let axis = [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ];
+    quat_normalize(&[axis[0], axis[1], axis[2], 1.0 + d])
+}
+
+/// Normalised linear interpolation from `a` (t = 0) to `b` (t = 1) along the
+/// short way round. Good enough for blending nearby rotations (IK weights).
+pub fn quat_nlerp(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
+    let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
+    let t = t.clamp(0.0, 1.0);
+    quat_normalize(&[
+        a[0] + (sign * b[0] - a[0]) * t,
+        a[1] + (sign * b[1] - a[1]) * t,
+        a[2] + (sign * b[2] - a[2]) * t,
+        a[3] + (sign * b[3] - a[3]) * t,
+    ])
+}
+
 /// Normalise the three basis columns of a column-major matrix.
 /// Returns the orthonormal basis (as `[col][row]`) and the column lengths.
 fn orthonormal_basis(m: &[[f32; 4]; 4]) -> ([[f32; 3]; 3], [f32; 3]) {
@@ -236,6 +291,33 @@ mod tests {
             "{lp:?}"
         );
         assert!(quat_close(&lq, &local.rotation_quat.unwrap()));
+    }
+
+    #[test]
+    fn from_two_vectors_maps_a_onto_b() {
+        let q = quat_from_two_vectors([1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        let v = quat_rotate_vec3(&q, [1.0, 0.0, 0.0]);
+        assert!(close(v[0], 0.0) && close(v[1], 0.0) && close(v[2], 1.0), "{v:?}");
+        // Opposite vectors: still a valid half turn.
+        let q = quat_from_two_vectors([0.0, 1.0, 0.0], [0.0, -2.0, 0.0]);
+        let v = quat_rotate_vec3(&q, [0.0, 1.0, 0.0]);
+        assert!(close(v[1], -1.0), "{v:?}");
+        // Same direction: identity.
+        let q = quat_from_two_vectors([0.0, 0.0, 3.0], [0.0, 0.0, 1.0]);
+        assert!(quat_close(&q, &[0.0, 0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn nlerp_endpoints_and_short_way() {
+        let a = [0.0, 0.0, 0.0, 1.0];
+        let b = euler_deg_to_quat(0.0, 90.0, 0.0);
+        assert!(quat_close(&quat_nlerp(&a, &b, 0.0), &a));
+        assert!(quat_close(&quat_nlerp(&a, &b, 1.0), &b));
+        // -b is the same rotation; the midpoint must not swing the long way.
+        let neg_b = [-b[0], -b[1], -b[2], -b[3]];
+        let mid = quat_nlerp(&a, &neg_b, 0.5);
+        let v = quat_rotate_vec3(&mid, [1.0, 0.0, 0.0]);
+        assert!(v[2] < 0.0 && v[0] > 0.0, "{v:?}");
     }
 
     #[test]

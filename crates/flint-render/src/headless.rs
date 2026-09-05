@@ -23,12 +23,7 @@ impl HeadlessContext {
             ..Default::default()
         });
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
+        let adapter = crate::gpu_select::request_adapter(&instance, None)
             .await
             .ok_or(RenderError::AdapterNotFound)?;
 

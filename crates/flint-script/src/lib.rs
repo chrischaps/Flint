@@ -161,6 +161,13 @@ impl ScriptSystem {
         c.camera_direction = direction;
     }
 
+    /// Camera view-projection (column-major) for world-space debug drawing
+    /// (`draw_line_3d`, `world_to_screen`). Pass the matrix the frame renders with.
+    pub fn set_camera_view_proj(&mut self, view_proj: [[f32; 4]; 4]) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.camera_view_proj = view_proj;
+    }
+
     /// Drain commands produced by scripts this frame
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()

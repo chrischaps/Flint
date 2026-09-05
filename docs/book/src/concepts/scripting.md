@@ -148,6 +148,7 @@ Animation functions write directly to the `animator` component on the target ent
 | `play_sequence(entity_id, name)` | Play a `*.sequence.toml` (timestamped blend/layer/speed/cue events) on this animator |
 | `stop_sequence(entity_id)` | Stop the active sequence |
 | `clear_anim_layer(entity_id, index)` | Deactivate a layer (slot kept so indices stay stable) |
+| `set_field(id, "ik_two_bone", "target", name)` | Arm two-bone IK on a forearm node (also `pole`, `tip`, `weight`); the engine pins the chain every frame (ADR 0070) |
 
 Weights are floats — write `0.5`, never `0` (Rhai does not coerce ints).
 

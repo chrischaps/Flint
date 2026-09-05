@@ -9,6 +9,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 #[derive(clap::Args)]
 pub struct PlayArgs {
     /// Path to scene file
+    #[arg(required_unless_present = "list_gpus", default_value = "")]
     pub scene: String,
 
     /// Paths to schemas directories (can specify multiple)
@@ -30,9 +31,26 @@ pub struct PlayArgs {
     /// Initial SFX bus volume (linear, 0.0 = muted, 1.0 = full)
     #[arg(long, default_value_t = 1.0)]
     pub sfx_volume: f64,
+
+    /// GPU adapter to use (case-insensitive substring of the adapter name,
+    /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
+    /// high-performance adapter. Use --list-gpus to see names.
+    #[arg(long)]
+    pub gpu: Option<String>,
+
+    /// List available GPU adapters and exit
+    #[arg(long)]
+    pub list_gpus: bool,
 }
 
 pub fn run(args: PlayArgs) -> Result<()> {
+    if args.list_gpus {
+        for a in flint_render::list_adapters() {
+            println!("{a}");
+        }
+        return Ok(());
+    }
+    flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
     for dir in flint_schema::discover_schema_dirs(&args.scene) {

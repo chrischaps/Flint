@@ -1,0 +1,22 @@
+# Two-bone inverse kinematics on a transform chain (ADR 0070).
+#
+# Lives on the SECOND bone of a chain (the forearm / shin). Its transform parent
+# is the first bone (upper arm / thigh) and a child entity named by `tip` marks
+# the chain's end (hand / foot). Every frame, after scripts, physics and
+# animation have written their poses, the player rotates the parent and this
+# entity so the tip reaches the `target` entity's world position, bending toward
+# the `pole` entity. Segment lengths come from the rest offsets in the model, so
+# a glTF that carries the empties needs no numbers here — a script only names
+# the entities (`set_field(elbow, "ik_two_bone", "target", "...")`).
+# Bones on the chain must have unit scale. Targets past the chain's reach
+# straighten the arm toward them.
+
+[component.ik_two_bone]
+description = "Two-bone IK: rotates this entity and its parent so the `tip` child reaches the `target` entity, bending toward `pole`. Runs every frame after animation; entities carrying rigidbody/joint must not use it."
+
+[component.ik_two_bone.fields]
+target = { type = "string", description = "Entity whose world position the tip reaches", default = "" }
+pole = { type = "string", description = "Entity whose world position the mid joint bends toward", default = "" }
+tip = { type = "string", description = "Child entity of this one at the chain's end (its rest offset is the second bone)", default = "" }
+weight = { type = "float", description = "Blend from the rest pose (0) to the solve (1)", default = 1.0, min = 0.0, max = 1.0 }
+enabled = { type = "bool", description = "Run the solve", default = true }

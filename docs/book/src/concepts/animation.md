@@ -365,6 +365,39 @@ skin = "Armature"           # Name of the glTF skin
 
 Entities with both `animator` and `skeleton` components use the skeletal animation path. Entities with only `animator` use property tweens.
 
+## Two-Bone IK
+
+`ik_two_bone` (ADR 0070) pins the end of a two-segment transform chain to a
+target entity every frame, after scripts, physics and clip playback have posed
+the world. It works on *entities*, not skeleton joints, so it suits models whose
+articulation is a glTF node hierarchy expanded by an `animator` (a driver's
+arms, a landing leg, a crane).
+
+Put the component on the **second** bone (forearm). Its transform parent is the
+first bone (upper arm); a child entity named by `tip` marks the chain end
+(hand). Segment lengths are read from those rest offsets, so the model carries
+all the numbers: the component only names entities.
+
+```toml
+[entities.forearm_r.ik_two_bone]
+target = "yoke__hand_target_r"   # world position the hand reaches
+pole   = "spine__pole_r"         # the elbow bends toward this entity
+tip    = "forearm_r__hand_r"     # child of forearm_r at the hand
+weight = 1.0                     # 0 = rest pose, 1 = full solve
+```
+
+Because glb-expanded nodes are not in the scene TOML, scripts usually arm the
+component at init with `set_field(elbow_id, "ik_two_bone", "target", "...")`
+and friends. Parent a hand target to a steering wheel node and turning the
+wheel with `set_rotation` moves both arms with no further script work.
+
+Rules: the two bones must have unit scale and carry no `rigidbody`/`joint`
+(the pass writes their `rotation_quat`; positions are untouched). A target
+past the chain's reach straightens the arm toward it; a pole on the reach line
+leaves the pose unchanged for that frame. The solve restarts from each bone's
+rest rotation, captured the first time the pass sees it, so twist does not
+drift. `flint render` runs the pass once before its frame.
+
 ## Animator Schema
 
 The `animator` component controls playback for both tiers:

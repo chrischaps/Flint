@@ -358,6 +358,9 @@ pub struct ScriptCallContext {
     /// Camera position and direction for weapon aiming
     pub camera_position: [f32; 3],
     pub camera_direction: [f32; 3],
+    /// View-projection of the camera the last frame was rendered with
+    /// (column-major, wgpu clip space). Backs `draw_line_3d` / `world_to_screen`.
+    pub camera_view_proj: [[f32; 4]; 4],
     /// Entity currently being scripted
     pub current_entity: EntityId,
     /// Accumulated commands to be drained after all scripts run
@@ -448,6 +451,12 @@ impl ScriptCallContext {
             world: std::ptr::null_mut(),
             physics: std::ptr::null(),
             camera_position: [0.0; 3],
+            camera_view_proj: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             camera_direction: [0.0, 0.0, 1.0],
             current_entity: EntityId::from_raw(0),
             commands: Vec::new(),

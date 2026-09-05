@@ -8,6 +8,7 @@
 
 pub mod blend;
 pub mod clip;
+pub mod ik_pass;
 pub mod layer_edit;
 pub mod loader;
 pub mod node_clip;
@@ -24,6 +25,7 @@ pub mod sprite_clip;
 pub mod sprite_sync;
 pub mod sync;
 
+pub use ik_pass::IkPass;
 pub use playback_state::{AnimLayer, ClipPlaybackState, LayerMode};
 pub use sequence::{
     load_sequence_from_file, AnimSequence, SequenceCueEvent, SequenceEvent, SequenceRuntime,
@@ -62,6 +64,7 @@ pub struct AnimationSystem {
     pub(crate) node_sync: NodeSync,
     pub(crate) sprite_sync: SpriteAnimSync,
     pub(crate) sequence_sync: SequenceSync,
+    pub(crate) ik: IkPass,
 }
 
 impl AnimationSystem {
@@ -73,6 +76,7 @@ impl AnimationSystem {
             node_sync: NodeSync::new(),
             sprite_sync: SpriteAnimSync::new(),
             sequence_sync: SequenceSync::new(),
+            ik: IkPass::new(),
         }
     }
 
@@ -84,6 +88,14 @@ impl AnimationSystem {
         self.node_sync.clear();
         self.sprite_sync.clear();
         self.sequence_sync.clear();
+        self.ik.clear();
+    }
+
+    /// Solve every `ik_two_bone` chain against the world's current pose
+    /// (ADR 0070). Call after scripts, physics and `update` have written their
+    /// transforms and before the renderer reads them.
+    pub fn run_ik(&mut self, world: &mut FlintWorld) {
+        self.ik.run(world);
     }
 
     // ── Sequences (timestamped animator events) ──
