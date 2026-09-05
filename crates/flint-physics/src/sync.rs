@@ -546,17 +546,20 @@ impl PhysicsSync {
         }
     }
 
-    /// Pin jointed dynamic bodies to their kinematic parents after a step.
+    /// Re-seat jointed dynamic bodies on their kinematic parents after a step.
     ///
     /// Rapier solves a joint against the kinematic body's start-of-step pose
     /// and matches velocities along the tangent, so when a scripted parent
-    /// moves on a curve the child's anchor drifts a few millimetres a step and
-    /// the joint never measures the error (the parent has already moved on).
-    /// Over a turn that grows into a visible slip. Translate the child so the
-    /// two anchors coincide on the joint's locked linear axes; rotation is
-    /// left to the solver.
-    pub fn project_kinematic_joint_anchors(&self, physics: &mut PhysicsWorld) {
-        let mut shifts: Vec<(RigidBodyHandle, na::Vector3<f32>)> = Vec::new();
+    /// moves on a curve (or turns under the child) the anchors separate a few
+    /// millimetres a step and the locked rotations drift, and the joint never
+    /// measures the error because the parent has already moved on. Over a turn
+    /// that grows into a visible slip or a part lying on its side. After the
+    /// step, rebuild the child's pose from the parent's joint frame: locked
+    /// linear and angular axes are made exact, free axes keep the simulated
+    /// coordinate (clamped to the joint's limits). Velocities are left alone
+    /// so springs still overshoot and settle.
+    pub fn project_kinematic_joints(&self, physics: &mut PhysicsWorld) {
+        let mut updates: Vec<(RigidBodyHandle, Isometry<f32>)> = Vec::new();
         for &handle in self.joint_map.values() {
             let Some(joint) = physics.impulse_joint_set.get(handle) else {
                 continue;
@@ -570,31 +573,70 @@ impl PhysicsSync {
             if b1.is_dynamic() || !b2.is_dynamic() {
                 continue;
             }
-            let a1 = b1.position() * na::Point3::from(joint.data.local_frame1.translation.vector);
-            let a2 = b2.position() * na::Point3::from(joint.data.local_frame2.translation.vector);
-            // Only the linear axes the joint locks are projected; a prismatic
-            // joint's slide axis is left to the solver and its motor.
-            let frame1_rot = b1.position().rotation * joint.data.local_frame1.rotation;
-            let mut d = frame1_rot.inverse() * (a1 - a2);
-            let locked = joint.data.locked_axes;
-            if !locked.contains(JointAxesMask::LIN_X) {
-                d.x = 0.0;
+            let data = &joint.data;
+            let locked = data.locked_axes;
+            let f1 = b1.position() * data.local_frame1; // joint frame from the parent
+            let f2 = b2.position() * data.local_frame2; // joint frame from the child
+
+            // Linear: child anchor offset in the parent's joint frame.
+            let mut o = f1.rotation.inverse() * (f2.translation.vector - f1.translation.vector);
+            let lin = [JointAxis::LinX, JointAxis::LinY, JointAxis::LinZ];
+            let lin_mask = [JointAxesMask::LIN_X, JointAxesMask::LIN_Y, JointAxesMask::LIN_Z];
+            for i in 0..3 {
+                if locked.contains(lin_mask[i]) {
+                    o[i] = 0.0;
+                } else if data.limit_axes.contains(lin_mask[i]) {
+                    let l = data.limits[lin[i] as usize];
+                    o[i] = o[i].clamp(l.min, l.max);
+                }
             }
-            if !locked.contains(JointAxesMask::LIN_Y) {
-                d.y = 0.0;
-            }
-            if !locked.contains(JointAxesMask::LIN_Z) {
-                d.z = 0.0;
-            }
-            let delta = frame1_rot * d;
-            if delta.norm_squared() > 1e-10 {
-                shifts.push((joint.body2, delta));
+
+            // Angular: relative rotation of the child frame in the parent frame,
+            // reduced to the twist about a single free axis, or identity when
+            // all three are locked. Two or three free axes are left alone.
+            let rel = f1.rotation.inverse() * f2.rotation;
+            let ang_free = [
+                !locked.contains(JointAxesMask::ANG_X),
+                !locked.contains(JointAxesMask::ANG_Y),
+                !locked.contains(JointAxesMask::ANG_Z),
+            ];
+            let new_rel = match ang_free.iter().filter(|f| **f).count() {
+                0 => na::UnitQuaternion::identity(),
+                1 => {
+                    let q = rel.quaternion();
+                    let (i, j, k) = if ang_free[0] {
+                        (q.i, 0.0, 0.0)
+                    } else if ang_free[1] {
+                        (0.0, q.j, 0.0)
+                    } else {
+                        (0.0, 0.0, q.k)
+                    };
+                    let twist = na::Quaternion::new(q.w, i, j, k);
+                    if twist.norm_squared() < 1e-12 {
+                        na::UnitQuaternion::identity()
+                    } else {
+                        na::UnitQuaternion::from_quaternion(twist)
+                    }
+                }
+                _ => rel,
+            };
+
+            let new_f2 = Isometry::from_parts(
+                (f1.translation.vector + f1.rotation * o).into(),
+                f1.rotation * new_rel,
+            );
+            let new_pose = new_f2 * data.local_frame2.inverse();
+            let cur = b2.position();
+            let moved = (new_pose.translation.vector - cur.translation.vector).norm_squared()
+                > 1e-12
+                || new_pose.rotation.angle_to(&cur.rotation) > 1e-5;
+            if moved {
+                updates.push((joint.body2, new_pose));
             }
         }
-        for (handle, delta) in shifts {
+        for (handle, pose) in updates {
             if let Some(body) = physics.get_rigid_body_mut(handle) {
-                let t = body.translation() + delta;
-                body.set_translation(t, true);
+                body.set_position(pose, true);
             }
         }
     }

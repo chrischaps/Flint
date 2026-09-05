@@ -685,6 +685,34 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
             ("motor_damping", f(6.0)),
         ],
     );
+    // A steering head (kinematic, yawed under the child) with a sprung
+    // prismatic piston hanging forward and down, like the trike's front wheel.
+    let head = body(&mut world, "head", [0.0, 0.4, -1.0], "kinematic", "box", [0.1, 0.1, 0.1], 0.0);
+    world.set_parent(head, base).unwrap();
+    let piston = world.spawn("piston").unwrap();
+    world
+        .set_component(piston, "transform", table(vec![("position", floats(&[0.0, -0.12, -0.45]))]))
+        .unwrap();
+    world
+        .set_component(
+            piston,
+            "rigidbody",
+            table(vec![("body_type", s("dynamic")), ("gravity_scale", f(0.0))]),
+        )
+        .unwrap();
+    world.set_parent(piston, head).unwrap();
+    joint(
+        &mut world,
+        piston,
+        vec![
+            ("type", s("prismatic")),
+            ("anchor", floats(&[0.0, 0.0, 0.0])),
+            ("axis", floats(&[0.0, -0.26, -0.97])),
+            ("limits", floats(&[-0.15, 0.15])),
+            ("motor_stiffness", f(200.0)),
+            ("motor_damping", f(10.0)),
+        ],
+    );
     sys.initialize(&mut world).unwrap();
 
     let (mut x, mut z, mut yaw) = (0.0f64, 0.0f64, 0.0f64);
@@ -692,6 +720,11 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
         if i >= 30 {
             yaw -= 1.0;
         }
+        // Steering head swings 20 deg each way while turning.
+        let steer = if i >= 30 { 20.0 * ((i as f64) * 0.1).sin() } else { 0.0 };
+        world
+            .set_field(head, "transform", "rotation", floats(&[0.0, steer, 0.0]))
+            .unwrap();
         let (sy, cy) = (yaw.to_radians().sin(), yaw.to_radians().cos());
         x += 0.3 * sy;
         z -= 0.3 * cy;
@@ -707,6 +740,22 @@ fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
         assert!(
             off < 0.02,
             "pod should stay on the base through the turn, local offset {off} at step {i}"
+        );
+        // The piston may only move along its axis within the stroke, and must
+        // keep the head's orientation (a prismatic joint locks all rotation).
+        let pt = world.get_transform(piston).unwrap();
+        let d = [pt.position.x, pt.position.y + 0.12, pt.position.z + 0.45];
+        let along = d[1] * -0.26 + d[2] * -0.97;
+        let perp = (d[0].powi(2) + (d[1] - along * -0.26).powi(2) + (d[2] - along * -0.97).powi(2)).sqrt();
+        assert!(
+            perp < 0.02 && along.abs() < 0.16,
+            "piston left its slide: perp {perp} along {along} at step {i}"
+        );
+        let q = pt.rotation_quat.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        let tilt = 2.0 * (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt().asin();
+        assert!(
+            tilt < 0.05,
+            "piston should keep the head's orientation, tilt {tilt} rad at step {i}"
         );
     }
 }
