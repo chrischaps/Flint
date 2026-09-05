@@ -34,7 +34,19 @@ impl PhysicsWorld {
             rigid_body_set: RigidBodySet::new(),
             collider_set: ColliderSet::new(),
             gravity: vector![0.0, -9.81, 0.0],
-            integration_parameters: IntegrationParameters::default(),
+            integration_parameters: {
+                // One solver substep with four internal iterations. Rapier's
+                // default TGS profile substeps dynamic bodies but solves each
+                // substep against a kinematic body's start-of-step pose, so a
+                // joint child trails a script-driven parent by (n-1)/n of the
+                // parent's per-step travel. Flint drives vehicles and rigs
+                // kinematically and hangs sprung parts on them, which must
+                // keep up exactly; stacking piles of loose bodies matters less.
+                let mut p = IntegrationParameters::default();
+                p.num_solver_iterations = std::num::NonZeroUsize::new(1).unwrap();
+                p.num_internal_pgs_iterations = 4;
+                p
+            },
             physics_pipeline: PhysicsPipeline::new(),
             island_manager: IslandManager::new(),
             broad_phase: DefaultBroadPhase::new(),

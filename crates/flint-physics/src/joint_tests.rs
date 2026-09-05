@@ -595,3 +595,53 @@ fn collider_less_hinged_body_rotates_with_parent_and_motor() {
         "motor should drive the collider-less arm to -60 deg: {angle}"
     );
 }
+
+#[test]
+fn jointed_child_keeps_up_with_a_fast_kinematic_parent() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    // Rapier's TGS solver substeps the dynamic body but solves each substep
+    // against the kinematic body's start-of-step pose, so with n substeps a
+    // jointed child trails a scripted parent by (n-1)/n of the parent's step
+    // travel: 0.22 m at 18 m/s. Flint runs one substep so the child keeps up.
+    let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let arm = world.spawn("arm").unwrap();
+    world
+        .set_component(arm, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.3]))]))
+        .unwrap();
+    world
+        .set_component(
+            arm,
+            "rigidbody",
+            table(vec![("body_type", s("dynamic")), ("gravity_scale", f(0.0))]),
+        )
+        .unwrap();
+    world.set_parent(arm, base).unwrap();
+    joint(
+        &mut world,
+        arm,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, 0.0])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_stiffness", f(60.0)),
+            ("motor_damping", f(6.0)),
+        ],
+    );
+
+    sys.initialize(&mut world).unwrap();
+    sys.fixed_update(&mut world, DT).unwrap();
+    for i in 1..=12 {
+        // 0.3 m per step along +Z: 18 m/s, a vehicle at speed.
+        world
+            .set_field(base, "transform", "position", floats(&[0.0, 2.0, 0.3 * i as f64]))
+            .unwrap();
+        sys.fixed_update(&mut world, DT).unwrap();
+        let lz = world.get_transform(arm).unwrap().position.z;
+        assert!(
+            (lz - 0.3).abs() < 0.01,
+            "arm should stay at its rest offset behind a moving parent, local z {lz} at step {i}"
+        );
+    }
+}
