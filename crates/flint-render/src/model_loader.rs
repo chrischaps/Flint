@@ -251,6 +251,23 @@ fn expand_nodes_animated(
                 default_color,
                 None, // No vertex baking — transforms live on the entity
             );
+            // The subset clones materials straight from the import, whose
+            // texture references are bare names; the textures themselves were
+            // uploaded by `load_model` namespaced by asset, so patch to match
+            // (otherwise a textured node draws with the default white texture).
+            if let Some(meshes) = renderer.mesh_cache_mut().get_mut(&cache_key) {
+                for mesh in meshes.iter_mut() {
+                    for tex in [
+                        &mut mesh.material.base_color_texture,
+                        &mut mesh.material.normal_texture,
+                        &mut mesh.material.metallic_roughness_texture,
+                    ] {
+                        if let Some(t) = tex.take() {
+                            *tex = Some(format!("{}::{}", asset_name, t));
+                        }
+                    }
+                }
+            }
 
             let model = toml::Value::Table({
                 let mut m = toml::map::Map::new();

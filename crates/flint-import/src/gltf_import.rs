@@ -184,12 +184,14 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
         root_nodes.push(idx);
     }
 
+    // Name each texture the same way the material references below do
+    // (`texture_name`), so embedded textures resolve by name after upload.
     let mut textures = Vec::new();
     for (i, image) in images.iter().enumerate() {
         let tex_name = document
             .textures()
             .nth(i)
-            .and_then(|t| t.name().map(String::from))
+            .map(texture_name)
             .unwrap_or_else(|| format!("texture_{}", i));
 
         let format = match image.format {
@@ -227,24 +229,15 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
         let roughness = pbr.roughness_factor();
 
         let base_color_texture = pbr.base_color_texture().map(|info| {
-            info.texture()
-                .name()
-                .map(String::from)
-                .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
+            texture_name(info.texture())
         });
 
         let normal_texture = material.normal_texture().map(|info| {
-            info.texture()
-                .name()
-                .map(String::from)
-                .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
+            texture_name(info.texture())
         });
 
         let metallic_roughness_texture = pbr.metallic_roughness_texture().map(|info| {
-            info.texture()
-                .name()
-                .map(String::from)
-                .unwrap_or_else(|| format!("texture_{}", info.texture().index()))
+            texture_name(info.texture())
         });
 
         let alpha_mode = match material.alpha_mode() {
@@ -701,4 +694,16 @@ fn build_keyframes(
             out_tangent: Vec::new(),
         })
         .collect()
+}
+
+/// A texture's name for the cache: the glTF texture name, else its source
+/// image's name (Blender names images but not textures — e.g. `tire_normal`,
+/// which the texture cache also reads to pick a linear format for normal
+/// maps), else `texture_<index>`.
+fn texture_name(texture: gltf::Texture<'_>) -> String {
+    texture
+        .name()
+        .map(String::from)
+        .or_else(|| texture.source().name().map(String::from))
+        .unwrap_or_else(|| format!("texture_{}", texture.index()))
 }
