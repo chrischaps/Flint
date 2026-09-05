@@ -909,3 +909,175 @@ fn prismatic_child_stays_put_under_ragged_frame_times() {
         );
     }
 }
+
+/// Bench-shaped stress: a kinematic TrikeBody (no collider) under a scripted
+/// root, with a collider-less hinge pod under a body-less GimbalYaw, driven
+/// round a circle while its pitch sweeps through 180 deg with a wrapped motor
+/// target. Every step the pod's pose must stay finite and near the body.
+///
+/// Reproduced the trick bench's vanishing pod before the guard in
+/// `project_kinematic_joints`: Rapier's angular motor takes
+/// `asin(rel_quat.imag[axis])` with no clamp, and once the hinge twist is
+/// near 180 deg a relative quaternion whose norm has drifted a few 1e-6 over
+/// 1.0 (kinematic re-seating + turning) gives asin(1.00001) = NaN, which the
+/// solver writes into the child body's pose and velocity for good.
+#[test]
+fn pod_hinge_stays_finite_under_turning_pitching_kinematic_parent() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    let root = world.spawn("root").unwrap();
+    world
+        .set_component(root, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .unwrap();
+    let body_id = world.spawn("TrikeBody").unwrap();
+    world
+        .set_component(body_id, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .unwrap();
+    world
+        .set_component(body_id, "rigidbody", table(vec![("body_type", s("kinematic"))]))
+        .unwrap();
+    world.set_parent(body_id, root).unwrap();
+    let yaw = world.spawn("GimbalYaw").unwrap();
+    world
+        .set_component(yaw, "transform", table(vec![("position", floats(&[0.0, 0.6, -0.3]))]))
+        .unwrap();
+    world.set_parent(yaw, body_id).unwrap();
+    let pod = world.spawn("GimbalPitch").unwrap();
+    world
+        .set_component(pod, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .unwrap();
+    world
+        .set_component(
+            pod,
+            "rigidbody",
+            table(vec![("body_type", s("dynamic")), ("gravity_scale", f(0.0))]),
+        )
+        .unwrap();
+    world.set_parent(pod, yaw).unwrap();
+    joint(
+        &mut world,
+        pod,
+        vec![
+            ("type", s("hinge")),
+            ("parent", s("TrikeBody")),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("limits", floats(&[0.0, 0.0])),
+            ("motor_stiffness", f(60.0)),
+            ("motor_damping", f(6.0)),
+        ],
+    );
+
+    sys.initialize(&mut world).unwrap();
+    let mut t = 0.0f64;
+    let mut frame = 0usize;
+    // Variable frame pacing: whole, fractional and multi-step frames.
+    let spans = [1.0, 2.0, 1.5, 1.0, 0.7, 2.3];
+    while t < 60.0 {
+        let span = spans[frame % spans.len()];
+        frame += 1;
+        sys.begin_frame(span);
+        let steps = (span as f64).floor().max(1.0) as usize;
+        for _ in 0..steps {
+            t += DT;
+            // Root drives a 6 m circle at 12 m/s and bobs; the body pitches
+            // +-20 deg on top of a slow sweep up through 180 deg.
+            let w = 12.0 / 6.0;
+            let (px, pz, yaw_deg) = (6.0 * (w * t).cos(), 6.0 * (w * t).sin(), -(w * t).to_degrees());
+            world
+                .set_field(root, "transform", "position", floats(&[px, 0.3 * (3.0 * t).sin(), pz]))
+                .unwrap();
+            world
+                .set_field(root, "transform", "rotation", floats(&[0.0, yaw_deg, 0.0]))
+                .unwrap();
+            let pitch = 20.0 * (1.7 * t).sin() + 170.0 * (0.05 * t).sin().max(0.0);
+            world
+                .set_field(body_id, "transform", "rotation", floats(&[pitch, 0.0, 0.0]))
+                .unwrap();
+            // The bench wraps the counter-rotation target to (-180, 180].
+            let mut target = -pitch % 360.0;
+            if target > 180.0 {
+                target -= 360.0;
+            }
+            if target <= -180.0 {
+                target += 360.0;
+            }
+            world
+                .set_field(pod, "joint", "motor_target", f(target))
+                .unwrap();
+            sys.fixed_update(&mut world, DT).unwrap();
+
+            let p = world.get_world_position(pod).unwrap();
+            let q = world
+                .get_transform(pod)
+                .unwrap()
+                .rotation_quat
+                .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+            assert!(
+                p.x.is_finite() && p.y.is_finite() && p.z.is_finite() && q.iter().all(|c| c.is_finite()),
+                "pod pose went non-finite at t={t:.3}: pos={p:?} quat={q:?}"
+            );
+            let b = world.get_world_position(body_id).unwrap();
+            let d = ((p.x - b.x).powi(2) + (p.y - b.y).powi(2) + (p.z - b.z).powi(2)).sqrt();
+            assert!(d < 2.0, "pod left the body at t={t:.3}: d={d} pod={p:?} body={b:?}");
+        }
+    }
+}
+
+/// A jointed child whose pose has gone non-finite (Rapier motor asin overflow)
+/// is re-seated on its parent at the motor target with zero velocity instead
+/// of staying NaN for the rest of the session.
+#[test]
+fn non_finite_jointed_child_is_reseated_at_motor_target() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    let base = body(&mut world, "base", [0.0, 2.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    let arm = world.spawn("arm").unwrap();
+    world
+        .set_component(arm, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.5]))]))
+        .unwrap();
+    world
+        .set_component(
+            arm,
+            "rigidbody",
+            table(vec![("body_type", s("dynamic")), ("gravity_scale", f(0.0))]),
+        )
+        .unwrap();
+    world.set_parent(arm, base).unwrap();
+    joint(
+        &mut world,
+        arm,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, -0.5])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_target", f(30.0)),
+            ("motor_stiffness", f(400.0)),
+            ("motor_damping", f(25.0)),
+        ],
+    );
+    sys.initialize(&mut world).unwrap();
+    for _ in 0..120 {
+        sys.fixed_update(&mut world, DT).unwrap();
+    }
+
+    let h = sys.sync.body_map[&arm];
+    let nan = f32::NAN;
+    let b = sys.physics_world.get_rigid_body_mut(h).unwrap();
+    b.set_position(
+        rapier3d::na::Isometry3::translation(nan, nan, nan),
+        true,
+    );
+    b.set_linvel(rapier3d::na::Vector3::new(nan, nan, nan), true);
+    sys.fixed_update(&mut world, DT).unwrap();
+
+    let p = world.get_world_position(arm).unwrap();
+    assert!(p.x.is_finite() && p.y.is_finite() && p.z.is_finite(), "arm still non-finite: {p:?}");
+    let b = sys.physics_world.get_rigid_body(h).unwrap();
+    assert!(b.linvel().iter().all(|c| c.is_finite()) && b.angvel().iter().all(|c| c.is_finite()));
+    // Seated at the anchor and near the 30 deg motor target.
+    let angle = sys.sync.joint_position(arm, &sys.physics_world).unwrap();
+    assert!((angle - 30.0).abs() < 5.0, "re-seated angle {angle} should be near the target");
+    assert!((p.y - 2.0).abs() < 0.6 && (p.x).abs() < 0.05, "arm should hang off the base: {p:?}");
+}

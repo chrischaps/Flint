@@ -34,6 +34,8 @@ pub struct PhysicsSync {
     pub(crate) joint_cache: HashMap<EntityId, JointParams>,
     /// Entities already warned about (non-unit scale, unresolved joint parent)
     warned: HashSet<EntityId>,
+    /// Jointed bodies already reported for a non-finite pose (one warning each).
+    nan_warned: HashSet<RigidBodyHandle>,
     /// Start-of-step pose of every kinematic body, recorded when its next
     /// pose is set; gives the parent's exact step velocity for the projection
     kin_start: HashMap<RigidBodyHandle, Isometry<f32>>,
@@ -56,6 +58,7 @@ impl PhysicsSync {
         self.joint_map.clear();
         self.joint_cache.clear();
         self.warned.clear();
+        self.nan_warned.clear();
         self.kin_start.clear();
         self.kin_frame_start.clear();
     }
@@ -669,6 +672,43 @@ impl PhysicsSync {
             let data = &joint.data;
             let locked = data.locked_axes;
             let f1 = b1.position() * data.local_frame1; // joint frame from the parent
+
+            // Rapier's angular motor measures the hinge angle as
+            // asin(rel_quat.imag[axis]) with no clamp: a twist near 180 deg
+            // whose quaternion norm has drifted a few 1e-6 over 1.0 gives NaN,
+            // and the solver writes it into the child's pose and velocity for
+            // good (the pod vanished from the trick bench). Rebuild such a
+            // child from the parent frame at the motor's target angle, at rest.
+            let pose_finite = b2.position().translation.vector.iter().all(|c| c.is_finite())
+                && b2.position().rotation.coords.iter().all(|c| c.is_finite());
+            let vel_finite = b2.linvel().iter().all(|c| c.is_finite())
+                && b2.angvel().iter().all(|c| c.is_finite());
+            if !pose_finite || !vel_finite {
+                let axis_i = [JointAxis::AngX, JointAxis::AngY, JointAxis::AngZ]
+                    .into_iter()
+                    .find(|a| !locked.contains((*a).into()) && data.motor_axes.contains((*a).into()));
+                let rel = match axis_i {
+                    Some(a) => {
+                        let mut v = na::Vector3::zeros();
+                        v[a as usize - 3] = 1.0;
+                        na::UnitQuaternion::from_axis_angle(
+                            &na::UnitVector3::new_normalize(v),
+                            data.motors[a as usize].target_pos,
+                        )
+                    }
+                    None => na::UnitQuaternion::identity(),
+                };
+                let f2 = Isometry::from_parts(f1.translation, f1.rotation * rel);
+                let pose = f2 * data.local_frame2.inverse();
+                if self.nan_warned.insert(joint.body2) {
+                    tracing::warn!(
+                        "physics: jointed body {:?} went non-finite; re-seated on its parent at the motor target",
+                        joint.body2
+                    );
+                }
+                updates.push((joint.body2, pose, Some(na::Vector3::zeros())));
+                continue;
+            }
             let f2 = b2.position() * data.local_frame2; // joint frame from the child
 
             // Linear: child anchor offset in the parent's joint frame. Locked
@@ -749,7 +789,10 @@ impl PhysicsSync {
                 (f1.translation.vector + f1.rotation * o).into(),
                 f1.rotation * new_rel,
             );
-            let new_pose = new_f2 * data.local_frame2.inverse();
+            let mut new_pose = new_f2 * data.local_frame2.inverse();
+            // Products of f32 unit quaternions drift off unit norm; Rapier
+            // never renormalises, and the motor's asin needs |imag| <= 1.
+            new_pose.rotation = na::UnitQuaternion::new_normalize(new_pose.rotation.into_inner());
             let cur = b2.position();
             let moved = (new_pose.translation.vector - cur.translation.vector).norm_squared()
                 > 1e-12
@@ -763,6 +806,9 @@ impl PhysicsSync {
                 body.set_position(pose, true);
                 if let Some(v) = vel {
                     body.set_linvel(v, true);
+                    if v == na::Vector3::zeros() {
+                        body.set_angvel(na::Vector3::zeros(), true);
+                    }
                 }
             }
         }
@@ -989,7 +1035,9 @@ fn iso_to_mat4(iso: &Isometry<f32>) -> [[f32; 4]; 4] {
 }
 
 fn quat_to_na(q: [f32; 4]) -> na::UnitQuaternion<f32> {
-    na::UnitQuaternion::from_quaternion(na::Quaternion::new(q[3], q[0], q[1], q[2]))
+    // Renormalise: matrix-extracted quaternions are off unit by a few ulps,
+    // and Rapier's motors assume exact unit rotations.
+    na::UnitQuaternion::new_normalize(na::Quaternion::new(q[3], q[0], q[1], q[2]))
 }
 
 fn na_to_quat(q: &na::UnitQuaternion<f32>) -> [f32; 4] {
