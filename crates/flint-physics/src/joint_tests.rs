@@ -645,3 +645,68 @@ fn jointed_child_keeps_up_with_a_fast_kinematic_parent() {
         );
     }
 }
+
+#[test]
+fn jointed_child_stays_anchored_on_a_curved_kinematic_path() {
+    let mut world = FlintWorld::new();
+    let mut sys = PhysicsSystem::new();
+
+    // root (scripted) -> base (kinematic) -> pod hinged at the base origin.
+    // Drive straight at 18 m/s, then turn at 60 deg/s. Rapier matches the
+    // pod's velocity to the base's start-of-step tangent, so on the arc the
+    // anchors separate a few mm per step and the joint never sees it; the
+    // post-step projection keeps the pod on the base.
+    let root = world.spawn("root").unwrap();
+    world
+        .set_component(root, "transform", table(vec![("position", floats(&[0.0, 2.0, 0.0]))]))
+        .unwrap();
+    let base = body(&mut world, "base", [0.0, 0.0, 0.0], "kinematic", "box", [0.2, 0.2, 0.2], 0.0);
+    world.set_parent(base, root).unwrap();
+    let pod = world.spawn("pod").unwrap();
+    world
+        .set_component(pod, "transform", table(vec![("position", floats(&[0.0, 0.0, 0.0]))]))
+        .unwrap();
+    world
+        .set_component(
+            pod,
+            "rigidbody",
+            table(vec![("body_type", s("dynamic")), ("gravity_scale", f(0.0))]),
+        )
+        .unwrap();
+    world.set_parent(pod, base).unwrap();
+    joint(
+        &mut world,
+        pod,
+        vec![
+            ("type", s("hinge")),
+            ("anchor", floats(&[0.0, 0.0, 0.0])),
+            ("axis", floats(&[1.0, 0.0, 0.0])),
+            ("motor_stiffness", f(60.0)),
+            ("motor_damping", f(6.0)),
+        ],
+    );
+    sys.initialize(&mut world).unwrap();
+
+    let (mut x, mut z, mut yaw) = (0.0f64, 0.0f64, 0.0f64);
+    for i in 0..120 {
+        if i >= 30 {
+            yaw -= 1.0;
+        }
+        let (sy, cy) = (yaw.to_radians().sin(), yaw.to_radians().cos());
+        x += 0.3 * sy;
+        z -= 0.3 * cy;
+        world
+            .set_field(root, "transform", "position", floats(&[x, 2.0, z]))
+            .unwrap();
+        world
+            .set_field(root, "transform", "rotation", floats(&[0.0, yaw, 0.0]))
+            .unwrap();
+        sys.fixed_update(&mut world, DT).unwrap();
+        let lp = world.get_transform(pod).unwrap().position;
+        let off = (lp.x * lp.x + lp.z * lp.z).sqrt();
+        assert!(
+            off < 0.02,
+            "pod should stay on the base through the turn, local offset {off} at step {i}"
+        );
+    }
+}

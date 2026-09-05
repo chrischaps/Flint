@@ -546,6 +546,59 @@ impl PhysicsSync {
         }
     }
 
+    /// Pin jointed dynamic bodies to their kinematic parents after a step.
+    ///
+    /// Rapier solves a joint against the kinematic body's start-of-step pose
+    /// and matches velocities along the tangent, so when a scripted parent
+    /// moves on a curve the child's anchor drifts a few millimetres a step and
+    /// the joint never measures the error (the parent has already moved on).
+    /// Over a turn that grows into a visible slip. Translate the child so the
+    /// two anchors coincide on the joint's locked linear axes; rotation is
+    /// left to the solver.
+    pub fn project_kinematic_joint_anchors(&self, physics: &mut PhysicsWorld) {
+        let mut shifts: Vec<(RigidBodyHandle, na::Vector3<f32>)> = Vec::new();
+        for &handle in self.joint_map.values() {
+            let Some(joint) = physics.impulse_joint_set.get(handle) else {
+                continue;
+            };
+            let (Some(b1), Some(b2)) = (
+                physics.get_rigid_body(joint.body1),
+                physics.get_rigid_body(joint.body2),
+            ) else {
+                continue;
+            };
+            if b1.is_dynamic() || !b2.is_dynamic() {
+                continue;
+            }
+            let a1 = b1.position() * na::Point3::from(joint.data.local_frame1.translation.vector);
+            let a2 = b2.position() * na::Point3::from(joint.data.local_frame2.translation.vector);
+            // Only the linear axes the joint locks are projected; a prismatic
+            // joint's slide axis is left to the solver and its motor.
+            let frame1_rot = b1.position().rotation * joint.data.local_frame1.rotation;
+            let mut d = frame1_rot.inverse() * (a1 - a2);
+            let locked = joint.data.locked_axes;
+            if !locked.contains(JointAxesMask::LIN_X) {
+                d.x = 0.0;
+            }
+            if !locked.contains(JointAxesMask::LIN_Y) {
+                d.y = 0.0;
+            }
+            if !locked.contains(JointAxesMask::LIN_Z) {
+                d.z = 0.0;
+            }
+            let delta = frame1_rot * d;
+            if delta.norm_squared() > 1e-10 {
+                shifts.push((joint.body2, delta));
+            }
+        }
+        for (handle, delta) in shifts {
+            if let Some(body) = physics.get_rigid_body_mut(handle) {
+                let t = body.translation() + delta;
+                body.set_translation(t, true);
+            }
+        }
+    }
+
     /// Current joint coordinate of an entity's joint: hinge angle in degrees,
     /// prismatic displacement in metres, `None` for other kinds or no joint.
     pub fn joint_position(&self, entity_id: EntityId, physics: &PhysicsWorld) -> Option<f32> {
