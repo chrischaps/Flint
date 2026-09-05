@@ -206,8 +206,12 @@ fn perturb_normal(N: vec3<f32>, world_pos: vec3<f32>, uv: vec2<f32>, map_normal:
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
 
+    // Guard only against a truly degenerate UV parameterisation. The
+    // derivatives are per screen pixel, so a 1k texture magnified over a
+    // few hundred pixels yields det ~ 1e-5 to 1e-6; an absolute 1e-4
+    // threshold silently discarded every normal map on a close-up mesh.
     let det = duv1.x * duv2.y - duv1.y * duv2.x;
-    if (abs(det) < 0.0001) {
+    if (abs(det) < 1e-12) {
         return N;
     }
     let inv_det = 1.0 / det;
