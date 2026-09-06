@@ -147,23 +147,20 @@ fn toml_to_style_value(val: &toml::Value) -> Option<StyleValue> {
         toml::Value::String(s) => Some(StyleValue::String(s.clone())),
         toml::Value::Boolean(b) => Some(StyleValue::Bool(*b)),
         toml::Value::Array(arr) => {
-            // Color array [r, g, b, a] or padding [l, t, r, b]
-            if arr.len() == 4 {
-                let values: Vec<f32> = arr
-                    .iter()
-                    .filter_map(|v| match v {
-                        toml::Value::Float(f) => Some(*f as f32),
-                        toml::Value::Integer(i) => Some(*i as f32),
-                        _ => None,
-                    })
-                    .collect();
-                if values.len() == 4 {
-                    return Some(StyleValue::Color([
-                        values[0], values[1], values[2], values[3],
-                    ]));
-                }
+            // Color array [r, g, b, a], padding [l, t, r, b],
+            // or shadow [dx, dy, r, g, b, a]
+            let values: Vec<f32> = arr
+                .iter()
+                .filter_map(|v| match v {
+                    toml::Value::Float(f) => Some(*f as f32),
+                    toml::Value::Integer(i) => Some(*i as f32),
+                    _ => None,
+                })
+                .collect();
+            if values.len() != arr.len() {
+                return None;
             }
-            None
+            StyleValue::from_numbers(&values)
         }
         _ => None,
     }

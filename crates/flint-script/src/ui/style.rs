@@ -45,6 +45,12 @@ pub struct ResolvedStyle {
     pub padding: [f32; 4], // L, T, R, B
     pub stroke_color: [f32; 4],
     pub stroke_width: f32,
+    /// Font family (file stem or `fonts.toml` alias); None = default font
+    pub font: Option<String>,
+    /// Extra glyph spacing in logical points
+    pub letter_spacing: f32,
+    /// Drop shadow: (colour, dx, dy)
+    pub shadow: Option<([f32; 4], f32, f32)>,
 
     // Layout
     pub layout: LayoutFlow,
@@ -73,6 +79,9 @@ impl Default for ResolvedStyle {
             padding: [0.0; 4],
             stroke_color: [0.0, 0.0, 0.0, 1.0],
             stroke_width: 0.0,
+            font: None,
+            letter_spacing: 0.0,
+            shadow: None,
             layout: LayoutFlow::Stack,
             margin_bottom: 0.0,
         }
@@ -200,6 +209,21 @@ impl StyleClass {
                         };
                     }
                 }
+                "font" => {
+                    if let StyleValue::String(s) = val {
+                        style.font = if s.is_empty() { None } else { Some(s.clone()) };
+                    }
+                }
+                "letter_spacing" => {
+                    if let StyleValue::Float(v) = val {
+                        style.letter_spacing = *v;
+                    }
+                }
+                "shadow" => {
+                    if let StyleValue::Shadow(dx, dy, c) = val {
+                        style.shadow = Some((*c, *dx, *dy));
+                    }
+                }
                 "padding" => {
                     if let StyleValue::Color(p) = val {
                         // Reuse Color([f32;4]) for 4-value padding
@@ -265,6 +289,45 @@ impl StyleClass {
                 "bg_color" => {
                     if let StyleValue::Color(c) = val {
                         style.bg_color = *c;
+                    }
+                }
+                "stroke_color" => {
+                    if let StyleValue::Color(c) = val {
+                        style.stroke_color = *c;
+                    }
+                }
+                "stroke_width" => {
+                    if let StyleValue::Float(v) = val {
+                        style.stroke_width = *v;
+                    }
+                }
+                "padding" => {
+                    if let StyleValue::Color(p) = val {
+                        style.padding = *p;
+                    }
+                }
+                "text_align" => {
+                    if let StyleValue::String(s) = val {
+                        style.text_align = match s.as_str() {
+                            "center" => TextAlign::Center,
+                            "right" => TextAlign::Right,
+                            _ => TextAlign::Left,
+                        };
+                    }
+                }
+                "font" => {
+                    if let StyleValue::String(s) = val {
+                        style.font = if s.is_empty() { None } else { Some(s.clone()) };
+                    }
+                }
+                "letter_spacing" => {
+                    if let StyleValue::Float(v) = val {
+                        style.letter_spacing = *v;
+                    }
+                }
+                "shadow" => {
+                    if let StyleValue::Shadow(dx, dy, c) = val {
+                        style.shadow = Some((*c, *dx, *dy));
                     }
                 }
                 _ => {}

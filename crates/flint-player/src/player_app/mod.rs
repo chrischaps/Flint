@@ -4,6 +4,7 @@
 
 mod debug_panels;
 mod events;
+pub mod fonts;
 mod frame;
 mod hud_render;
 mod init;
@@ -30,7 +31,7 @@ use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, Persis
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use transition::TransitionPhase;
 use winit::window::Window;
@@ -66,6 +67,48 @@ const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
 /// `timeline_panel::MANIFEST_MAP_PANEL`.
 #[cfg(feature = "debug-hud")]
 const GRASS_DEBUG_PANEL: &str = "Grass Debug";
+
+/// Frame-capture settings for the player (`--screenshot` family of flags).
+///
+/// Times are compared against `GameClock::total_time`, so they are game
+/// seconds since the first tick, not wall-clock seconds since launch.
+#[derive(Debug, Clone, Default)]
+pub struct CaptureConfig {
+    /// Output path. Base name for numbered files when `every` is set
+    /// (`hud.png` -> `hud_0001.png`, `hud_0002.png`, ...).
+    pub path: Option<std::path::PathBuf>,
+    /// Game time (s) at which to take the single screenshot. Default 0 =
+    /// first frame.
+    pub at: f64,
+    /// Interval (s) between repeated screenshots; None = single shot.
+    pub every: Option<f64>,
+    /// Game time (s) at which the player exits on its own.
+    pub exit_after: Option<f64>,
+    /// Internal: the first capture has been written.
+    pub(crate) taken: bool,
+    /// Internal: number of numbered frames written so far.
+    pub(crate) sequence: u32,
+    /// Internal: game time of the next scheduled interval capture.
+    pub(crate) next_due: f64,
+}
+
+impl CaptureConfig {
+    /// Build a capture schedule. `every <= 0` means single-shot.
+    pub fn new(
+        path: Option<std::path::PathBuf>,
+        at: f64,
+        every: Option<f64>,
+        exit_after: Option<f64>,
+    ) -> Self {
+        Self {
+            path,
+            at,
+            every: every.filter(|s| *s > 0.0),
+            exit_after,
+            ..Default::default()
+        }
+    }
+}
 
 pub struct PlayerApp {
     // Core state
@@ -106,6 +149,19 @@ pub struct PlayerApp {
     // Script-driven 2D draw commands
     draw_commands: Vec<DrawCommand>,
     ui_textures: HashMap<String, egui::TextureHandle>,
+    /// Family names registered from `<project>/fonts/` (file stems + manifest
+    /// aliases). The HUD renderer falls back to the default font for names
+    /// outside this set.
+    ui_fonts: HashSet<String>,
+    /// Unknown font names already warned about (one warn per name).
+    ui_fonts_warned: HashSet<String>,
+    /// The `fonts/` root the current font set was scanned from; rescan on
+    /// scene change only when this differs.
+    ui_fonts_root: Option<std::path::PathBuf>,
+    /// Set after the first egui pass: `Context::fonts()` panics before then,
+    /// so the script `measure_text` closure falls back to an estimate until
+    /// this flips.
+    egui_fonts_ready: Arc<std::sync::atomic::AtomicBool>,
 
     // Asset catalog (optional, for content-addressed asset resolution)
     catalog: Option<AssetCatalog>,
@@ -170,6 +226,16 @@ pub struct PlayerApp {
     /// (silent scenes start instantly); audio_source + session stems
     /// unaffected. Set from the scene file before startup, like msaa.
     pub scene_preload_audio: bool,
+
+    /// Initial window size in physical pixels (`--width`/`--height`).
+    /// Ignored on Android, where the surface is the screen.
+    pub window_size: (u32, u32),
+    /// Screenshot capture driven by `--screenshot` / `--screenshot-at` /
+    /// `--screenshot-every` / `--exit-after`. Captures the presented frame
+    /// (scene + egui HUD) right before `present()`.
+    pub capture: CaptureConfig,
+    /// Set once `--exit-after` elapses; the redraw handler exits the loop.
+    exit_requested: bool,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,

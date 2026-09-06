@@ -66,6 +66,32 @@ The standalone `flint-player` binary takes the same flags plus `--msaa <1|4>`
 (default `1`) for multisample anti-aliasing of the scene passes; `flint play`
 does not expose `--msaa`.
 
+### Player Screenshots (HUD included)
+
+`flint render` is headless and never runs scripts, so it cannot show a
+script-drawn HUD. The standalone `flint-player` can capture the frame it
+actually presents — scene *and* egui overlay — and exit on its own, which
+makes it the tool for verifying `on_draw_ui` output:
+
+```bash
+flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
+```
+
+| Flag | Description |
+|------|-------------|
+| `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`) |
+| `--screenshot <path>` | Write a PNG of the presented frame (scene + HUD). Parent directories are created |
+| `--screenshot-at <secs>` | Game time at which to capture: the first frame whose clock reaches this value (default `0`, the first frame) |
+| `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
+| `--exit-after <secs>` | Exit once game time reaches this value |
+
+Times are `GameClock` seconds (what scripts see via `total_time()`), not
+wall-clock seconds since launch, so a capture lands on the same gameplay
+moment regardless of load time. The capture reads the swapchain back on the
+GPU, so it requires a surface that advertises `COPY_SRC`; on adapters that do
+not (some GL/Android surfaces) the player logs a warning and skips the
+screenshot rather than failing. `flint play` does not expose these flags.
+
 ### Player Controls (Defaults)
 
 These are the built-in defaults. Games can override any binding via input config files (see [Physics and Runtime: Input System](../concepts/physics-and-runtime.md#input-system)).

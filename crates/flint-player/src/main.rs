@@ -4,6 +4,14 @@
 //!
 //! Usage:
 //!   flint-player <scene.toml> [--schemas <path>] [--fullscreen]
+//!                [--width <px>] [--height <px>]
+//!                [--screenshot <out.png>] [--screenshot-at <secs>]
+//!                [--screenshot-every <secs>] [--exit-after <secs>]
+//!
+//! Screenshots capture the presented frame — the 3D scene *and* the egui
+//! HUD — right before `present()`, so they show exactly what a player sees.
+//! `flint render` remains the headless, script-free snapshot; this path is
+//! for verifying script-driven UI and live gameplay state.
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -54,6 +62,34 @@ struct Args {
     /// List available GPU adapters and exit
     #[arg(long)]
     list_gpus: bool,
+
+    /// Initial window width in pixels (ignored with --fullscreen)
+    #[arg(long, default_value_t = 1280)]
+    width: u32,
+
+    /// Initial window height in pixels (ignored with --fullscreen)
+    #[arg(long, default_value_t = 720)]
+    height: u32,
+
+    /// Write a PNG of the presented frame (scene + HUD) to this path.
+    /// With --screenshot-every the path becomes a numbered base name
+    /// (hud.png -> hud_0001.png, hud_0002.png, ...).
+    #[arg(long, value_name = "PATH")]
+    screenshot: Option<String>,
+
+    /// Game time in seconds at which to take the screenshot (first frame
+    /// whose elapsed time reaches this value). Default 0 = first frame.
+    #[arg(long, default_value_t = 0.0, value_name = "SECS")]
+    screenshot_at: f64,
+
+    /// Keep capturing every N seconds after --screenshot-at until exit,
+    /// writing numbered files next to --screenshot
+    #[arg(long, value_name = "SECS")]
+    screenshot_every: Option<f64>,
+
+    /// Exit the player once game time reaches this many seconds
+    #[arg(long, value_name = "SECS")]
+    exit_after: Option<f64>,
 }
 
 fn main() -> Result<()> {
@@ -126,6 +162,13 @@ fn main() -> Result<()> {
 
     app.msaa_sample_count = args.msaa;
     app.scene_preload_audio = scene_file.scene.preload_audio;
+    app.window_size = (args.width, args.height);
+    app.capture = flint_player::CaptureConfig::new(
+        args.screenshot.map(std::path::PathBuf::from),
+        args.screenshot_at,
+        args.screenshot_every,
+        args.exit_after,
+    );
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
     app.audio

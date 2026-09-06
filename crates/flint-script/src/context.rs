@@ -263,6 +263,10 @@ pub enum ScriptCommand {
     },
 }
 
+/// Host-installed text measurement: `(text, size, font family, letter spacing)`
+/// → `(width, height)` in logical points.
+pub type TextMeasurer = Arc<dyn Fn(&str, f32, Option<&str>, f32) -> (f32, f32) + Send + Sync>;
+
 /// 2D draw command issued by scripts each frame (immediate mode)
 #[derive(Debug, Clone)]
 pub enum DrawCommand {
@@ -277,6 +281,13 @@ pub enum DrawCommand {
         align: u8,
         /// Optional stroke (outline): color + pixel width
         stroke: Option<([f32; 4], f32)>,
+        /// Font family name (a file stem or manifest alias under `<project>/fonts/`);
+        /// `None` or an unknown name falls back to the default proportional font.
+        font: Option<String>,
+        /// Extra spacing between glyphs, in logical points (0 = font default).
+        letter_spacing: f32,
+        /// Optional drop shadow: (colour, dx, dy) drawn once beneath the text.
+        shadow: Option<([f32; 4], f32, f32)>,
     },
     RectFilled {
         x: f32,
@@ -423,6 +434,11 @@ pub struct ScriptCallContext {
     pub ui_system: UiSystem,
     /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
     pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
+    /// Real text measurement, installed by the host once a text backend
+    /// exists: `(text, size, font family, letter spacing) -> (width, height)`
+    /// in logical points. `measure_text` falls back to a glyph-count
+    /// estimate when this is `None`.
+    pub text_measurer: Option<TextMeasurer>,
     /// Persistent camera follow state (survives across frames)
     pub camera_follow: CameraFollowState,
     /// Persistent screen shake state
@@ -495,6 +511,7 @@ impl ScriptCallContext {
             current_scene_path: String::new(),
             ui_system: UiSystem::new(),
             terrain_height_fn: None,
+            text_measurer: None,
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),
             loaded_chunk_ids: HashSet::new(),

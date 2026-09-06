@@ -8,7 +8,7 @@ use flint_core::components as comp;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::EntityId;
 use flint_core::{euler_deg_to_quat, quat_mul, quat_normalize};
-use rhai::{Dynamic, Engine, Map};
+use rhai::{Array, Dynamic, Engine, ImmutableString, Map};
 use std::sync::{Arc, Mutex};
 
 /// Register all API functions on the Rhai engine
@@ -2262,6 +2262,9 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     layer: 0,
                     align: 0,
                     stroke: None,
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
                 });
             },
         );
@@ -2291,6 +2294,9 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     layer: layer as i32,
                     align: 0,
                     stroke: None,
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
                 });
             },
         );
@@ -2324,6 +2330,36 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     layer: 0,
                     align: 0,
                     stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
+                });
+            },
+        );
+    }
+
+    // draw_text_opts(x, y, text, size, opts) — opts is a map with optional keys:
+    //   font (string), color ([r,g,b,a]), align ("left"|"center"|"right"),
+    //   stroke ([r,g,b,a,width]), spacing (px), layer (int), shadow ([dx,dy,r,g,b,a])
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_text_opts",
+            move |x: f64, y: f64, text: &str, size: f64, opts: Map| {
+                let o = TextOpts::from_map(&opts);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.draw_commands.push(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: o.color,
+                    layer: o.layer,
+                    align: o.align,
+                    stroke: o.stroke,
+                    font: o.font,
+                    letter_spacing: o.spacing,
+                    shadow: o.shadow,
                 });
             },
         );
@@ -2575,7 +2611,11 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                         p[2] + (q[2] - p[2]) * t,
                         NEAR_W,
                     ];
-                    if p[3] <= NEAR_W { p = m; } else { q = m; }
+                    if p[3] <= NEAR_W {
+                        p = m;
+                    } else {
+                        q = m;
+                    }
                 }
                 let (sx1, sy1) = clip_to_screen(p, c.screen_width, c.screen_height);
                 let (sx2, sy2) = clip_to_screen(q, c.screen_width, c.screen_height);
@@ -2724,15 +2764,33 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("measure_text", move |text: &str, size: f64| -> Map {
-            drop(crate::lock_or_recover(&ctx));
-            // Approximate text width: average character width ~0.6 * font_size
-            let char_width = size * 0.6;
-            let width = text.len() as f64 * char_width;
+            let c = crate::lock_or_recover(&ctx);
+            let (w, h) = measure_text_with(&c, text, size as f32, None, 0.0);
+            drop(c);
             let mut map = Map::new();
-            map.insert("width".into(), Dynamic::from(width));
-            map.insert("height".into(), Dynamic::from(size));
+            map.insert("width".into(), Dynamic::from(w as f64));
+            map.insert("height".into(), Dynamic::from(h as f64));
             map
         });
+    }
+
+    // measure_text_ex(text, size, font, spacing) -> Map #{width, height}
+    // `font` is a family name ("" = default font); `spacing` is extra letter spacing in px.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "measure_text_ex",
+            move |text: &str, size: f64, font: &str, spacing: f64| -> Map {
+                let c = crate::lock_or_recover(&ctx);
+                let family = (!font.is_empty()).then_some(font);
+                let (w, h) = measure_text_with(&c, text, size as f32, family, spacing as f32);
+                drop(c);
+                let mut map = Map::new();
+                map.insert("width".into(), Dynamic::from(w as f64));
+                map.insert("height".into(), Dynamic::from(h as f64));
+                map
+            },
+        );
     }
 
     // move_character(entity_id, dx, dy, dz) -> Map #{x, y, z, grounded} or ()
@@ -2955,6 +3013,27 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
                 } else {
                     return;
                 };
+                c.ui_system.set_style(element_id, prop, style_val);
+            },
+        );
+    }
+
+    // ui_set_style_array(element_id, prop, array) — for array-valued props:
+    // color / bg_color / stroke_color / padding ([a,b,c,d]) and shadow ([dx,dy,r,g,b,a])
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "ui_set_style_array",
+            move |element_id: &str, prop: &str, val: Array| {
+                let values = array_to_f32s(&val);
+                let Some(style_val) = StyleValue::from_numbers(&values) else {
+                    tracing::warn!(
+                        "ui_set_style_array({element_id}, {prop}): expected 4 or 6 numbers, got {}",
+                        val.len()
+                    );
+                    return;
+                };
+                let mut c = crate::lock_or_recover(&ctx);
                 c.ui_system.set_style(element_id, prop, style_val);
             },
         );
@@ -4095,6 +4174,236 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
                 comps.set_field(comp::SCREEN_ANCHOR, "offset_y", toml::Value::Float(y));
             }
         });
+    }
+}
+
+// ─── Text option helpers ─────────────────────────────────
+
+/// Read a Rhai number (INT or FLOAT) as f32; anything else is `None`.
+fn dyn_to_f32(d: &Dynamic) -> Option<f32> {
+    if let Some(f) = d.clone().try_cast::<f64>() {
+        Some(f as f32)
+    } else {
+        d.clone().try_cast::<i64>().map(|i| i as f32)
+    }
+}
+
+/// Convert a Rhai array of numbers (INT or FLOAT mixed) to f32s, skipping non-numbers.
+pub(crate) fn array_to_f32s(arr: &Array) -> Vec<f32> {
+    arr.iter().filter_map(dyn_to_f32).collect()
+}
+
+/// Parsed `draw_text_opts` option map. Every key is optional; defaults are
+/// white, left-aligned, layer 0, no stroke/shadow, default font.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TextOpts {
+    pub color: [f32; 4],
+    pub align: u8,
+    pub layer: i32,
+    pub stroke: Option<([f32; 4], f32)>,
+    pub font: Option<String>,
+    pub spacing: f32,
+    pub shadow: Option<([f32; 4], f32, f32)>,
+}
+
+impl Default for TextOpts {
+    fn default() -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0, 1.0],
+            align: 0,
+            layer: 0,
+            stroke: None,
+            font: None,
+            spacing: 0.0,
+            shadow: None,
+        }
+    }
+}
+
+impl TextOpts {
+    pub(crate) fn from_map(opts: &Map) -> Self {
+        let mut o = Self::default();
+        if let Some(v) = opts.get("font") {
+            if let Some(s) = v.clone().try_cast::<ImmutableString>() {
+                if !s.is_empty() {
+                    o.font = Some(s.to_string());
+                }
+            }
+        }
+        if let Some(v) = opts.get("color") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [r, g, b, a] = array_to_f32s(&arr)[..] {
+                    o.color = [r, g, b, a];
+                }
+            }
+        }
+        if let Some(v) = opts.get("align") {
+            if let Some(s) = v.clone().try_cast::<ImmutableString>() {
+                o.align = match s.as_str() {
+                    "center" => 1,
+                    "right" => 2,
+                    _ => 0,
+                };
+            } else if let Some(i) = dyn_to_f32(v) {
+                o.align = (i as i64).clamp(0, 2) as u8;
+            }
+        }
+        if let Some(v) = opts.get("stroke") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [r, g, b, a, w] = array_to_f32s(&arr)[..] {
+                    o.stroke = Some(([r, g, b, a], w));
+                }
+            }
+        }
+        if let Some(v) = opts.get("spacing") {
+            if let Some(f) = dyn_to_f32(v) {
+                o.spacing = f;
+            }
+        }
+        if let Some(v) = opts.get("layer") {
+            if let Some(f) = dyn_to_f32(v) {
+                o.layer = f as i32;
+            }
+        }
+        if let Some(v) = opts.get("shadow") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [dx, dy, r, g, b, a] = array_to_f32s(&arr)[..] {
+                    o.shadow = Some(([r, g, b, a], dx, dy));
+                }
+            }
+        }
+        o
+    }
+}
+
+/// Measure text with the host's installed measurer, falling back to the
+/// glyph-count estimate (0.6 em per char) when none is installed.
+pub(crate) fn measure_text_with(
+    c: &ScriptCallContext,
+    text: &str,
+    size: f32,
+    font: Option<&str>,
+    spacing: f32,
+) -> (f32, f32) {
+    match &c.text_measurer {
+        Some(m) => m(text, size, font, spacing),
+        None => {
+            let chars = text.chars().count() as f32;
+            (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size)
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_opts_tests {
+    use super::*;
+
+    fn arr(vals: &[Dynamic]) -> Dynamic {
+        Dynamic::from(vals.to_vec())
+    }
+
+    #[test]
+    fn empty_opts_are_white_left_layer0() {
+        let o = TextOpts::from_map(&Map::new());
+        assert_eq!(o, TextOpts::default());
+        assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn parses_every_key_with_mixed_int_and_float() {
+        let mut m = Map::new();
+        m.insert("font".into(), Dynamic::from("display"));
+        m.insert(
+            "color".into(),
+            arr(&[
+                Dynamic::from(1_i64),
+                Dynamic::from(0.5_f64),
+                Dynamic::from(0_i64),
+                Dynamic::from(1.0_f64),
+            ]),
+        );
+        m.insert("align".into(), Dynamic::from("center"));
+        m.insert(
+            "stroke".into(),
+            arr(&[
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(1_i64),
+                Dynamic::from(2.0_f64),
+            ]),
+        );
+        m.insert("spacing".into(), Dynamic::from(1.5_f64));
+        m.insert("layer".into(), Dynamic::from(3_i64));
+        m.insert(
+            "shadow".into(),
+            arr(&[
+                Dynamic::from(2_i64),
+                Dynamic::from(3.0_f64),
+                Dynamic::from(0.0_f64),
+                Dynamic::from(0.0_f64),
+                Dynamic::from(0.0_f64),
+                Dynamic::from(0.6_f64),
+            ]),
+        );
+        let o = TextOpts::from_map(&m);
+        assert_eq!(o.font.as_deref(), Some("display"));
+        assert_eq!(o.color, [1.0, 0.5, 0.0, 1.0]);
+        assert_eq!(o.align, 1);
+        assert_eq!(o.stroke, Some(([0.0, 0.0, 0.0, 1.0], 2.0)));
+        assert_eq!(o.spacing, 1.5);
+        assert_eq!(o.layer, 3);
+        assert_eq!(o.shadow, Some(([0.0, 0.0, 0.0, 0.6], 2.0, 3.0)));
+    }
+
+    #[test]
+    fn malformed_arrays_and_empty_font_are_ignored() {
+        let mut m = Map::new();
+        m.insert("font".into(), Dynamic::from(""));
+        m.insert("color".into(), arr(&[Dynamic::from(1.0_f64)]));
+        m.insert("align".into(), Dynamic::from("right"));
+        m.insert("stroke".into(), Dynamic::from("nope"));
+        let o = TextOpts::from_map(&m);
+        assert_eq!(o.font, None);
+        assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(o.align, 2);
+        assert_eq!(o.stroke, None);
+    }
+
+    #[test]
+    fn measure_uses_installed_measurer() {
+        let mut c = ScriptCallContext::new();
+        assert_eq!(measure_text_with(&c, "abcd", 10.0, None, 0.0), (24.0, 10.0));
+        c.text_measurer = Some(Arc::new(
+            |text: &str, size: f32, font: Option<&str>, sp: f32| {
+                let base = if font == Some("display") { 2.0 } else { 1.0 };
+                (text.len() as f32 * size * base + sp, size * 1.5)
+            },
+        ));
+        assert_eq!(measure_text_with(&c, "abcd", 10.0, None, 0.0), (40.0, 15.0));
+        assert_eq!(
+            measure_text_with(&c, "ab", 10.0, Some("display"), 1.0),
+            (41.0, 15.0)
+        );
+    }
+
+    #[test]
+    fn style_array_maps_by_length() {
+        use crate::ui::element::StyleValue;
+        assert_eq!(
+            StyleValue::from_numbers(&array_to_f32s(&vec![
+                Dynamic::from(1_i64),
+                Dynamic::from(2.0_f64),
+                Dynamic::from(3_i64),
+                Dynamic::from(4_i64)
+            ])),
+            Some(StyleValue::Color([1.0, 2.0, 3.0, 4.0]))
+        );
+        assert_eq!(
+            StyleValue::from_numbers(&[1.0, 2.0, 0.0, 0.0, 0.0, 1.0]),
+            Some(StyleValue::Shadow(1.0, 2.0, [0.0, 0.0, 0.0, 1.0]))
+        );
+        assert_eq!(StyleValue::from_numbers(&[1.0, 2.0]), None);
     }
 }
 

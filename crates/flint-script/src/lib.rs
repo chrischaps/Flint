@@ -348,6 +348,13 @@ impl ScriptSystem {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.terrain_height_fn = f;
     }
+
+    /// Install (or clear) the host's real text measurer used by
+    /// `measure_text` / `measure_text_ex`.
+    pub fn set_text_measurer(&mut self, f: Option<context::TextMeasurer>) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.text_measurer = f;
+    }
 }
 
 impl Default for ScriptSystem {

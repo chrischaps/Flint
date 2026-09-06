@@ -133,6 +133,12 @@ impl UiDocument {
                             layer: style.layer,
                             align: text_align,
                             stroke,
+                            font: style.font.clone(),
+                            letter_spacing: style.letter_spacing,
+                            shadow: style.shadow.map(|(mut sc, dx, dy)| {
+                                sc[3] *= opacity;
+                                (sc, dx, dy)
+                            }),
                         });
                     }
                 }

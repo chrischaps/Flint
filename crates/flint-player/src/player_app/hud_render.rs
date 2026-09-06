@@ -1,7 +1,8 @@
 //! Script-driven UI rendering via egui layer painter.
 
+use super::fonts::{resolve_font_id, text_layout_job};
 use flint_script::context::DrawCommand;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(super) fn to_color32(c: &[f32; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
@@ -19,6 +20,8 @@ pub(super) fn render_draw_commands(
     ctx: &egui::Context,
     commands: &[DrawCommand],
     ui_textures: &HashMap<String, egui::TextureHandle>,
+    ui_fonts: &HashSet<String>,
+    ui_fonts_warned: &mut HashSet<String>,
 ) {
     if commands.is_empty() {
         return;
@@ -46,6 +49,9 @@ pub(super) fn render_draw_commands(
                 color,
                 align,
                 stroke,
+                font,
+                letter_spacing,
+                shadow,
                 ..
             } => {
                 let anchor = match align {
@@ -53,12 +59,36 @@ pub(super) fn render_draw_commands(
                     2 => egui::Align2::RIGHT_TOP,
                     _ => egui::Align2::LEFT_TOP,
                 };
-                let font = egui::FontId::proportional(*size);
-                let pos = egui::Pos2::new(*x, *y);
+                let font_id = resolve_font_id(*size, font.as_deref(), ui_fonts, ui_fonts_warned);
+                let main = to_color32(color);
+                // Galleys bake their section colour, so shadow / stroke /
+                // main each get their own (the galley cache makes repeats
+                // cheap). Position comes from the main galley's size.
+                let galley = ctx.fonts(|f| {
+                    f.layout_job(text_layout_job(
+                        text,
+                        font_id.clone(),
+                        main,
+                        *letter_spacing,
+                    ))
+                });
+                let rect = anchor.anchor_size(egui::Pos2::new(*x, *y), galley.size());
+                let pos = rect.min;
 
-                // Draw stroke (outline) by rendering text at 8 compass offsets
+                if let Some((shadow_color, dx, dy)) = shadow {
+                    let sc = to_color32(shadow_color);
+                    let shadow_galley = ctx.fonts(|f| {
+                        f.layout_job(text_layout_job(text, font_id.clone(), sc, *letter_spacing))
+                    });
+                    painter.galley(egui::Pos2::new(pos.x + dx, pos.y + dy), shadow_galley, sc);
+                }
+
+                // Draw stroke (outline) by rendering the text at 8 compass offsets
                 if let Some((stroke_color, stroke_width)) = stroke {
                     let sc = to_color32(stroke_color);
+                    let stroke_galley = ctx.fonts(|f| {
+                        f.layout_job(text_layout_job(text, font_id.clone(), sc, *letter_spacing))
+                    });
                     let w = *stroke_width;
                     for &(dx, dy) in &[
                         (-w, 0.0),
@@ -70,17 +100,15 @@ pub(super) fn render_draw_commands(
                         (-w, w),
                         (w, w),
                     ] {
-                        painter.text(
+                        painter.galley(
                             egui::Pos2::new(pos.x + dx, pos.y + dy),
-                            anchor,
-                            text,
-                            font.clone(),
+                            stroke_galley.clone(),
                             sc,
                         );
                     }
                 }
 
-                painter.text(pos, anchor, text, font, to_color32(color));
+                painter.galley(pos, galley, main);
             }
 
             DrawCommand::RectFilled {

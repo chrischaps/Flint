@@ -18,10 +18,7 @@ pub struct HeadlessContext {
 impl HeadlessContext {
     /// Create a new headless rendering context with the given dimensions
     pub async fn new(width: u32, height: u32) -> Result<Self, RenderError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
+        let instance = crate::gpu_select::instance();
 
         let adapter = crate::gpu_select::request_adapter(&instance, None)
             .await

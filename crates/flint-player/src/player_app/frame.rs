@@ -553,7 +553,96 @@ impl PlayerApp {
         // Render egui HUD overlay on top of the 3D scene
         self.render_hud(&view);
 
+        // Capture the composited frame (scene + HUD) before it is presented.
+        if let Some(path) = self.capture_path_due() {
+            self.write_screenshot(&output.texture, &path);
+        }
+
         output.present();
+
+        if let Some(exit_after) = self.capture.exit_after {
+            if self.clock.total_time >= exit_after {
+                self.exit_requested = true;
+            }
+        }
+    }
+
+    /// Decide whether this frame should be written to disk, and to where.
+    ///
+    /// Single-shot: the first frame at or after `capture.at`. Interval mode:
+    /// the first frame at or after `capture.at`, then every `every` seconds,
+    /// numbered `<stem>_0001.<ext>`, `<stem>_0002.<ext>`, ...
+    fn capture_path_due(&mut self) -> Option<std::path::PathBuf> {
+        let base = self.capture.path.clone()?;
+        let now = self.clock.total_time;
+        match self.capture.every {
+            None => {
+                if self.capture.taken || now < self.capture.at {
+                    return None;
+                }
+                self.capture.taken = true;
+                Some(base)
+            }
+            Some(every) => {
+                if !self.capture.taken {
+                    if now < self.capture.at {
+                        return None;
+                    }
+                    self.capture.taken = true;
+                    self.capture.next_due = now;
+                }
+                if now < self.capture.next_due {
+                    return None;
+                }
+                self.capture.sequence += 1;
+                self.capture.next_due = now + every.max(1.0 / 240.0);
+                Some(numbered_capture_path(&base, self.capture.sequence))
+            }
+        }
+    }
+
+    /// Read the swapchain texture back and save it as a PNG.
+    fn write_screenshot(&self, texture: &wgpu::Texture, path: &std::path::Path) {
+        let Some(context) = &self.render_context else {
+            return;
+        };
+        if !context.surface_copyable {
+            tracing::warn!(
+                "screenshot skipped: surface has no COPY_SRC usage on this adapter ({})",
+                path.display()
+            );
+            return;
+        }
+        let pixels = match context.read_surface_rgba(texture) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("screenshot readback failed: {e}");
+                return;
+            }
+        };
+        let Some(img) = image::RgbaImage::from_raw(texture.width(), texture.height(), pixels)
+        else {
+            tracing::warn!("screenshot: pixel buffer size mismatch");
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    tracing::warn!("screenshot: cannot create {}: {e}", parent.display());
+                    return;
+                }
+            }
+        }
+        match img.save(path) {
+            Ok(()) => tracing::info!(
+                "screenshot written: {} ({}x{} at t={:.2}s)",
+                path.display(),
+                texture.width(),
+                texture.height(),
+                self.clock.total_time
+            ),
+            Err(e) => tracing::warn!("screenshot: failed to save {}: {e}", path.display()),
+        }
     }
 
     pub(super) fn tick(&mut self) {
@@ -723,8 +812,7 @@ impl PlayerApp {
 
     fn tick_fixed_physics(&mut self, config: &StateConfig, has_fps_player: bool) {
         // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
-        self.physics
-            .begin_frame(self.clock.pending_fixed_ratio());
+        self.physics.begin_frame(self.clock.pending_fixed_ratio());
         while self.clock.should_fixed_update() {
             let dt = self.clock.fixed_timestep;
 
@@ -1143,6 +1231,8 @@ impl PlayerApp {
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
         let ui_textures = &self.ui_textures;
+        let ui_fonts = &self.ui_fonts;
+        let ui_fonts_warned = &mut self.ui_fonts_warned;
 
         let show_stats = self.show_stats;
         let stats_data = if show_stats {
@@ -1170,7 +1260,7 @@ impl PlayerApp {
             // Script UI first: it shares the panels' background layer, so
             // issuing it before the panels puts the panels in front of it
             // (title card, HUD) — see render_draw_commands.
-            render_draw_commands(ctx, &draw_commands, ui_textures);
+            render_draw_commands(ctx, &draw_commands, ui_textures, ui_fonts, ui_fonts_warned);
 
             #[cfg(feature = "debug-hud")]
             {
@@ -1245,6 +1335,9 @@ impl PlayerApp {
         {
             self.debug_panels = debug_panels;
         }
+        // Fonts exist from here on; measure_text may now lay text out for real.
+        self.egui_fonts_ready
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         egui_winit.handle_platform_output(window, full_output.platform_output);
 
@@ -1400,4 +1493,35 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) 
                     );
                 });
         });
+}
+
+/// `hud.png` + 3 -> `hud_0003.png`; extension-less paths get `.png`.
+pub(crate) fn numbered_capture_path(base: &std::path::Path, n: u32) -> std::path::PathBuf {
+    let stem = base
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "frame".to_string());
+    let ext = base
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "png".to_string());
+    base.with_file_name(format!("{stem}_{n:04}.{ext}"))
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::numbered_capture_path;
+    use std::path::Path;
+
+    #[test]
+    fn numbered_path_keeps_dir_and_extension() {
+        let p = numbered_capture_path(Path::new("renders/hud.png"), 7);
+        assert_eq!(p, Path::new("renders/hud_0007.png"));
+    }
+
+    #[test]
+    fn numbered_path_defaults_extension() {
+        let p = numbered_capture_path(Path::new("shot"), 12);
+        assert_eq!(p, Path::new("shot_0012.png"));
+    }
 }

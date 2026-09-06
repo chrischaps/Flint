@@ -541,6 +541,9 @@ impl PlayerApp {
         // Update terrain height callback for scripts
         self.update_terrain_height_fn();
 
+        // Project fonts may differ when the new scene lives in another project
+        self.refresh_project_fonts();
+
         // Re-initialize systems
         self.physics
             .initialize(&mut self.world)

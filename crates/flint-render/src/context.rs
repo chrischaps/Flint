@@ -30,6 +30,9 @@ pub struct RenderContext {
     // Retained for surface recreation on Android resume
     instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
+    /// True when the swapchain was configured with `COPY_SRC`, so the
+    /// presented frame can be read back via [`Self::read_surface_rgba`].
+    pub surface_copyable: bool,
 }
 
 impl RenderContext {
@@ -37,10 +40,7 @@ impl RenderContext {
     pub async fn new(window: Arc<Window>) -> Result<Self, RenderError> {
         let size = window.inner_size();
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
+        let instance = crate::gpu_select::instance();
 
         let surface = instance
             .create_surface(window.clone())
@@ -83,8 +83,23 @@ impl RenderContext {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        // Ask for COPY_SRC on the swapchain when the surface allows it so the
+        // player can screenshot the presented frame (HUD included). Some
+        // backends (notably GL/Android) only permit RENDER_ATTACHMENT.
+        let surface_copyable = surface_caps
+            .usages
+            .contains(wgpu::TextureUsages::COPY_SRC);
+        let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        if surface_copyable {
+            usage |= wgpu::TextureUsages::COPY_SRC;
+        } else {
+            tracing::warn!(
+                "surface does not support COPY_SRC; --screenshot is unavailable on this adapter"
+            );
+        }
+
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage,
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -107,7 +122,96 @@ impl RenderContext {
             depth_view,
             instance,
             adapter,
+            surface_copyable,
         })
+    }
+
+    /// Read a surface-sized texture back as tightly packed RGBA8 bytes.
+    ///
+    /// Blocks on the GPU (`Maintain::Wait`). The texture must have been
+    /// created with `COPY_SRC` and be in the surface format; Bgra formats are
+    /// swizzled to RGBA on the way out. Mirrors `HeadlessContext::read_pixels`.
+    pub fn read_surface_rgba(&self, texture: &wgpu::Texture) -> Result<Vec<u8>, RenderError> {
+        if !self.surface_copyable {
+            return Err(RenderError::BufferReadFailed(
+                "surface was not configured with COPY_SRC".into(),
+            ));
+        }
+        let width = texture.width();
+        let height = texture.height();
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Surface Readback Buffer"),
+            size: (padded_bytes_per_row * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Surface Readback Encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &staging,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?
+            .map_err(|e| RenderError::BufferReadFailed(e.to_string()))?;
+
+        let data = slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            pixels.extend_from_slice(&data[start..start + unpadded_bytes_per_row as usize]);
+        }
+        drop(data);
+        staging.unmap();
+
+        let is_bgra = matches!(
+            texture.format(),
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        if is_bgra {
+            for px in pixels.chunks_exact_mut(4) {
+                px.swap(0, 2);
+            }
+        }
+        // The swapchain alpha channel is undefined for opaque surfaces.
+        for px in pixels.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        Ok(pixels)
     }
 
     /// Recreate the surface from a new window handle.

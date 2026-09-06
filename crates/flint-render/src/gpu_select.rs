@@ -11,6 +11,12 @@
 //! 4. Default: `PowerPreference::HighPerformance`, so dual-GPU laptops pick
 //!    the discrete card rather than whichever adapter enumerates first.
 //!
+//! The backend set comes from `WGPU_BACKEND` (`vulkan`, `dx12`, `gl`, or a
+//! comma list) via [`backends`], defaulting to all. On hybrid laptops whose
+//! panel is wired to the integrated GPU, DX12 presents cross-adapter frames
+//! far better than Vulkan; `WGPU_BACKEND=dx12` is the first thing to try when
+//! the discrete GPU renders fast but the screen updates slowly.
+//!
 //! The chosen adapter is logged at `info` level so the pick is visible.
 
 use std::sync::Mutex;
@@ -29,6 +35,19 @@ fn gpu_override() -> Option<String> {
 
 fn name_filter() -> Option<String> {
     gpu_override().or_else(|| std::env::var("WGPU_ADAPTER_NAME").ok().filter(|s| !s.is_empty()))
+}
+
+/// Backends to enumerate: `WGPU_BACKEND` env var, else all.
+pub fn backends() -> wgpu::Backends {
+    wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::all())
+}
+
+/// Create a wgpu instance over [`backends`].
+pub fn instance() -> wgpu::Instance {
+    wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: backends(),
+        ..Default::default()
+    })
 }
 
 fn power_preference() -> wgpu::PowerPreference {
@@ -72,7 +91,7 @@ async fn select_by_name(
     filter: &str,
 ) -> Option<wgpu::Adapter> {
     let filter = filter.to_lowercase();
-    let adapters = instance.enumerate_adapters(wgpu::Backends::all());
+    let adapters = instance.enumerate_adapters(backends());
     let available: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
 
     let matched = adapters.into_iter().find(|a| {
@@ -99,12 +118,8 @@ async fn select_by_name(
 
 /// List available adapters as `(name, device type, backend)` strings.
 pub fn list_adapters() -> Vec<String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..Default::default()
-    });
-    instance
-        .enumerate_adapters(wgpu::Backends::all())
+    instance()
+        .enumerate_adapters(backends())
         .iter()
         .map(|a| {
             let i = a.get_info();

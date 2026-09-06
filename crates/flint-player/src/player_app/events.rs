@@ -355,7 +355,7 @@ impl ApplicationHandler for PlayerApp {
             WindowEvent::RedrawRequested => {
                 self.tick();
                 self.render();
-                if self.music_exit_requested {
+                if self.music_exit_requested || self.exit_requested {
                     event_loop.exit();
                 }
             }

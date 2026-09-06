@@ -8,4 +8,4 @@ pub mod spline_gen;
 
 pub use flint_audio::Bus;
 pub use player_app::scene_loading::post_process_config_from_def;
-pub use player_app::PlayerApp;
+pub use player_app::{CaptureConfig, PlayerApp};

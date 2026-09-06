@@ -240,6 +240,9 @@ y = 10
 
 [styles.score-value]
 font_size = 28
+font = "BarlowCondensed-Bold"      # fonts/BarlowCondensed-Bold.ttf, or a fonts.toml alias
+letter_spacing = 1.0
+shadow = [2, 2, 0.0, 0.0, 0.0, 0.6]  # dx, dy, r, g, b, a
 color = [1.0, 1.0, 1.0, 1.0]
 text_align = "center"
 width_pct = 100
@@ -316,6 +319,9 @@ position = [0, 0, 0]
 | `ui_set_text(id, text)` | --- | Set element text content |
 | `ui_show(id)` / `ui_hide(id)` | --- | Toggle element visibility |
 | `ui_set_style(id, prop, val)` | --- | Override a style property at runtime |
+| `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `shadow` |
+| `draw_text_opts(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
+| `measure_text_ex(text, size, font, spacing)` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
 
 ## Render Command Quick Examples
 

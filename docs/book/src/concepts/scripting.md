@@ -522,6 +522,7 @@ Load and manipulate TOML-defined UI documents at runtime:
 | `ui_set_color(element_id, r, g, b, a)` | --- | Set element text/foreground color |
 | `ui_set_bg_color(element_id, r, g, b, a)` | --- | Set element background color |
 | `ui_set_style(element_id, property, value)` | --- | Override a single style property |
+| `ui_set_style_array(id, prop, array)` | --- | Override an array-valued property at runtime: `color`, `bg_color`, `stroke_color`, `padding` (4 numbers) or `shadow` (6 numbers) |
 | `ui_reset_style(element_id)` | --- | Remove all style overrides |
 | `ui_set_class(element_id, class_name)` | --- | Change an element's style class |
 | `ui_exists(element_id)` | `bool` | Check if a UI element exists |
@@ -550,6 +551,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `draw_text(x, y, text, size, r, g, b, a)` | Draw text at position |
 | `draw_text_ex(x, y, text, size, r, g, b, a, layer)` | Draw text with explicit layer |
 | `draw_text_stroked(x, y, text, size, r, g, b, a, stroke_r, stroke_g, stroke_b, stroke_a, stroke_width)` | Text with an outline stroke behind it |
+| `draw_text_opts(x, y, text, size, opts)` | Text with an options map: `font`, `color`, `align`, `stroke`, `spacing`, `layer`, `shadow` (see below) |
 | `draw_rect(x, y, w, h, r, g, b, a)` | Draw filled rectangle |
 | `draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)` | Filled rectangle with corner rounding and layer |
 | `draw_rect_outline(x, y, w, h, r, g, b, a, thickness)` | Rectangle outline |
@@ -568,10 +570,41 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 |----------|---------|-------------|
 | `screen_width()` | `f64` | Logical screen width in points |
 | `screen_height()` | `f64` | Logical screen height in points |
-| `measure_text(text, size)` | `Map` | Approximate text size as `#{width, height}` |
+| `measure_text(text, size)` | `Map` | Laid-out size of `text` in the default font as `#{width, height}` |
+| `measure_text_ex(text, size, font, spacing)` | `Map` | Same, for a named font family and extra letter spacing (`""` = default font) |
 | `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
+
+Both `measure_text` calls lay the string out with the same font stack the HUD draws with, so a measured width can be used to centre or right-pad text exactly. (Before the first frame has rendered they return a glyph-count estimate.)
+
+#### Text Options and Fonts
+
+`draw_text_opts` takes a map whose keys are all optional:
+
+```rhai
+draw_text_opts(40.0, 40.0, "128", 96.0, #{
+    font: "BarlowCondensed-BlackItalic",   // family name; unknown → default font (warned once)
+    color: [1.0, 0.85, 0.2, 1.0],          // default white
+    align: "center",                       // "left" | "center" | "right"
+    stroke: [0.0, 0.0, 0.0, 1.0, 2.0],     // r, g, b, a, width
+    spacing: 1.5,                          // extra letter spacing in points
+    layer: 6,                              // integer
+    shadow: [3.0, 3.0, 0.0, 0.0, 0.0, 0.7] // dx, dy, r, g, b, a
+});
+```
+
+Array entries may mix ints and floats. The shadow is drawn once, offset by `(dx, dy)`, beneath the stroke and the text.
+
+**Project fonts.** Drop `.ttf` / `.otf` files in `<project>/fonts/` (found the same way as `sprites/`: the scene file's directory, then its parent). Each file registers a font family named after its file stem, so `fonts/BarlowCondensed-Bold.ttf` is usable as `font: "BarlowCondensed-Bold"`. The folder is scanned non-recursively once at startup and again on scene change when the project root changes. An optional `fonts/fonts.toml` adds aliases that point at the same files:
+
+```toml
+[[font]]
+name = "display"                      # use as font = "display"
+file = "BarlowCondensed-BlackItalic.ttf"
+```
+
+The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, exactly as before.
 
 #### Layer Ordering
 
@@ -684,6 +717,9 @@ y = 10
 | `color` | [r,g,b,a] | `[1,1,1,1]` | Primary color (text color, shape fill) |
 | `bg_color` | [r,g,b,a] | `[0,0,0,0]` | Background color (panels) |
 | `font_size` | float | `16` | Text font size |
+| `font` | string | --- | Font family from `<project>/fonts/` (file stem or `fonts.toml` alias); unset = default font |
+| `letter_spacing` | float | `0` | Extra spacing between glyphs, in points |
+| `shadow` | [dx,dy,r,g,b,a] | --- | Drop shadow offset and colour, drawn beneath the text |
 | `text_align` | string | `"left"` | Text alignment: `left`, `center`, `right` |
 | `rounding` | float | `0` | Corner rounding for panels/rects |
 | `opacity` | float | `1.0` | Element opacity multiplier |

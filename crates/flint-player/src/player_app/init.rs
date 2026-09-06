@@ -12,8 +12,8 @@ use super::scene_loading::{
     load_sprite_animations_from_world, load_terrain_from_world_inner, register_node_animation_data,
     register_skeletal_data, resolve_procgen_assets,
 };
-use super::PlayerApp;
 use super::TransitionPhase;
+use super::{CaptureConfig, PlayerApp};
 use anyhow::{Context, Result};
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
@@ -29,7 +29,7 @@ use flint_runtime::{
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use winit::dpi::PhysicalSize;
@@ -66,6 +66,10 @@ impl PlayerApp {
             egui_renderer: None,
             draw_commands: Vec::new(),
             ui_textures: HashMap::new(),
+            ui_fonts: HashSet::new(),
+            ui_fonts_warned: HashSet::new(),
+            ui_fonts_root: None,
+            egui_fonts_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             catalog: AssetCatalog::load_from_directory("assets").ok(),
             content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
@@ -98,6 +102,9 @@ impl PlayerApp {
             music_pp_base: None,
             music_pp_restore: None,
             scene_preload_audio: true,
+            window_size: (1280, 720),
+            capture: CaptureConfig::default(),
+            exit_requested: false,
             input_config_override,
             scene_input_config,
             input_config_paths: None,
@@ -192,6 +199,10 @@ impl PlayerApp {
         // Input bindings, gamepad backend, egui overlay
         self.init_input_and_egui(&window, &render_context);
 
+        // Project fonts (fonts/*.ttf|otf) and the real text measurer for scripts
+        self.refresh_project_fonts();
+        self.install_text_measurer();
+
         // Splines, ambient/wrap/sheen, skybox, terrain, camera, post config
         self.apply_scene_environment(&render_context, &mut scene_renderer);
 
@@ -222,7 +233,10 @@ impl PlayerApp {
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
         let window_attrs = Window::default_attributes().with_title("Flint Player");
         #[cfg(not(target_os = "android"))]
-        let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(1280, 720));
+        let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(
+            self.window_size.0.max(1),
+            self.window_size.1.max(1),
+        ));
 
         let window = Arc::new(
             event_loop
@@ -643,6 +657,54 @@ impl PlayerApp {
             &context.queue,
             &self.scene_path,
         );
+    }
+
+    /// (Re)load `<project>/fonts/` into egui when the project root changed
+    /// since the last scan (initial load and scene transitions).
+    pub(super) fn refresh_project_fonts(&mut self) {
+        let root = super::fonts::find_fonts_dir(&self.scene_path);
+        if root.is_none() && self.ui_fonts.is_empty() {
+            // No fonts dir and nothing installed: egui defaults already apply.
+            self.ui_fonts_root = None;
+            return;
+        }
+        if root.is_some() && self.ui_fonts_root == root {
+            return; // same project root as the last scan
+        }
+        self.ui_fonts = super::fonts::install_project_fonts(&self.egui_ctx, &self.scene_path);
+        self.ui_fonts_warned.clear();
+        self.ui_fonts_root = root;
+    }
+
+    /// Give scripts a `measure_text` that lays text out with the same font
+    /// stack the HUD draws with. Before egui's first pass (fonts not built
+    /// yet) and for families not installed in the *active* definitions,
+    /// the closure degrades gracefully instead of panicking.
+    pub(super) fn install_text_measurer(&mut self) {
+        let ctx = self.egui_ctx.clone();
+        let ready = self.egui_fonts_ready.clone();
+        self.script.set_text_measurer(Some(Arc::new(
+            move |text: &str, size: f32, font: Option<&str>, spacing: f32| {
+                if !ready.load(std::sync::atomic::Ordering::Relaxed) {
+                    let chars = text.chars().count() as f32;
+                    return (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size);
+                }
+                ctx.fonts(|f| {
+                    let family = font
+                        .map(|n| egui::FontFamily::Name(n.into()))
+                        .filter(|fam| f.lock().fonts.definitions().families.contains_key(fam))
+                        .unwrap_or(egui::FontFamily::Proportional);
+                    let job = super::fonts::text_layout_job(
+                        text,
+                        egui::FontId::new(size, family),
+                        egui::Color32::WHITE,
+                        spacing,
+                    );
+                    let galley = f.layout_job(job);
+                    (galley.size().x, galley.size().y)
+                })
+            },
+        )));
     }
 
     /// Load a sprite texture for UI rendering. Called lazily when a draw_sprite
