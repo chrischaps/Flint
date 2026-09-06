@@ -792,6 +792,31 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
         );
     }
 
+    // set_material_override(entity_id: i64, material: &str, r: f64, g: f64, b: f64, a: f64)
+    // Per-glTF-material tint honoured by this entity's meshes and every
+    // descendant's (expanded GLB nodes), keyed by the material's name.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_material_override",
+            move |id: i64, material: &str, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 || material.is_empty() {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                let value = toml::Value::Array(vec![
+                    toml::Value::Float(r),
+                    toml::Value::Float(g),
+                    toml::Value::Float(b),
+                    toml::Value::Float(a),
+                ]);
+                let _ = world.set_field(eid, comp::MATERIAL_OVERRIDES, material, value);
+            },
+        );
+    }
+
     // find_entities_with(component: &str) -> Array of entity IDs
     {
         let ctx = ctx.clone();

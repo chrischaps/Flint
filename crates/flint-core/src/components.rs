@@ -7,6 +7,9 @@ pub const TRANSFORM: &str = "transform";
 
 // --- Rendering ---
 pub const MATERIAL: &str = "material";
+/// Per-glTF-material base-colour overrides (`{ <material name> = [r,g,b(,a)] }`),
+/// honoured on the entity or any ancestor. See `SceneRenderer::ecs_material_override`.
+pub const MATERIAL_OVERRIDES: &str = "material_overrides";
 pub const MODEL: &str = "model";
 pub const BOUNDS: &str = "bounds";
 pub const SPRITE: &str = "sprite";

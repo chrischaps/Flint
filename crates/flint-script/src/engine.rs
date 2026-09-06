@@ -1926,6 +1926,37 @@ mod tests {
     }
 
     #[test]
+    fn test_set_material_override_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("liveried").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_material_override(me, "Frame", 0.2, 0.4, 0.6, 1.0);
+                set_material_override(me, "Capsule", 1.0, 0.5, 0.0, 0.4);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        // The component is created on demand, keyed by glTF material name.
+        let ov = world.get_component(id, "material_overrides").unwrap();
+        let frame = ov.get("Frame").unwrap().as_array().unwrap();
+        let f = |i: usize| frame[i].as_float().unwrap();
+        assert!((f(0) - 0.2).abs() < 1e-6 && (f(1) - 0.4).abs() < 1e-6);
+        assert!((f(2) - 0.6).abs() < 1e-6 && (f(3) - 1.0).abs() < 1e-6);
+        let glass = ov.get("Capsule").unwrap().as_array().unwrap();
+        assert!((glass[3].as_float().unwrap() - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_find_entities_with_from_script() {
         let mut engine = ScriptEngine::new();
         let mut world = FlintWorld::new();

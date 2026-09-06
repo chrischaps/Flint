@@ -83,6 +83,7 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `get_children(id)` | `Array` | Get child entity IDs as an array |
 | `get_world_position(id)` | `Map` | World-space position as `#{x, y, z}` (accounts for parent transforms) |
 | `set_material_color(id, r, g, b, a)` | --- | Set the material base color (RGBA, 0.0--1.0) |
+| `set_material_override(id, material, r, g, b, a)` | --- | Tint one named glTF material on this entity and all its expanded child nodes (writes `material_overrides.<material>`) |
 | `find_entities_with(component)` | `Array` | All entity IDs that have the given component |
 | `entity_count_with(component)` | `i64` | Count of entities with the given component |
 | `spawn_entity(name)` | `i64` | Create a new entity. Returns its ID or `-1` on failure |

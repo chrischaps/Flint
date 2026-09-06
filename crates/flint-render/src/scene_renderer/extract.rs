@@ -49,6 +49,45 @@ impl SceneRenderer {
             })
     }
 
+    /// ECS `material_overrides.<name>` tint for one glTF material, looked up on
+    /// the entity and then every ancestor (a GLB expanded into a node hierarchy
+    /// keeps its meshes several levels below the entity a scene author sees).
+    /// Values are `[r, g, b]` or `[r, g, b, a]`; a missing alpha keeps
+    /// `gltf_alpha` so a three-component override on a blended glass material
+    /// stays translucent. `None` when no ancestor overrides this material.
+    fn ecs_material_override(
+        world: &FlintWorld,
+        entity_id: EntityId,
+        material_name: &str,
+        gltf_alpha: f32,
+    ) -> Option<[f32; 4]> {
+        if material_name.is_empty() {
+            return None;
+        }
+        let mut cur = Some(entity_id);
+        let mut depth = 0;
+        while let Some(id) = cur {
+            if depth > 32 {
+                break;
+            }
+            let hit = world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
+                .and_then(|m| m.get(material_name))
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    let f = |i: usize| arr.get(i).and_then(toml_f32);
+                    Some([f(0)?, f(1)?, f(2)?, f(3).unwrap_or(gltf_alpha)])
+                });
+            if hit.is_some() {
+                return hit;
+            }
+            cur = world.get_parent(id);
+            depth += 1;
+        }
+        None
+    }
+
     /// Extract a skinned (skeletal) entity into draw calls.
     /// Returns `true` if skinned meshes were found (caller should `continue`).
     pub(super) fn extract_skinned_entity(
@@ -96,8 +135,14 @@ impl SceneRenderer {
             // Material color override (entity, then parent) — same contract as
             // the static model path, so a scene can tint a skinned figure via
             // `material.base_color_r/g/b` too.
-            let base_color = Self::ecs_base_color_override(world, entity_id)
-                .unwrap_or(gpu_mesh.material.base_color);
+            let base_color = Self::ecs_material_override(
+                world,
+                entity_id,
+                &gpu_mesh.material.name,
+                gpu_mesh.material.base_color[3],
+            )
+            .or_else(|| Self::ecs_base_color_override(world, entity_id))
+            .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(
                 base_color,
@@ -167,6 +212,7 @@ impl SceneRenderer {
 
             let is_transparent = ecs_opacity < 1.0
                 || gltf_alpha < 1.0
+                || base_color[3] < 1.0
                 || blend_mode != BlendMode::Alpha
                 || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
 
@@ -264,11 +310,17 @@ impl SceneRenderer {
                 &tex_cache.default_metallic_roughness,
             );
 
-            // Material color override: check entity first, then inherit from parent.
-            // This lets scripts color a parent entity and have all child meshes
-            // (e.g. expanded GLB nodes) pick up the tint automatically.
-            let base_color = Self::ecs_base_color_override(world, entity_id)
-                .unwrap_or(gpu_mesh.material.base_color);
+            // Material colour: a per-material-name override on any ancestor wins
+            // (`material_overrides`), then the entity/parent `material.base_color_*`
+            // tint, then the glTF material itself.
+            let base_color = Self::ecs_material_override(
+                world,
+                entity_id,
+                &gpu_mesh.material.name,
+                gpu_mesh.material.base_color[3],
+            )
+            .or_else(|| Self::ecs_base_color_override(world, entity_id))
+            .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(
                 base_color,

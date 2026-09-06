@@ -36,6 +36,15 @@ The camera mode is determined by the entry point: `edit` uses orbit, `play` uses
 
 Imported glTF models are rendered with their full mesh geometry and materials. The `flint-import` crate extracts meshes, materials, and textures from `.glb`/`.gltf` files, which the renderer draws with PBR shading.
 
+### Recolouring a model per entity
+
+Two ECS components tint an imported model without touching the GLB:
+
+- `material.base_color_r/g/b[/a]` on the entity (or its direct parent) replaces the base colour of **every** primitive the entity draws. Scripts write it with `set_material_color`.
+- `material_overrides` maps glTF **material names** to colours: `Frame = [0.9, 0.3, 0.1]`, `Capsule = [0.2, 0.6, 1.0, 0.5]`. The renderer looks it up on the drawn entity and then on each ancestor, so a single component on a model's root entity recolours the matching materials on all of its expanded child nodes, including meshes that mix several materials. A three-component value keeps the material's own alpha. It takes precedence over `material.base_color_*` for the named material. Scripts write it with `set_material_override(id, name, r, g, b, a)`.
+
+Both are re-read whenever the renderer re-extracts the world (every frame in the player), so colour changes are live.
+
 ## Skinned Mesh Pipeline
 
 For skeletal animation, the renderer provides a separate GPU pipeline that applies bone matrix skinning in the vertex shader. This avoids the 32-byte overhead of bone data on static geometry.
