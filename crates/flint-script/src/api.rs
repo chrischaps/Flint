@@ -29,6 +29,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
+    register_data_api(engine, ctx.clone());
     register_terrain_api(engine, ctx.clone());
     register_sprite_api(engine, ctx.clone());
     register_sprite_animation_api(engine, ctx.clone());
@@ -3255,21 +3256,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("load_ui", move |layout_path: &str| -> i64 {
             let mut c = crate::lock_or_recover(&ctx);
             // Resolve relative to project root (scene's parent's parent)
-            let scene_dir = if c.current_scene_path.is_empty() {
-                std::path::PathBuf::from(".")
-            } else {
-                let p = std::path::Path::new(&c.current_scene_path);
-                // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
-                let root = p
-                    .parent()
-                    .and_then(|dir| dir.parent())
-                    .unwrap_or(std::path::Path::new("."));
-                if root.as_os_str().is_empty() {
-                    std::path::PathBuf::from(".")
-                } else {
-                    root.to_path_buf()
-                }
-            };
+            let scene_dir = project_root_for(&c.current_scene_path);
             c.ui_system.load(layout_path, &scene_dir)
         });
     }
@@ -3818,6 +3805,80 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
             if let Err(e) = store.load_from_file(std::path::Path::new(path)) {
                 tracing::warn!("load error: {}", e);
             }
+        });
+    }
+}
+
+// ─── Data files API ──────────────────────────────────────
+
+/// Project root for a scene path: the scene directory's parent, or "." when
+/// the path is empty or has no such parent. The same rule `load_ui` and the
+/// player's `save/persist.toml` use.
+pub fn project_root_for(scene_path: &str) -> std::path::PathBuf {
+    if scene_path.is_empty() {
+        return std::path::PathBuf::from(".");
+    }
+    // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
+    let root = std::path::Path::new(scene_path)
+        .parent()
+        .and_then(|dir| dir.parent())
+        .unwrap_or(std::path::Path::new("."));
+    if root.as_os_str().is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        root.to_path_buf()
+    }
+}
+
+/// Read and cache a TOML file relative to the project root, returning the
+/// whole document as a Rhai map (`()` on failure, which is also logged).
+fn load_data_impl(c: &mut ScriptCallContext, path: &str, reload: bool) -> Dynamic {
+    let full = project_root_for(&c.current_scene_path).join(path);
+    let key = full.to_string_lossy().to_string();
+    if reload {
+        c.data_cache.remove(&key);
+    }
+    if let Some(v) = c.data_cache.get(&key) {
+        return toml_to_dynamic(v.clone());
+    }
+    let parsed = std::fs::read_to_string(&full)
+        .map_err(|e| e.to_string())
+        .and_then(|text| text.parse::<toml::Value>().map_err(|e| e.to_string()));
+    match parsed {
+        Ok(v) => {
+            let d = toml_to_dynamic(v.clone());
+            c.data_cache.insert(key, v);
+            d
+        }
+        Err(e) => {
+            let message = format!("load_data('{}') failed (resolved to {}): {}", path, key, e);
+            tracing::warn!("{}", message);
+            c.commands.push(ScriptCommand::Log {
+                level: LogLevel::Warn,
+                message,
+            });
+            Dynamic::UNIT
+        }
+    }
+}
+
+fn register_data_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // load_data(path) -> Map | ()  — parsed once per path, cached for the session.
+    // Types are preserved exactly (TOML integer → INT, float → FLOAT), unlike ui_token.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_data", move |path: &str| -> Dynamic {
+            let mut c = crate::lock_or_recover(&ctx);
+            load_data_impl(&mut c, path, false)
+        });
+    }
+
+    // load_data(path, reload) — reload = true drops the cached parse first.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_data", move |path: &str, reload: bool| -> Dynamic {
+            let mut c = crate::lock_or_recover(&ctx);
+            load_data_impl(&mut c, path, reload)
         });
     }
 }
@@ -4845,6 +4906,70 @@ mod text_opts_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_project_root_for() {
+        assert_eq!(project_root_for(""), std::path::PathBuf::from("."));
+        assert_eq!(
+            project_root_for("scenes/a.scene.toml"),
+            std::path::PathBuf::from(".")
+        );
+        assert_eq!(
+            project_root_for("C:/games/trike/scenes/a.scene.toml"),
+            std::path::PathBuf::from("C:/games/trike")
+        );
+    }
+
+    #[test]
+    fn test_load_data_types_cache_and_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "flint_data_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::create_dir_all(root.join("scenes")).unwrap();
+        std::fs::write(root.join("data/x.toml"), "n = 7\nf = 1.5\nb = true\ns = \"hi\"\n[nested]\nk = 2\n[[list]]\nid = \"a\"\n[[list]]\nid = \"b\"\n").unwrap();
+
+        let mut c = ScriptCallContext::new();
+        c.current_scene_path = root
+            .join("scenes/x.scene.toml")
+            .to_string_lossy()
+            .to_string();
+
+        let d = load_data_impl(&mut c, "data/x.toml", false);
+        assert!(d.is_map());
+        let m = d.cast::<Map>();
+        assert!(m["n"].is_int());
+        assert_eq!(m["n"].as_int().unwrap(), 7);
+        assert!(m["f"].is_float());
+        assert_eq!(m["b"].as_bool().unwrap(), true);
+        assert_eq!(m["s"].clone().into_string().unwrap(), "hi");
+        assert_eq!(m["nested"].clone().cast::<Map>()["k"].as_int().unwrap(), 2);
+        assert_eq!(m["list"].clone().cast::<Array>().len(), 2);
+        assert_eq!(c.data_cache.len(), 1);
+
+        // Cached: the file can change on disk and the same parse comes back
+        std::fs::write(root.join("data/x.toml"), "n = 8\n").unwrap();
+        let d2 = load_data_impl(&mut c, "data/x.toml", false);
+        assert_eq!(d2.cast::<Map>()["n"].as_int().unwrap(), 7);
+        // ...until a reload is asked for
+        let d3 = load_data_impl(&mut c, "data/x.toml", true);
+        assert_eq!(d3.cast::<Map>()["n"].as_int().unwrap(), 8);
+
+        // Missing file: unit, and a warning queued for the game log
+        let d4 = load_data_impl(&mut c, "data/missing.toml", false);
+        assert!(d4.is_unit());
+        assert!(c
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, ScriptCommand::Log { level: LogLevel::Warn, .. })));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn test_toml_to_dynamic_bool() {

@@ -323,6 +323,7 @@ position = [0, 0, 0]
 | `pop_state()` | --- | Pop to previous game state |
 | `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to `save/persist.toml` 1 s later, on transitions and on exit |
 | `persist_save()` | --- | Write `save/persist.toml` now |
+| `load_data(path)` | `Map`/`()` | Read a TOML data file relative to the project root (cached; `load_data(path, true)` re-reads) |
 | `load_ui(path)` | `i64` | Load a `.ui.toml` document (returns handle) |
 | `ui_set_text(id, text)` | --- | Set element text content |
 | `ui_show(id)` / `ui_hide(id)` | --- | Toggle element visibility |

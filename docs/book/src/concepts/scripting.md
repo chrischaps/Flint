@@ -541,6 +541,23 @@ write immediately --- call it after a settings screen commits, so a crash a
 moment later loses nothing. The `save/` directory is created on demand; add it
 to the game's `.gitignore`. Loads and saves log at `info`, failures at `warn`.
 
+### Data Files API
+
+Read-only game data tables (trick dictionaries, item stats, tuning) kept as
+TOML under the project root:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `load_data(path)` | `Map` or `()` | Parse a TOML file relative to the project root (the scene directory's parent) and return the whole document as a map; parsed once per path and cached for the session |
+| `load_data(path, reload)` | `Map` or `()` | Same, but `reload = true` drops the cached parse first (hot iteration) |
+
+Types are preserved exactly: a TOML integer arrives as `INT`, a float as
+`FLOAT` (Rhai does not coerce between them, so write `points = 500.0` or call
+`to_float()` before multiplying by a float). Tables come back as maps with
+keys in alphabetical order; use an array of tables (`[[entries]]`) when file
+order matters. A missing or malformed file returns `()` and logs a warning.
+Call it once in `on_init` and keep the map --- every call clones the tree.
+
 ### Data-Driven UI API
 
 Load and manipulate TOML-defined UI documents at runtime:

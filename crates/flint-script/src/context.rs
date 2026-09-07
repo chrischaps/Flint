@@ -520,6 +520,8 @@ pub struct ScriptCallContext {
     pub current_scene_path: String,
     /// Data-driven UI system
     pub ui_system: UiSystem,
+    /// Parsed TOML data files, keyed by resolved path (`load_data`)
+    pub data_cache: std::collections::HashMap<String, toml::Value>,
     /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
     pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
     /// Real text measurement, installed by the host once a text backend
@@ -600,6 +602,7 @@ impl ScriptCallContext {
             transition_phase: String::from("idle"),
             current_scene_path: String::new(),
             ui_system: UiSystem::new(),
+            data_cache: std::collections::HashMap::new(),
             terrain_height_fn: None,
             text_measurer: None,
             camera_follow: CameraFollowState::default(),
