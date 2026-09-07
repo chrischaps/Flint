@@ -28,7 +28,7 @@ use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
 use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, PersistentStore};
-use flint_script::context::DrawCommand;
+use flint_script::context::DrawItem;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
 use std::collections::{HashMap, HashSet};
@@ -147,7 +147,7 @@ pub struct PlayerApp {
     egui_renderer: Option<egui_wgpu::Renderer>,
 
     // Script-driven 2D draw commands
-    draw_commands: Vec<DrawCommand>,
+    draw_commands: Vec<DrawItem>,
     ui_textures: HashMap<String, egui::TextureHandle>,
     /// Family names registered from `<project>/fonts/` (file stems + manifest
     /// aliases). The HUD renderer falls back to the default font for names

@@ -297,6 +297,7 @@ position = [0, 0, 0]
 | `distance(a, b)` | `f64` | Distance between two entities |
 | `is_action_pressed(action)` | `bool` | Check if action is held |
 | `is_action_just_pressed(action)` | `bool` | Check if action pressed this frame |
+| `mouse_x()` / `mouse_y()` | `f64` | Cursor in logical points; `is_mouse_pressed(b)` / `is_mouse_just_pressed(b)` (0 left, 1 right, 2 middle) |
 | `delta_time()` | `f64` | Seconds since last frame |
 | `play_sound(name)` | --- | Play a sound effect |
 | `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |
@@ -322,6 +323,12 @@ position = [0, 0, 0]
 | `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `shadow` |
 | `draw_text_opts(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
 | `measure_text_ex(text, size, font, spacing)` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
+| `draw_ring(cx, cy, r_in, r_out, start_deg, end_deg, r, g, b, a, layer)` | --- | Annular sector; degrees from 12 o'clock, clockwise (`draw_arc(cx, cy, radius, a0, a1, r, g, b, a, thickness, layer)` for a stroke) |
+| `draw_polygon(points, r, g, b, a, layer)` | --- | Convex fill from `[[x,y],...]` or flat `[x0,y0,...]`; `draw_polygon_outline(points, r, g, b, a, thickness, closed, layer)` |
+| `draw_rect_gradient(x, y, w, h, r1,g1,b1,a1, r2,g2,b2,a2, vertical, layer)` | --- | Two-colour linear gradient fill |
+| `draw_rect_ex4(x, y, w, h, r, g, b, a, tl, tr, br, bl, layer)` | --- | Filled rect with per-corner rounding; `draw_rect_outline_ex(..., thickness, rounding, layer)` |
+| `push_clip(x, y, w, h)` / `pop_clip()` | --- | Clip following draw calls to a rect (nests by intersection; reset each frame) |
+| `import "ui_kit" as ui;` | --- | Load `scripts/lib/ui_kit.rhai`; call `ui::fn_name(...)`. Edits under `scripts/lib/` hot-reload every script |
 
 ## Render Command Quick Examples
 

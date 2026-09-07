@@ -792,6 +792,11 @@ impl InputState {
     pub fn is_mouse_button_down(&self, button: u32) -> bool {
         self.mouse_buttons_down.contains(&button)
     }
+
+    /// True on the frame `button` (0 left, 1 right, 2 middle) went down.
+    pub fn is_mouse_button_just_pressed(&self, button: u32) -> bool {
+        self.mouse_buttons_just_pressed.contains(&button)
+    }
 }
 
 impl InputState {

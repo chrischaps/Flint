@@ -1252,6 +1252,40 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             c.input.mouse_delta.1
         });
     }
+
+    // mouse_x() / mouse_y() -> f64 - cursor position in logical points
+    // (the same space as screen_width()/screen_height() and draw_*).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_x", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.mouse_pos_logical.0 as f64
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_y", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.mouse_pos_logical.1 as f64
+        });
+    }
+
+    // is_mouse_pressed(button) / is_mouse_just_pressed(button) -> bool
+    // button: 0 left, 1 right, 2 middle.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_mouse_pressed", move |button: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_buttons_down.contains(&button)
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_mouse_just_pressed", move |button: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_buttons_just_pressed.contains(&button)
+        });
+    }
 }
 
 // ─── Time API ────────────────────────────────────────────
@@ -2253,7 +2287,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_text",
             move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
@@ -2285,7 +2319,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
@@ -2321,13 +2355,50 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   sa: f64,
                   sw: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
                     size: size as f32,
                     color: [r as f32, g as f32, b as f32, a as f32],
                     layer: 0,
+                    align: 0,
+                    stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
+                });
+            },
+        );
+    }
+
+    // draw_text_stroked_ex(x, y, text, size, r, g, b, a, sr, sg, sb, sa, stroke_w, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_text_stroked_ex",
+            move |x: f64,
+                  y: f64,
+                  text: &str,
+                  size: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  sr: f64,
+                  sg: f64,
+                  sb: f64,
+                  sa: f64,
+                  sw: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
                     align: 0,
                     stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
                     font: None,
@@ -2348,7 +2419,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             move |x: f64, y: f64, text: &str, size: f64, opts: Map| {
                 let o = TextOpts::from_map(&opts);
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
@@ -2372,7 +2443,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_rect",
             move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::RectFilled {
+                c.push_draw(DrawCommand::RectFilled {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2401,7 +2472,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   rounding: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::RectFilled {
+                c.push_draw(DrawCommand::RectFilled {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2429,13 +2500,14 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::RectOutline {
+                c.push_draw(DrawCommand::RectOutline {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
                     h: h as f32,
                     color: [r as f32, g as f32, b as f32, a as f32],
                     thickness: thickness as f32,
+                    rounding: 0.0,
                     layer: 0,
                 });
             },
@@ -2449,7 +2521,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_circle",
             move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleFilled {
+                c.push_draw(DrawCommand::CircleFilled {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2467,7 +2539,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_circle_ex",
             move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleFilled {
+                c.push_draw(DrawCommand::CircleFilled {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2485,7 +2557,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_circle_outline",
             move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleOutline {
+                c.push_draw(DrawCommand::CircleOutline {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2512,7 +2584,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   thickness: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleOutline {
+                c.push_draw(DrawCommand::CircleOutline {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2539,7 +2611,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Line {
+                c.push_draw(DrawCommand::Line {
                     x1: x1 as f32,
                     y1: y1 as f32,
                     x2: x2 as f32,
@@ -2596,38 +2668,44 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                let mut p = project_clip(&c.camera_view_proj, [x1 as f32, y1 as f32, z1 as f32]);
-                let mut q = project_clip(&c.camera_view_proj, [x2 as f32, y2 as f32, z2 as f32]);
-                const NEAR_W: f32 = 1e-3;
-                if p[3] <= NEAR_W && q[3] <= NEAR_W {
-                    return;
-                }
-                if p[3] <= NEAR_W || q[3] <= NEAR_W {
-                    // Move the behind-camera end onto the near plane (linear in clip space).
-                    let t = (NEAR_W - p[3]) / (q[3] - p[3]);
-                    let m = [
-                        p[0] + (q[0] - p[0]) * t,
-                        p[1] + (q[1] - p[1]) * t,
-                        p[2] + (q[2] - p[2]) * t,
-                        NEAR_W,
-                    ];
-                    if p[3] <= NEAR_W {
-                        p = m;
-                    } else {
-                        q = m;
-                    }
-                }
-                let (sx1, sy1) = clip_to_screen(p, c.screen_width, c.screen_height);
-                let (sx2, sy2) = clip_to_screen(q, c.screen_width, c.screen_height);
-                c.draw_commands.push(DrawCommand::Line {
-                    x1: sx1,
-                    y1: sy1,
-                    x2: sx2,
-                    y2: sy2,
-                    color: [r as f32, g as f32, b as f32, a as f32],
-                    thickness: thickness as f32,
-                    layer: 0,
-                });
+                push_line_3d(
+                    &mut c,
+                    [x1, y1, z1],
+                    [x2, y2, z2],
+                    [r as f32, g as f32, b as f32, a as f32],
+                    thickness as f32,
+                    0,
+                );
+            },
+        );
+    }
+
+    // draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_3d_ex",
+            move |x1: f64,
+                  y1: f64,
+                  z1: f64,
+                  x2: f64,
+                  y2: f64,
+                  z2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                push_line_3d(
+                    &mut c,
+                    [x1, y1, z1],
+                    [x2, y2, z2],
+                    [r as f32, g as f32, b as f32, a as f32],
+                    thickness as f32,
+                    layer as i32,
+                );
             },
         );
     }
@@ -2648,7 +2726,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   thickness: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Line {
+                c.push_draw(DrawCommand::Line {
                     x1: x1 as f32,
                     y1: y1 as f32,
                     x2: x2 as f32,
@@ -2661,6 +2739,252 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // draw_rect_outline_ex(x, y, w, h, r, g, b, a, thickness, rounding, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_rect_outline_ex",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  rounding: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::RectOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    rounding: rounding as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_rect_ex4(x, y, w, h, r, g, b, a, tl, tr, br, bl, layer)
+    // Filled rectangle with per-corner rounding (top-left, top-right,
+    // bottom-right, bottom-left).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_rect_ex4",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  tl: f64,
+                  tr: f64,
+                  br: f64,
+                  bl: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::RectRounded4 {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    rounding: [tl as f32, tr as f32, br as f32, bl as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_rect_gradient(x, y, w, h, r1, g1, b1, a1, r2, g2, b2, a2, vertical, layer)
+    // Linear two-colour fill: colour 1 -> colour 2, top->bottom when
+    // `vertical`, left->right otherwise.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_rect_gradient",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r1: f64,
+                  g1: f64,
+                  b1: f64,
+                  a1: f64,
+                  r2: f64,
+                  g2: f64,
+                  b2: f64,
+                  a2: f64,
+                  vertical: bool,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::RectGradient {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color_a: [r1 as f32, g1 as f32, b1 as f32, a1 as f32],
+                    color_b: [r2 as f32, g2 as f32, b2 as f32, a2 as f32],
+                    vertical,
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_ring(cx, cy, r_inner, r_outer, start_deg, end_deg, r, g, b, a, layer)
+    // Annular sector. Degrees from 12 o'clock, clockwise (0 = up, 90 =
+    // right); `end_deg > start_deg`, sweep clamped to 360; r_inner 0 = pie.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_ring",
+            move |cx: f64,
+                  cy: f64,
+                  r_inner: f64,
+                  r_outer: f64,
+                  start_deg: f64,
+                  end_deg: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Ring {
+                    cx: cx as f32,
+                    cy: cy as f32,
+                    r_inner: r_inner as f32,
+                    r_outer: r_outer as f32,
+                    start_deg: start_deg as f32,
+                    end_deg: end_deg as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_arc(cx, cy, radius, start_deg, end_deg, r, g, b, a, thickness, layer)
+    // Sugar for a ring centred on `radius` with the given stroke thickness.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_arc",
+            move |cx: f64,
+                  cy: f64,
+                  radius: f64,
+                  start_deg: f64,
+                  end_deg: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let half = (thickness * 0.5) as f32;
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Ring {
+                    cx: cx as f32,
+                    cy: cy as f32,
+                    r_inner: (radius as f32 - half).max(0.0),
+                    r_outer: radius as f32 + half,
+                    start_deg: start_deg as f32,
+                    end_deg: end_deg as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_polygon(points, r, g, b, a, layer) - convex fill.
+    // `points` is `[[x, y], ...]` or flat `[x0, y0, x1, y1, ...]` (ints or floats).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_polygon",
+            move |points: Array, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+                let Some(points) = crate::draw2d::parse_points(&points) else {
+                    tracing::warn!(
+                        "draw_polygon: points must be [[x,y],...] or a flat even-length [x0,y0,...] list of numbers"
+                    );
+                    return;
+                };
+                if points.len() < 3 {
+                    return;
+                }
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Polygon {
+                    points,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_polygon_outline(points, r, g, b, a, thickness, closed, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_polygon_outline",
+            move |points: Array,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  closed: bool,
+                  layer: i64| {
+                let Some(points) = crate::draw2d::parse_points(&points) else {
+                    tracing::warn!(
+                        "draw_polygon_outline: points must be [[x,y],...] or a flat even-length [x0,y0,...] list of numbers"
+                    );
+                    return;
+                };
+                if points.len() < 2 {
+                    return;
+                }
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::PolygonOutline {
+                    points,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    closed,
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // push_clip(x, y, w, h) / pop_clip()
+    // Every draw call issued while a clip is pushed is confined to that rect
+    // (nested pushes intersect). Unbalanced pops are ignored and the stack
+    // resets each frame.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("push_clip", move |x: f64, y: f64, w: f64, h: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.push_clip([x as f32, y as f32, w as f32, h as f32]);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("pop_clip", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.pop_clip();
+        });
+    }
+
     // draw_sprite(x, y, w, h, name)
     {
         let ctx = ctx.clone();
@@ -2668,7 +2992,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_sprite",
             move |x: f64, y: f64, w: f64, h: f64, name: &str| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Sprite {
+                c.push_draw(DrawCommand::Sprite {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2702,7 +3026,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Sprite {
+                c.push_draw(DrawCommand::Sprite {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -4495,6 +4819,51 @@ mod tests {
         let result: f64 = engine.eval("cos(0.0)").unwrap();
         assert!((result - 1.0).abs() < 1e-10);
     }
+}
+
+/// Project a world-space segment with the frame's camera and record it as
+/// a HUD line. Clipped against the near plane so a segment that passes the
+/// camera still draws; fully-behind segments are dropped.
+fn push_line_3d(
+    c: &mut ScriptCallContext,
+    a: [f64; 3],
+    b: [f64; 3],
+    color: [f32; 4],
+    thickness: f32,
+    layer: i32,
+) {
+    let mut p = project_clip(&c.camera_view_proj, [a[0] as f32, a[1] as f32, a[2] as f32]);
+    let mut q = project_clip(&c.camera_view_proj, [b[0] as f32, b[1] as f32, b[2] as f32]);
+    const NEAR_W: f32 = 1e-3;
+    if p[3] <= NEAR_W && q[3] <= NEAR_W {
+        return;
+    }
+    if p[3] <= NEAR_W || q[3] <= NEAR_W {
+        // Move the behind-camera end onto the near plane (linear in clip space).
+        let t = (NEAR_W - p[3]) / (q[3] - p[3]);
+        let m = [
+            p[0] + (q[0] - p[0]) * t,
+            p[1] + (q[1] - p[1]) * t,
+            p[2] + (q[2] - p[2]) * t,
+            NEAR_W,
+        ];
+        if p[3] <= NEAR_W {
+            p = m;
+        } else {
+            q = m;
+        }
+    }
+    let (sx1, sy1) = clip_to_screen(p, c.screen_width, c.screen_height);
+    let (sx2, sy2) = clip_to_screen(q, c.screen_width, c.screen_height);
+    c.push_draw(DrawCommand::Line {
+        x1: sx1,
+        y1: sy1,
+        x2: sx2,
+        y2: sy2,
+        color,
+        thickness,
+        layer,
+    });
 }
 
 /// World point → clip space with a column-major view-projection (m[col][row]).

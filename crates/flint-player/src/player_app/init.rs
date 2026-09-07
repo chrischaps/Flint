@@ -349,7 +349,7 @@ impl PlayerApp {
         );
         let egui_renderer = egui_wgpu::Renderer::new(
             &render_context.device,
-            render_context.config.format,
+            render_context.hud_format,
             None,
             1,
             false,
@@ -754,8 +754,8 @@ impl PlayerApp {
         let sprite_names: Vec<String> = self
             .draw_commands
             .iter()
-            .filter_map(|cmd| {
-                if let DrawCommand::Sprite { name, .. } = cmd {
+            .filter_map(|item| {
+                if let DrawCommand::Sprite { name, .. } = &item.cmd {
                     if !self.ui_textures.contains_key(name.as_str()) {
                         Some(name.clone())
                     } else {

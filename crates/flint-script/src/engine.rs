@@ -5,7 +5,7 @@
 //! that temporarily lends the FlintWorld to scripts.
 
 use crate::api;
-use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
+use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
 use flint_core::callbacks as cb;
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
@@ -145,6 +145,9 @@ pub struct ScriptEngine {
     engine: Engine,
     pub(crate) ctx: Arc<Mutex<ScriptCallContext>>,
     pub(crate) scripts: HashMap<EntityId, ScriptInstance>,
+    /// Base directory for `import "name"` (`<scripts>/lib`). `None` until a
+    /// scene sets it; the resolver then maps `import "x"` to `<lib>/x.rhai`.
+    module_base: Option<std::path::PathBuf>,
 }
 
 impl ScriptEngine {
@@ -162,7 +165,32 @@ impl ScriptEngine {
             engine,
             ctx,
             scripts: HashMap::new(),
+            module_base: None,
         }
+    }
+
+    /// Point `import "name"` at `<dir>/name.rhai` and drop any cached
+    /// modules. Installing a fresh `FileModuleResolver` is the cache clear:
+    /// the Engine owns its resolver, so re-creating it is simpler than
+    /// keeping a handle just to call `clear_cache`.
+    pub fn set_module_base(&mut self, dir: std::path::PathBuf) {
+        let resolver =
+            rhai::module_resolvers::FileModuleResolver::new_with_path_and_extension(&dir, "rhai");
+        self.engine.set_module_resolver(resolver);
+        self.module_base = Some(dir);
+    }
+
+    /// Re-install the module resolver on the same base path, discarding
+    /// every cached module (used when a `scripts/lib` file changes).
+    pub fn reset_module_cache(&mut self) {
+        if let Some(dir) = self.module_base.clone() {
+            self.set_module_base(dir);
+        }
+    }
+
+    /// Current module base directory, if a scene has set one.
+    pub fn module_base(&self) -> Option<&std::path::Path> {
+        self.module_base.as_deref()
     }
 
     /// Compile a Rhai source file into an AST
@@ -290,10 +318,10 @@ impl ScriptEngine {
         }
     }
 
-    /// Drain all accumulated draw commands
-    pub fn drain_draw_commands(&self) -> Vec<DrawCommand> {
+    /// Drain all accumulated draw commands (and reset the clip stack)
+    pub fn drain_draw_commands(&self) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.ctx);
-        std::mem::take(&mut c.draw_commands)
+        c.take_draw_items()
     }
 
     /// Route game events to appropriate script callbacks
@@ -468,6 +496,7 @@ impl ScriptEngine {
         let mut c = crate::lock_or_recover(&self.ctx);
         c.commands.clear();
         c.draw_commands.clear();
+        c.clip_stack.clear();
         c.ui_system.clear();
     }
 

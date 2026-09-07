@@ -33,6 +33,10 @@ pub struct RenderContext {
     /// True when the swapchain was configured with `COPY_SRC`, so the
     /// presented frame can be read back via [`Self::read_surface_rgba`].
     pub surface_copyable: bool,
+    /// Format for the HUD (egui) pass view: the swapchain format without its
+    /// sRGB suffix, so egui's own gamma handling applies and alpha blends in
+    /// display space.
+    pub hud_format: wgpu::TextureFormat,
 }
 
 impl RenderContext {
@@ -105,7 +109,14 @@ impl RenderContext {
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
+            // A non-sRGB view of the swapchain for the HUD pass: egui expects to
+            // write sRGB-encoded values itself, so blending a translucent panel
+            // against the scene happens in display space, not linear space.
+            view_formats: if surface_format.remove_srgb_suffix() != surface_format {
+                vec![surface_format.remove_srgb_suffix()]
+            } else {
+                vec![]
+            },
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
@@ -123,6 +134,7 @@ impl RenderContext {
             instance,
             adapter,
             surface_copyable,
+            hud_format: surface_format.remove_srgb_suffix(),
         })
     }
 

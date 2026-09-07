@@ -153,6 +153,7 @@ impl UiDocument {
                             h: rect.h,
                             color,
                             thickness: style.thickness,
+                            rounding: 0.0,
                             layer: style.layer,
                         });
                     } else {

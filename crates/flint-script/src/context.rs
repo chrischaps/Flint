@@ -57,6 +57,10 @@ pub struct InputSnapshot {
     /// Any raw key/mouse/gamepad press this frame (unbound keys included)
     pub any_just_pressed: bool,
     pub mouse_delta: (f64, f64),
+    /// Mouse buttons currently held (0 left, 1 right, 2 middle)
+    pub mouse_buttons_down: Vec<i64>,
+    /// Mouse buttons pressed this frame
+    pub mouse_buttons_just_pressed: Vec<i64>,
     /// Active touches: (id, norm_x, norm_y)
     pub touches: Vec<(i64, f64, f64)>,
     /// Touches that just started this frame: (id, norm_x, norm_y)
@@ -305,6 +309,54 @@ pub enum DrawCommand {
         h: f32,
         color: [f32; 4],
         thickness: f32,
+        rounding: f32,
+        layer: i32,
+    },
+    /// Filled rectangle with per-corner rounding `[tl, tr, br, bl]`.
+    RectRounded4 {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: [f32; 4],
+        rounding: [f32; 4],
+        layer: i32,
+    },
+    /// Two-colour linear gradient fill: `color_a` → `color_b`, top→bottom
+    /// when `vertical`, left→right otherwise.
+    RectGradient {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color_a: [f32; 4],
+        color_b: [f32; 4],
+        vertical: bool,
+        layer: i32,
+    },
+    /// Annular sector. Degrees from 12 o'clock, clockwise; `r_inner` may be 0.
+    Ring {
+        cx: f32,
+        cy: f32,
+        r_inner: f32,
+        r_outer: f32,
+        start_deg: f32,
+        end_deg: f32,
+        color: [f32; 4],
+        layer: i32,
+    },
+    /// Convex filled polygon.
+    Polygon {
+        points: Vec<[f32; 2]>,
+        color: [f32; 4],
+        layer: i32,
+    },
+    /// Polyline, optionally closed.
+    PolygonOutline {
+        points: Vec<[f32; 2]>,
+        color: [f32; 4],
+        thickness: f32,
+        closed: bool,
         layer: i32,
     },
     CircleFilled {
@@ -349,11 +401,35 @@ impl DrawCommand {
             DrawCommand::Text { layer, .. } => *layer,
             DrawCommand::RectFilled { layer, .. } => *layer,
             DrawCommand::RectOutline { layer, .. } => *layer,
+            DrawCommand::RectRounded4 { layer, .. } => *layer,
+            DrawCommand::RectGradient { layer, .. } => *layer,
+            DrawCommand::Ring { layer, .. } => *layer,
+            DrawCommand::Polygon { layer, .. } => *layer,
+            DrawCommand::PolygonOutline { layer, .. } => *layer,
             DrawCommand::CircleFilled { layer, .. } => *layer,
             DrawCommand::CircleOutline { layer, .. } => *layer,
             DrawCommand::Line { layer, .. } => *layer,
             DrawCommand::Sprite { layer, .. } => *layer,
         }
+    }
+}
+
+/// A recorded draw command plus the clip rect (`[x, y, w, h]`, logical
+/// points) that was active when it was issued — `None` = unclipped. The
+/// clip is stamped per item so layer sorting stays a plain stable sort.
+#[derive(Debug, Clone)]
+pub struct DrawItem {
+    pub cmd: DrawCommand,
+    pub clip: Option<[f32; 4]>,
+}
+
+impl DrawItem {
+    pub fn unclipped(cmd: DrawCommand) -> Self {
+        Self { cmd, clip: None }
+    }
+
+    pub fn layer(&self) -> i32 {
+        self.cmd.layer()
     }
 }
 
@@ -376,8 +452,15 @@ pub struct ScriptCallContext {
     pub current_entity: EntityId,
     /// Accumulated commands to be drained after all scripts run
     pub commands: Vec<ScriptCommand>,
-    /// Accumulated 2D draw commands for the current frame
-    pub draw_commands: Vec<DrawCommand>,
+    /// Accumulated 2D draw commands for the current frame, each stamped
+    /// with the clip rect active when it was issued
+    pub draw_commands: Vec<DrawItem>,
+    /// `push_clip` / `pop_clip` stack; each entry is already intersected
+    /// with its parent. Cleared when the frame's draw commands are drained.
+    pub clip_stack: Vec<[f32; 4]>,
+    /// Mouse cursor in logical points (same space as `screen_width`);
+    /// written by the host each frame alongside the screen size.
+    pub mouse_pos_logical: (f32, f32),
     /// Input snapshot for this frame
     pub input: InputSnapshot,
     /// Frame delta time
@@ -477,6 +560,8 @@ impl ScriptCallContext {
             current_entity: EntityId::from_raw(0),
             commands: Vec::new(),
             draw_commands: Vec::new(),
+            clip_stack: Vec::new(),
+            mouse_pos_logical: (0.0, 0.0),
             input: InputSnapshot::default(),
             delta_time: 0.0,
             total_time: 0.0,
@@ -517,6 +602,32 @@ impl ScriptCallContext {
             loaded_chunk_ids: HashSet::new(),
             conducted: ConductedSnapshot::default(),
         }
+    }
+
+    /// Record a draw command, stamping the clip rect currently on the stack.
+    pub fn push_draw(&mut self, cmd: DrawCommand) {
+        let clip = self.clip_stack.last().copied();
+        self.draw_commands.push(DrawItem { cmd, clip });
+    }
+
+    /// Push a clip rect (intersected with the enclosing one, if any).
+    pub fn push_clip(&mut self, rect: [f32; 4]) {
+        let rect = match self.clip_stack.last() {
+            Some(parent) => crate::draw2d::intersect_rect(*parent, rect),
+            None => rect,
+        };
+        self.clip_stack.push(rect);
+    }
+
+    /// Pop the innermost clip rect; an unbalanced pop is ignored.
+    pub fn pop_clip(&mut self) {
+        self.clip_stack.pop();
+    }
+
+    /// Take this frame's draw items and reset the clip stack.
+    pub fn take_draw_items(&mut self) -> Vec<DrawItem> {
+        self.clip_stack.clear();
+        std::mem::take(&mut self.draw_commands)
     }
 
     /// Get a reference to the world. Panics if called outside a valid scope.
@@ -637,6 +748,43 @@ mod tests {
 
         // Pointer cleared after scope drops
         assert!(ctx.lock().unwrap().world.is_null());
+    }
+
+    #[test]
+    fn clip_stack_stamps_intersects_and_resets() {
+        let mut c = ScriptCallContext::new();
+        let line = || DrawCommand::Line {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+            color: [1.0; 4],
+            thickness: 1.0,
+            layer: 3,
+        };
+        c.push_draw(line());
+        c.push_clip([0.0, 0.0, 100.0, 100.0]);
+        c.push_draw(line());
+        c.push_clip([50.0, 50.0, 100.0, 100.0]);
+        c.push_draw(line());
+        c.pop_clip();
+        c.pop_clip();
+        c.pop_clip(); // unbalanced: ignored
+        c.push_draw(line());
+
+        let items = c.take_draw_items();
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].clip, None);
+        assert_eq!(items[1].clip, Some([0.0, 0.0, 100.0, 100.0]));
+        assert_eq!(items[2].clip, Some([50.0, 50.0, 50.0, 50.0]));
+        assert_eq!(items[3].clip, None);
+        assert_eq!(items[2].layer(), 3);
+
+        // A frame that never pops still starts the next one clean.
+        c.push_clip([1.0, 1.0, 1.0, 1.0]);
+        let _ = c.take_draw_items();
+        assert!(c.clip_stack.is_empty());
+        assert!(c.draw_commands.is_empty());
     }
 
     #[test]

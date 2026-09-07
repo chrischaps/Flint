@@ -593,33 +593,35 @@ impl PlayerApp {
     }
 
     fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {
-            // FPS scenes gate mouse input behind click-to-capture (hides the
-            // cursor for mouse-look). 2D / UI scenes have no player entity, so
-            // keep the cursor visible and forward mouse buttons directly — this
-            // lets screen-space UI (e.g. card games) be clicked and dragged.
-            if !self.cursor_captured && self.physics.has_player_entity() {
-                if state == ElementState::Pressed && button == MouseButton::Left {
-                    #[cfg(feature = "debug-hud")]
-                    let panel_open = self.debug_panels.iter().any(|p| p.is_open());
-                    #[cfg(not(feature = "debug-hud"))]
-                    let panel_open = false;
-                    if !panel_open {
-                        self.capture_cursor();
-                    }
+            // Mouse button state always reaches InputState so scripts can
+            // read it (`is_mouse_pressed`, menus, screen-space UI) and the
+            // mouse-as-touch emulation keeps working. FPS scenes (a player
+            // entity exists) additionally treat the first left click as
+            // click-to-capture, which hides the cursor for mouse-look.
+            if let Some(btn) = match button {
+                MouseButton::Left => Some(0),
+                MouseButton::Right => Some(1),
+                MouseButton::Middle => Some(2),
+                _ => None,
+            } {
+                match state {
+                    ElementState::Pressed => self.input.process_mouse_button_down(btn),
+                    ElementState::Released => self.input.process_mouse_button_up(btn),
                 }
-                return;
             }
 
-            let btn = match button {
-                MouseButton::Left => 0,
-                MouseButton::Right => 1,
-                MouseButton::Middle => 2,
-                _ => return,
-            };
-
-            match state {
-                ElementState::Pressed => self.input.process_mouse_button_down(btn),
-                ElementState::Released => self.input.process_mouse_button_up(btn),
+            if !self.cursor_captured
+                && self.physics.has_player_entity()
+                && state == ElementState::Pressed
+                && button == MouseButton::Left
+            {
+                #[cfg(feature = "debug-hud")]
+                let panel_open = self.debug_panels.iter().any(|p| p.is_open());
+                #[cfg(not(feature = "debug-hud"))]
+                let panel_open = false;
+                if !panel_open {
+                    self.capture_cursor();
+                }
             }
     }
 

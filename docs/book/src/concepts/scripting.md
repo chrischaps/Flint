@@ -99,6 +99,11 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `action_value(action)` | `f64` | Analog value for Axis1d actions (0.0 if not bound) |
 | `mouse_delta_x()` | `f64` | Horizontal mouse movement this frame |
 | `mouse_delta_y()` | `f64` | Vertical mouse movement this frame |
+| `mouse_x()` / `mouse_y()` | `f64` | Cursor position in logical points (the `screen_width()` / `draw_*` space) |
+| `is_mouse_pressed(button)` | `bool` | Mouse button held: `0` left, `1` right, `2` middle |
+| `is_mouse_just_pressed(button)` | `bool` | Mouse button went down this frame |
+
+`mouse_x()` / `mouse_y()` and the button queries are what menus and other screen-space UI hit-test against; they are always fed, whether or not the cursor is captured. In scenes with a player character the first left click also captures the cursor for mouse-look (it still registers as a press).
 
 Action names are defined by input configuration files and are fully customizable per game. The built-in defaults include: `move_forward`, `move_backward`, `move_left`, `move_right`, `jump`, `interact`, `sprint`, `weapon_1`, `weapon_2`, `reload`, `fire`. Games can define arbitrary custom actions in their input config TOML files and query them from scripts with `is_action_pressed("custom_action")`.
 
@@ -555,12 +560,22 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `draw_rect(x, y, w, h, r, g, b, a)` | Draw filled rectangle |
 | `draw_rect_ex(x, y, w, h, r, g, b, a, rounding, layer)` | Filled rectangle with corner rounding and layer |
 | `draw_rect_outline(x, y, w, h, r, g, b, a, thickness)` | Rectangle outline |
+| `draw_rect_outline_ex(x, y, w, h, r, g, b, a, thickness, rounding, layer)` | Rectangle outline with corner rounding and layer |
+| `draw_rect_ex4(x, y, w, h, r, g, b, a, tl, tr, br, bl, layer)` | Filled rectangle with per-corner rounding (top-left, top-right, bottom-right, bottom-left) |
+| `draw_rect_gradient(x, y, w, h, r1, g1, b1, a1, r2, g2, b2, a2, vertical, layer)` | Two-colour linear gradient fill: colour 1 to colour 2, top to bottom when `vertical` is `true`, left to right otherwise |
+| `draw_text_stroked_ex(x, y, text, size, r, g, b, a, sr, sg, sb, sa, stroke_width, layer)` | Stroked text with explicit layer |
 | `draw_circle(x, y, radius, r, g, b, a)` | Draw filled circle |
 | `draw_circle_ex(x, y, radius, r, g, b, a, layer)` | Filled circle with explicit layer |
 | `draw_circle_outline(x, y, radius, r, g, b, a, thickness)` | Circle outline |
 | `draw_circle_outline_ex(x, y, radius, r, g, b, a, thickness, layer)` | Circle outline with explicit layer |
 | `draw_line(x1, y1, x2, y2, r, g, b, a, thickness)` | Draw a line segment |
 | `draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)` | Line segment with explicit layer |
+| `draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | World-space line projected with the frame's camera (near-plane clipped) |
+| `draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)` | Same, with explicit layer |
+| `draw_ring(cx, cy, r_inner, r_outer, start_deg, end_deg, r, g, b, a, layer)` | Annular sector (`r_inner` = 0 gives a pie slice); see angle convention below |
+| `draw_arc(cx, cy, radius, start_deg, end_deg, r, g, b, a, thickness, layer)` | Stroked arc: a ring centred on `radius`, `thickness` wide |
+| `draw_polygon(points, r, g, b, a, layer)` | Convex filled polygon; `points` is `[[x, y], ...]` or a flat `[x0, y0, x1, y1, ...]` list (ints or floats) |
+| `draw_polygon_outline(points, r, g, b, a, thickness, closed, layer)` | Polyline through `points`, closed back to the start when `closed` is `true` |
 | `draw_sprite(x, y, w, h, name)` | Draw a sprite image |
 | `draw_sprite_ex(x, y, w, h, name, u0, v0, u1, v1, r, g, b, a, layer)` | Sprite with custom UV coordinates, tint, and layer |
 
@@ -605,6 +620,50 @@ file = "BarlowCondensed-BlackItalic.ttf"
 ```
 
 The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, exactly as before.
+
+#### Rings and Arcs
+
+`draw_ring` / `draw_arc` angles are **degrees from 12 o'clock, clockwise on screen**: `0` is up, `90` is right, `180` is down, `270` is left. `end_deg` must exceed `start_deg`; a sweep larger than 360 is clamped to a full circle. A radial progress dial that fills clockwise from the top is therefore `draw_ring(cx, cy, 40.0, 50.0, 0.0, 360.0 * progress, ...)`. Sectors are tessellated at roughly one segment per 3 degrees (6 to 180 segments).
+
+#### Clipping
+
+| Function | Description |
+|----------|-------------|
+| `push_clip(x, y, w, h)` | Confine every following draw call to this rectangle |
+| `pop_clip()` | Restore the previous clip rectangle |
+
+Clips nest: an inner `push_clip` is intersected with the enclosing one. Each draw command remembers the clip that was active when it was issued, so clipping composes with `layer` ordering (a clipped layer-5 command still draws after unclipped layer-0 ones). Unbalanced `pop_clip` calls are ignored, and the stack is reset at the start of every frame, so a script that forgets to pop cannot clip the next frame. Typical use is a scrolling list or a marquee:
+
+```rhai
+push_clip(list_x, list_y, list_w, list_h);
+for i in 0..items.len() {
+    draw_text(list_x, list_y + i * 24.0 - scroll, items[i], 18.0, 1.0, 1.0, 1.0, 1.0);
+}
+pop_clip();
+```
+
+#### Shared Modules (`scripts/lib`)
+
+Scripts can `import` shared Rhai modules from `<project>/scripts/lib/` (the `lib/` folder inside whichever `scripts/` directory the scene resolved). `import "ui_kit" as ui;` loads `scripts/lib/ui_kit.rhai`; nested paths work too (`import "fx/easing" as ease;`). Every top-level `fn` in a module is exported automatically (mark helpers `private` to hide them); top-level variables must be `export`ed:
+
+```rhai
+// scripts/lib/ui_kit.rhai
+export let PANEL_ALPHA = 0.85;
+fn ease_out_cubic(t) { 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t) }
+private fn helper() { }
+```
+
+```rhai
+// scripts/hud.rhai
+import "ui_kit" as ui;
+
+fn on_draw_ui() {
+    let a = ui::ease_out_cubic(delta_time());
+    draw_rect(0.0, 0.0, 100.0, 20.0, 0.0, 0.0, 0.0, ui::PANEL_ALPHA);
+}
+```
+
+Put the `import` at the top level of the script: the engine evaluates a script's global statements before each callback, so a global import is visible inside `on_update`, `on_draw_ui` and any function you define. Modules are compiled once and cached. Editing, adding or removing any `.rhai` file under `scripts/lib/` clears that cache and hot-reloads every script in the scene (script state is preserved as with any hot-reload), so a change to a shared helper shows up everywhere at once.
 
 #### Layer Ordering
 
@@ -827,6 +886,8 @@ The script system checks file modification timestamps each frame. When a `.rhai`
 3. If compilation fails, the old AST is kept and an error is logged --- the game never crashes from a script typo
 
 This enables a fast iteration workflow: edit a script in your text editor, save, and see the result in the running game without restarting.
+
+Shared modules under `scripts/lib/` are watched as well: a change there clears the module cache and recompiles every script in the scene, since any of them may import the changed file.
 
 ## Interactable System
 

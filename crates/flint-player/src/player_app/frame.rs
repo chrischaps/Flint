@@ -551,7 +551,13 @@ impl PlayerApp {
         }
 
         // Render egui HUD overlay on top of the 3D scene
-        self.render_hud(&view);
+        // HUD draws into a non-sRGB view of the same texture (see
+        // RenderContext::hud_format) so egui blends in display space.
+        let hud_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(context.hud_format),
+            ..Default::default()
+        });
+        self.render_hud(&hud_view);
 
         // Capture the composited frame (scene + HUD) before it is presented.
         if let Some(path) = self.capture_path_due() {
@@ -895,6 +901,14 @@ impl PlayerApp {
         let screen_rect = self.egui_ctx.screen_rect();
         self.script
             .set_screen_size(screen_rect.width(), screen_rect.height());
+        // Cursor in the same logical-point space as screen_width()/draw_*:
+        // InputState holds physical pixels, egui's ppp is the window scale.
+        {
+            let ppp = self.egui_ctx.pixels_per_point().max(0.01);
+            let (mx, my) = self.input.mouse_position;
+            self.script
+                .set_mouse_position(mx as f32 / ppp, my as f32 / ppp);
+        }
 
         // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();
