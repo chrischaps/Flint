@@ -1241,6 +1241,11 @@ impl SceneRenderer {
                     let first = draw.first_instance;
                     render_pass.draw_indexed(0..6, 0, first..first + draw.instance_count);
                 }
+                // Restore the light bind group at slot 2: every line/overlay
+                // pipeline that follows (wireframe overlay, normal arrows,
+                // skeleton, gizmos) expects it there, and wgpu validates the
+                // layout at draw time.
+                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
             }
         }
 
