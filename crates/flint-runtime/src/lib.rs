@@ -18,9 +18,9 @@ pub use clock::GameClock;
 pub use event::GameEvent;
 pub use event_bus::EventBus;
 pub use input::{
-    ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputState,
-    RebindMode,
+    ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputDevice,
+    InputState, RebindMode, DEVICE_AXIS_DEADZONE,
 };
-pub use persist::PersistentStore;
+pub use persist::{PersistentStore, SaveDebounce};
 pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;

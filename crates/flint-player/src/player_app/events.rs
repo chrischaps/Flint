@@ -46,6 +46,12 @@ impl AndroidGamepadTracker {
     }
 
     /// Register a device as a gamepad and return its slot index.
+    /// True once any device has been registered as a gamepad.
+    #[cfg(target_os = "android")]
+    fn any_registered(&self) -> bool {
+        !self.device_slots.is_empty()
+    }
+
     fn register_device(&mut self, device_id: winit::event::DeviceId) -> u32 {
         self.known_device_ids.insert(device_id);
         *self.device_slots.entry(device_id).or_insert_with(|| {
@@ -99,6 +105,24 @@ impl PlayerApp {
         if let Some(gilrs) = &mut self.gilrs {
             while let Some(event) = gilrs.next_event() {
                 events.push(event);
+            }
+        }
+
+        // gamepad_connected(): gilrs knows on desktop; on Android (no gilrs
+        // backend) a pad exists once any gamepad-shaped event has been seen.
+        #[cfg(not(target_os = "android"))]
+        {
+            let connected = self
+                .gilrs
+                .as_ref()
+                .map(|g| g.gamepads().next().is_some())
+                .unwrap_or(false);
+            self.input.set_gamepad_connected(connected);
+        }
+        #[cfg(target_os = "android")]
+        {
+            if self.android_gamepad.any_registered() || !events.is_empty() {
+                self.input.set_gamepad_connected(true);
             }
         }
 
@@ -383,6 +407,12 @@ impl ApplicationHandler for PlayerApp {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    /// Every exit path (close button, Escape, --exit-after, script-requested,
+    /// init failure) funnels through here: last chance to write the store.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.flush_persistent_store(true, "exit");
     }
 }
 

@@ -251,6 +251,7 @@ fn set_style_accepts_token_strings_and_new_props() {
     sys.set_style("button", "width_pct", StyleValue::Float(50.0));
     sys.set_style("button", "layout", StyleValue::String("horizontal".into()));
     sys.set_style("button", "padding", StyleValue::Color([1.0, 2.0, 3.0, 4.0]));
+    sys.set_style("button", "uv", StyleValue::Color([0.25, 0.0, 0.5, 0.5]));
     // unknown token: ignored, no override stored
     sys.set_style("button", "rounding", StyleValue::String("$nope".into()));
     // unknown prop: warned once, ignored
@@ -266,6 +267,7 @@ fn set_style_accepts_token_strings_and_new_props() {
     assert!(st.height_auto);
     assert_eq!(st.layout, super::style::LayoutFlow::Horizontal);
     assert_eq!(st.padding, [1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(st.uv, [0.25, 0.0, 0.5, 0.5]);
     assert_eq!(rect.w, 640.0, "width_pct override applies to layout");
     assert_eq!(st.rounding, 0.0);
 

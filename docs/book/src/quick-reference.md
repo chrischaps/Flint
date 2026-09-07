@@ -302,6 +302,7 @@ position = [0, 0, 0]
 | `distance(a, b)` | `f64` | Distance between two entities |
 | `is_action_pressed(action)` | `bool` | Check if action is held |
 | `is_action_just_pressed(action)` | `bool` | Check if action pressed this frame |
+| `last_input_device()` / `gamepad_connected()` | `String` / `bool` | `"keyboard"` \| `"mouse"` \| `"gamepad"` \| `"touch"` latch for prompt glyphs; whether a pad is attached |
 | `mouse_x()` / `mouse_y()` | `f64` | Cursor in logical points; `is_mouse_pressed(b)` / `is_mouse_just_pressed(b)` (0 left, 1 right, 2 middle) |
 | `delta_time()` | `f64` | Seconds since last frame |
 | `play_sound(name)` | --- | Play a sound effect |
@@ -320,12 +321,13 @@ position = [0, 0, 0]
 | `load_scene(path)` | --- | Transition to a new scene |
 | `push_state("paused")` | --- | Push a game state (e.g., pause) |
 | `pop_state()` | --- | Pop to previous game state |
-| `persist_set(key, val)` | --- | Store data across scene transitions |
+| `persist_set(key, val)` | --- | Store data across scene transitions; auto-saved to `save/persist.toml` 1 s later, on transitions and on exit |
+| `persist_save()` | --- | Write `save/persist.toml` now |
 | `load_ui(path)` | `i64` | Load a `.ui.toml` document (returns handle) |
 | `ui_set_text(id, text)` | --- | Set element text content |
 | `ui_show(id)` / `ui_hide(id)` | --- | Toggle element visibility |
 | `ui_set_style(id, prop, val)` | --- | Override any style property at runtime (number, string, bool, array, or `"$token"`) |
-| `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `shadow` |
+| `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `uv` / `shadow` |
 | `ui_token(name)` | value or `()` | Read a style token (`"accent"`, `"$accent"`, `"color.accent"`) as float / float array / string |
 | `ui_hit(id, x, y)` | `bool` | Point-in-rect against the element's resolved layout (logical points) |
 | `draw_text_opts(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |

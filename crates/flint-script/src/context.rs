@@ -56,6 +56,11 @@ pub struct InputSnapshot {
     pub action_values: std::collections::HashMap<String, f64>,
     /// Any raw key/mouse/gamepad press this frame (unbound keys included)
     pub any_just_pressed: bool,
+    /// Device of the most recent deliberate input: "keyboard" | "mouse" |
+    /// "gamepad" | "touch" (empty only before the first snapshot).
+    pub last_device: String,
+    /// True while the host reports at least one gamepad attached.
+    pub gamepad_connected: bool,
     pub mouse_delta: (f64, f64),
     /// Mouse buttons currently held (0 left, 1 right, 2 middle)
     pub mouse_buttons_down: Vec<i64>,

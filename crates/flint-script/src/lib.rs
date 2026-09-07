@@ -118,6 +118,8 @@ impl ScriptSystem {
             actions_just_released: snapshot_actions_released(input),
             action_values: snapshot_action_values(input),
             any_just_pressed: input.any_just_pressed(),
+            last_device: input.last_device().as_str().to_string(),
+            gamepad_connected: input.gamepad_connected(),
             mouse_delta: input.raw_mouse_delta(),
             mouse_buttons_down: (0..3_u32)
                 .filter(|b| input.is_mouse_button_down(*b))

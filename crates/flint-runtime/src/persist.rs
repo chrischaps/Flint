@@ -5,26 +5,57 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 /// A key-value store that persists across scene transitions.
 ///
 /// Values are stored as [`toml::Value`] to match the engine's dynamic component
 /// system. The store can be serialized to / deserialized from TOML files.
+///
+/// Mutations raise a `dirty` flag; the host (the player) polls it through
+/// [`SaveDebounce`] and writes the store to disk shortly after the last
+/// change. A script can ask for an immediate write with `persist_save()`,
+/// which sets `flush_requested`.
 #[derive(Default)]
 pub struct PersistentStore {
     data: HashMap<String, toml::Value>,
+    dirty: bool,
+    flush_requested: bool,
 }
 
 impl PersistentStore {
     pub fn new() -> Self {
         Self {
             data: HashMap::new(),
+            dirty: false,
+            flush_requested: false,
         }
+    }
+
+    /// True when the store has changed since the last `mark_clean`.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Clear the dirty flag (after a successful save).
+    pub fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Ask the host to write the store now rather than after the debounce.
+    pub fn request_flush(&mut self) {
+        self.flush_requested = true;
+    }
+
+    /// Consume a pending flush request.
+    pub fn take_flush_request(&mut self) -> bool {
+        std::mem::take(&mut self.flush_requested)
     }
 
     /// Set a value by key. Overwrites any existing value.
     pub fn set(&mut self, key: &str, value: toml::Value) {
         self.data.insert(key.to_string(), value);
+        self.dirty = true;
     }
 
     /// Get a value by key.
@@ -39,11 +70,18 @@ impl PersistentStore {
 
     /// Remove a key, returning the old value if it existed.
     pub fn remove(&mut self, key: &str) -> Option<toml::Value> {
-        self.data.remove(key)
+        let old = self.data.remove(key);
+        if old.is_some() {
+            self.dirty = true;
+        }
+        old
     }
 
     /// Remove all entries.
     pub fn clear(&mut self) {
+        if !self.data.is_empty() {
+            self.dirty = true;
+        }
         self.data.clear();
     }
 
@@ -73,7 +111,62 @@ impl PersistentStore {
         for (k, v) in table {
             self.data.insert(k, v);
         }
+        self.dirty = false;
         Ok(())
+    }
+}
+
+/// Decides *when* a dirty [`PersistentStore`] gets written: one write per
+/// burst of changes, `delay` after the last change began the burst, or at
+/// once when a flush is forced (scene transition, exit, `persist_save()`).
+///
+/// Kept free of I/O so the timing can be unit tested with synthetic clocks.
+#[derive(Debug, Clone)]
+pub struct SaveDebounce {
+    delay: Duration,
+    dirty_since: Option<Instant>,
+}
+
+impl Default for SaveDebounce {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(1))
+    }
+}
+
+impl SaveDebounce {
+    pub fn new(delay: Duration) -> Self {
+        Self {
+            delay,
+            dirty_since: None,
+        }
+    }
+
+    /// Record that the store is dirty as of `now`. The first change of a
+    /// burst starts the clock; later changes do not push it back, so a
+    /// script writing every frame still gets saved once a second.
+    pub fn note_dirty(&mut self, now: Instant) {
+        if self.dirty_since.is_none() {
+            self.dirty_since = Some(now);
+        }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.dirty_since.is_some()
+    }
+
+    /// True when a save should happen now: `force`, or the delay has
+    /// elapsed since the burst began. Resets the pending state when it
+    /// returns true; the caller performs the write.
+    pub fn should_flush(&mut self, now: Instant, force: bool) -> bool {
+        let Some(since) = self.dirty_since else {
+            return false;
+        };
+        if force || now.saturating_duration_since(since) >= self.delay {
+            self.dirty_since = None;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -149,6 +242,59 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dirty_flag_tracks_mutations() {
+        let mut store = PersistentStore::new();
+        assert!(!store.is_dirty());
+
+        store.set("a", toml::Value::Integer(1));
+        assert!(store.is_dirty());
+        store.mark_clean();
+
+        store.remove("missing");
+        assert!(!store.is_dirty(), "removing an absent key is not a change");
+        store.remove("a");
+        assert!(store.is_dirty());
+        store.mark_clean();
+
+        store.clear();
+        assert!(!store.is_dirty(), "clearing an empty store is not a change");
+
+        assert!(!store.take_flush_request());
+        store.request_flush();
+        assert!(store.take_flush_request());
+        assert!(!store.take_flush_request(), "request is consumed");
+    }
+
+    #[test]
+    fn debounce_waits_then_flushes_once() {
+        let t0 = Instant::now();
+        let mut d = SaveDebounce::new(Duration::from_secs(1));
+        assert!(!d.should_flush(t0, false), "nothing pending");
+
+        d.note_dirty(t0);
+        assert!(d.is_pending());
+        assert!(!d.should_flush(t0 + Duration::from_millis(500), false));
+
+        // A later change inside the window does not restart the clock.
+        d.note_dirty(t0 + Duration::from_millis(800));
+        assert!(d.should_flush(t0 + Duration::from_millis(1000), false));
+        assert!(!d.is_pending());
+        assert!(!d.should_flush(t0 + Duration::from_secs(5), false));
+    }
+
+    #[test]
+    fn debounce_force_flushes_immediately() {
+        let t0 = Instant::now();
+        let mut d = SaveDebounce::default();
+        d.note_dirty(t0);
+        assert!(d.should_flush(t0, true));
+        assert!(
+            !d.should_flush(t0, true),
+            "force with nothing pending is a no-op"
+        );
     }
 
     #[test]

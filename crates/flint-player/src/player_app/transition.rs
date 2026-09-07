@@ -248,6 +248,10 @@ impl PlayerApp {
         // transient render state cleared.
         self.teardown_current_scene();
 
+        // The outgoing scene's on_scene_exit has run: persist whatever it
+        // (and the scene before it) stored, before the path changes.
+        self.flush_persistent_store(true, "scene transition");
+
         // Load: resolve + schema discovery + scene parse; on failure the
         // transition aborts here (world already cleared, same as before).
         if !self.load_target_scene(target_scene) {

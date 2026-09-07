@@ -224,11 +224,21 @@ A handful of probes per frame is cheap. Thousands are not.
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `any_input_just_pressed()` | `bool` | True on the frame any key, mouse button, or gamepad button was pressed |
+| `last_input_device()` | `String` | `"keyboard"`, `"mouse"`, `"gamepad"` or `"touch"`: the device of the most recent deliberate input |
+| `gamepad_connected()` | `bool` | True while at least one gamepad is attached |
 | `set_cursor_captured(captured)` | | Capture (hide + lock) or release the mouse cursor |
 
 `any_input_just_pressed` reads **raw** presses and bypasses action maps
 entirely — it is for "press any key to continue", where the whole point is that
 you do not care which key.
+
+`last_input_device` is a latch, not a per-frame flag: it changes on a key
+press, a mouse *button* press, a gamepad button, a stick pushed past 0.3, or a
+touch beginning, and keeps its value until the next such event. Mouse motion
+and idle stick drift never flip it, so a HUD that swaps prompt glyphs
+(`[E]` vs the `(A)` button) on it does not flicker when the mouse is nudged.
+`gamepad_connected` is the companion for "show pad prompts before the first
+press"; it starts `false` and follows the host's gamepad backend each frame.
 
 `set_cursor_captured(true)` is how a scene gets mouse-look without a
 character-controller player entity. The engine only captures automatically for
@@ -509,8 +519,27 @@ Key-value store that survives scene transitions:
 | `persist_remove(key)` | --- | Remove a key |
 | `persist_clear()` | --- | Clear all persistent data |
 | `persist_keys()` | `Array` | List all keys |
-| `persist_save(path)` | --- | Save store to a TOML file |
-| `persist_load(path)` | --- | Load store from a TOML file |
+| `persist_save()` | --- | Write the engine-managed save file now |
+| `persist_save(path)` | --- | Save store to an explicit TOML file |
+| `persist_load(path)` | --- | Load store from an explicit TOML file |
+
+#### Persistence
+
+The store is also kept on disk without any script involvement. The player
+reads `<project>/save/persist.toml` at startup (the project root is the scene
+directory's parent, the same rule as `fonts/` and `sprites/`; on Android it is
+the app's internal files directory) and, if the file exists, every
+`persist_get` sees last session's values from the first `on_init` onward. A
+missing file is a fresh, empty store --- nothing is created until something is
+stored.
+
+It is written back 1 s after the last `persist_set` / `persist_remove` /
+`persist_clear` (a script writing every frame still produces one write per
+second), on every scene transition (after the outgoing scene's
+`on_scene_exit`), and on exit. `persist_save()` with no arguments forces the
+write immediately --- call it after a settings screen commits, so a crash a
+moment later loses nothing. The `save/` directory is created on demand; add it
+to the game's `.gitignore`. Loads and saves log at `info`, failures at `warn`.
 
 ### Data-Driven UI API
 
@@ -786,6 +815,7 @@ y = 10
 | `radius` | float | `0` | Circle radius |
 | `layer` | int | `0` | Render layer (negative = behind, positive = in front) |
 | `padding` | [l,t,r,b] | `[0,0,0,0]` | Interior padding (left, top, right, bottom) |
+| `uv` | [u0,v0,u1,v1] | `[0,0,1,1]` | Sub-rectangle of an `image` element's texture in 0--1 space (sprite-sheet cells, atlases) |
 | `layout` | string | `"stack"` | Child flow: `stack` (vertical) or `horizontal` |
 | `margin_bottom` | float | `0` | Space below element in flow layout |
 

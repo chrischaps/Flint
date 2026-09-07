@@ -757,6 +757,10 @@ impl PlayerApp {
             }
         }
 
+        // Debounced save of the persistent store (1 s after the last change,
+        // or now if a script called persist_save()).
+        self.flush_persistent_store(false, "debounce");
+
         // Clear per-frame input state
         self.input.end_frame();
     }

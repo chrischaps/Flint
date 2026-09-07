@@ -117,6 +117,7 @@ impl PlayerApp {
             gilrs: None,
             state_machine: GameStateMachine::new(),
             persistent_store: PersistentStore::new(),
+            persist_debounce: flint_runtime::SaveDebounce::default(),
             transition_phase: TransitionPhase::Idle,
             schema_paths: Vec::new(),
             terrain: None,
@@ -208,6 +209,10 @@ impl PlayerApp {
 
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
+
+        // Saved persistent store (save/persist.toml) before any script's
+        // on_init runs, so persist_get sees last session's values.
+        self.load_persistent_store();
 
         // Physics → audio → music session → animation → particles → scripts
         // (audio before the scene-declared session, session before script

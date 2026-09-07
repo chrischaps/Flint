@@ -45,6 +45,9 @@ pub struct ResolvedStyle {
     pub padding: [f32; 4], // L, T, R, B
     pub stroke_color: [f32; 4],
     pub stroke_width: f32,
+    /// Image sub-rectangle `[u0, v0, u1, v1]` in 0..1 texture space
+    /// (sprite-sheet cells, cropped atlases). Images only.
+    pub uv: [f32; 4],
     /// Font family (file stem or `fonts.toml` alias); None = default font
     pub font: Option<String>,
     /// Extra glyph spacing in logical points
@@ -79,6 +82,7 @@ impl Default for ResolvedStyle {
             padding: [0.0; 4],
             stroke_color: [0.0, 0.0, 0.0, 1.0],
             stroke_width: 0.0,
+            uv: [0.0, 0.0, 1.0, 1.0],
             font: None,
             letter_spacing: 0.0,
             shadow: None,
@@ -121,6 +125,7 @@ pub const KNOWN_PROPERTIES: &[&str] = &[
     "stroke_width",
     "layout",
     "margin_bottom",
+    "uv",
 ];
 
 /// True when `prop` is a property name the style system understands.
@@ -158,8 +163,9 @@ pub fn apply_property(style: &mut ResolvedStyle, key: &str, val: &StyleValue) ->
         ("stroke_width", Float(v)) => style.stroke_width = *v,
         ("letter_spacing", Float(v)) => style.letter_spacing = *v,
         ("shadow", Shadow(dx, dy, c)) => style.shadow = Some((*c, *dx, *dy)),
-        // Reuse Color([f32; 4]) for 4-value padding
+        // Reuse Color([f32; 4]) for 4-value padding and image uv rects
         ("padding", Color(p)) => style.padding = *p,
+        ("uv", Color(u)) => style.uv = *u,
         ("text_align", String(s)) => {
             style.text_align = match s.as_str() {
                 "center" => TextAlign::Center,

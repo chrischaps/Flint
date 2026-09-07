@@ -12,6 +12,7 @@ mod input_config;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
+mod persist;
 pub(crate) mod scene_loading;
 mod script_commands;
 #[cfg(feature = "debug-hud")]
@@ -27,7 +28,9 @@ use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
-use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, PersistentStore};
+use flint_runtime::{
+    GameClock, GameStateMachine, InputConfig, InputState, PersistentStore, SaveDebounce,
+};
 use flint_script::context::DrawItem;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
@@ -250,6 +253,8 @@ pub struct PlayerApp {
     // State machine + persistence (survive scene transitions)
     state_machine: GameStateMachine,
     persistent_store: PersistentStore,
+    /// When to write `save/persist.toml` after a change (see `persist.rs`).
+    persist_debounce: SaveDebounce,
 
     // Scene transition lifecycle
     transition_phase: TransitionPhase,

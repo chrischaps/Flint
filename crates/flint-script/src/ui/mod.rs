@@ -351,7 +351,7 @@ impl UiDocument {
                             w: rect.w,
                             h: rect.h,
                             name: elem.src.clone(),
-                            uv: [0.0, 0.0, 1.0, 1.0],
+                            uv: style.uv,
                             tint: [
                                 style.color[0],
                                 style.color[1],

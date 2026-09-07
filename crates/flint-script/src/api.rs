@@ -1235,6 +1235,32 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // last_input_device() -> String
+    // "keyboard" | "mouse" | "gamepad" | "touch": whichever device produced
+    // the most recent deliberate input (key/button press, stick push past
+    // the noise floor, touch start). Mouse motion does not count. Drives
+    // prompt glyph swaps.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("last_input_device", move || -> String {
+            let c = crate::lock_or_recover(&ctx);
+            if c.input.last_device.is_empty() {
+                "keyboard".to_string()
+            } else {
+                c.input.last_device.clone()
+            }
+        });
+    }
+
+    // gamepad_connected() -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("gamepad_connected", move || -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.gamepad_connected
+        });
+    }
+
     // mouse_delta_x() -> f64
     {
         let ctx = ctx.clone();
@@ -3363,7 +3389,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
     }
 
     // ui_set_style_array(element_id, prop, array) — for array-valued props:
-    // color / bg_color / stroke_color / padding ([a,b,c,d]) and shadow ([dx,dy,r,g,b,a])
+    // color / bg_color / stroke_color / padding / uv ([a,b,c,d]) and shadow ([dx,dy,r,g,b,a])
     {
         let ctx = ctx.clone();
         engine.register_fn(
@@ -3750,7 +3776,22 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
         });
     }
 
-    // persist_save(path)
+    // persist_save() -- flush the engine-managed save file now (the player
+    // otherwise writes it 1 s after the last change, on scene transitions
+    // and on exit).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_save", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return;
+            }
+            let store = unsafe { &mut *c.persistent_store };
+            store.request_flush();
+        });
+    }
+
+    // persist_save(path) -- explicit path, written immediately
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_save", move |path: &str| {

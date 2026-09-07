@@ -25,6 +25,35 @@ pub enum TouchPhase {
     Cancelled,
 }
 
+/// The kind of device that most recently produced a deliberate input:
+/// a key press, a mouse button press, a gamepad button or a stick pushed
+/// past the noise floor, or a touch beginning. Mouse *motion* never counts,
+/// so a nudged mouse does not flip prompt glyphs away from the gamepad.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputDevice {
+    #[default]
+    Keyboard,
+    Mouse,
+    Gamepad,
+    Touch,
+}
+
+impl InputDevice {
+    /// Lowercase name as exposed to scripts (`last_input_device()`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InputDevice::Keyboard => "keyboard",
+            InputDevice::Mouse => "mouse",
+            InputDevice::Gamepad => "gamepad",
+            InputDevice::Touch => "touch",
+        }
+    }
+}
+
+/// Stick deflection below which an axis event does not count as the player
+/// picking up the gamepad (idle stick noise sits well under this).
+pub const DEVICE_AXIS_DEADZONE: f32 = 0.3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SwipeDirection {
@@ -307,6 +336,9 @@ pub struct InputState {
 
     config: InputConfig,
     last_frame_pressed_actions: HashSet<String>,
+
+    last_device: InputDevice,
+    gamepad_connected: bool,
 }
 
 impl Default for InputState {
@@ -344,7 +376,24 @@ impl InputState {
             mouse_touch_active: false,
             config: InputConfig::built_in_defaults(),
             last_frame_pressed_actions: HashSet::new(),
+            last_device: InputDevice::Keyboard,
+            gamepad_connected: false,
         }
+    }
+
+    /// The device that most recently produced a deliberate input.
+    pub fn last_device(&self) -> InputDevice {
+        self.last_device
+    }
+
+    /// True while at least one gamepad is attached. The host sets this each
+    /// frame from its gamepad backend; the state itself never infers it.
+    pub fn gamepad_connected(&self) -> bool {
+        self.gamepad_connected
+    }
+
+    pub fn set_gamepad_connected(&mut self, connected: bool) {
+        self.gamepad_connected = connected;
     }
 
     pub fn config(&self) -> &InputConfig {
@@ -468,6 +517,7 @@ impl InputState {
     }
 
     pub fn process_key_down(&mut self, key: KeyCode) {
+        self.last_device = InputDevice::Keyboard;
         if !self.keys_down.contains(&key) {
             self.keys_just_pressed.insert(key);
         }
@@ -490,6 +540,9 @@ impl InputState {
             self.mouse_touch_active = true;
             self.process_touch_start(0, self.mouse_position.0, self.mouse_position.1);
         }
+        // After the emulated touch start, so the device reads as the mouse
+        // it really was.
+        self.last_device = InputDevice::Mouse;
     }
 
     pub fn process_mouse_button_up(&mut self, button: u32) {
@@ -548,6 +601,7 @@ impl InputState {
     }
 
     pub fn process_touch_start(&mut self, id: u64, x: f64, y: f64) {
+        self.last_device = InputDevice::Touch;
         let norm = self.normalize_touch(x, y);
         self.touches.insert(
             id,
@@ -654,6 +708,7 @@ impl InputState {
     }
 
     pub fn process_gamepad_button_down(&mut self, gamepad: u32, button: impl Into<String>) {
+        self.last_device = InputDevice::Gamepad;
         let key = (gamepad, button.into());
         if !self.gamepad_buttons_down.contains(&key) {
             self.gamepad_buttons_just_pressed.insert(key.clone());
@@ -676,11 +731,17 @@ impl InputState {
         button: impl Into<String>,
         value: f32,
     ) {
+        if value > DEVICE_AXIS_DEADZONE {
+            self.last_device = InputDevice::Gamepad;
+        }
         self.gamepad_button_values
             .insert((gamepad, button.into()), value.clamp(0.0, 1.0));
     }
 
     pub fn process_gamepad_axis(&mut self, gamepad: u32, axis: impl Into<String>, value: f32) {
+        if value.abs() > DEVICE_AXIS_DEADZONE {
+            self.last_device = InputDevice::Gamepad;
+        }
         self.gamepad_axes
             .insert((gamepad, axis.into()), value.clamp(-1.0, 1.0));
     }
@@ -1398,6 +1459,62 @@ mod tests {
 
         input.process_key_up(KeyCode::KeyW);
         assert!(!input.is_key_down(KeyCode::KeyW));
+    }
+
+    #[test]
+    fn last_device_follows_deliberate_input() {
+        let mut input = InputState::new();
+        assert_eq!(input.last_device(), InputDevice::Keyboard);
+
+        input.process_key_down(KeyCode::KeyW);
+        assert_eq!(input.last_device(), InputDevice::Keyboard);
+
+        input.process_gamepad_button_down(0, "South");
+        assert_eq!(input.last_device(), InputDevice::Gamepad);
+
+        // Survives the frame boundary — it is a latch, not a per-frame flag.
+        input.end_frame();
+        assert_eq!(input.last_device(), InputDevice::Gamepad);
+
+        input.process_mouse_button_down(0);
+        assert_eq!(input.last_device(), InputDevice::Mouse);
+
+        // Mouse motion alone never flips it back.
+        input.process_gamepad_button_down(0, "East");
+        input.process_mouse_move(400.0, 300.0);
+        input.process_mouse_raw_delta(3.0, -2.0);
+        assert_eq!(input.last_device(), InputDevice::Gamepad);
+
+        input.process_touch_start(7, 100.0, 100.0);
+        assert_eq!(input.last_device(), InputDevice::Touch);
+        assert_eq!(input.last_device().as_str(), "touch");
+    }
+
+    #[test]
+    fn last_device_ignores_stick_noise() {
+        let mut input = InputState::new();
+        input.process_key_down(KeyCode::Space);
+        assert_eq!(input.last_device(), InputDevice::Keyboard);
+
+        // Idle drift on a stick or a resting trigger: not a device switch.
+        input.process_gamepad_axis(0, "LeftStickX", 0.12);
+        input.process_gamepad_axis(0, "LeftStickY", -0.29);
+        input.process_gamepad_button_changed(0, "RightTrigger2", 0.05);
+        assert_eq!(input.last_device(), InputDevice::Keyboard);
+
+        // A real push does switch it.
+        input.process_gamepad_axis(0, "LeftStickX", -0.8);
+        assert_eq!(input.last_device(), InputDevice::Gamepad);
+    }
+
+    #[test]
+    fn gamepad_connected_is_host_driven() {
+        let mut input = InputState::new();
+        assert!(!input.gamepad_connected());
+        input.set_gamepad_connected(true);
+        assert!(input.gamepad_connected());
+        input.end_frame();
+        assert!(input.gamepad_connected());
     }
 
     #[test]
