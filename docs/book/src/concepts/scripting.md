@@ -789,6 +789,58 @@ y = 10
 | `layout` | string | `"stack"` | Child flow: `stack` (vertical) or `horizontal` |
 | `margin_bottom` | float | `0` | Space below element in flow layout |
 
+Colour arrays may be `[r, g, b]` (alpha 1) or `[r, g, b, a]`.
+
+#### Style Tokens
+
+Any property value that is a string starting with `$` is a **token reference**, resolved when the style file is parsed. Tokens come from two places:
+
+- a local `[tokens]` table in the style file itself
+- a shared token file (the game's theme), named at the top level with `tokens = "ui/theme.toml"`
+
+```toml
+# ui/main_menu.style.toml
+tokens = "ui/theme.toml"          # shared theme, resolved from the project root
+
+[styles.select-header]
+font_size = 42
+color = "$accent"                 # searched: local [tokens], then every section of the theme
+font = "$font.label"              # section-qualified: [font] label = "Barlow-SemiBold"
+rounding = "$shape.radius"
+```
+
+The shared file is plain TOML sections --- `[color]`, `[font]`, `[type]`, `[shape]`, `[space]`, `[motion]`, whatever the game defines:
+
+```toml
+# ui/theme.toml
+[color]
+accent = [1.0, 0.55, 0.15, 1.0]
+paper  = [0.96, 0.96, 0.98]
+
+[font]
+label = "Barlow-SemiBold"
+
+[shape]
+radius = 4
+```
+
+Lookup order for `"$name"` is the local `[tokens]` table first, then each section of the shared file in file order; `"$section.name"` addresses one section explicitly. A local token may itself be a `"$ref"` into the shared file. Unknown tokens warn once (naming the property that used them) and leave the property unset, so the default applies.
+
+TOML cannot hold `tokens = "..."` and a `[tokens]` table under one key. To use a local table *and* a shared file, name the file with `tokens_file = "ui/theme.toml"` at the top level, or with `import = "ui/theme.toml"` inside `[tokens]`:
+
+```toml
+[tokens]
+import = "ui/theme.toml"
+card_pad = [12, 8, 12, 8]
+brand = "$color.accent"           # local alias for a shared token
+```
+
+Scripts read the same values with `ui_token(name)` (see below), so a Rhai HUD and a `.style.toml` never disagree about a colour or a spacing.
+
+#### Hot Reload
+
+Every loaded document remembers its `.ui.toml`, `.style.toml` and shared token file. The player polls them each frame alongside script hot-reload: when any changes, the document is re-parsed **in place** --- the handle stays valid, and runtime state set from scripts (`ui_set_text`, `ui_set_color`, `ui_set_bg_color`, `ui_set_visible`, `ui_set_class`, `ui_set_style`) is re-applied to every element id that still exists. New elements appear, removed ones vanish, edited tokens recolour. A file that fails to parse logs a warning and leaves the last good document in place until the next edit. Reloads are logged at `info` (`RUST_LOG=info`).
+
 #### Rhai API: Data-Driven UI
 
 | Function | Returns | Description |
@@ -801,13 +853,33 @@ y = 10
 | `ui_set_visible(element_id, visible)` | --- | Set element visibility |
 | `ui_set_color(element_id, r, g, b, a)` | --- | Override primary color |
 | `ui_set_bg_color(element_id, r, g, b, a)` | --- | Override background color |
-| `ui_set_style(element_id, prop, value)` | --- | Override any style property by name |
+| `ui_set_style(element_id, prop, value)` | --- | Override any style property by name --- every property the `.style.toml` parser accepts (see below) |
+| `ui_set_style_array(element_id, prop, array)` | --- | Same, for array values: `color` / `bg_color` / `stroke_color` / `padding` (3--4 numbers) or `shadow` (6 numbers). `ui_set_style` also accepts arrays directly |
 | `ui_reset_style(element_id)` | --- | Clear all runtime overrides |
 | `ui_set_class(element_id, class)` | --- | Switch an element's style class |
 | `ui_exists(element_id)` | `bool` | Check if an element exists in any loaded document |
 | `ui_get_rect(element_id)` | `Map` or `()` | Get resolved screen rect as `#{x, y, w, h}` |
+| `ui_hit(element_id, x, y)` | `bool` | True when the point (logical points, e.g. `mouse_position()`) lies inside the element's resolved rect; `false` for unknown ids |
+| `ui_token(name)` | `Array`, `float`, `string`, `bool` or `()` | Read a style token from the loaded documents' `[tokens]` tables and shared theme: `"accent"`, `"$accent"` and `"color.accent"` all work. Arrays and numbers come back as floats |
 
 Element IDs are the TOML key names from the layout file (e.g., `"speed_label"`, `"lap_counter"`). Functions search all loaded documents when resolving an element ID.
+
+`ui_set_style` takes whatever the property takes in the style file --- a number (`x`, `width_pct`, `font_size`, `thickness`, `stroke_width`, `letter_spacing`, `radius`, `rounding`, `margin_bottom`, `layer`, `opacity`), a string (`text_align`, `layout`, `font`), a bool (`height_auto`), an array (`color`, `bg_color`, `stroke_color`, `padding`, `shadow`) or a `"$token"` string for any of them, resolved through the owning document's tokens:
+
+```rhai
+ui_set_style("card_1_border", "color", "$accent");        // token -> colour
+ui_set_style("card_1_name", "font", "$font.display");
+ui_set_style("speed_panel", "padding", [12, 8, 12, 8]);
+ui_set_style("speed_panel", "height_auto", true);
+ui_set_style("speed_value", "text_align", "right");
+
+let accent = ui_token("accent");                            // [1.0, 0.55, 0.15, 1.0]
+draw_rect(10.0, 10.0, 40.0, 4.0, accent[0], accent[1], accent[2], accent[3]);
+
+if ui_hit("start_button", mouse_x, mouse_y) && is_action_just_pressed("click") { start(); }
+```
+
+An unknown property name logs one warning per (element, property) and is ignored; a `load_ui` failure returns `-1` and logs the resolved path together with the parse error.
 
 #### Example: Menu with Data-Driven UI
 

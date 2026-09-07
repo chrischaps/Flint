@@ -229,11 +229,14 @@ text = "0"
 
 ```toml
 # ui/hud.style.toml
+tokens = "ui/theme.toml"           # shared theme: [color] / [font] / [type] / [shape] / [space] sections
+                                   # (tokens_file = "..." or [tokens] import = "..." alongside a local [tokens] table)
+
 [styles.hud-panel]
 width = 160
 height = 50
-bg_color = [0.0, 0.0, 0.0, 0.6]
-rounding = 6
+bg_color = "$ink"                  # "$name" searches local [tokens] then every theme section
+rounding = "$shape.radius"         # "$section.name" pins one section
 padding = [10, 8, 10, 8]
 x = -10
 y = 10
@@ -247,6 +250,8 @@ color = [1.0, 1.0, 1.0, 1.0]
 text_align = "center"
 width_pct = 100
 ```
+
+Edits to `.ui.toml`, `.style.toml` and the token file hot-reload in the player; script overrides survive for ids that still exist.
 
 ### Script Attachment
 
@@ -319,8 +324,10 @@ position = [0, 0, 0]
 | `load_ui(path)` | `i64` | Load a `.ui.toml` document (returns handle) |
 | `ui_set_text(id, text)` | --- | Set element text content |
 | `ui_show(id)` / `ui_hide(id)` | --- | Toggle element visibility |
-| `ui_set_style(id, prop, val)` | --- | Override a style property at runtime |
+| `ui_set_style(id, prop, val)` | --- | Override any style property at runtime (number, string, bool, array, or `"$token"`) |
 | `ui_set_style_array(id, prop, [..])` | --- | Override `color` / `bg_color` / `stroke_color` / `padding` / `shadow` |
+| `ui_token(name)` | value or `()` | Read a style token (`"accent"`, `"$accent"`, `"color.accent"`) as float / float array / string |
+| `ui_hit(id, x, y)` | `bool` | Point-in-rect against the element's resolved layout (logical points) |
 | `draw_text_opts(x, y, text, size, #{font, color, align, stroke, spacing, layer, shadow})` | --- | HUD text in a project font (`fonts/*.ttf`, family = file stem) |
 | `measure_text_ex(text, size, font, spacing)` | `#{width,height}` | Real laid-out text size (also `measure_text(text, size)`) |
 | `draw_ring(cx, cy, r_in, r_out, start_deg, end_deg, r, g, b, a, layer)` | --- | Annular sector; degrees from 12 o'clock, clockwise (`draw_arc(cx, cy, radius, a0, a1, r, g, b, a, thickness, layer)` for a stroke) |

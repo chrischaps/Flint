@@ -3319,13 +3319,15 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         );
     }
 
-    // ui_set_style(element_id, prop, val)
+    // ui_set_style(element_id, prop, val) — every property the style parser
+    // accepts: numbers, strings (text_align / layout / font), bools
+    // (height_auto), arrays (color / padding / shadow), and "$token" strings
+    // for any of them.
     {
         let ctx = ctx.clone();
         engine.register_fn(
             "ui_set_style",
             move |element_id: &str, prop: &str, val: Dynamic| {
-                let mut c = crate::lock_or_recover(&ctx);
                 let style_val = if val.is_float() {
                     StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
                 } else if val.is_int() {
@@ -3334,9 +3336,27 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
                     StyleValue::String(val.into_string().unwrap_or_default())
                 } else if val.is_bool() {
                     StyleValue::Bool(val.as_bool().unwrap_or(false))
+                } else if val.is_array() {
+                    let arr = val.cast::<Array>();
+                    let values = array_to_f32s(&arr);
+                    match StyleValue::from_numbers(&values) {
+                        Some(sv) => sv,
+                        None => {
+                            tracing::warn!(
+                                "ui_set_style({element_id}, {prop}): expected 3, 4 or 6 numbers, got {}",
+                                arr.len()
+                            );
+                            return;
+                        }
+                    }
                 } else {
+                    tracing::warn!(
+                        "ui_set_style({element_id}, {prop}): unsupported value type {}",
+                        val.type_name()
+                    );
                     return;
                 };
+                let mut c = crate::lock_or_recover(&ctx);
                 c.ui_system.set_style(element_id, prop, style_val);
             },
         );
@@ -3390,6 +3410,31 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // ui_hit(element_id, x, y) -> bool — point inside the element's resolved rect
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_hit", move |element_id: &str, x: f64, y: f64| -> bool {
+            let mut c = crate::lock_or_recover(&ctx);
+            let sw = c.screen_width;
+            let sh = c.screen_height;
+            c.ui_system.hit(element_id, x as f32, y as f32, sw, sh)
+        });
+    }
+
+    // ui_token(name) -> array | float | string | bool | ()
+    // Reads a style token ("accent", "$accent", "color.accent") from the
+    // loaded documents' [tokens] tables and shared token file.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_token", move |name: &str| -> Dynamic {
+            let c = crate::lock_or_recover(&ctx);
+            match c.ui_system.token(name) {
+                Some(v) => toml_token_to_dynamic(&v),
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
     // ui_get_rect(element_id) -> Map #{x, y, w, h} or ()
     {
         let ctx = ctx.clone();
@@ -3409,6 +3454,31 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
                 None => Dynamic::UNIT,
             }
         });
+    }
+}
+
+/// Convert a token value to what a script expects: numbers → FLOAT,
+/// numeric arrays → Array of FLOAT, strings/bools as-is, anything else `()`.
+fn toml_token_to_dynamic(v: &toml::Value) -> Dynamic {
+    match v {
+        toml::Value::Float(f) => Dynamic::from(*f),
+        toml::Value::Integer(i) => Dynamic::from(*i as f64),
+        toml::Value::String(s) => Dynamic::from(s.clone()),
+        toml::Value::Boolean(b) => Dynamic::from(*b),
+        toml::Value::Array(arr) => {
+            let out: Array = arr
+                .iter()
+                .map(|x| match x {
+                    toml::Value::Float(f) => Dynamic::from(*f),
+                    toml::Value::Integer(i) => Dynamic::from(*i as f64),
+                    toml::Value::String(s) => Dynamic::from(s.clone()),
+                    toml::Value::Boolean(b) => Dynamic::from(*b),
+                    _ => Dynamic::UNIT,
+                })
+                .collect();
+            Dynamic::from(out)
+        }
+        _ => Dynamic::UNIT,
     }
 }
 

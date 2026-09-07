@@ -414,6 +414,11 @@ impl RuntimeSystem for ScriptSystem {
         // Check for hot-reloaded scripts
         self.sync.check_hot_reload(&mut self.engine);
 
+        // Check for edited .ui.toml / .style.toml / token files
+        crate::lock_or_recover(&self.engine.ctx)
+            .ui_system
+            .poll_reload();
+
         // Discover any new script entities
         self.sync.discover_and_load(world, &mut self.engine);
 
