@@ -4,12 +4,16 @@ use crate::primitives::{SkinnedVertex, Vertex};
 use crate::skinned_pipeline::MAX_BONES;
 use flint_import::{ImportResult, ImportedMaterial};
 use std::collections::HashMap;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 /// A single GPU-resident mesh primitive with its material data
 pub struct GpuMesh {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    /// Shared with every draw call that renders this mesh: static geometry
+    /// is never written after upload, so entities hold `Arc` clones instead
+    /// of re-uploading a private copy every frame.
+    pub vertex_buffer: Arc<wgpu::Buffer>,
+    pub index_buffer: Arc<wgpu::Buffer>,
     pub index_count: u32,
     pub material: ImportedMaterial,
     // Keep raw data for creating per-entity copies
@@ -166,8 +170,8 @@ impl MeshCache {
                 });
 
                 GpuMesh {
-                    vertex_buffer,
-                    index_buffer,
+                    vertex_buffer: Arc::new(vertex_buffer),
+                    index_buffer: Arc::new(index_buffer),
                     index_count: mesh.indices.len() as u32,
                     material,
                     vertex_data,
@@ -309,8 +313,8 @@ impl MeshCache {
                 });
 
                 GpuMesh {
-                    vertex_buffer,
-                    index_buffer,
+                    vertex_buffer: Arc::new(vertex_buffer),
+                    index_buffer: Arc::new(index_buffer),
                     index_count: mesh.indices.len() as u32,
                     material,
                     vertex_data,
@@ -510,8 +514,8 @@ impl MeshCache {
         });
 
         let gpu_mesh = GpuMesh {
-            vertex_buffer,
-            index_buffer,
+            vertex_buffer: Arc::new(vertex_buffer),
+            index_buffer: Arc::new(index_buffer),
             index_count: indices.len() as u32,
             material,
             vertex_data,

@@ -10,7 +10,7 @@ use crate::debug::DebugMode;
 use crate::grass_pipeline::{GrassComputeUniforms, GrassRenderUniforms, BLADE_INDEX_COUNT};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
-use crate::shadow::{ShadowDrawUniforms, CASCADE_COUNT};
+use crate::shadow::{ShadowDrawUniforms, CASCADE_COUNT, SHADOW_DRAW_STRIDE};
 use crate::skybox_pipeline::SkyboxUniforms;
 use crate::sprite2d_pipeline::Sprite2dUniforms;
 use wgpu::util::DeviceExt;
@@ -76,6 +76,44 @@ impl SceneRenderer {
             bytemuck::cast_slice(&[*shadow_pass.shadow_uniforms()]),
         );
 
+        // Gather every draw's uniforms for every cascade up front, in exactly
+        // the order the passes below bind them, and upload them once. Each
+        // draw then binds the shared buffer at its slot's dynamic offset
+        // instead of allocating a buffer + bind group of its own (which was
+        // ~800 allocations a frame in a 270-entity scene and dominated the
+        // CPU frame time).
+        let mut draw_uniforms: Vec<ShadowDrawUniforms> = Vec::new();
+        for cascade in 0..CASCADE_COUNT {
+            let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
+            let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
+            let slot = |model| ShadowDrawUniforms {
+                light_view_proj: cascade_vp,
+                model,
+            };
+            for draw in self.entity_draws.iter().filter(|d| !d.is_wireframe) {
+                draw_uniforms.push(slot(draw.model));
+            }
+            for draw in &self.terrain_draws {
+                if cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
+                    draw_uniforms.push(slot(draw.model));
+                }
+            }
+            for draw in self.transparent_draws.iter().filter(|d| !d.is_wireframe) {
+                draw_uniforms.push(slot(draw.model));
+            }
+            for draw in &self.skinned_entity_draws {
+                draw_uniforms.push(slot(draw.model));
+            }
+        }
+        shadow_pass.ensure_draw_capacity(device, draw_uniforms.len() as u32);
+        shadow_pass.write_draw_uniforms(queue, &draw_uniforms);
+        let mut next_slot: u32 = 0;
+        let bind_next = |pass: &mut wgpu::RenderPass<'_>, next_slot: &mut u32| {
+            let offset = (*next_slot as u64 * SHADOW_DRAW_STRIDE) as u32;
+            pass.set_bind_group(0, &shadow_pass.draw_bind_group, &[offset]);
+            *next_slot += 1;
+        };
+
         // Render each cascade
         for cascade in 0..CASCADE_COUNT {
             let cascade_vp = shadow_pass.shadow_uniforms().cascade_view_proj[cascade];
@@ -107,29 +145,7 @@ impl SceneRenderer {
                     if draw.is_wireframe {
                         continue;
                     }
-
-                    let shadow_uniforms = ShadowDrawUniforms {
-                        light_view_proj: cascade_vp,
-                        model: draw.model,
-                    };
-
-                    let shadow_buffer =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Shadow Draw Uniform"),
-                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-
-                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        layout: &shadow_pass.shadow_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: shadow_buffer.as_entire_binding(),
-                        }],
-                        label: Some("Shadow Draw Bind Group"),
-                    });
-
-                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    bind_next(&mut pass, &mut next_slot);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
@@ -141,28 +157,7 @@ impl SceneRenderer {
                     if !cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
                         continue;
                     }
-                    let shadow_uniforms = ShadowDrawUniforms {
-                        light_view_proj: cascade_vp,
-                        model: draw.model,
-                    };
-
-                    let shadow_buffer =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Terrain Shadow Draw Uniform"),
-                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-
-                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        layout: &shadow_pass.shadow_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: shadow_buffer.as_entire_binding(),
-                        }],
-                        label: Some("Terrain Shadow Draw Bind Group"),
-                    });
-
-                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    bind_next(&mut pass, &mut next_slot);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
@@ -224,29 +219,7 @@ impl SceneRenderer {
                     if draw.is_wireframe {
                         continue;
                     }
-
-                    let shadow_uniforms = ShadowDrawUniforms {
-                        light_view_proj: cascade_vp,
-                        model: draw.model,
-                    };
-
-                    let shadow_buffer =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Transparent Shadow Draw Uniform"),
-                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-
-                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        layout: &shadow_pass.shadow_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: shadow_buffer.as_entire_binding(),
-                        }],
-                        label: Some("Transparent Shadow Draw Bind Group"),
-                    });
-
-                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    bind_next(&mut pass, &mut next_slot);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
@@ -256,28 +229,7 @@ impl SceneRenderer {
                 pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
 
                 for draw in &self.skinned_entity_draws {
-                    let shadow_uniforms = ShadowDrawUniforms {
-                        light_view_proj: cascade_vp,
-                        model: draw.model,
-                    };
-
-                    let shadow_buffer =
-                        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("Skinned Shadow Draw Uniform"),
-                            contents: bytemuck::cast_slice(&[shadow_uniforms]),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-
-                    let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        layout: &shadow_pass.shadow_bind_group_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: shadow_buffer.as_entire_binding(),
-                        }],
-                        label: Some("Skinned Shadow Draw Bind Group"),
-                    });
-
-                    pass.set_bind_group(0, &shadow_bind, &[]);
+                    bind_next(&mut pass, &mut next_slot);
                     pass.set_bind_group(1, &draw.bone_bind_group, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -756,8 +708,8 @@ impl SceneRenderer {
         if phase.draws_opaque() {
             if let Some(grid) = &self.grid_draw {
                 render_pass.set_pipeline(&self.pipeline.line_pipeline);
-                render_pass.set_bind_group(0, &grid.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &grid.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*grid.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*grid.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -777,8 +729,8 @@ impl SceneRenderer {
         if self.debug_state.show_normals && phase.draws_ocean_and_after() {
             render_pass.set_pipeline(&self.pipeline.line_pipeline);
             for draw in &self.normal_arrow_draws {
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -791,8 +743,8 @@ impl SceneRenderer {
             render_pass.set_pipeline(&self.pipeline.skeleton_line_pipeline);
             render_pass.set_bind_group(2, &self.light_bind_group, &[]);
             for draw in &self.skeleton_overlay_draws {
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -807,8 +759,8 @@ impl SceneRenderer {
             // The particle pass may have left its texture bind group at slot 2.
             render_pass.set_bind_group(2, &self.light_bind_group, &[]);
             for draw in &self.debug_overlay_draws {
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -852,7 +804,7 @@ impl SceneRenderer {
                 .chain(self.transparent_draws.iter())
             {
                 if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
-                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     render_pass
                         .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -888,7 +840,7 @@ impl SceneRenderer {
                 .chain(self.transparent_draws.iter())
             {
                 if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
-                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     render_pass
                         .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -921,8 +873,8 @@ impl SceneRenderer {
         // so lines draw on top of the depth prepass.
         render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
         for draw in &self.wireframe_overlay_draws {
-            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-            render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+            render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+            render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
             render_pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
@@ -932,8 +884,8 @@ impl SceneRenderer {
         for draw in &self.entity_draws {
             if draw.is_wireframe {
                 render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1039,7 +991,7 @@ impl SceneRenderer {
                     .chain(self.transparent_draws.iter())
                 {
                     if draw.entity_id == Some(sel_id) && !draw.is_wireframe {
-                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
                         render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
                             draw.index_buffer.slice(..),
@@ -1057,8 +1009,8 @@ impl SceneRenderer {
                 } else {
                     render_pass.set_pipeline(&self.pipeline.pipeline);
                 }
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1180,8 +1132,8 @@ impl SceneRenderer {
                         &self.pipeline.transparent_multiply_pipeline
                     }
                 };
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1253,8 +1205,8 @@ impl SceneRenderer {
         if self.debug_state.mode == DebugMode::WireframeOverlay {
             render_pass.set_pipeline(&self.pipeline.overlay_line_pipeline);
             for draw in &self.wireframe_overlay_draws {
-                render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

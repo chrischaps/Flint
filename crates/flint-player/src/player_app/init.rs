@@ -276,6 +276,14 @@ impl PlayerApp {
                 ..Default::default()
             },
         );
+        // FLINT_SHADOWS=0 starts with the shadow pass off (the debug panel
+        // toggle) so a perf run can A/B shadow cost headlessly.
+        if std::env::var("FLINT_SHADOWS")
+            .map(|v| v == "0")
+            .unwrap_or(false)
+        {
+            scene_renderer.set_shadows(false);
+        }
 
         // Rebuild component index as a safety net after scene loading
         self.world.rebuild_component_index();

@@ -567,8 +567,24 @@ impl PlayerApp {
         output.present();
 
         if let Some(exit_after) = self.capture.exit_after {
+            if self.clock.total_time >= super::PERF_SKIP_SECS {
+                self.capture.perf_frames += 1;
+                self.capture.perf_time += self.clock.delta_time;
+            }
             if self.clock.total_time >= exit_after {
                 self.exit_requested = true;
+                // Headless perf figure: average frame time over the run, so a
+                // scene change can be A/B'd without watching the overlay.
+                let frames = self.capture.perf_frames;
+                if frames > 0 {
+                    let avg_ms = self.capture.perf_time * 1000.0 / frames as f64;
+                    eprintln!(
+                        "[perf] {frames} frames over {:.2} s after t={:.0}: avg {avg_ms:.2} ms/frame ({:.1} fps)",
+                        self.capture.perf_time,
+                        super::PERF_SKIP_SECS,
+                        1000.0 / avg_ms
+                    );
+                }
             }
         }
     }

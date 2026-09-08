@@ -4,7 +4,7 @@
 //! appropriate draw-list on `SceneRenderer`.
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
-use super::{SceneRenderer, SkinnedDrawCall};
+use super::{hash_parts, SceneRenderer, SkinnedDrawCall};
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
@@ -284,7 +284,7 @@ impl SceneRenderer {
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
 
-        for gpu_mesh in gpu_meshes {
+        for (mesh_index, gpu_mesh) in gpu_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
                 view_proj: [[0.0; 4]; 4],
                 model: model_matrix,
@@ -363,21 +363,53 @@ impl SceneRenderer {
                 || blend_mode != BlendMode::Alpha
                 || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
 
-            let mut draw = Self::create_imported_draw_call(
+            // Texture identity rides in the key: a map that finishes loading
+            // later flips its `has_*` flag and rebuilds the material binds.
+            let material_key = hash_parts(&[
+                bytemuck::bytes_of(&material_uniforms),
+                gpu_mesh
+                    .material
+                    .base_color_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .normal_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .metallic_roughness_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+            ]);
+            let binds = Self::cached_binds(
+                &mut self.draw_bind_cache,
+                self.extract_frame,
                 device,
                 &self.pipeline,
-                gpu_mesh,
-                transform_uniforms,
-                material_uniforms,
-                bc_view,
-                bc_sampler,
-                nm_view,
-                nm_sampler,
-                mr_view,
-                mr_sampler,
+                (entity_id, mesh_index as u32),
+                &transform_uniforms,
+                &material_uniforms,
+                material_key,
+                (bc_view, bc_sampler),
+                (nm_view, nm_sampler),
+                (mr_view, mr_sampler),
             );
-            draw.entity_id = Some(entity_id);
-            draw.blend_mode = blend_mode;
+            let draw = Self::draw_from_cache(
+                &gpu_mesh.vertex_buffer,
+                &gpu_mesh.index_buffer,
+                gpu_mesh.index_count,
+                false,
+                binds,
+                model_matrix,
+                inv_transpose,
+                entity_id,
+                blend_mode,
+            );
 
             if is_transparent {
                 self.transparent_draws.push(draw);
@@ -931,10 +963,33 @@ impl SceneRenderer {
             (visual.default_size, [0.0, 0.0, 0.0])
         };
 
-        let mesh = if visual.wireframe {
-            create_wireframe_box_mesh(size[0], size[1], size[2], visual.color)
+        // The box geometry is uploaded once per distinct size/colour/wireframe
+        // and shared; the CPU-side mesh is only built for the debug overlays.
+        let build_mesh = || {
+            if visual.wireframe {
+                create_wireframe_box_mesh(size[0], size[1], size[2], visual.color)
+            } else {
+                create_box_mesh(size[0], size[1], size[2], visual.color)
+            }
+        };
+        let mesh_key = hash_parts(&[
+            bytemuck::bytes_of(&size),
+            bytemuck::bytes_of(&visual.color),
+            &[visual.wireframe as u8],
+        ]);
+        let (box_vb, box_ib, box_index_count) = {
+            let cached =
+                Self::cached_box_mesh(&mut self.box_mesh_cache, device, mesh_key, build_mesh);
+            (
+                cached.vertex_buffer.clone(),
+                cached.index_buffer.clone(),
+                cached.index_count,
+            )
+        };
+        let mesh = if need_overlay || need_normals {
+            Some(build_mesh())
         } else {
-            create_box_mesh(size[0], size[1], size[2], visual.color)
+            None
         };
 
         let mut model = model_matrix;
@@ -1032,37 +1087,77 @@ impl SceneRenderer {
                     material_uniforms.opacity = proc_opacity;
                     material_uniforms.texture_scale = proc_texture_scale;
 
-                    let mut draw = Self::create_textured_draw_call(
+                    let material_key = hash_parts(&[
+                        b"textured",
+                        bytemuck::bytes_of(&material_uniforms),
+                        tex_name.as_bytes(),
+                    ]);
+                    let binds = Self::cached_binds(
+                        &mut self.draw_bind_cache,
+                        self.extract_frame,
                         device,
                         &self.pipeline,
-                        &mesh,
-                        transform_uniforms,
-                        material_uniforms,
-                        bc_view,
-                        bc_sampler,
-                        nm_view,
-                        nm_sampler,
-                        mr_view,
-                        mr_sampler,
+                        (entity_id, 0),
+                        &transform_uniforms,
+                        &material_uniforms,
+                        material_key,
+                        (bc_view, bc_sampler),
+                        (nm_view, nm_sampler),
+                        (mr_view, mr_sampler),
                     );
-                    draw.entity_id = Some(entity_id);
-                    draw.blend_mode = proc_blend_mode;
+                    let draw = Self::draw_from_cache(
+                        &box_vb,
+                        &box_ib,
+                        box_index_count,
+                        false,
+                        binds,
+                        model,
+                        inv_transpose,
+                        entity_id,
+                        proc_blend_mode,
+                    );
                     if proc_is_transparent {
                         self.transparent_draws.push(draw);
                     } else {
                         self.entity_draws.push(draw);
                     }
                 } else {
-                    let mut draw = Self::create_draw_call(
+                    let material_uniforms = MaterialUniforms::procedural();
+                    let material_key =
+                        hash_parts(&[b"procedural", bytemuck::bytes_of(&material_uniforms)]);
+                    let binds = Self::cached_binds(
+                        &mut self.draw_bind_cache,
+                        self.extract_frame,
                         device,
                         &self.pipeline,
-                        &mesh,
-                        false,
-                        transform_uniforms,
-                        MaterialUniforms::procedural(),
-                        tex_cache,
+                        (entity_id, 0),
+                        &transform_uniforms,
+                        &material_uniforms,
+                        material_key,
+                        (
+                            &tex_cache.default_white.view,
+                            &tex_cache.default_white.sampler,
+                        ),
+                        (
+                            &tex_cache.default_normal.view,
+                            &tex_cache.default_normal.sampler,
+                        ),
+                        (
+                            &tex_cache.default_metallic_roughness.view,
+                            &tex_cache.default_metallic_roughness.sampler,
+                        ),
                     );
-                    draw.entity_id = Some(entity_id);
+                    let draw = Self::draw_from_cache(
+                        &box_vb,
+                        &box_ib,
+                        box_index_count,
+                        false,
+                        binds,
+                        model,
+                        inv_transpose,
+                        entity_id,
+                        BlendMode::Alpha,
+                    );
                     self.entity_draws.push(draw);
                 }
             } else {
@@ -1090,17 +1185,40 @@ impl SceneRenderer {
                 mat_uniforms.opacity = proc_opacity;
                 mat_uniforms.texture_scale = proc_texture_scale;
 
-                let mut draw = Self::create_draw_call(
+                let material_key = hash_parts(&[b"colour", bytemuck::bytes_of(&mat_uniforms)]);
+                let binds = Self::cached_binds(
+                    &mut self.draw_bind_cache,
+                    self.extract_frame,
                     device,
                     &self.pipeline,
-                    &mesh,
-                    false,
-                    transform_uniforms,
-                    mat_uniforms,
-                    tex_cache,
+                    (entity_id, 0),
+                    &transform_uniforms,
+                    &mat_uniforms,
+                    material_key,
+                    (
+                        &tex_cache.default_white.view,
+                        &tex_cache.default_white.sampler,
+                    ),
+                    (
+                        &tex_cache.default_normal.view,
+                        &tex_cache.default_normal.sampler,
+                    ),
+                    (
+                        &tex_cache.default_metallic_roughness.view,
+                        &tex_cache.default_metallic_roughness.sampler,
+                    ),
                 );
-                draw.entity_id = Some(entity_id);
-                draw.blend_mode = proc_blend_mode;
+                let draw = Self::draw_from_cache(
+                    &box_vb,
+                    &box_ib,
+                    box_index_count,
+                    false,
+                    binds,
+                    model,
+                    inv_transpose,
+                    entity_id,
+                    proc_blend_mode,
+                );
                 if proc_is_transparent {
                     self.transparent_draws.push(draw);
                 } else {
@@ -1108,18 +1226,50 @@ impl SceneRenderer {
                 }
             }
         } else {
-            let mut draw = Self::create_draw_call(
+            let material_uniforms = MaterialUniforms::procedural();
+            let material_key = hash_parts(&[b"wire", bytemuck::bytes_of(&material_uniforms)]);
+            let binds = Self::cached_binds(
+                &mut self.draw_bind_cache,
+                self.extract_frame,
                 device,
                 &self.pipeline,
-                &mesh,
-                true,
-                transform_uniforms,
-                MaterialUniforms::procedural(),
-                tex_cache,
+                (entity_id, 0),
+                &transform_uniforms,
+                &material_uniforms,
+                material_key,
+                (
+                    &tex_cache.default_white.view,
+                    &tex_cache.default_white.sampler,
+                ),
+                (
+                    &tex_cache.default_normal.view,
+                    &tex_cache.default_normal.sampler,
+                ),
+                (
+                    &tex_cache.default_metallic_roughness.view,
+                    &tex_cache.default_metallic_roughness.sampler,
+                ),
             );
-            draw.entity_id = Some(entity_id);
+            let draw = Self::draw_from_cache(
+                &box_vb,
+                &box_ib,
+                box_index_count,
+                true,
+                binds,
+                model,
+                inv_transpose,
+                entity_id,
+                BlendMode::Alpha,
+            );
             self.entity_draws.push(draw);
         }
+
+        // Debug overlays are rebuilt every frame; they only exist in the
+        // wireframe/normals debug modes so the cost is opt-in.
+        let mesh = match mesh {
+            Some(m) => m,
+            None => return,
+        };
 
         // Generate wireframe overlay for procedural solid shapes
         if need_overlay && !visual.wireframe {

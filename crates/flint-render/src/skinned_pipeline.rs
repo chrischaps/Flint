@@ -252,10 +252,14 @@ impl SkinnedPipeline {
                 cache: None,
             })
         };
-        let transparent_alpha_back_pipeline =
-            make_transparent_alpha("Skinned Transparent Alpha Pipeline (back faces)", Some(wgpu::Face::Front));
-        let transparent_alpha_pipeline =
-            make_transparent_alpha("Skinned Transparent Alpha Pipeline (front faces)", Some(wgpu::Face::Back));
+        let transparent_alpha_back_pipeline = make_transparent_alpha(
+            "Skinned Transparent Alpha Pipeline (back faces)",
+            Some(wgpu::Face::Front),
+        );
+        let transparent_alpha_pipeline = make_transparent_alpha(
+            "Skinned Transparent Alpha Pipeline (front faces)",
+            Some(wgpu::Face::Back),
+        );
 
         // Transparent additive pipeline for skinned meshes
         let transparent_additive_pipeline =

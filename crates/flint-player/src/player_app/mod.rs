@@ -93,7 +93,15 @@ pub struct CaptureConfig {
     pub(crate) sequence: u32,
     /// Internal: game time of the next scheduled interval capture.
     pub(crate) next_due: f64,
+    /// Internal: frames presented and game time accumulated after the first
+    /// `PERF_SKIP_SECS`, reported on `--exit-after` as an average frame time.
+    pub(crate) perf_frames: u32,
+    pub(crate) perf_time: f64,
 }
+
+/// Game seconds ignored by the `--exit-after` frame-time report (loading,
+/// shader warm-up, first-frame texture uploads).
+pub(crate) const PERF_SKIP_SECS: f64 = 2.0;
 
 impl CaptureConfig {
     /// Build a capture schedule. `every <= 0` means single-shot.

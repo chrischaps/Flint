@@ -90,9 +90,7 @@ impl RenderContext {
         // Ask for COPY_SRC on the swapchain when the surface allows it so the
         // player can screenshot the presented frame (HUD included). Some
         // backends (notably GL/Android) only permit RENDER_ATTACHMENT.
-        let surface_copyable = surface_caps
-            .usages
-            .contains(wgpu::TextureUsages::COPY_SRC);
+        let surface_copyable = surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
         if surface_copyable {
             usage |= wgpu::TextureUsages::COPY_SRC;
@@ -102,12 +100,33 @@ impl RenderContext {
             );
         }
 
+        // FLINT_VSYNC picks the present mode: unset/"1" = vsync (Fifo),
+        // "0"/"off"/"immediate" = unlocked (real frame times for headless
+        // perf runs), "mailbox" = uncapped rendering with the newest frame
+        // shown at each refresh (no tearing, no Fifo stall). On this Optimus
+        // laptop Fifo has been seen pacing at ~7 Hz against a virtual
+        // display; mailbox sidesteps it.
+        let present_mode = match std::env::var("FLINT_VSYNC")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "0" | "off" | "immediate" => wgpu::PresentMode::AutoNoVsync,
+            "mailbox" => wgpu::PresentMode::Mailbox,
+            _ => wgpu::PresentMode::AutoVsync,
+        };
+        tracing::info!(
+            "surface present modes: {:?}; using {:?}",
+            surface_caps.present_modes,
+            present_mode
+        );
+
         let config = wgpu::SurfaceConfiguration {
             usage,
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             // A non-sRGB view of the swapchain for the HUD pass: egui expects to
             // write sRGB-encoded values itself, so blending a translucent panel
