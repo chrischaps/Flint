@@ -1358,7 +1358,8 @@ fn parse_mouse_button(button: &str) -> Option<u32> {
     }
 }
 
-fn parse_key_code(code: &str) -> Option<KeyCode> {
+/// Parse a winit key code name as written in input configs (`KeyW`, `ArrowUp`, `ShiftLeft`).
+pub fn parse_key_code(code: &str) -> Option<KeyCode> {
     // KeyA..KeyZ
     if code.len() == 4 && code.starts_with("Key") {
         return match code.as_bytes()[3] {

@@ -9,6 +9,7 @@ mod frame;
 mod hud_render;
 mod init;
 mod input_config;
+pub mod input_script;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
@@ -87,6 +88,8 @@ pub struct CaptureConfig {
     pub every: Option<f64>,
     /// Game time (s) at which the player exits on its own.
     pub exit_after: Option<f64>,
+    /// Timed input played into `InputState` (`--input-script`).
+    pub input_script: Option<input_script::InputScript>,
     /// Internal: the first capture has been written.
     pub(crate) taken: bool,
     /// Internal: number of numbered frames written so far.

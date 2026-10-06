@@ -613,7 +613,9 @@ impl PlayerApp {
                     self.capture.taken = true;
                     self.capture.next_due = now;
                 }
-                if now < self.capture.next_due {
+                // Tolerance so `--screenshot-every` equal to `--frame-step`
+                // writes every frame instead of losing some to rounding.
+                if now + 1e-6 < self.capture.next_due {
                     return None;
                 }
                 self.capture.sequence += 1;
@@ -673,6 +675,11 @@ impl PlayerApp {
 
         // Advance game clock
         self.clock.tick();
+
+        // Scripted input due by now (`--input-script`), before anything reads it
+        if let Some(script) = &mut self.capture.input_script {
+            script.apply(self.clock.total_time, &mut self.input);
+        }
 
         // Advance transition phase timing
         self.advance_transition();

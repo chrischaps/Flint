@@ -21,6 +21,7 @@ pub use input::{
     ActionConfig, ActionKind, AxisDirection, Binding, GamepadSelector, InputConfig, InputDevice,
     InputState, RebindMode, DEVICE_AXIS_DEADZONE,
 };
+pub use input::parse_key_code;
 pub use persist::{PersistentStore, SaveDebounce};
 pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;

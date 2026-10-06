@@ -7,6 +7,7 @@
 //!                [--width <px>] [--height <px>]
 //!                [--screenshot <out.png>] [--screenshot-at <secs>]
 //!                [--screenshot-every <secs>] [--exit-after <secs>]
+//!                [--frame-step <secs>] [--input-script <file>]
 //!
 //! Screenshots capture the presented frame — the 3D scene *and* the egui
 //! HUD — right before `present()`, so they show exactly what a player sees.
@@ -90,6 +91,17 @@ struct Args {
     /// Exit the player once game time reaches this many seconds
     #[arg(long, value_name = "SECS")]
     exit_after: Option<f64>,
+
+    /// Advance the game exactly this many seconds per frame, whatever the
+    /// wall time. With `--screenshot-every` equal to it, every frame is
+    /// written: smooth offline video however slow the capture runs.
+    #[arg(long, value_name = "SECS")]
+    frame_step: Option<f64>,
+
+    /// Play timed key / gamepad input from a file (see
+    /// `player_app/input_script.rs` for the format)
+    #[arg(long, value_name = "FILE")]
+    input_script: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -169,6 +181,10 @@ fn main() -> Result<()> {
         args.screenshot_every,
         args.exit_after,
     );
+    if let Some(path) = &args.input_script {
+        app.capture.input_script = Some(flint_player::InputScript::load(path)?);
+    }
+    app.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
     app.audio
