@@ -767,6 +767,7 @@ impl PlayerApp {
         if self.extensions.is_empty() {
             return;
         }
+        let mut fired_events = Vec::new();
         for ext in &mut self.extensions {
             let gpu = match (&mut self.scene_renderer, &self.render_context) {
                 (Some(renderer), Some(context)) => Some(crate::extension::ExtensionGpu {
@@ -782,8 +783,14 @@ impl PlayerApp {
                 input: &self.input,
                 camera: &self.camera,
                 gpu,
+                fired_events: &mut fired_events,
             };
             ext.pre_update(&mut ctx);
+        }
+        // Queued with the physics events, so collect_game_events hands them
+        // to scripts and audio this frame.
+        for event in fired_events {
+            self.physics.push_event(event);
         }
     }
 

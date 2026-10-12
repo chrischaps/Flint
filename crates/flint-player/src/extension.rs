@@ -23,7 +23,7 @@
 
 use flint_ecs::FlintWorld;
 use flint_render::{Camera, SceneRenderer};
-use flint_runtime::{GameClock, InputState};
+use flint_runtime::{GameClock, GameEvent, InputState};
 use winit::event::WindowEvent;
 
 /// Hooks an embedding game installs with `PlayerApp::add_extension`.
@@ -78,6 +78,29 @@ pub struct ExtensionCtx<'a> {
     /// The renderer and GPU handles, for uploading meshes and textures.
     /// `None` until the window and renderer exist.
     pub gpu: Option<ExtensionGpu<'a>>,
+    /// Events fired with `fire_event`, queued for this frame's scripts.
+    pub(crate) fired_events: &'a mut Vec<GameEvent>,
+}
+
+impl ExtensionCtx<'_> {
+    /// Fire a custom game event, as a script's `fire_event_data` does.
+    ///
+    /// It joins this frame's events, so scripts' `on_event(name, data)`
+    /// receives it before their `on_update` runs this frame. Audio triggers
+    /// see it too. A table `data` arrives in scripts as a map; anything else
+    /// arrives as `#{ value: data }`.
+    ///
+    /// ```ignore
+    /// let mut data = toml::Table::new();
+    /// data.insert("count".into(), 3.into());
+    /// ctx.fire_event("inventory_changed", data);
+    /// ```
+    pub fn fire_event(&mut self, name: impl Into<String>, data: impl Into<toml::Value>) {
+        self.fired_events.push(GameEvent::Custom {
+            name: name.into(),
+            data: data.into(),
+        });
+    }
 }
 
 /// The renderer and the device and queue it draws with.
