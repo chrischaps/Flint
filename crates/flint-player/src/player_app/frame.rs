@@ -1474,7 +1474,14 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, 
                     ui.separator();
 
                     // Breakdown
-                    ui.label(format!("Entities: {}", stats.entity_draws));
+                    if stats.culled_draws > 0 {
+                        ui.label(format!(
+                            "Entities: {} ({} culled)",
+                            stats.entity_draws, stats.culled_draws
+                        ));
+                    } else {
+                        ui.label(format!("Entities: {}", stats.entity_draws));
+                    }
                     if stats.skinned_draws > 0 {
                         ui.label(format!("Skinned: {}", stats.skinned_draws));
                     }

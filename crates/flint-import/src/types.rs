@@ -305,3 +305,24 @@ pub struct ImportedMaterial {
     /// Alpha cutoff for Mask mode (default 0.5)
     pub alpha_cutoff: f32,
 }
+
+impl ImportedMaterial {
+    /// An opaque, untextured, non-metallic material that takes its colour
+    /// from the vertices, for procedural meshes coloured per vertex.
+    /// Override the rest with struct update syntax:
+    /// `ImportedMaterial { roughness: 0.9, ..ImportedMaterial::vertex_colored("ground") }`.
+    pub fn vertex_colored(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 0.5,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            use_vertex_color: true,
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+        }
+    }
+}

@@ -3,7 +3,10 @@
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashSet;
 
-/// A vertex with position, normal, color, and UV coordinates
+/// A vertex with position, normal, color, and UV coordinates.
+///
+/// `color` is linear RGBA (the surface is sRGB): convert colours picked in
+/// sRGB, such as hex codes, with [`srgb_to_linear`] or they wash out.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Vertex {
@@ -28,6 +31,19 @@ impl Vertex {
             attributes: &Self::ATTRIBS,
         }
     }
+}
+
+/// An sRGB colour (each channel 0–1, as from a hex code) as the linear
+/// colour vertex colours and material colours expect. Alpha is unchanged.
+pub fn srgb_to_linear(rgba: [f32; 4]) -> [f32; 4] {
+    let lin = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [lin(rgba[0]), lin(rgba[1]), lin(rgba[2]), rgba[3]]
 }
 
 /// A vertex with position, normal, color, UV, and bone skinning data
@@ -612,5 +628,21 @@ pub fn generate_skeleton_lines_colored(
     Mesh {
         vertices: verts,
         indices,
+    }
+}
+
+#[cfg(test)]
+mod srgb_tests {
+    use super::srgb_to_linear;
+
+    #[test]
+    fn srgb_to_linear_matches_the_standard_curve() {
+        let [r, g, b, a] = srgb_to_linear([0.0, 0.5, 1.0, 0.25]);
+        assert_eq!(r, 0.0);
+        assert!((g - 0.214_041).abs() < 1e-5);
+        assert!((b - 1.0).abs() < 1e-6);
+        assert_eq!(a, 0.25);
+        // The linear segment near black.
+        assert!((srgb_to_linear([0.04, 0.0, 0.0, 1.0])[0] - 0.04 / 12.92).abs() < 1e-7);
     }
 }

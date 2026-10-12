@@ -90,7 +90,10 @@ impl SceneRenderer {
                 light_view_proj: cascade_vp,
                 model,
             };
-            for draw in self.entity_draws.iter().filter(|d| !d.is_wireframe) {
+            let casts = |d: &&super::DrawCall| {
+                !d.is_wireframe && super::draw_visible(d, &cascade_frustum)
+            };
+            for draw in self.entity_draws.iter().filter(casts) {
                 draw_uniforms.push(slot(draw.model));
             }
             for draw in &self.terrain_draws {
@@ -98,7 +101,7 @@ impl SceneRenderer {
                     draw_uniforms.push(slot(draw.model));
                 }
             }
-            for draw in self.transparent_draws.iter().filter(|d| !d.is_wireframe) {
+            for draw in self.transparent_draws.iter().filter(casts) {
                 draw_uniforms.push(slot(draw.model));
             }
             for draw in &self.skinned_entity_draws {
@@ -139,10 +142,15 @@ impl SceneRenderer {
                 });
 
                 pass.set_pipeline(&shadow_pass.shadow_pipeline);
+                // Same per-cascade test as the uniform gather above, so the
+                // slots line up.
+                let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
+                let casts =
+                    |d: &super::DrawCall| !d.is_wireframe && super::draw_visible(d, &cascade_frustum);
 
                 // Render each solid entity
                 for draw in &self.entity_draws {
-                    if draw.is_wireframe {
+                    if !casts(draw) {
                         continue;
                     }
                     bind_next(&mut pass, &mut next_slot);
@@ -152,7 +160,6 @@ impl SceneRenderer {
                 }
 
                 // Render terrain chunks into shadow map (frustum cull per cascade)
-                let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
                 for draw in &self.terrain_draws {
                     if !cascade_frustum.aabb_visible(draw.aabb_min, draw.aabb_max) {
                         continue;
@@ -216,7 +223,7 @@ impl SceneRenderer {
 
                 // Render transparent entities into shadow map (skip very transparent)
                 for draw in &self.transparent_draws {
-                    if draw.is_wireframe {
+                    if !casts(draw) {
                         continue;
                     }
                     bind_next(&mut pass, &mut next_slot);
