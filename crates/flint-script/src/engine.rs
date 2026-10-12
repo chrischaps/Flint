@@ -193,6 +193,12 @@ impl ScriptEngine {
         self.module_base.as_deref()
     }
 
+    /// The underlying Rhai engine, for registering native functions on top
+    /// of Flint's API (see `ScriptSystem::rhai_engine_mut`).
+    pub fn rhai_engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+
     /// Compile a Rhai source file into an AST
     pub fn compile(&self, source: &str) -> Result<AST, String> {
         self.engine.compile(source).map_err(|e| format!("{}", e))

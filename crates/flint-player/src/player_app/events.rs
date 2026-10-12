@@ -349,6 +349,12 @@ impl ApplicationHandler for PlayerApp {
             }
         }
 
+        // Game extensions next; they may consume input but never lifecycle
+        // events (see PlayerExtension::on_window_event).
+        if crate::extension::dispatch_window_event(&mut self.extensions, &event) {
+            return;
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
