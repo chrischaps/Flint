@@ -119,3 +119,84 @@ fn pre_update_runs_in_add_order_before_on_update() {
         ]
     );
 }
+
+/// Fires `pinged` with the frame count in every `pre_update`.
+struct Pinger {
+    frame: i64,
+}
+
+impl PlayerExtension for Pinger {
+    fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+        self.frame += 1;
+        let mut data = toml::Table::new();
+        data.insert("frame".into(), self.frame.into());
+        ctx.fire_event("pinged", data);
+    }
+}
+
+/// Registers `record(s)` on the app's script engine and attaches `src` to a
+/// new entity. Returns the log `record` appends to.
+fn attach_recording_script(app: &mut PlayerApp, test: &str, src: &str) -> Log {
+    let log = Log::default();
+    {
+        let log = log.clone();
+        app.script
+            .rhai_engine_mut()
+            .register_fn("record", move |s: &str| log.lock().unwrap().push(s.into()));
+    }
+    let dir = std::env::temp_dir().join(format!("flint_ext_{test}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("listener.rhai");
+    std::fs::write(&path, src).unwrap();
+    let id = app.world.spawn("listener").unwrap();
+    app.script.load_script_for_entity(id, &path);
+    let _ = std::fs::remove_dir_all(&dir);
+    log
+}
+
+#[test]
+fn extension_events_reach_on_event_before_on_update_same_frame() {
+    let mut app = headless_app();
+    app.add_extension(Box::new(Pinger { frame: 0 }));
+    let log = attach_recording_script(
+        &mut app,
+        "fire",
+        r#"
+fn on_event(name, data) { record(`${name} ${data.frame}`); }
+fn on_update() { record("update"); }
+"#,
+    );
+
+    app.tick();
+    app.tick();
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["pinged 1", "update", "pinged 2", "update"]
+    );
+}
+
+#[test]
+fn script_fired_events_reach_on_event_next_frame() {
+    let mut app = headless_app();
+    let log = attach_recording_script(
+        &mut app,
+        "script_fire",
+        r#"
+fn on_update() {
+    record("update");
+    fire_event_data("counted", #{ by: "script" });
+}
+fn on_event(name, data) { record(`${name} by ${data.by}`); }
+"#,
+    );
+
+    app.tick();
+    app.tick();
+
+    // Commands drain after on_update, so the event lands in the next frame.
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["update", "counted by script", "update"]
+    );
+}
