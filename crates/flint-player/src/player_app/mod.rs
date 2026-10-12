@@ -3,6 +3,7 @@
 //! Runs the game loop with physics, input, and first-person camera.
 
 mod debug_panels;
+mod egui_input;
 mod events;
 #[cfg(test)]
 mod extension_tests;
@@ -305,6 +306,8 @@ pub struct PlayerApp {
 
     /// Game-installed hooks (`add_extension`), in the order they were added.
     extensions: Vec<Box<dyn crate::extension::PlayerExtension>>,
+    /// Which held keys and buttons belong to egui (game egui layer, H3).
+    egui_input: egui_input::EguiInputGate,
 }
 
 use input_config::{InputConfigPaths, PendingRebind};

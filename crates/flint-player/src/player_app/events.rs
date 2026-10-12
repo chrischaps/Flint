@@ -334,16 +334,22 @@ impl ApplicationHandler for PlayerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // Forward window events to egui when a debug panel is open
-        // so interactive widgets (sliders, buttons) receive mouse input.
+        // egui sees window events first whenever it can have interactive
+        // UI on screen: an open debug panel, or an extension's ui(). Input
+        // it wants stops here (see egui_input for the rules).
         #[cfg(feature = "debug-hud")]
         let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
         #[cfg(not(feature = "debug-hud"))]
         let any_panel_open = false;
-        if any_panel_open {
+        if any_panel_open || !self.extensions.is_empty() {
             if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
                 let response = egui_winit.on_window_event(window, &event);
-                if response.consumed {
+                let wants_keyboard = self.egui_ctx.wants_keyboard_input();
+                let routed = super::egui_input::classify(&event);
+                if self
+                    .egui_input
+                    .consumes(routed, response.consumed, wants_keyboard)
+                {
                     return;
                 }
             }

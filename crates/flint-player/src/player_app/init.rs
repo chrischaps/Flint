@@ -133,6 +133,7 @@ impl PlayerApp {
             #[cfg(target_os = "android")]
             android_axis_reader: None,
             extensions: Vec::new(),
+            egui_input: Default::default(),
         }
     }
 
