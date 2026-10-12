@@ -37,6 +37,7 @@ flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
+rhai = { workspace = true }
 flint-procgen = { workspace = true }
 flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }

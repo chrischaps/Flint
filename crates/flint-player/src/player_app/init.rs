@@ -132,7 +132,17 @@ impl PlayerApp {
             android_gamepad: AndroidGamepadTracker::new(),
             #[cfg(target_os = "android")]
             android_axis_reader: None,
+            extensions: Vec::new(),
         }
+    }
+
+    /// Install a game's extension. Its script API is registered right away,
+    /// so add extensions before the event loop starts; after that, scripts
+    /// already compiled still see the new functions, because Rhai resolves
+    /// calls when they run. See `PlayerExtension` for when each hook runs.
+    pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
+        extension.register_script_api(self.script.rhai_engine_mut());
+        self.extensions.push(extension);
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).

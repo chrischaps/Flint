@@ -684,6 +684,9 @@ impl PlayerApp {
         // Advance transition phase timing
         self.advance_transition();
 
+        // Game extensions, before anything below reads the world
+        self.run_extension_pre_updates();
+
         // Read active state config to decide which systems run
         let config = self.state_machine.active_config().clone();
 
@@ -758,6 +761,30 @@ impl PlayerApp {
 
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();
+    }
+
+    fn run_extension_pre_updates(&mut self) {
+        if self.extensions.is_empty() {
+            return;
+        }
+        for ext in &mut self.extensions {
+            let gpu = match (&mut self.scene_renderer, &self.render_context) {
+                (Some(renderer), Some(context)) => Some(crate::extension::ExtensionGpu {
+                    renderer,
+                    device: &context.device,
+                    queue: &context.queue,
+                }),
+                _ => None,
+            };
+            let mut ctx = crate::extension::ExtensionCtx {
+                world: &mut self.world,
+                clock: &self.clock,
+                input: &self.input,
+                camera: &self.camera,
+                gpu,
+            };
+            ext.pre_update(&mut ctx);
+        }
     }
 
     fn finish_frame(&mut self) {
