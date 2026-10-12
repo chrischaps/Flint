@@ -1,4 +1,4 @@
-//! Screen-to-world picking on a camera's view-projection matrix.
+//! Screen-to-world picking on a camera's view-projection matrix (ADR 0075).
 //!
 //! Matrices are column-major (`m[col][row]`) in wgpu clip space: NDC x and
 //! y run -1..1 (left to right, bottom to top) and depth runs 0..1 (near to

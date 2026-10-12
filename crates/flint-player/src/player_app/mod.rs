@@ -306,7 +306,7 @@ pub struct PlayerApp {
 
     /// Game-installed hooks (`add_extension`), in the order they were added.
     extensions: Vec<Box<dyn crate::extension::PlayerExtension>>,
-    /// Which held keys and buttons belong to egui (game egui layer, H3).
+    /// Which held keys and buttons belong to egui (game egui layer, ADR 0073).
     egui_input: egui_input::EguiInputGate,
 }
 

@@ -2071,7 +2071,7 @@ impl SceneRenderer {
 
     /// Remove the named mesh. Returns whether it existed. Entities still
     /// naming it in `model.asset` draw nothing (or their `bounds` box, if
-    /// they have one) until a mesh with that name is uploaded again.
+    /// they have one) until a mesh with that name is uploaded again (ADR 0074).
     pub fn remove_mesh(&mut self, name: &str) -> bool {
         self.mesh_cache.remove(name)
     }
@@ -2785,7 +2785,7 @@ impl SceneRenderer {
 
     /// Move opaque and transparent draws whose world bounds miss the camera
     /// frustum into the culled lists. Wireframe draws and draws without
-    /// bounds always stay.
+    /// bounds always stay (ADR 0074).
     fn cull_draws_to_camera(&mut self) {
         let Some(frustum) = &self.camera_frustum else {
             return;
