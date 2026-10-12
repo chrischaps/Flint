@@ -55,14 +55,26 @@ pub trait PlayerExtension {
     /// player whatever this returns. The first extension to consume an
     /// event stops it reaching later extensions.
     ///
-    /// Open debug panels see events first: one they consume never arrives
+    /// egui sees events first (see `ui`): input it wants, such as typing
+    /// in a focused text field or a click on an egui window, never arrives
     /// here.
     fn on_window_event(&mut self, _event: &WindowEvent) -> bool {
         false
     }
 
-    /// Draw the game's own egui UI. Not called yet: the game egui layer
-    /// arrives with the input routing that goes with it.
+    /// Draw the game's own egui UI. Called every frame from inside the
+    /// player's egui pass, after the scripts' `on_draw_ui` and before the
+    /// debug panels, so it draws over the script HUD and under the panels.
+    ///
+    /// Installing any extension routes window events through egui first.
+    /// An event egui wants is consumed, and extensions, the player and
+    /// scripts never see it: keys and IME while a widget has keyboard
+    /// focus (a `TextEdit` being typed in, so Escape there unfocuses the
+    /// field rather than quitting), and clicks and the wheel over an egui
+    /// area. Clicks on empty space still reach the game.
+    ///
+    /// Use windows and areas, or side and top panels. A `CentralPanel`
+    /// covers the whole window, so it takes every click from the game.
     fn ui(&mut self, _ctx: &egui::Context) {}
 }
 

@@ -1303,6 +1303,7 @@ impl PlayerApp {
         let raw_input = egui_winit.take_egui_input(window);
 
         let draw_commands = std::mem::take(&mut self.draw_commands);
+        let mut extensions = std::mem::take(&mut self.extensions);
         #[cfg(feature = "debug-hud")]
         let mut debug_panels = std::mem::take(&mut self.debug_panels);
         let ui_textures = &self.ui_textures;
@@ -1332,80 +1333,31 @@ impl PlayerApp {
         };
 
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            // Script UI first: it shares the panels' background layer, so
-            // issuing it before the panels puts the panels in front of it
-            // (title card, HUD) — see render_draw_commands.
+            // Layers, back to front: script UI, game egui, debug panels.
+            // Script UI first: it shares the background layer with any game
+            // panels, so issuing it first puts those panels in front of it
+            // (see render_draw_commands).
             render_draw_commands(ctx, &draw_commands, ui_textures, ui_fonts, ui_fonts_warned);
 
-            #[cfg(feature = "debug-hud")]
-            {
-                // Full-width bottom strips first (e.g. the timeline panel);
-                // the panel draws its own compact labels (a heading would
-                // eat the vertical budget).
-                for panel in debug_panels.iter_mut() {
-                    if panel.is_open()
-                        && matches!(panel.layout(), flint_debug_ui::PanelLayout::Bottom)
-                    {
-                        let panel_name = panel.name().to_owned();
-                        egui::TopBottomPanel::bottom(egui::Id::new(&panel_name))
-                            .exact_height(112.0)
-                            .show(ctx, |ui| {
-                                panel.ui(ui);
-                            });
-                    }
-                }
-
-                // Open side-panel indices, in creation order.
-                let open: Vec<usize> = debug_panels
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| {
-                        p.is_open() && matches!(p.layout(), flint_debug_ui::PanelLayout::SideRight)
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
-                if !open.is_empty() {
-                    // Logical points (screen_rect), never config.width (physical px).
-                    let screen_w = ctx.screen_rect().width();
-                    // Panels take at most ~half the window; fewer columns when narrow.
-                    let max_cols = (((screen_w * 0.5) / 300.0).floor() as usize).clamp(1, 3);
-                    let names: Vec<String> = open
-                        .iter()
-                        .map(|&i| debug_panels[i].name().to_owned())
-                        .collect();
-                    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-                    let columns = flint_debug_ui::assign_columns(&name_refs, max_cols);
-
-                    for (col_idx, col) in columns.iter().enumerate() {
-                        egui::SidePanel::right(egui::Id::new(("debug_col", col_idx)))
-                            .default_width(300.0)
-                            .min_width(280.0)
-                            .show(ctx, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        for &slot in col {
-                                            let panel = &mut debug_panels[open[slot]];
-                                            let name = panel.name().to_owned();
-                                            egui::CollapsingHeader::new(
-                                                egui::RichText::new(name).heading(),
-                                            )
-                                            .default_open(true)
-                                            .show(ui, |ui| panel.ui(ui));
-                                            ui.separator();
-                                        }
-                                    });
-                            });
-                    }
-                }
+            // The game's own egui (PlayerExtension::ui). Its panels sit on
+            // the background layer and its windows on Middle, both below
+            // the debug panels, which float on Foreground.
+            for ext in extensions.iter_mut() {
+                ext.ui(ctx);
             }
+
+            #[cfg(feature = "debug-hud")]
+            let debug_width = super::debug_panels::show_debug_panels(ctx, &mut debug_panels);
+            #[cfg(not(feature = "debug-hud"))]
+            let debug_width = 0.0;
+
             if let Some(ref stats) = stats_data {
-                render_stats_overlay(ctx, stats);
+                render_stats_overlay(ctx, stats, debug_width);
             }
         });
 
         self.draw_commands = draw_commands;
+        self.extensions = extensions;
         #[cfg(feature = "debug-hud")]
         {
             self.debug_panels = debug_panels;
@@ -1475,12 +1427,15 @@ impl PlayerApp {
     }
 }
 
-fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats) {
+/// `right_inset`: width the debug columns take at the right edge, so the
+/// overlay sits beside them rather than over them.
+fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, right_inset: f32) {
     use flint_render::format_count;
 
     egui::Area::new(egui::Id::new("render_stats_overlay"))
-        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0 - right_inset, 8.0))
         .order(egui::Order::Foreground)
+        .interactable(false)
         .show(ctx, |ui| {
             egui::Frame::none()
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
