@@ -663,8 +663,19 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `measure_text(text, size)` | `Map` | Laid-out size of `text` in the default font as `#{width, height}` |
 | `measure_text_ex(text, size, font, spacing)` | `Map` | Same, for a named font family and extra letter spacing (`""` = default font) |
 | `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
+| `world_to_screen(x, y, z)` | `Map` | A world point in logical points as `#{x, y, depth, visible}`; `visible` is false behind the camera |
+| `screen_to_ground(x, y, plane_y)` | `[x, z]` or `()` | The point on the plane `y = plane_y` under a screen point, or `()` where the view doesn't reach it |
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
+
+`world_to_screen` and `screen_to_ground` are inverses. In `on_draw_ui` they use the camera the frame renders with; in `on_update`, which runs before script camera overrides apply, they use the previous frame's. `world_to_screen` of a ground hit lands back on the screen point it came from. `screen_to_ground` takes logical points, the `mouse_x()` / `mouse_y()` space, so it is correct at any display scale. It works for perspective and orthographic cameras, including one looking straight down. It returns `()` over the sky, when an orthographic camera looks level, or when the plane is behind the camera. Picking the ground under the cursor:
+
+```rhai
+let g = screen_to_ground(mouse_x(), mouse_y(), 0.0);
+if g != () && is_mouse_just_pressed(0) {
+    set_position(marker, g[0], 0.0, g[1]);   // exactly under the cursor
+}
+```
 
 Both `measure_text` calls lay the string out with the same font stack the HUD draws with, so a measured width can be used to centre or right-pad text exactly. (Before the first frame has rendered they return a glyph-count estimate.)
 
