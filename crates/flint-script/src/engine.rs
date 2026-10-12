@@ -34,6 +34,7 @@ pub struct ScriptInstance {
     pub has_on_scene_enter: bool,
     pub has_on_animation_end: bool,
     pub has_on_sequence_cue: bool,
+    pub has_on_event: bool,
     pub init_called: bool,
 }
 
@@ -53,6 +54,7 @@ impl ScriptInstance {
         let has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
         let has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         let has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
+        let has_on_event = has_function(&ast, cb::ON_EVENT);
 
         Self {
             ast,
@@ -71,6 +73,7 @@ impl ScriptInstance {
             has_on_scene_enter,
             has_on_animation_end,
             has_on_sequence_cue,
+            has_on_event,
             init_called: false,
         }
     }
@@ -91,6 +94,7 @@ impl ScriptInstance {
         self.has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
         self.has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         self.has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
+        self.has_on_event = has_function(&ast, cb::ON_EVENT);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -115,6 +119,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     (cb::ON_SCENE_EXIT, 0),
     (cb::ON_SCENE_ENTER, 0),
     (cb::ON_ANIMATION_END, 1),
+    (cb::ON_EVENT, 2),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -191,6 +196,12 @@ impl ScriptEngine {
     /// Current module base directory, if a scene has set one.
     pub fn module_base(&self) -> Option<&std::path::Path> {
         self.module_base.as_deref()
+    }
+
+    /// The underlying Rhai engine, for registering native functions on top
+    /// of Flint's API (see `ScriptSystem::rhai_engine_mut`).
+    pub fn rhai_engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
     }
 
     /// Compile a Rhai source file into an AST
@@ -351,6 +362,9 @@ impl ScriptEngine {
                 GameEvent::ActionPressed(action) => {
                     self.call_action_on_all(action, world);
                 }
+                GameEvent::Custom { name, data } => {
+                    self.call_event_on_all(name, data);
+                }
                 _ => {}
             }
         }
@@ -432,6 +446,48 @@ impl ScriptEngine {
                 ) {
                     tracing::warn!("on_trigger_exit error ({}): {}", script.source_path, e);
                 }
+            }
+        }
+    }
+
+    /// Broadcast a custom event to every script that defines
+    /// `on_event(name, data)`, in entity-id order so delivery is
+    /// deterministic. `data` always arrives as a map: a non-table payload
+    /// is wrapped as `#{ value: .. }` (ADR 0072).
+    fn call_event_on_all(&mut self, name: &str, data: &toml::Value) {
+        let mut entity_ids: Vec<EntityId> = self
+            .scripts
+            .iter()
+            .filter(|(_, s)| s.has_on_event)
+            .map(|(id, _)| *id)
+            .collect();
+        if entity_ids.is_empty() {
+            return;
+        }
+        entity_ids.sort_by_key(|id| id.raw());
+
+        let data = match data {
+            toml::Value::Table(_) => api::toml_to_dynamic(data.clone()),
+            other => {
+                let mut map = rhai::Map::new();
+                map.insert("value".into(), api::toml_to_dynamic(other.clone()));
+                rhai::Dynamic::from(map)
+            }
+        };
+
+        for entity_id in entity_ids {
+            let script = self.scripts.get_mut(&entity_id).unwrap();
+            {
+                let mut c = crate::lock_or_recover(&self.ctx);
+                c.current_entity = entity_id;
+            }
+            if let Err(e) = self.engine.call_fn::<()>(
+                &mut script.scope,
+                &script.ast,
+                cb::ON_EVENT,
+                (name.to_string(), data.clone()),
+            ) {
+                tracing::warn!("on_event error ({}): {}", script.source_path, e);
             }
         }
     }

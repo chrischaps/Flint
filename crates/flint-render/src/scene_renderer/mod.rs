@@ -86,6 +86,8 @@ pub(super) struct DrawCall {
     entity_id: Option<flint_core::EntityId>,
     blend_mode: BlendMode,
     sort_depth: f32,
+    /// World-space bounds for frustum culling. `None` draws are never culled.
+    world_aabb: Option<([f32; 3], [f32; 3])>,
 }
 
 /// Transform + material GPU resources of one draw of one entity, kept
@@ -112,6 +114,32 @@ pub(super) struct CachedBoxMesh {
     pub vertex_buffer: Arc<wgpu::Buffer>,
     pub index_buffer: Arc<wgpu::Buffer>,
     pub index_count: u32,
+}
+
+/// Whether `draw` may be inside `frustum`. Draws without bounds always are.
+pub(super) fn draw_visible(draw: &DrawCall, frustum: &crate::frustum::Frustum) -> bool {
+    draw.world_aabb
+        .map_or(true, |(min, max)| frustum.aabb_visible(min, max))
+}
+
+/// The world-space AABB enclosing a local AABB under `model` (column-major),
+/// by Arvo's method: exact for the transformed box, never too small.
+pub(super) fn transform_aabb(
+    model: &[[f32; 4]; 4],
+    min: [f32; 3],
+    max: [f32; 3],
+) -> ([f32; 3], [f32; 3]) {
+    let mut out_min = [model[3][0], model[3][1], model[3][2]];
+    let mut out_max = out_min;
+    for row in 0..3 {
+        for col in 0..3 {
+            let a = model[col][row] * min[col];
+            let b = model[col][row] * max[col];
+            out_min[row] += a.min(b);
+            out_max[row] += a.max(b);
+        }
+    }
+    (out_min, out_max)
 }
 
 /// FNV-1a over a few byte slices: a cheap, stable key for the draw caches.
@@ -208,6 +236,10 @@ pub struct SceneRenderer {
     skinned_entity_draws: Vec<SkinnedDrawCall>,
     transparent_draws: Vec<DrawCall>,
     transparent_skinned_draws: Vec<SkinnedDrawCall>,
+    /// Draws outside the camera frustum in the last `render_to`, set aside
+    /// from `entity_draws` / `transparent_draws` after the shadow pass.
+    culled_entity_draws: Vec<DrawCall>,
+    culled_transparent_draws: Vec<DrawCall>,
     billboard_draws: Vec<crate::billboard_pipeline::BillboardDrawCall>,
     debug_state: DebugState,
     wireframe_overlay_draws: Vec<DrawCall>,
@@ -454,6 +486,8 @@ impl SceneRenderer {
             skinned_entity_draws: Vec::new(),
             transparent_draws: Vec::new(),
             transparent_skinned_draws: Vec::new(),
+            culled_entity_draws: Vec::new(),
+            culled_transparent_draws: Vec::new(),
             billboard_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
@@ -1619,6 +1653,8 @@ impl SceneRenderer {
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
+        self.culled_entity_draws.clear();
+        self.culled_transparent_draws.clear();
         self.billboard_draws.clear();
         self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
@@ -1741,6 +1777,8 @@ impl SceneRenderer {
             skinned_entity_draws: Vec::new(),
             transparent_draws: Vec::new(),
             transparent_skinned_draws: Vec::new(),
+            culled_entity_draws: Vec::new(),
+            culled_transparent_draws: Vec::new(),
             billboard_draws: Vec::new(),
             debug_state: DebugState::default(),
             wireframe_overlay_draws: Vec::new(),
@@ -2011,7 +2049,14 @@ impl SceneRenderer {
         }
     }
 
-    /// Load a procedural mesh from raw vertex/index data into the GPU mesh cache
+    /// Create or replace the named mesh from raw vertex/index data.
+    ///
+    /// Any entity whose `model.asset` is `name` draws it from the next
+    /// `update_from_world`. Replacing a mesh frees the old GPU buffers once
+    /// the current frame's draw lists let go of them, so a mesh can be
+    /// rebuilt as often as needed without growing GPU memory. Vertex colours
+    /// are used when `material.use_vertex_color` is set; they are linear,
+    /// so convert sRGB colours with [`crate::srgb_to_linear`].
     pub fn load_procedural_mesh(
         &mut self,
         device: &wgpu::Device,
@@ -2022,6 +2067,13 @@ impl SceneRenderer {
     ) {
         self.mesh_cache
             .upload_procedural(device, name, vertices, indices, material);
+    }
+
+    /// Remove the named mesh. Returns whether it existed. Entities still
+    /// naming it in `model.asset` draw nothing (or their `bounds` box, if
+    /// they have one) until a mesh with that name is uploaded again (ADR 0074).
+    pub fn remove_mesh(&mut self, name: &str) -> bool {
+        self.mesh_cache.remove(name)
     }
 
     /// Get a mutable reference to the mesh cache
@@ -2129,6 +2181,8 @@ impl SceneRenderer {
             draw_calls,
             triangles,
             entity_draws,
+            culled_draws: (self.culled_entity_draws.len() + self.culled_transparent_draws.len())
+                as u32,
             skinned_draws,
             terrain_draws,
             terrain_total_chunks: self.terrain_total_chunks,
@@ -2461,6 +2515,8 @@ impl SceneRenderer {
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
+        self.culled_entity_draws.clear();
+        self.culled_transparent_draws.clear();
         self.billboard_draws.clear();
         self.sprite2d_batches.clear();
         self.wireframe_overlay_draws.clear();
@@ -2723,7 +2779,26 @@ impl SceneRenderer {
             entity_id: Some(entity_id),
             blend_mode,
             sort_depth: 0.0,
+            world_aabb: None,
         }
+    }
+
+    /// Move opaque and transparent draws whose world bounds miss the camera
+    /// frustum into the culled lists. Wireframe draws and draws without
+    /// bounds always stay (ADR 0074).
+    fn cull_draws_to_camera(&mut self) {
+        let Some(frustum) = &self.camera_frustum else {
+            return;
+        };
+        let split = |draws: &mut Vec<DrawCall>, culled: &mut Vec<DrawCall>| {
+            let (keep, cull): (Vec<_>, Vec<_>) = draws
+                .drain(..)
+                .partition(|d| d.is_wireframe || draw_visible(d, frustum));
+            *draws = keep;
+            culled.extend(cull);
+        };
+        split(&mut self.entity_draws, &mut self.culled_entity_draws);
+        split(&mut self.transparent_draws, &mut self.culled_transparent_draws);
     }
 
     // ── Draw call factory methods ──
@@ -2768,6 +2843,7 @@ impl SceneRenderer {
             entity_id: None,
             blend_mode: BlendMode::Alpha,
             sort_depth: 0.0,
+            world_aabb: None,
         }
     }
 
@@ -3585,6 +3661,12 @@ impl SceneRenderer {
         let view_proj = camera.view_projection_matrix();
         self.camera_frustum = Some(crate::frustum::Frustum::from_view_projection(&view_proj));
 
+        // Draws an earlier render_to culled (another camera, same extract)
+        // come back for the shadow pass and this camera's test.
+        self.entity_draws.append(&mut self.culled_entity_draws);
+        self.transparent_draws
+            .append(&mut self.culled_transparent_draws);
+
         // Count visible terrain chunks for stats
         self.terrain_visible_chunks = if let Some(ref frustum) = self.camera_frustum {
             self.terrain_draws
@@ -3606,8 +3688,13 @@ impl SceneRenderer {
             bytemuck::cast_slice(&[self.light_uniforms]),
         );
 
-        // Shadow pass: render depth from light perspective
+        // Shadow pass: render depth from light perspective. It sees every
+        // draw (culled per cascade), since a caster outside the view can
+        // still shadow what's in it.
         self.render_shadow_pass(device, queue, camera, camera_pos);
+
+        // Set aside draws outside the camera frustum for the rest of the frame.
+        self.cull_draws_to_camera();
 
         // All scene pipelines target Rgba16Float, so we always render to the HDR
         // buffer and composite to sRGB.
@@ -3867,6 +3954,48 @@ impl SceneRenderer {
         // Composite: always needed to convert HDR → sRGB surface
         if has_postprocess {
             self.render_postprocess(device, queue, depth_view, target_view, camera);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transform_aabb;
+
+    fn translate_scale(t: [f32; 3], s: [f32; 3]) -> [[f32; 4]; 4] {
+        [
+            [s[0], 0.0, 0.0, 0.0],
+            [0.0, s[1], 0.0, 0.0],
+            [0.0, 0.0, s[2], 0.0],
+            [t[0], t[1], t[2], 1.0],
+        ]
+    }
+
+    #[test]
+    fn aabb_follows_translation_and_scale() {
+        let m = translate_scale([10.0, 0.0, -5.0], [2.0, 1.0, -3.0]);
+        let (min, max) = transform_aabb(&m, [-1.0, 0.0, 0.0], [1.0, 1.0, 2.0]);
+        assert_eq!(min, [8.0, 0.0, -11.0]);
+        assert_eq!(max, [12.0, 1.0, -5.0]);
+    }
+
+    #[test]
+    fn aabb_encloses_a_rotated_box() {
+        // 45 degrees about Y: a unit box's corners reach sqrt(2) on X and Z.
+        let (s, c) = std::f32::consts::FRAC_PI_4.sin_cos();
+        let m = [
+            [c, 0.0, -s, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [s, 0.0, c, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let (min, max) = transform_aabb(&m, [-1.0; 3], [1.0; 3]);
+        let r = 2.0_f32.sqrt();
+        for (got, want) in min.iter().zip([-r, -1.0, -r]) {
+            assert!((got - want).abs() < 1e-5, "{min:?}");
+        }
+        for (got, want) in max.iter().zip([r, 1.0, r]) {
+            assert!((got - want).abs() < 1e-5, "{max:?}");
         }
     }
 }

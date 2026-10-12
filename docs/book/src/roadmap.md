@@ -199,7 +199,7 @@ Targeted optimization requires knowing where time is spent. F2 already shows fra
 These are ideas under consideration, not committed plans:
 
 - **Networking** — multiplayer support with entity replication
-- **Plugin system** — third-party engine extensions
+- **Plugin system** — third-party engine extensions. Compiled-in [player extensions](guides/player-extensions.md) are the first step
 - **Package manager** — share schemas, constraints, and assets between projects
 - **WebAssembly** — browser-based viewer and potentially runtime
 - **Shader graph** — visual shader editing for non-programmers

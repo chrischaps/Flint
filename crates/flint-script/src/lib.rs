@@ -371,6 +371,16 @@ impl ScriptSystem {
         }
     }
 
+    /// The Rhai engine, for a host that registers its own native functions
+    /// (flint-player's `PlayerExtension::register_script_api`). Flint's API
+    /// is already registered; a later registration with the same name and
+    /// parameter types replaces it. The engine survives `clear()`, so
+    /// registrations last across scene transitions. With rhai's `sync`
+    /// feature, registered closures must be `Send + Sync`.
+    pub fn rhai_engine_mut(&mut self) -> &mut rhai::Engine {
+        self.engine.rhai_engine_mut()
+    }
+
     /// Set the terrain height sampling callback for scripts
     pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
@@ -512,6 +522,37 @@ mod tests {
         let system = ScriptSystem::new();
         let commands = system.engine.drain_commands();
         assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn host_registered_functions_reach_scripts_and_survive_clear() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::<i64>::new()));
+        let mut system = ScriptSystem::new();
+        {
+            let seen = seen.clone();
+            let rhai = system.rhai_engine_mut();
+            rhai.register_fn("host_answer", || 42_i64);
+            rhai.register_fn("host_record", move |v: i64| seen.lock().unwrap().push(v));
+            // Replaces Flint's own delta_time() for every script.
+            rhai.register_fn("delta_time", || 7.0_f64);
+        }
+
+        let source = "fn on_update() { host_record(host_answer()); host_record(delta_time().to_int()); }";
+        let mut world = FlintWorld::new();
+        let id = world.spawn("host").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "host.rhai".into());
+        system.engine.call_updates(&mut world);
+        assert_eq!(*seen.lock().unwrap(), [42, 7]);
+
+        // A scene transition keeps the engine and its registrations.
+        system.clear();
+        let id = world.spawn("host2").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "host.rhai".into());
+        system.engine.call_updates(&mut world);
+        assert_eq!(*seen.lock().unwrap(), [42, 7, 42, 7]);
     }
 
     #[test]

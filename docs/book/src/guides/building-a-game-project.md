@@ -242,5 +242,6 @@ Engine edits are normal commits in your game repo. The subtree commands handle s
 
 - [Schemas](../concepts/schemas.md) --- component and archetype schema system
 - [Scripting](../concepts/scripting.md) --- full Rhai scripting API
+- [Player Extensions](player-extensions.md) --- your own binary around `PlayerApp`, when a game needs native Rust, egui panels or runtime meshes
 - [Rendering](../concepts/rendering.md) --- billboard sprites and PBR pipeline
 - [CLI Reference](../cli-reference/overview.md) --- the `play` command and `--schemas` flag

@@ -15,6 +15,9 @@ pub struct RenderStats {
     pub triangles: u32,
     // Per-system breakdown
     pub entity_draws: u32,
+    /// Opaque and transparent mesh draws skipped because their bounds were
+    /// outside the camera frustum. Not counted in `draw_calls`.
+    pub culled_draws: u32,
     pub skinned_draws: u32,
     pub terrain_draws: u32,
     pub terrain_total_chunks: u32,

@@ -76,6 +76,15 @@ pub fn quat_to_euler_xyz(q: [f32; 4]) -> [f32; 3] {
     [roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees()]
 }
 
+/// Whether a `model` component names a mesh that code uploads at runtime
+/// (`runtime = true`) rather than a file on disk.
+pub fn is_runtime_model(model: &toml::Value) -> bool {
+    model
+        .get("runtime")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 /// Resolve the file path for a model asset name.
 fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<PathBuf> {
     if let Some(path) = config.overrides.get(asset_name) {
@@ -304,6 +313,10 @@ fn expand_nodes_animated(
 /// Handles path resolution, GLB import, multi-node expansion, skinned mesh
 /// detection, and GPU upload. Returns metadata so callers can perform
 /// skeletal animation registration on top.
+///
+/// Entities whose model sets `runtime = true` are skipped: their mesh is
+/// uploaded by code at runtime (`SceneRenderer::load_procedural_mesh`), so
+/// there's no file to find.
 pub fn load_models_from_world(
     world: &mut FlintWorld,
     renderer: &mut SceneRenderer,
@@ -325,6 +338,7 @@ pub fn load_models_from_world(
             let components = world.get_components(e.id);
             let model_asset = components
                 .and_then(|c| c.get(comp::MODEL).cloned())
+                .filter(|model| !is_runtime_model(model))
                 .and_then(|model| {
                     model
                         .get("asset")

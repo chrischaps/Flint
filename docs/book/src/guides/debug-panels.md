@@ -24,6 +24,10 @@ Side panels are fold-open headers distributed across up to three columns. Column
 
 A panel can instead ask for the `Bottom` layout, a full-width strip. The Manifest Map uses it; timeline-shaped panels should.
 
+Columns open 300 points wide. Drag a column's left edge to resize it, between 280 points and half the window. The F2 stats overlay sits just left of the columns.
+
+The panels are the top layer of the player's egui pass. Back to front, it draws script UI (`on_draw_ui`), then a game's own egui (`PlayerExtension::ui`), then the debug panels. The panels float on egui's Foreground order instead of being egui `SidePanel`s. A `SidePanel` always paints on the background layer, under any egui window a game opens, so the panels would end up hidden behind the game's UI.
+
 ## The Panel Roster
 
 Scene-component panels are created **only when their driving component is present** on some entity, so a scene with no ocean never sees an ocean panel.

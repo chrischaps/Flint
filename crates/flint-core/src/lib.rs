@@ -14,6 +14,7 @@ mod hash;
 mod id;
 pub mod ik;
 pub mod ocean;
+pub mod projection;
 pub mod quat;
 pub mod spline;
 pub mod toml_util;

@@ -3,7 +3,10 @@
 //! Runs the game loop with physics, input, and first-person camera.
 
 mod debug_panels;
+mod egui_input;
 mod events;
+#[cfg(test)]
+mod extension_tests;
 pub mod fonts;
 mod frame;
 mod hud_render;
@@ -300,6 +303,11 @@ pub struct PlayerApp {
     // Android JNI axis reader for trigger/right-stick values from GameActivity
     #[cfg(target_os = "android")]
     android_axis_reader: Option<fn() -> [f32; 4]>,
+
+    /// Game-installed hooks (`add_extension`), in the order they were added.
+    extensions: Vec<Box<dyn crate::extension::PlayerExtension>>,
+    /// Which held keys and buttons belong to egui (game egui layer, ADR 0073).
+    egui_input: egui_input::EguiInputGate,
 }
 
 use input_config::{InputConfigPaths, PendingRebind};

@@ -2676,6 +2676,37 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // screen_to_ground(x, y, plane_y) -> [x, z] or ()
+    // The ground under a screen point: where the ray through (x, y) meets the
+    // plane y = plane_y. (x, y) is in logical points, the mouse_x()/mouse_y()
+    // space, and the camera is the one world_to_screen uses, so
+    // world_to_screen of the hit lands back on (x, y). () where the view
+    // doesn't reach the plane: sky, a level orthographic camera, or a plane
+    // behind the camera.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "screen_to_ground",
+            move |x: f64, y: f64, plane_y: f64| -> Dynamic {
+                let c = crate::lock_or_recover(&ctx);
+                match flint_core::projection::screen_to_ground(
+                    &c.camera_view_proj,
+                    x as f32,
+                    y as f32,
+                    c.screen_width,
+                    c.screen_height,
+                    plane_y as f32,
+                ) {
+                    Some([gx, gz]) => Dynamic::from_array(vec![
+                        Dynamic::from(gx as f64),
+                        Dynamic::from(gz as f64),
+                    ]),
+                    None => Dynamic::UNIT,
+                }
+            },
+        );
+    }
+
     // draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)
     // World-space debug line, projected onto the HUD layer. Clipped against
     // the near plane so a segment that passes the camera still draws.

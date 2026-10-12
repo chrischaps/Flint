@@ -50,6 +50,7 @@ Scripts define behavior through callback functions. The engine detects which cal
 | `on_scene_enter` / `on_scene_exit` | `fn on_scene_enter()` | Around scene transitions (see [Scene Transition API](#scene-transition-api)) |
 | `on_sequence_cue` | `fn on_sequence_cue(sequence, cue)` | An animation sequence passed a `cue` event (see [Animation](animation.md#sequences)) |
 | `on_animation_end` | `fn on_animation_end(clip)` | A `once` sprite clip finished (see [2D Sprites](sprites-2d.md)) |
+| `on_event` | `fn on_event(name, data)` | A custom game event fired by a script, the engine or a player extension (see [Event API](#event-api)) |
 
 The `on_interact` callback is sugar for the common pattern of proximity-based interaction. It automatically checks the entity's `interactable` component for `range` (default 3.0) and `enabled` (default true) before firing.
 
@@ -250,6 +251,34 @@ scenes that have one, so a fixed-camera or custom-camera scene must ask.
 |----------|-------------|
 | `fire_event(name)` | Fire a named game event |
 | `fire_event_data(name, data)` | Fire an event with a data map payload |
+
+A fired event is broadcast. Every script that defines `on_event(name, data)`
+receives it, including the script that fired it, in entity-id order. `data` is
+always a map: `fire_event` sends an empty one. The payload travels as TOML, so
+map values must be booleans, integers, floats, strings, arrays or maps; `()`
+and other types are dropped. Audio triggers hear the same events.
+
+```rhai
+fn on_event(name, data) {
+    if name == "door_opened" {
+        log(`door ${data.id} opened`);
+    }
+}
+```
+
+**Timing.** Script commands run after `on_update`, so an event a script fires
+reaches `on_event` at the start of the next frame, before that frame's
+`on_update`. Events from the host arrive the same frame:
+
+- **Player extensions** call `ExtensionCtx::fire_event(name, data)` in
+  `pre_update`. `data` is anything that converts into a `toml::Value`, usually
+  a `toml::Table`. Scripts see it before this frame's `on_update`.
+- **Engine code** pushes a `GameEvent::Custom { name, data }` onto the physics
+  event queue, which hands it to scripts with the next batch of collisions
+  and input actions.
+
+A payload that isn't a table arrives as `#{ value: data }`. Events are dropped
+while the game state pauses scripts, as input actions are.
 
 ### Log API
 
@@ -634,8 +663,19 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `measure_text(text, size)` | `Map` | Laid-out size of `text` in the default font as `#{width, height}` |
 | `measure_text_ex(text, size, font, spacing)` | `Map` | Same, for a named font family and extra letter spacing (`""` = default font) |
 | `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
+| `world_to_screen(x, y, z)` | `Map` | A world point in logical points as `#{x, y, depth, visible}`; `visible` is false behind the camera |
+| `screen_to_ground(x, y, plane_y)` | `[x, z]` or `()` | The point on the plane `y = plane_y` under a screen point, or `()` where the view doesn't reach it |
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
+
+`world_to_screen` and `screen_to_ground` are inverses. In `on_draw_ui` they use the camera the frame renders with; in `on_update`, which runs before script camera overrides apply, they use the previous frame's. `world_to_screen` of a ground hit lands back on the screen point it came from. `screen_to_ground` takes logical points, the `mouse_x()` / `mouse_y()` space, so it is correct at any display scale. It works for perspective and orthographic cameras, including one looking straight down. It returns `()` over the sky, when an orthographic camera looks level, or when the plane is behind the camera. Picking the ground under the cursor:
+
+```rhai
+let g = screen_to_ground(mouse_x(), mouse_y(), 0.0);
+if g != () && is_mouse_just_pressed(0) {
+    set_position(marker, g[0], 0.0, g[1]);   // exactly under the cursor
+}
+```
 
 Both `measure_text` calls lay the string out with the same font stack the HUD draws with, so a measured width can be used to centre or right-pad text exactly. (Before the first frame has rendered they return a glyph-count estimate.)
 

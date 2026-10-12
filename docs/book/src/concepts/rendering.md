@@ -32,6 +32,14 @@ The renderer supports two camera modes that share the same view/projection math:
 
 The camera mode is determined by the entry point: `edit` uses orbit, `play` uses first-person. Both produce the same view and projection matrices. A scene's `[camera]` block seeds the orbit camera in the viewer and the framing in `flint render`; in the viewer, **Space** returns to that authored framing.
 
+### Picking the ground
+
+`Camera::screen_to_ground(x, y, width, height, plane_y)` returns the `[x, z]` point on the plane `y = plane_y` under a screen point, or `None` where the view doesn't reach it. Screen points start at the top-left with y down. Any unit works as long as the cursor and the viewport size use the same one, so logical points or physical pixels both give the right answer on a HiDPI display. Scripts get the same function as `screen_to_ground(x, y, plane_y)`.
+
+It is built on `Camera::unproject_ray(ndc_x, ndc_y)`. That returns a ray whose origin is on the near plane, so the same code serves perspective cameras (rays fan out from the eye) and orthographic ones (parallel rays). It honours `ndc_offset`. The arithmetic is in `flint_core::projection` and runs in `f64`, because an `f32` inverse of a projection whose far plane is thousands of times its near plane would let distant hits drift off the cursor.
+
+A camera looking straight down has no defined "right" (`forward × up` is zero). In that case the view basis puts north (-Z) at the top of the screen and east (+X) on the right, like a map. Without that fallback the view matrix collapses and nothing renders.
+
 ## glTF Mesh Rendering
 
 Imported glTF models are rendered with their full mesh geometry and materials. The `flint-import` crate extracts meshes, materials, and textures from `.glb`/`.gltf` files, which the renderer draws with PBR shading.
@@ -44,6 +52,27 @@ Two ECS components tint an imported model without touching the GLB:
 - `material_overrides` maps glTF **material names** to colours: `Frame = [0.9, 0.3, 0.1]`, `Capsule = [0.2, 0.6, 1.0, 0.5]`. The renderer looks it up on the drawn entity and then on each ancestor, so a single component on a model's root entity recolours the matching materials on all of its expanded child nodes, including meshes that mix several materials. A three-component value keeps the material's own alpha. It takes precedence over `material.base_color_*` for the named material. Scripts write it with `set_material_override(id, name, r, g, b, a)`.
 
 Both are re-read whenever the renderer re-extracts the world (every frame in the player), so colour changes are live.
+
+### Runtime meshes
+
+Code can build meshes while the game runs and draw them like imported models. A mesh has a name. Any entity whose `model.asset` is that name draws it at the entity's transform.
+
+- **Create or replace:** `SceneRenderer::load_procedural_mesh(device, name, vertices, indices, material)`.
+  - Uploading under a name already in use replaces that mesh.
+  - The old GPU buffers are freed once the current frame's draw list lets go of them, so a mesh can be rebuilt every frame without GPU memory growing.
+- **Remove:** `SceneRenderer::remove_mesh(name)`. An entity that still names the mesh draws nothing until the name is uploaded again. If the entity has a `bounds` box, it draws the box instead.
+- **From a player extension:** use `ExtensionGpu::upload_mesh` and `ExtensionGpu::remove_mesh` in `pre_update`. `ExtensionCtx::attach_mesh(entity, name)` sets the entity's model.
+- **Declared in a scene:** add `runtime = true` to the model so the model loader doesn't look for a file:
+
+  ```toml
+  [entities.ground.model]
+  asset = "city_ground"   # uploaded by code at runtime
+  runtime = true
+  ```
+
+**Vertex colours.** `ImportedMaterial::vertex_colored(name)` makes a material that takes its colour from each vertex. One mesh can then carry many colours without one material per colour. Vertex colours are **linear**, so convert sRGB values such as hex codes with `flint_render::srgb_to_linear`, or they wash out.
+
+**Culling.** Every static mesh has a local bounding box, which the renderer computes from its vertices at upload. Each frame, opaque and transparent mesh draws whose world box is outside the camera frustum are skipped. Each shadow cascade skips the draws outside its own frustum as well. The F2 stats overlay shows the main-view count as `Entities: N (M culled)`, and `RenderStats::culled_draws` holds the same number. Skinned meshes, wireframes and `bounds` boxes are never culled. Large meshes are hard to cull, so split a sprawling mesh into sectors if most of it is usually off screen.
 
 ## Skinned Mesh Pipeline
 
