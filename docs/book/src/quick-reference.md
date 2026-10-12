@@ -304,6 +304,7 @@ position = [0, 0, 0]
 | `is_action_just_pressed(action)` | `bool` | Check if action pressed this frame |
 | `last_input_device()` / `gamepad_connected()` | `String` / `bool` | `"keyboard"` \| `"mouse"` \| `"gamepad"` \| `"touch"` latch for prompt glyphs; whether a pad is attached |
 | `mouse_x()` / `mouse_y()` | `f64` | Cursor in logical points; `is_mouse_pressed(b)` / `is_mouse_just_pressed(b)` (0 left, 1 right, 2 middle) |
+| `screen_to_ground(x, y, plane_y)` | `[x, z]`/`()` | Ground point under a screen point (e.g. the cursor); `world_to_screen(x, y, z)` is the inverse |
 | `delta_time()` | `f64` | Seconds since last frame |
 | `play_sound(name)` | --- | Play a sound effect |
 | `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |

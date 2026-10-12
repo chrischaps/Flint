@@ -32,6 +32,14 @@ The renderer supports two camera modes that share the same view/projection math:
 
 The camera mode is determined by the entry point: `edit` uses orbit, `play` uses first-person. Both produce the same view and projection matrices. A scene's `[camera]` block seeds the orbit camera in the viewer and the framing in `flint render`; in the viewer, **Space** returns to that authored framing.
 
+### Picking the ground
+
+`Camera::screen_to_ground(x, y, width, height, plane_y)` returns the `[x, z]` point on the plane `y = plane_y` under a screen point, or `None` where the view doesn't reach it. Screen points start at the top-left with y down. Any unit works as long as the cursor and the viewport size use the same one, so logical points or physical pixels both give the right answer on a HiDPI display. Scripts get the same function as `screen_to_ground(x, y, plane_y)`.
+
+It is built on `Camera::unproject_ray(ndc_x, ndc_y)`. That returns a ray whose origin is on the near plane, so the same code serves perspective cameras (rays fan out from the eye) and orthographic ones (parallel rays). It honours `ndc_offset`. The arithmetic is in `flint_core::projection` and runs in `f64`, because an `f32` inverse of a projection whose far plane is thousands of times its near plane would let distant hits drift off the cursor.
+
+A camera looking straight down has no defined "right" (`forward × up` is zero). In that case the view basis puts north (-Z) at the top of the screen and east (+X) on the right, like a map. Without that fallback the view matrix collapses and nothing renders.
+
 ## glTF Mesh Rendering
 
 Imported glTF models are rendered with their full mesh geometry and materials. The `flint-import` crate extracts meshes, materials, and textures from `.glb`/`.gltf` files, which the renderer draws with PBR shading.

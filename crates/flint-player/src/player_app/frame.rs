@@ -743,6 +743,14 @@ impl PlayerApp {
         // Script camera overrides (chase cam etc.) + roll basis + listener
         self.apply_script_camera_overrides(has_fps_player);
 
+        // The camera is final for this frame now. Give on_draw_ui the one the
+        // frame renders with, so world_to_screen / screen_to_ground there
+        // line up with the drawn world instead of trailing it by a frame.
+        self.script
+            .set_camera(self.camera.position_array(), self.camera.forward_vector());
+        self.script
+            .set_camera_view_proj(self.camera.view_projection_matrix());
+
         // on_draw_ui (always runs), script commands, draw-command collection
         self.drive_script_ui();
 
