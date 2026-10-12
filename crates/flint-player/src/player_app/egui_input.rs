@@ -1,4 +1,4 @@
-//! Who gets an input event, egui or the game (the game egui layer, H3).
+//! Who gets an input event, egui or the game (the game egui layer, ADR 0073).
 //!
 //! While egui can have something interactive on screen (an open debug
 //! panel, or any installed `PlayerExtension`, whose `ui()` may draw), every

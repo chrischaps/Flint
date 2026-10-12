@@ -453,7 +453,7 @@ impl ScriptEngine {
     /// Broadcast a custom event to every script that defines
     /// `on_event(name, data)`, in entity-id order so delivery is
     /// deterministic. `data` always arrives as a map: a non-table payload
-    /// is wrapped as `#{ value: .. }`.
+    /// is wrapped as `#{ value: .. }` (ADR 0072).
     fn call_event_on_all(&mut self, name: &str, data: &toml::Value) {
         let mut entity_ids: Vec<EntityId> = self
             .scripts

@@ -1,5 +1,5 @@
 //! Player extensions: Rust code an embedding game installs into
-//! `PlayerApp` (the first step toward the roadmap's plugin system).
+//! `PlayerApp` (the first step toward the roadmap's plugin system; ADR 0071).
 //!
 //! A game that wraps `PlayerApp` in its own binary can add native Rhai
 //! functions, run per-frame Rust before the scripts, and see window events
