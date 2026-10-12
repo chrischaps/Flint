@@ -4,7 +4,7 @@
 //! appropriate draw-list on `SceneRenderer`.
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
-use super::{hash_parts, SceneRenderer, SkinnedDrawCall};
+use super::{hash_parts, transform_aabb, SceneRenderer, SkinnedDrawCall};
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
@@ -399,7 +399,7 @@ impl SceneRenderer {
                 (nm_view, nm_sampler),
                 (mr_view, mr_sampler),
             );
-            let draw = Self::draw_from_cache(
+            let mut draw = Self::draw_from_cache(
                 &gpu_mesh.vertex_buffer,
                 &gpu_mesh.index_buffer,
                 gpu_mesh.index_count,
@@ -410,6 +410,11 @@ impl SceneRenderer {
                 entity_id,
                 blend_mode,
             );
+            draw.world_aabb = Some(transform_aabb(
+                &model_matrix,
+                gpu_mesh.aabb_min,
+                gpu_mesh.aabb_max,
+            ));
 
             if is_transparent {
                 self.transparent_draws.push(draw);

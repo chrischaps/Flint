@@ -21,8 +21,10 @@
 //! player.add_extension(Box::new(MyGame { .. }));
 //! ```
 
+use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_render::{Camera, SceneRenderer};
+use flint_import::ImportedMaterial;
+use flint_render::{Camera, SceneRenderer, Vertex};
 use flint_runtime::{GameClock, GameEvent, InputState};
 use winit::event::WindowEvent;
 
@@ -113,6 +115,18 @@ impl ExtensionCtx<'_> {
             data: data.into(),
         });
     }
+
+    /// Draw the runtime mesh `mesh` at `entity`'s transform, by setting the
+    /// entity's `model` to `{ asset = mesh, runtime = true }`. The mesh may be
+    /// uploaded before or after (see [`ExtensionGpu::upload_mesh`]); until it
+    /// exists the entity draws nothing. Any other `model` fields are kept.
+    pub fn attach_mesh(&mut self, entity: EntityId, mesh: &str) -> flint_core::Result<()> {
+        let mut model = toml::Table::new();
+        model.insert("asset".into(), mesh.into());
+        model.insert("runtime".into(), true.into());
+        self.world
+            .merge_component(entity, flint_core::components::MODEL, model.into())
+    }
 }
 
 /// The renderer and the device and queue it draws with.
@@ -120,6 +134,34 @@ pub struct ExtensionGpu<'a> {
     pub renderer: &'a mut SceneRenderer,
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
+}
+
+impl ExtensionGpu<'_> {
+    /// Create or replace the runtime mesh `name`. Entities whose
+    /// `model.asset` is `name` draw it this frame (see
+    /// [`ExtensionCtx::attach_mesh`]). Replacing frees the old GPU buffers
+    /// once this frame's draw lists let go of them, so a mesh can be rebuilt
+    /// as often as its data changes.
+    ///
+    /// The mesh is culled against the camera by the bounds of `vertices`.
+    /// Use [`ImportedMaterial::vertex_colored`] to colour per vertex; vertex
+    /// colours are linear, so convert sRGB with `flint_render::srgb_to_linear`.
+    pub fn upload_mesh(
+        &mut self,
+        name: &str,
+        vertices: &[Vertex],
+        indices: &[u32],
+        material: ImportedMaterial,
+    ) {
+        self.renderer
+            .load_procedural_mesh(self.device, name, vertices, indices, material);
+    }
+
+    /// Remove the runtime mesh `name`; entities naming it draw nothing
+    /// until it is uploaded again. Returns whether it existed.
+    pub fn remove_mesh(&mut self, name: &str) -> bool {
+        self.renderer.remove_mesh(name)
+    }
 }
 
 /// Whether an extension may consume `event`. Lifecycle events must always

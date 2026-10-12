@@ -200,3 +200,31 @@ fn on_event(name, data) { record(`${name} by ${data.by}`); }
         ["update", "counted by script", "update"]
     );
 }
+
+/// Attaches the runtime mesh `ground` to an existing entity in `pre_update`.
+struct Attacher;
+
+impl PlayerExtension for Attacher {
+    fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+        let id = ctx.world.get_id("plot").unwrap();
+        ctx.attach_mesh(id, "ground").unwrap();
+    }
+}
+
+#[test]
+fn attach_mesh_names_a_runtime_model_and_keeps_other_fields() {
+    let mut app = headless_app();
+    let id = app.world.spawn("plot").unwrap();
+    let mut model = toml::Table::new();
+    model.insert("asset".into(), "placeholder".into());
+    model.insert("note".into(), "kept".into());
+    app.world.set_component(id, "model", model.into()).unwrap();
+    app.add_extension(Box::new(Attacher));
+    app.tick();
+
+    let model = app.world.get_component(id, "model").unwrap();
+    assert_eq!(model.get("asset").unwrap().as_str(), Some("ground"));
+    assert_eq!(model.get("runtime").unwrap().as_bool(), Some(true));
+    assert_eq!(model.get("note").unwrap().as_str(), Some("kept"));
+    assert!(flint_render::model_loader::is_runtime_model(model));
+}

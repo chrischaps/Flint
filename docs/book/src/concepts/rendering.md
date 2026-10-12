@@ -45,6 +45,27 @@ Two ECS components tint an imported model without touching the GLB:
 
 Both are re-read whenever the renderer re-extracts the world (every frame in the player), so colour changes are live.
 
+### Runtime meshes
+
+Code can build meshes while the game runs and draw them like imported models. A mesh has a name. Any entity whose `model.asset` is that name draws it at the entity's transform.
+
+- **Create or replace:** `SceneRenderer::load_procedural_mesh(device, name, vertices, indices, material)`.
+  - Uploading under a name already in use replaces that mesh.
+  - The old GPU buffers are freed once the current frame's draw list lets go of them, so a mesh can be rebuilt every frame without GPU memory growing.
+- **Remove:** `SceneRenderer::remove_mesh(name)`. An entity that still names the mesh draws nothing until the name is uploaded again. If the entity has a `bounds` box, it draws the box instead.
+- **From a player extension:** use `ExtensionGpu::upload_mesh` and `ExtensionGpu::remove_mesh` in `pre_update`. `ExtensionCtx::attach_mesh(entity, name)` sets the entity's model.
+- **Declared in a scene:** add `runtime = true` to the model so the model loader doesn't look for a file:
+
+  ```toml
+  [entities.ground.model]
+  asset = "city_ground"   # uploaded by code at runtime
+  runtime = true
+  ```
+
+**Vertex colours.** `ImportedMaterial::vertex_colored(name)` makes a material that takes its colour from each vertex. One mesh can then carry many colours without one material per colour. Vertex colours are **linear**, so convert sRGB values such as hex codes with `flint_render::srgb_to_linear`, or they wash out.
+
+**Culling.** Every static mesh has a local bounding box, which the renderer computes from its vertices at upload. Each frame, opaque and transparent mesh draws whose world box is outside the camera frustum are skipped. Each shadow cascade skips the draws outside its own frustum as well. The F2 stats overlay shows the main-view count as `Entities: N (M culled)`, and `RenderStats::culled_draws` holds the same number. Skinned meshes, wireframes and `bounds` boxes are never culled. Large meshes are hard to cull, so split a sprawling mesh into sectors if most of it is usually off screen.
+
 ## Skinned Mesh Pipeline
 
 For skeletal animation, the renderer provides a separate GPU pipeline that applies bone matrix skinning in the vertex shader. This avoids the 32-byte overhead of bone data on static geometry.
