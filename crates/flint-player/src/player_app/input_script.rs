@@ -91,7 +91,9 @@ impl InputScript {
 
     /// Apply every event due at `now`. A release of something pressed this
     /// same frame waits for the next frame, so scripts always see the press.
-    pub fn apply(&mut self, now: f64, input: &mut InputState) {
+    /// Returns the keys pressed, so the player can treat its debug keys
+    /// (F2 and the rest) as it would a real press.
+    pub fn apply(&mut self, now: f64, input: &mut InputState) -> Vec<KeyCode> {
         let mut pressed_keys: Vec<KeyCode> = Vec::new();
         let mut pressed_buttons: Vec<String> = Vec::new();
         while let Some((t, action)) = self.events.get(self.next) {
@@ -123,6 +125,7 @@ impl InputScript {
             }
             self.next += 1;
         }
+        pressed_keys
     }
 }
 
@@ -149,10 +152,10 @@ mod tests {
     fn tap_release_waits_a_frame() {
         let mut s = InputScript::parse("0 tap KeyF 0.001").unwrap();
         let mut input = InputState::new();
-        s.apply(0.5, &mut input);
+        assert_eq!(s.apply(0.5, &mut input), [KeyCode::KeyF]);
         assert!(input.is_key_down(KeyCode::KeyF));
         input.end_frame();
-        s.apply(0.6, &mut input);
+        assert!(s.apply(0.6, &mut input).is_empty());
         assert!(!input.is_key_down(KeyCode::KeyF));
     }
 }
