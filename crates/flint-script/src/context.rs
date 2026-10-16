@@ -62,6 +62,8 @@ pub struct InputSnapshot {
     /// True while the host reports at least one gamepad attached.
     pub gamepad_connected: bool,
     pub mouse_delta: (f64, f64),
+    /// Wheel lines (notches) this frame, (x, y); up and right are positive.
+    pub mouse_wheel: (f64, f64),
     /// Mouse buttons currently held (0 left, 1 right, 2 middle)
     pub mouse_buttons_down: Vec<i64>,
     /// Mouse buttons pressed this frame

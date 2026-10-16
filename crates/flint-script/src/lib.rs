@@ -121,6 +121,10 @@ impl ScriptSystem {
             last_device: input.last_device().as_str().to_string(),
             gamepad_connected: input.gamepad_connected(),
             mouse_delta: input.raw_mouse_delta(),
+            mouse_wheel: {
+                let (x, y) = input.mouse_wheel_delta();
+                (x as f64, y as f64)
+            },
             mouse_buttons_down: (0..3_u32)
                 .filter(|b| input.is_mouse_button_down(*b))
                 .map(|b| b as i64)

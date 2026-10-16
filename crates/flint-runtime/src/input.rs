@@ -850,6 +850,11 @@ impl InputState {
         self.raw_mouse_delta
     }
 
+    /// Wheel lines (notches) this frame, (x, y); up and right are positive.
+    pub fn mouse_wheel_delta(&self) -> (f32, f32) {
+        self.mouse_wheel_delta
+    }
+
     pub fn is_mouse_button_down(&self, button: u32) -> bool {
         self.mouse_buttons_down.contains(&button)
     }

@@ -1120,6 +1120,34 @@ mod tests {
     }
 
     #[test]
+    fn test_mouse_wheel_reaches_scripts() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("wheel").unwrap();
+        probe_component(&mut world, id);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_update() {
+                let me = self_entity();
+                set_field(me, "probe", "wx", mouse_wheel_x());
+                set_field(me, "probe", "wy", mouse_wheel_y());
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "wheel.rhai".into());
+        let input = InputSnapshot {
+            mouse_wheel: (-0.5, 2.0),
+            ..Default::default()
+        };
+        engine.provide_context(input, 0.016, 0.0);
+        engine.call_updates(&mut world);
+        assert_eq!(probe_float(&world, id, "wx"), -0.5);
+        assert_eq!(probe_float(&world, id, "wy"), 2.0);
+    }
+
+    #[test]
     fn test_conducted_neutral_defaults() {
         // Never call set_conducted: getters must read as a clean, settled
         // world so bindings never branch on session existence.
