@@ -474,105 +474,8 @@ impl PlayerApp {
                             return;
                         }
 
-                        // Debug keys
-                        match key_code {
-                            KeyCode::F2 => {
-                                self.show_stats = !self.show_stats;
-                            }
-                            #[cfg(feature = "debug-hud")]
-                            KeyCode::F3 => {
-                                // Toggle the scene-component debug panels
-                                // (grass, ocean, ...). The Rendering &
-                                // Effects panel is excluded — it has its
-                                // own key (F4) and would otherwise flip
-                                // out of phase with it.
-                                let scene_panels: Vec<usize> = self
-                                    .debug_panels
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(_, p)| {
-                                        p.name() != flint_debug_ui::RENDER_DEBUG_PANEL
-                                    })
-                                    .map(|(i, _)| i)
-                                    .collect();
-                                if scene_panels.is_empty() {
-                                    tracing::info!("No debug panels in current scene");
-                                } else {
-                                    // Toggle the panels, then adjust cursor outside the borrow
-                                    for i in scene_panels {
-                                        self.debug_panels[i].toggle();
-                                    }
-                                    // Cursor follows ALL panels (incl. the
-                                    // render panel, which F3 leaves alone).
-                                    let any_open =
-                                        self.debug_panels.iter().any(|p| p.is_open());
-                                    if any_open {
-                                        self.release_cursor();
-                                    } else if self.physics.has_player_entity() {
-                                        self.capture_cursor();
-                                    }
-                                }
-                            }
-                            // Music Guide overlay (ADR 0035): the Phase 4
-                            // debug-surface key — all F-keys are taken.
-                            #[cfg(feature = "debug-hud")]
-                            KeyCode::Backquote => {
-                                self.toggle_named_panel(
-                                    music_guide_panel::MUSIC_GUIDE_PANEL,
-                                    "no music session running — nothing to guide",
-                                );
-                            }
-                            // Manifest Map timeline strip: Backslash
-                            // (unbound elsewhere; Backquote is the guide's).
-                            #[cfg(feature = "debug-hud")]
-                            KeyCode::Backslash => {
-                                self.toggle_named_panel(
-                                    timeline_panel::MANIFEST_MAP_PANEL,
-                                    "no music session running — nothing to map",
-                                );
-                            }
-                            // Debug force-fail: trigger the full
-                            // reintegration (rewind → seam → reassembly)
-                            // without having to play to a fail — seam
-                            // iteration must not depend on first clearing
-                            // the arming threshold (ADR 0064 follow-up).
-                            #[cfg(feature = "debug-hud")]
-                            KeyCode::F9 => {
-                                if let Some(ms) = self.music_session.as_mut() {
-                                    ms.debug_force_fail();
-                                    println!(
-                                        "[music] DEBUG: full-fail forced — rewind incoming"
-                                    );
-                                } else {
-                                    println!(
-                                        "[music] no music session running — nothing to fail"
-                                    );
-                                }
-                            }
-                            // Rendering & Effects menu (ADR 0053): the
-                            // one home for every render/post debug
-                            // control the old F1/F4-F10/F12 keys used to
-                            // flip blindly, plus their non-binary params.
-                            #[cfg(feature = "debug-hud")]
-                            KeyCode::F4 => {
-                                self.toggle_named_panel(
-                                    flint_debug_ui::RENDER_DEBUG_PANEL,
-                                    "no renderer active — nothing to tune",
-                                );
-                            }
-                            KeyCode::F11 => {
-                                if let Some(window) = &self.window {
-                                    if window.fullscreen().is_some() {
-                                        window.set_fullscreen(None);
-                                    } else {
-                                        window.set_fullscreen(Some(
-                                            winit::window::Fullscreen::Borderless(None),
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
+                        // Debug keys, shared with `--input-script` (H9)
+                        self.handle_debug_key(key_code);
 
                         self.input.process_key_down(key_code);
 
@@ -632,6 +535,111 @@ impl PlayerApp {
                     }
                 }
             }
+    }
+
+    /// The player's debug keys: F2 stats overlay, F3/F4 panels, the music
+    /// guide and timeline, F9 force-fail, F11 fullscreen. Called for a real
+    /// key press and for one the input script presses, so a capture can
+    /// open the overlay (H9). Escape stays window-only: it exits.
+    pub(super) fn handle_debug_key(&mut self, key_code: KeyCode) {
+        match key_code {
+            KeyCode::F2 => {
+                self.show_stats = !self.show_stats;
+            }
+            #[cfg(feature = "debug-hud")]
+            KeyCode::F3 => {
+                // Toggle the scene-component debug panels
+                // (grass, ocean, ...). The Rendering &
+                // Effects panel is excluded — it has its
+                // own key (F4) and would otherwise flip
+                // out of phase with it.
+                let scene_panels: Vec<usize> = self
+                    .debug_panels
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| {
+                        p.name() != flint_debug_ui::RENDER_DEBUG_PANEL
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                if scene_panels.is_empty() {
+                    tracing::info!("No debug panels in current scene");
+                } else {
+                    // Toggle the panels, then adjust cursor outside the borrow
+                    for i in scene_panels {
+                        self.debug_panels[i].toggle();
+                    }
+                    // Cursor follows ALL panels (incl. the
+                    // render panel, which F3 leaves alone).
+                    let any_open =
+                        self.debug_panels.iter().any(|p| p.is_open());
+                    if any_open {
+                        self.release_cursor();
+                    } else if self.physics.has_player_entity() {
+                        self.capture_cursor();
+                    }
+                }
+            }
+            // Music Guide overlay (ADR 0035): the Phase 4
+            // debug-surface key — all F-keys are taken.
+            #[cfg(feature = "debug-hud")]
+            KeyCode::Backquote => {
+                self.toggle_named_panel(
+                    music_guide_panel::MUSIC_GUIDE_PANEL,
+                    "no music session running — nothing to guide",
+                );
+            }
+            // Manifest Map timeline strip: Backslash
+            // (unbound elsewhere; Backquote is the guide's).
+            #[cfg(feature = "debug-hud")]
+            KeyCode::Backslash => {
+                self.toggle_named_panel(
+                    timeline_panel::MANIFEST_MAP_PANEL,
+                    "no music session running — nothing to map",
+                );
+            }
+            // Debug force-fail: trigger the full
+            // reintegration (rewind → seam → reassembly)
+            // without having to play to a fail — seam
+            // iteration must not depend on first clearing
+            // the arming threshold (ADR 0064 follow-up).
+            #[cfg(feature = "debug-hud")]
+            KeyCode::F9 => {
+                if let Some(ms) = self.music_session.as_mut() {
+                    ms.debug_force_fail();
+                    println!(
+                        "[music] DEBUG: full-fail forced — rewind incoming"
+                    );
+                } else {
+                    println!(
+                        "[music] no music session running — nothing to fail"
+                    );
+                }
+            }
+            // Rendering & Effects menu (ADR 0053): the
+            // one home for every render/post debug
+            // control the old F1/F4-F10/F12 keys used to
+            // flip blindly, plus their non-binary params.
+            #[cfg(feature = "debug-hud")]
+            KeyCode::F4 => {
+                self.toggle_named_panel(
+                    flint_debug_ui::RENDER_DEBUG_PANEL,
+                    "no renderer active — nothing to tune",
+                );
+            }
+            KeyCode::F11 => {
+                if let Some(window) = &self.window {
+                    if window.fullscreen().is_some() {
+                        window.set_fullscreen(None);
+                    } else {
+                        window.set_fullscreen(Some(
+                            winit::window::Fullscreen::Borderless(None),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn handle_mouse_input(&mut self, state: ElementState, button: MouseButton) {

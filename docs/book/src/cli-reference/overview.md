@@ -83,7 +83,10 @@ flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas  
 | `--screenshot <path>` | Write a PNG of the presented frame (scene + HUD). Parent directories are created |
 | `--screenshot-at <secs>` | Game time at which to capture: the first frame whose clock reaches this value (default `0`, the first frame) |
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
-| `--exit-after <secs>` | Exit once game time reaches this value |
+| `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
+| `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time |
+| `--input-script <file>` | Play timed keys, axes and gamepad buttons (format in `player_app/input_script.rs`). Scripted keys reach the debug keys too, so `2.0 tap F2` opens the stats overlay |
+| `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not
 wall-clock seconds since launch, so a capture lands on the same gameplay

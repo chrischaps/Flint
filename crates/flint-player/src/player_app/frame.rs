@@ -570,6 +570,13 @@ impl PlayerApp {
             if self.clock.total_time >= super::PERF_SKIP_SECS {
                 self.capture.perf_frames += 1;
                 self.capture.perf_time += self.clock.delta_time;
+                if let Some(renderer) = &self.scene_renderer {
+                    let stats = renderer.collect_stats();
+                    self.capture.perf_draws += stats.draw_calls as u64;
+                    self.capture.perf_entity_draws += stats.entity_draws as u64;
+                    self.capture.perf_culled += stats.culled_draws as u64;
+                    self.capture.perf_triangles += stats.triangles as u64;
+                }
             }
             if self.clock.total_time >= exit_after {
                 self.exit_requested = true;
@@ -583,6 +590,16 @@ impl PlayerApp {
                         self.capture.perf_time,
                         super::PERF_SKIP_SECS,
                         1000.0 / avg_ms
+                    );
+                    // The F2 overlay's main figures, averaged, so a capture
+                    // can compare draw counts and culling headlessly (H9).
+                    let avg = |sum: u64| sum as f64 / frames as f64;
+                    eprintln!(
+                        "[perf] avg per frame: {:.0} draw calls ({:.0} entity draws, {:.0} culled), {:.0} triangles",
+                        avg(self.capture.perf_draws),
+                        avg(self.capture.perf_entity_draws),
+                        avg(self.capture.perf_culled),
+                        avg(self.capture.perf_triangles)
                     );
                 }
             }
@@ -676,9 +693,17 @@ impl PlayerApp {
         // Advance game clock
         self.clock.tick();
 
-        // Scripted input due by now (`--input-script`), before anything reads it
+        // `--stats`: the overlay starts open, and F2 can still close it.
+        if std::mem::take(&mut self.capture.show_stats) {
+            self.show_stats = true;
+        }
+
+        // Scripted input due by now (`--input-script`), before anything reads it,
+        // and as a real key press would, through the debug keys (H9).
         if let Some(script) = &mut self.capture.input_script {
-            script.apply(self.clock.total_time, &mut self.input);
+            for key in script.apply(self.clock.total_time, &mut self.input) {
+                self.handle_debug_key(key);
+            }
         }
 
         // Advance transition phase timing

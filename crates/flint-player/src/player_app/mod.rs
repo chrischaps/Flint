@@ -6,6 +6,8 @@ mod debug_panels;
 mod egui_input;
 mod events;
 #[cfg(test)]
+mod debug_key_tests;
+#[cfg(test)]
 mod extension_tests;
 pub mod fonts;
 mod frame;
@@ -93,6 +95,9 @@ pub struct CaptureConfig {
     pub exit_after: Option<f64>,
     /// Timed input played into `InputState` (`--input-script`).
     pub input_script: Option<input_script::InputScript>,
+    /// Open the F2 stats overlay on the first frame (`--stats`). F2 still
+    /// closes it.
+    pub show_stats: bool,
     /// Internal: the first capture has been written.
     pub(crate) taken: bool,
     /// Internal: number of numbered frames written so far.
@@ -103,6 +108,12 @@ pub struct CaptureConfig {
     /// `PERF_SKIP_SECS`, reported on `--exit-after` as an average frame time.
     pub(crate) perf_frames: u32,
     pub(crate) perf_time: f64,
+    /// Internal: render stats summed over the same frames, reported beside
+    /// the frame time.
+    pub(crate) perf_draws: u64,
+    pub(crate) perf_entity_draws: u64,
+    pub(crate) perf_culled: u64,
+    pub(crate) perf_triangles: u64,
 }
 
 /// Game seconds ignored by the `--exit-after` frame-time report (loading,

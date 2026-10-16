@@ -102,6 +102,11 @@ struct Args {
     /// `player_app/input_script.rs` for the format)
     #[arg(long, value_name = "FILE")]
     input_script: Option<String>,
+
+    /// Open the rendering stats overlay (F2) from the first frame, so a
+    /// capture shows it
+    #[arg(long)]
+    stats: bool,
 }
 
 fn main() -> Result<()> {
@@ -184,6 +189,7 @@ fn main() -> Result<()> {
     if let Some(path) = &args.input_script {
         app.capture.input_script = Some(flint_player::InputScript::load(path)?);
     }
+    app.capture.show_stats = args.stats;
     app.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)
