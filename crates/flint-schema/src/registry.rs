@@ -118,12 +118,22 @@ impl SchemaRegistry {
 
     /// Load a component schema from a TOML file
     pub fn load_component_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let path = path.as_ref();
         let content = fs::read_to_string(path)?;
         let file: ComponentSchemaFile = toml::from_str(&content)?;
+        self.insert_components(file, &path.display().to_string());
+        Ok(())
+    }
 
+    fn insert_components(&mut self, file: ComponentSchemaFile, source: &str) {
         for (name, def) in file.component {
             let mut fields = HashMap::new();
             for (field_name, field_def) in def.fields {
+                if let Some(type_name) = field_def.unknown_type_name() {
+                    tracing::warn!(
+                        "{source}: component '{name}' field '{field_name}' has unknown type                          \"{type_name}\"; validating it as a string"
+                    );
+                }
                 fields.insert(field_name, field_def.to_field_schema());
             }
 
@@ -134,8 +144,6 @@ impl SchemaRegistry {
             };
             self.components.insert(name, schema);
         }
-
-        Ok(())
     }
 
     /// Load an archetype schema from a TOML file
@@ -154,21 +162,7 @@ impl SchemaRegistry {
     /// Load a component schema from a TOML string
     pub fn load_component_string(&mut self, content: &str) -> Result<()> {
         let file: ComponentSchemaFile = toml::from_str(content)?;
-
-        for (name, def) in file.component {
-            let mut fields = HashMap::new();
-            for (field_name, field_def) in def.fields {
-                fields.insert(field_name, field_def.to_field_schema());
-            }
-
-            let schema = ComponentSchema {
-                name: name.clone(),
-                description: def.description,
-                fields,
-            };
-            self.components.insert(name, schema);
-        }
-
+        self.insert_components(file, "<string>");
         Ok(())
     }
 
@@ -235,6 +229,42 @@ impl SchemaRegistry {
 mod tests {
     use super::*;
 
+    /// Every field in the engine's own schemas names a type the parser knows,
+    /// so none silently validates as a string (H8: `"integer"` did).
+    #[test]
+    fn engine_schemas_name_only_known_field_types() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/components");
+        let mut unknown = Vec::new();
+        let mut files = 0;
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().map(|e| e != "toml").unwrap_or(true) {
+                continue;
+            }
+            files += 1;
+            let file: ComponentSchemaFile =
+                toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            for (name, def) in &file.component {
+                for (field, field_def) in &def.fields {
+                    if let Some(t) = field_def.unknown_type_name() {
+                        let file_name = path.file_name().unwrap().to_string_lossy();
+                        unknown.push(format!("{file_name}: {name}.{field} = \"{t}\""));
+                    }
+                }
+            }
+        }
+        assert!(files > 0, "no schemas found in {}", dir.display());
+        assert!(
+            unknown.is_empty(),
+            "unknown field types:
+{}",
+            unknown.join(
+                "
+"
+            )
+        );
+    }
+
     #[test]
     fn test_load_component_string() {
         let toml = r#"
@@ -253,6 +283,25 @@ style = { type = "enum", values = ["hinged", "sliding"], default = "hinged" }
         assert_eq!(door.name, "door");
         assert!(door.fields.contains_key("locked"));
         assert!(door.fields.contains_key("style"));
+    }
+
+    /// An array of free-form tables (animator layers) validates as tables,
+    /// where it used to validate each element as a string and fail.
+    #[test]
+    fn array_of_tables_validates() {
+        let toml = r#"
+[component.animator.fields]
+layers = { type = "array", element = "table", default = [] }
+"#;
+        let mut registry = SchemaRegistry::new();
+        registry.load_component_string(toml).unwrap();
+        let schema = registry.get_component("animator").unwrap();
+
+        let good: toml::Value =
+            toml::from_str("layers = [{ clip = \"wave\", weight = 0.5 }]").unwrap();
+        crate::validate_component_data(schema, &good).unwrap();
+        let bad: toml::Value = toml::from_str("layers = [\"wave\"]").unwrap();
+        assert!(crate::validate_component_data(schema, &bad).is_err());
     }
 
     #[test]
