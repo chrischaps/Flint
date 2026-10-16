@@ -307,3 +307,84 @@ fn vertex_colours_render() {
     let [r, g, b, _] = gpu.centre_pixel();
     assert!(r > 150 && g < 60 && b < 60, "expected red, got {r} {g} {b}");
 }
+
+/// Emission (ADR 0076) is added after lighting: a glowing face reads the
+/// same whichever way it faces, whatever the ambient and however bright the
+/// sun, both from the material and per vertex.
+#[test]
+fn emission_ignores_facing_and_light() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    let mut world = FlintWorld::new();
+    spawn(&mut world, "lamp", "lamp", [0.0; 3]);
+    // The test's own sun, overhead, so the default scene lights stay out.
+    let sun = world.spawn("sun").unwrap();
+    let camera = Camera::default();
+
+    let mut shoot = |vertices: &[Vertex], material: ImportedMaterial, ambient: f32, sun_on: f32| {
+        let (_, indices) = square(20.0, [0.0; 4]);
+        let mut light = toml::Table::new();
+        light.insert("type".into(), "directional".into());
+        light.insert("intensity".into(), (4.0 * sun_on as f64).into());
+        light.insert(
+            "direction".into(),
+            toml::Value::Array(vec![0.0.into(), 1.0.into(), 0.0.into()]),
+        );
+        world.set_component(sun, "light", light.into()).unwrap();
+        renderer.set_ambient([ambient; 3], [ambient; 3]);
+        renderer.load_procedural_mesh(&gpu.device, "lamp", vertices, &indices, material);
+        gpu.frame(&mut renderer, &world, &camera);
+        gpu.centre_pixel()
+    };
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let face_down = |mut v: Vec<Vertex>| {
+        v.iter_mut().for_each(|v| v.normal = [0.0, -1.0, 0.0]);
+        v
+    };
+
+    // A rough black metal reflects next to nothing (F0 = 0), so what's left
+    // is the green it gives off.
+    let lamp = ImportedMaterial {
+        base_color: [0.0, 0.0, 0.0, 1.0],
+        roughness: 1.0,
+        metallic: 1.0,
+        emissive: [0.0, 0.25, 0.0],
+        emissive_strength: 2.0,
+        ..ImportedMaterial::default()
+    };
+    let (up, _) = square(20.0, [1.0; 4]);
+    let lit = shoot(&up, lamp.clone(), 0.0, 0.0);
+    let [r, g, b, _] = lit;
+    assert!(g > 150 && r < 30 && b < 30, "expected green, got {r} {g} {b}");
+    for (vertices, ambient, sun_on, what) in [
+        (&up, 1.0, 0.0, "the ambient"),
+        (&up, 0.0, 1.0, "the sun"),
+        (&face_down(up.clone()), 1.0, 1.0, "facing away"),
+    ] {
+        let seen = shoot(vertices, lamp.clone(), ambient, sun_on);
+        assert!(close(lit, seen), "{what} changed it: {lit:?} vs {seen:?}");
+    }
+
+    // Per vertex: alpha 0 is light, alpha 1 an ordinary lit surface.
+    let glowing = ImportedMaterial {
+        roughness: 1.0,
+        metallic: 1.0,
+        vertex_emission: true,
+        emissive_strength: 2.0,
+        ..ImportedMaterial::vertex_colored("lamp")
+    };
+    let (light, _) = square(20.0, [0.0, 0.25, 0.0, 0.0]);
+    for (vertices, ambient, sun_on, what) in [
+        (&light, 0.0, 0.0, "per-vertex light"),
+        (&light, 1.0, 1.0, "light on a per-vertex lamp"),
+        (&face_down(light.clone()), 1.0, 1.0, "facing away from a per-vertex lamp"),
+    ] {
+        let seen = shoot(vertices, glowing.clone(), ambient, sun_on);
+        assert!(close(lit, seen), "{what}: {lit:?} vs {seen:?}");
+    }
+    let (surface, _) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
+    let dark = shoot(&surface, glowing.clone(), 0.0, 0.0);
+    let bright = shoot(&surface, glowing, 1.0, 0.0);
+    assert!(bright[1] > dark[1] + 20, "a surface vertex takes the ambient: {dark:?} {bright:?}");
+}

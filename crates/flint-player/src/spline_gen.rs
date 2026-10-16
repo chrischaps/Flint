@@ -891,6 +891,7 @@ pub fn load_splines(
                     use_vertex_color: job.def.stripe_color.is_some(),
                     alpha_mode: flint_import::AlphaMode::Opaque,
                     alpha_cutoff: 0.5,
+                    ..Default::default()
                 };
                 renderer.load_procedural_mesh(device, &chunk_name, &verts, &indices, material);
 
@@ -951,6 +952,7 @@ pub fn load_splines(
                 use_vertex_color: job.def.stripe_color.is_some(),
                 alpha_mode: flint_import::AlphaMode::Opaque,
                 alpha_cutoff: 0.5,
+                ..Default::default()
             };
             renderer.load_procedural_mesh(device, &job.entity_name, &verts, &indices, material);
 

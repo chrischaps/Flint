@@ -24,6 +24,9 @@ struct MaterialUniforms {
     opacity: f32,
     alpha_cutoff: f32,
     texture_scale: f32,
+    // Emission (ADR 0076): rgb = the material's own light, w = per-vertex
+    // emission scale (0 = off; vertex alpha is then how much is surface).
+    emissive: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -441,6 +444,16 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
         alpha = material.base_color.a;
     }
 
+    // Emission (ADR 0076). Per-vertex: alpha 1 is lit surface, 0 is pure
+    // light giving off its rgb; vertex alpha is no longer opacity.
+    var emission = material.emissive.rgb;
+    if (material.use_vertex_color == 1u && material.emissive.w > 0.0) {
+        let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
+        emission += in.color.rgb * glow * material.emissive.w;
+        albedo = albedo * (1.0 - glow);
+        alpha = 1.0;
+    }
+
     if (material.has_base_color_tex == 1u) {
         let tex_color = textureSample(base_color_texture, base_color_sampler, scaled_uv);
         albedo = tex_color.rgb * albedo;
@@ -509,7 +522,9 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
     let hemisphere_mix = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(ground_color, sky_color, hemisphere_mix) * albedo;
 
-    var color = ambient + Lo;
+    // Emission goes on after lighting and before tonemapping, so it reads the
+    // same under any light and bloom picks it up.
+    var color = ambient + Lo + emission;
 
     let final_alpha = alpha * material.opacity;
 

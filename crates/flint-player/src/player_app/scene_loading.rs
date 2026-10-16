@@ -936,6 +936,7 @@ fn upload_procgen_mesh(
             use_vertex_color: true,
             alpha_mode: flint_import::AlphaMode::Opaque,
             alpha_cutoff: 0.5,
+            ..Default::default()
         };
 
         renderer.load_procedural_mesh(device, name, &vertices, &mesh.indices, imported_mat);
@@ -982,6 +983,7 @@ fn upload_procgen_mesh(
                 use_vertex_color: true,
                 alpha_mode: flint_import::AlphaMode::Opaque,
                 alpha_cutoff: 0.5,
+                ..Default::default()
             };
 
             renderer.load_procedural_mesh(
