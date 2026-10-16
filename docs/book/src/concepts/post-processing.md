@@ -97,6 +97,8 @@ Distance-based fog blends a configurable fog color into the scene based on pixel
 | `fog_height_falloff` | f32 | `0.1` | How quickly fog thins with altitude |
 | `fog_height_origin` | f32 | `0.0` | World Y where fog is thickest |
 
+Fog reaches **everything drawn, at any distance** (ADR 0078). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before ADR 0078 the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
+
 ## Volumetric Lighting (God Rays)
 
 Volumetric lighting simulates light scattering through participating media (dust, fog, haze), producing visible shafts of light (god rays). The effect ray-marches from each pixel toward the camera, sampling the shadow map at each step to determine whether that point in space is lit or in shadow.

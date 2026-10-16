@@ -47,8 +47,6 @@ pub struct OceanUniformsGpu {
     pub camera_far: f32,
     /// 1 when the grab pass ran this frame (scene color/depth are valid).
     pub grab_enabled: u32,
-    /// Scene fog color (rgb) + self-fog strength (a) for the horizon fade.
-    pub fog_color: [f32; 4],
     /// Sky gradient snapshot for analytic reflections (from the `sky`
     /// component; strength 0 when the scene has no procedural sky).
     pub sky_zenith: [f32; 4],
@@ -496,11 +494,11 @@ mod tests {
     fn uniform_struct_matches_wgsl_layout() {
         // waves(512) + 4 colors(64) + grid_offset(8) + 2×u32(8) + 8×f32(32)
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
-        // + fog_color(16) + sky snapshot 3×vec4 + strength(64, incl. 3
-        // splash scalars) + contact hull 3×vec4(48) + band edge 4×f32(16)
-        // + foam_glow vec4(16) + mode u32 + mode_mix + pad2 (16) = 832
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 832);
-        assert_eq!(832 % 16, 0, "uniform size must be 16-byte aligned");
+        // + sky snapshot 3×vec4 + strength(64, incl. 3 splash scalars)
+        // + contact hull 3×vec4(48) + band edge 4×f32(16)
+        // + foam_glow vec4(16) + mode u32 + mode_mix + pad2 (16) = 816
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 816);
+        assert_eq!(816 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     #[test]

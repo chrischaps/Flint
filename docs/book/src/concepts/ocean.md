@@ -110,9 +110,11 @@ where the surface is actually compressing toward a breaking crest. It is a
 physical quantity, not a height threshold, which is why the foam sits where
 foam belongs even in a confused sea.
 
-The ocean **writes depth**, so scene fog applies to it correctly. It also fogs
-*itself* to the scene fog color before the composite's sky cutoff, otherwise
-the far water would render as an unfogged dark band at the horizon.
+The ocean **writes depth**, so scene fog applies to it like any other surface,
+with the scene's own `fog_density` and `fog_start`, all the way to the far
+plane (ADR 0078). Thin the fog and the water stays water-coloured further out.
+(It used to fog itself over a fixed 380–640 m, whatever the density, to hide the
+composite's old near-1.0 sky cut.)
 
 ### Bioluminescence
 
