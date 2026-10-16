@@ -195,7 +195,7 @@ All input flows through a unified `Binding` model:
 - **Keyboard keys** (`Key { code }`) --- any winit `KeyCode` name (e.g., `"KeyW"`, `"Space"`, `"ShiftLeft"`)
 - **Mouse buttons** (`MouseButton { button }`) --- `"Left"`, `"Right"`, `"Middle"`, `"Back"`, `"Forward"`
 - **Mouse delta** (`MouseDelta { axis, scale }`) --- raw mouse movement for camera look
-- **Mouse wheel** (`MouseWheel { axis, scale }`) --- scroll wheel input
+- **Mouse wheel** (`MouseWheel { axis, scale }`) --- scroll wheel input, in lines (notches) this frame, up and right positive; a touchpad's pixel scroll counts 50 px to a line. Bind it to an `axis1d` action (`type = "mouse_wheel"`, `axis = "y"`) and read it with `action_value`. A wheel turned over egui doesn't reach it
 - **Gamepad buttons** (`GamepadButton { button, gamepad }`) --- any gilrs button name (e.g., `"South"`, `"RightTrigger"`)
 - **Gamepad axes** (`GamepadAxis { axis, gamepad, deadzone, scale, invert, threshold, direction }`) --- analog sticks and triggers with full processing pipeline
 

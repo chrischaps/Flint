@@ -1280,6 +1280,24 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // mouse_wheel_x() / mouse_wheel_y() -> f64 - wheel lines (notches)
+    // this frame; up and right are positive. A touchpad's pixel scroll
+    // arrives as fractions of a line. Zero while the cursor is over egui.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_wheel_x", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_wheel.0
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_wheel_y", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_wheel.1
+        });
+    }
+
     // mouse_x() / mouse_y() -> f64 - cursor position in logical points
     // (the same space as screen_width()/screen_height() and draw_*).
     {
