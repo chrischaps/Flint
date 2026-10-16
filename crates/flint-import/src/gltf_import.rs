@@ -258,6 +258,9 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             use_vertex_color: false,
             alpha_mode,
             alpha_cutoff,
+            emissive: material.emissive_factor(),
+            emissive_strength: material.emissive_strength().unwrap_or(1.0),
+            vertex_emission: false,
         });
     }
 

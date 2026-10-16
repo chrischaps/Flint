@@ -304,6 +304,44 @@ pub struct ImportedMaterial {
     pub alpha_mode: AlphaMode,
     /// Alpha cutoff for Mask mode (default 0.5)
     pub alpha_cutoff: f32,
+    /// Light the surface gives off, as linear RGB (glTF `emissiveFactor`).
+    /// Added after lighting and before tonemapping, so it reads the same
+    /// from every side and under any light, and bloom picks it up. Zero
+    /// (the default) gives off nothing.
+    pub emissive: [f32; 3],
+    /// Multiplies `emissive`, and the per-vertex emission of
+    /// `vertex_emission`, so radiance can go past 1 (glTF
+    /// `KHR_materials_emissive_strength`). Default 1.
+    pub emissive_strength: f32,
+    /// Per-vertex emission, for vertex-coloured meshes that mix lit and
+    /// glowing faces. The vertex alpha says how much of the face is
+    /// surface: 1 (every ordinary vertex colour) is lit as usual, 0 reflects
+    /// nothing and gives off its RGB times `emissive_strength` as light, and
+    /// values between blend the two. RGB may go past 1 for bright lights.
+    /// Vertex alpha is then no longer opacity; the entity material's
+    /// `opacity` still applies. Needs `use_vertex_color`.
+    pub vertex_emission: bool,
+}
+
+impl Default for ImportedMaterial {
+    /// Opaque white, non-metallic, half rough, no textures and no emission.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 0.5,
+            base_color_texture: None,
+            normal_texture: None,
+            metallic_roughness_texture: None,
+            use_vertex_color: false,
+            alpha_mode: AlphaMode::Opaque,
+            alpha_cutoff: 0.5,
+            emissive: [0.0; 3],
+            emissive_strength: 1.0,
+            vertex_emission: false,
+        }
+    }
 }
 
 impl ImportedMaterial {
@@ -314,15 +352,8 @@ impl ImportedMaterial {
     pub fn vertex_colored(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            base_color: [1.0; 4],
-            metallic: 0.0,
-            roughness: 0.5,
-            base_color_texture: None,
-            normal_texture: None,
-            metallic_roughness_texture: None,
             use_vertex_color: true,
-            alpha_mode: AlphaMode::Opaque,
-            alpha_cutoff: 0.5,
+            ..Self::default()
         }
     }
 }

@@ -433,6 +433,7 @@ impl GenPreviewApp {
             use_vertex_color: false,
             alpha_mode: flint_import::AlphaMode::Opaque,
             alpha_cutoff: 0.5,
+            ..Default::default()
         };
 
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
@@ -501,6 +502,7 @@ impl GenPreviewApp {
                 use_vertex_color: false,
                 alpha_mode: flint_import::AlphaMode::Opaque,
                 alpha_cutoff: 0.5,
+                ..Default::default()
             };
 
             if let (Some(context), Some(renderer)) =

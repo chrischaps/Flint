@@ -66,6 +66,11 @@ pub struct MaterialUniforms {
     pub opacity: f32,
     pub alpha_cutoff: f32,
     pub texture_scale: f32,
+    /// Emission (ADR 0076). `rgb` is the material's own light, linear and
+    /// already times its strength. `w` scales per-vertex emission, where a
+    /// vertex's alpha says how much of it is surface (see
+    /// `ImportedMaterial::vertex_emission`); 0 turns that off.
+    pub emissive: [f32; 4],
 }
 
 impl MaterialUniforms {
@@ -85,6 +90,7 @@ impl MaterialUniforms {
             opacity: 1.0,
             alpha_cutoff: 0.5,
             texture_scale: 1.0,
+            emissive: [0.0; 4],
         }
     }
 
@@ -104,7 +110,16 @@ impl MaterialUniforms {
             opacity: 1.0,
             alpha_cutoff: 0.5,
             texture_scale: 1.0,
+            emissive: [0.0; 4],
         }
+    }
+
+    /// Sets the emission from an imported material.
+    pub fn set_emission(&mut self, material: &flint_import::ImportedMaterial) {
+        let [r, g, b] = material.emissive;
+        let s = material.emissive_strength;
+        let per_vertex = material.vertex_emission && material.use_vertex_color;
+        self.emissive = [r * s, g * s, b * s, if per_vertex { s } else { 0.0 }];
     }
 }
 

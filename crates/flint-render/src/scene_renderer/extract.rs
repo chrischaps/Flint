@@ -155,6 +155,7 @@ impl SceneRenderer {
             if gpu_mesh.material.use_vertex_color {
                 material_uniforms.use_vertex_color = 1;
             }
+            material_uniforms.set_emission(&gpu_mesh.material);
 
             let (transform_buffer, transform_bind_group) =
                 Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
@@ -333,6 +334,7 @@ impl SceneRenderer {
             if gpu_mesh.material.use_vertex_color {
                 material_uniforms.use_vertex_color = 1;
             }
+            material_uniforms.set_emission(&gpu_mesh.material);
 
             // Read opacity and blend_mode from ECS material component
             let ecs_opacity = world

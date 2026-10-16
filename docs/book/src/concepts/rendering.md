@@ -160,6 +160,33 @@ Configure post-processing per-scene via the `[post_process]` TOML block, overrid
 
 *PBR materials with varying roughness and metallic values. Left to right: rough dielectric, smooth dielectric, rough metal, polished metal.*
 
+### Emission
+
+A material can give off light of its own (ADR 0076): lamps, lit windows, embers, a glowing crown. Emission is added after lighting and before tonemapping, so it doesn't depend on facing, the sun or the ambient, and with post-processing on, bloom picks up anything brighter than its threshold. It lights only its own surface. To light the things around it, put a point light beside it.
+
+- **`ImportedMaterial::emissive`** is the light, as linear RGB. It defaults to zero.
+- **`emissive_strength`** multiplies it, so radiance can go past 1. It defaults to 1.
+- **glTF:** `emissiveFactor` and `KHR_materials_emissive_strength` are read into those two fields. Emissive textures aren't read yet.
+
+```rust
+let lamp = ImportedMaterial {
+    base_color: [0.05, 0.05, 0.05, 1.0],
+    emissive: [1.0, 0.7, 0.35],
+    emissive_strength: 4.0, // well past a bloom threshold of 1-3
+    ..ImportedMaterial::default()
+};
+```
+
+**Per-vertex emission** suits runtime meshes coloured per vertex, where one mesh mixes lit faces with glowing ones. Set `vertex_emission: true` on a `vertex_colored` material. Each vertex's alpha then says how much of it is surface:
+
+| Vertex alpha | The face is... |
+|---|---|
+| 1 | an ordinary surface, lit as usual. Every existing vertex colour is unchanged. |
+| 0 | light. It reflects no diffuse and gives off its RGB × `emissive_strength`. |
+| between | a blend of the two. |
+
+Vertex RGB may go past 1 for bright lights. In this mode vertex alpha is no longer opacity, but the entity's `material.opacity` still applies. A glowing face keeps its normal, so it can still take a faint specular highlight on top, like lit glass.
+
 ## Debug Visualization
 
 The renderer provides eight shading modes, selected from the **Shading** combo in the Rendering & Effects menu (F4) or with `--debug-mode` headlessly:
