@@ -21,10 +21,10 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `bool` | Boolean | `true` / `false` |
-| `i32` | 32-bit integer | `42` |
+| `bool` (or `boolean`) | Boolean | `true` / `false` |
+| `i32` (or `int`, `integer`) | 32-bit integer | `42` |
 | `i64` | 64-bit integer | `1700000000` |
-| `f32` | 32-bit float | `3.14` |
+| `f32` (or `float`) | 32-bit float | `3.14` |
 | `f64` | 64-bit float | `3.14159265` |
 | `string` | Text string | `"hello"` |
 | `vec2` | 2D vector, validated as an array of floats | `[0.5, 1.0]` |
@@ -33,10 +33,11 @@ open_angle = { type = "f32", default = 90.0, min = 0.0, max = 180.0 }
 | `color` | RGB or RGBA color | `[1.0, 0.8, 0.6]` |
 | `transform` | Nested position / rotation / scale table | see [Transform](#transform) |
 | `enum` | One of a set of string values | `"hinged"` |
-| `array` | List of a given `element` type | `["a", "b"]` |
-| `entity_ref` | Reference to another entity by name | `"main_hall"` |
+| `table` | A table of any shape, checked only as a table | `{ clip = "walk", weight = 0.5 }` |
+| `array` | List of a given `element` type (`string` if none is given) | `["a", "b"]` |
+| `entity_ref` | Reference to another entity by name, validated as a string | `"main_hall"` |
 
-`vec2` and `vec4` have no dedicated variant; the parser maps them to a float array so validation reports a bad value as "expected float array" rather than misreporting the field as a string. Any type name the parser does not recognise falls back to `string`.
+`vec2` and `vec4` have no dedicated variant; the parser maps them to a float array so validation reports a bad value as "expected float array" rather than misreporting the field as a string. A type name the parser does not recognise still loads, validated as a `string`, but the registry logs a warning naming the file, component and field, so a typo such as `"integr"` is caught where it was written. The engine's own schemas are checked for unknown names by a test in `flint-schema`.
 
 ### Field Constraints
 

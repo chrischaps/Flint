@@ -129,6 +129,7 @@ fn format_field_type(ft: &FieldType) -> String {
         FieldType::Vec3 => "vec3".to_string(),
         FieldType::Transform => "transform".to_string(),
         FieldType::Color => "color".to_string(),
+        FieldType::Table => "table".to_string(),
         FieldType::Enum { values } => format!("enum[{}]", values.join(", ")),
         FieldType::Array { element } => format!("array<{}>", format_field_type(element)),
     }

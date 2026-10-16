@@ -284,8 +284,8 @@ fn edit_field(
             None // Transform fields are handled by the top-level Transform section
         }
 
-        FieldType::Array { .. } => {
-            // Read-only for arrays
+        FieldType::Array { .. } | FieldType::Table => {
+            // Read-only for arrays and free-form tables
             ui.horizontal(|ui| {
                 ui.label(format!("{}:", name));
                 ui.monospace(format_toml_leaf(value));
