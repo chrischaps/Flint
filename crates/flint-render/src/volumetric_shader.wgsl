@@ -183,7 +183,8 @@ fn fs_volumetric(in: VsOut) -> @location(0) vec4<f32> {
     // Sample depth
     let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
 
-    let is_sky = depth >= 0.9999;
+    // Sky never writes depth, so only the clear value (1.0) is sky.
+    let is_sky = depth >= 1.0;
     var march_dist: f32;
     var ray_norm: vec3<f32>;
 

@@ -432,15 +432,6 @@ impl SceneRenderer {
                     camera_near: self.ocean_camera_near_far.0,
                     camera_far: self.ocean_camera_near_far.1,
                     grab_enabled: u32::from(self.ocean_grab_this_frame),
-                    fog_color: {
-                        let c = self.postprocess_config.fog_color;
-                        let strength = if self.postprocess_config.fog_enabled {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                        [c[0], c[1], c[2], strength]
-                    },
                     sky_zenith: self.sky_params.zenith_color,
                     sky_horizon: self.sky_params.horizon_color,
                     sky_haze: self.sky_params.haze_color,

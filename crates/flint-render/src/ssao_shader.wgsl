@@ -65,8 +65,8 @@ fn fs_ssao(in: VsOut) -> @location(0) f32 {
 
     let depth = textureSample(depth_texture, depth_sampler, uv).r;
 
-    // Skip sky pixels (depth at or near 1.0)
-    if (depth >= 0.9999) {
+    // Skip sky pixels: only the clear value, 1.0 (sky never writes depth)
+    if (depth >= 1.0) {
         return 1.0;
     }
 

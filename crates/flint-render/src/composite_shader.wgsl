@@ -136,14 +136,24 @@ fn linear_depth(depth: f32) -> f32 {
     return params.near * params.far / (params.far - depth * (params.far - params.near));
 }
 
+// Sky test shared by every depth-reading path below. The sky and skybox
+// never write depth, and every pass clears it to exactly 1.0, so a pixel is
+// sky iff its depth is 1.0. Anything drawn inside the far plane is < 1.0
+// (Depth32Float keeps ~6e-8 of precision there), so geometry is fogged,
+// shaded and focused at any distance; a "near 1.0" cut would leave distant
+// ground unfogged (ADR 0078).
+fn is_sky_depth(depth: f32) -> bool {
+    return depth >= 1.0;
+}
+
 // Circle-of-confusion at a UV: 0 = in focus, 1 = fully defocused.
-// Sky (depth at/near the far plane) is treated as at the far plane so it
+// Sky (depth at the far plane) is treated as at the far plane so it
 // defocuses naturally when the focus plane is near. textureSampleLevel —
 // this is called from non-uniform control flow inside the DoF gather loop.
 fn coc_at(uv: vec2<f32>) -> f32 {
     let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
     var z = params.far;
-    if (depth < 0.9999) {
+    if (!is_sky_depth(depth)) {
         z = linear_depth(depth);
     }
     return clamp(abs(z - params.dof_focus_distance) / params.dof_focus_range, 0.0, 1.0)
@@ -153,8 +163,8 @@ fn coc_at(uv: vec2<f32>) -> f32 {
 // Compute fog factor from depth buffer
 fn compute_fog(uv: vec2<f32>) -> f32 {
     let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
-    // Skip skybox (depth at or near far plane)
-    if (depth >= 0.9999) {
+    // Skip the sky; everything drawn is fogged, however far
+    if (is_sky_depth(depth)) {
         return 0.0;
     }
 
@@ -337,7 +347,7 @@ fn tron_view(mapped: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let depth_c = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
     var out_col = mapped * 0.08;
 
-    if (depth_c >= 0.9999) {
+    if (is_sky_depth(depth_c)) {
         // Sky: keep only the dim ghost.
         return mapped * 0.05;
     }
@@ -406,7 +416,7 @@ fn underwater_view(mapped: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     // ocean grid's far fade, so treat it as a full column of water.
     let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
     var dist = 60.0;
-    if (depth < 0.9999) {
+    if (!is_sky_depth(depth)) {
         dist = length(world_pos_from_depth(uv, depth) - params.camera_pos);
     }
 

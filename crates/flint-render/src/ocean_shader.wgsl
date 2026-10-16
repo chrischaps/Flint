@@ -53,11 +53,8 @@ struct OceanUniforms {
     camera_near: f32,
     camera_far: f32,
     grab_enabled: u32,          // 1 when scene color/depth copies are valid
-    // Self-fog: the composite fog skips depth ≥ 0.9999 (to spare the sky),
-    // which with GL-style depth is all water beyond ~700 m — it would render
-    // as an unfogged dark band at the horizon. The ocean fades itself to the
-    // scene fog color before that threshold instead.
-    fog_color: vec4<f32>,
+    // No self-fog: the composite fogs every pixel that isn't sky, the water
+    // included, with the scene's own density and start (ADR 0078).
     // Analytic sky reflection: a snapshot of the procedural sky's gradient
     // (copied per frame from the `sky` component, so reflections track the
     // time of day for free). Deliberately no sun disc — the cel specular IS
@@ -796,10 +793,6 @@ fn fs_main(in: VertexOutput,
         let glow = ocean.foam_glow.a * agitation * (1.0 + agitation * 2.5);
         color += ocean.foam_glow.rgb * glow;
     }
-
-    // ── Self-fog toward the horizon (see fog_color comment above) ───────
-    let horizon_fade = smoothstep(380.0, 640.0, view_depth);
-    color = mix(color, ocean.fog_color.rgb, horizon_fade * ocean.fog_color.a);
 
     if (ocean.enable_tonemapping == 1u) {
         color = aces_filmic(color);
