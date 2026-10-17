@@ -192,6 +192,10 @@ fn on_interact() {
 
 Sound names match files in the `audio/` directory. All `.ogg`, `.wav`, `.mp3`, and `.flac` files are automatically loaded at startup.
 
+## From Rust: Player Extensions
+
+A game that wraps the player in its own binary reaches the same engine from Rust through `ExtensionCtx::audio` (ADR 0084). It plays sounds with no script in between, chooses each placed sound's falloff, sets the bus volumes, and loads sounds it makes in memory (samples, or encoded bytes) rather than from files under `audio/`. A sound loaded there can be played by scripts and `audio_source`s by its name. See [Player Extensions: Sound](../guides/player-extensions.md#sound).
+
 ## Further Reading
 
 - [Scripting](scripting.md) --- full scripting API including audio functions

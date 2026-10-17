@@ -7,7 +7,7 @@ pub mod extension;
 mod player_app;
 pub mod spline_gen;
 
-pub use extension::{ExtensionCtx, ExtensionGpu, PlayerExtension};
+pub use extension::{ExtensionAudio, ExtensionCtx, ExtensionGpu, PlayerExtension, SoundOptions};
 pub use flint_audio::Bus;
 pub use player_app::fonts::project_font_definitions;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent};

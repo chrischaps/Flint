@@ -83,6 +83,7 @@ Each frame the player ticks the clock, applies any input script, advances a scen
 - `camera`: **last** frame's camera. Scripts and physics may move it later this frame.
 - `gpu`: `Option<ExtensionGpu>`, with the renderer, device and queue. It's `None` until the window and renderer exist, and in headless runs, so check it every frame rather than once.
 - `persist`: the persistent store scripts use, mutable (see [Saved data](#saved-data)).
+- `audio`: play sounds, load sounds made in memory, and set the mixer buses (see [Sound](#sound)).
 
 ### Talking to scripts
 
@@ -110,6 +111,30 @@ ctx.persist.set("last_level", "harbour".into());
 A write in `pre_update` is visible to scripts in that frame's `on_update`, and a script's write is visible to extensions the next frame. Extension writes join the player's own save: one second after a burst of changes, on every scene transition, and on exit. `ctx.persist.request_flush()` saves at the end of this frame instead, as a script's `persist_save()` does.
 
 Every script can read every key, so keep secrets such as session tokens in a file of the game's own. The store is only reachable from `pre_update`. If the game changes a setting in `ui`, keep the change and write it in the next `pre_update`.
+
+### Sound
+
+`ctx.audio` is an `ExtensionAudio`, a handle on the player's audio engine. Sounds are cached by name, in the same cache that scripts' `play_sound` and `audio_source.file` read. A sound an extension loads can be played by a script, and a file the scene preloaded (`audio/<file>`) can be played from Rust.
+
+```rust
+use flint_player::{Bus, SoundOptions};
+
+// Once: a sound made in code (one channel, or two for left and right).
+ctx.audio.load_samples("blip", 44_100, &[&samples])?;
+// Or an encoded one held in memory: WAV, OGG, FLAC or MP3.
+ctx.audio.load_bytes("door", include_bytes!("door.ogg").to_vec())?;
+
+// Any frame:
+ctx.audio.play("blip", &SoundOptions::new().volume(0.5).pitch(1.2))?;
+ctx.audio.play("door", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
+ctx.audio.set_bus_volume(Bus::Music, 0.4);
+```
+
+- **`play`** plays a sound once. Without `at`, it plays flat, from nowhere. With `at`, it pans and fades with distance from the listener: full volume within `distances`' first value and silent past its second (by default 1 and 25, the same as a script's `play_sound_at`). `bus` routes it through `Bus::Sfx` (the default) or `Bus::Music`. An unknown name is an error.
+- **`load_samples`** and **`load_bytes`** replace any sound already cached under the name. A sound that's already playing carries on with the old data. A looping `audio_source` whose sound isn't cached yet stays silent, so load the sound before spawning the entity that plays it.
+- **`set_bus_volume`** scales everything on the bus, including scripts' sounds and `audio_source`s, on top of each sound's own volume. It holds across scene transitions. A game's volume settings belong here rather than in each sound's volume.
+
+Loading needs no audio device. Without one, `play` does nothing and returns `Ok`, so a game doesn't need to check `is_available()` first. Like the rest of `ExtensionCtx`, `audio` is only reachable from `pre_update`. A sound triggered in `ui` (a button's click) is queued and played in the next `pre_update`.
 
 ### Meshes at runtime
 
