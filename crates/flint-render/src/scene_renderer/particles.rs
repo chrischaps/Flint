@@ -188,6 +188,20 @@ impl SceneRenderer {
         self.debug_overlay_draws.clear();
     }
 
+    /// Depth-tested world lines for the frames that follow, until replaced
+    /// (ADR 0083). They're projected with each frame's own camera and drawn
+    /// over the finished image, hidden behind nearer geometry. Widths are in
+    /// logical points; `px_per_point` converts them to the target's pixels.
+    /// Pass an empty `Vec` to clear them.
+    pub fn set_world_lines(
+        &mut self,
+        lines: Vec<flint_core::world_line::WorldLine>,
+        px_per_point: f32,
+    ) {
+        self.world_lines = lines;
+        self.world_line_px_per_point = px_per_point;
+    }
+
     /// Background colour of the main pass (linear RGBA). Editors use this
     /// to review alpha-blended effects against light and dark backdrops.
     pub fn set_clear_color(&mut self, rgba: [f32; 4]) {

@@ -335,6 +335,12 @@ impl ScriptEngine {
         c.take_draw_items()
     }
 
+    /// Drain the depth-tested world lines scripts queued this frame
+    pub fn drain_world_lines(&self) -> Vec<flint_core::world_line::WorldLine> {
+        let mut c = crate::lock_or_recover(&self.ctx);
+        std::mem::take(&mut c.world_lines)
+    }
+
     /// Route game events to appropriate script callbacks
     pub fn process_events(&mut self, events: &[GameEvent], world: &mut FlintWorld) {
         if events.is_empty() {

@@ -268,6 +268,12 @@ impl ScriptSystem {
         self.engine.drain_draw_commands()
     }
 
+    /// Drain the depth-tested world lines (`draw_world_line`, ADR 0083)
+    /// scripts queued this frame, for `SceneRenderer::set_world_lines`
+    pub fn drain_world_lines(&mut self) -> Vec<flint_core::world_line::WorldLine> {
+        self.engine.drain_world_lines()
+    }
+
     /// Generate draw commands from the data-driven UI system (unclipped)
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
