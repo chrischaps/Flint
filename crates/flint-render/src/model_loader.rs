@@ -270,6 +270,7 @@ fn expand_nodes_animated(
                         &mut mesh.material.base_color_texture,
                         &mut mesh.material.normal_texture,
                         &mut mesh.material.metallic_roughness_texture,
+                        &mut mesh.material.emissive_texture,
                     ] {
                         if let Some(t) = tex.take() {
                             *tex = Some(format!("{}::{}", asset_name, t));
