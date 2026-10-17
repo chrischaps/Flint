@@ -228,3 +228,85 @@ fn attach_mesh_names_a_runtime_model_and_keeps_other_fields() {
     assert_eq!(model.get("note").unwrap().as_str(), Some("kept"));
     assert!(flint_render::model_loader::is_runtime_model(model));
 }
+
+/// Counts its frames into the shared store as `visits`, and records what
+/// the scripts last left under `from_script`.
+struct Keeper {
+    seen: Log,
+}
+
+impl PlayerExtension for Keeper {
+    fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+        let visits = ctx
+            .persist
+            .get("visits")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(0);
+        ctx.persist.set("visits", (visits + 1).into());
+        let from_script = ctx
+            .persist
+            .get("from_script")
+            .and_then(|v| v.as_str())
+            .unwrap_or("nothing");
+        self.seen.lock().unwrap().push(from_script.into());
+    }
+}
+
+#[test]
+fn extensions_and_scripts_share_the_persistent_store() {
+    let mut app = headless_app();
+    let seen = Log::default();
+    app.add_extension(Box::new(Keeper { seen: seen.clone() }));
+    let log = attach_recording_script(
+        &mut app,
+        "persist",
+        r#"
+fn on_update() {
+    let visits = persist_get("visits");
+    record(`visits ${visits}`);
+    persist_set("from_script", `after ${visits}`);
+}
+"#,
+    );
+
+    app.tick();
+    app.tick();
+
+    // The script reads the extension's write in the same frame, and the
+    // extension reads the script's in the next.
+    assert_eq!(*log.lock().unwrap(), ["visits 1", "visits 2"]);
+    assert_eq!(*seen.lock().unwrap(), ["nothing", "after 1"]);
+}
+
+/// Sets `greeting` once, in its first `pre_update`.
+struct Greeter {
+    done: bool,
+}
+
+impl PlayerExtension for Greeter {
+    fn pre_update(&mut self, ctx: &mut ExtensionCtx) {
+        if !std::mem::replace(&mut self.done, true) {
+            ctx.persist.set("greeting", "hello".into());
+        }
+    }
+}
+
+#[test]
+fn an_extension_write_starts_the_save_debounce() {
+    let mut app = headless_app();
+    app.add_extension(Box::new(Greeter { done: false }));
+    assert!(!app.persist_debounce.is_pending());
+
+    app.tick();
+
+    // Dirty, and waiting out the debounce: no script wrote anything, so
+    // the extension's write alone is what the next save will carry.
+    assert!(app.persistent_store.is_dirty());
+    assert!(app.persist_debounce.is_pending());
+    assert_eq!(
+        app.persistent_store
+            .get("greeting")
+            .and_then(|v| v.as_str()),
+        Some("hello")
+    );
+}

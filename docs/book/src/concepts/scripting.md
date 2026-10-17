@@ -571,6 +571,10 @@ write immediately --- call it after a settings screen commits, so a crash a
 moment later loses nothing. The `save/` directory is created on demand; add it
 to the game's `.gitignore`. Loads and saves log at `info`, failures at `warn`.
 
+A game's Rust code shares the same store: a player extension reaches it as
+`ExtensionCtx::persist` (see [Player Extensions](../guides/player-extensions.md#saved-data)),
+and its writes are saved the same way.
+
 ### Data Files API
 
 Read-only game data tables (trick dictionaries, item stats, tuning) kept as

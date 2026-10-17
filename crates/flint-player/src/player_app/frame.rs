@@ -816,6 +816,7 @@ impl PlayerApp {
                 input: &self.input,
                 camera: &self.camera,
                 gpu,
+                persist: &mut self.persistent_store,
                 fired_events: &mut fired_events,
             };
             ext.pre_update(&mut ctx);
