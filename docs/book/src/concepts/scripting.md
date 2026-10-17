@@ -100,6 +100,7 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `action_value(action)` | `f64` | Analog value for Axis1d actions (0.0 if not bound) |
 | `mouse_delta_x()` | `f64` | Horizontal mouse movement this frame |
 | `mouse_delta_y()` | `f64` | Vertical mouse movement this frame |
+| `mouse_wheel_x()` / `mouse_wheel_y()` | `f64` | Wheel lines (notches) this frame; up and right are positive. A touchpad's scroll arrives as fractions, 50 px to a line. Zero while the cursor is over egui |
 | `mouse_x()` / `mouse_y()` | `f64` | Cursor position in logical points (the `screen_width()` / `draw_*` space) |
 | `is_mouse_pressed(button)` | `bool` | Mouse button held: `0` left, `1` right, `2` middle |
 | `is_mouse_just_pressed(button)` | `bool` | Mouse button went down this frame |

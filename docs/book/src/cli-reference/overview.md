@@ -85,8 +85,21 @@ flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas  
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
 | `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
 | `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time |
-| `--input-script <file>` | Play timed keys, axes and gamepad buttons (format in `player_app/input_script.rs`). Scripted keys reach the debug keys too, so `2.0 tap F2` opens the stats overlay |
+| `--input-script <file>` | Play timed keys, axes, gamepad buttons and the wheel, one event per line (below). Scripted keys reach the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
+
+An input script plays its events at set game times. `#` starts a comment:
+
+```text
+0.0   down    KeyW               # hold a key (names as in input configs)
+2.5   up      KeyW
+3.0   tap     KeyF 0.4           # down now, up 0.4 s later (default 0.06)
+3.0   axis    LeftStickX -0.35   # stick / trigger value on the script pad
+4.0   press   South              # gamepad button down
+4.2   release South
+5.0   wheel   1                  # one wheel line up this frame
+5.5   wheel   -0.5 2             # half a line down, two lines right
+```
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not
 wall-clock seconds since launch, so a capture lands on the same gameplay

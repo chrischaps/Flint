@@ -1,5 +1,6 @@
 //! Timed input script (`--input-script <file>`): key presses, gamepad
-//! buttons and stick values played into `InputState` at set game times.
+//! buttons, stick values and the mouse wheel played into `InputState` at
+//! set game times.
 //!
 //! With `--frame-step` the run is deterministic, so a scripted lap or trick
 //! line plays the same way every time: the capture path for showcase video
@@ -14,6 +15,8 @@
 //! 3.0   axis   LeftStickX -0.35   # stick / trigger value on the script pad
 //! 4.0   press  South              # gamepad button down
 //! 4.2   release South
+//! 5.0   wheel  1                  # wheel lines this frame: up is +, in
+//! 5.5   wheel  -0.5 2             # a line is a notch; then an x amount
 //! ```
 
 use flint_runtime::{parse_key_code, InputState};
@@ -30,6 +33,7 @@ enum Action {
     Axis(String, f32),
     ButtonDown(String),
     ButtonUp(String),
+    Wheel(f32, f32),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -81,6 +85,15 @@ impl InputScript {
                 }
                 "press" => events.push((t, Action::ButtonDown(f[2].to_string()))),
                 "release" => events.push((t, Action::ButtonUp(f[2].to_string()))),
+                "wheel" => {
+                    let lines = |s: &str| s.parse::<f32>().map_err(|_| bad("bad wheel lines"));
+                    let dy = lines(f[2])?;
+                    let dx = match f.get(3) {
+                        Some(x) => lines(x)?,
+                        None => 0.0,
+                    };
+                    events.push((t, Action::Wheel(dx, dy)));
+                }
                 _ => return Err(bad("unknown verb")),
             }
         }
@@ -122,6 +135,7 @@ impl InputScript {
                     }
                     input.process_gamepad_button_up(SCRIPT_PAD, b.clone());
                 }
+                Action::Wheel(dx, dy) => input.process_mouse_wheel(*dx, *dy),
             }
             self.next += 1;
         }
@@ -146,6 +160,20 @@ mod tests {
     #[test]
     fn rejects_unknown_key() {
         assert!(InputScript::parse("0 down KeyWW").is_err());
+    }
+
+    #[test]
+    fn wheel_lasts_one_frame() {
+        let mut s = InputScript::parse("1.0 wheel 2\n1.0 wheel -0.5 1.5\n").unwrap();
+        let mut input = InputState::new();
+        s.apply(0.5, &mut input);
+        assert_eq!(input.mouse_wheel_delta(), (0.0, 0.0));
+        s.apply(1.0, &mut input);
+        assert_eq!(input.mouse_wheel_delta(), (1.5, 1.5));
+        input.end_frame();
+        s.apply(1.1, &mut input);
+        assert_eq!(input.mouse_wheel_delta(), (0.0, 0.0));
+        assert!(InputScript::parse("0 wheel up").is_err());
     }
 
     #[test]

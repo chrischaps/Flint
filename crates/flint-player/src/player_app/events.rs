@@ -17,7 +17,7 @@ use flint_runtime::{Binding, RebindMode};
 use gilrs::EventType;
 use std::path::{Path, PathBuf};
 use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 #[cfg(target_os = "android")]
 use winit::keyboard::NativeKeyCode;
@@ -67,6 +67,22 @@ impl AndroidGamepadTracker {
 
     fn slot_for(&self, device_id: winit::event::DeviceId) -> Option<u32> {
         self.device_slots.get(&device_id).copied()
+    }
+}
+
+/// Pixels of a touchpad's smooth scroll that make one wheel line, the
+/// figure egui-winit uses too.
+const PIXELS_PER_LINE: f32 = 50.0;
+
+/// A wheel event in lines (notches): up and right are positive, as winit
+/// reports them. A touchpad's pixel scroll is scaled to lines, so wheel
+/// bindings and `mouse_wheel_*()` feel alike on either.
+pub(super) fn wheel_lines(delta: MouseScrollDelta) -> (f32, f32) {
+    match delta {
+        MouseScrollDelta::LineDelta(x, y) => (x, y),
+        MouseScrollDelta::PixelDelta(p) => {
+            (p.x as f32 / PIXELS_PER_LINE, p.y as f32 / PIXELS_PER_LINE)
+        }
     }
 }
 
@@ -382,6 +398,11 @@ impl ApplicationHandler for PlayerApp {
 
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.process_mouse_move(position.x, position.y);
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = wheel_lines(delta);
+                self.input.process_mouse_wheel(dx, dy);
             }
 
             WindowEvent::Touch(touch) => {
@@ -732,5 +753,20 @@ impl PlayerApp {
                     self.input.process_touch_cancel(id);
                 }
             }
+    }
+}
+
+#[cfg(test)]
+mod wheel_tests {
+    use super::wheel_lines;
+    use winit::dpi::PhysicalPosition;
+    use winit::event::MouseScrollDelta;
+
+    #[test]
+    fn a_notch_is_a_line_and_fifty_pixels_are_another() {
+        assert_eq!(wheel_lines(MouseScrollDelta::LineDelta(0.0, 1.0)), (0.0, 1.0));
+        assert_eq!(wheel_lines(MouseScrollDelta::LineDelta(-2.0, 0.0)), (-2.0, 0.0));
+        let px = MouseScrollDelta::PixelDelta(PhysicalPosition::new(25.0, -100.0));
+        assert_eq!(wheel_lines(px), (0.5, -2.0));
     }
 }
