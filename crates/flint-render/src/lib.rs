@@ -32,6 +32,7 @@ pub mod skybox_pipeline;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
 mod texture_cache;
+pub mod world_line_pipeline;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;

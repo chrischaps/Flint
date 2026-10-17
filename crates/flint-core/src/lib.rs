@@ -19,6 +19,7 @@ pub mod quat;
 pub mod spline;
 pub mod toml_util;
 mod types;
+pub mod world_line;
 
 pub use error::{FlintError, Result};
 pub use hash::ContentHash;

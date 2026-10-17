@@ -462,6 +462,9 @@ pub struct ScriptCallContext {
     /// Accumulated 2D draw commands for the current frame, each stamped
     /// with the clip rect active when it was issued
     pub draw_commands: Vec<DrawItem>,
+    /// Depth-tested world lines queued this frame (`draw_world_line`,
+    /// ADR 0083). The host hands them to the renderer.
+    pub world_lines: Vec<flint_core::world_line::WorldLine>,
     /// `push_clip` / `pop_clip` stack; each entry is already intersected
     /// with its parent. Cleared when the frame's draw commands are drained.
     pub clip_stack: Vec<[f32; 4]>,
@@ -569,6 +572,7 @@ impl ScriptCallContext {
             current_entity: EntityId::from_raw(0),
             commands: Vec::new(),
             draw_commands: Vec::new(),
+            world_lines: Vec::new(),
             clip_stack: Vec::new(),
             mouse_pos_logical: (0.0, 0.0),
             input: InputSnapshot::default(),

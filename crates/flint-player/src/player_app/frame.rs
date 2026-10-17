@@ -1115,6 +1115,12 @@ impl PlayerApp {
             .generate_ui_draw_commands(screen_rect.width(), screen_rect.height());
         commands.extend(ui_commands);
         self.draw_commands = commands;
+
+        // Depth-tested world lines (ADR 0083) render with this frame's scene.
+        let world_lines = self.script.drain_world_lines();
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.set_world_lines(world_lines, self.egui_ctx.pixels_per_point());
+        }
     }
 
     fn tick_av_systems(

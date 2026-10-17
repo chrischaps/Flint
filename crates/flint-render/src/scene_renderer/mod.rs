@@ -338,6 +338,12 @@ pub struct SceneRenderer {
     particle_upload_scratch: Vec<flint_particles::ParticleInstance>,
     /// Editor/gizmo line overlay, drawn on top regardless of debug mode.
     debug_overlay_draws: Vec<DrawCall>,
+    /// Depth-tested script lines for the next frame (ADR 0083), and the
+    /// logical-point scale their widths are given in.
+    world_lines: Vec<flint_core::world_line::WorldLine>,
+    world_line_px_per_point: f32,
+    /// Built on the first frame that has lines.
+    world_line_pipeline: Option<crate::world_line_pipeline::WorldLinePipeline>,
     /// Main-pass clear colour (linear RGBA).
     clear_color: [f32; 4],
     // 2D sprites
@@ -564,6 +570,9 @@ impl SceneRenderer {
             particle_texture_bind_groups: HashMap::new(),
             particle_upload_scratch: Vec::new(),
             debug_overlay_draws: Vec::new(),
+            world_lines: Vec::new(),
+            world_line_px_per_point: 1.0,
+            world_line_pipeline: None,
             clear_color: DEFAULT_CLEAR_COLOR,
             sprite2d_pipeline: Some(sprite2d_pipeline),
             sprite2d_batches: Vec::new(),
@@ -1857,6 +1866,9 @@ impl SceneRenderer {
             particle_texture_bind_groups: HashMap::new(),
             particle_upload_scratch: Vec::new(),
             debug_overlay_draws: Vec::new(),
+            world_lines: Vec::new(),
+            world_line_px_per_point: 1.0,
+            world_line_pipeline: None,
             clear_color: DEFAULT_CLEAR_COLOR,
             sprite2d_pipeline: Some(sprite2d_pipeline),
             sprite2d_batches: Vec::new(),
@@ -3955,6 +3967,54 @@ impl SceneRenderer {
         if has_postprocess {
             self.render_postprocess(device, queue, depth_view, target_view, camera);
         }
+
+        // World lines (ADR 0083) go over the finished image, tested against
+        // the frame's single-sample depth. Without the HDR chain an MSAA depth
+        // is never resolved, so they're skipped there.
+        if !self.world_lines.is_empty() && (has_postprocess || self.sample_count == 1) {
+            self.render_world_lines(device, queue, depth_view, target_view, camera);
+        }
+    }
+
+    fn render_world_lines(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        depth_view: &wgpu::TextureView,
+        target_view: &wgpu::TextureView,
+        camera: &Camera,
+    ) {
+        let Some(viewport) = self
+            .postprocess_resources
+            .as_ref()
+            .map(|r| [r.width as f32, r.height as f32])
+        else {
+            return;
+        };
+        let format = self.surface_format;
+        let pipeline = self.world_line_pipeline.get_or_insert_with(|| {
+            crate::world_line_pipeline::WorldLinePipeline::new(device, format)
+        });
+        let view = crate::world_line_pipeline::LineView {
+            view_proj: camera.view_projection_matrix(),
+            eye: camera.position_array(),
+            viewport,
+            px_per_point: self.world_line_px_per_point,
+            linear_output: format.is_srgb(),
+        };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("World Line Encoder"),
+        });
+        pipeline.draw(
+            device,
+            queue,
+            &mut encoder,
+            target_view,
+            depth_view,
+            &self.world_lines,
+            &view,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
     }
 }
 

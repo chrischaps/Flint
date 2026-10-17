@@ -652,6 +652,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `draw_line_ex(x1, y1, x2, y2, r, g, b, a, thickness, layer)` | Line segment with explicit layer |
 | `draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | World-space line projected with the frame's camera (near-plane clipped) |
 | `draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)` | Same, with explicit layer |
+| `draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | World-space line drawn in the 3D frame with a depth test: geometry in front of it hides it (see below) |
 | `draw_ring(cx, cy, r_inner, r_outer, start_deg, end_deg, r, g, b, a, layer)` | Annular sector (`r_inner` = 0 gives a pie slice); see angle convention below |
 | `draw_arc(cx, cy, radius, start_deg, end_deg, r, g, b, a, thickness, layer)` | Stroked arc: a ring centred on `radius`, `thickness` wide |
 | `draw_polygon(points, r, g, b, a, layer)` | Convex filled polygon; `points` is `[[x, y], ...]` or a flat `[x0, y0, x1, y1, ...]` list (ints or floats) |
@@ -670,6 +671,26 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
 | `world_to_screen(x, y, z)` | `Map` | A world point in logical points as `#{x, y, depth, visible}`; `visible` is false behind the camera |
 | `screen_to_ground(x, y, plane_y)` | `[x, z]` or `()` | The point on the plane `y = plane_y` under a screen point, or `()` where the view doesn't reach it |
+
+#### Lines in the world
+
+`draw_line_3d` projects onto the HUD, so it shows in front of everything, including the model a ring is drawn round. `draw_world_line` draws in the 3D frame instead. It goes over the finished image, before the HUD, and it's hidden wherever the scene's depth is nearer. A ring on the ground round a statue therefore passes behind the statue's far side. The arguments and units are `draw_line_3d`'s: world coordinates, a display-space colour, and a width in logical points. The edges are anti-aliased. World lines don't write depth, so they never hide each other. Fog, bloom and tonemapping don't touch them. They're projected with the camera the frame renders with, from `on_update` or `on_draw_ui` alike. There is no layer, and there is no clip rect.
+
+Each end is pulled toward the camera by 0.2% of its distance, so a line laid exactly on a surface doesn't flicker against it. A line meant to lie on a raised surface, such as a road or a pavement, should still be drawn at or just above that surface. Draw a ring as a polyline:
+
+```rust
+fn ring(cx, cz, y, r, steps) {
+    for i in 0..steps {
+        let a0 = i.to_float() / steps.to_float() * 2.0 * PI();
+        let a1 = (i + 1).to_float() / steps.to_float() * 2.0 * PI();
+        draw_world_line(cx + r * a0.cos(), y, cz + r * a0.sin(),
+                        cx + r * a1.cos(), y, cz + r * a1.sin(),
+                        1.0, 0.8, 0.2, 0.7, 2.0);
+    }
+}
+```
+
+Rust hosts can set the same lines on the renderer directly with `SceneRenderer::set_world_lines(lines, pixels_per_point)`.
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
 
