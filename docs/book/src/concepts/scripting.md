@@ -762,6 +762,21 @@ for i in 0..items.len() {
 pop_clip();
 ```
 
+#### Over the UI
+
+| Function | Description |
+|----------|-------------|
+| `push_over_ui()` | Draw every following call above the game's egui panels and windows |
+| `pop_over_ui()` | Go back to drawing under them |
+
+The script HUD normally draws under a game's own egui ([Player Extensions](../guides/player-extensions.md)), so a panel covers any HUD drawing behind it. Calls issued between `push_over_ui()` and `pop_over_ui()` go on a layer of their own, painted after every egui panel and window but before popups, debug panels and tooltips. Among themselves they still sort by `layer`, and each can be clipped. Pushes nest, unbalanced pops are ignored, and the depth is reset every frame. Use it for short-lived effects that have to reach the UI, such as an item flying into an inventory button, and keep everything else under it, so the HUD never covers what a panel says:
+
+```rhai
+push_over_ui();
+draw_circle(pip_x, pip_y, 5.0, 0.79, 0.64, 0.15, 1.0);  // lands on the button
+pop_over_ui();
+```
+
 #### Shared Modules (`scripts/lib`)
 
 Scripts can `import` shared Rhai modules from `<project>/scripts/lib/` (the `lib/` folder inside whichever `scripts/` directory the scene resolved). `import "ui_kit" as ui;` loads `scripts/lib/ui_kit.rhai`; nested paths work too (`import "fx/easing" as ease;`). Every top-level `fn` in a module is exported automatically (mark helpers `private` to hide them); top-level variables must be `export`ed:

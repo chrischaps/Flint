@@ -146,7 +146,10 @@ Loading needs no audio device. Without one, `play` does nothing and returns `Ok`
 
 1. script UI (`on_draw_ui`)
 2. each extension's `ui()`
-3. the [debug panels](debug-panels.md)
+3. script UI drawn between `push_over_ui()` and `pop_over_ui()` ([Scripting: Over the UI](../concepts/scripting.md#over-the-ui))
+4. the [debug panels](debug-panels.md)
+
+Egui popups and tooltips draw over the first three.
 
 Use `egui::Window`, `egui::Area`, or side and top panels. Don't use a `CentralPanel`: it covers the whole window and takes every click away from the game.
 

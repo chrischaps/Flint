@@ -18,6 +18,18 @@ fn pos2(p: &[f32; 2]) -> egui::Pos2 {
     egui::Pos2::new(p[0], p[1])
 }
 
+/// The egui layer that `push_over_ui` items paint into (ADR 0085).
+///
+/// egui paints each `Order` back to front, and within one it paints the
+/// areas (panels' windows, `egui::Window`s) in their stacking order first,
+/// then any layer that isn't an area. This layer is never an area, and it's
+/// the only non-area layer on `Middle`, so it lands above every game panel
+/// (`Background`) and window (`Middle`) but below popups, debug panels
+/// (`Foreground`) and tooltips.
+pub(super) fn over_ui_layer() -> egui::LayerId {
+    egui::LayerId::new(egui::Order::Middle, egui::Id::new("flint_script_over_ui"))
+}
+
 /// Render script-issued 2D draw commands via egui layer painter.
 /// Uses `ctx.layer_painter()` directly instead of `egui::Area` to avoid
 /// zero-size clipping when only painter calls are used (no widgets).
@@ -41,14 +53,21 @@ pub(super) fn render_draw_commands(
     // in one layer draw in insertion order, so debug panels land on top of
     // script UI (title card, HUD). Distinct layers within the same Order
     // composite in hash-map order — not deterministic — so don't split this
-    // into its own layer.
+    // into its own layer. Items pushed over the UI go to `over_ui_layer`
+    // instead, in the same layer order among themselves.
     let base_painter = ctx.layer_painter(egui::LayerId::background());
+    let over_painter = ctx.layer_painter(over_ui_layer());
     let screen = ctx.screen_rect();
 
     for item in &sorted {
+        let layer_painter = if item.over_ui {
+            &over_painter
+        } else {
+            &base_painter
+        };
         // A clipped item paints through a painter whose clip rect is the
         // stamped rect intersected with the screen; everything else shares
-        // the base painter. Clipping is per item, so it composes with the
+        // its layer's painter. Clipping is per item, so it composes with the
         // layer sort.
         let clipped;
         let painter = match item.clip {
@@ -58,10 +77,10 @@ pub(super) fn render_draw_commands(
                     egui::Vec2::new(w.max(0.0), h.max(0.0)),
                 )
                 .intersect(screen);
-                clipped = base_painter.with_clip_rect(rect);
+                clipped = layer_painter.with_clip_rect(rect);
                 &clipped
             }
-            None => &base_painter,
+            None => layer_painter,
         };
         let cmd = &item.cmd;
         match cmd {
@@ -330,5 +349,74 @@ pub(super) fn render_draw_commands(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flint_script::context::DrawCommand;
+
+    const MARK: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
+
+    fn dot(over_ui: bool) -> DrawItem {
+        DrawItem {
+            cmd: DrawCommand::CircleFilled {
+                x: 100.0,
+                y: 20.0,
+                radius: 6.0,
+                color: MARK,
+                layer: 0,
+            },
+            clip: None,
+            over_ui,
+        }
+    }
+
+    /// Runs one egui frame the way `render_hud` does (script UI first, then
+    /// a game panel and window) and returns where the script's dot falls in
+    /// the painted shapes, and how many shapes there are.
+    fn dot_index(over_ui: bool) -> (usize, usize) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(640.0, 360.0),
+            )),
+            ..Default::default()
+        };
+        let items = [dot(over_ui)];
+        let out = ctx.run(input, |ctx| {
+            render_draw_commands(
+                ctx,
+                &items,
+                &HashMap::new(),
+                &HashSet::new(),
+                &mut HashSet::new(),
+            );
+            egui::TopBottomPanel::top("header").show(ctx, |ui| ui.label("header"));
+            egui::Window::new("panel")
+                .fixed_pos([60.0, 0.0])
+                .show(ctx, |ui| ui.label("window"));
+        });
+        let mark = to_color32(&MARK);
+        let at = out
+            .shapes
+            .iter()
+            .position(|c| matches!(&c.shape, egui::Shape::Circle(s) if s.fill == mark))
+            .expect("the dot is painted");
+        (at, out.shapes.len())
+    }
+
+    #[test]
+    fn script_ui_draws_under_the_games_egui() {
+        let (at, _) = dot_index(false);
+        assert_eq!(at, 0, "issued first on the background layer");
+    }
+
+    #[test]
+    fn over_ui_items_draw_over_panels_and_windows() {
+        let (at, len) = dot_index(true);
+        assert_eq!(at, len - 1, "painted after the header and the window");
     }
 }

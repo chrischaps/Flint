@@ -3091,6 +3091,25 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // push_over_ui() / pop_over_ui()
+    // Every draw call issued between them draws above the game's egui panels
+    // and windows instead of under them (ADR 0085). Pushes nest, unbalanced
+    // pops are ignored, and the depth resets each frame.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("push_over_ui", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.push_over_ui();
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("pop_over_ui", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.pop_over_ui();
+        });
+    }
+
     // draw_sprite(x, y, w, h, name)
     {
         let ctx = ctx.clone();

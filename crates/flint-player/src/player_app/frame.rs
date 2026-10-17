@@ -1382,7 +1382,9 @@ impl PlayerApp {
             // Layers, back to front: script UI, game egui, debug panels.
             // Script UI first: it shares the background layer with any game
             // panels, so issuing it first puts those panels in front of it
-            // (see render_draw_commands).
+            // (see render_draw_commands). Items a script pushed over the
+            // UI go on their own Middle layer, above the game's panels and
+            // windows and below the debug panels (ADR 0085).
             render_draw_commands(ctx, &draw_commands, ui_textures, ui_fonts, ui_fonts_warned);
 
             // The game's own egui (PlayerExtension::ui). Its panels sit on
