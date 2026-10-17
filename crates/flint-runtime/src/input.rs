@@ -1363,93 +1363,92 @@ fn parse_mouse_button(button: &str) -> Option<u32> {
     }
 }
 
-/// Parse a winit key code name as written in input configs (`KeyW`, `ArrowUp`, `ShiftLeft`).
+/// Declares [`KEY_CODES`] from a list of `KeyCode` variant names, so each
+/// name is written once and can't drift from the variant it names.
+macro_rules! key_codes {
+    ($($name:ident),* $(,)?) => {
+        /// Every winit `KeyCode` variant (winit 0.30) except `Unidentified`,
+        /// paired with its name. The name is the variant's `Debug` output,
+        /// which is what a rebind writes back (`format!("{key:?}")`), so
+        /// configs round-trip.
+        pub const KEY_CODES: &[(&str, KeyCode)] = &[$((stringify!($name), KeyCode::$name)),*];
+    };
+}
+
+#[rustfmt::skip]
+key_codes!(
+    Backquote, Backslash, BracketLeft, BracketRight, Comma, Digit0, Digit1, Digit2, Digit3,
+    Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Equal, IntlBackslash, IntlRo, IntlYen,
+    KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN,
+    KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ, Minus, Period,
+    Quote, Semicolon, Slash, AltLeft, AltRight, Backspace, CapsLock, ContextMenu,
+    ControlLeft, ControlRight, Enter, SuperLeft, SuperRight, ShiftLeft, ShiftRight, Space,
+    Tab, Convert, KanaMode, Lang1, Lang2, Lang3, Lang4, Lang5, NonConvert, Delete, End,
+    Help, Home, Insert, PageDown, PageUp, ArrowDown, ArrowLeft, ArrowRight, ArrowUp,
+    NumLock, Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7,
+    Numpad8, Numpad9, NumpadAdd, NumpadBackspace, NumpadClear, NumpadClearEntry,
+    NumpadComma, NumpadDecimal, NumpadDivide, NumpadEnter, NumpadEqual, NumpadHash,
+    NumpadMemoryAdd, NumpadMemoryClear, NumpadMemoryRecall, NumpadMemoryStore,
+    NumpadMemorySubtract, NumpadMultiply, NumpadParenLeft, NumpadParenRight, NumpadStar,
+    NumpadSubtract, Escape, Fn, FnLock, PrintScreen, ScrollLock, Pause, BrowserBack,
+    BrowserFavorites, BrowserForward, BrowserHome, BrowserRefresh, BrowserSearch,
+    BrowserStop, Eject, LaunchApp1, LaunchApp2, LaunchMail, MediaPlayPause, MediaSelect,
+    MediaStop, MediaTrackNext, MediaTrackPrevious, Power, Sleep, AudioVolumeDown,
+    AudioVolumeMute, AudioVolumeUp, WakeUp, Meta, Hyper, Turbo, Abort, Resume, Suspend,
+    Again, Copy, Cut, Find, Open, Paste, Props, Select, Undo, Hiragana, Katakana, F1, F2,
+    F3, F4, F5, F6, F7, F8, F9, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19, F20, F21,
+    F22, F23, F24, F25, F26, F27, F28, F29, F30, F31, F32, F33, F34, F35,
+);
+
+/// Parse a winit key code name as written in input configs (`KeyW`, `ArrowUp`,
+/// `ShiftLeft`, `PageUp`, `NumpadAdd`). Accepts every name in [`KEY_CODES`],
+/// spelled exactly as the `KeyCode` variant.
 pub fn parse_key_code(code: &str) -> Option<KeyCode> {
-    // KeyA..KeyZ
-    if code.len() == 4 && code.starts_with("Key") {
-        return match code.as_bytes()[3] {
-            b'A' => Some(KeyCode::KeyA),
-            b'B' => Some(KeyCode::KeyB),
-            b'C' => Some(KeyCode::KeyC),
-            b'D' => Some(KeyCode::KeyD),
-            b'E' => Some(KeyCode::KeyE),
-            b'F' => Some(KeyCode::KeyF),
-            b'G' => Some(KeyCode::KeyG),
-            b'H' => Some(KeyCode::KeyH),
-            b'I' => Some(KeyCode::KeyI),
-            b'J' => Some(KeyCode::KeyJ),
-            b'K' => Some(KeyCode::KeyK),
-            b'L' => Some(KeyCode::KeyL),
-            b'M' => Some(KeyCode::KeyM),
-            b'N' => Some(KeyCode::KeyN),
-            b'O' => Some(KeyCode::KeyO),
-            b'P' => Some(KeyCode::KeyP),
-            b'Q' => Some(KeyCode::KeyQ),
-            b'R' => Some(KeyCode::KeyR),
-            b'S' => Some(KeyCode::KeyS),
-            b'T' => Some(KeyCode::KeyT),
-            b'U' => Some(KeyCode::KeyU),
-            b'V' => Some(KeyCode::KeyV),
-            b'W' => Some(KeyCode::KeyW),
-            b'X' => Some(KeyCode::KeyX),
-            b'Y' => Some(KeyCode::KeyY),
-            b'Z' => Some(KeyCode::KeyZ),
-            _ => None,
-        };
-    }
-
-    // Digit0..Digit9
-    if code.len() == 6 && code.starts_with("Digit") {
-        return match code.as_bytes()[5] {
-            b'0' => Some(KeyCode::Digit0),
-            b'1' => Some(KeyCode::Digit1),
-            b'2' => Some(KeyCode::Digit2),
-            b'3' => Some(KeyCode::Digit3),
-            b'4' => Some(KeyCode::Digit4),
-            b'5' => Some(KeyCode::Digit5),
-            b'6' => Some(KeyCode::Digit6),
-            b'7' => Some(KeyCode::Digit7),
-            b'8' => Some(KeyCode::Digit8),
-            b'9' => Some(KeyCode::Digit9),
-            _ => None,
-        };
-    }
-
-    match code {
-        "Space" => Some(KeyCode::Space),
-        "Tab" => Some(KeyCode::Tab),
-        "Enter" => Some(KeyCode::Enter),
-        "Backspace" => Some(KeyCode::Backspace),
-        "Escape" => Some(KeyCode::Escape),
-        "ShiftLeft" => Some(KeyCode::ShiftLeft),
-        "ShiftRight" => Some(KeyCode::ShiftRight),
-        "ControlLeft" => Some(KeyCode::ControlLeft),
-        "ControlRight" => Some(KeyCode::ControlRight),
-        "AltLeft" => Some(KeyCode::AltLeft),
-        "AltRight" => Some(KeyCode::AltRight),
-        "ArrowUp" => Some(KeyCode::ArrowUp),
-        "ArrowDown" => Some(KeyCode::ArrowDown),
-        "ArrowLeft" => Some(KeyCode::ArrowLeft),
-        "ArrowRight" => Some(KeyCode::ArrowRight),
-        "F1" => Some(KeyCode::F1),
-        "F2" => Some(KeyCode::F2),
-        "F3" => Some(KeyCode::F3),
-        "F4" => Some(KeyCode::F4),
-        "F5" => Some(KeyCode::F5),
-        "F6" => Some(KeyCode::F6),
-        "F7" => Some(KeyCode::F7),
-        "F8" => Some(KeyCode::F8),
-        "F9" => Some(KeyCode::F9),
-        "F10" => Some(KeyCode::F10),
-        "F11" => Some(KeyCode::F11),
-        "F12" => Some(KeyCode::F12),
-        _ => None,
-    }
+    // Bindings are parsed every frame, so look names up in a map, not the list.
+    static BY_NAME: std::sync::OnceLock<HashMap<&'static str, KeyCode>> =
+        std::sync::OnceLock::new();
+    BY_NAME
+        .get_or_init(|| KEY_CODES.iter().copied().collect())
+        .get(code)
+        .copied()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_key_code_name_round_trips() {
+        for &(name, key) in KEY_CODES {
+            assert_eq!(parse_key_code(name), Some(key), "{name} doesn't parse");
+            // A rebind writes the name back with Debug; it must parse again.
+            assert_eq!(format!("{key:?}"), name, "{name} isn't its variant's name");
+        }
+        let unique: HashSet<_> = KEY_CODES.iter().map(|&(_, key)| key).collect();
+        assert_eq!(unique.len(), KEY_CODES.len(), "a key is listed twice");
+        for name in [
+            "Home",
+            "PageUp",
+            "Equal",
+            "Minus",
+            "Slash",
+            "NumpadAdd",
+            "F24",
+        ] {
+            assert!(parse_key_code(name).is_some(), "{name}");
+        }
+        for name in [
+            "",
+            "home",
+            "Key",
+            "KeyAA",
+            "Digit10",
+            "Unidentified",
+            "Plus",
+        ] {
+            assert_eq!(parse_key_code(name), None, "{name:?}");
+        }
+    }
 
     #[test]
     fn test_key_transitions() {
