@@ -19,6 +19,14 @@ use std::time::Duration;
 /// within 1 m, silent past 25 m.
 pub const DEFAULT_DISTANCES: (f32, f32) = (1.0, 25.0);
 
+/// How a placed sound fades between its distances when the caller names no
+/// curve. With `r` the listener's fraction of the way from `min` to `max`,
+/// the sound is `-60·r^rolloff` dB: at 2 it holds up most of the way and
+/// drops near `max`; below 1 it falls fast past `min` and tails off slowly,
+/// near an inverse-distance law (0.6 between 32 and 1250 m is within 1.5 dB
+/// of `(32/d)^1.2` out to 300 m).
+pub const DEFAULT_ROLLOFF: f32 = 2.0;
+
 /// Mixer bus a sound routes through. Both buses are children of the main
 /// track, so the master low-pass filter still applies to everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -244,6 +252,23 @@ impl AudioEngine {
         max_distance: f32,
         bus: Bus,
     ) -> Result<SpatialTrackHandle> {
+        self.create_spatial_track_with(
+            position,
+            (min_distance, max_distance),
+            DEFAULT_ROLLOFF,
+            bus,
+        )
+    }
+
+    /// Create a spatial track with its own falloff curve (see
+    /// [`DEFAULT_ROLLOFF`]).
+    pub fn create_spatial_track_with(
+        &mut self,
+        position: Vec3,
+        (min_distance, max_distance): (f32, f32),
+        rolloff: f32,
+        bus: Bus,
+    ) -> Result<SpatialTrackHandle> {
         if self.manager.is_none() {
             return Err(flint_core::FlintError::AudioError("No audio device".into()));
         }
@@ -264,7 +289,7 @@ impl AudioEngine {
                 min_distance,
                 max_distance,
             })
-            .attenuation_function(Some(Easing::OutPowf(2.0)));
+            .attenuation_function(Some(Easing::OutPowf(rolloff.max(0.01) as f64)));
 
         let bus_handle = match bus {
             Bus::Music => &mut self.music_bus,
@@ -374,20 +399,24 @@ impl AudioEngine {
             volume,
             pitch,
             DEFAULT_DISTANCES,
+            DEFAULT_ROLLOFF,
             Bus::Sfx,
         )
     }
 
     /// Play a one-shot at a 3D position with its own falloff, `(min, max)`
     /// metres from the listener: full volume within `min`, silent past
-    /// `max`. Routed through `bus`.
+    /// `max`, along the curve `rolloff` (see [`DEFAULT_ROLLOFF`]). Routed
+    /// through `bus`.
+    #[allow(clippy::too_many_arguments)]
     pub fn play_oneshot_at(
         &mut self,
         sound_name: &str,
         position: Vec3,
         volume: f64,
         pitch: f64,
-        (min_distance, max_distance): (f32, f32),
+        distances: (f32, f32),
+        rolloff: f32,
         bus: Bus,
     ) -> Result<()> {
         if !self.sound_cache.contains_key(sound_name) {
@@ -395,7 +424,7 @@ impl AudioEngine {
                 "Sound not cached: {sound_name}"
             )));
         }
-        let mut track = self.create_spatial_track(position, min_distance, max_distance, bus)?;
+        let mut track = self.create_spatial_track_with(position, distances, rolloff, bus)?;
         let handle = self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
         self.oneshot_tracks.push((track, handle));
         Ok(())
@@ -506,7 +535,7 @@ mod tests {
         let mut engine = AudioEngine::new();
         let at = Vec3::new(0.0, 0.0, 0.0);
         assert!(engine
-            .play_oneshot_at("nope", at, 1.0, 1.0, (2.0, 80.0), Bus::Sfx)
+            .play_oneshot_at("nope", at, 1.0, 1.0, (2.0, 80.0), 0.7, Bus::Sfx)
             .is_err());
         assert!(engine
             .play_non_spatial("nope", 1.0, 1.0, false, Bus::Music)

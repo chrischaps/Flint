@@ -22,12 +22,16 @@ impl PlayerApp {
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
             match cmd {
-                ScriptCommand::PlaySound { name, volume } => {
+                ScriptCommand::PlaySound {
+                    name,
+                    volume,
+                    pitch,
+                } => {
                     if self.audio.engine.is_available() {
                         if let Err(e) = self.audio.engine.play_non_spatial(
                             &name,
                             volume,
-                            1.0,
+                            pitch,
                             false,
                             flint_audio::Bus::Sfx,
                         ) {
@@ -40,14 +44,20 @@ impl PlayerApp {
                     position,
                     volume,
                     pitch,
+                    distances,
+                    rolloff,
                 } => {
                     let pos =
                         FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
-                    if let Err(e) = self
-                        .audio
-                        .engine
-                        .play_at_position(&name, pos, volume, pitch)
-                    {
+                    if let Err(e) = self.audio.engine.play_oneshot_at(
+                        &name,
+                        pos,
+                        volume,
+                        pitch,
+                        distances.unwrap_or(flint_audio::engine::DEFAULT_DISTANCES),
+                        rolloff.unwrap_or(flint_audio::engine::DEFAULT_ROLLOFF),
+                        flint_audio::Bus::Sfx,
+                    ) {
                         tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
                     }
                 }
