@@ -153,7 +153,7 @@ impl PlayerApp {
     }
 
     /// A handle on the camera scripts' `world_to_screen` uses, for native
-    /// functions an extension registers (ADR 0086). Take it before
+    /// functions an extension registers (ADR 0087). Take it before
     /// `add_extension` and move it into the extension, whose
     /// `register_script_api` closures clone it. Called from a script, it
     /// answers with the camera this frame renders with, as

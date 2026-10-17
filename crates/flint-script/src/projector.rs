@@ -1,4 +1,4 @@
-//! Projecting with the frame's camera from native code (ADR 0086).
+//! Projecting with the frame's camera from native code (ADR 0087).
 //!
 //! `world_to_screen` and `screen_to_ground` read the camera the host hands
 //! the script system each frame, which is the one the frame renders with by

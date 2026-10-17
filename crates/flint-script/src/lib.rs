@@ -186,7 +186,7 @@ impl ScriptSystem {
     }
 
     /// A cloneable handle on the camera `world_to_screen` uses, for native
-    /// functions a game registers (ADR 0086). Inside a script call it's
+    /// functions a game registers (ADR 0087). Inside a script call it's
     /// the camera this frame renders with; see [`Projector`].
     pub fn projector(&self) -> Projector {
         Projector::new(self.engine.ctx.clone())
