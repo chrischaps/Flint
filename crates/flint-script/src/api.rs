@@ -2716,7 +2716,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("world_to_screen", move |x: f64, y: f64, z: f64| -> Map {
-            // The same answer `Projector` gives native code (ADR 0086).
+            // The same answer `Projector` gives native code (ADR 0087).
             let view = View::of(&crate::lock_or_recover(&ctx));
             let mut map = Map::new();
             let (sx, sy, depth, visible) =

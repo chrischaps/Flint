@@ -197,7 +197,7 @@ For fonts that don't come from the folder (embedded with `include_bytes!`, or ch
 
 ## Projecting from Native Functions
 
-A native function that places things on the screen needs the camera scripts project with, and `ExtensionCtx::camera` is a frame old by the time `on_draw_ui` runs. `PlayerApp::projector()` returns a `Projector`, a cloneable handle on the scripts' camera (ADR 0086). Take it before `add_extension`, hand it to the extension, and clone it into the closures it registers:
+A native function that places things on the screen needs the camera scripts project with, and `ExtensionCtx::camera` is a frame old by the time `on_draw_ui` runs. `PlayerApp::projector()` returns a `Projector`, a cloneable handle on the scripts' camera (ADR 0087). Take it before `add_extension`, hand it to the extension, and clone it into the closures it registers:
 
 ```rust
 let projector = player.projector();
