@@ -4,6 +4,7 @@
 //! They access the world through the shared ScriptCallContext.
 
 use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
+use crate::projector::{clip_to_screen, project_clip, View};
 use flint_core::components as comp;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::EntityId;
@@ -2675,20 +2676,20 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("world_to_screen", move |x: f64, y: f64, z: f64| -> Map {
-            let c = crate::lock_or_recover(&ctx);
-            let clip = project_clip(&c.camera_view_proj, [x as f32, y as f32, z as f32]);
+            // The same answer `Projector` gives native code (ADR 0086).
+            let view = View::of(&crate::lock_or_recover(&ctx));
             let mut map = Map::new();
-            let visible = clip[3] > 1e-4;
-            if visible {
-                let (sx, sy) = clip_to_screen(clip, c.screen_width, c.screen_height);
-                map.insert("x".into(), Dynamic::from(sx as f64));
-                map.insert("y".into(), Dynamic::from(sy as f64));
-                map.insert("depth".into(), Dynamic::from(clip[3] as f64));
-            } else {
-                map.insert("x".into(), Dynamic::from(0.0_f64));
-                map.insert("y".into(), Dynamic::from(0.0_f64));
-                map.insert("depth".into(), Dynamic::from(clip[3] as f64));
-            }
+            let (sx, sy, depth, visible) =
+                match view.world_to_screen([x as f32, y as f32, z as f32]) {
+                    Some(p) => (p.x, p.y, p.depth, true),
+                    None => {
+                        let clip = project_clip(&view.view_proj, [x as f32, y as f32, z as f32]);
+                        (0.0, 0.0, clip[3], false)
+                    }
+                };
+            map.insert("x".into(), Dynamic::from(sx as f64));
+            map.insert("y".into(), Dynamic::from(sy as f64));
+            map.insert("depth".into(), Dynamic::from(depth as f64));
             map.insert("visible".into(), Dynamic::from(visible));
             map
         });
@@ -5200,19 +5201,3 @@ fn push_line_3d(
     });
 }
 
-/// World point → clip space with a column-major view-projection (m[col][row]).
-fn project_clip(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 4] {
-    let mut out = [0.0f32; 4];
-    for (row, o) in out.iter_mut().enumerate() {
-        *o = m[0][row] * p[0] + m[1][row] * p[1] + m[2][row] * p[2] + m[3][row];
-    }
-    out
-}
-
-/// Clip space → HUD pixels (origin top-left, y down).
-fn clip_to_screen(clip: [f32; 4], w: f32, h: f32) -> (f32, f32) {
-    let inv_w = 1.0 / clip[3];
-    let nx = clip[0] * inv_w;
-    let ny = clip[1] * inv_w;
-    ((nx * 0.5 + 0.5) * w, (1.0 - (ny * 0.5 + 0.5)) * h)
-}

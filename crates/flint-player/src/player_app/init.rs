@@ -152,6 +152,17 @@ impl PlayerApp {
         }
     }
 
+    /// A handle on the camera scripts' `world_to_screen` uses, for native
+    /// functions an extension registers (ADR 0086). Take it before
+    /// `add_extension` and move it into the extension, whose
+    /// `register_script_api` closures clone it. Called from a script, it
+    /// answers with the camera this frame renders with, as
+    /// `world_to_screen` does; from `pre_update`, last frame's, like
+    /// `ExtensionCtx::camera`.
+    pub fn projector(&self) -> crate::Projector {
+        self.script.projector()
+    }
+
     /// Set the schema paths used for scene loading (preserved across transitions).
     pub fn set_schema_paths(&mut self, paths: Vec<String>) {
         self.schema_paths = paths;

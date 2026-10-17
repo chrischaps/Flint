@@ -12,12 +12,14 @@ pub mod api;
 pub mod context;
 pub mod draw2d;
 pub mod engine;
+pub mod projector;
 pub mod sync;
 pub mod ui;
 
 pub use context::StateScope;
 pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
 pub use context::{DrawCommand, DrawItem};
+pub use projector::{Projector, ScreenPoint, View};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
@@ -181,6 +183,13 @@ impl ScriptSystem {
     pub fn set_camera_view_proj(&mut self, view_proj: [[f32; 4]; 4]) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.camera_view_proj = view_proj;
+    }
+
+    /// A cloneable handle on the camera `world_to_screen` uses, for native
+    /// functions a game registers (ADR 0086). Inside a script call it's
+    /// the camera this frame renders with; see [`Projector`].
+    pub fn projector(&self) -> Projector {
+        Projector::new(self.engine.ctx.clone())
     }
 
     /// Drain commands produced by scripts this frame
