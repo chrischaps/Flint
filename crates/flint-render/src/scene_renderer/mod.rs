@@ -1928,6 +1928,9 @@ impl SceneRenderer {
                 if let Some(ref tex) = mesh.material.metallic_roughness_texture {
                     mesh.material.metallic_roughness_texture = Some(format!("{}::{}", name, tex));
                 }
+                if let Some(ref tex) = mesh.material.emissive_texture {
+                    mesh.material.emissive_texture = Some(format!("{}::{}", name, tex));
+                }
             }
         }
     }
@@ -1975,6 +1978,9 @@ impl SceneRenderer {
                 }
                 if let Some(ref tex) = mesh.material.metallic_roughness_texture {
                     mesh.material.metallic_roughness_texture = Some(format!("{}::{}", name, tex));
+                }
+                if let Some(ref tex) = mesh.material.emissive_texture {
+                    mesh.material.emissive_texture = Some(format!("{}::{}", name, tex));
                 }
             }
         }
@@ -2700,6 +2706,7 @@ impl SceneRenderer {
         base_color: (&wgpu::TextureView, &wgpu::Sampler),
         normal: (&wgpu::TextureView, &wgpu::Sampler),
         metallic_roughness: (&wgpu::TextureView, &wgpu::Sampler),
+        emissive: (&wgpu::TextureView, &wgpu::Sampler),
     ) -> &'a CachedDrawBinds {
         let make_material = |device: &wgpu::Device| {
             let (b, bg) = Self::create_material_bind_with_textures(
@@ -2712,6 +2719,8 @@ impl SceneRenderer {
                 normal.1,
                 metallic_roughness.0,
                 metallic_roughness.1,
+                emissive.0,
+                emissive.1,
             );
             (Arc::new(b), Arc::new(bg))
         };
@@ -2898,6 +2907,8 @@ impl SceneRenderer {
             &texture_cache.default_normal.sampler,
             &texture_cache.default_metallic_roughness.view,
             &texture_cache.default_metallic_roughness.sampler,
+            &texture_cache.default_white.view,
+            &texture_cache.default_white.sampler,
         )
     }
 
@@ -2911,6 +2922,8 @@ impl SceneRenderer {
         normal_sampler: &wgpu::Sampler,
         mr_view: &wgpu::TextureView,
         mr_sampler: &wgpu::Sampler,
+        emissive_view: &wgpu::TextureView,
+        emissive_sampler: &wgpu::Sampler,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Uniform Buffer"),
@@ -2948,6 +2961,14 @@ impl SceneRenderer {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::Sampler(mr_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(emissive_sampler),
                 },
             ],
             label: Some("Material Bind Group"),

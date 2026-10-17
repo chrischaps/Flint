@@ -131,6 +131,11 @@ impl SceneRenderer {
                 gpu_mesh.material.metallic_roughness_texture.as_deref(),
                 &tex_cache.default_metallic_roughness,
             );
+            let (em_view, em_sampler, has_em) = Self::resolve_texture(
+                tex_cache,
+                gpu_mesh.material.emissive_texture.as_deref(),
+                &tex_cache.default_white,
+            );
 
             // Material color override (entity, then parent) — same contract as
             // the static model path, so a scene can tint a skinned figure via
@@ -156,6 +161,7 @@ impl SceneRenderer {
                 material_uniforms.use_vertex_color = 1;
             }
             material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             let (transform_buffer, transform_bind_group) =
                 Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
@@ -169,6 +175,8 @@ impl SceneRenderer {
                 nm_sampler,
                 mr_view,
                 mr_sampler,
+                em_view,
+                em_sampler,
             );
 
             let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -310,6 +318,11 @@ impl SceneRenderer {
                 gpu_mesh.material.metallic_roughness_texture.as_deref(),
                 &tex_cache.default_metallic_roughness,
             );
+            let (em_view, em_sampler, has_em) = Self::resolve_texture(
+                tex_cache,
+                gpu_mesh.material.emissive_texture.as_deref(),
+                &tex_cache.default_white,
+            );
 
             // Material colour: a per-material-name override on any ancestor wins
             // (`material_overrides`), then the entity/parent `material.base_color_*`
@@ -335,6 +348,7 @@ impl SceneRenderer {
                 material_uniforms.use_vertex_color = 1;
             }
             material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             // Read opacity and blend_mode from ECS material component
             let ecs_opacity = world
@@ -387,6 +401,12 @@ impl SceneRenderer {
                     .as_deref()
                     .unwrap_or("")
                     .as_bytes(),
+                gpu_mesh
+                    .material
+                    .emissive_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
             ]);
             let binds = Self::cached_binds(
                 &mut self.draw_bind_cache,
@@ -400,6 +420,7 @@ impl SceneRenderer {
                 (bc_view, bc_sampler),
                 (nm_view, nm_sampler),
                 (mr_view, mr_sampler),
+                (em_view, em_sampler),
             );
             let mut draw = Self::draw_from_cache(
                 &gpu_mesh.vertex_buffer,
@@ -1111,6 +1132,10 @@ impl SceneRenderer {
                         (bc_view, bc_sampler),
                         (nm_view, nm_sampler),
                         (mr_view, mr_sampler),
+                        (
+                            &tex_cache.default_white.view,
+                            &tex_cache.default_white.sampler,
+                        ),
                     );
                     let draw = Self::draw_from_cache(
                         &box_vb,
@@ -1152,6 +1177,10 @@ impl SceneRenderer {
                         (
                             &tex_cache.default_metallic_roughness.view,
                             &tex_cache.default_metallic_roughness.sampler,
+                        ),
+                        (
+                            &tex_cache.default_white.view,
+                            &tex_cache.default_white.sampler,
                         ),
                     );
                     let draw = Self::draw_from_cache(
@@ -1214,6 +1243,10 @@ impl SceneRenderer {
                         &tex_cache.default_metallic_roughness.view,
                         &tex_cache.default_metallic_roughness.sampler,
                     ),
+                    (
+                        &tex_cache.default_white.view,
+                        &tex_cache.default_white.sampler,
+                    ),
                 );
                 let draw = Self::draw_from_cache(
                     &box_vb,
@@ -1255,6 +1288,10 @@ impl SceneRenderer {
                 (
                     &tex_cache.default_metallic_roughness.view,
                     &tex_cache.default_metallic_roughness.sampler,
+                ),
+                (
+                    &tex_cache.default_white.view,
+                    &tex_cache.default_white.sampler,
                 ),
             );
             let draw = Self::draw_from_cache(

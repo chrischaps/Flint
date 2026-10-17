@@ -313,6 +313,11 @@ pub struct ImportedMaterial {
     /// `vertex_emission`, so radiance can go past 1 (glTF
     /// `KHR_materials_emissive_strength`). Default 1.
     pub emissive_strength: f32,
+    /// The emissive map (glTF `emissiveTexture`), sRGB. Its rgb multiplies
+    /// `emissive` × `emissive_strength`, so painted-on lights (window grids,
+    /// signage) glow only where painted. A texture with `emissive` left at
+    /// zero gives off nothing, as in glTF. Per-vertex emission ignores it.
+    pub emissive_texture: Option<String>,
     /// Per-vertex emission, for vertex-coloured meshes that mix lit and
     /// glowing faces. The vertex alpha says how much of the face is
     /// surface: 1 (every ordinary vertex colour) is lit as usual, 0 reflects
@@ -339,6 +344,7 @@ impl Default for ImportedMaterial {
             alpha_cutoff: 0.5,
             emissive: [0.0; 3],
             emissive_strength: 1.0,
+            emissive_texture: None,
             vertex_emission: false,
         }
     }

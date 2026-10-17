@@ -71,6 +71,10 @@ pub struct MaterialUniforms {
     /// vertex's alpha says how much of it is surface (see
     /// `ImportedMaterial::vertex_emission`); 0 turns that off.
     pub emissive: [f32; 4],
+    /// 1 when the material has an emissive map (glTF `emissiveTexture`),
+    /// bound at 7 and 8. Its rgb multiplies `emissive.rgb`.
+    pub has_emissive_tex: u32,
+    pub _pad_emissive: [u32; 3],
 }
 
 impl MaterialUniforms {
@@ -91,6 +95,8 @@ impl MaterialUniforms {
             alpha_cutoff: 0.5,
             texture_scale: 1.0,
             emissive: [0.0; 4],
+            has_emissive_tex: 0,
+            _pad_emissive: [0; 3],
         }
     }
 
@@ -111,6 +117,8 @@ impl MaterialUniforms {
             alpha_cutoff: 0.5,
             texture_scale: 1.0,
             emissive: [0.0; 4],
+            has_emissive_tex: 0,
+            _pad_emissive: [0; 3],
         }
     }
 
@@ -405,6 +413,24 @@ impl RenderPipeline {
                     // binding 6: metallic_roughness_sampler
                     wgpu::BindGroupLayoutEntry {
                         binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // binding 7: emissive_texture
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    // binding 8: emissive_sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,

@@ -27,6 +27,12 @@ struct MaterialUniforms {
     // Emission (ADR 0076): rgb = the material's own light, w = per-vertex
     // emission scale (0 = off; vertex alpha is then how much is surface).
     emissive: vec4<f32>,
+    // 1 when `emissive_texture` holds the material's emissive map; its rgb
+    // multiplies `emissive.rgb` (glTF `emissiveTexture`).
+    has_emissive_tex: u32,
+    _pad_e0: u32,
+    _pad_e1: u32,
+    _pad_e2: u32,
 };
 
 @group(0) @binding(0)
@@ -49,6 +55,11 @@ var normal_map_sampler: sampler;
 var metallic_roughness_texture: texture_2d<f32>;
 @group(1) @binding(6)
 var metallic_roughness_sampler: sampler;
+
+@group(1) @binding(7)
+var emissive_texture: texture_2d<f32>;
+@group(1) @binding(8)
+var emissive_sampler: sampler;
 
 struct DirectionalLight {
     direction: vec3<f32>,
@@ -447,6 +458,9 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
     // Emission (ADR 0076). Per-vertex: alpha 1 is lit surface, 0 is pure
     // light giving off its rgb; vertex alpha is no longer opacity.
     var emission = material.emissive.rgb;
+    if (material.has_emissive_tex == 1u) {
+        emission *= textureSample(emissive_texture, emissive_sampler, scaled_uv).rgb;
+    }
     if (material.use_vertex_color == 1u && material.emissive.w > 0.0) {
         let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
         emission += in.color.rgb * glow * material.emissive.w;

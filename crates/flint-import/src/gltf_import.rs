@@ -240,6 +240,10 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             texture_name(info.texture())
         });
 
+        let emissive_texture = material.emissive_texture().map(|info| {
+            texture_name(info.texture())
+        });
+
         let alpha_mode = match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
             gltf::material::AlphaMode::Mask => AlphaMode::Mask,
@@ -260,6 +264,7 @@ pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
             alpha_cutoff,
             emissive: material.emissive_factor(),
             emissive_strength: material.emissive_strength().unwrap_or(1.0),
+            emissive_texture,
             vertex_emission: false,
         });
     }
@@ -709,4 +714,40 @@ fn texture_name(texture: gltf::Texture<'_>) -> String {
         .map(String::from)
         .or_else(|| texture.source().name().map(String::from))
         .unwrap_or_else(|| format!("texture_{}", texture.index()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A material with painted-on lights keeps its emissive map's name, the
+    /// same name the texture is imported under, so the renderer can find it.
+    #[test]
+    fn the_emissive_texture_is_read() {
+        // One 1x1 PNG, used as the emissive map of the only material.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let gltf = format!(
+            r#"{{
+                "asset": {{ "version": "2.0" }},
+                "images": [{{ "uri": "data:image/png;base64,{png}", "name": "windows" }}],
+                "textures": [{{ "source": 0 }}],
+                "materials": [{{
+                    "name": "tower",
+                    "emissiveFactor": [1.0, 0.8, 0.5],
+                    "emissiveTexture": {{ "index": 0 }}
+                }}]
+            }}"#
+        );
+        let path = std::env::temp_dir().join(format!("flint-emissive-{}.gltf", std::process::id()));
+        std::fs::write(&path, gltf).unwrap();
+        let result = import_gltf(&path);
+        let _ = std::fs::remove_file(&path);
+        let result = result.unwrap();
+
+        let material = &result.materials[0];
+        assert_eq!(material.emissive, [1.0, 0.8, 0.5]);
+        assert_eq!(material.emissive_texture.as_deref(), Some("windows"));
+        assert_eq!(result.textures[0].name, "windows");
+        assert_eq!(material.base_color_texture, None);
+    }
 }

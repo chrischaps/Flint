@@ -321,8 +321,13 @@ fn emission_ignores_facing_and_light() {
     // The test's own sun, overhead, so the default scene lights stay out.
     let sun = world.spawn("sun").unwrap();
     let camera = Camera::default();
+    for (name, texel) in [("lamp_green", [0, 255, 0, 255]), ("lamp_black", [0, 0, 0, 255])] {
+        renderer
+            .load_texture_rgba(&gpu.device, &gpu.queue, name, 1, 1, &texel, false)
+            .unwrap();
+    }
 
-    let mut shoot = |vertices: &[Vertex], material: ImportedMaterial, ambient: f32, sun_on: f32| {
+    let mut shoot =|vertices: &[Vertex], material: ImportedMaterial, ambient: f32, sun_on: f32| {
         let (_, indices) = square(20.0, [0.0; 4]);
         let mut light = toml::Table::new();
         light.insert("type".into(), "directional".into());
@@ -365,6 +370,18 @@ fn emission_ignores_facing_and_light() {
         let seen = shoot(vertices, lamp.clone(), ambient, sun_on);
         assert!(close(lit, seen), "{what} changed it: {lit:?} vs {seen:?}");
     }
+
+    // An emissive map multiplies the factor: a grey factor over a green
+    // texel gives off the same green, and a black texel gives off nothing.
+    let painted = |map: &str| ImportedMaterial {
+        emissive: [0.25; 3],
+        emissive_texture: Some(map.into()),
+        ..lamp.clone()
+    };
+    let seen = shoot(&up, painted("lamp_green"), 1.0, 1.0);
+    assert!(close(lit, seen), "a green emissive map: {lit:?} vs {seen:?}");
+    let [r, g, b, _] = shoot(&up, painted("lamp_black"), 0.0, 0.0);
+    assert!(r < 10 && g < 10 && b < 10, "a black emissive map glows: {r} {g} {b}");
 
     // Per vertex: alpha 0 is light, alpha 1 an ordinary lit surface.
     let glowing = ImportedMaterial {

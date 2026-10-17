@@ -172,7 +172,8 @@ A material can give off light of its own (ADR 0076): lamps, lit windows, embers,
 
 - **`ImportedMaterial::emissive`** is the light, as linear RGB. It defaults to zero.
 - **`emissive_strength`** multiplies it, so radiance can go past 1. It defaults to 1.
-- **glTF:** `emissiveFactor` and `KHR_materials_emissive_strength` are read into those two fields. Emissive textures aren't read yet.
+- **`emissive_texture`** is an optional emissive map, sRGB, whose RGB multiplies the light, so painted-on lights (a grid of windows, signage, panel lines) glow only where they're painted. As in glTF, a map does nothing while `emissive` is zero: set the factor to white to take the map's colours as they are.
+- **glTF:** `emissiveFactor`, `emissiveTexture` and `KHR_materials_emissive_strength` are read into those three fields. The map uses the mesh's first UV set, like the other maps.
 
 ```rust
 let lamp = ImportedMaterial {
