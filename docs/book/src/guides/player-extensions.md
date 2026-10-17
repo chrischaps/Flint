@@ -82,6 +82,7 @@ Each frame the player ticks the clock, applies any input script, advances a scen
 - `input`: this frame's input state, before scripts read it.
 - `camera`: **last** frame's camera. Scripts and physics may move it later this frame.
 - `gpu`: `Option<ExtensionGpu>`, with the renderer, device and queue. It's `None` until the window and renderer exist, and in headless runs, so check it every frame rather than once.
+- `persist`: the persistent store scripts use, mutable (see [Saved data](#saved-data)).
 
 ### Talking to scripts
 
@@ -96,6 +97,19 @@ ctx.fire_event("inventory_changed", data);
 A table arrives in scripts as a map, and anything else arrives as `#{ value: data }`. The payload is TOML, which has no null. If you forward JSON from a server, drop `null` fields or leave the keys out.
 
 In the other direction, scripts call the native functions the extension registered.
+
+### Saved data
+
+`ctx.persist` is the same `PersistentStore` that scripts reach with `persist_get` and `persist_set`, the one the player keeps in `save/persist.toml` (see [Scripting: Persistence](../concepts/scripting.md#persistence)). It's loaded before any script's `on_init`, so the first `pre_update` already sees last session's values.
+
+```rust
+let volume = ctx.persist.get("music_volume").and_then(|v| v.as_float()).unwrap_or(0.8);
+ctx.persist.set("last_level", "harbour".into());
+```
+
+A write in `pre_update` is visible to scripts in that frame's `on_update`, and a script's write is visible to extensions the next frame. Extension writes join the player's own save: one second after a burst of changes, on every scene transition, and on exit. `ctx.persist.request_flush()` saves at the end of this frame instead, as a script's `persist_save()` does.
+
+Every script can read every key, so keep secrets such as session tokens in a file of the game's own. The store is only reachable from `pre_update`. If the game changes a setting in `ui`, keep the change and write it in the next `pre_update`.
 
 ### Meshes at runtime
 

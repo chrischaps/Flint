@@ -2756,6 +2756,36 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)
+    // World-space line drawn in the 3D frame with a depth test (ADR 0083):
+    // geometry in front hides it. Projected with the camera the frame
+    // renders with; thickness in logical points, colour as the HUD's.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_world_line",
+            move |x1: f64,
+                  y1: f64,
+                  z1: f64,
+                  x2: f64,
+                  y2: f64,
+                  z2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.world_lines.push(flint_core::world_line::WorldLine {
+                    a: [x1 as f32, y1 as f32, z1 as f32],
+                    b: [x2 as f32, y2 as f32, z2 as f32],
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                });
+            },
+        );
+    }
+
     // draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)
     {
         let ctx = ctx.clone();

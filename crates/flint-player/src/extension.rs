@@ -25,7 +25,7 @@ use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::{Camera, SceneRenderer, Vertex};
-use flint_runtime::{GameClock, GameEvent, InputState};
+use flint_runtime::{GameClock, GameEvent, InputState, PersistentStore};
 use winit::event::WindowEvent;
 
 /// Hooks an embedding game installs with `PlayerApp::add_extension`.
@@ -106,6 +106,13 @@ pub struct ExtensionCtx<'a> {
     /// The renderer and GPU handles, for uploading meshes and textures.
     /// `None` until the window and renderer exist.
     pub gpu: Option<ExtensionGpu<'a>>,
+    /// The store scripts read and write with `persist_get` / `persist_set`
+    /// (`save/persist.toml`; ADR 0080). Writes here are visible to scripts
+    /// this frame, and join the player's save: one second after a burst of
+    /// changes, on scene transitions and on exit. Call
+    /// [`PersistentStore::request_flush`] to save at the end of this frame
+    /// instead. Scripts can read every key, so keep secrets out of it.
+    pub persist: &'a mut PersistentStore,
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
 }

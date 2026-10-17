@@ -699,10 +699,15 @@ impl PlayerApp {
         }
 
         // Scripted input due by now (`--input-script`), before anything reads it,
-        // and as a real key press would, through the debug keys (H9).
+        // and as a real key press would, through the debug keys (H9). The
+        // pointer goes the way a real mouse's does, egui first (ADR 0082).
         if let Some(script) = &mut self.capture.input_script {
-            for key in script.apply(self.clock.total_time, &mut self.input) {
+            let applied = script.apply(self.clock.total_time, &mut self.input);
+            for key in applied.keys {
                 self.handle_debug_key(key);
+            }
+            for event in applied.pointer {
+                self.scripted_pointer_event(event);
             }
         }
 
@@ -816,6 +821,7 @@ impl PlayerApp {
                 input: &self.input,
                 camera: &self.camera,
                 gpu,
+                persist: &mut self.persistent_store,
                 fired_events: &mut fired_events,
             };
             ext.pre_update(&mut ctx);
@@ -1109,6 +1115,12 @@ impl PlayerApp {
             .generate_ui_draw_commands(screen_rect.width(), screen_rect.height());
         commands.extend(ui_commands);
         self.draw_commands = commands;
+
+        // Depth-tested world lines (ADR 0083) render with this frame's scene.
+        let world_lines = self.script.drain_world_lines();
+        if let Some(renderer) = &mut self.scene_renderer {
+            renderer.set_world_lines(world_lines, self.egui_ctx.pixels_per_point());
+        }
     }
 
     fn tick_av_systems(
