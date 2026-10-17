@@ -424,15 +424,23 @@ impl DrawCommand {
 /// A recorded draw command plus the clip rect (`[x, y, w, h]`, logical
 /// points) that was active when it was issued — `None` = unclipped. The
 /// clip is stamped per item so layer sorting stays a plain stable sort.
+/// `over_ui` is stamped the same way: true when the item was issued inside
+/// `push_over_ui` / `pop_over_ui`, and it then draws above the game's egui
+/// (ADR 0085).
 #[derive(Debug, Clone)]
 pub struct DrawItem {
     pub cmd: DrawCommand,
     pub clip: Option<[f32; 4]>,
+    pub over_ui: bool,
 }
 
 impl DrawItem {
     pub fn unclipped(cmd: DrawCommand) -> Self {
-        Self { cmd, clip: None }
+        Self {
+            cmd,
+            clip: None,
+            over_ui: false,
+        }
     }
 
     pub fn layer(&self) -> i32 {
@@ -468,6 +476,9 @@ pub struct ScriptCallContext {
     /// `push_clip` / `pop_clip` stack; each entry is already intersected
     /// with its parent. Cleared when the frame's draw commands are drained.
     pub clip_stack: Vec<[f32; 4]>,
+    /// `push_over_ui` / `pop_over_ui` depth; above zero, draw items are
+    /// stamped `over_ui`. Reset with the clip stack each frame.
+    pub over_ui_depth: u32,
     /// Mouse cursor in logical points (same space as `screen_width`);
     /// written by the host each frame alongside the screen size.
     pub mouse_pos_logical: (f32, f32),
@@ -574,6 +585,7 @@ impl ScriptCallContext {
             draw_commands: Vec::new(),
             world_lines: Vec::new(),
             clip_stack: Vec::new(),
+            over_ui_depth: 0,
             mouse_pos_logical: (0.0, 0.0),
             input: InputSnapshot::default(),
             delta_time: 0.0,
@@ -618,10 +630,12 @@ impl ScriptCallContext {
         }
     }
 
-    /// Record a draw command, stamping the clip rect currently on the stack.
+    /// Record a draw command, stamping the clip rect currently on the stack
+    /// and whether it was issued over the UI.
     pub fn push_draw(&mut self, cmd: DrawCommand) {
         let clip = self.clip_stack.last().copied();
-        self.draw_commands.push(DrawItem { cmd, clip });
+        let over_ui = self.over_ui_depth > 0;
+        self.draw_commands.push(DrawItem { cmd, clip, over_ui });
     }
 
     /// Push a clip rect (intersected with the enclosing one, if any).
@@ -638,9 +652,20 @@ impl ScriptCallContext {
         self.clip_stack.pop();
     }
 
-    /// Take this frame's draw items and reset the clip stack.
+    /// Start drawing over the game's egui. Pushes nest; each needs a pop.
+    pub fn push_over_ui(&mut self) {
+        self.over_ui_depth = self.over_ui_depth.saturating_add(1);
+    }
+
+    /// End the innermost `push_over_ui`; an unbalanced pop is ignored.
+    pub fn pop_over_ui(&mut self) {
+        self.over_ui_depth = self.over_ui_depth.saturating_sub(1);
+    }
+
+    /// Take this frame's draw items and reset the clip and over-UI stacks.
     pub fn take_draw_items(&mut self) -> Vec<DrawItem> {
         self.clip_stack.clear();
+        self.over_ui_depth = 0;
         std::mem::take(&mut self.draw_commands)
     }
 
@@ -799,6 +824,42 @@ mod tests {
         let _ = c.take_draw_items();
         assert!(c.clip_stack.is_empty());
         assert!(c.draw_commands.is_empty());
+    }
+
+    #[test]
+    fn over_ui_stamps_nests_and_resets() {
+        let mut c = ScriptCallContext::new();
+        let dot = || DrawCommand::CircleFilled {
+            x: 0.0,
+            y: 0.0,
+            radius: 1.0,
+            color: [1.0; 4],
+            layer: 0,
+        };
+        c.push_draw(dot());
+        c.push_over_ui();
+        c.push_clip([0.0, 0.0, 10.0, 10.0]);
+        c.push_draw(dot());
+        c.pop_clip();
+        c.push_over_ui();
+        c.pop_over_ui();
+        c.push_draw(dot()); // still inside the outer push
+        c.pop_over_ui();
+        c.pop_over_ui(); // unbalanced: ignored
+        c.push_draw(dot());
+
+        let items = c.take_draw_items();
+        let over: Vec<bool> = items.iter().map(|i| i.over_ui).collect();
+        assert_eq!(over, [false, true, true, false]);
+        // The two stamps are independent.
+        assert_eq!(items[1].clip, Some([0.0, 0.0, 10.0, 10.0]));
+        assert_eq!(items[2].clip, None);
+
+        // A frame that never pops still starts the next one under the UI.
+        c.push_over_ui();
+        let _ = c.take_draw_items();
+        c.push_draw(dot());
+        assert!(!c.take_draw_items()[0].over_ui);
     }
 
     #[test]
