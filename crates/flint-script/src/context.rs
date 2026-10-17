@@ -208,12 +208,18 @@ pub enum ScriptCommand {
     PlaySound {
         name: String,
         volume: f64,
+        pitch: f64,
     },
     PlaySoundAt {
         name: String,
         position: (f64, f64, f64),
         volume: f64,
         pitch: f64,
+        /// `(min, max)` metres from the listener; `None` is the engine's
+        /// default (1 to 25).
+        distances: Option<(f32, f32)>,
+        /// The falloff curve between them; `None` is the engine's default.
+        rolloff: Option<f32>,
     },
     StopSound {
         name: String,

@@ -168,6 +168,8 @@ impl ExtensionCtx<'_> {
 /// // Any frame:
 /// ctx.audio.play("blip", &SoundOptions::new().volume(0.5).pitch(1.2))?;
 /// ctx.audio.play("audio/door.ogg", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
+/// // Heard from far off, fading like a sound in the open:
+/// ctx.audio.play("bell", &SoundOptions::new().at(pos).distances(10.0, 400.0).rolloff(0.7))?;
 /// ctx.audio.set_bus_volume(Bus::Music, 0.4);
 /// ```
 pub struct ExtensionAudio<'a> {
@@ -232,6 +234,7 @@ impl<'a> ExtensionAudio<'a> {
                 options.volume,
                 options.pitch,
                 options.distances,
+                options.rolloff,
                 options.bus,
             ),
             None => engine
@@ -262,6 +265,10 @@ pub struct SoundOptions {
     /// For a placed sound, `(min, max)` from the listener: full volume
     /// within `min`, silent past `max`.
     pub distances: (f32, f32),
+    /// The curve between them (see [`flint_audio::engine::DEFAULT_ROLLOFF`]):
+    /// 2 holds the sound up and drops it near `max`; below 1 it falls away
+    /// soon after `min` and tails off, like a real sound in the open.
+    pub rolloff: f32,
 }
 
 impl Default for SoundOptions {
@@ -272,6 +279,7 @@ impl Default for SoundOptions {
             bus: Bus::Sfx,
             at: None,
             distances: flint_audio::engine::DEFAULT_DISTANCES,
+            rolloff: flint_audio::engine::DEFAULT_ROLLOFF,
         }
     }
 }
@@ -303,6 +311,10 @@ impl SoundOptions {
             distances: (min, max),
             ..self
         }
+    }
+    /// The falloff curve of a placed sound (default 2).
+    pub fn rolloff(self, rolloff: f32) -> Self {
+        Self { rolloff, ..self }
     }
 }
 
@@ -394,8 +406,11 @@ mod tests {
         let placed = SoundOptions::new()
             .at(Vec3::new(4.0, 0.0, 2.0))
             .distances(2.0, 80.0)
+            .rolloff(0.7)
             .bus(Bus::Music);
         assert_eq!(placed.distances, (2.0, 80.0));
+        assert_eq!(placed.rolloff, 0.7);
+        assert_eq!(SoundOptions::new().rolloff, 2.0);
         audio.play("click", &placed).unwrap();
         assert!(audio.play("missing", &SoundOptions::new()).is_err());
         audio.set_bus_volume(Bus::Sfx, 0.25);

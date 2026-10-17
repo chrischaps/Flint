@@ -1363,6 +1363,7 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             c.commands.push(ScriptCommand::PlaySound {
                 name: name.to_string(),
                 volume: 1.0,
+                pitch: 1.0,
             });
         });
     }
@@ -1375,6 +1376,20 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             c.commands.push(ScriptCommand::PlaySound {
                 name: name.to_string(),
                 volume,
+                pitch: 1.0,
+            });
+        });
+    }
+
+    // play_sound(name, volume, pitch) — 3-arg overload with pitch
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("play_sound", move |name: &str, volume: f64, pitch: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::PlaySound {
+                name: name.to_string(),
+                volume,
+                pitch,
             });
         });
     }
@@ -1391,6 +1406,8 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     position: (x, y, z),
                     volume: vol,
                     pitch: 1.0,
+                    distances: None,
+                    rolloff: None,
                 });
             },
         );
@@ -1402,12 +1419,35 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn(
             "play_sound_at",
             move |name: &str, x: f64, y: f64, z: f64, vol: f64, pitch: f64| {
-                let mut c = ctx.lock().unwrap();
+                let mut c = crate::lock_or_recover(&ctx);
                 c.commands.push(ScriptCommand::PlaySoundAt {
                     name: name.to_string(),
                     position: (x, y, z),
                     volume: vol,
                     pitch,
+                    distances: None,
+                    rolloff: None,
+                });
+            },
+        );
+    }
+
+    // play_sound_at(name, x, y, z, opts) — opts is a map with optional keys:
+    //   volume (1), pitch (1), min_distance (1), max_distance (25), rolloff (2)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "play_sound_at",
+            move |name: &str, x: f64, y: f64, z: f64, opts: Map| {
+                let o = SoundOpts::from_map(&opts);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::PlaySoundAt {
+                    name: name.to_string(),
+                    position: (x, y, z),
+                    volume: o.volume,
+                    pitch: o.pitch,
+                    distances: o.distances,
+                    rolloff: o.rolloff,
                 });
             },
         );
@@ -4785,6 +4825,31 @@ fn dyn_to_f32(d: &Dynamic) -> Option<f32> {
 /// Convert a Rhai array of numbers (INT or FLOAT mixed) to f32s, skipping non-numbers.
 pub(crate) fn array_to_f32s(arr: &Array) -> Vec<f32> {
     arr.iter().filter_map(dyn_to_f32).collect()
+}
+
+/// Parsed `play_sound_at` option map. Every key is optional: full volume,
+/// normal pitch, and the engine's falloff. Naming only one distance keeps
+/// the engine's default (1 or 25) for the other.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SoundOpts {
+    pub volume: f64,
+    pub pitch: f64,
+    pub distances: Option<(f32, f32)>,
+    pub rolloff: Option<f32>,
+}
+
+impl SoundOpts {
+    pub(crate) fn from_map(opts: &Map) -> Self {
+        let get = |k: &str| opts.get(k).and_then(dyn_to_f32);
+        let (min, max) = (get("min_distance"), get("max_distance"));
+        Self {
+            volume: get("volume").map_or(1.0, f64::from),
+            pitch: get("pitch").map_or(1.0, f64::from),
+            distances: (min.is_some() || max.is_some())
+                .then(|| (min.unwrap_or(1.0), max.unwrap_or(25.0))),
+            rolloff: get("rolloff"),
+        }
+    }
 }
 
 /// Parsed `draw_text_opts` option map. Every key is optional; defaults are

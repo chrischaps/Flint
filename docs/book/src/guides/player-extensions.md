@@ -127,10 +127,11 @@ ctx.audio.load_bytes("door", include_bytes!("door.ogg").to_vec())?;
 // Any frame:
 ctx.audio.play("blip", &SoundOptions::new().volume(0.5).pitch(1.2))?;
 ctx.audio.play("door", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
+ctx.audio.play("bell", &SoundOptions::new().at(pos).distances(20.0, 600.0).rolloff(0.7))?;
 ctx.audio.set_bus_volume(Bus::Music, 0.4);
 ```
 
-- **`play`** plays a sound once. Without `at`, it plays flat, from nowhere. With `at`, it pans and fades with distance from the listener: full volume within `distances`' first value and silent past its second (by default 1 and 25, the same as a script's `play_sound_at`). `bus` routes it through `Bus::Sfx` (the default) or `Bus::Music`. An unknown name is an error.
+- **`play`** plays a sound once. Without `at`, it plays flat, from nowhere. With `at`, it pans and fades with distance from the listener: full volume within `distances`' first value and silent past its second (by default 1 and 25, the same as a script's `play_sound_at`). `rolloff` sets the curve between them: the default 2 holds a sound up and drops it near the far distance, and a value below 1 fades it like a sound in the open (see [Audio](../concepts/audio.md#scripting-integration)). `bus` routes it through `Bus::Sfx` (the default) or `Bus::Music`. An unknown name is an error.
 - **`load_samples`** and **`load_bytes`** replace any sound already cached under the name. A sound that's already playing carries on with the old data. A looping `audio_source` whose sound isn't cached yet stays silent, so load the sound before spawning the entity that plays it.
 - **`set_bus_volume`** scales everything on the bus, including scripts' sounds and `audio_source`s, on top of each sound's own volume. It holds across scene transitions. A game's volume settings belong here rather than in each sound's volume.
 

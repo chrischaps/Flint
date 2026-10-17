@@ -126,8 +126,10 @@ Audio functions produce deferred commands that the player processes after the sc
 |----------|-------------|
 | `play_sound(name)` | Play a non-spatial sound at default volume |
 | `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
+| `play_sound(name, volume, pitch)` | As above, with a pitch multiplier |
 | `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
 | `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
+| `play_sound_at(name, x, y, z, opts)` | A spatial sound with a map of options, each optional: `volume` (1), `pitch` (1), `min_distance` (1), `max_distance` (25), `rolloff` (2) |
 | `stop_sound(name)` | Stop a playing sound |
 
 Sound names match the audio files loaded from the `audio/` directory (without extension). A one-shot naming a file that is not there fails silently — it logs a warning and plays nothing.
@@ -135,9 +137,10 @@ Sound names match the audio files loaded from the `audio/` directory (without ex
 Varying `pitch` slightly per trigger (say 0.9–1.1) is the cheapest way to stop a
 repeated one-shot sounding like a repeated one-shot.
 
-Spatial one-shot tracks attenuate to silence at 25 m. An event further away
-than that must use non-spatial `play_sound` with a hand-scaled volume, or it
-will simply not be heard.
+By default a spatial one-shot fades to silence at 25 m. A sound meant to be
+heard further away sets `max_distance` in the options map, and usually a
+`rolloff` below 1 so it fades like a sound in the open. See
+[Audio: Scripting](audio.md#scripting-integration).
 
 ### Animation API
 

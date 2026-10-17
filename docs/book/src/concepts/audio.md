@@ -179,7 +179,10 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 |----------|-------------|
 | `play_sound(name)` | Play a non-spatial sound at default volume |
 | `play_sound(name, volume)` | Play a non-spatial sound at the given volume (0.0--1.0) |
+| `play_sound(name, volume, pitch)` | As above, with a pitch multiplier |
 | `play_sound_at(name, x, y, z, volume)` | Play a spatial sound at a 3D position |
+| `play_sound_at(name, x, y, z, volume, pitch)` | As above, with a pitch multiplier |
+| `play_sound_at(name, x, y, z, opts)` | Play a spatial sound with options: `volume`, `pitch`, `min_distance`, `max_distance`, `rolloff`, each optional |
 | `stop_sound(name)` | Stop a playing sound |
 
 ```rust
@@ -187,8 +190,12 @@ Audio can be controlled from [Rhai scripts](scripting.md) using deferred command
 fn on_interact() {
     play_sound("door_open");                          // Non-spatial
     play_sound_at("glass_clink", 5.0, 1.0, 3.0, 0.8); // Spatial at position
+    play_sound_at("bell", 0.0, 30.0, 0.0,             // Heard across town
+        #{ volume: 0.6, min_distance: 20.0, max_distance: 600.0, rolloff: 0.7 });
 }
 ```
+
+A placed sound is at full volume within `min_distance` and silent past `max_distance`. Between them it is `-60·r^rolloff` dB, where `r` is how far the listener is along the way from one to the other. The default `rolloff` of 2 holds a sound up most of the way and drops it near `max_distance`, which suits a small room. A sound heard across open ground wants a rolloff below 1: it falls away soon after `min_distance` and then tails off slowly, close to a real sound's inverse-distance fade. For example, `rolloff: 0.6` between 32 m and 1250 m stays within 1.5 dB of `(32/d)^1.2` out to 300 m.
 
 Sound names match files in the `audio/` directory. All `.ogg`, `.wav`, `.mp3`, and `.flac` files are automatically loaded at startup.
 
