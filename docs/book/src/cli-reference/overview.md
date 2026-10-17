@@ -85,7 +85,7 @@ flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas  
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
 | `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
 | `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time |
-| `--input-script <file>` | Play timed keys, axes, gamepad buttons and the wheel, one event per line (below). Scripted keys reach the debug keys too, so `2.0 tap F2` opens the stats overlay |
+| `--input-script <file>` | Play timed keys, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 
 An input script plays its events at set game times. `#` starts a comment:
@@ -99,7 +99,28 @@ An input script plays its events at set game times. `#` starts a comment:
 4.2   release South
 5.0   wheel   1                  # one wheel line up this frame
 5.5   wheel   -0.5 2             # half a line down, two lines right
+6.0   mouse   640 360            # pointer to (640, 360) in window pixels
+6.1   down    MouseLeft          # mouse buttons work with down, up and tap
+6.2   mouse   900 500 0.5        # glide there over 0.5 s: a drag
+6.8   up      MouseLeft
+7.0   click   320 200            # pointer there, then tap MouseLeft
+7.5   click   320 200 MouseRight
 ```
+
+The mouse buttons are `MouseLeft`, `MouseRight`, `MouseMiddle`, `MouseBack`
+and `MouseForward`. Pointer positions are physical window pixels, the same
+pixels a screenshot has, so a point read off a capture can be clicked in the
+next one. A glide moves the pointer a little every frame, as a hand would.
+
+The mouse takes the path a real one does (ADR 0082): egui first, then game
+extensions, then `InputState` and scripts. So a scripted click can press an
+egui button, drag between egui widgets or open a tooltip, and a click over a
+panel stays out of the world. Two things wait a frame, however coarse the
+frames: a button press in the frame the pointer jumped (egui decides who gets
+a click from where the pointer was the frame before), and any release in the
+frame of its press. A `click` therefore takes three frames: move, press,
+release. The real cursor still moves the pointer if it crosses the window
+during a capture, so keep it outside.
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not
 wall-clock seconds since launch, so a capture lands on the same gameplay

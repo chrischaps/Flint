@@ -1,6 +1,7 @@
 //! Captures reach the debug keys (H9): a key the input script presses goes
 //! through the same handler as a real one, and `CaptureConfig::show_stats`
-//! opens the F2 overlay from the first frame. Headless: no window.
+//! opens the F2 overlay from the first frame. Scripted clicks reach
+//! `InputState` the way real ones do (ADR 0082). Headless: no window.
 
 use super::input_script::InputScript;
 use super::PlayerApp;
@@ -62,4 +63,18 @@ fn show_stats_opens_the_overlay_once() {
     app.input.end_frame();
     app.tick();
     assert!(!app.show_stats, "F2 still closes it");
+}
+
+#[test]
+fn a_scripted_click_reaches_input_state_a_frame_after_the_pointer() {
+    // Frames at t = 0, 0.25, 0.5: move, press, release (ADR 0082).
+    let mut app = with_script("0 click 100 50\n");
+    app.clock.frame_step = Some(0.25);
+    app.tick();
+    assert_eq!(app.input.mouse_position, (100.0, 50.0));
+    assert!(!app.input.is_mouse_button_down(0));
+    app.tick();
+    assert!(app.input.is_mouse_button_down(0));
+    app.tick();
+    assert!(!app.input.is_mouse_button_down(0));
 }

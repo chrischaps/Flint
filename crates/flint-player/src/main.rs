@@ -98,7 +98,7 @@ struct Args {
     #[arg(long, value_name = "SECS")]
     frame_step: Option<f64>,
 
-    /// Play timed key / gamepad input from a file (see
+    /// Play timed key, gamepad and mouse input from a file (see
     /// `player_app/input_script.rs` for the format)
     #[arg(long, value_name = "FILE")]
     input_script: Option<String>,

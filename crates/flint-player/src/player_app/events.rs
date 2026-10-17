@@ -4,6 +4,7 @@
 //! capture/persistence, cursor capture, and the Android gamepad tracking
 //! that exists only to serve these handlers.
 
+use super::input_script::PointerEvent;
 use super::PlayerApp;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
@@ -350,30 +351,7 @@ impl ApplicationHandler for PlayerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // egui sees window events first whenever it can have interactive
-        // UI on screen: an open debug panel, or an extension's ui(). Input
-        // it wants stops here (see egui_input for the rules).
-        #[cfg(feature = "debug-hud")]
-        let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
-        #[cfg(not(feature = "debug-hud"))]
-        let any_panel_open = false;
-        if any_panel_open || !self.extensions.is_empty() {
-            if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
-                let response = egui_winit.on_window_event(window, &event);
-                let wants_keyboard = self.egui_ctx.wants_keyboard_input();
-                let routed = super::egui_input::classify(&event);
-                if self
-                    .egui_input
-                    .consumes(routed, response.consumed, wants_keyboard)
-                {
-                    return;
-                }
-            }
-        }
-
-        // Game extensions next; they may consume input but never lifecycle
-        // events (see PlayerExtension::on_window_event).
-        if crate::extension::dispatch_window_event(&mut self.extensions, &event) {
+        if self.taken_before_the_game(&event) {
             return;
         }
 
@@ -658,6 +636,53 @@ impl PlayerApp {
                         ));
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether egui or an extension takes a window event before the player
+    /// and scripts see it.
+    fn taken_before_the_game(&mut self, event: &WindowEvent) -> bool {
+        // egui sees window events first whenever it can have interactive
+        // UI on screen: an open debug panel, or an extension's ui(). Input
+        // it wants stops here (see egui_input for the rules).
+        #[cfg(feature = "debug-hud")]
+        let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
+        #[cfg(not(feature = "debug-hud"))]
+        let any_panel_open = false;
+        if any_panel_open || !self.extensions.is_empty() {
+            if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
+                let response = egui_winit.on_window_event(window, event);
+                let wants_keyboard = self.egui_ctx.wants_keyboard_input();
+                let routed = super::egui_input::classify(event);
+                if self
+                    .egui_input
+                    .consumes(routed, response.consumed, wants_keyboard)
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Game extensions next; they may consume input but never lifecycle
+        // events (see PlayerExtension::on_window_event).
+        crate::extension::dispatch_window_event(&mut self.extensions, event)
+    }
+
+    /// A pointer event from `--input-script` (ADR 0082). It takes the path a
+    /// real one does: egui, then extensions, then `InputState`.
+    pub(super) fn scripted_pointer_event(&mut self, event: PointerEvent) {
+        let event = event.to_window_event();
+        if self.taken_before_the_game(&event) {
+            return;
+        }
+        match event {
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.handle_mouse_input(state, button);
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.process_mouse_move(position.x, position.y);
             }
             _ => {}
         }
