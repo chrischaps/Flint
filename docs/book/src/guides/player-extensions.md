@@ -194,3 +194,22 @@ For fonts that don't come from the folder (embedded with `include_bytes!`, or ch
 ## Picking the Ground
 
 `Camera::screen_to_ground(x, y, width, height, plane_y)` returns the `[x, z]` point on a horizontal plane under a screen point, or `None` for the sky. Scripts have the same thing as `screen_to_ground(mouse_x(), mouse_y(), plane_y)`. See [Rendering: Picking the ground](../concepts/rendering.md#picking-the-ground).
+
+## Projecting from Native Functions
+
+A native function that places things on the screen needs the camera scripts project with, and `ExtensionCtx::camera` is a frame old by the time `on_draw_ui` runs. `PlayerApp::projector()` returns a `Projector`, a cloneable handle on the scripts' camera (ADR 0086). Take it before `add_extension`, hand it to the extension, and clone it into the closures it registers:
+
+```rust
+let projector = player.projector();
+player.add_extension(Box::new(MyGame { projector, .. }));
+
+// in register_script_api:
+let projector = self.projector.clone();
+engine.register_fn("my_labels", move || -> rhai::Array {
+    let view = projector.view(); // one lock, then plain maths
+    let size = view.screen_size();
+    anchors().filter_map(|p| view.world_to_screen(p)) /* ... */
+});
+```
+
+`View::world_to_screen` returns a `ScreenPoint { x, y, depth }` in logical points, or `None` where Rhai's `world_to_screen` says `visible: false`. The two agree exactly: called from a script, the view is the camera this frame renders with. `View::screen_to_ground` matches the Rhai function too. Outside a script call (in `pre_update`, say), the view is the previous frame's camera. `view()` takes the script context's lock, so don't call it from a callback the script system runs while holding that lock, such as a text measurer.

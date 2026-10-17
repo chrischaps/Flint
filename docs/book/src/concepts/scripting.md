@@ -697,7 +697,7 @@ Rust hosts can set the same lines on the renderer directly with `SceneRenderer::
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
 
-`world_to_screen` and `screen_to_ground` are inverses. In `on_draw_ui` they use the camera the frame renders with; in `on_update`, which runs before script camera overrides apply, they use the previous frame's. `world_to_screen` of a ground hit lands back on the screen point it came from. `screen_to_ground` takes logical points, the `mouse_x()` / `mouse_y()` space, so it is correct at any display scale. It works for perspective and orthographic cameras, including one looking straight down. It returns `()` over the sky, when an orthographic camera looks level, or when the plane is behind the camera. Picking the ground under the cursor:
+`world_to_screen` and `screen_to_ground` are inverses. In `on_draw_ui` they use the camera the frame renders with; in `on_update`, which runs before script camera overrides apply, they use the previous frame's. `world_to_screen` of a ground hit lands back on the screen point it came from. Native functions a game registers get the same answers from `Projector` (see [Player extensions](../guides/player-extensions.md#projecting-from-native-functions)). `screen_to_ground` takes logical points, the `mouse_x()` / `mouse_y()` space, so it is correct at any display scale. It works for perspective and orthographic cameras, including one looking straight down. It returns `()` over the sky, when an orthographic camera looks level, or when the plane is behind the camera. Picking the ground under the cursor:
 
 ```rhai
 let g = screen_to_ground(mouse_x(), mouse_y(), 0.0);
