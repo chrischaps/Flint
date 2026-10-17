@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
 
 `PlayerApp` is a winit `ApplicationHandler`, so it runs directly with no wrapper. Set the same public fields `flint-player`'s `main.rs` sets for the features your scenes use: window size, environment and skybox, and `capture` for `--screenshot`-style runs. Pass the engine's `schemas/` yourself, ahead of the game's.
 
-## The Four Hooks
+## The Hooks
 
 | Method | When it runs | Use it for |
 |---|---|---|
@@ -61,6 +61,7 @@ fn main() -> anyhow::Result<()> {
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
 | `ui(&egui::Context)` | Every frame, inside the player's egui pass | The game's own panels and windows |
+| `fonts(&mut egui::FontDefinitions)` | Whenever the player installs egui's fonts | Fonts the project's `fonts/` folder can't give |
 
 Extensions run in the order they were added.
 
@@ -136,6 +137,30 @@ Once any extension is installed, or any debug panel is open, every window event 
 Next, `on_window_event` offers each remaining event to the extensions in order. Returning `true` consumes it, and later extensions and the player don't see it. Only input events can be consumed. Lifecycle events such as `Resized`, `CloseRequested` and `RedrawRequested` always reach every extension and the player, whatever an extension returns.
 
 egui's verdicts come from the previous frame. A key pressed in the same frame as the click that focuses a field still reaches the game.
+
+### Fonts
+
+The player owns egui's fonts. It installs them from the project's `fonts/` folder at start and again on a scene change into another project root, and each install replaces every font egui has. So don't call `Context::set_fonts` from `ui()`: the next install drops what it set.
+
+Usually the folder is enough. Name your egui UI's faces in `fonts/fonts.toml` (ADR 0081):
+
+```toml
+[[font]]
+name = "body"
+file = "SourceSans3-Regular.ttf"
+
+[[font]]
+name = "strong"
+file = "SourceSans3-Semibold.ttf"
+
+[egui]
+proportional = "body"     # egui's default text, so every label and button
+# monospace = "..."       # likewise for egui's monospace
+```
+
+Then `ui()` draws in `body` by default and in `strong` with `FontId::new(size, FontFamily::Name("strong".into()))`. egui's own fonts stay behind each face, for the glyphs it lacks. The families exist from the first frame, so there's no frame to skip.
+
+For fonts that don't come from the folder (embedded with `include_bytes!`, or chosen at run time), implement `fonts()`. It gets the definitions just before each install, project fonts already in, and what it adds survives every reload. A named family it adds is one scripts can draw in too.
 
 ## Picking the Ground
 

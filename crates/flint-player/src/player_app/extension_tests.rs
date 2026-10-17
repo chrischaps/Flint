@@ -229,6 +229,65 @@ fn attach_mesh_names_a_runtime_model_and_keeps_other_fields() {
     assert!(flint_render::model_loader::is_runtime_model(model));
 }
 
+/// Adds a named family and makes it egui's default, as a game with its own
+/// embedded font would.
+struct Faces {
+    calls: Arc<AtomicI64>,
+}
+
+impl PlayerExtension for Faces {
+    fn fonts(&mut self, defs: &mut egui::FontDefinitions) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let face = defs.families[&egui::FontFamily::Proportional][0].clone();
+        defs.families
+            .insert(egui::FontFamily::Name("game".into()), vec![face]);
+    }
+}
+
+#[test]
+fn the_fonts_hook_runs_on_every_install_and_its_families_reach_scripts() {
+    let calls = Arc::new(AtomicI64::new(0));
+    let mut app = headless_app();
+    app.add_extension(Box::new(Faces {
+        calls: calls.clone(),
+    }));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "no fonts before initialize"
+    );
+
+    app.refresh_project_fonts();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(app.ui_fonts.contains("game"), "scripts can draw in it");
+
+    // Same project root: nothing to reload.
+    app.refresh_project_fonts();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // An extension added late gets its hook, and the earlier one keeps its
+    // family through the reload.
+    let late = Arc::new(AtomicI64::new(0));
+    app.add_extension(Box::new(Faces {
+        calls: late.clone(),
+    }));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(late.load(Ordering::SeqCst), 1);
+    assert!(app.ui_fonts.contains("game"));
+
+    // egui has the family on the next pass, so laying text out in it from
+    // `ui` doesn't panic.
+    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+        ctx.fonts(|f| {
+            f.layout_no_wrap(
+                "Capitol".into(),
+                egui::FontId::new(14.0, egui::FontFamily::Name("game".into())),
+                egui::Color32::WHITE,
+            )
+        });
+    });
+}
+
 /// Counts its frames into the shared store as `visits`, and records what
 /// the scripts last left under `from_script`.
 struct Keeper {

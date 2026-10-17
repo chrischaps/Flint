@@ -731,7 +731,15 @@ name = "display"                      # use as font = "display"
 file = "BarlowCondensed-BlackItalic.ttf"
 ```
 
-The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, exactly as before.
+Each named family keeps egui's built-in fonts behind it, for glyphs the file lacks. The player logs the loaded families at startup (`RUST_LOG=info`). Text without a `font` — and the data-driven UI's default — uses egui's built-in proportional font, unless the manifest names another (ADR 0081):
+
+```toml
+[egui]
+proportional = "body"                 # a file stem or an alias
+monospace = "code"
+```
+
+That face then leads egui's default family, for the script HUD's unnamed text and for a game's own egui panels alike ([Player Extensions](../guides/player-extensions.md#fonts)).
 
 #### Rings and Arcs
 

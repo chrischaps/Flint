@@ -186,6 +186,9 @@ pub struct PlayerApp {
     /// The `fonts/` root the current font set was scanned from; rescan on
     /// scene change only when this differs.
     ui_fonts_root: Option<std::path::PathBuf>,
+    /// Whether egui has been given the fonts at least once. Until then
+    /// `refresh_project_fonts` always installs them.
+    ui_fonts_installed: bool,
     /// Set after the first egui pass: `Context::fonts()` panics before then,
     /// so the script `measure_text` closure falls back to an estimate until
     /// this flips.

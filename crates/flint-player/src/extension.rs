@@ -78,6 +78,20 @@ pub trait PlayerExtension {
     /// Use windows and areas, or side and top panels. A `CentralPanel`
     /// covers the whole window, so it takes every click from the game.
     fn ui(&mut self, _ctx: &egui::Context) {}
+
+    /// Add to or change egui's fonts before the player installs them
+    /// (ADR 0081). `defs` already holds the project's `fonts/` (each file
+    /// under its stem, the `fonts.toml` aliases, and its `[egui]` defaults).
+    ///
+    /// Called whenever the player sets egui's fonts: at start, on a scene
+    /// change into another project root, and when an extension is added
+    /// after the fonts are in. Fonts set here survive those reloads, which
+    /// fonts set with `Context::set_fonts` from `ui` do not. A named family
+    /// added here is one scripts can draw in too.
+    ///
+    /// Families exist from the first egui pass after the call, so laying
+    /// text out in one from `ui` is safe on every frame.
+    fn fonts(&mut self, _defs: &mut egui::FontDefinitions) {}
 }
 
 /// What an extension can reach during `pre_update`.

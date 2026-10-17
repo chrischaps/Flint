@@ -69,6 +69,7 @@ impl PlayerApp {
             ui_fonts: HashSet::new(),
             ui_fonts_warned: HashSet::new(),
             ui_fonts_root: None,
+            ui_fonts_installed: false,
             egui_fonts_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             catalog: AssetCatalog::load_from_directory("assets").ok(),
             content_store: Some(ContentStore::new(".flint/assets")),
@@ -144,6 +145,11 @@ impl PlayerApp {
     pub fn add_extension(&mut self, mut extension: Box<dyn crate::extension::PlayerExtension>) {
         extension.register_script_api(self.script.rhai_engine_mut());
         self.extensions.push(extension);
+        // A late extension still gets its `fonts` hook.
+        if self.ui_fonts_installed {
+            self.ui_fonts_installed = false;
+            self.refresh_project_fonts();
+        }
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).
@@ -684,20 +690,22 @@ impl PlayerApp {
     }
 
     /// (Re)load `<project>/fonts/` into egui when the project root changed
-    /// since the last scan (initial load and scene transitions).
+    /// since the last scan (initial load and scene transitions). Extensions'
+    /// `fonts` hooks edit the definitions before they're installed.
     pub(super) fn refresh_project_fonts(&mut self) {
         let root = super::fonts::find_fonts_dir(&self.scene_path);
-        if root.is_none() && self.ui_fonts.is_empty() {
-            // No fonts dir and nothing installed: egui defaults already apply.
-            self.ui_fonts_root = None;
-            return;
-        }
-        if root.is_some() && self.ui_fonts_root == root {
+        if self.ui_fonts_installed && self.ui_fonts_root == root {
             return; // same project root as the last scan
         }
-        self.ui_fonts = super::fonts::install_project_fonts(&self.egui_ctx, &self.scene_path);
+        let mut defs = super::fonts::project_font_definitions(&self.scene_path);
+        for ext in self.extensions.iter_mut() {
+            ext.fonts(&mut defs);
+        }
+        self.ui_fonts = super::fonts::script_families(&defs);
+        self.egui_ctx.set_fonts(defs);
         self.ui_fonts_warned.clear();
         self.ui_fonts_root = root;
+        self.ui_fonts_installed = true;
     }
 
     /// Give scripts a `measure_text` that lays text out with the same font

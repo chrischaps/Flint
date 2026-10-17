@@ -10,7 +10,21 @@
 //! [[font]]
 //! name = "display"                     # alias → FontFamily::Name("display")
 //! file = "BarlowCondensed-BlackItalic.ttf"
+//!
+//! [egui]                               # optional (ADR 0081)
+//! proportional = "body"                # egui's default text face
+//! monospace = "code"                   # egui's monospace face
 //! ```
+//!
+//! The `[egui]` names are families (a file stem or an alias). The named face
+//! goes first in egui's `Proportional` or `Monospace` family, ahead of egui's
+//! own fonts, so a game's egui UI draws in it and keeps egui's fonts for the
+//! glyphs it lacks. Every named family keeps egui's proportional fonts as
+//! fallbacks the same way.
+//!
+//! An extension can add fonts of its own with `PlayerExtension::fonts`,
+//! which edits the definitions before Flint installs them, so they survive
+//! every reload.
 //!
 //! Both the renderer (`hud_render`) and the script `measure_text` closure
 //! build their layout jobs through [`text_layout_job`] so measurement and
@@ -57,6 +71,38 @@ pub fn parse_manifest(text: &str) -> Vec<FontAlias> {
             }
         })
         .collect()
+}
+
+/// The `[egui]` table of a `fonts.toml`: which families egui's default
+/// families start with. `None` keeps egui's own face.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EguiDefaults {
+    pub proportional: Option<String>,
+    pub monospace: Option<String>,
+}
+
+/// Parse the `[egui]` table of a `fonts.toml` manifest. A missing table, a
+/// malformed document or a non-string value yields `None` for that slot
+/// (`parse_manifest` already warns about a parse error).
+pub fn parse_egui_defaults(text: &str) -> EguiDefaults {
+    let Ok(doc) = text.parse::<toml::Value>() else {
+        return EguiDefaults::default();
+    };
+    let Some(table) = doc.get("egui") else {
+        return EguiDefaults::default();
+    };
+    let slot = |key: &str| match table.get(key) {
+        Some(toml::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(other) => {
+            tracing::warn!("fonts.toml: [egui] {key} should be a family name, not {other}");
+            None
+        }
+        None => None,
+    };
+    EguiDefaults {
+        proportional: slot("proportional"),
+        monospace: slot("monospace"),
+    }
 }
 
 /// Resolve the family table for a set of font files plus manifest aliases.
@@ -107,14 +153,14 @@ pub fn find_fonts_dir(scene_path: &str) -> Option<PathBuf> {
 }
 
 /// Scan a `fonts/` directory: read every `.ttf`/`.otf` (non-recursive) and
-/// the optional manifest. Returns `(stem → bytes, aliases)`.
-fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>) {
+/// the optional manifest. Returns `(stem → bytes, aliases, egui defaults)`.
+fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, EguiDefaults) {
     let mut data = BTreeMap::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("fonts: cannot read {}: {e}", dir.display());
-            return (data, Vec::new());
+            return (data, Vec::new(), EguiDefaults::default());
         }
     };
     for entry in entries.flatten() {
@@ -140,56 +186,99 @@ fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>) {
         }
     }
     let manifest = dir.join("fonts.toml");
-    let aliases = match std::fs::read_to_string(&manifest) {
-        Ok(text) => parse_manifest(&text),
-        Err(_) => Vec::new(),
-    };
-    (data, aliases)
+    match std::fs::read_to_string(&manifest) {
+        Ok(text) => (data, parse_manifest(&text), parse_egui_defaults(&text)),
+        Err(_) => (data, Vec::new(), EguiDefaults::default()),
+    }
 }
 
-/// Load the project's fonts into `ctx` and return the set of family names
-/// scripts may refer to. With no `fonts/` directory the egui defaults are
-/// restored (so a scene change to a font-less project drops stale families).
-pub fn install_project_fonts(ctx: &egui::Context, scene_path: &str) -> HashSet<String> {
+/// egui's definitions with a project's fonts added: each file under its
+/// stem, a named family per stem and alias, and `defaults` first in egui's
+/// own families. Every named family falls back to egui's proportional fonts.
+/// `families` is `resolve_families`' table.
+pub fn build_definitions(
+    data: BTreeMap<String, Vec<u8>>,
+    families: &BTreeMap<String, String>,
+    defaults: &EguiDefaults,
+) -> egui::FontDefinitions {
     let mut defs = egui::FontDefinitions::default();
-    let mut known = HashSet::new();
-
-    if let Some(dir) = find_fonts_dir(scene_path) {
-        let (data, aliases) = scan_fonts_dir(&dir);
-        let stems: Vec<String> = data.keys().cloned().collect();
-        let families = resolve_families(&stems, &aliases);
-        for (stem, bytes) in data {
-            defs.font_data
-                .insert(stem, Arc::new(egui::FontData::from_owned(bytes)));
-        }
-        for (family, target) in &families {
-            defs.families.insert(
-                egui::FontFamily::Name(family.as_str().into()),
-                vec![target.clone()],
-            );
-            known.insert(family.clone());
-        }
-        if known.is_empty() {
-            tracing::info!("fonts: {} contains no .ttf/.otf files", dir.display());
-        } else {
-            let mut names: Vec<&String> = known.iter().collect();
-            names.sort();
-            tracing::info!(
-                "fonts: loaded {} famil{} from {}: {}",
-                names.len(),
-                if names.len() == 1 { "y" } else { "ies" },
-                dir.display(),
-                names
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
+    let fallbacks = defs
+        .families
+        .get(&egui::FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for (stem, bytes) in data {
+        defs.font_data
+            .insert(stem, Arc::new(egui::FontData::from_owned(bytes)));
     }
+    for (family, target) in families {
+        let mut list = vec![target.clone()];
+        list.extend(fallbacks.iter().cloned());
+        defs.families
+            .insert(egui::FontFamily::Name(family.as_str().into()), list);
+    }
+    for (slot, key, name) in [
+        (
+            egui::FontFamily::Proportional,
+            "proportional",
+            &defaults.proportional,
+        ),
+        (
+            egui::FontFamily::Monospace,
+            "monospace",
+            &defaults.monospace,
+        ),
+    ] {
+        let Some(name) = name else { continue };
+        let Some(target) = families.get(name) else {
+            tracing::warn!("fonts.toml: [egui] {key} = `{name}` is not a font in fonts/");
+            continue;
+        };
+        let list = defs.families.entry(slot).or_default();
+        list.retain(|f| f != target);
+        list.insert(0, target.clone());
+    }
+    defs
+}
 
-    ctx.set_fonts(defs);
-    known
+/// The project's font definitions for a scene path (see `build_definitions`).
+/// With no `fonts/` directory these are egui's defaults, so a scene change
+/// to a font-less project drops stale families.
+pub fn project_font_definitions(scene_path: &str) -> egui::FontDefinitions {
+    let Some(dir) = find_fonts_dir(scene_path) else {
+        return egui::FontDefinitions::default();
+    };
+    let (data, aliases, defaults) = scan_fonts_dir(&dir);
+    let stems: Vec<String> = data.keys().cloned().collect();
+    let families = resolve_families(&stems, &aliases);
+    if families.is_empty() {
+        tracing::info!("fonts: {} contains no .ttf/.otf files", dir.display());
+    } else {
+        tracing::info!(
+            "fonts: loaded {} famil{} from {}: {}",
+            families.len(),
+            if families.len() == 1 { "y" } else { "ies" },
+            dir.display(),
+            families
+                .keys()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    build_definitions(data, &families, &defaults)
+}
+
+/// The family names scripts may refer to: every named family in `defs`,
+/// the project's and any an extension added.
+pub fn script_families(defs: &egui::FontDefinitions) -> HashSet<String> {
+    defs.families
+        .keys()
+        .filter_map(|f| match f {
+            egui::FontFamily::Name(name) => Some(name.to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Resolve a script-facing family name to an egui `FontId`, falling back to
@@ -310,6 +399,73 @@ file = "NoName.ttf"
         );
         assert_eq!(fams["display"], "BarlowCondensed-BlackItalic");
         assert!(!fams.contains_key("ghost"));
+    }
+
+    #[test]
+    fn egui_defaults_parse() {
+        let text = r#"
+[[font]]
+name = "body"
+file = "Body.ttf"
+
+[egui]
+proportional = "body"
+monospace = 3
+"#;
+        assert_eq!(
+            parse_egui_defaults(text),
+            EguiDefaults {
+                proportional: Some("body".into()),
+                monospace: None,
+            }
+        );
+        assert_eq!(parse_egui_defaults(""), EguiDefaults::default());
+        assert_eq!(parse_egui_defaults("not [[ toml"), EguiDefaults::default());
+    }
+
+    /// The named face leads egui's family and egui's fonts stay behind it;
+    /// named families fall back to egui's proportional fonts; an unknown
+    /// default leaves egui's family alone.
+    #[test]
+    fn definitions_put_the_named_defaults_first() {
+        let egui_defaults = egui::FontDefinitions::default();
+        let proportional = &egui_defaults.families[&egui::FontFamily::Proportional];
+        let monospace = &egui_defaults.families[&egui::FontFamily::Monospace];
+
+        let data: BTreeMap<String, Vec<u8>> = [
+            ("Body".to_string(), vec![0u8]),
+            ("Title".to_string(), vec![1u8]),
+        ]
+        .into();
+        let stems: Vec<String> = data.keys().cloned().collect();
+        let families = resolve_families(
+            &stems,
+            &[FontAlias {
+                name: "body".into(),
+                file: "Body.ttf".into(),
+            }],
+        );
+        let defs = build_definitions(
+            data,
+            &families,
+            &EguiDefaults {
+                proportional: Some("body".into()),
+                monospace: Some("ghost".into()),
+            },
+        );
+
+        let p = &defs.families[&egui::FontFamily::Proportional];
+        assert_eq!(p[0], "Body");
+        assert_eq!(&p[1..], &proportional[..]);
+        assert_eq!(&defs.families[&egui::FontFamily::Monospace], monospace);
+        let title = &defs.families[&egui::FontFamily::Name("Title".into())];
+        assert_eq!(title[0], "Title");
+        assert_eq!(&title[1..], &proportional[..]);
+        assert!(defs.font_data.contains_key("Body"));
+
+        let mut names: Vec<String> = script_families(&defs).into_iter().collect();
+        names.sort();
+        assert_eq!(names, ["Body", "Title", "body"]);
     }
 
     #[test]
