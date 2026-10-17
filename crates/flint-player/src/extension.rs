@@ -21,7 +21,8 @@
 //! player.add_extension(Box::new(MyGame { .. }));
 //! ```
 
-use flint_core::EntityId;
+use flint_audio::{AudioSystem, Bus};
+use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::{Camera, SceneRenderer, Vertex};
@@ -113,6 +114,9 @@ pub struct ExtensionCtx<'a> {
     /// [`PersistentStore::request_flush`] to save at the end of this frame
     /// instead. Scripts can read every key, so keep secrets out of it.
     pub persist: &'a mut PersistentStore,
+    /// The player's audio: play sounds, load sounds made in memory, and set
+    /// the mixer buses (ADR 0084). See [`ExtensionAudio`].
+    pub audio: ExtensionAudio<'a>,
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
 }
@@ -147,6 +151,158 @@ impl ExtensionCtx<'_> {
         model.insert("runtime".into(), true.into());
         self.world
             .merge_component(entity, flint_core::components::MODEL, model.into())
+    }
+}
+
+/// The player's audio, as an extension reaches it (ADR 0084).
+///
+/// Sounds are cached by name, the same cache scripts' `play_sound` and
+/// `audio_source.file` read: a sound loaded here can be played from a
+/// script, and a file the scene preloaded (`audio/<file>`) can be played
+/// from here. Loading needs no audio device; playing without one does
+/// nothing, so a game needn't check.
+///
+/// ```ignore
+/// // Once: a sound made in code, mono at 44.1 kHz.
+/// ctx.audio.load_samples("blip", 44_100, &[&samples])?;
+/// // Any frame:
+/// ctx.audio.play("blip", &SoundOptions::new().volume(0.5).pitch(1.2))?;
+/// ctx.audio.play("audio/door.ogg", &SoundOptions::new().at(pos).distances(2.0, 60.0))?;
+/// ctx.audio.set_bus_volume(Bus::Music, 0.4);
+/// ```
+pub struct ExtensionAudio<'a> {
+    pub(crate) system: &'a mut AudioSystem,
+}
+
+impl<'a> ExtensionAudio<'a> {
+    pub(crate) fn new(system: &'a mut AudioSystem) -> Self {
+        Self { system }
+    }
+
+    /// Whether there's a device to play on. Without one, every sound is
+    /// silent, though loading still works.
+    pub fn is_available(&self) -> bool {
+        self.system.engine.is_available()
+    }
+
+    /// Whether a sound is cached under `name`.
+    pub fn has_sound(&self, name: &str) -> bool {
+        self.system.engine.has_sound(name)
+    }
+
+    /// Cache a sound made in memory: one channel (heard on both sides) or
+    /// two (left, right) of samples in -1..1 at `sample_rate` Hz. Replaces
+    /// any sound cached under `name`; one already playing plays on.
+    ///
+    /// A looping `audio_source` naming a sound that isn't cached yet stays
+    /// silent, so load before spawning the entity that plays it.
+    pub fn load_samples(
+        &mut self,
+        name: &str,
+        sample_rate: u32,
+        channels: &[&[f32]],
+    ) -> flint_core::Result<()> {
+        self.system
+            .engine
+            .load_sound_from_samples(name, sample_rate, channels)
+    }
+
+    /// Cache an encoded sound held in memory (WAV, OGG, FLAC or MP3), such
+    /// as one from `include_bytes!`. Replaces any sound cached under `name`.
+    pub fn load_bytes(&mut self, name: &str, bytes: Vec<u8>) -> flint_core::Result<()> {
+        self.system.engine.load_sound_from_bytes(name, bytes)
+    }
+
+    /// Play the cached sound `name` once. An unknown name is an error;
+    /// with no device it does nothing.
+    pub fn play(&mut self, name: &str, options: &SoundOptions) -> flint_core::Result<()> {
+        let engine = &mut self.system.engine;
+        if !engine.has_sound(name) {
+            return Err(flint_core::FlintError::AudioError(format!(
+                "Sound not cached: {name}"
+            )));
+        }
+        if !engine.is_available() {
+            return Ok(());
+        }
+        match options.at {
+            Some(at) => engine.play_oneshot_at(
+                name,
+                at,
+                options.volume,
+                options.pitch,
+                options.distances,
+                options.bus,
+            ),
+            None => engine
+                .play_non_spatial(name, options.volume, options.pitch, false, options.bus)
+                .map(drop),
+        }
+    }
+
+    /// Set a mixer bus's volume (linear: 0 mutes, 1 is unity). It scales
+    /// everything on the bus, scripts' sounds and `audio_source`s included,
+    /// on top of their own volumes. It stays set across scene transitions.
+    pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
+        self.system.set_bus_volume(bus, volume);
+    }
+}
+
+/// How [`ExtensionAudio::play`] plays a sound.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoundOptions {
+    /// Linear: 1 is the sound as made.
+    pub volume: f64,
+    /// Playback rate: 2 is an octave up and twice as fast.
+    pub pitch: f64,
+    pub bus: Bus,
+    /// Where the sound is, world units, so it pans and fades with distance
+    /// from the listener. `None` plays it flat, from nowhere.
+    pub at: Option<Vec3>,
+    /// For a placed sound, `(min, max)` from the listener: full volume
+    /// within `min`, silent past `max`.
+    pub distances: (f32, f32),
+}
+
+impl Default for SoundOptions {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            pitch: 1.0,
+            bus: Bus::Sfx,
+            at: None,
+            distances: flint_audio::engine::DEFAULT_DISTANCES,
+        }
+    }
+}
+
+impl SoundOptions {
+    /// Full volume, normal pitch, on the sfx bus, from nowhere.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn volume(self, volume: f64) -> Self {
+        Self { volume, ..self }
+    }
+    pub fn pitch(self, pitch: f64) -> Self {
+        Self { pitch, ..self }
+    }
+    pub fn bus(self, bus: Bus) -> Self {
+        Self { bus, ..self }
+    }
+    /// Place the sound at `at`.
+    pub fn at(self, at: Vec3) -> Self {
+        Self {
+            at: Some(at),
+            ..self
+        }
+    }
+    /// The falloff of a placed sound (default 1 to 25).
+    pub fn distances(self, min: f32, max: f32) -> Self {
+        Self {
+            distances: (min, max),
+            ..self
+        }
     }
 }
 
@@ -220,6 +376,32 @@ pub(crate) fn dispatch_window_event(
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn an_extension_loads_and_plays_sounds_made_in_memory() {
+        use flint_runtime::RuntimeSystem;
+        // As the player does at scene load: the listener placed sounds need.
+        let mut system = AudioSystem::new();
+        system.initialize(&mut FlintWorld::new()).unwrap();
+        let mut audio = ExtensionAudio::new(&mut system);
+        let click: Vec<f32> = (0..200).map(|i| 1.0 - i as f32 / 200.0).collect();
+        audio.load_samples("click", 44_100, &[&click]).unwrap();
+        assert!(audio.has_sound("click"));
+        // Flat and placed, with or without a device.
+        audio
+            .play("click", &SoundOptions::new().volume(0.5).pitch(1.3))
+            .unwrap();
+        let placed = SoundOptions::new()
+            .at(Vec3::new(4.0, 0.0, 2.0))
+            .distances(2.0, 80.0)
+            .bus(Bus::Music);
+        assert_eq!(placed.distances, (2.0, 80.0));
+        audio.play("click", &placed).unwrap();
+        assert!(audio.play("missing", &SoundOptions::new()).is_err());
+        audio.set_bus_volume(Bus::Sfx, 0.25);
+        // Scripts and audio_sources read the same cache.
+        assert!(system.engine.has_sound("click"));
+    }
 
     type Log = Arc<Mutex<Vec<String>>>;
 

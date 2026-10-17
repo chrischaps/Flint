@@ -12,7 +12,12 @@ use kira::track::{
 use kira::{AudioManager, DefaultBackend, Easing, Tween};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Distances for a placed one-shot when the caller names none: full volume
+/// within 1 m, silent past 25 m.
+pub const DEFAULT_DISTANCES: (f32, f32) = (1.0, 25.0);
 
 /// Mixer bus a sound routes through. Both buses are children of the main
 /// track, so the master low-pass filter still applies to everything.
@@ -140,6 +145,58 @@ impl AudioEngine {
         })?;
 
         self.sound_cache.insert(name.to_string(), sound_data);
+        Ok(())
+    }
+
+    /// Cache an encoded sound held in memory (WAV, OGG, FLAC or MP3 bytes,
+    /// e.g. from `include_bytes!`) under `name`. Replaces any sound already
+    /// cached under that name; sounds already playing keep the old data.
+    pub fn load_sound_from_bytes(&mut self, name: &str, bytes: Vec<u8>) -> Result<()> {
+        let data = StaticSoundData::from_cursor(std::io::Cursor::new(bytes)).map_err(|e| {
+            flint_core::FlintError::AudioError(format!("Failed to decode '{name}': {e}"))
+        })?;
+        self.sound_cache.insert(name.to_string(), data);
+        Ok(())
+    }
+
+    /// Cache a sound made in memory under `name`, from its samples: one
+    /// channel (played on both sides) or two (left, right), each in -1..1 at
+    /// `sample_rate` Hz. Unequal channels are cut to the shorter. Replaces
+    /// any sound already cached under that name.
+    pub fn load_sound_from_samples(
+        &mut self,
+        name: &str,
+        sample_rate: u32,
+        channels: &[&[f32]],
+    ) -> Result<()> {
+        let frames: Arc<[kira::Frame]> = match channels {
+            [mono] => mono.iter().map(|&s| kira::Frame::from_mono(s)).collect(),
+            [left, right] => left
+                .iter()
+                .zip(right.iter())
+                .map(|(&l, &r)| kira::Frame { left: l, right: r })
+                .collect(),
+            _ => {
+                return Err(flint_core::FlintError::AudioError(format!(
+                    "'{name}': {} channels; a sound has one or two",
+                    channels.len()
+                )))
+            }
+        };
+        if sample_rate == 0 {
+            return Err(flint_core::FlintError::AudioError(format!(
+                "'{name}': sample rate 0"
+            )));
+        }
+        self.sound_cache.insert(
+            name.to_string(),
+            StaticSoundData {
+                sample_rate,
+                frames,
+                settings: Default::default(),
+                slice: None,
+            },
+        );
         Ok(())
     }
 
@@ -311,7 +368,34 @@ impl AudioEngine {
         volume: f64,
         pitch: f64,
     ) -> Result<()> {
-        let mut track = self.create_spatial_track(position, 1.0, 25.0, Bus::Sfx)?;
+        self.play_oneshot_at(
+            sound_name,
+            position,
+            volume,
+            pitch,
+            DEFAULT_DISTANCES,
+            Bus::Sfx,
+        )
+    }
+
+    /// Play a one-shot at a 3D position with its own falloff, `(min, max)`
+    /// metres from the listener: full volume within `min`, silent past
+    /// `max`. Routed through `bus`.
+    pub fn play_oneshot_at(
+        &mut self,
+        sound_name: &str,
+        position: Vec3,
+        volume: f64,
+        pitch: f64,
+        (min_distance, max_distance): (f32, f32),
+        bus: Bus,
+    ) -> Result<()> {
+        if !self.sound_cache.contains_key(sound_name) {
+            return Err(flint_core::FlintError::AudioError(format!(
+                "Sound not cached: {sound_name}"
+            )));
+        }
+        let mut track = self.create_spatial_track(position, min_distance, max_distance, bus)?;
         let handle = self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
         self.oneshot_tracks.push((track, handle));
         Ok(())
@@ -356,5 +440,76 @@ pub fn amplitude_to_db(amplitude: f64) -> kira::Decibels {
         kira::Decibels(-60.0) // silence
     } else {
         kira::Decibels((20.0 * (amplitude as f32).log10()).max(-60.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sounds_load_from_samples_and_bytes_without_a_device() {
+        let mut engine = AudioEngine::new();
+        let tone: Vec<f32> = (0..441).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        engine
+            .load_sound_from_samples("mono", 44_100, &[&tone])
+            .unwrap();
+        engine
+            .load_sound_from_samples("stereo", 22_050, &[&tone, &tone[..400]])
+            .unwrap();
+        assert!(engine.has_sound("mono") && engine.has_sound("stereo"));
+        assert_eq!(engine.sound_cache["mono"].frames.len(), 441);
+        assert_eq!(
+            engine.sound_cache["stereo"].frames.len(),
+            400,
+            "cut to the shorter"
+        );
+        assert_eq!(
+            engine.sound_cache["mono"].frames[3].left,
+            engine.sound_cache["mono"].frames[3].right
+        );
+        assert!(engine.load_sound_from_samples("none", 44_100, &[]).is_err());
+        assert!(engine
+            .load_sound_from_samples("three", 44_100, &[&tone, &tone, &tone])
+            .is_err());
+        assert!(engine
+            .load_sound_from_samples("still", 0, &[&tone])
+            .is_err());
+
+        // A 16-bit mono WAV of the same tone, decoded from memory.
+        let mut wav = Vec::new();
+        let data_len = tone.len() as u32 * 2;
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        for v in [
+            16u32.to_le_bytes(),
+            [1, 0, 1, 0],
+            44_100u32.to_le_bytes(),
+            88_200u32.to_le_bytes(),
+            [2, 0, 16, 0],
+        ] {
+            wav.extend_from_slice(&v);
+        }
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for s in &tone {
+            wav.extend_from_slice(&((s * 32767.0) as i16).to_le_bytes());
+        }
+        engine.load_sound_from_bytes("wav", wav).unwrap();
+        assert_eq!(engine.sound_cache["wav"].frames.len(), 441);
+        assert!(engine.load_sound_from_bytes("junk", vec![1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn an_unknown_sound_is_an_error_not_a_panic() {
+        let mut engine = AudioEngine::new();
+        let at = Vec3::new(0.0, 0.0, 0.0);
+        assert!(engine
+            .play_oneshot_at("nope", at, 1.0, 1.0, (2.0, 80.0), Bus::Sfx)
+            .is_err());
+        assert!(engine
+            .play_non_spatial("nope", 1.0, 1.0, false, Bus::Music)
+            .is_err());
     }
 }

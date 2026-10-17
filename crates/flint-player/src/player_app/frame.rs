@@ -822,6 +822,7 @@ impl PlayerApp {
                 camera: &self.camera,
                 gpu,
                 persist: &mut self.persistent_store,
+                audio: crate::extension::ExtensionAudio::new(&mut self.audio),
                 fired_events: &mut fired_events,
             };
             ext.pre_update(&mut ctx);
