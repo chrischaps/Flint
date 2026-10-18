@@ -353,7 +353,7 @@ impl ExtensionGpu<'_> {
     }
 
     /// Grow compute grass on the game's own ground: a density mask and a
-    /// height over a world rectangle (ADR 0088). Replaces any grass loaded,
+    /// height over a world rectangle (ADR 0089). Replaces any grass loaded,
     /// a terrain's included. Call again whenever the ground changes, and
     /// [`set_grass_config`](Self::set_grass_config) to retune it without
     /// re-uploading the mask. Errs only when the mask or heights don't

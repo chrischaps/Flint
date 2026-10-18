@@ -39,13 +39,13 @@ pub struct GrassComputeUniforms {
     /// 1: a density weight above the threshold keeps a blade with that
     /// probability, so the mask fades a field out. 0: full density above it.
     pub scale_by_density: u32,
-    /// First grid cell of this frame's dispatch window (ADR 0088): only the
+    /// First grid cell of this frame's dispatch window (ADR 0089): only the
     /// cells within `max_distance` of the camera are dispatched.
     pub grid_start_x: u32,
     pub grid_start_z: u32,
 }
 
-/// The ground a game grows grass on instead of a Flint terrain (ADR 0088).
+/// The ground a game grows grass on instead of a Flint terrain (ADR 0089).
 ///
 /// The ground is a world-space rectangle on the XZ plane, from `origin`
 /// (its minimum corner) across `size`. The mask and the heightmap each

@@ -295,7 +295,7 @@ pub struct SceneRenderer {
     grass_terrain_width: f32,
     grass_terrain_depth: f32,
     grass_terrain_height_scale: f32,
-    /// Grass grows on a game's ground (ADR 0088), not a terrain's splat map.
+    /// Grass grows on a game's ground (ADR 0089), not a terrain's splat map.
     grass_on_ground: bool,
     /// A mask weight thins the field in proportion (ground only).
     grass_scale_by_density: bool,
@@ -1299,7 +1299,7 @@ impl SceneRenderer {
     }
 
     /// Grow grass on a game's own ground instead of a Flint terrain
-    /// (ADR 0088): a density mask and a height over a world rectangle.
+    /// (ADR 0089): a density mask and a height over a world rectangle.
     ///
     /// Replaces whatever grass is loaded, a terrain's included, and can be
     /// called again whenever the ground changes. `config` is used as for a
