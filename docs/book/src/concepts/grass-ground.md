@@ -86,4 +86,17 @@ The compute pass covers only the grid cells within `max_distance` of the camera,
 
 Each cell keeps its place in the whole grid, so a blade doesn't move as the window follows the camera. Terrain grass gets the same windowing, and grows exactly as it did before.
 
-**Cost.** On an RTX 4070, the Mesh Meadow demo at 1600×900 with density 40 and a 70 m reach grows about 110,000 blades (1.3 M triangles). It costs 1.3–1.6 ms a frame: compute, the count read back, the draw and two shadow cascades. A camera standing in an unbroken field of the same density draws about 440,000 blades, at about 4.5 ms. Every blade in reach is drawn, including those behind the camera, and the CPU waits for the blade count before the draw. Frustum culling and an indirect draw would remove both ([TheCapitol #133](https://github.com/chrischaps/TheCapitol/issues/133)).
+## Only what the camera sees (ADR 0092)
+
+Within that window, the compute pass keeps a blade only if its root is inside the camera frustum. The planes are pushed out first, so nothing visible is lost at the frame's edges. They move out by the tallest blade, which covers a blade leaning in from just outside. With shadows on, they move out further, by as far as a blade's shadow reaches along the ground: its height over the tangent of the sun's elevation, capped at eight blade heights for a sun near the horizon. A blade just off screen whose shadow falls on screen is still drawn into the shadow cascades.
+
+The pass counts the blades it keeps into a `DrawIndexedIndirect` buffer, and the main pass and both shadow cascades draw from it with `draw_indexed_indirect`. The CPU never waits for the count. The compute pass runs before the shadow pass, so the cascades cast the blades of the frame they shadow. The F2 overlay's blade count comes from a small read-back that is mapped without waiting, so it lags the frame by one or two.
+
+**Cost.** Measured on an RTX 4070 at 1600×900, uncapped, with the builds from before and after culling run alternately. The grass's cost is the frame time with grass minus the frame time without it.
+
+| Scene | Before culling | Culled to the view |
+|---|---|---|
+| Mesh Meadow demo (density 40, 70 m reach), looking into the field | ~111k blades, 1.3 ms | ~83k blades, 0.9 ms |
+| Standing in an unbroken field (same density and reach) | ~507k blades, 3.8 ms | ~125k blades, 1.1 ms |
+
+With the grass still (`wind_strength` 0), a frame from either build is identical to the pixel, shadows included.

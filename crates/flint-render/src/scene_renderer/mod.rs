@@ -18,7 +18,7 @@ use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
 use crate::grass_pipeline::{
     GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu,
-    GrassPipeline, GrassRenderUniforms, MAX_GRASS_ENTITIES,
+    GrassCountReadback, GrassDrawArgs, GrassPipeline, GrassRenderUniforms, MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleDrawCall, ParticlePipeline};
 use crate::pipeline::{
@@ -277,10 +277,14 @@ pub struct SceneRenderer {
     // Grass
     grass_pipeline: Option<GrassPipeline>,
     grass_instance_buffer: Option<wgpu::Buffer>,
+    /// Blades drawn, for stats: read back without waiting, so a frame or
+    /// more behind (ADR 0092). The draws themselves read the GPU's count.
     grass_instance_count: u32,
+    /// The grass compute ran for this render_to, so the draws have arguments
+    grass_drawing: bool,
     grass_max_instances: u32,
-    grass_counter_buffer: Option<wgpu::Buffer>,
-    grass_staging_buffer: Option<wgpu::Buffer>,
+    grass_draw_args_buffer: Option<wgpu::Buffer>,
+    grass_count_readback: Option<GrassCountReadback>,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
@@ -533,9 +537,10 @@ impl SceneRenderer {
             grass_pipeline,
             grass_instance_buffer: None,
             grass_instance_count: 0,
+            grass_drawing: false,
             grass_max_instances: 0,
-            grass_counter_buffer: None,
-            grass_staging_buffer: None,
+            grass_draw_args_buffer: None,
+            grass_count_readback: None,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -1402,23 +1407,8 @@ impl SceneRenderer {
             mapped_at_creation: false,
         });
 
-        // Atomic counter buffer (u32)
-        let counter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Counter Buffer"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Staging buffer for reading counter back to CPU
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Staging Buffer"),
-            size: 4,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Indirect draw arguments; the compute pass counts blades into them (ADR 0092)
+        let counter_buffer = create_grass_draw_args_buffer(device);
 
         // Compute uniform buffer
         let compute_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1534,8 +1524,8 @@ impl SceneRenderer {
         self.grass_instance_buffer = Some(instance_buffer);
         self.grass_instance_count = 0;
         self.grass_max_instances = max_instances;
-        self.grass_counter_buffer = Some(counter_buffer);
-        self.grass_staging_buffer = Some(staging_buffer);
+        self.grass_draw_args_buffer = Some(counter_buffer);
+        self.grass_count_readback = Some(GrassCountReadback::new(device));
         self.grass_compute_uniform_buffer = Some(compute_uniform_buffer);
         self.grass_compute_uniform_bind_group = Some(compute_uniform_bind_group);
         self.grass_compute_texture_bind_group = Some(compute_texture_bind_group);
@@ -1583,8 +1573,8 @@ impl SceneRenderer {
         self.grass_instance_buffer = None;
         self.grass_instance_count = 0;
         self.grass_max_instances = 0;
-        self.grass_counter_buffer = None;
-        self.grass_staging_buffer = None;
+        self.grass_draw_args_buffer = None;
+        self.grass_count_readback = None;
         self.grass_compute_uniform_buffer = None;
         self.grass_compute_uniform_bind_group = None;
         self.grass_compute_texture_bind_group = None;
@@ -1640,23 +1630,8 @@ impl SceneRenderer {
             mapped_at_creation: false,
         });
 
-        // Reallocate counter buffer
-        let counter_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Counter Buffer"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Reallocate staging buffer
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Grass Staging Buffer"),
-            size: 4,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Indirect draw arguments; the compute pass counts blades into them (ADR 0092)
+        let counter_buffer = create_grass_draw_args_buffer(device);
 
         // Recreate compute storage bind group (binds instance buffer at binding 0)
         let compute_storage_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1701,8 +1676,8 @@ impl SceneRenderer {
         self.grass_instance_buffer = Some(instance_buffer);
         self.grass_instance_count = 0;
         self.grass_max_instances = max_instances;
-        self.grass_counter_buffer = Some(counter_buffer);
-        self.grass_staging_buffer = Some(staging_buffer);
+        self.grass_draw_args_buffer = Some(counter_buffer);
+        self.grass_count_readback = Some(GrassCountReadback::new(device));
         self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
         self.grass_render_instance_bind_group = Some(render_instance_bind_group);
         self.grass_config = Some(config);
@@ -1912,9 +1887,10 @@ impl SceneRenderer {
             grass_pipeline,
             grass_instance_buffer: None,
             grass_instance_count: 0,
+            grass_drawing: false,
             grass_max_instances: 0,
-            grass_counter_buffer: None,
-            grass_staging_buffer: None,
+            grass_draw_args_buffer: None,
+            grass_count_readback: None,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -2239,7 +2215,7 @@ impl SceneRenderer {
         let billboard_draws = self.billboard_draws.len() as u32;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
-        let grass_draw_calls = if self.grass_instance_count > 0 {
+        let grass_draw_calls = if self.grass_drawing {
             1u32
         } else {
             0
@@ -3826,6 +3802,32 @@ impl SceneRenderer {
             bytemuck::cast_slice(&[self.light_uniforms]),
         );
 
+        // Grass compute (ADR 0092): scatters this camera's blades, culled to
+        // its view, and counts them into the indirect draw arguments. It goes
+        // before the shadow pass so the cascades cast this frame's blades.
+        // Nothing waits on it: the draws read the count on the GPU, and the
+        // stats get it a frame or so late.
+        self.grass_drawing = false;
+        if self.grass_needs_realloc {
+            if let Some(config) = self.grass_config.clone() {
+                self.reload_grass_config(device, config);
+            }
+        }
+        if self.grass_config.as_ref().is_some_and(|c| c.enabled) {
+            let mut compute_encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Grass Compute Encoder"),
+                });
+            let grass_time = self.grass_time;
+            self.dispatch_grass_compute(device, queue, &mut compute_encoder, camera, grass_time);
+            queue.submit(std::iter::once(compute_encoder.finish()));
+            if let Some(readback) = &mut self.grass_count_readback {
+                readback.start_map();
+            }
+        } else {
+            self.grass_instance_count = 0;
+        }
+
         // Shadow pass: render depth from light perspective. It sees every
         // draw (culled per cascade), since a caster outside the view can
         // still shadow what's in it.
@@ -3874,27 +3876,6 @@ impl SceneRenderer {
             tonemapping_u32,
             camera,
         );
-
-        // Grass compute: dispatch in a separate encoder+submit so we can read back
-        // the instance count before the render pass needs it.
-        // That read-back waits on the GPU, and every blade in reach is drawn,
-        // in view or not. Frustum culling and an indirect draw would remove
-        // both (chrischaps/TheCapitol#133).
-        if self.grass_needs_realloc {
-            if let Some(config) = self.grass_config.clone() {
-                self.reload_grass_config(device, config);
-            }
-        }
-        if self.grass_config.as_ref().is_some_and(|c| c.enabled) {
-            let mut compute_encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Grass Compute Encoder"),
-                });
-            let grass_time = self.grass_time;
-            self.dispatch_grass_compute(device, queue, &mut compute_encoder, camera, grass_time);
-            queue.submit(std::iter::once(compute_encoder.finish()));
-            self.read_grass_instance_count(device);
-        }
 
         // MSAA (ADR 0058): scene passes draw into MSAA color/depth and
         // resolve color into the HDR buffer; depth resolves (sample 0) into
@@ -4217,6 +4198,19 @@ mod tests {
             assert!((got - want).abs() < 1e-5, "{max:?}");
         }
     }
+}
+
+/// The grass draw's indirect arguments (ADR 0092): the compute pass writes
+/// the instance count, and the draws read the buffer as `INDIRECT`.
+fn create_grass_draw_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Grass Draw Args"),
+        contents: bytemuck::bytes_of(&GrassDrawArgs::RESET),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::INDIRECT
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+    })
 }
 
 /// Upload one grass ground texture (heightmap, splat map or mask) and

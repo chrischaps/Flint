@@ -4,6 +4,8 @@
 //! Two-pass system: compute shader places instances, render pass draws cross-quads.
 
 use bytemuck::{Pod, Zeroable};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 /// Per-instance data written by compute shader, read by vertex shader.
@@ -43,6 +45,162 @@ pub struct GrassComputeUniforms {
     /// cells within `max_distance` of the camera are dispatched.
     pub grid_start_x: u32,
     pub grid_start_z: u32,
+    /// The camera frustum's planes (`ax + by + cz + d >= 0` is inside),
+    /// each pushed out by [`grass_cull_padding`] (ADR 0092). A blade whose
+    /// root is outside any of them isn't drawn.
+    pub frustum_planes: [[f32; 4]; 6],
+}
+
+/// The grass draw's `DrawIndexedIndirect` arguments (ADR 0092). The compute
+/// pass counts its blades into `instance_count`, and the main pass and the
+/// shadow cascades draw from this buffer, so the CPU never reads it.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct GrassDrawArgs {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub first_instance: u32,
+}
+
+impl GrassDrawArgs {
+    /// The arguments each frame starts from: one blade mesh, no instances.
+    pub const RESET: Self = Self {
+        index_count: BLADE_INDEX_COUNT,
+        instance_count: 0,
+        first_index: 0,
+        base_vertex: 0,
+        first_instance: 0,
+    };
+    /// Byte offset of `instance_count`, for the stats read-back.
+    pub const INSTANCE_COUNT_OFFSET: u64 = 4;
+}
+
+/// How far the grass cull pushes each frustum plane out (ADR 0092).
+///
+/// A blade is culled by its root, so the planes move out by the tallest
+/// blade, and a blade leaning in from just outside the view still shows.
+/// With shadows on, a blade outside the view can also cast into it, as far
+/// as its shadow reaches along the ground: its height over the tangent of
+/// the sun's elevation. That reach is capped at eight blade heights (a sun
+/// about 7° up), past which the shadow is too faint and long to pop.
+/// `sun_direction` is the shadow-casting light's direction, or `None` when
+/// shadows are off.
+pub fn grass_cull_padding(max_blade_height: f32, sun_direction: Option<[f32; 3]>) -> f32 {
+    const MAX_SHADOW_REACH: f32 = 8.0;
+    let reach = sun_direction.map_or(0.0, |d| {
+        let across = (d[0] * d[0] + d[2] * d[2]).sqrt();
+        let down = d[1].abs();
+        if down * MAX_SHADOW_REACH <= across {
+            MAX_SHADOW_REACH
+        } else {
+            across / down
+        }
+    });
+    max_blade_height * (1.0 + reach)
+}
+
+/// The camera frustum's planes, each pushed out by `padding` world units,
+/// for the grass compute pass (ADR 0092).
+pub fn grass_cull_planes(view_proj: &[[f32; 4]; 4], padding: f32) -> [[f32; 4]; 6] {
+    let mut planes = crate::frustum::Frustum::from_view_projection(view_proj).planes;
+    for plane in &mut planes {
+        plane[3] += padding;
+    }
+    planes
+}
+
+/// Reads the number of blades drawn back to the CPU for [`RenderStats`],
+/// a frame or more late, without ever waiting on the GPU (ADR 0092).
+///
+/// Each frame [`record_copy`](Self::record_copy) copies the count into a
+/// small buffer, unless an earlier copy is still on its way, and after the
+/// submit [`start_map`](Self::start_map) maps it. [`poll`](Self::poll)
+/// picks the value up once the map has finished.
+///
+/// [`RenderStats`]: crate::RenderStats
+pub struct GrassCountReadback {
+    buffer: wgpu::Buffer,
+    /// A copy was recorded and hasn't been mapped yet
+    copy_recorded: bool,
+    /// A map is in flight; its callback sets `state`
+    mapping: bool,
+    /// 0 while the map is pending, 1 mapped, 2 failed
+    state: Arc<AtomicU8>,
+}
+
+impl GrassCountReadback {
+    pub fn new(device: &wgpu::Device) -> Self {
+        Self {
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grass Count Read-back"),
+                size: 4,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            copy_recorded: false,
+            mapping: false,
+            state: Default::default(),
+        }
+    }
+
+    /// Records a copy of the count from the draw arguments, unless the last
+    /// one hasn't come back yet.
+    pub fn record_copy(&mut self, encoder: &mut wgpu::CommandEncoder, draw_args: &wgpu::Buffer) {
+        if self.mapping || self.copy_recorded {
+            return;
+        }
+        encoder.copy_buffer_to_buffer(
+            draw_args,
+            GrassDrawArgs::INSTANCE_COUNT_OFFSET,
+            &self.buffer,
+            0,
+            4,
+        );
+        self.copy_recorded = true;
+    }
+
+    /// Starts mapping the copy. Call after the submit that holds it.
+    pub fn start_map(&mut self) {
+        if !self.copy_recorded {
+            return;
+        }
+        self.copy_recorded = false;
+        self.mapping = true;
+        self.state.store(0, Ordering::Release);
+        let state = self.state.clone();
+        self.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                state.store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
+            });
+    }
+
+    /// The count, if a map has finished since the last call. Polls the
+    /// device without blocking.
+    pub fn poll(&mut self, device: &wgpu::Device) -> Option<u32> {
+        if !self.mapping {
+            return None;
+        }
+        device.poll(wgpu::Maintain::Poll);
+        match self.state.load(Ordering::Acquire) {
+            1 => {
+                let count = {
+                    let data = self.buffer.slice(..).get_mapped_range();
+                    u32::from_le_bytes([data[0], data[1], data[2], data[3]])
+                };
+                self.buffer.unmap();
+                self.mapping = false;
+                Some(count)
+            }
+            2 => {
+                self.mapping = false;
+                None
+            }
+            _ => None,
+        }
+    }
 }
 
 /// The ground a game grows grass on instead of a Flint terrain (ADR 0089).
@@ -675,6 +833,66 @@ mod tests {
         assert!(
             grass_dispatch_window([0.0, 0.0], [100.0, 100.0], 0.5, [50.0, -200.0], 80.0).is_none()
         );
+    }
+
+    #[test]
+    fn cull_padding_reaches_as_far_as_a_blade_shadow() {
+        // Shadows off: the tallest blade
+        assert_eq!(grass_cull_padding(0.5, None), 0.5);
+        // A sun 45° up casts a shadow as long as the blade is tall
+        let pad = grass_cull_padding(0.5, Some([0.6, -0.8, 0.0].map(|v| v * 1.25)));
+        assert!((pad - 0.5 * (1.0 + 0.75)).abs() < 1e-5, "{pad}");
+        let pad = grass_cull_padding(0.5, Some([0.0, -1.0, 1.0]));
+        assert!((pad - 1.0).abs() < 1e-5, "{pad}");
+        // A sun on the horizon is capped at eight blade heights
+        assert_eq!(grass_cull_padding(0.5, Some([1.0, 0.0, 0.0])), 4.5);
+        assert_eq!(grass_cull_padding(0.5, Some([1.0, -0.01, 0.0])), 4.5);
+    }
+
+    #[test]
+    fn cull_planes_are_the_frustum_pushed_out() {
+        let camera = crate::Camera::new();
+        let view_proj = camera.view_projection_matrix();
+        let plain = crate::frustum::Frustum::from_view_projection(&view_proj).planes;
+        let padded = grass_cull_planes(&view_proj, 2.0);
+        for (p, q) in plain.iter().zip(&padded) {
+            assert_eq!(p[..3], q[..3]);
+            assert!((q[3] - p[3] - 2.0).abs() < 1e-5);
+        }
+        // A point just behind the camera is outside the plain frustum and
+        // inside the padded one
+        let eye = camera.position_array();
+        let fwd = {
+            let t = [
+                camera.target.x - eye[0],
+                camera.target.y - eye[1],
+                camera.target.z - eye[2],
+            ];
+            let len = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
+            t.map(|v| v / len)
+        };
+        let behind = [eye[0] - fwd[0], eye[1] - fwd[1], eye[2] - fwd[2]];
+        let inside = |planes: &[[f32; 4]; 6]| {
+            planes
+                .iter()
+                .all(|p| p[0] * behind[0] + p[1] * behind[1] + p[2] * behind[2] + p[3] >= 0.0)
+        };
+        assert!(!inside(&plain));
+        assert!(inside(&padded));
+    }
+
+    #[test]
+    fn draw_args_match_draw_indexed_indirect() {
+        // wgpu's DrawIndexedIndirectArgs: five 32-bit words, the count second
+        assert_eq!(std::mem::size_of::<GrassDrawArgs>(), 20);
+        let args = GrassDrawArgs {
+            instance_count: 7,
+            ..GrassDrawArgs::RESET
+        };
+        let bytes = bytemuck::bytes_of(&args);
+        let at = GrassDrawArgs::INSTANCE_COUNT_OFFSET as usize;
+        assert_eq!(u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()), 7);
+        assert_eq!(GrassDrawArgs::RESET.index_count, BLADE_INDEX_COUNT);
     }
 
     #[test]
