@@ -16,6 +16,14 @@ pub struct GpuTexture {
     pub height: u32,
 }
 
+/// Whether a loose image file is a data map, by its name: the companion
+/// maps `<tex>_normal` and `<tex>_roughness` are sampled linear, anything
+/// else as sRGB colour. Only for files on disk; a model's own textures go
+/// by how its materials use them.
+pub fn is_data_map_name(name: &str) -> bool {
+    name.contains("normal") || name.contains("roughness")
+}
+
 /// Cache of GPU textures, keyed by name, with built-in defaults
 pub struct TextureCache {
     textures: HashMap<String, GpuTexture>,
@@ -89,13 +97,19 @@ impl TextureCache {
         }
     }
 
-    /// Upload an imported texture to the GPU
+    /// Upload an imported texture to the GPU.
+    ///
+    /// `linear` is for data maps (normal, metallic-roughness): they're
+    /// sampled as stored. Colour maps (base colour, emissive) are sRGB. The
+    /// caller decides from how the material uses the texture, since a glTF
+    /// texture's name says nothing about it.
     pub fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         name: &str,
         imported: &ImportedTexture,
+        linear: bool,
     ) {
         if self.textures.contains_key(name) {
             return;
@@ -109,8 +123,7 @@ impl TextureCache {
             imported.height,
         );
 
-        // Determine if this is a normal map (use Rgba8Unorm, not sRGB)
-        let format = if name.contains("normal") {
+        let format = if linear {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
             wgpu::TextureFormat::Rgba8UnormSrgb
@@ -177,7 +190,7 @@ impl TextureCache {
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
 
-        let format = if name.contains("normal") {
+        let format = if is_data_map_name(name) {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
             wgpu::TextureFormat::Rgba8UnormSrgb
