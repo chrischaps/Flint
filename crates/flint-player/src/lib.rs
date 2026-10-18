@@ -9,8 +9,10 @@ pub mod spline_gen;
 
 pub use extension::{ExtensionAudio, ExtensionCtx, ExtensionGpu, PlayerExtension, SoundOptions};
 pub use flint_audio::Bus;
+pub use flint_render::{GrassGround, GrassHeight};
 pub use flint_script::{Projector, ScreenPoint, View};
+pub use flint_terrain::GrassConfig;
 pub use player_app::fonts::project_font_definitions;
 pub use player_app::input_script::{Applied, InputScript, PointerEvent};
-pub use player_app::scene_loading::post_process_config_from_def;
+pub use player_app::scene_loading::{load_scene_grass_ground, post_process_config_from_def};
 pub use player_app::{CaptureConfig, PlayerApp};

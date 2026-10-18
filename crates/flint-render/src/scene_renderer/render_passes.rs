@@ -7,7 +7,9 @@ use super::SceneRenderer;
 use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::{mat4_inverse, mat4_mul, Camera};
 use crate::debug::DebugMode;
-use crate::grass_pipeline::{GrassComputeUniforms, GrassRenderUniforms, BLADE_INDEX_COUNT};
+use crate::grass_pipeline::{
+    grass_dispatch_window, GrassComputeUniforms, GrassRenderUniforms, BLADE_INDEX_COUNT,
+};
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
 use crate::shadow::{ShadowDrawUniforms, CASCADE_COUNT, SHADOW_DRAW_STRIDE};
@@ -377,6 +379,18 @@ impl SceneRenderer {
                 _pad: 0.0,
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        }
+
+        // Grass view uniforms (its vertex shader reads only view_proj and camera_pos)
+        if let Some(buf) = &self.grass_transform_buffer {
+            let uniforms = TransformUniforms {
+                view_proj,
+                model: identity_matrix(),
+                model_inv_transpose: identity_matrix(),
+                camera_pos,
+                _pad: 0.0,
+            };
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
         // Update terrain material buffer (tonemapping flag)
@@ -945,9 +959,10 @@ impl SceneRenderer {
                 &self.grass_render_instance_bind_group,
             ) {
                 if self.grass_instance_count > 0 {
-                    // Explicitly set bind group 0 (transform) — cannot rely on terrain having set it
-                    if let Some(first_terrain) = self.terrain_draws.first() {
-                        render_pass.set_bind_group(0, &first_terrain.transform_bind_group, &[]);
+                    // Bind group 0 (transform): the grass's own view uniforms,
+                    // so grass on a game's ground draws with no terrain loaded
+                    if let Some(transform_bg) = &self.grass_transform_bind_group {
+                        render_pass.set_bind_group(0, transform_bg, &[]);
                     }
                     render_pass.set_pipeline(&gp.render_pipeline);
                     render_pass.set_bind_group(1, render_bg, &[]);
@@ -1359,6 +1374,17 @@ impl SceneRenderer {
             queue.write_buffer(counter_buf, 0, &[0u8; 4]);
         }
 
+        // Only the cells within reach of the camera are dispatched (ADR 0088)
+        let spacing = 1.0 / config.density.sqrt();
+        let window = grass_dispatch_window(
+            [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],
+            [self.grass_terrain_width, self.grass_terrain_depth],
+            spacing,
+            [camera.position.x, camera.position.z],
+            config.max_distance,
+        );
+        let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
+
         // Update compute uniforms
         let uniforms = GrassComputeUniforms {
             camera_pos: [camera.position.x, camera.position.y, camera.position.z],
@@ -1371,12 +1397,17 @@ impl SceneRenderer {
             max_distance: config.max_distance,
             fade_start: config.fade_start,
             density_threshold: config.density_threshold,
-            density_layer: config.density_layer,
+            // A ground's mask is a single channel
+            density_layer: if self.grass_on_ground {
+                0
+            } else {
+                config.density_layer
+            },
             blade_height: config.blade_height,
             height_variation: config.height_variation,
-            _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
+            scale_by_density: self.grass_scale_by_density as u32,
+            grid_start_x: start_x,
+            grid_start_z: start_z,
         };
 
         if let Some(buf) = &self.grass_compute_uniform_buffer {
@@ -1413,14 +1444,12 @@ impl SceneRenderer {
             queue.write_buffer(buf, 0, bytemuck::cast_slice(&[render_uniforms]));
         }
 
-        // Compute dispatch
-        let spacing = 1.0 / config.density.sqrt();
-        let grid_x = (self.grass_terrain_width / spacing).ceil() as u32;
-        let grid_z = (self.grass_terrain_depth / spacing).ceil() as u32;
-        let workgroups_x = (grid_x + 7) / 8;
-        let workgroups_z = (grid_z + 7) / 8;
+        // Compute dispatch over the window (none when the camera is out of reach;
+        // the counter, reset above, then reads zero)
+        let workgroups_x = count_x.div_ceil(8);
+        let workgroups_z = count_z.div_ceil(8);
 
-        {
+        if workgroups_x > 0 && workgroups_z > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Grass Compute Pass"),
                 timestamp_writes: None,

@@ -43,6 +43,8 @@ pub const PARTICLE_EFFECT: &str = "particle_effect";
 
 // --- Terrain ---
 pub const TERRAIN: &str = "terrain";
+/// Compute grass on a game's own ground: a mask over a rectangle (ADR 0088).
+pub const GRASS_GROUND: &str = "grass_ground";
 
 // --- Ocean ---
 pub const OCEAN: &str = "ocean";

@@ -565,7 +565,8 @@ impl PlayerApp {
                 info.config,
                 std::path::PathBuf::from(&self.scene_path),
                 info.terrain_entity_name,
-            );
+            )
+            .with_component(info.component);
             self.debug_panels.push(Box::new(panel));
         }
         #[cfg(not(feature = "debug-hud"))]

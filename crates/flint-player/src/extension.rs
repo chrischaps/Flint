@@ -25,7 +25,7 @@ use flint_audio::{AudioSystem, Bus};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
-use flint_render::{Camera, SceneRenderer, Vertex};
+use flint_render::{Camera, GrassGround, SceneRenderer, Vertex};
 use flint_runtime::{GameClock, GameEvent, InputState, PersistentStore};
 use winit::event::WindowEvent;
 
@@ -350,6 +350,33 @@ impl ExtensionGpu<'_> {
     /// until it is uploaded again. Returns whether it existed.
     pub fn remove_mesh(&mut self, name: &str) -> bool {
         self.renderer.remove_mesh(name)
+    }
+
+    /// Grow compute grass on the game's own ground: a density mask and a
+    /// height over a world rectangle (ADR 0088). Replaces any grass loaded,
+    /// a terrain's included. Call again whenever the ground changes, and
+    /// [`set_grass_config`](Self::set_grass_config) to retune it without
+    /// re-uploading the mask. Errs only when the mask or heights don't
+    /// match their stated sizes; on a device with no compute grass it does
+    /// nothing.
+    pub fn set_grass_ground(
+        &mut self,
+        config: &flint_terrain::GrassConfig,
+        ground: &GrassGround,
+    ) -> Result<(), String> {
+        self.renderer
+            .set_grass_ground(self.device, self.queue, config, ground)
+    }
+
+    /// Change the grass's look (colours, wind, density, reach) and keep its
+    /// ground. The instance buffer grows on the next frame if it must.
+    pub fn set_grass_config(&mut self, config: flint_terrain::GrassConfig) {
+        self.renderer.set_grass_config(config);
+    }
+
+    /// Remove the grass, whatever ground it grows on.
+    pub fn clear_grass(&mut self) {
+        self.renderer.unload_grass();
     }
 }
 

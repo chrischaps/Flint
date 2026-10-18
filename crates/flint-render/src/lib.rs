@@ -44,8 +44,9 @@ pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use grass_pipeline::{
-    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
-    GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
+    grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight,
+    GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT,
+    MAX_GRASS_ENTITIES,
 };
 pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
@@ -332,7 +333,29 @@ mod tests {
     #[test]
     fn grass_compute_shader_wgsl_parses() {
         let source = include_str!("grass_compute.wgsl");
-        naga::front::wgsl::parse_str(source).expect("grass_compute.wgsl failed to parse");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("grass_compute.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("grass_compute.wgsl failed validation");
+
+        // The uniforms the Rust side writes must match the shader's struct
+        let span = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("GrassComputeUniforms"))
+            .map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { span, .. } => *span,
+                _ => panic!("GrassComputeUniforms is not a struct"),
+            })
+            .expect("GrassComputeUniforms in grass_compute.wgsl");
+        assert_eq!(
+            span as usize,
+            std::mem::size_of::<crate::GrassComputeUniforms>()
+        );
     }
 
     #[test]
