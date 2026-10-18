@@ -1,5 +1,5 @@
 # Mesh Meadow: compute grass on a plain mesh ground, under a painted mask
-# (ADR 0088). No terrain: the ground is a box, and demo/mesh_meadow/mask.png
+# (ADR 0089). No terrain: the ground is a box, and demo/mesh_meadow/mask.png
 # says where the grass grows. It thins toward the rim and in grey patches,
 # and leaves a winding path and a clearing bare.
 #

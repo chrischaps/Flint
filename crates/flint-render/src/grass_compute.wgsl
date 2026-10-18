@@ -17,7 +17,7 @@ struct GrassComputeUniforms {
     height_variation: f32,
     scale_by_density: u32,
     // First cell of the dispatch window; the dispatch covers only the cells
-    // near the camera, but each keeps its place in the whole grid (ADR 0088).
+    // near the camera, but each keeps its place in the whole grid (ADR 0089).
     grid_start_x: u32,
     grid_start_z: u32,
 };
@@ -34,7 +34,7 @@ struct GrassInstance {
 var<uniform> params: GrassComputeUniforms;
 
 // Group 1: Ground textures: a terrain's heightmap and splat map, or a game's
-// heightmap (world y, scale 1) and R8 density mask (ADR 0088)
+// heightmap (world y, scale 1) and R8 density mask (ADR 0089)
 @group(1) @binding(0)
 var heightmap_texture: texture_2d<f32>;
 @group(1) @binding(1)

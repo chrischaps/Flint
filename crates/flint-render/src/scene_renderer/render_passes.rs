@@ -1374,7 +1374,7 @@ impl SceneRenderer {
             queue.write_buffer(counter_buf, 0, &[0u8; 4]);
         }
 
-        // Only the cells within reach of the camera are dispatched (ADR 0088)
+        // Only the cells within reach of the camera are dispatched (ADR 0089)
         let spacing = 1.0 / config.density.sqrt();
         let window = grass_dispatch_window(
             [self.grass_terrain_offset[0], self.grass_terrain_offset[2]],

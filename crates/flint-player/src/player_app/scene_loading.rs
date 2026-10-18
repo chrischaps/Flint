@@ -248,7 +248,7 @@ pub(super) fn load_terrain_from_world_inner(
         break; // Only one terrain entity for now
     }
 
-    // Grass on a scene-authored mesh ground (ADR 0088). One grass field per
+    // Grass on a scene-authored mesh ground (ADR 0089). One grass field per
     // scene: a grass_ground replaces a terrain's grass.
     if let Some(info) = load_grass_ground(world, scene_dir, device, queue, scene_renderer) {
         if grass_info_out.is_some() {
@@ -262,7 +262,7 @@ pub(super) fn load_terrain_from_world_inner(
 }
 
 /// Load a scene's `grass_ground` into `scene_renderer`, as the player does
-/// (ADR 0088). Returns whether grass was set. Public for `flint render`.
+/// (ADR 0089). Returns whether grass was set. Public for `flint render`.
 pub fn load_scene_grass_ground(
     world: &FlintWorld,
     scene_path: &str,
@@ -277,7 +277,7 @@ pub fn load_scene_grass_ground(
 }
 
 /// Load the first `grass_ground` entity's mask and hand it to the renderer
-/// (ADR 0088). The ground is level at the entity's `y`, from its `x`, `z`
+/// (ADR 0089). The ground is level at the entity's `y`, from its `x`, `z`
 /// across `width` × `depth`.
 fn load_grass_ground(
     world: &FlintWorld,

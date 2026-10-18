@@ -798,7 +798,7 @@ fn load_terrain_for_render(
         break; // Only one terrain for now
     }
 
-    // Grass on a mesh ground (ADR 0088), as the player loads it
+    // Grass on a mesh ground (ADR 0089), as the player loads it
     if flint_player::load_scene_grass_ground(world, scene_path, device, queue, renderer) {
         println!("[grass] Enabled on grass_ground");
     }

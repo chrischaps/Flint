@@ -1,5 +1,5 @@
 [component.grass_ground]
-description = "Compute grass on mesh ground: a grayscale density mask over a world rectangle, level at the entity's y (ADR 0088). The entity's x and z are the rectangle's minimum corner. One grass field per scene; it replaces a terrain's grass."
+description = "Compute grass on mesh ground: a grayscale density mask over a world rectangle, level at the entity's y (ADR 0089). The entity's x and z are the rectangle's minimum corner. One grass field per scene; it replaces a terrain's grass."
 
 [component.grass_ground.fields]
 mask = { type = "string", description = "Path to a grayscale PNG: black no grass, white full density. Pixel (0,0) is at the minimum corner; rows run toward +Z" }

@@ -35,7 +35,7 @@ impl GrassDebugPanel {
     }
 
     /// Commit to `component`'s fields instead of the `terrain`'s, for grass
-    /// on a `grass_ground` (ADR 0088).
+    /// on a `grass_ground` (ADR 0089).
     pub fn with_component(mut self, component: &'static str) -> Self {
         self.component = component;
         self

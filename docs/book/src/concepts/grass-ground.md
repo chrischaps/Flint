@@ -1,6 +1,6 @@
 # Grass on Any Ground
 
-The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead (ADR 0088). That ground is two things over a world-space rectangle:
+The [terrain](terrain.md#grass) grows grass from its own heightmap and splat map. A game whose ground is something else, such as a mesh it builds itself, a level made of boxes or a race track, can give the grass pass its own ground instead (ADR 0089). That ground is two things over a world-space rectangle:
 
 - **a density mask.** One byte per texel: 0 grows no grass and 255 grows full density.
 - **a height.** Either level ground at one `y`, or a heightmap of world `y` values.
