@@ -174,11 +174,13 @@ depth = 384.0
 
 How it works, per frame:
 
-1. A **compute pass** walks a grid whose spacing is `1 / sqrt(density)`, samples the splat map's `density_layer` at each cell, skips cells under `density_threshold`, applies a probabilistic falloff between `fade_start` and `max_distance`, and writes a 32-byte instance (position on the heightmap, rotation, height scale, packed tint) into a storage buffer.
+1. A **compute pass** walks the cells within `max_distance` of the camera on a grid whose spacing is `1 / sqrt(density)`, samples the splat map's `density_layer` at each cell, skips cells under `density_threshold`, applies a probabilistic falloff between `fade_start` and `max_distance`, and writes a 32-byte instance (position on the heightmap, rotation, height scale, packed tint) into a storage buffer.
 2. A **render pass** draws one shared blade mesh per instance. The vertex shader sways blades by a time-driven wind term and pushes them away from up to eight entity positions within `bend_radius`; the fragment shader blends `color_base` to `color_tip` along the blade, mixes in `color_dry`, and shades with the same lighting levers and PCSS shadows as other geometry. The player feeds the camera position as the bend entity.
 3. The **shadow pass** renders the instances into the nearest two cascades, so grass darkens the ground under it.
 
 The pipeline participates in MSAA when the player runs with `--msaa 4`, and grass appears in `flint render` snapshots at time zero, so the wind is frozen but the field is fully populated.
+
+The grass isn't tied to a terrain. A game with mesh ground gives it a density mask and a height instead: see [Grass on Any Ground](grass-ground.md).
 
 The **Grass Debug** panel (`F3` in the player, see [Debug Panels](../guides/debug-panels.md)) exposes every field above live and can commit them back to the scene file, which is how the meadow demo's numbers were found.
 

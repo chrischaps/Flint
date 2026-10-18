@@ -17,8 +17,8 @@ use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
 use crate::grass_pipeline::{
-    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
-    GrassRenderUniforms, MAX_GRASS_ENTITIES,
+    GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu,
+    GrassPipeline, GrassRenderUniforms, MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleDrawCall, ParticlePipeline};
 use crate::pipeline::{
@@ -295,6 +295,15 @@ pub struct SceneRenderer {
     grass_terrain_width: f32,
     grass_terrain_depth: f32,
     grass_terrain_height_scale: f32,
+    /// Grass grows on a game's ground (ADR 0088), not a terrain's splat map.
+    grass_on_ground: bool,
+    /// A mask weight thins the field in proportion (ground only).
+    grass_scale_by_density: bool,
+    /// The config grew past the instance buffer; reallocate before the next dispatch.
+    grass_needs_realloc: bool,
+    /// The grass draw's own view uniforms, so it needs no terrain to borrow them from.
+    grass_transform_buffer: Option<wgpu::Buffer>,
+    grass_transform_bind_group: Option<wgpu::BindGroup>,
     // Procedural sky (replaces the texture skybox when a `sky` component exists)
     sky_pipeline: Option<crate::sky_pipeline::SkyPipeline>,
     sky_uniform_buffer: Option<wgpu::Buffer>,
@@ -541,6 +550,11 @@ impl SceneRenderer {
             grass_terrain_width: 0.0,
             grass_terrain_depth: 0.0,
             grass_terrain_height_scale: 0.0,
+            grass_on_ground: false,
+            grass_scale_by_density: false,
+            grass_needs_realloc: false,
+            grass_transform_buffer: None,
+            grass_transform_bind_group: None,
             sky_pipeline: sky_resources.0,
             sky_uniform_buffer: sky_resources.1,
             sky_uniform_bind_group: sky_resources.2,
@@ -1248,12 +1262,135 @@ impl SceneRenderer {
         terrain_depth: f32,
         height_scale: f32,
     ) {
+        if self.grass_pipeline.is_none() {
+            return;
+        }
+        let hm_view = upload_grass_texture(
+            device,
+            queue,
+            "Grass Heightmap Texture",
+            wgpu::TextureFormat::R32Float,
+            bytemuck::cast_slice(heightmap_data),
+            4,
+            heightmap_width,
+            heightmap_depth,
+        );
+        let splat_view = upload_grass_texture(
+            device,
+            queue,
+            "Grass Splat Texture",
+            wgpu::TextureFormat::Rgba8Unorm,
+            splat_data,
+            4,
+            splat_width,
+            splat_height,
+        );
+        self.install_grass(
+            device,
+            config,
+            &hm_view,
+            &splat_view,
+            terrain_offset,
+            terrain_width,
+            terrain_depth,
+            height_scale,
+            None,
+        );
+    }
+
+    /// Grow grass on a game's own ground instead of a Flint terrain
+    /// (ADR 0088): a density mask and a height over a world rectangle.
+    ///
+    /// Replaces whatever grass is loaded, a terrain's included, and can be
+    /// called again whenever the ground changes. `config` is used as for a
+    /// terrain, except that `density_layer` and `density_source` don't
+    /// apply: the mask is the density. Does nothing, and returns `Ok`, when
+    /// the device has no compute grass (see `has_grass_pipeline`).
+    pub fn set_grass_ground(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        config: &flint_terrain::GrassConfig,
+        ground: &GrassGround,
+    ) -> Result<(), String> {
+        ground.validate()?;
+        if self.grass_pipeline.is_none() {
+            return Ok(());
+        }
+        let flat;
+        let (heights, hm_w, hm_d) = match ground.height {
+            GrassHeight::Flat(y) => {
+                flat = [y];
+                (&flat[..], 1, 1)
+            }
+            GrassHeight::Map {
+                heights,
+                width,
+                depth,
+            } => (heights, width, depth),
+        };
+        let hm_view = upload_grass_texture(
+            device,
+            queue,
+            "Grass Ground Height Texture",
+            wgpu::TextureFormat::R32Float,
+            bytemuck::cast_slice(heights),
+            4,
+            hm_w,
+            hm_d,
+        );
+        let mask_view = upload_grass_texture(
+            device,
+            queue,
+            "Grass Ground Mask Texture",
+            wgpu::TextureFormat::R8Unorm,
+            ground.mask,
+            1,
+            ground.mask_width,
+            ground.mask_height,
+        );
+        // The heights are world y: offset 0, scale 1.
+        self.install_grass(
+            device,
+            config,
+            &hm_view,
+            &mask_view,
+            [ground.origin[0], 0.0, ground.origin[1]],
+            ground.size[0],
+            ground.size[1],
+            1.0,
+            Some(ground.scale_by_mask),
+        );
+        Ok(())
+    }
+
+    /// Whether this device runs the compute grass at all.
+    pub fn has_grass_pipeline(&self) -> bool {
+        self.grass_pipeline.is_some()
+    }
+
+    /// Build the grass buffers and bind groups over ground textures already
+    /// uploaded. `ground` is `None` for a terrain (its splat layer is the
+    /// density), or `Some(scale_by_mask)` for a game's R8 mask.
+    #[allow(clippy::too_many_arguments)]
+    fn install_grass(
+        &mut self,
+        device: &wgpu::Device,
+        config: &flint_terrain::GrassConfig,
+        hm_view: &wgpu::TextureView,
+        splat_view: &wgpu::TextureView,
+        terrain_offset: [f32; 3],
+        terrain_width: f32,
+        terrain_depth: f32,
+        height_scale: f32,
+        ground: Option<bool>,
+    ) {
         let grass_pipeline = match &self.grass_pipeline {
             Some(p) => p,
             None => return,
         };
 
-        let max_instances = config.max_instances(terrain_width, terrain_depth);
+        let max_instances = config.instance_capacity(terrain_width, terrain_depth);
         let instance_buffer_size =
             (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
 
@@ -1300,78 +1437,6 @@ impl SceneRenderer {
             label: Some("Grass Compute Uniform Bind Group"),
         });
 
-        // Upload heightmap as R32Float texture
-        let hm_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Grass Heightmap Texture"),
-            size: wgpu::Extent3d {
-                width: heightmap_width,
-                height: heightmap_depth,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &hm_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(heightmap_data),
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(heightmap_width * 4),
-                rows_per_image: Some(heightmap_depth),
-            },
-            wgpu::Extent3d {
-                width: heightmap_width,
-                height: heightmap_depth,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        // Upload splat map as RGBA8 texture
-        let splat_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Grass Splat Texture"),
-            size: wgpu::Extent3d {
-                width: splat_width,
-                height: splat_height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &splat_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            splat_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(splat_width * 4),
-                rows_per_image: Some(splat_height),
-            },
-            wgpu::Extent3d {
-                width: splat_width,
-                height: splat_height,
-                depth_or_array_layers: 1,
-            },
-        );
-
         // Heightmap uses nearest (non-filtering) sampler since R32Float is not filterable
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Grass Nearest Sampler"),
@@ -1387,15 +1452,12 @@ impl SceneRenderer {
             ..Default::default()
         });
 
-        let hm_view = hm_texture.create_view(&Default::default());
-        let splat_view = splat_texture.create_view(&Default::default());
-
         let compute_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &grass_pipeline.compute_texture_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&hm_view),
+                    resource: wgpu::BindingResource::TextureView(hm_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -1403,7 +1465,7 @@ impl SceneRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&splat_view),
+                    resource: wgpu::BindingResource::TextureView(splat_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -1487,6 +1549,27 @@ impl SceneRenderer {
         self.grass_terrain_width = terrain_width;
         self.grass_terrain_depth = terrain_depth;
         self.grass_terrain_height_scale = height_scale;
+        self.grass_on_ground = ground.is_some();
+        self.grass_scale_by_density = ground.unwrap_or(false);
+        self.grass_needs_realloc = false;
+        if self.grass_transform_bind_group.is_none() {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grass Transform Buffer"),
+                size: std::mem::size_of::<TransformUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.pipeline.transform_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+                label: Some("Grass Transform Bind Group"),
+            });
+            self.grass_transform_buffer = Some(buffer);
+            self.grass_transform_bind_group = Some(bind_group);
+        }
 
         tracing::info!(
             "Grass loaded: max {} instances, {:.1}MB buffer",
@@ -1512,12 +1595,22 @@ impl SceneRenderer {
         self.grass_entity_buffer = None;
         self.grass_entity_count = 0;
         self.grass_config = None;
+        self.grass_on_ground = false;
+        self.grass_scale_by_density = false;
+        self.grass_needs_realloc = false;
     }
 
     /// Update grass config without buffer reallocation.
     /// Compute and render passes read `grass_config` fresh each frame to build
     /// uniforms, so changes take effect on the next `render()` call.
+    /// If the new config needs more instances than the buffer holds (a
+    /// higher density or a longer `max_distance`), the buffer is
+    /// reallocated before the next dispatch.
     pub fn set_grass_config(&mut self, config: flint_terrain::GrassConfig) {
+        let capacity = config.instance_capacity(self.grass_terrain_width, self.grass_terrain_depth);
+        if self.grass_instance_buffer.is_some() && capacity > self.grass_max_instances {
+            self.grass_needs_realloc = true;
+        }
         self.grass_config = Some(config);
     }
 
@@ -1535,7 +1628,7 @@ impl SceneRenderer {
         };
 
         let max_instances =
-            config.max_instances(self.grass_terrain_width, self.grass_terrain_depth);
+            config.instance_capacity(self.grass_terrain_width, self.grass_terrain_depth);
         let instance_buffer_size =
             (max_instances as u64) * std::mem::size_of::<GrassInstanceGpu>() as u64;
 
@@ -1613,6 +1706,7 @@ impl SceneRenderer {
         self.grass_compute_storage_bind_group = Some(compute_storage_bind_group);
         self.grass_render_instance_bind_group = Some(render_instance_bind_group);
         self.grass_config = Some(config);
+        self.grass_needs_realloc = false;
 
         tracing::info!(
             "Grass reloaded: max {} instances, {:.1}MB buffer",
@@ -1835,6 +1929,11 @@ impl SceneRenderer {
             grass_terrain_width: 0.0,
             grass_terrain_depth: 0.0,
             grass_terrain_height_scale: 0.0,
+            grass_on_ground: false,
+            grass_scale_by_density: false,
+            grass_needs_realloc: false,
+            grass_transform_buffer: None,
+            grass_transform_bind_group: None,
             sky_pipeline: sky_resources.0,
             sky_uniform_buffer: sky_resources.1,
             sky_uniform_bind_group: sky_resources.2,
@@ -3772,6 +3871,14 @@ impl SceneRenderer {
 
         // Grass compute: dispatch in a separate encoder+submit so we can read back
         // the instance count before the render pass needs it.
+        // That read-back waits on the GPU, and every blade in reach is drawn,
+        // in view or not. Frustum culling and an indirect draw would remove
+        // both (chrischaps/TheCapitol#133).
+        if self.grass_needs_realloc {
+            if let Some(config) = self.grass_config.clone() {
+                self.reload_grass_config(device, config);
+            }
+        }
         if self.grass_config.as_ref().is_some_and(|c| c.enabled) {
             let mut compute_encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -4079,4 +4186,51 @@ mod tests {
             assert!((got - want).abs() < 1e-5, "{max:?}");
         }
     }
+}
+
+/// Upload one grass ground texture (heightmap, splat map or mask) and
+/// return its view. `bytes_per_texel` is 4 for R32Float and Rgba8Unorm,
+/// 1 for R8Unorm.
+#[allow(clippy::too_many_arguments)]
+fn upload_grass_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    format: wgpu::TextureFormat,
+    data: &[u8],
+    bytes_per_texel: u32,
+    width: u32,
+    height: u32,
+) -> wgpu::TextureView {
+    let size = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        data,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(width * bytes_per_texel),
+            rows_per_image: Some(height),
+        },
+        size,
+    );
+    texture.create_view(&Default::default())
 }

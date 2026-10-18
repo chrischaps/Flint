@@ -15,9 +15,11 @@ struct GrassComputeUniforms {
     density_layer: u32,
     blade_height: f32,
     height_variation: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    scale_by_density: u32,
+    // First cell of the dispatch window; the dispatch covers only the cells
+    // near the camera, but each keeps its place in the whole grid (ADR 0088).
+    grid_start_x: u32,
+    grid_start_z: u32,
 };
 
 struct GrassInstance {
@@ -31,7 +33,8 @@ struct GrassInstance {
 @group(0) @binding(0)
 var<uniform> params: GrassComputeUniforms;
 
-// Group 1: Terrain textures
+// Group 1: Ground textures: a terrain's heightmap and splat map, or a game's
+// heightmap (world y, scale 1) and R8 density mask (ADR 0088)
 @group(1) @binding(0)
 var heightmap_texture: texture_2d<f32>;
 @group(1) @binding(1)
@@ -71,13 +74,15 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid_x = u32(ceil(params.terrain_width / spacing));
     let grid_z = u32(ceil(params.terrain_depth / spacing));
 
-    if gid.x >= grid_x || gid.y >= grid_z {
+    let cell_x = gid.x + params.grid_start_x;
+    let cell_z = gid.y + params.grid_start_z;
+    if cell_x >= grid_x || cell_z >= grid_z {
         return;
     }
 
     // Base position on grid
-    let base_x = f32(gid.x) * spacing;
-    let base_z = f32(gid.y) * spacing;
+    let base_x = f32(cell_x) * spacing;
+    let base_z = f32(cell_z) * spacing;
 
     // Deterministic jitter from position hash
     let jitter = hash22(vec2<f32>(base_x, base_z));
@@ -106,6 +111,14 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if layer_weight < params.density_threshold {
         return;
+    }
+
+    // A partial weight thins the field in proportion to it
+    if params.scale_by_density != 0u {
+        let keep = hash21(vec2<f32>(world_x * 5.17, world_z * 3.91));
+        if keep > layer_weight {
+            return;
+        }
     }
 
     // Load heightmap texel for Y position (R32Float is not filterable)

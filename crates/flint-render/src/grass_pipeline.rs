@@ -36,9 +36,123 @@ pub struct GrassComputeUniforms {
     pub density_layer: u32,
     pub blade_height: f32,
     pub height_variation: f32,
-    pub _pad0: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
+    /// 1: a density weight above the threshold keeps a blade with that
+    /// probability, so the mask fades a field out. 0: full density above it.
+    pub scale_by_density: u32,
+    /// First grid cell of this frame's dispatch window (ADR 0088): only the
+    /// cells within `max_distance` of the camera are dispatched.
+    pub grid_start_x: u32,
+    pub grid_start_z: u32,
+}
+
+/// The ground a game grows grass on instead of a Flint terrain (ADR 0088).
+///
+/// The ground is a world-space rectangle on the XZ plane, from `origin`
+/// (its minimum corner) across `size`. The mask and the heightmap each
+/// cover the whole rectangle, whatever their resolution: texel (0, 0) is at
+/// the origin and rows run toward +Z.
+#[derive(Clone, Copy, Debug)]
+pub struct GrassGround<'a> {
+    /// Minimum corner of the rectangle, world X and Z.
+    pub origin: [f32; 2],
+    /// Extent of the rectangle in world units, X and Z.
+    pub size: [f32; 2],
+    /// Where grass grows: one byte per texel, 0 none and 255 full density,
+    /// `mask_width × mask_height` bytes, row by row.
+    pub mask: &'a [u8],
+    pub mask_width: u32,
+    pub mask_height: u32,
+    /// Whether a mask value between the threshold and 255 thins the field
+    /// in proportion (`true`), or grows it at full density (`false`, the
+    /// terrain splat rule).
+    pub scale_by_mask: bool,
+    /// What the blades stand on.
+    pub height: GrassHeight<'a>,
+}
+
+/// The height of a [`GrassGround`].
+#[derive(Clone, Copy, Debug)]
+pub enum GrassHeight<'a> {
+    /// Level ground at world `y`.
+    Flat(f32),
+    /// World `y` per texel, `width × depth` values, row by row toward +Z,
+    /// sampled nearest.
+    Map {
+        heights: &'a [f32],
+        width: u32,
+        depth: u32,
+    },
+}
+
+impl GrassGround<'_> {
+    /// Checks the slices against their stated sizes.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.size[0] <= 0.0 || self.size[1] <= 0.0 {
+            return Err(format!(
+                "grass ground size must be positive, got {:?}",
+                self.size
+            ));
+        }
+        if self.mask_width == 0 || self.mask_height == 0 {
+            return Err("grass mask is empty".into());
+        }
+        let want = self.mask_width as usize * self.mask_height as usize;
+        if self.mask.len() != want {
+            return Err(format!(
+                "grass mask is {} bytes, {}x{} needs {want}",
+                self.mask.len(),
+                self.mask_width,
+                self.mask_height
+            ));
+        }
+        if let GrassHeight::Map {
+            heights,
+            width,
+            depth,
+        } = self.height
+        {
+            let want = width as usize * depth as usize;
+            if want == 0 || heights.len() != want {
+                return Err(format!(
+                    "grass heightmap is {} values, {width}x{depth} needs {want}",
+                    heights.len()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Grid cells, and the first cell, that a grass dispatch covers this frame.
+///
+/// The grid has a cell every `spacing` units from `origin` across `extent`.
+/// Only the cells within `max_distance` of the camera, on X and Z, can grow
+/// a blade, so the dispatch covers that square clipped to the grid. The
+/// cells keep their place in the whole grid, so a blade doesn't move as
+/// the window follows the camera. `None` when the camera is too far away.
+pub fn grass_dispatch_window(
+    origin: [f32; 2],
+    extent: [f32; 2],
+    spacing: f32,
+    camera_xz: [f32; 2],
+    max_distance: f32,
+) -> Option<([u32; 2], [u32; 2])> {
+    let mut start = [0u32; 2];
+    let mut count = [0u32; 2];
+    for axis in 0..2 {
+        let cells = (extent[axis] / spacing).ceil().max(0.0) as i64;
+        // One extra cell each side covers the jitter of half a cell.
+        let lo = ((camera_xz[axis] - max_distance - origin[axis]) / spacing).floor() as i64 - 1;
+        let hi = ((camera_xz[axis] + max_distance - origin[axis]) / spacing).ceil() as i64 + 1;
+        let lo = lo.clamp(0, cells);
+        let hi = hi.clamp(0, cells);
+        if hi <= lo {
+            return None;
+        }
+        start[axis] = lo as u32;
+        count[axis] = (hi - lo) as u32;
+    }
+    Some((start, count))
 }
 
 /// Uniform buffer for the render (vertex/fragment) shader.
@@ -517,5 +631,99 @@ impl GrassPipeline {
             blade_vertex_buffer,
             blade_index_buffer,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_covers_the_reach_of_the_camera_clipped_to_the_grid() {
+        // A 1000 m ground, a cell every 0.5 m, the camera in the middle
+        let (start, count) =
+            grass_dispatch_window([0.0, 0.0], [1000.0, 1000.0], 0.5, [500.0, 500.0], 40.0).unwrap();
+        // 460..540 m is cells 920..1080, with one more each side for jitter
+        assert_eq!(start, [919, 919]);
+        assert_eq!(count, [162, 162]);
+
+        // At a corner the window is clipped to the grid
+        let (start, count) =
+            grass_dispatch_window([0.0, 0.0], [1000.0, 1000.0], 0.5, [0.0, 1000.0], 40.0).unwrap();
+        assert_eq!(start, [0, 1919]);
+        assert_eq!(count, [81, 81]);
+    }
+
+    #[test]
+    fn window_keeps_cells_in_place_on_an_offset_ground() {
+        // Cells count from the ground's origin, not from the camera
+        let (a, _) =
+            grass_dispatch_window([-300.0, 200.0], [600.0, 600.0], 0.25, [0.0, 500.0], 10.0)
+                .unwrap();
+        let (b, _) =
+            grass_dispatch_window([-300.0, 200.0], [600.0, 600.0], 0.25, [1.0, 500.0], 10.0)
+                .unwrap();
+        assert_eq!(b[0] - a[0], 4); // 1 m further is four cells on
+        assert_eq!(a[1], b[1]);
+    }
+
+    #[test]
+    fn no_window_when_the_camera_is_out_of_reach() {
+        assert!(
+            grass_dispatch_window([0.0, 0.0], [100.0, 100.0], 0.5, [300.0, 50.0], 80.0).is_none()
+        );
+        assert!(
+            grass_dispatch_window([0.0, 0.0], [100.0, 100.0], 0.5, [50.0, -200.0], 80.0).is_none()
+        );
+    }
+
+    #[test]
+    fn ground_validation_checks_sizes() {
+        let mask = [255u8; 4];
+        let heights = [0.0f32; 6];
+        let ground = GrassGround {
+            origin: [0.0, 0.0],
+            size: [10.0, 10.0],
+            mask: &mask,
+            mask_width: 2,
+            mask_height: 2,
+            scale_by_mask: true,
+            height: GrassHeight::Flat(1.0),
+        };
+        assert!(ground.validate().is_ok());
+        assert!(GrassGround {
+            mask_width: 3,
+            ..ground
+        }
+        .validate()
+        .is_err());
+        assert!(GrassGround {
+            size: [0.0, 10.0],
+            ..ground
+        }
+        .validate()
+        .is_err());
+        let map = GrassHeight::Map {
+            heights: &heights,
+            width: 3,
+            depth: 2,
+        };
+        assert!(GrassGround {
+            height: map,
+            ..ground
+        }
+        .validate()
+        .is_ok());
+        let short = GrassHeight::Map {
+            heights: &heights,
+            width: 4,
+            depth: 2,
+        };
+        assert!(GrassGround {
+            height: short,
+            ..ground
+        }
+        .validate()
+        .is_err());
     }
 }
