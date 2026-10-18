@@ -85,6 +85,7 @@ pub struct OceanPanelConfig {
     pub shore_foam_strength: f32,
     pub shore_foam_speed: f32,
     pub shore_foam_color: [f32; 4],
+    pub shore_foam_reach: f32,
     // Refraction
     pub turbidity: f32,
     pub refraction_strength: f32,
@@ -139,6 +140,7 @@ impl OceanPanelConfig {
             shore_foam_strength: f("shore_foam_strength", 1.0),
             shore_foam_speed: f("shore_foam_speed", 1.0),
             shore_foam_color: c("shore_foam_color", [0.96, 0.99, 1.0, 1.0]),
+            shore_foam_reach: f("shore_foam_reach", 0.0),
             turbidity: f("turbidity", 0.8),
             refraction_strength: f("refraction_strength", 0.6),
             sky_reflection_strength: f("sky_reflection_strength", 0.8),
@@ -195,6 +197,7 @@ impl OceanPanelConfig {
             ("shore_foam_strength", f(self.shore_foam_strength)),
             ("shore_foam_speed", f(self.shore_foam_speed)),
             ("shore_foam_color", c(self.shore_foam_color)),
+            ("shore_foam_reach", f(self.shore_foam_reach)),
             ("turbidity", f(self.turbidity)),
             ("refraction_strength", f(self.refraction_strength)),
             ("sky_reflection_strength", f(self.sky_reflection_strength)),
@@ -471,6 +474,13 @@ impl DebugPanel for OceanDebugPanel {
                     ui,
                     "Lap Speed",
                     &mut self.config.shore_foam_speed,
+                    0.01,
+                    0.0..=10.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Shore Reach (m)",
+                    &mut self.config.shore_foam_reach,
                     0.01,
                     0.0..=10.0,
                 );
