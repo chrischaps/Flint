@@ -8,7 +8,8 @@ use crate::billboard_pipeline::BillboardUniforms;
 use crate::camera::{mat4_inverse, mat4_mul, Camera};
 use crate::debug::DebugMode;
 use crate::grass_pipeline::{
-    grass_dispatch_window, GrassComputeUniforms, GrassRenderUniforms, BLADE_INDEX_COUNT,
+    grass_cull_padding, grass_cull_planes, grass_dispatch_window, GrassComputeUniforms,
+    GrassDrawArgs, GrassRenderUniforms,
 };
 use crate::particle_pipeline::ParticleUniforms;
 use crate::pipeline::TransformUniforms;
@@ -174,12 +175,13 @@ impl SceneRenderer {
 
                 // Render grass into shadow cascade (nearest 2 only)
                 if cascade < 2 {
-                    if let (Some(gp), Some(render_bg), Some(instance_bg)) = (
+                    if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
                         &self.grass_pipeline,
                         &self.grass_render_uniform_bind_group,
                         &self.grass_render_instance_bind_group,
+                        &self.grass_draw_args_buffer,
                     ) {
-                        if self.grass_instance_count > 0 {
+                        if self.grass_drawing {
                             // Grass shadow pipeline uses TransformUniforms (same layout as PBR)
                             let grass_shadow_uniforms = TransformUniforms {
                                 view_proj: cascade_vp,
@@ -214,11 +216,8 @@ impl SceneRenderer {
                                 gp.blade_index_buffer.slice(..),
                                 wgpu::IndexFormat::Uint16,
                             );
-                            pass.draw_indexed(
-                                0..BLADE_INDEX_COUNT,
-                                0,
-                                0..self.grass_instance_count,
-                            );
+                            // The count is the compute pass's (ADR 0092)
+                            pass.draw_indexed_indirect(args, 0);
                         }
                     }
                 }
@@ -953,12 +952,13 @@ impl SceneRenderer {
             }
 
             // Grass rendering (after terrain -- also writes depth)
-            if let (Some(gp), Some(render_bg), Some(instance_bg)) = (
+            if let (Some(gp), Some(render_bg), Some(instance_bg), Some(args)) = (
                 &self.grass_pipeline,
                 &self.grass_render_uniform_bind_group,
                 &self.grass_render_instance_bind_group,
+                &self.grass_draw_args_buffer,
             ) {
-                if self.grass_instance_count > 0 {
+                if self.grass_drawing {
                     // Bind group 0 (transform): the grass's own view uniforms,
                     // so grass on a game's ground draws with no terrain loaded
                     if let Some(transform_bg) = &self.grass_transform_bind_group {
@@ -973,7 +973,8 @@ impl SceneRenderer {
                         gp.blade_index_buffer.slice(..),
                         wgpu::IndexFormat::Uint16,
                     );
-                    render_pass.draw_indexed(0..BLADE_INDEX_COUNT, 0, 0..self.grass_instance_count);
+                    // The count is the compute pass's, culled to the view (ADR 0092)
+                    render_pass.draw_indexed_indirect(args, 0);
                 }
             }
         } // end opaque phase (terrain + grass)
@@ -1336,11 +1337,15 @@ impl SceneRenderer {
         }
     }
 
-    /// Dispatch the grass compute shader to scatter instances.
-    /// Call before render_main_pass, after update_per_frame_uniforms.
+    /// Dispatch the grass compute shader to scatter this camera's blades,
+    /// culled to its view, and count them into the indirect draw arguments
+    /// (ADR 0092). Call before the shadow and main passes, and call
+    /// [`GrassCountReadback::start_map`] after submitting `encoder`.
+    ///
+    /// [`GrassCountReadback::start_map`]: crate::grass_pipeline::GrassCountReadback::start_map
     pub fn dispatch_grass_compute(
         &mut self,
-        _device: &wgpu::Device,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         camera: &Camera,
@@ -1350,6 +1355,15 @@ impl SceneRenderer {
             Some(c) if c.enabled => c.clone(),
             _ => return,
         };
+
+        // The last count that has come back, for stats
+        if let Some(count) = self
+            .grass_count_readback
+            .as_mut()
+            .and_then(|readback| readback.poll(device))
+        {
+            self.grass_instance_count = count.min(self.grass_max_instances);
+        }
 
         let grass_pipeline = match &self.grass_pipeline {
             Some(p) => p,
@@ -1369,10 +1383,11 @@ impl SceneRenderer {
             None => return,
         };
 
-        // Reset atomic counter to 0
-        if let Some(counter_buf) = &self.grass_counter_buffer {
-            queue.write_buffer(counter_buf, 0, &[0u8; 4]);
-        }
+        // Reset the draw arguments to no blades; the compute pass counts them in
+        let Some(draw_args) = &self.grass_draw_args_buffer else {
+            return;
+        };
+        queue.write_buffer(draw_args, 0, bytemuck::bytes_of(&GrassDrawArgs::RESET));
 
         // Only the cells within reach of the camera are dispatched (ADR 0089)
         let spacing = 1.0 / config.density.sqrt();
@@ -1384,6 +1399,17 @@ impl SceneRenderer {
             config.max_distance,
         );
         let ([start_x, start_z], [count_x, count_z]) = window.unwrap_or(([0, 0], [0, 0]));
+
+        // Only the blades in view are drawn. The planes are pushed out by the
+        // tallest blade, and with shadows on by how far its shadow reaches,
+        // so nothing that leans or casts into the view is lost at its edges.
+        let sun = (self.shadows_enabled() && self.light_uniforms.directional_count > 0)
+            .then(|| self.light_uniforms.directional_lights[0].direction);
+        let tallest = config.blade_height * (1.0 + config.height_variation.max(0.0));
+        let frustum_planes = grass_cull_planes(
+            &camera.view_projection_matrix(),
+            grass_cull_padding(tallest, sun),
+        );
 
         // Update compute uniforms
         let uniforms = GrassComputeUniforms {
@@ -1408,6 +1434,7 @@ impl SceneRenderer {
             scale_by_density: self.grass_scale_by_density as u32,
             grid_start_x: start_x,
             grid_start_z: start_z,
+            frustum_planes,
         };
 
         if let Some(buf) = &self.grass_compute_uniform_buffer {
@@ -1461,35 +1488,10 @@ impl SceneRenderer {
             pass.dispatch_workgroups(workgroups_x, workgroups_z, 1);
         }
 
-        // Copy counter to staging buffer for CPU readback
-        if let (Some(counter), Some(staging)) =
-            (&self.grass_counter_buffer, &self.grass_staging_buffer)
-        {
-            encoder.copy_buffer_to_buffer(counter, 0, staging, 0, 4);
+        // Copy the count out for stats, unless the last copy is still coming back
+        if let Some(readback) = &mut self.grass_count_readback {
+            readback.record_copy(encoder, draw_args);
         }
-    }
-
-    /// Read back the grass instance count from the staging buffer.
-    /// Call after submitting the command buffer from the previous frame.
-    pub fn read_grass_instance_count(&mut self, device: &wgpu::Device) {
-        let staging = match &self.grass_staging_buffer {
-            Some(s) => s,
-            None => return,
-        };
-
-        let slice = staging.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        device.poll(wgpu::Maintain::Wait);
-
-        if let Ok(Ok(())) = rx.recv() {
-            let data = slice.get_mapped_range();
-            let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            self.grass_instance_count = count.min(self.grass_max_instances);
-            drop(data);
-            staging.unmap();
-        }
+        self.grass_drawing = true;
     }
 }

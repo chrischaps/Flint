@@ -20,6 +20,19 @@ struct GrassComputeUniforms {
     // near the camera, but each keeps its place in the whole grid (ADR 0089).
     grid_start_x: u32,
     grid_start_z: u32,
+    // The camera frustum, each plane pushed out for blade height and shadow
+    // reach; a blade rooted outside any plane isn't drawn (ADR 0092)
+    frustum_planes: array<vec4<f32>, 6>,
+};
+
+// DrawIndexedIndirect arguments: the draws read the count from here, so the
+// CPU never waits for it (ADR 0092)
+struct DrawArgs {
+    index_count: u32,
+    instance_count: atomic<u32>,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
 };
 
 struct GrassInstance {
@@ -48,7 +61,7 @@ var splat_sampler: sampler;
 @group(2) @binding(0)
 var<storage, read_write> instances: array<GrassInstance>;
 @group(2) @binding(1)
-var<storage, read_write> instance_count: atomic<u32>;
+var<storage, read_write> draw_args: DrawArgs;
 
 // Hash function for deterministic pseudo-random values from position
 fn hash21(p: vec2<f32>) -> f32 {
@@ -138,6 +151,15 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    // Out of view (the planes are padded, so blades that lean or cast a
+    // shadow into the view stay)
+    for (var i = 0u; i < 6u; i++) {
+        let plane = params.frustum_planes[i];
+        if dot(plane.xyz, world_pos) + plane.w < 0.0 {
+            return;
+        }
+    }
+
     // Probabilistic density falloff in the fade zone
     if dist > params.fade_start {
         let fade_t = (dist - params.fade_start) / (params.max_distance - params.fade_start);
@@ -161,7 +183,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let tint = tint_r | (tint_r << 8u) | (tint_r << 16u) | (255u << 24u);
 
     // Write instance
-    let idx = atomicAdd(&instance_count, 1u);
+    let idx = atomicAdd(&draw_args.instance_count, 1u);
     if idx < arrayLength(&instances) {
         instances[idx] = GrassInstance(
             world_pos,
@@ -169,5 +191,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             height_scale * params.blade_height,
             tint,
         );
+    } else {
+        // Full: give the slot back, so the count the draws read never runs
+        // past the buffer. It can't drop below the buffer's length, since
+        // only a blade that found it full takes one back.
+        atomicSub(&draw_args.instance_count, 1u);
     }
 }
