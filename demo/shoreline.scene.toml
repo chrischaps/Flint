@@ -50,6 +50,9 @@ shore_foam_width = 0.35
 shore_foam_strength = 0.95
 shore_foam_speed = 1.0
 shore_foam_color = [0.97, 0.94, 0.88, 1.0]
+# Measure the band across the water to the stone (ADR 0091). The quay's top
+# is 1 m up and the piers' 1.6 m, so anything up to 1.8 m above is shore.
+shore_foam_reach = 1.8
 
 # ------------------------------------------------------------
 #  The harbour: a sea bed, the quay, a slipway and the piers

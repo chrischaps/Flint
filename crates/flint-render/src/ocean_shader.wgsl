@@ -86,7 +86,9 @@ struct OceanUniforms {
     shore_foam_strength: f32,
     shore_foam_color: vec4<f32>,
     shore_foam_speed: f32,
-    _pad_shore0: f32,
+    // Screen-space shore search (ADR 0091): a solid standing up to this
+    // many metres above the surface is the shore. 0 = no search.
+    shore_foam_reach: f32,
     _pad_shore1: f32,
     _pad_shore2: f32,
 };
@@ -692,20 +694,73 @@ fn fs_main(in: VertexOutput,
     // surface's own wave height moves the band, so it laps with the waves'
     // phase; a slow surge and the foam noise break it up along the shore.
     // Undistorted pixel on purpose: refraction's offset would make the band
-    // shimmer. A vertical wall only foams on the face the camera looks at,
-    // because the ray from water at a wall's foot runs away from it
-    // (chrischaps/TheCapitol#132 has the ways round that).
+    // shimmer.
+    //
+    // Depth along the ray alone (shore_foam_reach 0) makes the band's width
+    // on the water depend on the view: w / tan(elevation) out from a wall,
+    // so it's broad from a low camera, a hairline from overhead, and a wall
+    // whose foot the ray looks away from never foams. With a reach, the
+    // shore search (ADR 0091) also looks at the depth round the pixel,
+    // rebuilds each tap's scene point, and takes the distance to the
+    // nearest one that is shore: max(across the water, depth below the
+    // surface), so a wall is measured across the water and a gentle beach
+    // by its depth. Solids more than `reach` above the surface (a bridge
+    // deck, a passer-by) aren't shore. It finds only what's on screen,
+    // which is where a band can show.
     var shore_foam = 0.0;
+    // Each pixel's ray, scaled to unit view depth, is linear in screen
+    // space, so its screen derivatives step a ray to any nearby pixel.
+    // Taken here, in uniform control flow.
+    let water_z = linearize_depth(in.clip_position.z);
+    let ray0 = (in.world_pos - transform.camera_pos) / max(water_z, 1e-4);
+    let ray_dx = dpdx(ray0);
+    let ray_dy = dpdy(ray0);
     if (ocean.shore_foam_width > 0.0001) {
         let s_dims = vec2<i32>(textureDimensions(grab_depth));
         let s_px = clamp(vec2<i32>(in.clip_position.xy), vec2<i32>(0), s_dims - 1);
-        let water_z = linearize_depth(in.clip_position.z);
         let scene_z = linearize_depth(textureLoad(grab_depth, s_px, 0).r);
         // Both depths are view z along one ray, so their ratio scales the
         // camera→surface vector out to the scene point.
-        let scene_pos = transform.camera_pos
-            + (in.world_pos - transform.camera_pos) * (scene_z / max(water_z, 1e-4));
-        let below = max(in.world_pos.y - scene_pos.y, 0.0);
+        let scene_pos = transform.camera_pos + ray0 * scene_z;
+        var below = max(in.world_pos.y - scene_pos.y, 0.0);
+
+        let reach = ocean.shore_foam_reach;
+        if (reach > 0.0 && foam_distance_fade > 0.001) {
+            below = max(below, length(scene_pos.xz - in.world_pos.xz));
+            // Search out to the band's widest, in pixels at this depth.
+            let w_max = ocean.shore_foam_width * 1.25;
+            let px_m = water_z * max(length(ray_dx), length(ray_dy));
+            let r_px = min(w_max / max(px_m, 1e-6), 32.0);
+            if (r_px >= 1.0) {
+                // 8 directions, 3 steps out each; the first shore along a
+                // direction is its nearest, so it stops there.
+                for (var i = 0; i < 8; i++) {
+                    let a = f32(i) * (TAU / 8.0);
+                    let dir = vec2<f32>(cos(a), sin(a));
+                    for (var k = 1; k <= 3; k++) {
+                        let t_px = clamp(
+                            vec2<i32>(in.clip_position.xy + dir * (r_px * f32(k) / 3.0)),
+                            vec2<i32>(0), s_dims - 1);
+                        let t_d = textureLoad(grab_depth, t_px, 0).r;
+                        if (t_d >= 1.0) {
+                            continue; // sky: nothing there
+                        }
+                        let o = vec2<f32>(t_px) + 0.5 - in.clip_position.xy;
+                        let q = transform.camera_pos
+                            + (ray0 + ray_dx * o.x + ray_dy * o.y) * linearize_depth(t_d);
+                        let rise = q.y - in.world_pos.y;
+                        if (rise > reach) {
+                            continue;
+                        }
+                        let d = max(length(q.xz - in.world_pos.xz), max(-rise, 0.0));
+                        if (d < w_max) {
+                            below = min(below, d);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         let lap_t = ocean.time * ocean.shore_foam_speed;
         let lap = fbm(in.param_xz * ocean.foam_noise_scale * 0.5

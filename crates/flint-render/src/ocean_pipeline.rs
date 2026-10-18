@@ -92,7 +92,10 @@ pub struct OceanUniformsGpu {
     pub shore_foam_color: [f32; 4],
     /// Lapping rate of the shoreline band.
     pub shore_foam_speed: f32,
-    pub _pad_shore: [f32; 3],
+    /// Highest a solid may stand above the surface and still be the shore
+    /// the screen-space search measures to (0 = no search).
+    pub shore_foam_reach: f32,
+    pub _pad_shore: [f32; 2],
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -152,6 +155,11 @@ pub struct OceanVisuals {
     pub shore_foam_speed: f32,
     /// Shoreline foam colour (RGBA linear).
     pub shore_foam_color: [f32; 4],
+    /// Screen-space shore search (ADR 0091): a solid on screen standing up
+    /// to this many metres above the surface is the shore, and the band is
+    /// measured across the water to it, so it keeps its width from any
+    /// angle. 0 = off: depth along the view ray only (ADR 0088).
+    pub shore_foam_reach: f32,
 }
 
 impl Default for OceanVisuals {
@@ -190,6 +198,7 @@ impl Default for OceanVisuals {
             shore_foam_strength: 1.0,
             shore_foam_speed: 1.0,
             shore_foam_color: [0.96, 0.99, 1.0, 1.0],
+            shore_foam_reach: 0.0,
         }
     }
 }
@@ -235,6 +244,7 @@ impl OceanVisuals {
             shore_foam_strength: f("shore_foam_strength", d.shore_foam_strength).clamp(0.0, 2.0),
             shore_foam_speed: f("shore_foam_speed", d.shore_foam_speed).clamp(0.0, 10.0),
             shore_foam_color: c("shore_foam_color", d.shore_foam_color),
+            shore_foam_reach: f("shore_foam_reach", d.shore_foam_reach).clamp(0.0, 50.0),
         }
     }
 

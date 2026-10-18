@@ -178,19 +178,33 @@ crest foam (60 to 140 m).
 | `shore_foam_strength` | Opacity gain. |
 | `shore_foam_speed` | Lapping rate; 0 holds the band still (the waves still move it). |
 | `shore_foam_color` | Its own colour, so shore foam can be warmer or dirtier than crest foam. It is lit like the crest foam: the same sun, ambient and sky glow. |
+| `shore_foam_reach` | Turns on the shore search (below): a solid standing up to this many metres above the surface counts as the shore. 0 (the default) measures along the view ray only. |
 
-It needs the grab pass, so it's off without post-processing. Two things follow
-from measuring along the view ray:
+It needs the grab pass, so it's off without post-processing.
 
-- **A vertical wall foams on the face the camera looks at.** At the foot of
-  the near wall, the ray runs away from the wall to the bed, so that side has
-  no band. From a low camera the near wall usually hides that water anyway.
-  ([TheCapitol#132](https://github.com/chrischaps/TheCapitol/issues/132)
-  tracks a shore-distance mask that would fix it.)
-- **The band's width on screen depends on the slope behind it.** On a wall it's
-  `shore_foam_width` over the tangent of the camera's pitch; on a gentle beach
-  it's the width of the shallows. Keep the width to the waves' height plus a
-  little, or a whole shelf turns white.
+Measured along the view ray alone, **a wall's band depends on the view.** Out
+from a wall the band is `shore_foam_width` over the tangent of the ray's
+elevation: broad from a low camera, a hairline from overhead. Worse, at the
+foot of the wall nearer the camera, the ray runs away from the wall to the bed,
+so that wall has no band at all.
+
+**The shore search fixes both.** Set `shore_foam_reach` and each water pixel
+also reads the depth at 24 pixels round it (8 directions, 3 steps out to the
+band's widest on screen). It rebuilds the scene point at each one, and the
+band is measured to the nearest one that is shore: the larger of its distance
+across the water and its depth below the surface. A wall is then measured
+across the water, so its band is `shore_foam_width` wide from any angle, and
+the near wall's band is found from the kerb above it. A gentle beach is still
+measured by its depth. Set the reach just above your walls' tops: solids
+higher than that, such as a bridge deck or someone standing on the quay, aren't
+shore, so they don't paint foam on the water under their edge. The search
+only finds what's on screen. That's where a band can show, though a wall
+cut off by the frame's edge doesn't foam the water beside it. It costs up to
+24 depth reads on water pixels within the foam's 140 m, and nothing when the
+band is under a pixel wide.
+
+Either way, keep the width to the waves' height plus a little, or a whole
+gentle shelf turns white.
 
 The scene's `foam_noise_scale` sets the size of the lace, for crest and shore
 foam alike. Shore foam counts toward `foam_glow` like flecks do.

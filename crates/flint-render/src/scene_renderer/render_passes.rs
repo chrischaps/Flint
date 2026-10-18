@@ -501,7 +501,8 @@ impl SceneRenderer {
                     shore_foam_strength: v.shore_foam_strength,
                     shore_foam_color: v.shore_foam_color,
                     shore_foam_speed: v.shore_foam_speed,
-                    _pad_shore: [0.0; 3],
+                    shore_foam_reach: v.shore_foam_reach,
+                    _pad_shore: [0.0; 2],
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
             }
