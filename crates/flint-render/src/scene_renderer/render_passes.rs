@@ -218,6 +218,9 @@ impl SceneRenderer {
                             );
                             // The count is the compute pass's (ADR 0092)
                             pass.draw_indexed_indirect(args, 0);
+                            // Back to the depth pipeline for the transparent
+                            // casters, which bind the shared dynamic-offset group
+                            pass.set_pipeline(&shadow_pass.shadow_pipeline);
                         }
                     }
                 }
