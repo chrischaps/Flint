@@ -17,7 +17,7 @@ use crate::context::RenderContext;
 use crate::debug::{DebugMode, DebugState};
 use crate::gpu_mesh::MeshCache;
 use crate::grass_pipeline::{
-    GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu,
+    check_grass_mask_patch, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight, GrassInstanceGpu,
     GrassCountReadback, GrassDrawArgs, GrassPipeline, GrassRenderUniforms, MAX_GRASS_ENTITIES,
 };
 use crate::particle_pipeline::{ParticleDrawCall, ParticlePipeline};
@@ -303,6 +303,9 @@ pub struct SceneRenderer {
     grass_on_ground: bool,
     /// A mask weight thins the field in proportion (ground only).
     grass_scale_by_density: bool,
+    /// The ground's mask and its size in texels, kept so part of it can be
+    /// repainted in place (ADR 0093). `None` for a terrain's grass.
+    grass_mask: Option<(wgpu::Texture, u32, u32)>,
     /// The config grew past the instance buffer; reallocate before the next dispatch.
     grass_needs_realloc: bool,
     /// The grass draw's own view uniforms, so it needs no terrain to borrow them from.
@@ -557,6 +560,7 @@ impl SceneRenderer {
             grass_terrain_height_scale: 0.0,
             grass_on_ground: false,
             grass_scale_by_density: false,
+            grass_mask: None,
             grass_needs_realloc: false,
             grass_transform_buffer: None,
             grass_transform_bind_group: None,
@@ -1270,7 +1274,7 @@ impl SceneRenderer {
         if self.grass_pipeline.is_none() {
             return;
         }
-        let hm_view = upload_grass_texture(
+        let (_, hm_view) = upload_grass_texture(
             device,
             queue,
             "Grass Heightmap Texture",
@@ -1280,7 +1284,7 @@ impl SceneRenderer {
             heightmap_width,
             heightmap_depth,
         );
-        let splat_view = upload_grass_texture(
+        let (_, splat_view) = upload_grass_texture(
             device,
             queue,
             "Grass Splat Texture",
@@ -1334,7 +1338,7 @@ impl SceneRenderer {
                 depth,
             } => (heights, width, depth),
         };
-        let hm_view = upload_grass_texture(
+        let (_, hm_view) = upload_grass_texture(
             device,
             queue,
             "Grass Ground Height Texture",
@@ -1344,7 +1348,7 @@ impl SceneRenderer {
             hm_w,
             hm_d,
         );
-        let mask_view = upload_grass_texture(
+        let (mask, mask_view) = upload_grass_texture(
             device,
             queue,
             "Grass Ground Mask Texture",
@@ -1365,6 +1369,57 @@ impl SceneRenderer {
             ground.size[1],
             1.0,
             Some(ground.scale_by_mask),
+        );
+        self.grass_mask = Some((mask, ground.mask_width, ground.mask_height));
+        Ok(())
+    }
+
+    /// Repaint part of the grass ground's mask in place (ADR 0093): the
+    /// `width × height` texels at (`x`, `y`), from `bytes` (one a texel,
+    /// row by row toward +Z). The buffers and bind groups stay as they
+    /// are, so a small clearing costs a small upload, not a reinstall.
+    ///
+    /// Errs when no ground was set with `set_grass_ground` (a terrain's
+    /// grass has no mask to repaint), or when the rectangle runs off the
+    /// mask or `bytes` is the wrong length. On a device with no compute
+    /// grass it does nothing, as `set_grass_ground` does.
+    pub fn update_grass_mask(
+        &mut self,
+        queue: &wgpu::Queue,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if self.grass_pipeline.is_none() {
+            return Ok(());
+        }
+        let Some((mask, mask_width, mask_height)) = &self.grass_mask else {
+            return Err("no grass ground to repaint: set one with set_grass_ground".into());
+        };
+        check_grass_mask_patch(*mask_width, *mask_height, x, y, width, height, bytes.len())?;
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: mask,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         Ok(())
     }
@@ -1541,6 +1596,7 @@ impl SceneRenderer {
         self.grass_terrain_height_scale = height_scale;
         self.grass_on_ground = ground.is_some();
         self.grass_scale_by_density = ground.unwrap_or(false);
+        self.grass_mask = None;
         self.grass_needs_realloc = false;
         if self.grass_transform_bind_group.is_none() {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1587,6 +1643,7 @@ impl SceneRenderer {
         self.grass_config = None;
         self.grass_on_ground = false;
         self.grass_scale_by_density = false;
+        self.grass_mask = None;
         self.grass_needs_realloc = false;
     }
 
@@ -1907,6 +1964,7 @@ impl SceneRenderer {
             grass_terrain_height_scale: 0.0,
             grass_on_ground: false,
             grass_scale_by_density: false,
+            grass_mask: None,
             grass_needs_realloc: false,
             grass_transform_buffer: None,
             grass_transform_bind_group: None,
@@ -4214,8 +4272,8 @@ fn create_grass_draw_args_buffer(device: &wgpu::Device) -> wgpu::Buffer {
 }
 
 /// Upload one grass ground texture (heightmap, splat map or mask) and
-/// return its view. `bytes_per_texel` is 4 for R32Float and Rgba8Unorm,
-/// 1 for R8Unorm.
+/// return it with its view. `bytes_per_texel` is 4 for R32Float and
+/// Rgba8Unorm, 1 for R8Unorm.
 #[allow(clippy::too_many_arguments)]
 fn upload_grass_texture(
     device: &wgpu::Device,
@@ -4226,7 +4284,7 @@ fn upload_grass_texture(
     bytes_per_texel: u32,
     width: u32,
     height: u32,
-) -> wgpu::TextureView {
+) -> (wgpu::Texture, wgpu::TextureView) {
     let size = wgpu::Extent3d {
         width,
         height,
@@ -4257,5 +4315,6 @@ fn upload_grass_texture(
         },
         size,
     );
-    texture.create_view(&Default::default())
+    let view = texture.create_view(&Default::default());
+    (texture, view)
 }

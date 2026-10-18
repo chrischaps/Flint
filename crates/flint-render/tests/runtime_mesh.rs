@@ -1,6 +1,7 @@
 //! Runtime procedural meshes: create, replace and remove after init without
 //! leaking GPU memory, vertex colours, and frustum culling by mesh bounds.
-//! Also how an imported model's textures are sampled (the same frame rig).
+//! Also how an imported model's textures are sampled (the same frame rig),
+//! and a grass mask repainted in part after upload.
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
@@ -624,4 +625,81 @@ fn model_data_maps_are_linear() {
     // And the test can tell: an sRGB decode would shade like 0.21.
     let srgb_read = shoot(0.216, 0.216);
     assert!(!close(want, srgb_read), "0.5 and 0.21 look alike: {want:?} vs {srgb_read:?}");
+}
+
+#[test]
+fn part_of_a_grass_mask_repaints_in_place() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let world = FlintWorld::new();
+    let camera = Camera::default();
+    if !renderer.has_grass_pipeline() {
+        eprintln!("no compute grass on this adapter; skipping");
+        return;
+    }
+    // Nothing to repaint before a ground is set.
+    assert!(renderer
+        .update_grass_mask(&gpu.queue, 0, 0, 1, 1, &[255])
+        .is_err());
+
+    // A bare 20 m square round the origin, which the default camera
+    // (at (10, 10, 10)) looks down on.
+    const N: u32 = 64;
+    let bare = vec![0u8; (N * N) as usize];
+    let config = flint_terrain::GrassConfig {
+        enabled: true,
+        density: 20.0,
+        max_distance: 60.0,
+        ..flint_terrain::GrassConfig::default()
+    };
+    let ground = flint_render::GrassGround {
+        origin: [-10.0, -10.0],
+        size: [20.0, 20.0],
+        mask: &bare,
+        mask_width: N,
+        mask_height: N,
+        scale_by_mask: false,
+        height: flint_render::GrassHeight::Flat(0.0),
+    };
+    renderer
+        .set_grass_ground(&gpu.device, &gpu.queue, &config, &ground)
+        .unwrap();
+    // The blade count is read back a frame or two late.
+    let blades = |renderer: &mut SceneRenderer| {
+        for _ in 0..4 {
+            gpu.frame(renderer, &world, &camera);
+        }
+        renderer.collect_stats().grass_instances
+    };
+    assert_eq!(blades(&mut renderer), 0, "a bare mask grows nothing");
+
+    // Fill the middle quarter: grass grows there, with the same buffers.
+    let full = vec![255u8; (N / 2 * N / 2) as usize];
+    renderer
+        .update_grass_mask(&gpu.queue, N / 4, N / 4, N / 2, N / 2, &full)
+        .unwrap();
+    let grown = blades(&mut renderer);
+    assert!(grown > 0, "the repainted patch grows grass");
+
+    // Clear a corner of it again: fewer blades, but some.
+    let clear = vec![0u8; (N / 4 * N / 4) as usize];
+    renderer
+        .update_grass_mask(&gpu.queue, N / 4, N / 4, N / 4, N / 4, &clear)
+        .unwrap();
+    let fewer = blades(&mut renderer);
+    assert!(fewer > 0 && fewer < grown, "{fewer} of {grown} blades left");
+
+    // A patch off the mask's edge, or of the wrong length, is refused.
+    assert!(renderer
+        .update_grass_mask(&gpu.queue, N - 1, 0, 2, 1, &[0, 0])
+        .is_err());
+    assert!(renderer
+        .update_grass_mask(&gpu.queue, 0, 0, 2, 2, &[0; 3])
+        .is_err());
+
+    // Once the grass is gone, so is the mask.
+    renderer.unload_grass();
+    assert!(renderer
+        .update_grass_mask(&gpu.queue, 0, 0, 1, 1, &[255])
+        .is_err());
 }

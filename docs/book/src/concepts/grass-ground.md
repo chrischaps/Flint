@@ -73,12 +73,13 @@ if let Err(e) = gpu.set_grass_ground(&config, &ground) {
 ```
 
 - **`set_grass_ground`** uploads the mask and height, and replaces any grass already loaded. Call it again to repaint: a road laid, a lot built on, a field cleared. It returns `Err` only when a slice doesn't match its stated size. On a device without compute shaders it does nothing.
+- **`update_grass_mask(x, y, width, height, &bytes)`** repaints part of the mask in place (ADR 0093): the `width × height` texels from texel (`x`, `y`), one byte each, row by row toward +Z. The buffers and bind groups stay as they are, so a small change costs a small upload. Use it for something that comes and goes often, such as a clearing round a thing placed or picked up. It returns `Err` when no ground is set (a terrain's grass has no mask to repaint), or when the rectangle runs off the mask or `bytes` is the wrong length. On a device without compute shaders it does nothing.
 - **`set_grass_config`** retunes the grass without uploading the ground again. If the new config needs more instances than the buffer holds, the buffer grows before the next frame.
 - **`clear_grass`** removes it.
 
 `GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle, sampled nearest. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
 
-The same calls are on `SceneRenderer` (`set_grass_ground`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass.
+The same calls are on `SceneRenderer` (`set_grass_ground`, `update_grass_mask`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass.
 
 ## Only the reach of the camera
 

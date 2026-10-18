@@ -374,6 +374,25 @@ impl ExtensionGpu<'_> {
         self.renderer.set_grass_config(config);
     }
 
+    /// Repaint part of the grass ground's mask in place (ADR 0093): the
+    /// `width × height` texels at (`x`, `y`), from `bytes`, one a texel,
+    /// row by row toward +Z. Much cheaper than a whole
+    /// [`set_grass_ground`](Self::set_grass_ground) for a small change,
+    /// such as a clearing round something placed. Errs when no ground is
+    /// set, or the rectangle runs off the mask or `bytes` is the wrong
+    /// length; on a device with no compute grass it does nothing.
+    pub fn update_grass_mask(
+        &mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        self.renderer
+            .update_grass_mask(self.queue, x, y, width, height, bytes)
+    }
+
     /// Remove the grass, whatever ground it grows on.
     pub fn clear_grass(&mut self) {
         self.renderer.unload_grass();
