@@ -194,6 +194,28 @@ let lamp = ImportedMaterial {
 
 Vertex RGB may go past 1 for bright lights. In this mode vertex alpha is no longer opacity, but the entity's `material.opacity` still applies. A glowing face keeps its normal, so it can still take a faint specular highlight on top, like lit glass.
 
+#### Changing the glow after upload
+
+A mesh's emission is set when it's uploaded, but an entity can scale it every frame with **`material.emissive_scale`** (ADR 0090). It multiplies all of the mesh's emission: the material's own `emissive` and the per-vertex kind. The default is 1, which is the mesh as uploaded. Nothing is re-uploaded, so a city's worth of windows can come on with the evening as one number per entity.
+
+```toml
+[entities.lamp_post.material]
+emissive_scale = 0.0   # off by day; a script or extension raises it at dusk
+```
+
+- **Where it applies:** imported and runtime meshes, skinned or not. An entity with no scale of its own takes its parent's, so a GLB expanded into child nodes dims as one.
+- **Zero is dark.** At 0, a per-vertex light face goes black, like an unlit bulb. It doesn't turn back into a lit, see-through surface, and surface vertices are lit as usual. Negative values count as 0.
+- **Only the strength changes.** How much of each vertex is surface and how much is light is fixed by its alpha at upload. To slide a face from lit paint by day to light by night, either rebuild it, or upload the surface and the light as two meshes and fade one with `opacity`. Glass that is lit like any surface and gives off light from its material's `emissive` is often enough: at 0 it's plain glass.
+- **Cost:** a new scale rebuilds that draw's small material uniform on the next frame, as a new `opacity` does. If hundreds of entities glow at once, change the value in steps rather than by a hair every frame.
+
+From an extension, write the field like any other component:
+
+```rust
+let mut material = toml::Table::new();
+material.insert("emissive_scale".into(), (night * 1.6).into());
+world.set_component(id, "material", material.into())?;
+```
+
 ## Debug Visualization
 
 The renderer provides eight shading modes, selected from the **Shading** combo in the Rendering & Effects menu (F4) or with `--debug-mode` headlessly:

@@ -69,12 +69,16 @@ pub struct MaterialUniforms {
     /// Emission (ADR 0076). `rgb` is the material's own light, linear and
     /// already times its strength. `w` scales per-vertex emission, where a
     /// vertex's alpha says how much of it is surface (see
-    /// `ImportedMaterial::vertex_emission`); 0 turns that off.
+    /// `ImportedMaterial::vertex_emission`).
     pub emissive: [f32; 4],
     /// 1 when the material has an emissive map (glTF `emissiveTexture`),
     /// bound at 7 and 8. Its rgb multiplies `emissive.rgb`.
     pub has_emissive_tex: u32,
-    pub _pad_emissive: [u32; 3],
+    /// 1 when vertex alpha is the surface share, not opacity (ADR 0090).
+    /// Separate from `emissive.w` so a strength of 0 leaves the light parts
+    /// dark rather than turning them back into lit, see-through surface.
+    pub vertex_emission: u32,
+    pub _pad_emissive: [u32; 2],
 }
 
 impl MaterialUniforms {
@@ -96,7 +100,8 @@ impl MaterialUniforms {
             texture_scale: 1.0,
             emissive: [0.0; 4],
             has_emissive_tex: 0,
-            _pad_emissive: [0; 3],
+            vertex_emission: 0,
+            _pad_emissive: [0; 2],
         }
     }
 
@@ -118,7 +123,8 @@ impl MaterialUniforms {
             texture_scale: 1.0,
             emissive: [0.0; 4],
             has_emissive_tex: 0,
-            _pad_emissive: [0; 3],
+            vertex_emission: 0,
+            _pad_emissive: [0; 2],
         }
     }
 
@@ -128,6 +134,18 @@ impl MaterialUniforms {
         let s = material.emissive_strength;
         let per_vertex = material.vertex_emission && material.use_vertex_color;
         self.emissive = [r * s, g * s, b * s, if per_vertex { s } else { 0.0 }];
+        self.vertex_emission = per_vertex as u32;
+    }
+
+    /// Multiplies all of the emission, the material's own and per-vertex,
+    /// by `scale` (ADR 0090: the entity's `material.emissive_scale`). The
+    /// surface share of each vertex is unchanged, so 0 leaves pure-light
+    /// vertices black and lit-surface vertices lit.
+    pub fn scale_emission(&mut self, scale: f32) {
+        let scale = scale.max(0.0);
+        for c in &mut self.emissive {
+            *c *= scale;
+        }
     }
 }
 
