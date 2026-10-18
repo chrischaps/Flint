@@ -22,4 +22,5 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+flint-asset = { workspace = true }
 naga = { version = "23", features = ["wgsl-in"] }

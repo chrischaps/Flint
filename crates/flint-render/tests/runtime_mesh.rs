@@ -1,10 +1,11 @@
 //! Runtime procedural meshes: create, replace and remove after init without
 //! leaking GPU memory, vertex colours, and frustum culling by mesh bounds.
+//! Also how an imported model's textures are sampled (the same frame rig).
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
 use flint_ecs::FlintWorld;
-use flint_import::ImportedMaterial;
+use flint_import::{ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_render::{Camera, DebugMode, RendererConfig, SceneRenderer, Vertex};
 
 const SIZE: u32 = 64;
@@ -404,4 +405,125 @@ fn emission_ignores_facing_and_light() {
     let dark = shoot(&surface, glowing.clone(), 0.0, 0.0);
     let bright = shoot(&surface, glowing, 1.0, 0.0);
     assert!(bright[1] > dark[1] + 20, "a surface vertex takes the ambient: {dark:?} {bright:?}");
+}
+
+/// An imported model's data maps are sampled as stored, whatever they're
+/// called (a glTF texture is often just `texture_<i>`): a metallic-roughness
+/// texel of 0.5 shades like factors of 0.5, not the 0.21 an sRGB decode
+/// makes of it. Colour maps stay sRGB, and a texture used both ways gets a
+/// copy of each.
+#[test]
+fn model_data_maps_are_linear() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    let mut world = FlintWorld::new();
+    spawn(&mut world, "plate", "plate", [0.0; 3]);
+    let sun = world.spawn("sun").unwrap();
+    let mut light = toml::Table::new();
+    light.insert("type".into(), "directional".into());
+    light.insert("intensity".into(), 3.0.into());
+    light.insert(
+        "direction".into(),
+        toml::Value::Array(vec![0.3.into(), 1.0.into(), 0.2.into()]),
+    );
+    world.set_component(sun, "light", light.into()).unwrap();
+    renderer.set_ambient([0.3; 3], [0.3; 3]);
+    let camera = Camera::default();
+
+    let (vertices, indices) = square(20.0, [1.0; 4]);
+    let mesh = ImportedMesh {
+        name: "plate".into(),
+        positions: vertices.iter().map(|v| v.position).collect(),
+        normals: vertices.iter().map(|v| v.normal).collect(),
+        uvs: vertices.iter().map(|v| v.uv).collect(),
+        indices: indices.clone(),
+        material_index: Some(0),
+        joint_indices: None,
+        joint_weights: None,
+        skin_index: None,
+    };
+    let texel = |name: &str, rgba: [u8; 4]| ImportedTexture {
+        name: name.into(),
+        width: 1,
+        height: 1,
+        format: "rgba8".into(),
+        data: rgba.to_vec(),
+    };
+    let surface = ImportedMaterial {
+        base_color: [0.8, 0.3, 0.2, 1.0],
+        ..ImportedMaterial::default()
+    };
+    // glTF packs roughness in green and metallic in blue; the factors scale them.
+    let mapped = ImportedMaterial {
+        metallic: 1.0,
+        roughness: 1.0,
+        metallic_roughness_texture: Some("texture_2".into()),
+        normal_texture: Some("texture_1".into()),
+        base_color_texture: Some("texture_0".into()),
+        ..surface.clone()
+    };
+    // A second material reads the colour map as its metallic-roughness map.
+    let odd = ImportedMaterial {
+        metallic_roughness_texture: Some("texture_0".into()),
+        base_color_texture: None,
+        normal_texture: None,
+        ..mapped.clone()
+    };
+    let model = ImportResult {
+        asset_meta: flint_asset::AssetMeta {
+            name: "plate".into(),
+            asset_type: flint_asset::AssetType::Mesh,
+            hash: String::new(),
+            source_path: None,
+            format: None,
+            properties: Default::default(),
+            tags: Vec::new(),
+        },
+        meshes: vec![mesh],
+        textures: vec![
+            texel("texture_0", [255; 4]),
+            texel("texture_1", [128, 128, 255, 255]),
+            texel("texture_2", [0, 128, 128, 255]),
+        ],
+        materials: vec![mapped, odd],
+        skeletons: Vec::new(),
+        skeletal_clips: Vec::new(),
+        node_clips: Vec::new(),
+        nodes: Vec::new(),
+        root_nodes: Vec::new(),
+    };
+    renderer.load_model(&gpu.device, &gpu.queue, "plate", &model);
+
+    let format = |name: &str| {
+        let cache = renderer.texture_cache().unwrap();
+        cache.get(name).map(|t| t.texture.format())
+    };
+    let (srgb, linear) = (
+        Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+        Some(wgpu::TextureFormat::Rgba8Unorm),
+    );
+    assert_eq!(format("plate::texture_0"), srgb, "the base-colour map");
+    assert_eq!(format("plate::texture_1"), linear, "the normal map");
+    assert_eq!(format("plate::texture_2"), linear, "the metallic-roughness map");
+    assert_eq!(format("plate::texture_0#linear"), linear, "a colour map read as data");
+
+    gpu.frame(&mut renderer, &world, &camera);
+    let seen = gpu.centre_pixel();
+    let mut shoot = |metallic: f32, roughness: f32| {
+        let material = ImportedMaterial {
+            metallic,
+            roughness,
+            ..surface.clone()
+        };
+        renderer.load_procedural_mesh(&gpu.device, "plate", &vertices, &indices, material);
+        gpu.frame(&mut renderer, &world, &camera);
+        gpu.centre_pixel()
+    };
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let want = shoot(0.5, 0.5);
+    assert!(close(seen, want), "the map shades unlike factors of 0.5: {seen:?} vs {want:?}");
+    // And the test can tell: an sRGB decode would shade like 0.21.
+    let srgb_read = shoot(0.216, 0.216);
+    assert!(!close(want, srgb_read), "0.5 and 0.21 look alike: {want:?} vs {srgb_read:?}");
 }

@@ -40,7 +40,7 @@ use flint_core::toml_util::toml_f32;
 use flint_core::{Transform, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportResult;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -2008,28 +2008,12 @@ impl SceneRenderer {
             .upload_imported(device, name, import_result, default_color);
 
         // Upload textures referenced by materials, namespaced by asset name
-        if let Some(cache) = &mut self.texture_cache {
-            for texture in &import_result.textures {
-                let namespaced = format!("{}::{}", name, texture.name);
-                cache.upload(device, queue, &namespaced, texture);
-            }
-        }
+        let both = self.upload_model_textures(device, queue, name, import_result);
 
         // Patch material texture references on cached meshes to use namespaced names
         if let Some(gpu_meshes) = self.mesh_cache.get_mut(name) {
             for mesh in gpu_meshes.iter_mut() {
-                if let Some(ref tex) = mesh.material.base_color_texture {
-                    mesh.material.base_color_texture = Some(format!("{}::{}", name, tex));
-                }
-                if let Some(ref tex) = mesh.material.normal_texture {
-                    mesh.material.normal_texture = Some(format!("{}::{}", name, tex));
-                }
-                if let Some(ref tex) = mesh.material.metallic_roughness_texture {
-                    mesh.material.metallic_roughness_texture = Some(format!("{}::{}", name, tex));
-                }
-                if let Some(ref tex) = mesh.material.emissive_texture {
-                    mesh.material.emissive_texture = Some(format!("{}::{}", name, tex));
-                }
+                namespace_textures(&mut mesh.material, name, &both);
             }
         }
     }
@@ -2059,30 +2043,52 @@ impl SceneRenderer {
         }
 
         // Also upload textures, namespaced by asset name
-        if let Some(cache) = &mut self.texture_cache {
-            for texture in &import_result.textures {
-                let namespaced = format!("{}::{}", name, texture.name);
-                cache.upload(device, queue, &namespaced, texture);
-            }
-        }
+        let both = self.upload_model_textures(device, queue, name, import_result);
 
         // Patch material texture references on cached skinned meshes
         if let Some(gpu_meshes) = self.mesh_cache.get_skinned_mut(name) {
             for mesh in gpu_meshes.iter_mut() {
-                if let Some(ref tex) = mesh.material.base_color_texture {
-                    mesh.material.base_color_texture = Some(format!("{}::{}", name, tex));
+                namespace_textures(&mut mesh.material, name, &both);
+            }
+        }
+    }
+
+    /// Upload a model's textures as `<asset>::<texture>`, each in the colour
+    /// space its materials read it in: normal and metallic-roughness maps
+    /// linear, base-colour and emissive maps (and unreferenced textures)
+    /// sRGB. A texture used both ways is uploaded twice, the linear copy as
+    /// `<asset>::<texture>#linear`; returns the names of those, for
+    /// [`namespace_textures`].
+    fn upload_model_textures(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        import_result: &ImportResult,
+    ) -> HashSet<String> {
+        let mut colour = HashSet::new();
+        let mut data = HashSet::new();
+        for m in &import_result.materials {
+            colour.extend(m.base_color_texture.iter().chain(&m.emissive_texture));
+            data.extend(m.normal_texture.iter().chain(&m.metallic_roughness_texture));
+        }
+        let mut both = HashSet::new();
+        if let Some(cache) = &mut self.texture_cache {
+            for texture in &import_result.textures {
+                let namespaced = format!("{}::{}", name, texture.name);
+                let is_data = data.contains(&texture.name);
+                if !is_data || colour.contains(&texture.name) {
+                    cache.upload(device, queue, &namespaced, texture, false);
                 }
-                if let Some(ref tex) = mesh.material.normal_texture {
-                    mesh.material.normal_texture = Some(format!("{}::{}", name, tex));
-                }
-                if let Some(ref tex) = mesh.material.metallic_roughness_texture {
-                    mesh.material.metallic_roughness_texture = Some(format!("{}::{}", name, tex));
-                }
-                if let Some(ref tex) = mesh.material.emissive_texture {
-                    mesh.material.emissive_texture = Some(format!("{}::{}", name, tex));
+                if is_data && colour.contains(&texture.name) {
+                    cache.upload(device, queue, &format!("{namespaced}#linear"), texture, true);
+                    both.insert(texture.name.clone());
+                } else if is_data {
+                    cache.upload(device, queue, &namespaced, texture, true);
                 }
             }
         }
+        both
     }
 
     /// Upload an entity's bone matrices to the GPU.
@@ -4144,6 +4150,31 @@ impl SceneRenderer {
         );
         queue.submit(std::iter::once(encoder.finish()));
     }
+}
+
+/// Point a model material's texture references at the names
+/// [`SceneRenderer::upload_model_textures`] gave them: `<asset>::<texture>`,
+/// and for a data map whose texture is also a colour map, the linear copy.
+fn namespace_textures(
+    material: &mut flint_import::ImportedMaterial,
+    asset: &str,
+    both: &HashSet<String>,
+) {
+    let colour = |tex: &mut Option<String>| {
+        if let Some(t) = tex {
+            *t = format!("{asset}::{t}");
+        }
+    };
+    let data = |tex: &mut Option<String>| {
+        if let Some(t) = tex {
+            let suffix = if both.contains(t.as_str()) { "#linear" } else { "" };
+            *t = format!("{asset}::{t}{suffix}");
+        }
+    };
+    colour(&mut material.base_color_texture);
+    colour(&mut material.emissive_texture);
+    data(&mut material.normal_texture);
+    data(&mut material.metallic_roughness_texture);
 }
 
 #[cfg(test)]

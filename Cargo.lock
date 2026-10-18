@@ -1862,6 +1862,7 @@ name = "flint-render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "flint-asset",
  "flint-core",
  "flint-ecs",
  "flint-import",
