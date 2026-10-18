@@ -49,6 +49,24 @@ impl SceneRenderer {
             })
     }
 
+    /// ECS `material.emissive_scale` for a model entity (ADR 0090), on the
+    /// entity and then its parent like the tint above, read every frame so
+    /// a game can change a mesh's glow after upload. 1 when neither sets
+    /// one; negative values count as 0.
+    pub(super) fn ecs_emissive_scale(world: &FlintWorld, entity_id: EntityId) -> f32 {
+        let read = |id: EntityId| {
+            world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get("emissive_scale"))
+                .and_then(toml_f32)
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .unwrap_or(1.0)
+            .max(0.0)
+    }
+
     /// ECS `material_overrides.<name>` tint for one glTF material, looked up on
     /// the entity and then every ancestor (a GLB expanded into a node hierarchy
     /// keeps its meshes several levels below the entity a scene author sees).
@@ -161,6 +179,7 @@ impl SceneRenderer {
                 material_uniforms.use_vertex_color = 1;
             }
             material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             let (transform_buffer, transform_bind_group) =
@@ -348,6 +367,7 @@ impl SceneRenderer {
                 material_uniforms.use_vertex_color = 1;
             }
             material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             // Read opacity and blend_mode from ECS material component

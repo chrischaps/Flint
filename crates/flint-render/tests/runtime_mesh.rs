@@ -407,6 +407,104 @@ fn emission_ignores_facing_and_light() {
     assert!(bright[1] > dark[1] + 20, "a surface vertex takes the ambient: {dark:?} {bright:?}");
 }
 
+/// `material.emissive_scale` (ADR 0090) changes a mesh's glow every frame
+/// with no re-upload: it multiplies the material's own emission and the
+/// per-vertex kind, a parent's scale reaches its children, and at 0 a
+/// pure-light vertex goes dark instead of turning back into lit surface.
+#[test]
+fn emissive_scale_changes_glow_after_upload() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let set_scale = |world: &mut FlintWorld, name: &str, scale: Option<f64>| {
+        let id = world.get_id(name).unwrap();
+        let mut material = toml::Table::new();
+        if let Some(s) = scale {
+            material.insert("emissive_scale".into(), s.into());
+        }
+        world.set_component(id, "material", material.into()).unwrap();
+    };
+
+    // Per vertex, uploaded once: green light at radiance 0.25.
+    let (light, indices) = square(20.0, [0.0, 0.25, 0.0, 0.0]);
+    let glowing = ImportedMaterial {
+        roughness: 1.0,
+        metallic: 1.0,
+        vertex_emission: true,
+        ..ImportedMaterial::vertex_colored("windows")
+    };
+    renderer.load_procedural_mesh(&gpu.device, "windows", &light, &indices, glowing);
+    spawn(&mut world, "windows", "windows", [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let one = gpu.centre_pixel();
+    assert!(one[1] > 100 && one[0] < 30, "unscaled light: {one:?}");
+
+    set_scale(&mut world, "windows", Some(1.0));
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(one, gpu.centre_pixel()), "a scale of 1 is the upload");
+
+    set_scale(&mut world, "windows", Some(2.0));
+    gpu.frame(&mut renderer, &world, &camera);
+    let two = gpu.centre_pixel();
+    assert!(two[1] > one[1] + 30, "a scale of 2 is brighter: {one:?} vs {two:?}");
+
+    set_scale(&mut world, "windows", Some(0.0));
+    gpu.frame(&mut renderer, &world, &camera);
+    let [r, g, b, _] = gpu.centre_pixel();
+    assert!(r < 10 && g < 10 && b < 10, "a scale of 0 is dark glass: {r} {g} {b}");
+
+    set_scale(&mut world, "windows", None);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(one, gpu.centre_pixel()), "no scale is the upload again");
+
+    // A lit surface vertex keeps its light at a scale of 0.
+    renderer.set_ambient([1.0; 3], [1.0; 3]);
+    let (surface, _) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
+    let surface_mat = ImportedMaterial {
+        roughness: 1.0,
+        metallic: 0.0,
+        vertex_emission: true,
+        ..ImportedMaterial::vertex_colored("windows")
+    };
+    renderer.load_procedural_mesh(&gpu.device, "windows", &surface, &indices, surface_mat);
+    gpu.frame(&mut renderer, &world, &camera);
+    let lit = gpu.centre_pixel();
+    set_scale(&mut world, "windows", Some(0.0));
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(lit, gpu.centre_pixel()), "surface at scale 0: {lit:?}");
+    assert!(lit[1] > 20, "the surface vertex takes the ambient: {lit:?}");
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    world.despawn(world.get_id("windows").unwrap()).unwrap();
+
+    // The material's own emission, scaled from the parent.
+    let lamp = ImportedMaterial {
+        base_color: [0.0, 0.0, 0.0, 1.0],
+        roughness: 1.0,
+        metallic: 1.0,
+        emissive: [0.0, 0.25, 0.0],
+        ..ImportedMaterial::default()
+    };
+    renderer.load_procedural_mesh(&gpu.device, "lamp", &light, &indices, lamp);
+    let parent = world.spawn("lamp_post").unwrap();
+    spawn(&mut world, "lamp", "lamp", [0.0; 3]);
+    let child = world.get_id("lamp").unwrap();
+    world.set_parent(child, parent).unwrap();
+    gpu.frame(&mut renderer, &world, &camera);
+    let own = gpu.centre_pixel();
+    assert!(close(one, own), "material emission matches per vertex: {own:?}");
+    set_scale(&mut world, "lamp_post", Some(2.0));
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(two, gpu.centre_pixel()), "the parent's scale reaches the child");
+    set_scale(&mut world, "lamp", Some(0.0));
+    gpu.frame(&mut renderer, &world, &camera);
+    let [r, g, b, _] = gpu.centre_pixel();
+    assert!(r < 10 && g < 10 && b < 10, "the child's own scale wins: {r} {g} {b}");
+}
+
 /// An imported model's data maps are sampled as stored, whatever they're
 /// called (a glTF texture is often just `texture_<i>`): a metallic-roughness
 /// texel of 0.5 shades like factors of 0.5, not the 0.21 an sRGB decode
