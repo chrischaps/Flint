@@ -83,7 +83,16 @@ pub struct OceanUniformsGpu {
     pub mode: u32,
     /// Blend strength 0..1 for the active mode.
     pub mode_mix: f32,
-    pub _pad_mode: [f32; 2],
+    // ── Shoreline foam (from the grab pass's depth) ──
+    /// Band width in metres of water depth below the surface (0 = off).
+    pub shore_foam_width: f32,
+    /// Opacity gain of the shoreline band.
+    pub shore_foam_strength: f32,
+    /// Shoreline foam colour (RGBA linear).
+    pub shore_foam_color: [f32; 4],
+    /// Lapping rate of the shoreline band.
+    pub shore_foam_speed: f32,
+    pub _pad_shore: [f32; 3],
 }
 
 /// Visual (non-simulation) parameters of the `ocean` component.
@@ -134,6 +143,15 @@ pub struct OceanVisuals {
     pub foam_glow_color: [f32; 4],
     /// Bioluminescent glow strength (0 = off; time_of_day.rhai drives it).
     pub foam_glow: f32,
+    /// Shoreline foam band: where the opaque scene behind the water lies
+    /// within this many metres below the surface (0 = off, the default).
+    pub shore_foam_width: f32,
+    /// Shoreline foam opacity gain.
+    pub shore_foam_strength: f32,
+    /// Shoreline foam lapping rate (0 = still).
+    pub shore_foam_speed: f32,
+    /// Shoreline foam colour (RGBA linear).
+    pub shore_foam_color: [f32; 4],
 }
 
 impl Default for OceanVisuals {
@@ -168,6 +186,10 @@ impl Default for OceanVisuals {
             // Teal-green sea sparkle (dinoflagellate blue-green).
             foam_glow_color: [0.35, 0.95, 0.75, 1.0],
             foam_glow: 0.0,
+            shore_foam_width: 0.0,
+            shore_foam_strength: 1.0,
+            shore_foam_speed: 1.0,
+            shore_foam_color: [0.96, 0.99, 1.0, 1.0],
         }
     }
 }
@@ -209,6 +231,10 @@ impl OceanVisuals {
             rain_ripple: f("rain_ripple", d.rain_ripple).clamp(0.0, 1.0),
             foam_glow_color: c("foam_glow_color", d.foam_glow_color),
             foam_glow: f("foam_glow", d.foam_glow).clamp(0.0, 2.0),
+            shore_foam_width: f("shore_foam_width", d.shore_foam_width).clamp(0.0, 50.0),
+            shore_foam_strength: f("shore_foam_strength", d.shore_foam_strength).clamp(0.0, 2.0),
+            shore_foam_speed: f("shore_foam_speed", d.shore_foam_speed).clamp(0.0, 10.0),
+            shore_foam_color: c("shore_foam_color", d.shore_foam_color),
         }
     }
 
@@ -496,9 +522,10 @@ mod tests {
         // + absorption vec3+turbidity(16) + refr/near/far/grab(16)
         // + sky snapshot 3×vec4 + strength(64, incl. 3 splash scalars)
         // + contact hull 3×vec4(48) + band edge 4×f32(16)
-        // + foam_glow vec4(16) + mode u32 + mode_mix + pad2 (16) = 816
-        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 816);
-        assert_eq!(816 % 16, 0, "uniform size must be 16-byte aligned");
+        // + foam_glow vec4(16) + mode u32 + mode_mix + shore width/strength (16)
+        // + shore colour vec4(16) + shore speed + pad3 (16) = 848
+        assert_eq!(std::mem::size_of::<OceanUniformsGpu>(), 848);
+        assert_eq!(848 % 16, 0, "uniform size must be 16-byte aligned");
     }
 
     #[test]

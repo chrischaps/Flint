@@ -148,6 +148,53 @@ sea stays quiet, the lee side stays quiet, and the windward face flares.
 On genuinely glassy water, set `splash_baseline = 0` — a foam ring hugging a
 motionless hull on a mirror reads as a bug.
 
+### Shoreline foam
+
+Foam where the water meets anything solid: a harbour wall, a pier, a rock, a
+beach. Set a width and the ocean finds its own shores:
+
+```toml
+[entities.ocean.ocean]
+shore_foam_width = 0.3     # metres of water depth that foam (0 = off)
+shore_foam_strength = 0.9
+shore_foam_speed = 1.0
+shore_foam_color = [0.95, 0.88, 0.80, 1.0]
+```
+
+The ocean already reads the grab pass's depth for refraction. For each water
+pixel it takes the opaque point behind it on the same view ray and measures how
+far that point lies below the surface. Where it's within `shore_foam_width`, the
+pixel foams. A wall or a pier running down into the water is shallow right
+beside it, and a beach is shallow where it shelves up, so no mask is needed.
+The band is solid against the shore and laced toward its open edge, with the
+same lace noise as the crest foam. It laps three ways: the surface's own wave
+height raises and lowers it, a slow surge (`shore_foam_speed`) runs along the
+shore, and the foam noise breaks up its edge. It fades with distance like the
+crest foam (60 to 140 m).
+
+| Field | Effect |
+|-------|--------|
+| `shore_foam_width` | Depth below the surface that foams, in metres. 0 (the default) turns it off. |
+| `shore_foam_strength` | Opacity gain. |
+| `shore_foam_speed` | Lapping rate; 0 holds the band still (the waves still move it). |
+| `shore_foam_color` | Its own colour, so shore foam can be warmer or dirtier than crest foam. It is lit like the crest foam: the same sun, ambient and sky glow. |
+
+It needs the grab pass, so it's off without post-processing. Two things follow
+from measuring along the view ray:
+
+- **A vertical wall foams on the face the camera looks at.** At the foot of
+  the near wall, the ray runs away from the wall to the bed, so that side has
+  no band. From a low camera the near wall usually hides that water anyway.
+  ([TheCapitol#132](https://github.com/chrischaps/TheCapitol/issues/132)
+  tracks a shore-distance mask that would fix it.)
+- **The band's width on screen depends on the slope behind it.** On a wall it's
+  `shore_foam_width` over the tangent of the camera's pitch; on a gentle beach
+  it's the width of the shallows. Keep the width to the waves' height plus a
+  little, or a whole shelf turns white.
+
+The scene's `foam_noise_scale` sets the size of the lace, for crest and shore
+foam alike. Shore foam counts toward `foam_glow` like flecks do.
+
 ### Rain
 
 `rain_ripple` (0..1) scatters expanding impact rings across the surface,
