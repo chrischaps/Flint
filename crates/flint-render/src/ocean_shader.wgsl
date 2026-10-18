@@ -79,7 +79,16 @@ struct OceanUniforms {
     // Reality tear (mirrors PostProcessConfig): 2 = blood ocean.
     mode: u32,
     mode_mix: f32,
-    _pad_mode: vec2<f32>,
+    // Shoreline foam (ADR 0088): a band where the opaque scene behind the
+    // water lies within shore_foam_width m below the surface. 0 = off, and
+    // the renderer forces 0 when the grab pass didn't run.
+    shore_foam_width: f32,
+    shore_foam_strength: f32,
+    shore_foam_color: vec4<f32>,
+    shore_foam_speed: f32,
+    _pad_shore0: f32,
+    _pad_shore1: f32,
+    _pad_shore2: f32,
 };
 
 @group(1) @binding(0)
@@ -448,6 +457,7 @@ fn fs_main(in: VertexOutput,
     var shallow_rgb = ocean.shallow_color.rgb;
     var sss_rgb = ocean.sss_color.rgb;
     var foam_rgb = ocean.foam_color.rgb;
+    var shore_rgb = ocean.shore_foam_color.rgb;
     var sky_zen_rgb = ocean.sky_zenith.rgb;
     var sky_hor_rgb = ocean.sky_horizon.rgb;
     var sky_haze_rgb = ocean.sky_haze.rgb;
@@ -469,6 +479,7 @@ fn fs_main(in: VertexOutput,
         shallow_rgb = mix(shallow_rgb, vec3<f32>(0.45, 0.04, 0.05) * k, m);
         sss_rgb = mix(sss_rgb, vec3<f32>(0.85, 0.05, 0.03), m);
         foam_rgb = mix(foam_rgb, vec3<f32>(0.95, 0.78, 0.76), m);
+        shore_rgb = mix(shore_rgb, vec3<f32>(0.95, 0.78, 0.76), m);
         // Reflections must bleed too or the pools stay sky-blue at grazing.
         sky_zen_rgb = mix(sky_zen_rgb, sky_zen_rgb * vec3<f32>(1.0, 0.25, 0.3), m);
         sky_hor_rgb = mix(sky_hor_rgb, sky_hor_rgb * vec3<f32>(1.1, 0.3, 0.32), m);
@@ -673,6 +684,44 @@ fn fs_main(in: VertexOutput,
         }
     }
 
+    // ── Shoreline foam: where the scene behind the water is shallow ─────
+    // The grab pass's depth gives the opaque point behind this fragment on
+    // the same view ray; its height below the (displaced) surface is the
+    // water's depth there. A wall, a pier or a beach shelving up to the
+    // surface all read as shallow, so every shore foams with no mask. The
+    // surface's own wave height moves the band, so it laps with the waves'
+    // phase; a slow surge and the foam noise break it up along the shore.
+    // Undistorted pixel on purpose: refraction's offset would make the band
+    // shimmer. A vertical wall only foams on the face the camera looks at,
+    // because the ray from water at a wall's foot runs away from it
+    // (chrischaps/TheCapitol#132 has the ways round that).
+    var shore_foam = 0.0;
+    if (ocean.shore_foam_width > 0.0001) {
+        let s_dims = vec2<i32>(textureDimensions(grab_depth));
+        let s_px = clamp(vec2<i32>(in.clip_position.xy), vec2<i32>(0), s_dims - 1);
+        let water_z = linearize_depth(in.clip_position.z);
+        let scene_z = linearize_depth(textureLoad(grab_depth, s_px, 0).r);
+        // Both depths are view z along one ray, so their ratio scales the
+        // camera→surface vector out to the scene point.
+        let scene_pos = transform.camera_pos
+            + (in.world_pos - transform.camera_pos) * (scene_z / max(water_z, 1e-4));
+        let below = max(in.world_pos.y - scene_pos.y, 0.0);
+
+        let lap_t = ocean.time * ocean.shore_foam_speed;
+        let lap = fbm(in.param_xz * ocean.foam_noise_scale * 0.5
+            + vec2<f32>(lap_t * 0.23, lap_t * -0.17));
+        // A surge that runs along the shore, out of step from place to place.
+        let surge = 0.5 + 0.5 * sin(lap_t * 1.3 + lap * TAU);
+        let width = ocean.shore_foam_width * (0.55 + 0.45 * surge) * (0.75 + 0.5 * lap);
+        let x = below / max(width, 1e-4);
+        let x_aa = clamp(fwidth(x) * 1.5, 1e-3, 0.5);
+        let band = 1.0 - smoothstep(1.0 - x_aa, 1.0 + x_aa, x);
+        // Solid against the shore, more lace toward the band's open edge.
+        let cut = mix(0.12, 0.62, clamp(x, 0.0, 1.0));
+        let laced = smoothstep(cut - lace_aa, cut + lace_aa, lace);
+        shore_foam = band * laced * ocean.shore_foam_strength * foam_distance_fade;
+    }
+
     // ── Cel specular glint (sun path sparkle; front faces only — there is
     // no sun path on the underside of the surface) ──────────────────────
     let H = normalize(V + L);
@@ -688,7 +737,11 @@ fn fs_main(in: VertexOutput,
     // Ambient lights the COMPOSED surface (water + foam) so moonlit nights
     // keep their foam instead of crushing it to black when the sun is out.
     let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
-    let foam_mix = clamp(foam_hard + foam_flecks + contact_foam + rain_rings, 0.0, 1.0);
+    let crest_foam = foam_hard + foam_flecks + contact_foam + rain_rings;
+    let foam_mix = clamp(crest_foam + shore_foam, 0.0, 1.0);
+    // Shoreline foam keeps its own colour, blended by its share of the foam.
+    let foam_tint = mix(foam_rgb, shore_rgb,
+                        shore_foam / max(crest_foam + shore_foam, 1e-4));
     let sky_weight = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(lights.ambient_ground.rgb, lights.ambient_sky.rgb, sky_weight);
     // Shadow dimming scales with actual sun light: with the sun down
@@ -712,13 +765,13 @@ fn fs_main(in: VertexOutput,
     // the transmission below, so high turbidity converges to it seamlessly.
     let water_body = water_color * sun_tint * shadow_dim + ambient * water_color * 0.5;
 
-    let base = mix(water_color, foam_rgb, foam_mix);
+    let base = mix(water_color, foam_tint, foam_mix);
     var color = base * sun_tint * shadow_dim;
     // Fresnel-weighted glint: full glitter path at grazing (sunset), nearly
     // nothing looking straight down (×3 so the path saturates early).
     color += sun_radiance * spec * sf * foam_distance_fade
         * clamp(fresnel * 3.0, 0.0, 1.0);
-    color += mix(ambient * water_color, foam_ambient * foam_rgb,
+    color += mix(ambient * water_color, foam_ambient * foam_tint,
                  foam_mix) * 0.5;
 
     // ── Refraction + turbidity (grab pass): see through to the legs ─────
@@ -783,7 +836,8 @@ fn fs_main(in: VertexOutput,
     // almost nothing, so the contact hull's wake is unmistakably the source.
     if (ocean.foam_glow.a > 0.001) {
         let agitation = clamp(
-            foam_hard * 0.08 + foam_flecks * 0.35 + contact_foam * 1.6,
+            foam_hard * 0.08 + foam_flecks * 0.35 + contact_foam * 1.6
+                + shore_foam * 0.35,
             0.0, 1.6);
         // Superlinear response pushes CHURNED foam past the bloom
         // threshold (post HDR pipeline, threshold ~1.0): the stirred

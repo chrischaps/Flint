@@ -477,7 +477,17 @@ impl SceneRenderer {
                     // these uniforms, so it can never race time_of_day.rhai.
                     mode: self.postprocess_config.render_mode,
                     mode_mix: self.postprocess_config.mode_mix,
-                    _pad_mode: [0.0; 2],
+                    // Shoreline foam reads the grab pass's depth: off
+                    // without it, whatever the component says.
+                    shore_foam_width: if self.ocean_grab_this_frame {
+                        v.shore_foam_width
+                    } else {
+                        0.0
+                    },
+                    shore_foam_strength: v.shore_foam_strength,
+                    shore_foam_color: v.shore_foam_color,
+                    shore_foam_speed: v.shore_foam_speed,
+                    _pad_shore: [0.0; 3],
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
             }
