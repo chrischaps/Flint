@@ -281,6 +281,33 @@ impl GrassGround<'_> {
     }
 }
 
+/// Checks a repaint of part of a `mask_width × mask_height` grass mask
+/// (ADR 0093): the rectangle at texel (`x`, `y`), `width × height`, must lie
+/// inside the mask, and `bytes` must hold one byte for each of its texels.
+pub fn check_grass_mask_patch(
+    mask_width: u32,
+    mask_height: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    bytes: usize,
+) -> Result<(), String> {
+    let fits = |at: u32, len: u32, of: u32| at.checked_add(len).is_some_and(|end| end <= of);
+    if !fits(x, width, mask_width) || !fits(y, height, mask_height) {
+        return Err(format!(
+            "grass mask patch {width}x{height} at ({x}, {y}) runs off the {mask_width}x{mask_height} mask"
+        ));
+    }
+    let want = width as usize * height as usize;
+    if bytes != want {
+        return Err(format!(
+            "grass mask patch is {bytes} bytes, {width}x{height} needs {want}"
+        ));
+    }
+    Ok(())
+}
+
 /// Grid cells, and the first cell, that a grass dispatch covers this frame.
 ///
 /// The grid has a cell every `spacing` units from `origin` across `extent`.
@@ -943,5 +970,18 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn mask_patch_must_fit_the_mask() {
+        assert!(check_grass_mask_patch(8, 4, 0, 0, 8, 4, 32).is_ok());
+        assert!(check_grass_mask_patch(8, 4, 5, 1, 3, 3, 9).is_ok());
+        assert!(check_grass_mask_patch(8, 4, 2, 2, 0, 0, 0).is_ok());
+        // Off the right edge, off the far edge, and the wrong length.
+        assert!(check_grass_mask_patch(8, 4, 6, 0, 3, 1, 3).is_err());
+        assert!(check_grass_mask_patch(8, 4, 0, 2, 1, 3, 3).is_err());
+        assert!(check_grass_mask_patch(8, 4, 0, 0, 2, 2, 5).is_err());
+        // No overflow past u32.
+        assert!(check_grass_mask_patch(8, 4, u32::MAX, 0, 2, 1, 2).is_err());
     }
 }

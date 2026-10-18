@@ -44,7 +44,7 @@ pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use grass_pipeline::{
-    grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight,
+    check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight,
     GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT,
     MAX_GRASS_ENTITIES,
 };
