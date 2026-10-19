@@ -19,7 +19,7 @@ pub mod ui;
 pub use context::StateScope;
 pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
 pub use context::{DrawCommand, DrawItem};
-pub use projector::{Projector, ScreenPoint, View};
+pub use projector::{GroundField, Projector, ScreenPoint, View};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;

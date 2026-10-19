@@ -1926,6 +1926,7 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "rhai",
  "toml",
  "tracing",

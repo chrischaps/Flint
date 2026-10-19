@@ -2766,6 +2766,44 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // screen_to_heightfield(x, y) -> [x, y, z] or ()
+    // The game's ground under a screen point (ADR 0095): where the ray
+    // through (x, y) first comes down onto the ground field the host
+    // registered with Projector::set_ground. () with no ground registered,
+    // or where the ray misses it (the sky, or past its edge); fall back to
+    // screen_to_ground there.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("screen_to_heightfield", move |x: f64, y: f64| -> Dynamic {
+            let (view, ground) = {
+                let c = crate::lock_or_recover(&ctx);
+                (crate::projector::View::of(&c), c.ground.clone())
+            };
+            match ground.and_then(|g| view.screen_to_heightfield(x as f32, y as f32, &g)) {
+                Some([gx, gy, gz]) => Dynamic::from_array(vec![
+                    Dynamic::from(gx as f64),
+                    Dynamic::from(gy as f64),
+                    Dynamic::from(gz as f64),
+                ]),
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
+    // ground_height(x, z) -> f64 or ()
+    // World y of the registered ground field at (x, z). () with none
+    // registered, or off its edge. (terrain_height reads a scene's terrain.)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ground_height", move |x: f64, z: f64| -> Dynamic {
+            let ground = crate::lock_or_recover(&ctx).ground.clone();
+            match ground.and_then(|g| g.height_at(x as f32, z as f32)) {
+                Some(h) => Dynamic::from(h as f64),
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
     // draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)
     // World-space debug line, projected onto the HUD layer. Clipped against
     // the near plane so a segment that passes the camera still draws.

@@ -196,6 +196,9 @@ The collider shape exactly matches the rendered mesh, so what you see is what yo
 
 ## Height Sampling from Scripts
 
+A game that makes its own ground rather than loading a `terrain` registers it as a `GroundField` instead, and scripts read it with `ground_height(x, z)` and pick it with `screen_to_heightfield(x, y)` (see [Player extensions](../guides/player-extensions.md#picking-a-ground-that-isnt-flat)).
+
+
 The `terrain_height(x, z)` function is available in [Rhai scripts](scripting.md) to query the terrain height at any world position:
 
 ```rust

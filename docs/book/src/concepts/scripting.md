@@ -674,6 +674,8 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
 | `world_to_screen(x, y, z)` | `Map` | A world point in logical points as `#{x, y, depth, visible}`; `visible` is false behind the camera |
 | `screen_to_ground(x, y, plane_y)` | `[x, z]` or `()` | The point on the plane `y = plane_y` under a screen point, or `()` where the view doesn't reach it |
+| `screen_to_heightfield(x, y)` | `[x, y, z]` or `()` | The game's ground under a screen point, where the ray first comes down onto the ground field the host registered, or `()` with none registered or where the ray misses it |
+| `ground_height(x, z)` | `f64` or `()` | World y of the registered ground field at (x, z), or `()` with none registered or off its edge |
 
 #### Lines in the world
 
@@ -703,6 +705,16 @@ Rust hosts can set the same lines on the renderer directly with `SceneRenderer::
 let g = screen_to_ground(mouse_x(), mouse_y(), 0.0);
 if g != () && is_mouse_just_pressed(0) {
     set_position(marker, g[0], 0.0, g[1]);   // exactly under the cursor
+}
+```
+
+On ground that isn't flat, a plane cuts the view at the wrong height: on a hill, the click lands past or short of the spot under the cursor. A game that registers its ground with `Projector::set_ground` (see [Player extensions](../guides/player-extensions.md#picking-a-ground-that-isnt-flat)) gets `screen_to_heightfield(x, y)`, the first point where the ray through the screen point comes down onto that ground, as `[x, y, z]`, and `ground_height(x, z)`. Both return `()` where there's no answer, so fall back to the plane there:
+
+```rhai
+let g = screen_to_heightfield(mouse_x(), mouse_y());
+if g == () {
+    let p = screen_to_ground(mouse_x(), mouse_y(), 0.0);
+    if p != () { g = [p[0], 0.0, p[1]]; }
 }
 ```
 
