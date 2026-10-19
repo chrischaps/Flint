@@ -1,0 +1,22 @@
+[component.water_body]
+description = "Water on a mesh of its own, shaded as the ocean is (ADR 0094): a lake at its own level, or a river down a path that can step and fall. Several per scene, each with its own level and tint. The waves, foam, refraction and shoreline band are the scene's ocean component's (or the defaults when there is none), scaled by wave_scale. Points are in world space; the entity's transform is not applied."
+
+[component.water_body.fields]
+shape = { type = "enum", values = ["lake", "river"], description = "lake: still water filling an outline at a level. river: a ribbon down a path, flowing from its first point to its last", default = "lake" }
+
+# ── A lake ──────────────────────────────────────────────────────────────
+outline = { type = "array", element = "vec2", description = "Lake: the shore as [x, z] points, either winding, not closed. A simple outline: no holes, not crossing itself", default = [] }
+level = { type = "float", description = "Lake: the surface's height in world y", default = 0.0 }
+
+# ── A river ─────────────────────────────────────────────────────────────
+path = { type = "array", element = "vec3", description = "River: the surface along its centre line as [x, y, z] points, upstream first. Where it drops steeply the water falls with it", default = [] }
+width = { type = "float", description = "River: bank to bank, m", default = 4.0 }
+speed = { type = "float", description = "River: mid-stream speed on the level, m/s. The banks run at 35% of it", default = 1.0 }
+fall_speedup = { type = "float", description = "River: how much faster it runs at the foot of a drop: speed × (1 + fall_speedup × slope of the segment above). Calm at a fall's lip, white at its foot", default = 3.0 }
+
+# ── The look ────────────────────────────────────────────────────────────
+deep_color = { type = "vec4", description = "Water in wave shadow (RGBA linear). Unset: the ocean's" }
+shallow_color = { type = "vec4", description = "Water in full light (RGBA linear). Unset: the ocean's" }
+wave_scale = { type = "float", description = "The ocean's waves, scaled: 0 a mirror, 1 the open sea", default = 0.3 }
+flow_foam = { type = "float", description = "White water where the flow is fast (from about 0.5 m/s, full by 3.5): 0 none, 1 full", default = 1.0 }
+flow_period = { type = "float", description = "Seconds between the flow's two phase resets: longer pulses less, shorter stretches less on fast water", default = 2.0 }

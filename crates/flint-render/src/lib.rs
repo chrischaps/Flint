@@ -31,6 +31,7 @@ pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
+pub mod water_body;
 mod texture_cache;
 pub mod world_line_pipeline;
 
@@ -80,6 +81,7 @@ pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
 };
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
+pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
 pub use texture_cache::TextureCache;
 
 #[cfg(test)]
@@ -134,9 +136,19 @@ mod tests {
     }
 
     #[test]
-    fn ocean_shader_wgsl_parses() {
+    fn ocean_shader_wgsl_parses_and_validates() {
+        // Validated too: a failure here would otherwise only show as the
+        // pipeline's catch_unwind quietly turning the ocean (and every water
+        // body) off.
         let source = include_str!("ocean_shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("ocean_shader.wgsl failed validation");
     }
 
     #[test]

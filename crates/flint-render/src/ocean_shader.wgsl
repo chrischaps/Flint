@@ -9,6 +9,12 @@
 // (sub-meter cells for displacement) and the rim reaches kilometers (flat,
 // fog-eaten horizon). The whole grid follows the camera via grid_offset,
 // snapped to inner-cell multiples so waves stay world-anchored.
+//
+// Water bodies (ADR 0094): `vs_body` draws a supplied mesh (a lake at its
+// own level, a river down a valley) through the same fragment shader. Each
+// vertex brings its rest position, normal and flow; `body` scales the waves,
+// tints the water and sets the flow's phase period. The sea binds a body
+// block too (its own colours, full waves, no flow), so its look is unchanged.
 
 struct TransformUniforms {
     view_proj: mat4x4<f32>,
@@ -96,6 +102,19 @@ struct OceanUniforms {
 @group(1) @binding(0)
 var<uniform> ocean: OceanUniforms;
 
+// Per-body look (ADR 0094); must match WaterBodyUniformsGpu in water_body.rs.
+struct BodyUniforms {
+    deep_color: vec4<f32>,
+    shallow_color: vec4<f32>,
+    // x = wave_scale (the sea's waves, scaled), y = flow_foam (white water
+    // on fast flow), z = flow_period in s (0 = still water: one wave
+    // evaluation, no advection), w unused.
+    params: vec4<f32>,
+};
+
+@group(1) @binding(1)
+var<uniform> body: BodyUniforms;
+
 // Bind group 2: lights + shadows (same layout as shader.wgsl / terrain)
 struct DirectionalLight {
     direction: vec3<f32>,
@@ -177,11 +196,21 @@ struct VertexInput {
     @location(0) pos: vec2<f32>,    // normalized grid coords in [-1, 1]
 };
 
+// A water body's vertex (ADR 0094); must match WaterVertex in water_body.rs.
+struct BodyVertexInput {
+    @location(0) position: vec3<f32>,   // rest surface point
+    @location(1) normal: vec3<f32>,     // rest surface normal (up for a lake)
+    @location(2) flow: vec2<f32>,       // XZ velocity, m/s
+};
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_pos: vec3<f32>,   // displaced surface position
     @location(1) param_xz: vec2<f32>,    // pre-displacement world column
     @location(2) fade: f32,              // displacement fade factor
+    @location(3) rest_y: f32,            // the surface's height at rest
+    @location(4) flow: vec2<f32>,        // XZ velocity (0 for the sea)
+    @location(5) rest_normal: vec3<f32>, // the surface's normal at rest
 };
 
 const PI: f32 = 3.14159265359;
@@ -300,6 +329,53 @@ fn fbm(p: vec2<f32>) -> f32 {
     return v;
 }
 
+// ── Flow (ADR 0094): two phases of advection, blended ───────────────────
+// The waves and foam at p are sampled where the water was, p - flow·age.
+// Each phase's age runs up to one period and resets; the two are half a
+// period apart and each fades out as it resets, so the resets never show.
+// A noise offset staggers the phase from place to place, so the blend
+// doesn't pulse across the whole body at once.
+
+struct FlowTaps {
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    w0: f32,         // weight of p0; p1 takes the rest
+};
+
+fn flow_taps(p: vec2<f32>, flow: vec2<f32>) -> FlowTaps {
+    let period = body.params.z;
+    if (period <= 0.0) {
+        return FlowTaps(p, p, 1.0);
+    }
+    let ph0 = fract(ocean.time / period + value_noise(p * 0.11));
+    let ph1 = fract(ph0 + 0.5);
+    let w0 = 1.0 - abs(2.0 * ph0 - 1.0);
+    return FlowTaps(p - flow * period * (ph0 - 0.5), p - flow * period * (ph1 - 0.5), w0);
+}
+
+fn flowing_offset(t: FlowTaps, amp_scale: f32) -> vec3<f32> {
+    if (body.params.z <= 0.0) {
+        return gerstner_offset(t.p0, amp_scale);
+    }
+    return mix(gerstner_offset(t.p1, amp_scale), gerstner_offset(t.p0, amp_scale), t.w0);
+}
+
+fn flowing_normal_jacobian(t: FlowTaps, amp_scale: f32) -> vec4<f32> {
+    if (body.params.z <= 0.0) {
+        return gerstner_normal_jacobian(t.p0, amp_scale);
+    }
+    let a = gerstner_normal_jacobian(t.p0, amp_scale);
+    let b = gerstner_normal_jacobian(t.p1, amp_scale);
+    let m = mix(b, a, t.w0);
+    return vec4<f32>(normalize(m.xyz), m.w);
+}
+
+// Noise in the flow's own frame, stretched along it: white-water streaks.
+fn streak_noise(p: vec2<f32>, dir: vec2<f32>) -> f32 {
+    let q = vec2<f32>(dot(p, dir), dot(p, vec2<f32>(-dir.y, dir.x)));
+    return fbm(q * vec2<f32>(0.6, 2.8) * max(ocean.foam_noise_scale, 0.05) * 2.0);
+}
+
 // ── Vertex ──────────────────────────────────────────────────────────────
 
 @vertex
@@ -310,13 +386,39 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let cam_dist = distance(flat_xz, transform.camera_pos.xz);
     let fade = 1.0 - smoothstep(ocean.fade_start, ocean.fade_end, cam_dist);
 
-    let off = gerstner_offset(flat_xz, fade);
+    let off = gerstner_offset(flat_xz, fade * body.params.x);
     let world_pos = vec3<f32>(flat_xz.x + off.x, off.y, flat_xz.y + off.z);
 
     out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
     out.world_pos = world_pos;
     out.param_xz = flat_xz;
     out.fade = fade;
+    out.rest_y = 0.0;
+    out.flow = vec2<f32>(0.0);
+    out.rest_normal = vec3<f32>(0.0, 1.0, 0.0);
+    return out;
+}
+
+// A water body's mesh (ADR 0094): displaced by the sea's waves, scaled by
+// the body and carried along its flow, about its own rest surface.
+@vertex
+fn vs_body(in: BodyVertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    let rest_xz = in.position.xz;
+    let cam_dist = distance(rest_xz, transform.camera_pos.xz);
+    let fade = 1.0 - smoothstep(ocean.fade_start, ocean.fade_end, cam_dist);
+
+    let off = flowing_offset(flow_taps(rest_xz, in.flow), fade * body.params.x);
+    let world_pos = in.position + off;
+
+    out.clip_position = transform.view_proj * vec4<f32>(world_pos, 1.0);
+    out.world_pos = world_pos;
+    out.param_xz = rest_xz;
+    out.fade = fade;
+    out.rest_y = in.position.y;
+    out.flow = in.flow;
+    out.rest_normal = normalize(in.normal);
     return out;
 }
 
@@ -427,9 +529,15 @@ fn cel_band(value: f32, steps: f32, p: vec2<f32>) -> f32 {
 @fragment
 fn fs_main(in: VertexOutput,
            @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let nj = gerstner_normal_jacobian(in.param_xz, in.fade);
-    let N = nj.xyz;
+    let wave_scale = body.params.x;
+    let taps = flow_taps(in.param_xz, in.flow);
+    let nj = flowing_normal_jacobian(taps, in.fade * wave_scale);
+    // The waves tilt the rest surface: the sea's (and a lake's) is up, so
+    // this is the wave normal itself; down a fall it leans with the water.
+    let N = normalize(nj.xyz + in.rest_normal - vec3<f32>(0.0, 1.0, 0.0));
     let jacobian = nj.w;
+    // Height above the rest surface, in units of the body's wave height.
+    let swell = (in.world_pos.y - in.rest_y) / max(wave_scale, 0.05);
 
     let V = normalize(transform.camera_pos - in.world_pos);
     let view_depth = length(transform.camera_pos - in.world_pos);
@@ -455,8 +563,8 @@ fn fs_main(in: VertexOutput,
     // downstream term (bands, SSS, foam, reflections) agrees. Remapping here
     // — after the TOD script's palette landed in the uniforms — means the
     // tear can never race time_of_day.rhai.
-    var deep_rgb = ocean.deep_color.rgb;
-    var shallow_rgb = ocean.shallow_color.rgb;
+    var deep_rgb = body.deep_color.rgb;
+    var shallow_rgb = body.shallow_color.rgb;
     var sss_rgb = ocean.sss_color.rgb;
     var foam_rgb = ocean.foam_color.rgb;
     var shore_rgb = ocean.shore_foam_color.rgb;
@@ -519,7 +627,7 @@ fn fs_main(in: VertexOutput,
     // Height rides the swell (troughs deep, crests light) so the bands read
     // as graphic wave shapes even with the sun overhead — the woodblock look.
     let ndl = max(dot(N, L), 0.0);
-    let height01 = clamp(in.world_pos.y * 0.5 + 0.5, 0.0, 1.0);
+    let height01 = clamp(swell * 0.5 + 0.5, 0.0, 1.0);
     let shade = clamp(ndl * 0.55 + height01 * 0.65 - 0.10, 0.0, 1.0);
     // Woodblock wobble (band_wobble > 0): world-anchored noise raggedizes
     // the ramp boundaries. A razor band edge sweeping across a big smooth
@@ -547,8 +655,11 @@ fn fs_main(in: VertexOutput,
     // Foam fades with distance: graphic detail near the camera, flat color
     // toward the horizon (matches the reference art and hides aliasing).
     let foam_distance_fade = 1.0 - smoothstep(60.0, 140.0, view_depth);
-    let foam_noise = fbm(in.param_xz * ocean.foam_noise_scale
-        + vec2<f32>(ocean.time * 0.35, ocean.time * -0.21));
+    let foam_drift = vec2<f32>(ocean.time * 0.35, ocean.time * -0.21);
+    var foam_noise = fbm(taps.p0 * ocean.foam_noise_scale + foam_drift);
+    if (body.params.z > 0.0) {
+        foam_noise = mix(fbm(taps.p1 * ocean.foam_noise_scale + foam_drift), foam_noise, taps.w0);
+    }
     let foam_field = jacobian + (foam_noise - 0.5) * 0.30
         + (1.0 - foam_distance_fade) * 10.0;
     let foam_aa = clamp(fwidth(foam_field) * 1.5, 1e-4, 0.4);
@@ -560,8 +671,11 @@ fn fs_main(in: VertexOutput,
     // biggest at the mass edge and close up toward the crest pinch, so the
     // freshest churn stays solid while the skirt goes ragged. Edges stay
     // hard (cel style) — the breakup is topology, not softness.
-    let lace = fbm(in.param_xz * ocean.foam_noise_scale * 6.0
-        + vec2<f32>(ocean.time * -0.13, ocean.time * 0.19));
+    let lace_drift = vec2<f32>(ocean.time * -0.13, ocean.time * 0.19);
+    var lace = fbm(taps.p0 * ocean.foam_noise_scale * 6.0 + lace_drift);
+    if (body.params.z > 0.0) {
+        lace = mix(fbm(taps.p1 * ocean.foam_noise_scale * 6.0 + lace_drift), lace, taps.w0);
+    }
     let lace_aa = clamp(fwidth(lace) * 1.5, 1e-4, 0.4);
     let foam_depth = clamp((ocean.foam_threshold - foam_field) / 0.35, 0.0, 1.0);
     let hole_cut = mix(0.52, 0.30, foam_depth);
@@ -623,7 +737,7 @@ fn fs_main(in: VertexOutput,
             // would alternate sides evenly. Water riding UP the logs is
             // what actually churns — weight impact by surface height so
             // windward crest-strikes dominate and the lee stays quiet.
-            let crest = clamp(0.5 + in.world_pos.y * 1.2, 0.25, 1.25);
+            let crest = clamp(0.5 + swell * 1.2, 0.25, 1.25);
             let churn = clamp(ocean.hull_b.z + impact * crest * ocean.hull_c.w, 0.0, 1.5);
 
             // Scalloped, lapping edge; churn drives both width and opacity.
@@ -684,6 +798,21 @@ fn fs_main(in: VertexOutput,
             }
             rain_rings *= ring_fade * clamp(ocean.rain_ripple, 0.0, 1.0) * 0.8;
         }
+    }
+
+    // ── White water (ADR 0094): fast flow foams in streaks along it ─────
+    // Gated on the body's uniform, so derivatives stay in uniform control
+    // flow and the sea and still water pay nothing.
+    var rush_foam = 0.0;
+    if (body.params.y > 0.001) {
+        let speed = length(in.flow);
+        let dir = select(vec2<f32>(0.0, 1.0), in.flow / max(speed, 1e-4), speed > 1e-4);
+        let rush = clamp(smoothstep(0.5, 3.5, speed) * body.params.y, 0.0, 1.0);
+        let streak = mix(streak_noise(taps.p1, dir), streak_noise(taps.p0, dir), taps.w0);
+        let s_aa = clamp(fwidth(streak) * 1.5, 1e-4, 0.4);
+        let cut = mix(0.86, 0.30, rush);
+        rush_foam = smoothstep(cut - s_aa, cut + s_aa, streak)
+            * smoothstep(0.0, 0.12, rush) * foam_distance_fade;
     }
 
     // ── Shoreline foam: where the scene behind the water is shallow ─────
@@ -792,7 +921,7 @@ fn fs_main(in: VertexOutput,
     // Ambient lights the COMPOSED surface (water + foam) so moonlit nights
     // keep their foam instead of crushing it to black when the sun is out.
     let sun_tint = clamp(sun_radiance, vec3<f32>(0.0), vec3<f32>(1.25));
-    let crest_foam = foam_hard + foam_flecks + contact_foam + rain_rings;
+    let crest_foam = foam_hard + foam_flecks + contact_foam + rain_rings + rush_foam;
     let foam_mix = clamp(crest_foam + shore_foam, 0.0, 1.0);
     // Shoreline foam keeps its own colour, blended by its share of the foam.
     let foam_tint = mix(foam_rgb, shore_rgb,
@@ -892,7 +1021,7 @@ fn fs_main(in: VertexOutput,
     if (ocean.foam_glow.a > 0.001) {
         let agitation = clamp(
             foam_hard * 0.08 + foam_flecks * 0.35 + contact_foam * 1.6
-                + shore_foam * 0.35,
+                + shore_foam * 0.35 + rush_foam * 0.35,
             0.0, 1.6);
         // Superlinear response pushes CHURNED foam past the bloom
         // threshold (post HDR pipeline, threshold ~1.0): the stirred

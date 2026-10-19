@@ -49,6 +49,8 @@ pub const GRASS_GROUND: &str = "grass_ground";
 // --- Ocean ---
 pub const OCEAN: &str = "ocean";
 pub const OCEAN_CONTACT: &str = "ocean_contact";
+/// Water on a mesh of its own: a lake at its level or a river down its path (ADR 0094).
+pub const WATER_BODY: &str = "water_body";
 
 // --- Skeletal probes ---
 pub const BONE_PROBE: &str = "bone_probe";
