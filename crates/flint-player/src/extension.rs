@@ -397,6 +397,38 @@ impl ExtensionGpu<'_> {
     pub fn clear_grass(&mut self) {
         self.renderer.unload_grass();
     }
+
+    /// Draw water on the game's own mesh (ADR 0094): a lake at its own
+    /// level, a river stepping down a valley. It shades as the `ocean` does
+    /// (waves, Fresnel, refraction, the cel ramp, shoreline foam), with the
+    /// body's tint, wave scale and flow; fast flow foams white. Build the
+    /// mesh with [`WaterBodyMesh::lake`](crate::WaterBodyMesh::lake) or
+    /// [`river`](crate::WaterBodyMesh::river), or supply your own. Replaces
+    /// any body set with this `id`. Errs when the mesh's indices are bad.
+    pub fn set_water_body(
+        &mut self,
+        id: &str,
+        mesh: &crate::WaterBodyMesh,
+        look: crate::WaterBodyLook,
+    ) -> Result<(), String> {
+        self.renderer.set_water_body(self.device, id, mesh, look)
+    }
+
+    /// Change a water body's look and keep its mesh. Returns whether it existed.
+    pub fn set_water_body_look(&mut self, id: &str, look: crate::WaterBodyLook) -> bool {
+        self.renderer.set_water_body_look(id, look)
+    }
+
+    /// Remove the water body set with `id`. Returns whether it existed.
+    pub fn remove_water_body(&mut self, id: &str) -> bool {
+        self.renderer.remove_water_body(id)
+    }
+
+    /// Remove every water body the game set (a scene's `water_body`
+    /// components stay).
+    pub fn clear_water_bodies(&mut self) {
+        self.renderer.clear_water_bodies();
+    }
 }
 
 /// Whether an extension may consume `event`. Lifecycle events must always

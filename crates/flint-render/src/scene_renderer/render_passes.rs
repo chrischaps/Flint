@@ -401,8 +401,9 @@ impl SceneRenderer {
             queue.write_buffer(buf, 12, bytemuck::cast_slice(&[tonemapping_u32]));
         }
 
-        // Update ocean uniforms (wave phases in f64, grid follows the camera)
-        if self.ocean_active {
+        // Update ocean uniforms (wave phases in f64, grid follows the camera).
+        // Water bodies read them too (ADR 0094), sea or no sea.
+        if self.water_active() {
             if let (Some(spectrum), Some(ubuf), Some(tbuf)) = (
                 &self.ocean_spectrum,
                 &self.ocean_uniform_buffer,
@@ -507,6 +508,17 @@ impl SceneRenderer {
                     _pad_shore: [0.0; 2],
                 };
                 queue.write_buffer(ubuf, 0, bytemuck::cast_slice(&[uniforms]));
+
+                // Each body's look, its missing colours the sea's as they
+                // stand this frame (so a time-of-day palette tints them too).
+                if let Some(sea_buf) = &self.ocean_sea_body_buffer {
+                    let sea = crate::water_body::WaterBodyUniformsGpu::sea(v);
+                    queue.write_buffer(sea_buf, 0, bytemuck::cast_slice(&[sea]));
+                }
+                for b in self.water_bodies_to_draw() {
+                    let u = b.look.to_gpu(v, b.flowing);
+                    queue.write_buffer(&b.uniform_buffer, 0, bytemuck::cast_slice(&[u]));
+                }
             }
         }
 
@@ -985,7 +997,7 @@ impl SceneRenderer {
 
         // Ocean rendering (after all opaque — writes depth so fog applies;
         // group 3 holds the grab-pass snapshots, or dummies when disabled)
-        if self.ocean_active && phase.draws_ocean_and_after() {
+        if self.water_active() && phase.draws_ocean_and_after() {
             let grab_bg = if self.ocean_grab_this_frame {
                 self.ocean_grab_bind_group.as_ref()
             } else {
@@ -997,15 +1009,32 @@ impl SceneRenderer {
                 &self.ocean_transform_bind_group,
                 grab_bg,
             ) {
-                render_pass.set_pipeline(&op.pipeline);
                 render_pass.set_bind_group(0, transform_bg, &[]);
-                render_pass.set_bind_group(1, ocean_bg, &[]);
                 render_pass.set_bind_group(2, &self.light_bind_group, &[]);
                 render_pass.set_bind_group(3, grab_bg, &[]);
-                render_pass.set_vertex_buffer(0, op.grid_vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(op.grid_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..op.grid_index_count, 0, 0..1);
+                if self.ocean_active {
+                    render_pass.set_pipeline(&op.pipeline);
+                    render_pass.set_bind_group(1, ocean_bg, &[]);
+                    render_pass.set_vertex_buffer(0, op.grid_vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(
+                        op.grid_index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    render_pass.draw_indexed(0..op.grid_index_count, 0, 0..1);
+                }
+                // Lakes and rivers (ADR 0094): after the sea, depth-tested,
+                // so one above sea level hides the sea beneath it.
+                let mut bodies = self.water_bodies_to_draw().peekable();
+                if bodies.peek().is_some() {
+                    render_pass.set_pipeline(&op.body_pipeline);
+                    for b in bodies {
+                        render_pass.set_bind_group(1, &b.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, b.vertex_buffer.slice(..));
+                        render_pass
+                            .set_index_buffer(b.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        render_pass.draw_indexed(0..b.index_count, 0, 0..1);
+                    }
+                }
             }
         }
 
