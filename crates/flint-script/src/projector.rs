@@ -14,8 +14,17 @@
 //! outside a script call (an extension's `pre_update`, say), it's the
 //! camera the last update handed over: last frame's, like
 //! `ExtensionCtx::camera`.
+//!
+//! A game whose ground isn't flat registers it with [`Projector::set_ground`]
+//! (ADR 0095): a [`GroundField`], a heightmap placed in the world. Then
+//! [`Projector::screen_to_heightfield`] finds the ground under a screen
+//! point on a hill, where `screen_to_ground` would cut a plane at the wrong
+//! height, and [`Projector::ground_height`] reads it anywhere. Scripts get
+//! the same as `screen_to_heightfield(x, y)` and `ground_height(x, z)`.
 
 use std::sync::{Arc, Mutex};
+
+pub use flint_terrain::GroundField;
 
 use crate::context::ScriptCallContext;
 
@@ -45,6 +54,38 @@ impl Projector {
     /// `view().world_to_screen(p)`, for a single point.
     pub fn world_to_screen(&self, p: [f32; 3]) -> Option<ScreenPoint> {
         self.view().world_to_screen(p)
+    }
+
+    /// Register the ground scripts and [`Projector::screen_to_heightfield`]
+    /// pick against, or clear it with `None`. Call again to replace it (a
+    /// field built off the main thread, say). It's the game's: it survives
+    /// scene changes. Takes the script context's lock, as [`Projector::view`]
+    /// does.
+    pub fn set_ground(&self, ground: Option<Arc<GroundField>>) {
+        crate::lock_or_recover(&self.ctx).ground = ground;
+    }
+
+    /// The ground [`Projector::set_ground`] registered.
+    pub fn ground(&self) -> Option<Arc<GroundField>> {
+        crate::lock_or_recover(&self.ctx).ground.clone()
+    }
+
+    /// Where the ray through the screen point (x, y) first meets the
+    /// registered ground, as a world point. `None` with no ground
+    /// registered, or where the ray misses it: the sky, or past its edge.
+    /// One lock, then the march runs without it.
+    pub fn screen_to_heightfield(&self, x: f32, y: f32) -> Option<[f32; 3]> {
+        let (view, ground) = {
+            let c = crate::lock_or_recover(&self.ctx);
+            (View::of(&c), c.ground.clone())
+        };
+        view.screen_to_heightfield(x, y, ground.as_deref()?)
+    }
+
+    /// World y of the registered ground at (x, z). `None` with no ground
+    /// registered, or off its edge.
+    pub fn ground_height(&self, x: f32, z: f32) -> Option<f32> {
+        self.ground()?.height_at(x, z)
     }
 }
 
@@ -107,6 +148,24 @@ impl View {
         )
     }
 
+    /// The world ray through the screen point (x, y), as `(origin,
+    /// direction)`: origin on the near plane, direction unit length.
+    /// `None` for an empty screen or a singular camera.
+    pub fn screen_ray(&self, x: f32, y: f32) -> Option<([f32; 3], [f32; 3])> {
+        if self.width.is_nan() || self.height.is_nan() || self.width <= 0.0 || self.height <= 0.0 {
+            return None;
+        }
+        let ndc = flint_core::projection::screen_to_ndc(x, y, self.width, self.height);
+        flint_core::projection::unproject_ray(&self.view_proj, ndc)
+    }
+
+    /// Where the ray through the screen point (x, y) first meets `ground`,
+    /// as a world point (see [`GroundField::ray`]).
+    pub fn screen_to_heightfield(&self, x: f32, y: f32, ground: &GroundField) -> Option<[f32; 3]> {
+        let (origin, dir) = self.screen_ray(x, y)?;
+        ground.ray(origin, dir)
+    }
+
     /// The screen's size in logical points.
     pub fn screen_size(&self) -> [f32; 2] {
         [self.width, self.height]
@@ -167,7 +226,11 @@ mod tests {
     }
 
     fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
     }
     fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
         a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
@@ -186,14 +249,23 @@ mod tests {
 
     #[test]
     fn the_target_lands_mid_screen() {
-        let p = system().projector().world_to_screen([0.0, 0.0, 0.0]).unwrap();
-        assert!((p.x - 640.0).abs() < 1e-3 && (p.y - 360.0).abs() < 1e-3, "{p:?}");
+        let p = system()
+            .projector()
+            .world_to_screen([0.0, 0.0, 0.0])
+            .unwrap();
+        assert!(
+            (p.x - 640.0).abs() < 1e-3 && (p.y - 360.0).abs() < 1e-3,
+            "{p:?}"
+        );
         assert!((p.depth - 500f32.sqrt()).abs() < 1e-3, "{p:?}");
     }
 
     #[test]
     fn behind_the_camera_is_none() {
-        assert_eq!(system().projector().world_to_screen([0.0, 20.0, 40.0]), None);
+        assert_eq!(
+            system().projector().world_to_screen([0.0, 20.0, 40.0]),
+            None
+        );
     }
 
     #[test]
@@ -210,15 +282,16 @@ mod tests {
     fn a_native_function_agrees_with_world_to_screen() {
         let mut s = system();
         let projector = s.projector();
-        s.rhai_engine_mut().register_fn("native_project", move |x: f64, y: f64, z: f64| {
-            let mut m = Map::new();
-            if let Some(p) = projector.world_to_screen([x as f32, y as f32, z as f32]) {
-                m.insert("x".into(), (p.x as f64).into());
-                m.insert("y".into(), (p.y as f64).into());
-                m.insert("depth".into(), (p.depth as f64).into());
-            }
-            m
-        });
+        s.rhai_engine_mut()
+            .register_fn("native_project", move |x: f64, y: f64, z: f64| {
+                let mut m = Map::new();
+                if let Some(p) = projector.world_to_screen([x as f32, y as f32, z as f32]) {
+                    m.insert("x".into(), (p.x as f64).into());
+                    m.insert("y".into(), (p.y as f64).into());
+                    m.insert("depth".into(), (p.depth as f64).into());
+                }
+                m
+            });
         let engine = s.rhai_engine_mut();
         for p in [[0.0f64, 0.0, 0.0], [3.0, 1.5, -4.0], [-12.0, 0.0, 7.5]] {
             let script = format!(
@@ -228,6 +301,97 @@ mod tests {
             );
             assert!(engine.eval::<bool>(&script).unwrap(), "{p:?}");
         }
+    }
+
+    /// A slope rising towards -z, y = 2 - z / 2, over x and z in -20..20,
+    /// sampled every 0.5.
+    fn slope() -> std::sync::Arc<super::GroundField> {
+        let texel = 0.5f32;
+        let n = (40.0 / texel) as u32 + 1;
+        let mut heights = Vec::with_capacity((n * n) as usize);
+        for row in 0..n {
+            let z = -20.0 + row as f32 * texel;
+            for _col in 0..n {
+                heights.push(2.0 - z / 2.0);
+            }
+        }
+        std::sync::Arc::new(super::GroundField::new(
+            flint_terrain::Heightmap::from_raw(heights, n, n),
+            [-20.0, -20.0],
+            [40.0, 40.0],
+            1.0,
+            0.0,
+        ))
+    }
+
+    #[test]
+    fn a_click_on_a_slope_lands_within_a_texel_of_the_true_point() {
+        let s = system();
+        let projector = s.projector();
+        projector.set_ground(Some(slope()));
+        let view = projector.view();
+        for (x, z) in [
+            (0.0f32, 0.0f32),
+            (4.0, -3.0),
+            (-6.5, 2.5),
+            (8.0, 6.0),
+            (-3.0, -9.0),
+        ] {
+            let truth = [x, 2.0 - z / 2.0, z];
+            let p = view.world_to_screen(truth).unwrap();
+            let hit = projector.screen_to_heightfield(p.x, p.y).unwrap();
+            let err = (hit[0] - truth[0]).hypot(hit[2] - truth[2]);
+            assert!(err < 0.5, "{truth:?} -> {hit:?}");
+            // A flat pick at the height of the ground under the camera's
+            // target is a long way off on the slope: what the field is for.
+            if z.abs() > 2.0 {
+                let flat = view.screen_to_ground(p.x, p.y, 2.0).unwrap();
+                assert!((flat[1] - z).abs() > 1.0, "{z} {flat:?}");
+            }
+        }
+        assert_eq!(projector.ground_height(4.0, -3.0), Some(3.5));
+        assert_eq!(projector.ground_height(40.0, 0.0), None);
+    }
+
+    #[test]
+    fn without_a_ground_nothing_is_picked() {
+        let projector = system().projector();
+        assert!(projector.screen_to_heightfield(640.0, 360.0).is_none());
+        assert!(projector.ground_height(0.0, 0.0).is_none());
+        projector.set_ground(Some(slope()));
+        assert!(projector.screen_to_heightfield(640.0, 360.0).is_some());
+        projector.set_ground(None);
+        assert!(projector.screen_to_heightfield(640.0, 360.0).is_none());
+    }
+
+    #[test]
+    fn scripts_pick_the_same_ground() {
+        let mut s = system();
+        let projector = s.projector();
+        projector.set_ground(Some(slope()));
+        let p = projector.view().world_to_screen([4.0, 3.5, -3.0]).unwrap();
+        let rust = projector.screen_to_heightfield(p.x, p.y).unwrap();
+        let script = format!(
+            "let g = screen_to_heightfield({:?}, {:?}); [g[0], g[1], g[2], ground_height(4.0, -3.0)]",
+            p.x as f64, p.y as f64
+        );
+        let engine = s.rhai_engine_mut();
+        let out: Vec<f64> = engine
+            .eval::<rhai::Array>(&script)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.as_float().unwrap())
+            .collect();
+        assert_eq!(out[..3], [rust[0] as f64, rust[1] as f64, rust[2] as f64]);
+        assert_eq!(out[3], 3.5);
+        assert!(engine
+            .eval::<rhai::Dynamic>("ground_height(100.0, 0.0)")
+            .unwrap()
+            .is_unit());
+        assert!(engine
+            .eval::<rhai::Dynamic>("screen_to_heightfield(640.0, -5000.0)")
+            .unwrap()
+            .is_unit());
     }
 
     #[test]

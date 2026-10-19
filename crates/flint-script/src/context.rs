@@ -546,6 +546,9 @@ pub struct ScriptCallContext {
     pub data_cache: std::collections::HashMap<String, toml::Value>,
     /// Terrain height sampling callback — set by PlayerApp if terrain is loaded
     pub terrain_height_fn: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>,
+    /// The game's ground, for `screen_to_heightfield` and `ground_height`
+    /// (ADR 0095). Set through `Projector::set_ground`; survives `clear()`.
+    pub ground: Option<Arc<flint_terrain::GroundField>>,
     /// Real text measurement, installed by the host once a text backend
     /// exists: `(text, size, font family, letter spacing) -> (width, height)`
     /// in logical points. `measure_text` falls back to a glyph-count
@@ -628,6 +631,7 @@ impl ScriptCallContext {
             ui_system: UiSystem::new(),
             data_cache: std::collections::HashMap::new(),
             terrain_height_fn: None,
+            ground: None,
             text_measurer: None,
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),

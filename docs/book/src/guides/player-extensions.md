@@ -213,3 +213,23 @@ engine.register_fn("my_labels", move || -> rhai::Array {
 ```
 
 `View::world_to_screen` returns a `ScreenPoint { x, y, depth }` in logical points, or `None` where Rhai's `world_to_screen` says `visible: false`. The two agree exactly: called from a script, the view is the camera this frame renders with. `View::screen_to_ground` matches the Rhai function too. Outside a script call (in `pre_update`, say), the view is the previous frame's camera. `view()` takes the script context's lock, so don't call it from a callback the script system runs while holding that lock, such as a text measurer.
+
+### Picking a ground that isn't flat
+
+`screen_to_ground` cuts a plane, which is wrong on a hill. A game that builds its own ground registers it with the projector as a `GroundField` (ADR 0095): a `Heightmap` placed in the world, with its first sample at `origin` and its last at `origin + size`, and world y `sample × height_scale + base_y`. Both types are re-exported by `flint-player`.
+
+```rust
+let heights: Vec<f32> = /* cols × rows samples, row-major, in metres */;
+let ground = GroundField::new(
+    Heightmap::from_raw(heights, cols, rows),
+    [0.0, 0.0],          // world x, z of the first sample
+    [12000.0, 12000.0],  // to the last
+    1.0,                 // height_scale
+    0.0,                 // base_y
+);
+projector.set_ground(Some(Arc::new(ground)));
+```
+
+Then `Projector::screen_to_heightfield(x, y)` returns the world point where the ray through a screen point first comes down onto the ground, and `Projector::ground_height(x, z)` reads it; scripts have the same as `screen_to_heightfield(x, y)` and `ground_height(x, z)`. `View::screen_ray` and `View::screen_to_heightfield(x, y, &ground)` do it on a snapshot, and `GroundField::ray(origin, dir)` takes any ray, a camera rig's line to its target say.
+
+The ray is clipped to the field's box (its x/z extent and the range of its heights), then stepped one texel at a time over the ground and the crossing step bisected, so it can start anywhere and a hit lies on the ground. A ray that comes in through the field's side below the ground meets it at the edge. One that starts under the ground is reported where it next comes down onto it from above. A ridge thinner than a texel can be stepped over. `set_ground` again replaces the field (one built off the main thread, say), and `set_ground(None)` clears it. It survives scene changes: it's the game's, not the scene's. The editor's `ray_heightmap_intersect` uses the same march.
