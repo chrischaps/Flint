@@ -93,8 +93,9 @@ impl SceneRenderer {
                 light_view_proj: cascade_vp,
                 model,
             };
+            // `casts_shadow` is the entity's `material.cast_shadows` (ADR 0100)
             let casts = |d: &&super::DrawCall| {
-                !d.is_wireframe && super::draw_visible(d, &cascade_frustum)
+                d.casts_shadow && !d.is_wireframe && super::draw_visible(d, &cascade_frustum)
             };
             for draw in self.entity_draws.iter().filter(casts) {
                 draw_uniforms.push(slot(draw.model));
@@ -107,7 +108,7 @@ impl SceneRenderer {
             for draw in self.transparent_draws.iter().filter(casts) {
                 draw_uniforms.push(slot(draw.model));
             }
-            for draw in &self.skinned_entity_draws {
+            for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
                 draw_uniforms.push(slot(draw.model));
             }
         }
@@ -148,8 +149,9 @@ impl SceneRenderer {
                 // Same per-cascade test as the uniform gather above, so the
                 // slots line up.
                 let cascade_frustum = crate::frustum::Frustum::from_view_projection(&cascade_vp);
-                let casts =
-                    |d: &super::DrawCall| !d.is_wireframe && super::draw_visible(d, &cascade_frustum);
+                let casts = |d: &super::DrawCall| {
+                    d.casts_shadow && !d.is_wireframe && super::draw_visible(d, &cascade_frustum)
+                };
 
                 // Render each solid entity
                 for draw in &self.entity_draws {
@@ -225,7 +227,7 @@ impl SceneRenderer {
                     }
                 }
 
-                // Render transparent entities into shadow map (skip very transparent)
+                // Render transparent entities into shadow map
                 for draw in &self.transparent_draws {
                     if !casts(draw) {
                         continue;
@@ -239,7 +241,7 @@ impl SceneRenderer {
                 // Render skinned entities into shadow map
                 pass.set_pipeline(&shadow_pass.skinned_shadow_pipeline);
 
-                for draw in &self.skinned_entity_draws {
+                for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
                     bind_next(&mut pass, &mut next_slot);
                     pass.set_bind_group(1, &draw.bone_bind_group, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));

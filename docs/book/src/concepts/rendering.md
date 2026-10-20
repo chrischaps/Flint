@@ -19,7 +19,7 @@ Diffuse shading is Lambert by default, but the scene can blend toward Oren-Nayar
 
 Directional lights cast shadows via cascaded shadow maps. Multiple shadow cascades cover different distance ranges from the camera, giving high-resolution shadows close up and broader coverage at distance. A directional light with a non-zero `angular_size` gets contact-hardening PCSS shadows instead of the fixed PCF kernel.
 
-Shadows are toggled at runtime from the Rendering & Effects menu (**F4**), which also offers the shadow-map resolution (512 to 4096). Headlessly, use `--no-shadows` and `--shadow-resolution`. See [Lighting](lighting.md#shadows) for details.
+Shadows are toggled at runtime from the Rendering & Effects menu (**F4**), which also offers the shadow-map resolution (512 to 4096). Headlessly, use `--no-shadows` and `--shadow-resolution`. One entity stops casting with `material.cast_shadows = false`. See [Lighting](lighting.md#shadows) for details.
 
 ## Camera Modes
 

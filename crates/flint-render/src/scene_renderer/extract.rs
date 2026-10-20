@@ -69,6 +69,23 @@ impl SceneRenderer {
             .clamp(0.0, 1.0)
     }
 
+    /// ECS `material.cast_shadows` for an entity (ADR 0100): false keeps
+    /// its draws out of the shadow cascades, opaque, transparent and
+    /// skinned alike. True when neither it nor its parent sets one, so a GLB
+    /// expanded into child nodes stops casting as one.
+    pub(super) fn ecs_casts_shadow(world: &FlintWorld, entity_id: EntityId) -> bool {
+        let read = |id: EntityId| {
+            world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get("cast_shadows"))
+                .and_then(|v| v.as_bool())
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .unwrap_or(true)
+    }
+
     /// A number in the `material` component of `entity_id`, or else of its
     /// parent.
     fn ecs_material_f32(world: &FlintWorld, entity_id: EntityId, key: &str) -> Option<f32> {
@@ -295,6 +312,7 @@ impl SceneRenderer {
                 entity_id: Some(entity_id),
                 blend_mode,
                 sort_depth: 0.0,
+                casts_shadow: Self::ecs_casts_shadow(world, entity_id),
             };
 
             if is_transparent {
@@ -470,6 +488,7 @@ impl SceneRenderer {
                 entity_id,
                 blend_mode,
             );
+            draw.casts_shadow = Self::ecs_casts_shadow(world, entity_id);
             draw.world_aabb = Some(transform_aabb(
                 &model_matrix,
                 gpu_mesh.aabb_min,
@@ -1109,6 +1128,7 @@ impl SceneRenderer {
             .unwrap_or_default();
         let proc_blend_mode = parse_blend_mode(&proc_blend_mode_str);
         let proc_is_transparent = proc_opacity < 1.0 || proc_blend_mode != BlendMode::Alpha;
+        let casts_shadow = Self::ecs_casts_shadow(world, entity_id);
 
         if !visual.wireframe {
             if let Some(tex_name) = &material_texture {
@@ -1174,7 +1194,7 @@ impl SceneRenderer {
                             &tex_cache.default_white.sampler,
                         ),
                     );
-                    let draw = Self::draw_from_cache(
+                    let mut draw = Self::draw_from_cache(
                         &box_vb,
                         &box_ib,
                         box_index_count,
@@ -1185,6 +1205,7 @@ impl SceneRenderer {
                         entity_id,
                         proc_blend_mode,
                     );
+                    draw.casts_shadow = casts_shadow;
                     if proc_is_transparent {
                         self.transparent_draws.push(draw);
                     } else {
@@ -1220,7 +1241,7 @@ impl SceneRenderer {
                             &tex_cache.default_white.sampler,
                         ),
                     );
-                    let draw = Self::draw_from_cache(
+                    let mut draw = Self::draw_from_cache(
                         &box_vb,
                         &box_ib,
                         box_index_count,
@@ -1231,6 +1252,7 @@ impl SceneRenderer {
                         entity_id,
                         BlendMode::Alpha,
                     );
+                    draw.casts_shadow = casts_shadow;
                     self.entity_draws.push(draw);
                 }
             } else {
@@ -1285,7 +1307,7 @@ impl SceneRenderer {
                         &tex_cache.default_white.sampler,
                     ),
                 );
-                let draw = Self::draw_from_cache(
+                let mut draw = Self::draw_from_cache(
                     &box_vb,
                     &box_ib,
                     box_index_count,
@@ -1296,6 +1318,7 @@ impl SceneRenderer {
                     entity_id,
                     proc_blend_mode,
                 );
+                draw.casts_shadow = casts_shadow;
                 if proc_is_transparent {
                     self.transparent_draws.push(draw);
                 } else {

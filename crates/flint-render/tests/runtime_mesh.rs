@@ -2,7 +2,8 @@
 //! leaking GPU memory, vertex colours, and frustum culling by mesh bounds.
 //! Also how an imported model's textures are sampled (the same frame rig),
 //! a grass mask repainted in part after upload, and grass blades standing
-//! on the blend of their ground's heights.
+//! on the blend of their ground's heights, and a mesh kept out of the
+//! shadow map by `material.cast_shadows`.
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
@@ -912,4 +913,84 @@ fn terrain_grass_stands_where_the_terrain_mesh_does() {
             "a blade at ({x}, {z}) stands at {y}, the terrain is at {want}"
         );
     }
+}
+
+/// `material.cast_shadows = false` (ADR 0100) keeps a mesh out of the
+/// shadow cascades. A sheet that's all but clear, hung over lit ground,
+/// shadows it as if it were solid until it says it doesn't cast, on its own
+/// material or its parent's.
+#[test]
+fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let set = |world: &mut FlintWorld, name: &str, fields: &[(&str, toml::Value)]| {
+        let id = world.get_id(name).unwrap();
+        let mut material = toml::Table::new();
+        for (k, v) in fields {
+            material.insert((*k).into(), v.clone());
+        }
+        world.set_component(id, "material", material.into()).unwrap();
+    };
+    let material = |name: &str| ImportedMaterial {
+        roughness: 1.0,
+        metallic: 0.0,
+        ..ImportedMaterial::vertex_colored(name)
+    };
+
+    // Grey ground under a slanting sun (its direction points at it), and a
+    // sheet 2 m up whose shadow falls on the middle of the view, while the
+    // camera sees past the sheet's side to the ground there.
+    let (ground, indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
+    let (sheet, _) = square(1.5, [0.5, 0.5, 0.5, 1.0]);
+    renderer.load_procedural_mesh(&gpu.device, "ground", &ground, &indices, material("ground"));
+    renderer.load_procedural_mesh(&gpu.device, "sheet", &sheet, &indices, material("sheet"));
+    let sun = world.spawn("sun").unwrap();
+    let mut light = toml::Table::new();
+    light.insert("type".into(), "directional".into());
+    light.insert("intensity".into(), 3.0.into());
+    light.insert(
+        "direction".into(),
+        toml::Value::Array(vec![0.5.into(), 1.0.into(), 0.0.into()]),
+    );
+    world.set_component(sun, "light", light.into()).unwrap();
+    spawn(&mut world, "ground", "ground", [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let lit = gpu.centre_pixel();
+    assert!(lit[0] > 40, "the ground is lit: {lit:?}");
+
+    // 2% opaque, it still casts a solid shadow by default.
+    // A bare parent costs the child its own transform
+    // (chrischaps/TheCapitol#281), so this one sits at the origin.
+    let parent = world.spawn("mist").unwrap();
+    let mut origin = toml::Table::new();
+    origin.insert("position".into(), toml::Value::Array(vec![0.0.into(); 3]));
+    world.set_component(parent, "transform", origin.into()).unwrap();
+    spawn(&mut world, "sheet", "sheet", [1.0, 2.0, 0.0]);
+    world.set_parent(world.get_id("sheet").unwrap(), parent).unwrap();
+    set(&mut world, "sheet", &[("opacity", 0.02.into())]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let shaded = gpu.centre_pixel();
+    assert!(shaded[0] + 30 < lit[0], "a clear sheet casts: {shaded:?} vs {lit:?}");
+
+    set(&mut world, "sheet", &[("opacity", 0.02.into()), ("cast_shadows", false.into())]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let seen = gpu.centre_pixel();
+    assert!(close(lit, seen), "cast_shadows = false: {seen:?} vs {lit:?}");
+
+    // Opaque too, and from the parent.
+    set(&mut world, "sheet", &[]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let solid = gpu.centre_pixel();
+    set(&mut world, "mist", &[("cast_shadows", false.into())]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let seen = gpu.centre_pixel();
+    assert!(seen[0] > solid[0] + 30, "the parent's cast_shadows: {seen:?} vs {solid:?}");
+    set(&mut world, "sheet", &[("cast_shadows", true.into())]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(solid, gpu.centre_pixel()), "the child's own value wins");
 }
