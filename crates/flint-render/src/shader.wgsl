@@ -32,7 +32,9 @@ struct MaterialUniforms {
     // 1 when vertex alpha is the surface share, not opacity (ADR 0090), so
     // a strength of 0 leaves the light parts dark.
     vertex_emission: u32,
-    _pad_e1: u32,
+    // How much of a per-vertex light part is also lit surface (ADR 0096),
+    // with its light unchanged.
+    glow_surface: f32,
     _pad_e2: u32,
 };
 
@@ -528,6 +530,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Emission (ADR 0076). Per-vertex: alpha 1 is lit surface, 0 is pure
     // light giving off its rgb; vertex alpha is no longer opacity.
+    // `glow_surface` (ADR 0096) lights the light part as surface too.
     var emission = material.emissive.rgb;
     if (material.has_emissive_tex == 1u) {
         emission *= textureSample(emissive_texture, emissive_sampler, scaled_uv).rgb;
@@ -535,7 +538,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (material.use_vertex_color == 1u && material.vertex_emission == 1u) {
         let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
         emission += in.color.rgb * glow * material.emissive.w;
-        albedo = albedo * (1.0 - glow);
+        albedo = albedo * (1.0 - glow * (1.0 - material.glow_surface));
         alpha = 1.0;
     }
 

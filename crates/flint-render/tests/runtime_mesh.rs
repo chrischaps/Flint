@@ -506,6 +506,101 @@ fn emissive_scale_changes_glow_after_upload() {
     assert!(r < 10 && g < 10 && b < 10, "the child's own scale wins: {r} {g} {b}");
 }
 
+/// `material.glow_surface` (ADR 0096) lights a per-vertex light part as
+/// surface too, every frame, without taking any of its light: with
+/// `emissive_scale` it slides a face uploaded once as light from lit paint
+/// (1, 0) to light only (0, 1), and the parent's value reaches a child.
+#[test]
+fn glow_surface_slides_light_to_surface_after_upload() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let set = |world: &mut FlintWorld, name: &str, fields: &[(&str, f64)]| {
+        let id = world.get_id(name).unwrap();
+        let mut material = toml::Table::new();
+        for (k, v) in fields {
+            material.insert((*k).into(), (*v).into());
+        }
+        world.set_component(id, "material", material.into()).unwrap();
+    };
+    let material = |name: &str| ImportedMaterial {
+        roughness: 1.0,
+        metallic: 0.0,
+        vertex_emission: true,
+        ..ImportedMaterial::vertex_colored(name)
+    };
+
+    // The same colour twice: once as lit surface, once as light.
+    let (paint, indices) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
+    let (light, _) = square(20.0, [0.0, 0.25, 0.0, 0.0]);
+    renderer.load_procedural_mesh(&gpu.device, "paint", &paint, &indices, material("paint"));
+    renderer.load_procedural_mesh(&gpu.device, "gold", &light, &indices, material("gold"));
+    // A sun that's off, so the default scene lights stay out: the only
+    // light is the ambient each step sets.
+    let sun = world.spawn("sun").unwrap();
+    let mut off = toml::Table::new();
+    off.insert("type".into(), "directional".into());
+    off.insert("intensity".into(), 0.0.into());
+    world.set_component(sun, "light", off.into()).unwrap();
+    let parent = world.spawn("plot").unwrap();
+    spawn(&mut world, "gold", "gold", [0.0; 3]);
+    world.set_parent(world.get_id("gold").unwrap(), parent).unwrap();
+
+    // In the dark it's its light, whatever its surface share.
+    gpu.frame(&mut renderer, &world, &camera);
+    let glow = gpu.centre_pixel();
+    assert!(glow[1] > 100 && glow[0] < 30, "light: {glow:?}");
+    set(&mut world, "gold", &[("glow_surface", 1.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(glow, gpu.centre_pixel()), "glow_surface takes no light away");
+
+    // Under the sky: none of it is paint at 0, all of it at 1.
+    renderer.set_ambient([1.0; 3], [1.0; 3]);
+    set(&mut world, "gold", &[("emissive_scale", 0.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let [r, g, b, _] = gpu.centre_pixel();
+    assert!(r < 10 && g < 10 && b < 10, "light at scale 0 is dark: {r} {g} {b}");
+    set(&mut world, "gold", &[("emissive_scale", 0.0), ("glow_surface", 1.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let lit = gpu.centre_pixel();
+    set(&mut world, "gold", &[("emissive_scale", 0.0), ("glow_surface", 0.5)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let half = gpu.centre_pixel();
+    set(&mut world, "gold", &[("glow_surface", 1.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let both = gpu.centre_pixel();
+    assert!(
+        both[1] > lit[1] + 5 && both[1] > glow[1] + 5,
+        "paint and light together: {both:?}, paint {lit:?}, light {glow:?}"
+    );
+
+    // From the parent, as from the entity itself.
+    set(&mut world, "gold", &[]);
+    set(&mut world, "plot", &[("glow_surface", 1.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(both, gpu.centre_pixel()), "the parent's glow_surface reaches the child");
+
+    // Paint at 1 is exactly a surface vertex of the same colour.
+    world.despawn(world.get_id("gold").unwrap()).unwrap();
+    spawn(&mut world, "paint", "paint", [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let painted = gpu.centre_pixel();
+    assert!(painted[1] > 20, "the paint takes the ambient: {painted:?}");
+    assert!(close(lit, painted), "glow_surface 1 is paint: {lit:?} vs {painted:?}");
+    assert!(
+        half[1] > 5 && half[1] + 5 < painted[1],
+        "0.5 is between: {half:?} vs {painted:?}"
+    );
+    // A surface vertex is surface already: glow_surface leaves it alone.
+    set(&mut world, "paint", &[("glow_surface", 1.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(painted, gpu.centre_pixel()), "surface vertices don't change");
+}
+
 /// An imported model's data maps are sampled as stored, whatever they're
 /// called (a glTF texture is often just `texture_<i>`): a metallic-roughness
 /// texel of 0.5 shades like factors of 0.5, not the 0.21 an sRGB decode

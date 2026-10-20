@@ -8,4 +8,5 @@ roughness = { type = "float", description = "Roughness factor 0.0-1.0", default 
 opacity = { type = "float", description = "Opacity 0.0-1.0", default = 1.0 }
 blend_mode = { type = "string", description = "Blend mode: alpha, additive, multiply", default = "alpha" }
 emissive_scale = { type = "float", description = "Multiplies the mesh's emission (its own and per-vertex), read every frame. 1 = as uploaded, 0 = no light. Imported and runtime meshes; inherited from the parent.", default = 1.0 }
+glow_surface = { type = "float", description = "How much of each per-vertex light part is also lit surface, 0.0-1.0, read every frame. Its light is unchanged (emissive_scale sets that). 0 = as uploaded. Inherited from the parent.", default = 0.0 }
 texture_scale = { type = "float", description = "UV multiplier for texture tiling. Default 1.0. Values < 1 make textures appear larger.", default = 1.0 }
