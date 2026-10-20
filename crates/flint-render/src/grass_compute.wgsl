@@ -20,6 +20,14 @@ struct GrassComputeUniforms {
     // near the camera, but each keeps its place in the whole grid (ADR 0089).
     grid_start_x: u32,
     grid_start_z: u32,
+    // 1: the heightmap's samples sit on the grid's corners, the first at the
+    // origin and the last at the far edge, as a terrain's mesh reads them.
+    // 0: each sits in the middle of its texel's cell, as a game's ground
+    // map does (ADR 0098)
+    height_at_corners: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
     // The camera frustum, each plane pushed out for blade height and shadow
     // reach; a blade rooted outside any plane isn't drawn (ADR 0092)
     frustum_planes: array<vec4<f32>, 6>,
@@ -78,6 +86,30 @@ fn hash22(p: vec2<f32>) -> vec2<f32> {
     return fract((vec2<f32>(p3.x, p3.x) + vec2<f32>(p3.y, p3.z)) * vec2<f32>(p3.z, p3.y));
 }
 
+// The ground's height at (u, v), blended from the four samples round it
+// (ADR 0098). R32Float isn't filterable without a device feature, so the
+// blend is done here from four loads. Past the outermost samples the
+// height holds level.
+fn ground_height(u: f32, v: f32) -> f32 {
+    let dims = vec2<i32>(textureDimensions(heightmap_texture, 0));
+    let last = dims - vec2<i32>(1, 1);
+    var at: vec2<f32>;
+    if params.height_at_corners != 0u {
+        at = vec2<f32>(u, v) * vec2<f32>(last);
+    } else {
+        at = vec2<f32>(u, v) * vec2<f32>(dims) - 0.5;
+    }
+    at = clamp(at, vec2<f32>(0.0), vec2<f32>(last));
+    let i0 = vec2<i32>(floor(at));
+    let i1 = min(i0 + vec2<i32>(1, 1), last);
+    let t = at - vec2<f32>(i0);
+    let h00 = textureLoad(heightmap_texture, i0, 0).r;
+    let h10 = textureLoad(heightmap_texture, vec2<i32>(i1.x, i0.y), 0).r;
+    let h01 = textureLoad(heightmap_texture, vec2<i32>(i0.x, i1.y), 0).r;
+    let h11 = textureLoad(heightmap_texture, i1, 0).r;
+    return mix(mix(h00, h10, t.x), mix(h01, h11, t.x), t.y);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Grid spacing from density: spacing = 1 / sqrt(density)
@@ -134,14 +166,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // Load heightmap texel for Y position (R32Float is not filterable)
-    let hm_dims = textureDimensions(heightmap_texture, 0);
-    let hm_coord = vec2<i32>(
-        clamp(i32(u * f32(hm_dims.x)), 0, i32(hm_dims.x) - 1),
-        clamp(i32(v * f32(hm_dims.y)), 0, i32(hm_dims.y) - 1),
-    );
-    let height_sample = textureLoad(heightmap_texture, hm_coord, 0).r;
-    let world_y = params.terrain_offset.y + height_sample * params.height_scale;
+    let world_y = params.terrain_offset.y + ground_height(u, v) * params.height_scale;
 
     // Distance check for LOD/density falloff
     let world_pos = vec3<f32>(world_x, world_y, world_z);

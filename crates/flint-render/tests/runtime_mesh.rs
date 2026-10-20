@@ -1,7 +1,8 @@
 //! Runtime procedural meshes: create, replace and remove after init without
 //! leaking GPU memory, vertex colours, and frustum culling by mesh bounds.
 //! Also how an imported model's textures are sampled (the same frame rig),
-//! and a grass mask repainted in part after upload.
+//! a grass mask repainted in part after upload, and grass blades standing
+//! on the blend of their ground's heights.
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
@@ -797,4 +798,118 @@ fn part_of_a_grass_mask_repaints_in_place() {
     assert!(renderer
         .update_grass_mask(&gpu.queue, 0, 0, 1, 1, &[255])
         .is_err());
+}
+
+/// A tilted plane, world `y` at (`x`, `z`): a blend of four heights on it
+/// lies on it, while the nearest one misses by up to half a texel's rise.
+fn slope(x: f32, z: f32) -> f32 {
+    0.3 * x + 0.2 * z
+}
+
+/// One frame of grass over the 20 m square round the origin, which the
+/// default camera looks down on, and the blades it grew.
+fn grown_blades(gpu: &Gpu, renderer: &mut SceneRenderer) -> Vec<flint_render::GrassInstanceGpu> {
+    gpu.frame(renderer, &FlintWorld::new(), &Camera::default());
+    let blades = renderer.read_grass_blades(&gpu.device, &gpu.queue);
+    assert!(blades.len() > 500, "only {} blades grew", blades.len());
+    blades
+}
+
+fn grass_config() -> flint_terrain::GrassConfig {
+    flint_terrain::GrassConfig {
+        enabled: true,
+        density: 20.0,
+        max_distance: 60.0,
+        ..flint_terrain::GrassConfig::default()
+    }
+}
+
+#[test]
+fn grass_stands_on_the_blend_of_a_ground_maps_heights() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    if !renderer.has_grass_pipeline() {
+        eprintln!("no compute grass on this adapter; skipping");
+        return;
+    }
+    // Eight texels a side, 2.5 m each, every height taken at the middle of
+    // its cell, as `GrassHeight::Map` says.
+    const N: u32 = 8;
+    const CELL: f32 = 20.0 / N as f32;
+    let centre = |i: u32| -10.0 + (i as f32 + 0.5) * CELL;
+    let heights: Vec<f32> = (0..N)
+        .flat_map(|j| (0..N).map(move |i| slope(centre(i), centre(j))))
+        .collect();
+    let ground = flint_render::GrassGround {
+        origin: [-10.0, -10.0],
+        size: [20.0, 20.0],
+        mask: &[255],
+        mask_width: 1,
+        mask_height: 1,
+        scale_by_mask: false,
+        height: flint_render::GrassHeight::Map {
+            heights: &heights,
+            width: N,
+            depth: N,
+        },
+    };
+    renderer
+        .set_grass_ground(&gpu.device, &gpu.queue, &grass_config(), &ground)
+        .unwrap();
+
+    // On the plane between the outermost cells' middles, and level past them.
+    let inner = 10.0 - CELL / 2.0;
+    for blade in grown_blades(&gpu, &mut renderer) {
+        let [x, y, z] = blade.position;
+        let want = slope(x.clamp(-inner, inner), z.clamp(-inner, inner));
+        assert!(
+            (y - want).abs() < 1e-3,
+            "a blade at ({x}, {z}) stands at {y}, the ground is at {want}"
+        );
+    }
+}
+
+#[test]
+fn terrain_grass_stands_where_the_terrain_mesh_does() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    if !renderer.has_grass_pipeline() {
+        eprintln!("no compute grass on this adapter; skipping");
+        return;
+    }
+    // A terrain's samples sit on its corners: nine a side over 20 m, the
+    // first on the near edge and the last on the far one, as
+    // `Heightmap::sample` reads them. They're scaled by `height_scale` and
+    // raised by the offset's `y`.
+    const N: u32 = 9;
+    const SCALE: f32 = 4.0;
+    const RAISE: f32 = 1.5;
+    let corner = |i: u32| -10.0 + i as f32 * 20.0 / (N - 1) as f32;
+    let heights: Vec<f32> = (0..N)
+        .flat_map(|j| (0..N).map(move |i| slope(corner(i), corner(j)) / SCALE))
+        .collect();
+    renderer.load_grass(
+        &gpu.device,
+        &gpu.queue,
+        &grass_config(),
+        &heights,
+        N,
+        N,
+        &[255, 0, 0, 0],
+        1,
+        1,
+        [-10.0, RAISE, -10.0],
+        20.0,
+        20.0,
+        SCALE,
+    );
+
+    for blade in grown_blades(&gpu, &mut renderer) {
+        let [x, y, z] = blade.position;
+        let want = RAISE + slope(x, z);
+        assert!(
+            (y - want).abs() < 1e-3,
+            "a blade at ({x}, {z}) stands at {y}, the terrain is at {want}"
+        );
+    }
 }
