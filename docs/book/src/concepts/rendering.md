@@ -205,7 +205,7 @@ emissive_scale = 0.0   # off by day; a script or extension raises it at dusk
 
 - **Where it applies:** imported and runtime meshes, skinned or not. An entity with no scale of its own takes its parent's, so a GLB expanded into child nodes dims as one.
 - **Zero is dark.** At 0, a per-vertex light face goes black, like an unlit bulb. It doesn't turn back into a lit, see-through surface, and surface vertices are lit as usual. Negative values count as 0.
-- **Only the strength changes.** How much of each vertex is surface and how much is light is fixed by its alpha at upload. To slide a face from lit paint by day to light by night, either rebuild it, or upload the surface and the light as two meshes and fade one with `opacity`. Glass that is lit like any surface and gives off light from its material's `emissive` is often enough: at 0 it's plain glass.
+- **Only the strength changes.** To slide a face from lit paint by day to light by night, use `glow_surface` as well (below). Glass that is lit like any surface and gives off light from its material's `emissive` is often enough: at 0 it's plain glass.
 - **Cost:** a new scale rebuilds that draw's small material uniform on the next frame, as a new `opacity` does. If hundreds of entities glow at once, change the value in steps rather than by a hair every frame.
 
 From an extension, write the field like any other component:
@@ -215,6 +215,20 @@ let mut material = toml::Table::new();
 material.insert("emissive_scale".into(), (night * 1.6).into());
 world.set_component(id, "material", material.into())?;
 ```
+
+#### Lighting the glow as surface too
+
+**`material.glow_surface`** (ADR 0096), 0 to 1, says how much of each per-vertex light part is also an ordinary lit surface of its colour. It adds the surface and takes none of the light away, so `emissive_scale` and `glow_surface` set a light face's two halves apart: how much light it gives off, and how much paint the sun and sky can light. The default is 0, the mesh as uploaded. Surface vertices (alpha 1) don't change, so a mesh can mix plain faces with ones that slide.
+
+Upload the sliding faces as pure light (alpha 0) at the colour you want, once. Then, every frame:
+
+| `glow_surface` | `emissive_scale` | The face is... |
+|---|---|---|
+| 1 | 0 | lit paint: gold in the sun |
+| 0.6 | 0.25 | gold paint with a little light in it, at dusk |
+| 0 | 1.6 | light only, bright at night |
+
+A vertex of alpha `a` is lit as surface by `a + (1 − a) × glow_surface` of its colour and gives off `(1 − a)` of it times the strength, as before. It applies wherever per-vertex emission does, skinned or not, with the same inheritance from the parent as `emissive_scale`, and the same cost when it changes. Values are clamped to 0..1.
 
 ## Debug Visualization
 

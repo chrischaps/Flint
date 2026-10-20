@@ -78,7 +78,12 @@ pub struct MaterialUniforms {
     /// Separate from `emissive.w` so a strength of 0 leaves the light parts
     /// dark rather than turning them back into lit, see-through surface.
     pub vertex_emission: u32,
-    pub _pad_emissive: [u32; 2],
+    /// How much of each per-vertex light part is also lit surface, 0..1
+    /// (ADR 0096: the entity's `material.glow_surface`). Its light is
+    /// unchanged, so with `emissive_scale` a light part's surface and light
+    /// are set apart. 0 is the mesh as uploaded.
+    pub glow_surface: f32,
+    pub _pad_emissive: u32,
 }
 
 impl MaterialUniforms {
@@ -101,7 +106,8 @@ impl MaterialUniforms {
             emissive: [0.0; 4],
             has_emissive_tex: 0,
             vertex_emission: 0,
-            _pad_emissive: [0; 2],
+            glow_surface: 0.0,
+            _pad_emissive: 0,
         }
     }
 
@@ -124,7 +130,8 @@ impl MaterialUniforms {
             emissive: [0.0; 4],
             has_emissive_tex: 0,
             vertex_emission: 0,
-            _pad_emissive: [0; 2],
+            glow_surface: 0.0,
+            _pad_emissive: 0,
         }
     }
 
