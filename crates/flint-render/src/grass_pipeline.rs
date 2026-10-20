@@ -45,6 +45,15 @@ pub struct GrassComputeUniforms {
     /// cells within `max_distance` of the camera are dispatched.
     pub grid_start_x: u32,
     pub grid_start_z: u32,
+    /// How the heightmap's samples lie over the ground (ADR 0098). 1: on
+    /// the grid's corners, the first at the origin and the last at the far
+    /// edge, as a terrain's mesh reads them. 0: one in the middle of each
+    /// texel's cell, as a [`GrassHeight::Map`] is read. Either way a blade
+    /// stands on the blend of the four samples round it.
+    pub height_at_corners: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
     /// The camera frustum's planes (`ax + by + cz + d >= 0` is inside),
     /// each pushed out by [`grass_cull_padding`] (ADR 0092). A blade whose
     /// root is outside any of them isn't drawn.
@@ -233,8 +242,11 @@ pub struct GrassGround<'a> {
 pub enum GrassHeight<'a> {
     /// Level ground at world `y`.
     Flat(f32),
-    /// World `y` per texel, `width × depth` values, row by row toward +Z,
-    /// sampled nearest.
+    /// World `y` per texel, `width × depth` values, row by row toward +Z.
+    /// Each value is the height at the middle of its texel's cell, and a
+    /// blade stands on the blend of the four round it (ADR 0098), so a
+    /// grid as coarse as the ground's own detail is enough. Within half a
+    /// cell of the rectangle's edge the height holds level.
     Map {
         heights: &'a [f32],
         width: u32,

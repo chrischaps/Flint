@@ -1467,6 +1467,12 @@ impl SceneRenderer {
             scale_by_density: self.grass_scale_by_density as u32,
             grid_start_x: start_x,
             grid_start_z: start_z,
+            // A terrain's samples sit on its mesh's vertices; a game's
+            // ground map's in its cells (ADR 0098)
+            height_at_corners: !self.grass_on_ground as u32,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
             frustum_planes,
         };
 

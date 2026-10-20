@@ -1674,6 +1674,48 @@ impl SceneRenderer {
         self.grass_needs_realloc = false;
     }
 
+    /// The blades the grass's last compute pass kept, read back from the
+    /// GPU (ADR 0098). It waits for the GPU, so it's for tests and tools,
+    /// never for a frame. Empty with no grass loaded.
+    pub fn read_grass_blades(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Vec<GrassInstanceGpu> {
+        let (Some(instances), Some(args)) =
+            (&self.grass_instance_buffer, &self.grass_draw_args_buffer)
+        else {
+            return Vec::new();
+        };
+        let read = |buffer: &wgpu::Buffer, offset: u64, size: u64| -> Vec<u8> {
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grass Blade Read-back"),
+                size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&Default::default());
+            encoder.copy_buffer_to_buffer(buffer, offset, &staging, 0, size);
+            queue.submit([encoder.finish()]);
+            staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::Maintain::Wait);
+            let bytes = staging.slice(..).get_mapped_range().to_vec();
+            staging.unmap();
+            bytes
+        };
+        let count = read(args, GrassDrawArgs::INSTANCE_COUNT_OFFSET, 4);
+        let count = u32::from_le_bytes([count[0], count[1], count[2], count[3]])
+            .min(self.grass_max_instances);
+        if count == 0 {
+            return Vec::new();
+        }
+        let stride = std::mem::size_of::<GrassInstanceGpu>();
+        read(instances, 0, count as u64 * stride as u64)
+            .chunks_exact(stride)
+            .map(bytemuck::pod_read_unaligned)
+            .collect()
+    }
+
     /// Update grass config without buffer reallocation.
     /// Compute and render passes read `grass_config` fresh each frame to build
     /// uniforms, so changes take effect on the next `render()` call.
