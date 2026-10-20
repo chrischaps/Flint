@@ -23,19 +23,22 @@
 //! 6.8   up     MouseLeft          #   a glide to (900, 500) over 0.5 s drags
 //! 7.0   click  320 200            # pointer there, then tap MouseLeft
 //! 7.5   click  320 200 MouseRight
+//! 8.0   type   200 planks         # text into the focused egui field
 //! ```
 //!
-//! Keys, pad and wheel write `InputState` directly. The pointer (`mouse`,
-//! `click` and mouse buttons) comes back from [`InputScript::apply`] as
-//! [`PointerEvent`]s, which the player feeds through the same path as
-//! winit's own events (ADR 0082): egui first, then extensions, then
-//! `InputState`. So a scripted click can press an egui button, and one over
-//! a panel stays out of the world.
+//! Pad and wheel write `InputState` directly. Keys, the pointer (`mouse`,
+//! `click` and mouse buttons) and typed text come back from
+//! [`InputScript::apply`] as [`ScriptEvent`]s, which the player routes the
+//! way it routes a real keyboard and mouse: egui first, then `InputState`
+//! (ADR 0082 for the pointer, ADR 0097 for keys). So a scripted click can
+//! press an egui button, one over a panel stays out of the world, a held
+//! Shift reaches egui's modifiers, and a key typed into a focused field
+//! never reaches the game.
 
 use flint_runtime::{parse_key_code, InputState};
 use winit::dpi::PhysicalPosition;
 use winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
-use winit::keyboard::KeyCode;
+use winit::keyboard::{KeyCode, ModifiersState};
 
 /// Gamepad slot the script drives, away from slot 0 so a real pad plugged in
 /// at the same time does not overwrite its values.
@@ -70,14 +73,71 @@ impl PointerEvent {
     }
 }
 
+/// One thing the script did, for the player to route as a real device's.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScriptEvent {
+    Pointer(PointerEvent),
+    /// A key went down or up.
+    Key(KeyCode, ElementState),
+    /// The modifiers held now, sent just before the event of the Shift,
+    /// Control, Alt or Super key that changed them, as winit sends
+    /// `ModifiersChanged`. A second Shift while one is held changes nothing.
+    Modifiers(ModifiersState),
+    /// Text typed (`type`), for a focused egui field.
+    Text(String),
+}
+
 /// What one frame of the script did, beyond writing `InputState`.
 #[derive(Debug, Default)]
 pub struct Applied {
-    /// Keys pressed, so the player can treat its debug keys (F2 and the
-    /// rest) as it would a real press.
-    pub keys: Vec<KeyCode>,
-    /// Pointer events, in order, for the player to route.
-    pub pointer: Vec<PointerEvent>,
+    /// Keys, pointer, modifiers and text, in script order, for the player
+    /// to route.
+    pub events: Vec<ScriptEvent>,
+}
+
+impl Applied {
+    /// The pointer events, in order.
+    pub fn pointer(&self) -> Vec<PointerEvent> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                ScriptEvent::Pointer(p) => Some(*p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The keys pressed, in order.
+    pub fn keys_pressed(&self) -> Vec<KeyCode> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                ScriptEvent::Key(k, ElementState::Pressed) => Some(*k),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The modifier a key holds, if it's one.
+fn modifier(key: KeyCode) -> Option<ModifiersState> {
+    Some(match key {
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => ModifiersState::SHIFT,
+        KeyCode::ControlLeft | KeyCode::ControlRight => ModifiersState::CONTROL,
+        KeyCode::AltLeft | KeyCode::AltRight => ModifiersState::ALT,
+        KeyCode::SuperLeft | KeyCode::SuperRight => ModifiersState::SUPER,
+        _ => return None,
+    })
+}
+
+/// The rest of a line after its first `n` words, from its first non-space.
+fn after_words(line: &str, n: usize) -> &str {
+    let mut rest = line;
+    for _ in 0..n {
+        rest = rest.trim_start();
+        rest = &rest[rest.find(char::is_whitespace).unwrap_or(rest.len())..];
+    }
+    rest.trim_start()
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +152,7 @@ enum Action {
     Pointer(f64, f64, f64),
     MouseDown(MouseButton),
     MouseUp(MouseButton),
+    Text(String),
 }
 
 /// A pointer moving from one place to another over a span of game time.
@@ -122,6 +183,8 @@ pub struct InputScript {
     /// Where the script last put the pointer.
     pointer: (f64, f64),
     glide: Option<Glide>,
+    /// Modifier keys held down, for `ModifiersChanged`.
+    modifier_keys: Vec<KeyCode>,
 }
 
 fn parse_mouse_button(name: &str) -> Option<MouseButton> {
@@ -225,6 +288,9 @@ impl InputScript {
                     events.push((t, Action::MouseDown(b)));
                     events.push((t + 0.06, Action::MouseUp(b)));
                 }
+                // Everything after the verb, inner spaces kept (a `#` still
+                // starts a comment).
+                "type" => events.push((t, Action::Text(after_words(line, 2).to_string()))),
                 _ => return Err(bad("unknown verb")),
             }
         }
@@ -236,6 +302,14 @@ impl InputScript {
         })
     }
 
+    /// The modifiers the held modifier keys make.
+    fn modifiers(&self) -> ModifiersState {
+        self.modifier_keys
+            .iter()
+            .filter_map(|&k| modifier(k))
+            .fold(ModifiersState::empty(), |a, b| a | b)
+    }
+
     /// Apply every event due at `now`. Two things wait for the next frame,
     /// as they would with a real hand on the keys and mouse:
     /// - a release of something pressed this same frame, so scripts always
@@ -245,6 +319,7 @@ impl InputScript {
     ///   click. A glide's steps don't hold a press back.
     pub fn apply(&mut self, now: f64, input: &mut InputState) -> Applied {
         let mut out = Applied::default();
+        let mut pressed_keys: Vec<KeyCode> = Vec::new();
         let mut pressed_buttons: Vec<String> = Vec::new();
         let mut pressed_mouse: Vec<MouseButton> = Vec::new();
         let mut jumped = false;
@@ -254,14 +329,27 @@ impl InputScript {
             }
             match action {
                 Action::KeyDown(k) => {
-                    input.process_key_down(*k);
-                    out.keys.push(*k);
+                    let was = self.modifiers();
+                    if modifier(*k).is_some() && !self.modifier_keys.contains(k) {
+                        self.modifier_keys.push(*k);
+                    }
+                    if self.modifiers() != was {
+                        out.events.push(ScriptEvent::Modifiers(self.modifiers()));
+                    }
+                    out.events.push(ScriptEvent::Key(*k, ElementState::Pressed));
+                    pressed_keys.push(*k);
                 }
                 Action::KeyUp(k) => {
-                    if out.keys.contains(k) {
+                    if pressed_keys.contains(k) {
                         break;
                     }
-                    input.process_key_up(*k);
+                    let was = self.modifiers();
+                    self.modifier_keys.retain(|m| m != k);
+                    if self.modifiers() != was {
+                        out.events.push(ScriptEvent::Modifiers(self.modifiers()));
+                    }
+                    out.events
+                        .push(ScriptEvent::Key(*k, ElementState::Released));
                 }
                 Action::Axis(name, v) => input.process_gamepad_axis(SCRIPT_PAD, name.clone(), *v),
                 Action::ButtonDown(b) => {
@@ -286,7 +374,8 @@ impl InputScript {
                     } else {
                         self.glide = None;
                         self.pointer = (*x, *y);
-                        out.pointer.push(PointerEvent::Moved(*x, *y));
+                        out.events
+                            .push(ScriptEvent::Pointer(PointerEvent::Moved(*x, *y)));
                         jumped = true;
                     }
                 }
@@ -294,15 +383,18 @@ impl InputScript {
                     if jumped {
                         break;
                     }
-                    out.pointer.push(PointerEvent::Pressed(*b));
+                    out.events
+                        .push(ScriptEvent::Pointer(PointerEvent::Pressed(*b)));
                     pressed_mouse.push(*b);
                 }
                 Action::MouseUp(b) => {
                     if pressed_mouse.contains(b) {
                         break;
                     }
-                    out.pointer.push(PointerEvent::Released(*b));
+                    out.events
+                        .push(ScriptEvent::Pointer(PointerEvent::Released(*b)));
                 }
+                Action::Text(text) => out.events.push(ScriptEvent::Text(text.clone())),
             }
             self.next += 1;
         }
@@ -311,7 +403,8 @@ impl InputScript {
             let (at, arrived) = glide.at(now);
             if at != self.pointer {
                 self.pointer = at;
-                out.pointer.push(PointerEvent::Moved(at.0, at.1));
+                out.events
+                    .push(ScriptEvent::Pointer(PointerEvent::Moved(at.0, at.1)));
             }
             if arrived {
                 self.glide = None;
@@ -361,11 +454,66 @@ mod tests {
     fn tap_release_waits_a_frame() {
         let mut s = InputScript::parse("0 tap KeyF 0.001").unwrap();
         let mut input = InputState::new();
-        assert_eq!(s.apply(0.5, &mut input).keys, [KeyCode::KeyF]);
-        assert!(input.is_key_down(KeyCode::KeyF));
-        input.end_frame();
-        assert!(s.apply(0.6, &mut input).keys.is_empty());
+        let first = s.apply(0.5, &mut input).events;
+        assert_eq!(
+            first,
+            [ScriptEvent::Key(KeyCode::KeyF, ElementState::Pressed)]
+        );
+        let second = s.apply(0.6, &mut input).events;
+        assert_eq!(
+            second,
+            [ScriptEvent::Key(KeyCode::KeyF, ElementState::Released)]
+        );
+        // The script never writes keys itself: the player routes them.
         assert!(!input.is_key_down(KeyCode::KeyF));
+    }
+
+    #[test]
+    fn modifier_keys_say_what_is_held_before_their_own_event() {
+        use ElementState::{Pressed as Down, Released as Up};
+        let mut s = InputScript::parse(
+            "0 down ShiftLeft\n0 down ControlRight\n0.1 down ShiftRight\n\
+             0.2 up ShiftLeft\n0.3 tap KeyA\n0.4 up ShiftRight\n0.4 up ControlRight\n",
+        )
+        .unwrap();
+        let mut input = InputState::new();
+        let both = ModifiersState::SHIFT | ModifiersState::CONTROL;
+        let mut frame = |t| s.apply(t, &mut input).events;
+        assert_eq!(
+            frame(0.0),
+            [
+                ScriptEvent::Modifiers(ModifiersState::SHIFT),
+                ScriptEvent::Key(KeyCode::ShiftLeft, Down),
+                ScriptEvent::Modifiers(both),
+                ScriptEvent::Key(KeyCode::ControlRight, Down),
+            ]
+        );
+        // The other Shift, and one Shift up while the other is held, change
+        // nothing that's held.
+        assert_eq!(frame(0.1), [ScriptEvent::Key(KeyCode::ShiftRight, Down)]);
+        assert_eq!(frame(0.2), [ScriptEvent::Key(KeyCode::ShiftLeft, Up)]);
+        assert_eq!(frame(0.3), [ScriptEvent::Key(KeyCode::KeyA, Down)]);
+        assert_eq!(
+            frame(0.4),
+            [
+                ScriptEvent::Key(KeyCode::KeyA, Up),
+                ScriptEvent::Modifiers(ModifiersState::CONTROL),
+                ScriptEvent::Key(KeyCode::ShiftRight, Up),
+                ScriptEvent::Modifiers(ModifiersState::empty()),
+                ScriptEvent::Key(KeyCode::ControlRight, Up),
+            ]
+        );
+    }
+
+    #[test]
+    fn type_keeps_the_rest_of_the_line() {
+        let mut s = InputScript::parse("1.5   type   200  planks, oak  # a note\n").unwrap();
+        let mut input = InputState::new();
+        assert_eq!(
+            s.apply(2.0, &mut input).events,
+            [ScriptEvent::Text("200  planks, oak".into())]
+        );
+        assert!(InputScript::parse("1 type").is_err());
     }
 
     /// The pointer events of each frame, one frame per time.
@@ -374,7 +522,7 @@ mod tests {
         let mut input = InputState::new();
         times
             .iter()
-            .map(|&t| s.apply(t, &mut input).pointer)
+            .map(|&t| s.apply(t, &mut input).pointer())
             .collect()
     }
 

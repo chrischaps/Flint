@@ -698,16 +698,13 @@ impl PlayerApp {
             self.show_stats = true;
         }
 
-        // Scripted input due by now (`--input-script`), before anything reads it,
-        // and as a real key press would, through the debug keys (H9). The
-        // pointer goes the way a real mouse's does, egui first (ADR 0082).
+        // Scripted input due by now (`--input-script`), before anything reads it.
+        // Keys and the pointer go the way a real keyboard's and mouse's do:
+        // egui first (ADR 0082, 0097), then the debug keys (H9) and InputState.
         if let Some(script) = &mut self.capture.input_script {
             let applied = script.apply(self.clock.total_time, &mut self.input);
-            for key in applied.keys {
-                self.handle_debug_key(key);
-            }
-            for event in applied.pointer {
-                self.scripted_pointer_event(event);
+            for event in applied.events {
+                self.scripted_event(event);
             }
         }
 
