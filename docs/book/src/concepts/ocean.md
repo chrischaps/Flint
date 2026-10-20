@@ -305,6 +305,7 @@ rest.
 | `wave_scale` | The ocean's waves, scaled: 0 a mirror, 1 the open sea (default 0.3). |
 | `flow_foam` | White water where the flow is fast, from about 0.5 m/s and full by 3.5 (default 1). |
 | `flow_period` | Seconds between the flow's phase resets (default 2): longer pulses less, shorter stretches less. |
+| `shore_foam` | The shoreline band's width, as a share of the ocean's `shore_foam_width` (default 1; 0 none). |
 
 How it works:
 
@@ -325,6 +326,11 @@ How it works:
 - **Everything else is the ocean's.** Foam, refraction, turbidity, sky
   reflection and the shoreline band come from the `ocean` component, or the
   default ocean when the scene has none.
+- **The shoreline band scales per body** (ADR 0099). The band foams wherever
+  the bed is within `shore_foam_width` of the surface, so a stream or a
+  shallow river whose whole bed is that shallow foams from bank to bank.
+  `shore_foam` narrows the band on that body alone (0.2 leaves a hairline at
+  the banks; 0 turns it off) and keeps its colour, strength and pace.
 
 Limits: a body's waves move its vertices only as finely as it's tessellated
 (normals are per pixel, so the look holds on a coarse lake). `ocean_height`
