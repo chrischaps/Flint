@@ -20,10 +20,13 @@
 //!
 //! Synthetic key presses (winit sends them for keys already held when the
 //! window gains focus) and lifecycle events are never consumed.
+//!
+//! `--input-script` keys take the same gate (ADR 0097). They reach egui as
+//! the events egui-winit would have made of them ([`scripted_key_events`]).
 
 use std::collections::HashSet;
 use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// A key or button that can be held down.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -117,10 +120,156 @@ impl EguiInputGate {
     }
 }
 
+/// What egui-winit would push for a key from `--input-script` (ADR 0097).
+///
+/// A scripted key has no winit `KeyEvent` (one can't be built outside
+/// winit), so this stands in for egui-winit's `on_keyboard_input` on a US
+/// layout: the key, and on a press the text it types, unless Ctrl or the
+/// command key is held. No cut, copy or paste: those need the clipboard.
+pub(super) fn scripted_key_events(
+    key: KeyCode,
+    pressed: bool,
+    modifiers: egui::Modifiers,
+) -> Vec<egui::Event> {
+    let mut events = Vec::new();
+    if let Some(egui_key) = egui_key(key) {
+        events.push(egui::Event::Key {
+            key: egui_key,
+            physical_key: Some(egui_key),
+            pressed,
+            repeat: false,
+            modifiers,
+        });
+    }
+    let is_cmd = modifiers.ctrl || modifiers.command || modifiers.mac_cmd;
+    if pressed && !is_cmd {
+        if let Some(c) = typed_char(key, modifiers.shift) {
+            events.push(egui::Event::Text(c.to_string()));
+        }
+    }
+    events
+}
+
+/// egui's name for a key, by its winit name.
+fn egui_key(key: KeyCode) -> Option<egui::Key> {
+    let name = format!("{key:?}");
+    let name = match key {
+        KeyCode::BracketLeft => "[",
+        KeyCode::BracketRight => "]",
+        KeyCode::NumpadEnter => "Enter",
+        KeyCode::NumpadAdd => "+",
+        KeyCode::NumpadSubtract => "-",
+        KeyCode::NumpadDecimal => ".",
+        KeyCode::NumpadDivide => "/",
+        _ => name.strip_prefix("Key").unwrap_or(&name),
+    };
+    egui::Key::from_name(name)
+}
+
+/// The character a key types on a US layout.
+fn typed_char(key: KeyCode, shift: bool) -> Option<char> {
+    let pick = |plain, shifted| Some(if shift { shifted } else { plain });
+    let name = format!("{key:?}");
+    let single = |s: &str| {
+        let mut chars = s.chars();
+        chars.next().filter(|_| chars.next().is_none())
+    };
+    if let Some(letter) = name.strip_prefix("Key").and_then(single) {
+        return pick(letter.to_ascii_lowercase(), letter);
+    }
+    if let Some(digit) = name.strip_prefix("Digit").and_then(single) {
+        let shifted = ")!@#$%^&*(".chars().nth(digit.to_digit(10)? as usize)?;
+        return pick(digit, shifted);
+    }
+    if let Some(digit) = name.strip_prefix("Numpad").and_then(single) {
+        return Some(digit);
+    }
+    match key {
+        KeyCode::Space => Some(' '),
+        KeyCode::Minus => pick('-', '_'),
+        KeyCode::Equal => pick('=', '+'),
+        KeyCode::BracketLeft => pick('[', '{'),
+        KeyCode::BracketRight => pick(']', '}'),
+        KeyCode::Backslash => pick('\\', '|'),
+        KeyCode::Semicolon => pick(';', ':'),
+        KeyCode::Quote => pick('\'', '"'),
+        KeyCode::Comma => pick(',', '<'),
+        KeyCode::Period => pick('.', '>'),
+        KeyCode::Slash => pick('/', '?'),
+        KeyCode::Backquote => pick('`', '~'),
+        KeyCode::NumpadAdd => Some('+'),
+        KeyCode::NumpadSubtract => Some('-'),
+        KeyCode::NumpadMultiply => Some('*'),
+        KeyCode::NumpadDivide => Some('/'),
+        KeyCode::NumpadDecimal => Some('.'),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::keyboard::KeyCode;
+
+    fn text(key: KeyCode, modifiers: egui::Modifiers) -> Option<String> {
+        scripted_key_events(key, true, modifiers)
+            .into_iter()
+            .find_map(|e| match e {
+                egui::Event::Text(t) => Some(t),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn a_scripted_press_is_the_key_then_its_text() {
+        let shift = egui::Modifiers::SHIFT;
+        let events = scripted_key_events(KeyCode::KeyA, true, shift);
+        assert_eq!(
+            events,
+            [
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: Some(egui::Key::A),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: shift,
+                },
+                egui::Event::Text("A".into()),
+            ]
+        );
+        // A release types nothing.
+        assert_eq!(scripted_key_events(KeyCode::KeyA, false, shift).len(), 1);
+    }
+
+    #[test]
+    fn scripted_keys_type_as_a_us_keyboard_does() {
+        let none = egui::Modifiers::NONE;
+        let shift = egui::Modifiers::SHIFT;
+        assert_eq!(text(KeyCode::KeyQ, none).as_deref(), Some("q"));
+        assert_eq!(text(KeyCode::Digit2, none).as_deref(), Some("2"));
+        assert_eq!(text(KeyCode::Digit2, shift).as_deref(), Some("@"));
+        assert_eq!(text(KeyCode::Digit0, shift).as_deref(), Some(")"));
+        assert_eq!(text(KeyCode::Slash, shift).as_deref(), Some("?"));
+        assert_eq!(text(KeyCode::Numpad7, shift).as_deref(), Some("7"));
+        assert_eq!(text(KeyCode::Space, none).as_deref(), Some(" "));
+        // Keys that type nothing, and Ctrl, which makes a shortcut instead.
+        assert_eq!(text(KeyCode::Enter, none), None);
+        assert_eq!(text(KeyCode::F2, none), None);
+        assert_eq!(text(KeyCode::KeyC, egui::Modifiers::CTRL), None);
+    }
+
+    #[test]
+    fn scripted_keys_have_egui_names() {
+        assert_eq!(egui_key(KeyCode::Enter), Some(egui::Key::Enter));
+        assert_eq!(egui_key(KeyCode::NumpadEnter), Some(egui::Key::Enter));
+        assert_eq!(egui_key(KeyCode::Escape), Some(egui::Key::Escape));
+        assert_eq!(egui_key(KeyCode::KeyZ), Some(egui::Key::Z));
+        assert_eq!(egui_key(KeyCode::Digit9), Some(egui::Key::Num9));
+        assert_eq!(egui_key(KeyCode::BracketLeft), Some(egui::Key::OpenBracket));
+        assert_eq!(egui_key(KeyCode::Backspace), Some(egui::Key::Backspace));
+        assert_eq!(egui_key(KeyCode::F12), Some(egui::Key::F12));
+        // Modifiers are egui's modifiers, not keys.
+        assert_eq!(egui_key(KeyCode::ShiftLeft), None);
+    }
 
     const E: Held = Held::Key(PhysicalKey::Code(KeyCode::KeyE));
     const LEFT: Held = Held::Mouse(MouseButton::Left);

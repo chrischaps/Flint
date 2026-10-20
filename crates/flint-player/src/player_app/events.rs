@@ -4,7 +4,8 @@
 //! capture/persistence, cursor capture, and the Android gamepad tracking
 //! that exists only to serve these handlers.
 
-use super::input_script::PointerEvent;
+use super::egui_input::{Held, Routed};
+use super::input_script::{PointerEvent, ScriptEvent};
 use super::PlayerApp;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
@@ -644,14 +645,8 @@ impl PlayerApp {
     /// Whether egui or an extension takes a window event before the player
     /// and scripts see it.
     fn taken_before_the_game(&mut self, event: &WindowEvent) -> bool {
-        // egui sees window events first whenever it can have interactive
-        // UI on screen: an open debug panel, or an extension's ui(). Input
-        // it wants stops here (see egui_input for the rules).
-        #[cfg(feature = "debug-hud")]
-        let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
-        #[cfg(not(feature = "debug-hud"))]
-        let any_panel_open = false;
-        if any_panel_open || !self.extensions.is_empty() {
+        // Input egui wants stops here (see egui_input for the rules).
+        if self.egui_sees_input() {
             if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
                 let response = egui_winit.on_window_event(window, event);
                 let wants_keyboard = self.egui_ctx.wants_keyboard_input();
@@ -668,6 +663,72 @@ impl PlayerApp {
         // Game extensions next; they may consume input but never lifecycle
         // events (see PlayerExtension::on_window_event).
         crate::extension::dispatch_window_event(&mut self.extensions, event)
+    }
+
+    /// Whether egui sees input before the game: whenever it can have
+    /// interactive UI on screen, an open debug panel or an extension's ui().
+    fn egui_sees_input(&self) -> bool {
+        #[cfg(feature = "debug-hud")]
+        let any_panel_open = self.debug_panels.iter().any(|p| p.is_open());
+        #[cfg(not(feature = "debug-hud"))]
+        let any_panel_open = false;
+        any_panel_open || !self.extensions.is_empty()
+    }
+
+    /// An event from `--input-script`, routed as a real device's would be.
+    pub(super) fn scripted_event(&mut self, event: ScriptEvent) {
+        match event {
+            ScriptEvent::Pointer(pointer) => self.scripted_pointer_event(pointer),
+            ScriptEvent::Key(key, state) => self.scripted_key(key, state),
+            ScriptEvent::Modifiers(state) => {
+                // A real `ModifiersChanged`: egui-winit keeps the modifiers
+                // for the events after it, and extensions see it too.
+                self.taken_before_the_game(&WindowEvent::ModifiersChanged(state.into()));
+            }
+            ScriptEvent::Text(text) => {
+                if self.egui_sees_input() {
+                    if let Some(egui_winit) = &mut self.egui_winit {
+                        egui_winit
+                            .egui_input_mut()
+                            .events
+                            .push(egui::Event::Text(text));
+                    }
+                }
+            }
+        }
+    }
+
+    /// A key from `--input-script` (ADR 0097). egui gets what egui-winit
+    /// would have made of it, and the same gate as a real key decides
+    /// whether the game does: a key typed into a focused field stops there.
+    /// Extensions never see one: `on_window_event` takes a winit
+    /// `KeyboardInput`, whose `KeyEvent` can't be built outside winit.
+    fn scripted_key(&mut self, key: KeyCode, state: ElementState) {
+        let pressed = state == ElementState::Pressed;
+        if self.egui_sees_input() {
+            if let Some(egui_winit) = &mut self.egui_winit {
+                let raw = egui_winit.egui_input_mut();
+                let events = super::egui_input::scripted_key_events(key, pressed, raw.modifiers);
+                raw.events.extend(events);
+            }
+            let held = Held::Key(PhysicalKey::Code(key));
+            let routed = if pressed {
+                Routed::Press(held)
+            } else {
+                Routed::Release(held)
+            };
+            let wants_keyboard = self.egui_ctx.wants_keyboard_input();
+            if self.egui_input.consumes(routed, false, wants_keyboard) {
+                return;
+            }
+        }
+        // As a real key, through the debug keys (H9), but Esc doesn't quit.
+        if pressed {
+            self.handle_debug_key(key);
+            self.input.process_key_down(key);
+        } else {
+            self.input.process_key_up(key);
+        }
     }
 
     /// A pointer event from `--input-script` (ADR 0082). It takes the path a

@@ -85,7 +85,7 @@ flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas  
 | `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
 | `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
 | `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time |
-| `--input-script <file>` | Play timed keys, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach the debug keys too, so `2.0 tap F2` opens the stats overlay |
+| `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
 
 An input script plays its events at set game times. `#` starts a comment:
@@ -105,6 +105,9 @@ An input script plays its events at set game times. `#` starts a comment:
 6.8   up      MouseLeft
 7.0   click   320 200            # pointer there, then tap MouseLeft
 7.5   click   320 200 MouseRight
+8.0   down    ShiftLeft          # held modifiers reach egui: a shift-drag
+9.0   type    200 planks         # text into the focused egui field
+9.5   tap     Enter
 ```
 
 The mouse buttons are `MouseLeft`, `MouseRight`, `MouseMiddle`, `MouseBack`
@@ -119,7 +122,20 @@ panel stays out of the world. Two things wait a frame, however coarse the
 frames: a button press in the frame the pointer jumped (egui decides who gets
 a click from where the pointer was the frame before), and any release in the
 frame of its press. A `click` therefore takes three frames: move, press,
-release. The real cursor still moves the pointer if it crosses the window
+release.
+
+Keys take the path a real keyboard does too (ADR 0097). egui gets each one
+as egui-winit would have made it, the key and, on a press, the character it
+types on a US layout (`KeyA` with Shift held types `A`; nothing while Ctrl is
+held). Shift, Ctrl, Alt and Super also send a `ModifiersChanged`, so egui
+sees a held modifier on the clicks and drags that follow, and so do
+extensions. Then the same focus rule as a real key: while an egui field has
+keyboard focus, the key stops there, and `InputState`, scripts and the debug
+keys never see it. `type` sends the rest of its line as egui text, spaces and
+all, without pressing any keys; click a field first to focus it. Two
+differences from a real keyboard: extensions' `on_window_event` never sees a
+scripted key (winit's `KeyEvent` can't be built outside winit), and a scripted
+Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
 during a capture, so keep it outside.
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not

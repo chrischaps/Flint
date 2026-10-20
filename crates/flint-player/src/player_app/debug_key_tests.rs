@@ -65,6 +65,58 @@ fn show_stats_opens_the_overlay_once() {
     assert!(!app.show_stats, "F2 still closes it");
 }
 
+/// An extension with nothing but defaults, so egui sees input first.
+struct Bare;
+impl crate::extension::PlayerExtension for Bare {}
+
+/// Run one egui frame on the app's context with a text field focused.
+fn focus_a_field(app: &PlayerApp) {
+    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let mut text = String::new();
+            ui.text_edit_singleline(&mut text).request_focus();
+        });
+    });
+}
+
+#[test]
+fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
+    // Frames at t = 0, 0.25, 0.5 (ADR 0097).
+    let mut app = with_script("0 down KeyW\n0.25 up KeyW\n0.5 tap F2\n");
+    app.clock.frame_step = Some(0.25);
+    app.add_extension(Box::new(Bare));
+    focus_a_field(&app);
+    assert!(app.egui_ctx.wants_keyboard_input());
+    app.tick();
+    assert!(!app.input.is_key_down(KeyCode::KeyW), "the field took it");
+    app.tick();
+    app.tick();
+    assert!(!app.show_stats, "the debug keys don't see it either");
+}
+
+#[test]
+fn scripted_keys_reach_the_game_when_no_field_has_focus() {
+    let mut app = with_script("0 down ShiftLeft\n0 down KeyW\n");
+    app.add_extension(Box::new(Bare));
+    app.tick();
+    assert!(app.input.is_key_down(KeyCode::ShiftLeft));
+    assert!(app.input.is_key_down(KeyCode::KeyW));
+}
+
+#[test]
+fn a_release_follows_a_scripted_press_that_reached_the_game() {
+    // The game saw W go down, then a field took focus: the release still
+    // reaches the game, so W isn't stuck down there.
+    let mut app = with_script("0 down KeyW\n0.25 up KeyW\n");
+    app.clock.frame_step = Some(0.25);
+    app.add_extension(Box::new(Bare));
+    app.tick();
+    assert!(app.input.is_key_down(KeyCode::KeyW));
+    focus_a_field(&app);
+    app.tick();
+    assert!(!app.input.is_key_down(KeyCode::KeyW));
+}
+
 #[test]
 fn a_scripted_click_reaches_input_state_a_frame_after_the_pointer() {
     // Frames at t = 0, 0.25, 0.5: move, press, release (ADR 0082).
