@@ -77,7 +77,9 @@ if let Err(e) = gpu.set_grass_ground(&config, &ground) {
 - **`set_grass_config`** retunes the grass without uploading the ground again. If the new config needs more instances than the buffer holds, the buffer grows before the next frame.
 - **`clear_grass`** removes it.
 
-`GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle, sampled nearest. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
+`GrassHeight::Map { heights, width, depth }` gives the ground a shape. It's a grid of world `y` values over the same rectangle. Each value is the height at the middle of its texel's cell, and a blade stands on the blend of the four values round it (ADR 0098), so on a slope the blades follow the ground rather than stepping with the grid. A grid as fine as the ground's own detail is enough. Within half a cell of the rectangle's edge the height holds level at the outermost values. The heights are world units, unlike a terrain's heightmap, which is scaled by `height_scale`.
+
+`SceneRenderer::read_grass_blades` reads back the blades the last frame grew: each root, height, turn and tint. It waits for the GPU, so it's for tests and tools, not for a frame.
 
 The same calls are on `SceneRenderer` (`set_grass_ground`, `update_grass_mask`, `set_grass_config`, `unload_grass`) for code that drives the renderer directly. A scene transition clears the grass.
 
