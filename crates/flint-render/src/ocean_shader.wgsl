@@ -108,7 +108,8 @@ struct BodyUniforms {
     shallow_color: vec4<f32>,
     // x = wave_scale (the sea's waves, scaled), y = flow_foam (white water
     // on fast flow), z = flow_period in s (0 = still water: one wave
-    // evaluation, no advection), w unused.
+    // evaluation, no advection), w = shore_foam (the shoreline band's width
+    // as a share of the ocean's, ADR 0099; the sea's is 1).
     params: vec4<f32>,
 };
 
@@ -844,7 +845,11 @@ fn fs_main(in: VertexOutput,
     let ray0 = (in.world_pos - transform.camera_pos) / max(water_z, 1e-4);
     let ray_dx = dpdx(ray0);
     let ray_dy = dpdy(ray0);
-    if (ocean.shore_foam_width > 0.0001) {
+    // The body scales the band (ADR 0099): shallow water whose whole bed
+    // lies within the sea's band takes a narrower one, or none. Uniform, so
+    // the branch stays in uniform control flow.
+    let shore_width = ocean.shore_foam_width * body.params.w;
+    if (shore_width > 0.0001) {
         let s_dims = vec2<i32>(textureDimensions(grab_depth));
         let s_px = clamp(vec2<i32>(in.clip_position.xy), vec2<i32>(0), s_dims - 1);
         let scene_z = linearize_depth(textureLoad(grab_depth, s_px, 0).r);
@@ -857,7 +862,7 @@ fn fs_main(in: VertexOutput,
         if (reach > 0.0 && foam_distance_fade > 0.001) {
             below = max(below, length(scene_pos.xz - in.world_pos.xz));
             // Search out to the band's widest, in pixels at this depth.
-            let w_max = ocean.shore_foam_width * 1.25;
+            let w_max = shore_width * 1.25;
             let px_m = water_z * max(length(ray_dx), length(ray_dy));
             let r_px = min(w_max / max(px_m, 1e-6), 32.0);
             if (r_px >= 1.0) {
@@ -896,7 +901,7 @@ fn fs_main(in: VertexOutput,
             + vec2<f32>(lap_t * 0.23, lap_t * -0.17));
         // A surge that runs along the shore, out of step from place to place.
         let surge = 0.5 + 0.5 * sin(lap_t * 1.3 + lap * TAU);
-        let width = ocean.shore_foam_width * (0.55 + 0.45 * surge) * (0.75 + 0.5 * lap);
+        let width = shore_width * (0.55 + 0.45 * surge) * (0.75 + 0.5 * lap);
         let x = below / max(width, 1e-4);
         let x_aa = clamp(fwidth(x) * 1.5, 1e-3, 0.5);
         let band = 1.0 - smoothstep(1.0 - x_aa, 1.0 + x_aa, x);
