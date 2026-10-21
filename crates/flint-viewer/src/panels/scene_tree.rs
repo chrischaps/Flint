@@ -220,7 +220,7 @@ impl SceneTree {
                 ui.painter().rect_stroke(
                     rect,
                     2.0,
-                    egui::Stroke::new(1.5, ui.visuals().selection.stroke.color),
+                    egui::Stroke::new(1.5f32, ui.visuals().selection.stroke.color),
                 );
             }
         }

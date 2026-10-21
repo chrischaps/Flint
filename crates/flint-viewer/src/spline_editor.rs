@@ -326,7 +326,7 @@ impl SplineEditor {
                 world_to_screen(camera, screen_size, window[0]),
                 world_to_screen(camera, screen_size, window[1]),
             ) {
-                painter.line_segment([a, b], egui::Stroke::new(2.5, curve_color));
+                painter.line_segment([a, b], egui::Stroke::new(2.5f32, curve_color));
             }
         }
         // Close the loop if closed
@@ -337,7 +337,7 @@ impl SplineEditor {
                 world_to_screen(camera, screen_size, last),
                 world_to_screen(camera, screen_size, first),
             ) {
-                painter.line_segment([a, b], egui::Stroke::new(2.5, curve_color));
+                painter.line_segment([a, b], egui::Stroke::new(2.5f32, curve_color));
             }
         }
 
@@ -352,7 +352,7 @@ impl SplineEditor {
                 world_to_screen(camera, screen_size, self.control_points[i].position),
                 world_to_screen(camera, screen_size, self.control_points[next].position),
             ) {
-                painter.line_segment([a, b], egui::Stroke::new(1.0, polygon_color));
+                painter.line_segment([a, b], egui::Stroke::new(1.0f32, polygon_color));
             }
         }
 
@@ -386,7 +386,7 @@ impl SplineEditor {
                 painter.circle_stroke(
                     screen_pos,
                     radius + 1.0,
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(20, 20, 20)),
+                    egui::Stroke::new(2.0f32, egui::Color32::from_rgb(20, 20, 20)),
                 );
                 painter.circle_filled(screen_pos, radius, color);
 

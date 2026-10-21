@@ -1308,7 +1308,7 @@ fn draw_timeline(ctx: &egui::Context, effect: &ParticleEffect, f: &Frame, a: &mu
                         let x1 = x_of(em.start_delay + em.duration);
                         painter.line_segment(
                             [Pos2::new(x0, row_y), Pos2::new(x1, row_y)],
-                            Stroke::new(2.0, ACCENT.linear_multiply(0.5)),
+                            Stroke::new(2.0f32, ACCENT.linear_multiply(0.5)),
                         );
                     }
                     for b in &em.bursts {
@@ -1346,7 +1346,7 @@ fn draw_timeline(ctx: &egui::Context, effect: &ParticleEffect, f: &Frame, a: &mu
                         Pos2::new(px, rect.top() + 2.0),
                         Pos2::new(px, rect.bottom() - 2.0),
                     ],
-                    Stroke::new(2.0, Color32::WHITE),
+                    Stroke::new(2.0f32, Color32::WHITE),
                 );
                 if resp.dragged() || resp.clicked() {
                     if let Some(p) = resp.interact_pointer_pos() {
@@ -1399,7 +1399,7 @@ fn overlay_frame() -> egui::Frame {
     egui::Frame::none()
         .fill(Color32::from_rgba_unmultiplied(0, 0, 0, 170))
         .stroke(Stroke::new(
-            1.0,
+            1.0f32,
             Color32::from_rgba_unmultiplied(255, 255, 255, 30),
         ))
         .rounding(egui::Rounding::same(6.0))

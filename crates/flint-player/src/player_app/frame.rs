@@ -1485,7 +1485,7 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, 
             egui::Frame::none()
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 209))
                 .stroke(egui::Stroke::new(
-                    1.0,
+                    1.0f32,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 38),
                 ))
                 .rounding(egui::Rounding::same(4.0))
