@@ -63,6 +63,8 @@ fn main() -> anyhow::Result<()> {
 | `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
 | `ui(&egui::Context)` | Every frame, inside the player's egui pass | The game's own panels and windows |
 | `fonts(&mut egui::FontDefinitions)` | Whenever the player installs egui's fonts | Fonts the project's `fonts/` folder can't give |
+| `debug_panels() -> Vec<String>` | When the player builds its debug panels: each scene load, and at `add_extension` | Naming the game's own [debug panels](debug-panels.md#adding-a-panel-from-a-game) (ADR 0107) |
+| `debug_panel_ui(name, &mut egui::Ui)` | Every frame one of them is open, after `ui` | Drawing that panel's contents from the game's state |
 
 Extensions run in the order they were added.
 
@@ -155,6 +157,8 @@ if let Some(hit) = ctx.rays.segment(head, camera_wants) {
 An upload without the option, or `remove_mesh`, stops it being a target. The triangles are kept on the CPU under a bounding volume hierarchy, built at each upload, so make targets of what rays need to meet. Native functions reach the same scene through `Projector::ray_scene()`, and `Projector::screen_to_mesh(x, y)` picks under a screen point.
 
 `set_ground_fog(&GroundFog { origin, size, width, depth, texels })` lays a fog on floors of the game's own (ADR 0106): each texel a `[floor, amount]`, so a mist can fill valleys at many heights. Its look is the post-process config's `ground_fog_*`, so set the map when the ground changes and the density and colour by the hour. See [Post-processing: Ground fog](../concepts/post-processing.md#ground-fog).
+
+`renderer.set_gpu_timing(device, queue, true)` times the frame's phases on the GPU (ADR 0108), and `renderer.collect_stats()` then carries each phase's milliseconds in `gpu_passes` and the frame's in `gpu_frame_ms`, for a game's own frame graph. See [Profiling](profiling.md).
 
 ## Game UI with egui
 

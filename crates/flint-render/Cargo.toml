@@ -20,6 +20,7 @@ bytemuck = { workspace = true }
 image = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+profiling = { workspace = true }
 
 [dev-dependencies]
 flint-asset = { workspace = true }

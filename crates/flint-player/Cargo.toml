@@ -18,6 +18,11 @@ default = ["debug-hud"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
 # zero debug surface and must still compile.
 debug-hud = ["dep:flint-debug-ui"]
+# The frame profiler (ADR 0109): the frame loop's and the renderer's scopes
+# (and wgpu's own) go to Tracy, and each frame is marked. Off, the scopes
+# compile to nothing. The client listens on loopback only (no firewall
+# prompt) and keeps nothing until a viewer connects.
+profile = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
 flint-core = { workspace = true }
@@ -38,6 +43,8 @@ flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
 rhai = { workspace = true }
+profiling = { workspace = true }
+tracy-client = { workspace = true, optional = true, features = ["only-localhost", "ondemand"] }
 flint-procgen = { workspace = true }
 flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }

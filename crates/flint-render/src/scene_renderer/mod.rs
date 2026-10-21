@@ -294,6 +294,8 @@ pub struct SceneRenderer {
     grass_max_instances: u32,
     grass_draw_args_buffer: Option<wgpu::Buffer>,
     grass_count_readback: Option<GrassCountReadback>,
+    /// Times the frame's phases on the GPU, while timing is on (ADR 0108)
+    gpu_timer: Option<crate::gpu_timer::GpuTimer>,
     grass_compute_uniform_buffer: Option<wgpu::Buffer>,
     grass_compute_uniform_bind_group: Option<wgpu::BindGroup>,
     grass_compute_texture_bind_group: Option<wgpu::BindGroup>,
@@ -567,6 +569,7 @@ impl SceneRenderer {
             grass_max_instances: 0,
             grass_draw_args_buffer: None,
             grass_count_readback: None,
+            gpu_timer: None,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -2033,6 +2036,7 @@ impl SceneRenderer {
             grass_max_instances: 0,
             grass_draw_args_buffer: None,
             grass_count_readback: None,
+            gpu_timer: None,
             grass_compute_uniform_buffer: None,
             grass_compute_uniform_bind_group: None,
             grass_compute_texture_bind_group: None,
@@ -2473,7 +2477,62 @@ impl SceneRenderer {
             grass_draw_calls,
             shadow_draw_calls,
             shadow_triangles,
+            gpu_passes: self
+                .gpu_timer
+                .as_ref()
+                .map(|t| t.timings().passes.clone())
+                .unwrap_or_default(),
+            gpu_frame_ms: self
+                .gpu_timer
+                .as_ref()
+                .map_or(0.0, |t| t.timings().frame_ms),
             ..Default::default()
+        }
+    }
+
+    /// Time the frame's phases on the GPU, or stop (ADR 0108): the grass
+    /// compute, the shadows, the scene, the post-process chain, its last
+    /// pass (the composite, or FXAA when it's on) and the world lines, each
+    /// a scope, into [`RenderStats::gpu_passes`]. Off by default. The
+    /// device must have been created with `Features::TIMESTAMP_QUERY`
+    /// (Flint's contexts ask for it where the adapter has it); without it
+    /// timing stays off. Returns whether timing is on.
+    ///
+    /// The host ends each frame with
+    /// [`finish_gpu_timings`](Self::finish_gpu_timings), after its last
+    /// timed submission.
+    ///
+    /// [`RenderStats::gpu_passes`]: crate::RenderStats::gpu_passes
+    pub fn set_gpu_timing(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, on: bool) -> bool {
+        if !on {
+            self.gpu_timer = None;
+        } else if self.gpu_timer.is_none() {
+            self.gpu_timer = crate::gpu_timer::GpuTimer::new(device, queue);
+        }
+        self.gpu_timer.is_some()
+    }
+
+    /// Whether the frame's phases are being timed.
+    pub fn gpu_timing(&self) -> bool {
+        self.gpu_timer.is_some()
+    }
+
+    /// The timer, while timing is on, for a host to time its own work (its
+    /// UI, say) in the same frame: [`GpuTimer::begin`] and
+    /// [`GpuTimer::end`] round it.
+    ///
+    /// [`GpuTimer::begin`]: crate::GpuTimer::begin
+    /// [`GpuTimer::end`]: crate::GpuTimer::end
+    pub fn gpu_timer_mut(&mut self) -> Option<&mut crate::gpu_timer::GpuTimer> {
+        self.gpu_timer.as_mut()
+    }
+
+    /// End the frame's GPU timing: pick up the times read back so far and
+    /// send this frame's back. Call once a frame after the last timed
+    /// submission, before presenting. Does nothing while timing is off.
+    pub fn finish_gpu_timings(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if let Some(timer) = &mut self.gpu_timer {
+            timer.finish_frame(device, queue);
         }
     }
 
@@ -2785,6 +2844,7 @@ impl SceneRenderer {
     // ── Slim update_from_world: dispatch loop calling extraction helpers ──
 
     /// Update meshes from the world state
+    #[profiling::function]
     pub fn update_from_world(&mut self, world: &FlintWorld, device: &wgpu::Device) {
         if self.device_lost {
             return;
@@ -4112,6 +4172,7 @@ impl SceneRenderer {
     // ── Slim render_to: orchestrates shadow → uniforms → main pass → postprocess ──
 
     /// Render the scene to an arbitrary texture view with explicit device/queue/depth
+    #[profiling::function]
     pub fn render_to(
         &mut self,
         device: &wgpu::Device,
@@ -4123,6 +4184,9 @@ impl SceneRenderer {
         if self.device_lost {
             return;
         }
+        // Taken for the frame, so the phases can be scoped while self is
+        // borrowed; put back at the end (ADR 0108).
+        let mut gpu_timer = self.gpu_timer.take();
         let clear_color = wgpu::Color {
             r: self.clear_color[0] as f64,
             g: self.clear_color[1] as f64,
@@ -4176,7 +4240,13 @@ impl SceneRenderer {
                     label: Some("Grass Compute Encoder"),
                 });
             let grass_time = self.grass_time;
+            let scope = gpu_timer
+                .as_mut()
+                .map(|t| t.begin(&mut compute_encoder, "Grass"));
             self.dispatch_grass_compute(device, queue, &mut compute_encoder, camera, grass_time);
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end(&mut compute_encoder, scope);
+            }
             queue.submit(std::iter::once(compute_encoder.finish()));
             if let Some(readback) = &mut self.grass_count_readback {
                 readback.start_map();
@@ -4188,7 +4258,13 @@ impl SceneRenderer {
         // Shadow pass: render depth from light perspective. It sees every
         // draw (culled per cascade), since a caster outside the view can
         // still shadow what's in it.
+        let scope = gpu_timer
+            .as_mut()
+            .map(|t| t.begin_submit(device, queue, "Shadows"));
         self.render_shadow_pass(device, queue, camera, camera_pos);
+        if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+            timer.end_submit(device, queue, scope);
+        }
 
         // Set aside draws outside the camera frustum for the rest of the frame.
         self.cull_draws_to_camera();
@@ -4272,6 +4348,7 @@ impl SceneRenderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+        let scene_scope = gpu_timer.as_mut().map(|t| t.begin(&mut encoder, "Scene"));
 
         if !self.ocean_grab_this_frame {
             // Single-pass path (unchanged for scenes without an ocean).
@@ -4434,19 +4511,36 @@ impl SceneRenderer {
             }
         }
 
+        if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scene_scope) {
+            timer.end(&mut encoder, scope);
+        }
         queue.submit(std::iter::once(encoder.finish()));
 
         // Composite: always needed to convert HDR → sRGB surface
         if has_postprocess {
-            self.render_postprocess(device, queue, depth_view, target_view, camera);
+            self.render_postprocess(
+                device,
+                queue,
+                depth_view,
+                target_view,
+                camera,
+                gpu_timer.as_mut(),
+            );
         }
 
         // World lines (ADR 0083) go over the finished image, tested against
         // the frame's single-sample depth. Without the HDR chain an MSAA depth
         // is never resolved, so they're skipped there.
         if !self.world_lines.is_empty() && (has_postprocess || self.sample_count == 1) {
+            let scope = gpu_timer
+                .as_mut()
+                .map(|t| t.begin_submit(device, queue, "World lines"));
             self.render_world_lines(device, queue, depth_view, target_view, camera);
+            if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
+                timer.end_submit(device, queue, scope);
+            }
         }
+        self.gpu_timer = gpu_timer;
     }
 
     fn render_world_lines(

@@ -273,6 +273,85 @@ impl PlayerApp {
             tracing::info!("{absent_msg}");
         }
     }
+
+    /// Add the panels the extensions name (ADR 0107), after the engine's,
+    /// replacing any added before. A panel that was open stays open.
+    #[cfg(feature = "debug-hud")]
+    pub(super) fn create_extension_debug_panels(&mut self) {
+        let mut open = Vec::new();
+        self.debug_panels.retain(|panel| {
+            let Some(ext) = panel.as_any().downcast_ref::<ExtensionPanel>() else {
+                return true;
+            };
+            if ext.open {
+                open.push((ext.extension, ext.name.clone()));
+            }
+            false
+        });
+        for (extension, ext) in self.extensions.iter().enumerate() {
+            for name in ext.debug_panels() {
+                let was_open = open.iter().any(|(e, n)| *e == extension && *n == name);
+                self.debug_panels.push(Box::new(ExtensionPanel {
+                    extension,
+                    name,
+                    open: was_open,
+                }));
+            }
+        }
+    }
+}
+
+/// A debug panel a game names through `PlayerExtension::debug_panels`. It
+/// holds only the panel's place and whether it's open: the frame draws its
+/// contents with the extension's `debug_panel_ui` (see [`draw_panel`]).
+#[cfg(feature = "debug-hud")]
+pub(super) struct ExtensionPanel {
+    /// Index into `PlayerApp::extensions`.
+    extension: usize,
+    name: String,
+    open: bool,
+}
+
+#[cfg(feature = "debug-hud")]
+impl flint_debug_ui::DebugPanel for ExtensionPanel {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    /// Drawn by [`draw_panel`], which can reach the extension.
+    fn ui(&mut self, _ui: &mut egui::Ui) {}
+    fn is_open(&self) -> bool {
+        self.open
+    }
+    fn toggle(&mut self) {
+        self.open = !self.open;
+    }
+    fn is_dirty(&self) -> bool {
+        false
+    }
+    fn clear_dirty(&mut self) {}
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+/// Draw one panel's contents: an engine panel draws itself, and a game's
+/// is drawn by the extension that named it.
+#[cfg(feature = "debug-hud")]
+pub(super) fn draw_panel(
+    panel: &mut dyn flint_debug_ui::DebugPanel,
+    extensions: &mut [Box<dyn crate::extension::PlayerExtension>],
+    ui: &mut egui::Ui,
+) {
+    if let Some(ext) = panel.as_any().downcast_ref::<ExtensionPanel>() {
+        if let Some(extension) = extensions.get_mut(ext.extension) {
+            extension.debug_panel_ui(&ext.name, ui);
+        }
+    } else {
+        panel.ui(ui);
+    }
 }
 
 /// Side columns open this wide (the old `SidePanel` default). The grip on
@@ -286,8 +365,9 @@ const DEBUG_COLUMN_MIN_WIDTH: f32 = 280.0;
 const DEBUG_BOTTOM_HEIGHT: f32 = 112.0;
 
 /// Draw the open debug panels: full-width strips along the bottom (e.g. the
-/// timeline), then columns from the right edge above them. Returns the
-/// width the columns take.
+/// timeline), then columns from the right edge above them, each panel's
+/// contents by `draw` (see [`draw_panel`]). Returns the width the columns
+/// take.
 ///
 /// They float on egui's Foreground order rather than being egui
 /// `SidePanel`s, which always paint on the background layer. That keeps
@@ -298,6 +378,7 @@ const DEBUG_BOTTOM_HEIGHT: f32 = 112.0;
 pub(super) fn show_debug_panels(
     ctx: &egui::Context,
     panels: &mut [Box<dyn flint_debug_ui::DebugPanel>],
+    draw: &mut dyn FnMut(&mut dyn flint_debug_ui::DebugPanel, &mut egui::Ui),
 ) -> f32 {
     use flint_debug_ui::PanelLayout;
 
@@ -312,7 +393,7 @@ pub(super) fn show_debug_panels(
             let id = egui::Id::new(("debug_bottom", panel.name()));
             let size = egui::vec2(screen.width(), DEBUG_BOTTOM_HEIGHT);
             let top_right = egui::pos2(screen.max.x, bottom - DEBUG_BOTTOM_HEIGHT);
-            debug_area(ctx, id, top_right, size, |ui| panel.ui(ui));
+            debug_area(ctx, id, top_right, size, |ui| draw(panel.as_mut(), ui));
             bottom -= DEBUG_BOTTOM_HEIGHT;
         }
     }
@@ -357,7 +438,7 @@ pub(super) fn show_debug_panels(
                         let name = panel.name().to_owned();
                         egui::CollapsingHeader::new(egui::RichText::new(name).heading())
                             .default_open(true)
-                            .show(ui, |ui| panel.ui(ui));
+                            .show(ui, |ui| draw(panel.as_mut(), ui));
                         ui.separator();
                     }
                 });
@@ -467,7 +548,9 @@ mod tests {
             ..Default::default()
         };
         let mut width = 0.0;
-        let _ = ctx.run(input, |ctx| width = show_debug_panels(ctx, panels));
+        let _ = ctx.run(input, |ctx| {
+            width = show_debug_panels(ctx, panels, &mut |panel, ui| panel.ui(ui))
+        });
         width
     }
 

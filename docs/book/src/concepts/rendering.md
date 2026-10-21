@@ -277,7 +277,7 @@ Additional overlays:
 
 - **Normal arrows** (F3 in the viewer, `--show-normals` in render) --- draws face-normal direction arrows
 - **Skeleton overlay** (model previewer) --- draws the armature over a rigged model, following the animated pose, with a colour mode that paints joints by last writer, layer weight, mask, or keyed joints. See [Animation](animation.md).
-- **Render stats** (F2 in the viewer and the player) --- frame time, draw counts, resolution
+- **Render stats** (F2 in the viewer and the player) --- frame time, draw counts, resolution, and in the player the GPU's time per phase where the device can time (see [Profiling](../guides/profiling.md))
 
 ![Wireframe debug mode](../images/debug-wireframe.png)
 

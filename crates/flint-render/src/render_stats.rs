@@ -31,6 +31,12 @@ pub struct RenderStats {
     // Shadow pass (estimated)
     pub shadow_draw_calls: u32,
     pub shadow_triangles: u32,
+    // GPU time (ADR 0108): empty unless the renderer's GPU timing is on and
+    // the device can time. Smoothed, and a frame or more late.
+    /// Each timed scope, in the order the frame began them.
+    pub gpu_passes: Vec<crate::gpu_timer::GpuPassTime>,
+    /// From the frame's first timestamp to its last; 0 when untimed.
+    pub gpu_frame_ms: f32,
     // Screen info (set by caller)
     pub resolution: [u32; 2],
 }

@@ -87,6 +87,10 @@ pest_derive = "2.7"
 wgpu = "23.0"
 winit = "0.30"
 pollster = "0.4"
+# Frame profiler scopes: nothing at all without a backend feature (ADR 0109)
+profiling = "1.0"
+# profiling's Tracy backend uses this version; named here for its features
+tracy-client = { version = "0.18", default-features = false }
 bytemuck = { version = "1.19", features = ["derive"] }
 
 # File watching

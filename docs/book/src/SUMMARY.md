@@ -57,6 +57,7 @@
 - [Deploying to Android](guides/android.md)
 - [Player Extensions](guides/player-extensions.md)
 - [Debug Panels](guides/debug-panels.md)
+- [Profiling](guides/profiling.md)
 - [Particle Editor](guides/particle-editor.md)
 
 # Reference

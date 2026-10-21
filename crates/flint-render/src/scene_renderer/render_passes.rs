@@ -39,6 +39,7 @@ impl RenderPhase {
 
 impl SceneRenderer {
     /// Render depth from light perspective for cascaded shadow mapping.
+    #[profiling::function]
     pub(super) fn render_shadow_pass(
         &mut self,
         device: &wgpu::Device,
@@ -646,6 +647,7 @@ impl SceneRenderer {
     }
 
     /// Execute the main render pass: skybox → grid → terrain → entities → sprites → particles → debug.
+    #[profiling::function]
     pub(super) fn render_main_pass<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
@@ -1276,6 +1278,7 @@ impl SceneRenderer {
     }
 
     /// Run post-processing: SSAO, bloom, composite HDR → sRGB.
+    #[profiling::function]
     pub(super) fn render_postprocess(
         &self,
         device: &wgpu::Device,
@@ -1283,6 +1286,7 @@ impl SceneRenderer {
         depth_view: &wgpu::TextureView,
         target_view: &wgpu::TextureView,
         camera: &Camera,
+        mut timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         let pp = match &self.postprocess_pipeline {
             Some(pp) => pp,
@@ -1292,6 +1296,14 @@ impl SceneRenderer {
             Some(r) => r,
             None => return,
         };
+
+        // GPU timing (ADR 0108): the chain is one scope, and the pass that
+        // writes the target another, timed inside its own submission. Under
+        // vsync the GPU waits for the swapchain image before that submission
+        // runs, and a scope across it would count the wait.
+        let chain = timer
+            .as_deref_mut()
+            .map(|t| t.begin_submit(device, queue, "Post-process"));
 
         // Run Kuwahara filter if enabled
         if self.postprocess_config.enabled && self.postprocess_config.kuwahara_enabled {
@@ -1351,6 +1363,14 @@ impl SceneRenderer {
         } else {
             target_view
         };
+        let end_chain = |timer: Option<&mut crate::gpu_timer::GpuTimer>| {
+            if let (Some(timer), Some(chain)) = (timer, chain) {
+                timer.end_submit(device, queue, chain);
+            }
+        };
+        if !fxaa_active {
+            end_chain(timer.as_deref_mut());
+        }
 
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
@@ -1366,10 +1386,16 @@ impl SceneRenderer {
             // precise over long sessions. Headless render leaves this 0.0.
             (self.ocean_time % 100_000.0) as f32,
             self.ground_fog.as_ref(),
+            if fxaa_active {
+                None
+            } else {
+                timer.as_deref_mut()
+            },
         );
 
         if fxaa_active {
-            pp.run_fxaa(device, queue, resources, target_view);
+            end_chain(timer.as_deref_mut());
+            pp.run_fxaa(device, queue, resources, target_view, timer);
         }
     }
 

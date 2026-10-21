@@ -44,6 +44,11 @@ impl PlayerApp {
         input_config_override: Option<String>,
         scene_input_config: Option<String>,
     ) -> Self {
+        // The profiler's client, before the first scope (ADR 0109). Tracy's
+        // viewer connects to it while the game runs; starting it twice is
+        // harmless.
+        #[cfg(feature = "profile")]
+        profiling::tracy_client::Client::start();
         Self {
             world,
             scene_path,
@@ -130,6 +135,7 @@ impl PlayerApp {
             particles_render_enabled: true,
             show_stats: false,
             stats_frame_times: std::collections::VecDeque::new(),
+            stats_gpu_timing: false,
             procgen_resolver: flint_procgen::ProcGenResolver::new(),
             loaded_chunks: HashMap::new(),
             #[cfg(target_os = "android")]
@@ -153,6 +159,9 @@ impl PlayerApp {
             self.ui_fonts_installed = false;
             self.refresh_project_fonts();
         }
+        // And its debug panels, before the next scene load builds them again.
+        #[cfg(feature = "debug-hud")]
+        self.create_extension_debug_panels();
     }
 
     /// A handle on the camera scripts' `world_to_screen` uses, for native
@@ -590,6 +599,8 @@ impl PlayerApp {
             // is true here because player scripts drive post fields.
             self.debug_panels
                 .push(Box::new(flint_debug_ui::RenderDebugPanel::new(true)));
+            // The game's own (ADR 0107), after the engine's.
+            self.create_extension_debug_panels();
         }
     }
 
