@@ -283,6 +283,12 @@ impl ScriptSystem {
         self.engine.drain_world_lines()
     }
 
+    /// Drain the depth-tested world text (`draw_world_text`, ADR 0104)
+    /// scripts queued this frame, for the host to lay out and draw
+    pub fn drain_world_texts(&mut self) -> Vec<flint_core::world_text::WorldText> {
+        self.engine.drain_world_texts()
+    }
+
     /// Generate draw commands from the data-driven UI system (unclipped)
     pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.engine.ctx);

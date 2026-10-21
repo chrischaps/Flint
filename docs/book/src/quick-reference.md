@@ -307,6 +307,7 @@ position = [0, 0, 0]
 | `screen_to_ground(x, y, plane_y)` | `[x, z]`/`()` | Ground point under a screen point (e.g. the cursor); `world_to_screen(x, y, z)` is the inverse |
 | `screen_to_heightfield(x, y)` / `ground_height(x, z)` | `[x, y, z]`/`()`, `f64`/`()` | The host's registered ground field under a screen point, and its height (ADR 0095) |
 | `draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | `()` | World-space line in the 3D frame, hidden behind nearer geometry (unlike `draw_line_3d`, which is HUD) |
+| `draw_world_text(x, y, z, text, size, opts)` | `()` | Text at a world point, hidden behind nearer geometry: a billboard in points, or painted on a plane (`facing`) in world units |
 | `delta_time()` | `f64` | Seconds since last frame |
 | `play_sound(name)` | --- | Play a sound effect |
 | `set_dof(strength)` / `set_dof_focus(dist, range)` | --- | Drive depth of field from a script |

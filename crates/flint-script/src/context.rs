@@ -479,6 +479,9 @@ pub struct ScriptCallContext {
     /// Depth-tested world lines queued this frame (`draw_world_line`,
     /// ADR 0083). The host hands them to the renderer.
     pub world_lines: Vec<flint_core::world_line::WorldLine>,
+    /// Depth-tested world text queued this frame (`draw_world_text`,
+    /// ADR 0104). The host lays it out and draws it before the HUD.
+    pub world_texts: Vec<flint_core::world_text::WorldText>,
     /// `push_clip` / `pop_clip` stack; each entry is already intersected
     /// with its parent. Cleared when the frame's draw commands are drained.
     pub clip_stack: Vec<[f32; 4]>,
@@ -593,6 +596,7 @@ impl ScriptCallContext {
             commands: Vec::new(),
             draw_commands: Vec::new(),
             world_lines: Vec::new(),
+            world_texts: Vec::new(),
             clip_stack: Vec::new(),
             over_ui_depth: 0,
             mouse_pos_logical: (0.0, 0.0),

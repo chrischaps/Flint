@@ -2865,6 +2865,26 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // draw_world_text(x, y, z, text, size, opts)
+    // Text at a world point, drawn in the 3D frame with a depth test
+    // (ADR 0104): geometry in front hides it. opts are draw_text_opts's
+    // (font, color, align, stroke, spacing, shadow; no layer), centred on
+    // the point by default, plus valign ("top"|"middle"|"bottom"), and
+    // facing ([nx, ny, nz]) with up ([x, y, z], world up by default) to lay
+    // it in a plane. A billboard's size is in points; on a plane, every
+    // length is in world units.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_world_text",
+            move |x: f64, y: f64, z: f64, text: &str, size: f64, opts: Map| {
+                let t = world_text_from([x as f32, y as f32, z as f32], text, size as f32, &opts);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.world_texts.push(t);
+            },
+        );
+    }
+
     // draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)
     {
         let ctx = ctx.clone();
@@ -4974,6 +4994,56 @@ impl TextOpts {
     }
 }
 
+/// A `draw_world_text` call as the host draws it: `draw_text_opts`'s
+/// options, centred and middled on the point unless `align` or `valign`
+/// say otherwise, and on a plane when `facing` is a usable normal.
+pub(crate) fn world_text_from(
+    at: [f32; 3],
+    text: &str,
+    size: f32,
+    opts: &Map,
+) -> flint_core::world_text::WorldText {
+    let o = TextOpts::from_map(opts);
+    let align = if opts.contains_key("align") { o.align } else { 1 };
+    let valign = match opts.get("valign") {
+        Some(v) => match v.clone().try_cast::<ImmutableString>() {
+            Some(s) => match s.as_str() {
+                "top" => 0,
+                "bottom" => 2,
+                _ => 1,
+            },
+            None => dyn_to_f32(v).map_or(1, |i| (i as i64).clamp(0, 2) as u8),
+        },
+        None => 1,
+    };
+    let vec3 = |key: &str| -> Option<[f32; 3]> {
+        let arr = opts.get(key)?.clone().try_cast::<Array>()?;
+        match array_to_f32s(&arr)[..] {
+            [x, y, z] => Some([x, y, z]),
+            _ => None,
+        }
+    };
+    let plane = vec3("facing")
+        .filter(|n| n.iter().any(|c| *c != 0.0))
+        .map(|normal| flint_core::world_text::TextPlane {
+            normal,
+            up: vec3("up").unwrap_or([0.0, 1.0, 0.0]),
+        });
+    flint_core::world_text::WorldText {
+        at,
+        text: text.to_string(),
+        size,
+        color: o.color,
+        align,
+        valign,
+        stroke: o.stroke,
+        font: o.font,
+        spacing: o.spacing,
+        shadow: o.shadow,
+        plane,
+    }
+}
+
 /// Measure text with the host's installed measurer, falling back to the
 /// glyph-count estimate (0.6 em per char) when none is installed.
 pub(crate) fn measure_text_with(
@@ -5066,6 +5136,52 @@ mod text_opts_tests {
         assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(o.align, 2);
         assert_eq!(o.stroke, None);
+    }
+
+    #[test]
+    fn world_text_is_a_centred_billboard_by_default() {
+        let t = world_text_from([1.0, 2.0, 3.0], "Ada's", 14.0, &Map::new());
+        assert_eq!(t.at, [1.0, 2.0, 3.0]);
+        assert_eq!(t.text, "Ada's");
+        assert_eq!((t.align, t.valign), (1, 1));
+        assert_eq!(t.color, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(t.plane, None);
+    }
+
+    #[test]
+    fn world_text_takes_the_text_opts_and_a_plane() {
+        let mut m = Map::new();
+        m.insert("font".into(), Dynamic::from("display"));
+        m.insert("align".into(), Dynamic::from("left"));
+        m.insert("valign".into(), Dynamic::from("bottom"));
+        m.insert(
+            "facing".into(),
+            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(-1.0_f64)]),
+        );
+        let t = world_text_from([0.0; 3], "x", 0.2, &m);
+        assert_eq!(t.font.as_deref(), Some("display"));
+        assert_eq!((t.align, t.valign), (0, 2));
+        let plane = t.plane.unwrap();
+        assert_eq!(plane.normal, [0.0, 0.0, -1.0]);
+        assert_eq!(plane.up, [0.0, 1.0, 0.0]);
+
+        m.insert(
+            "up".into(),
+            arr(&[Dynamic::from(1_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+        );
+        assert_eq!(world_text_from([0.0; 3], "x", 0.2, &m).plane.unwrap().up, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn world_text_without_a_usable_normal_is_a_billboard() {
+        let mut m = Map::new();
+        m.insert(
+            "facing".into(),
+            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+        );
+        assert_eq!(world_text_from([0.0; 3], "x", 9.0, &m).plane, None);
+        m.insert("facing".into(), arr(&[Dynamic::from(1_i64)]));
+        assert_eq!(world_text_from([0.0; 3], "x", 9.0, &m).plane, None);
     }
 
     #[test]

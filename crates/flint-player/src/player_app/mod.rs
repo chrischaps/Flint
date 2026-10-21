@@ -24,6 +24,7 @@ mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
 mod transition;
+mod world_text;
 
 #[cfg(target_os = "android")]
 use events::AndroidGamepadTracker;
@@ -176,6 +177,10 @@ pub struct PlayerApp {
 
     // Script-driven 2D draw commands
     draw_commands: Vec<DrawItem>,
+    /// Depth-tested world text queued this frame (ADR 0104), laid out in
+    /// the egui pass and drawn before the HUD.
+    world_texts: Vec<flint_core::world_text::WorldText>,
+    world_text_pipeline: Option<world_text::WorldTextPipeline>,
     ui_textures: HashMap<String, egui::TextureHandle>,
     /// Family names registered from `<project>/fonts/` (file stems + manifest
     /// aliases). The HUD renderer falls back to the default font for names
