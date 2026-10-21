@@ -2006,6 +2006,17 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             c.cursor_captured_override = Some(captured);
         });
     }
+
+    // is_cursor_captured() -> bool — whether the cursor is captured now
+    // (ADR 0110). A set_cursor_captured() request shows from the next
+    // frame; Escape, F3/F4 and a lost capture show too. While captured,
+    // mouse_x()/mouse_y() read the window centre and clicks skip egui.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_cursor_captured", move || -> bool {
+            crate::lock_or_recover(&ctx).cursor_captured
+        });
+    }
 }
 
 // ─── 2D Physics API ──────────────────────────────────────

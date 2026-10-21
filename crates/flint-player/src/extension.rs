@@ -164,9 +164,17 @@ pub struct ExtensionCtx<'a> {
     pub rays: std::sync::Arc<flint_core::ray_mesh::RayScene>,
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
+    pub(crate) cursor_captured: bool,
 }
 
 impl ExtensionCtx<'_> {
+    /// Whether the cursor is captured now (ADR 0110), as scripts'
+    /// `is_cursor_captured()` reads it. While it is, `input.mouse_position`
+    /// is the window centre and clicks skip egui.
+    pub fn is_cursor_captured(&self) -> bool {
+        self.cursor_captured
+    }
+
     /// Fire a custom game event, as a script's `fire_event_data` does.
     ///
     /// It joins this frame's events, so scripts' `on_event(name, data)`

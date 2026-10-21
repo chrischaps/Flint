@@ -533,6 +533,9 @@ pub struct ScriptCallContext {
     /// Script-driven cursor capture request. Games without a character
     /// controller (which normally gates capture) use this for mouse look.
     pub cursor_captured_override: Option<bool>,
+    /// Whether the cursor is captured now, for `is_cursor_captured()`
+    /// (ADR 0110). The host sets it each frame.
+    pub cursor_captured: bool,
     /// Raw pointer to the GameStateMachine — valid only during call scope
     pub state_machine: *mut GameStateMachine,
     /// Raw pointer to the PersistentStore — valid only during call scope
@@ -631,6 +634,7 @@ impl ScriptCallContext {
             postprocess_mode_params_override: None,
             audio_lowpass_cutoff_override: None,
             cursor_captured_override: None,
+            cursor_captured: false,
             state_machine: std::ptr::null_mut(),
             persistent_store: std::ptr::null_mut(),
             transition_progress: -1.0,

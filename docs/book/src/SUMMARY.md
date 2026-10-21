@@ -43,6 +43,7 @@
 - [Scripting](concepts/scripting.md)
 - [2D Sprites](concepts/sprites-2d.md)
 - [Touch Input](concepts/touch-input.md)
+- [Cursor Capture and Input Gates](concepts/input-gates.md)
 - [Procedural Generation](concepts/procgen.md)
 - [AI Asset Generation](concepts/ai-generation.md)
 

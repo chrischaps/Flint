@@ -24,6 +24,8 @@
 //! 7.0   click  320 200            # pointer there, then tap MouseLeft
 //! 7.5   click  320 200 MouseRight
 //! 8.0   type   200 planks         # text into the focused egui field
+//! 9.0   look   40 -10             # raw mouse motion, as mouse-look reads
+//! 9.5   look   300 0 1.5          #   it; spread over 1.5 s
 //! ```
 //!
 //! The pad writes `InputState` directly. Keys, the pointer (`mouse`,
@@ -34,7 +36,9 @@
 //! press an egui button, one over a panel stays out of the world, a wheel
 //! over a panel scrolls it rather than the camera behind it, a held Shift
 //! reaches egui's modifiers, and a key typed into a focused field never
-//! reaches the game.
+//! reaches the game. `look` is raw motion (`mouse_delta_x/y`), routed as a
+//! real mouse's: it reaches the game only while the cursor is captured and
+//! no text field has focus (ADR 0110).
 
 use flint_runtime::{parse_key_code, InputState};
 use winit::dpi::PhysicalPosition;
@@ -95,6 +99,8 @@ pub enum ScriptEvent {
     Modifiers(ModifiersState),
     /// Text typed (`type`), for a focused egui field.
     Text(String),
+    /// Raw mouse motion (`look`), in the units of a real mouse's.
+    Look(f64, f64),
 }
 
 /// What one frame of the script did, beyond writing `InputState`.
@@ -163,6 +169,29 @@ enum Action {
     MouseDown(MouseButton),
     MouseUp(MouseButton),
     Text(String),
+    /// Raw motion (dx, dy), at once or spread over the seconds given.
+    Look(f64, f64, f64),
+}
+
+/// Raw motion spread over a span of game time.
+#[derive(Debug, Clone, Copy)]
+struct Sweep {
+    total: (f64, f64),
+    start: f64,
+    seconds: f64,
+    /// How much of `total` has been fed so far.
+    fed: (f64, f64),
+}
+
+impl Sweep {
+    /// The motion due by `now` and not yet fed, and whether it's all fed.
+    fn step(&mut self, now: f64) -> ((f64, f64), bool) {
+        let k = ((now - self.start) / self.seconds).clamp(0.0, 1.0);
+        let due = (self.total.0 * k, self.total.1 * k);
+        let step = (due.0 - self.fed.0, due.1 - self.fed.1);
+        self.fed = due;
+        (step, k >= 1.0)
+    }
 }
 
 /// A pointer moving from one place to another over a span of game time.
@@ -195,6 +224,8 @@ pub struct InputScript {
     glide: Option<Glide>,
     /// Modifier keys held down, for `ModifiersChanged`.
     modifier_keys: Vec<KeyCode>,
+    /// `look`s still spreading their motion over frames.
+    sweeps: Vec<Sweep>,
 }
 
 fn parse_mouse_button(name: &str) -> Option<MouseButton> {
@@ -301,6 +332,18 @@ impl InputScript {
                 // Everything after the verb, inner spaces kept (a `#` still
                 // starts a comment).
                 "type" => events.push((t, Action::Text(after_words(line, 2).to_string()))),
+                "look" => {
+                    let dx = number(2, "look needs dx and dy")?;
+                    let dy = number(3, "look needs dx and dy")?;
+                    let over = match f.get(4) {
+                        Some(_) => number(4, "bad look seconds")?,
+                        None => 0.0,
+                    };
+                    if over < 0.0 {
+                        return Err(bad("bad look seconds"));
+                    }
+                    events.push((t, Action::Look(dx, dy, over)));
+                }
                 _ => return Err(bad("unknown verb")),
             }
         }
@@ -412,6 +455,18 @@ impl InputScript {
                         .push(ScriptEvent::Pointer(PointerEvent::Released(*b)));
                 }
                 Action::Text(text) => out.events.push(ScriptEvent::Text(text.clone())),
+                Action::Look(dx, dy, over) => {
+                    if *over > 0.0 {
+                        self.sweeps.push(Sweep {
+                            total: (*dx, *dy),
+                            start: *t,
+                            seconds: *over,
+                            fed: (0.0, 0.0),
+                        });
+                    } else {
+                        out.events.push(ScriptEvent::Look(*dx, *dy));
+                    }
+                }
             }
             self.next += 1;
         }
@@ -426,6 +481,17 @@ impl InputScript {
             if arrived {
                 self.glide = None;
             }
+        }
+        // A spread `look` feeds its share of the motion every frame.
+        let mut look = (0.0, 0.0);
+        self.sweeps.retain_mut(|sweep| {
+            let ((dx, dy), done) = sweep.step(now);
+            look.0 += dx;
+            look.1 += dy;
+            !done
+        });
+        if look != (0.0, 0.0) {
+            out.events.push(ScriptEvent::Look(look.0, look.1));
         }
         out
     }
@@ -649,6 +715,47 @@ mod tests {
                 vec![]
             ]
         );
+    }
+
+    /// The raw motion of each frame, one frame per time.
+    fn looks(src: &str, times: &[f64]) -> Vec<Vec<(f64, f64)>> {
+        let mut s = InputScript::parse(src).unwrap();
+        let mut input = InputState::new();
+        times
+            .iter()
+            .map(|&t| {
+                s.apply(t, &mut input)
+                    .events
+                    .into_iter()
+                    .filter_map(|e| match e {
+                        ScriptEvent::Look(dx, dy) => Some((dx, dy)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn look_is_raw_motion_at_once_or_spread() {
+        assert_eq!(
+            looks("1 look 40 -10
+", &[0.5, 1.0, 1.5]),
+            [vec![], vec![(40.0, -10.0)], vec![]]
+        );
+        // Spread over a second: a share each frame, adding up to it all.
+        assert_eq!(
+            looks("0 look 100 0 1
+", &[0.0, 0.25, 0.5, 1.0, 2.0]),
+            [vec![], vec![(25.0, 0.0)], vec![(25.0, 0.0)], vec![(50.0, 0.0)], vec![]]
+        );
+        // The script never writes it itself: the player routes it.
+        let mut s = InputScript::parse("0 look 5 5").unwrap();
+        let mut input = InputState::new();
+        s.apply(0.0, &mut input);
+        assert_eq!(input.raw_mouse_delta(), (0.0, 0.0));
+        assert!(InputScript::parse("0 look 5").is_err());
+        assert!(InputScript::parse("0 look 5 5 -1").is_err());
     }
 
     #[test]

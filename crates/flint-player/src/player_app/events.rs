@@ -146,6 +146,11 @@ impl PlayerApp {
 
         for event in events {
             let gamepad = gamepad_id_to_u32(event.id);
+            self.real_pad_slots.insert(gamepad);
+            // A real pad is ignored while the window is unfocused (ADR 0110).
+            if !self.window_focused && event.event != EventType::Disconnected {
+                continue;
+            }
             match event.event {
                 EventType::ButtonPressed(button, _) => {
                     let name = format!("{button:?}");
@@ -270,6 +275,10 @@ impl PlayerApp {
         Ok(())
     }
 
+    /// Capture the cursor for mouse-look (ADR 0110). While it's captured the
+    /// cursor reads as the window centre, its moves reach no one, and its
+    /// buttons and wheel reach the game but not egui. Without a window
+    /// (headless tests) only the state changes.
     pub(super) fn capture_cursor(&mut self) {
         if let Some(window) = &self.window {
             #[cfg(not(target_os = "android"))]
@@ -280,7 +289,13 @@ impl PlayerApp {
                     .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
                 window.set_cursor_visible(false);
             }
-            self.cursor_captured = true;
+        }
+        self.cursor_captured = true;
+        self.centre_the_cursor();
+        // egui stops hearing the pointer, so it mustn't think it's still
+        // hovering whatever it was over.
+        if let Some(egui_winit) = &mut self.egui_winit {
+            egui_winit.egui_input_mut().events.push(egui::Event::PointerGone);
         }
     }
 
@@ -290,11 +305,88 @@ impl PlayerApp {
             {
                 let _ = window.set_cursor_grab(CursorGrabMode::None);
                 window.set_cursor_visible(true);
+                // The cursor comes back where it read while captured, so
+                // nothing jumps under it.
+                let (w, h) = self.input.screen_size();
+                let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(
+                    w / 2.0,
+                    h / 2.0,
+                ));
             }
-            self.cursor_captured = false;
+        }
+        self.cursor_captured = false;
+    }
+
+    /// Whether the cursor is captured now (ADR 0110). A script's request
+    /// takes effect at the end of the frame it's made in.
+    pub fn is_cursor_captured(&self) -> bool {
+        self.cursor_captured
+    }
+
+    /// Put the cursor `InputState` reports at the window centre, without a
+    /// delta, as it reads while captured.
+    fn centre_the_cursor(&mut self) {
+        let (w, h) = self.input.screen_size();
+        self.input.mouse_position = (w / 2.0, h / 2.0);
+    }
+
+    /// Whether an egui text field has the keyboard (the text-focus gate of
+    /// ADR 0073): keys, pads and raw mouse motion stay out of the game.
+    pub(super) fn text_has_focus(&self) -> bool {
+        self.egui_sees_input() && self.egui_ctx.wants_keyboard_input()
+    }
+
+    /// Hold the pads while a text field has focus (ADR 0110). Called at the
+    /// top of each frame, before the pads are polled.
+    pub(super) fn gate_gamepads(&mut self) {
+        let held = self.text_has_focus();
+        self.input.hold_gamepads(held);
+    }
+
+    /// The window gained or lost focus. Losing it releases every real pad,
+    /// and their events are dropped until it's back; then the sticks are
+    /// read again where they stand. Buttons need a fresh press. The input
+    /// script's pad is left alone: captures run unfocused.
+    pub(super) fn window_focus_changed(&mut self, focused: bool) {
+        self.window_focused = focused;
+        if !focused {
+            for slot in self.real_pad_slots.iter().copied() {
+                self.input.clear_gamepad(slot);
+            }
+        }
+        let Some(gilrs) = &mut self.gilrs else {
+            return;
+        };
+        // Drain what came in before the change, so it isn't replayed.
+        while gilrs.next_event().is_some() {}
+        if !focused {
+            return;
+        }
+        for (id, pad) in gilrs.gamepads() {
+            let slot = gamepad_id_to_u32(id);
+            self.real_pad_slots.insert(slot);
+            for axis in STICKS {
+                let value = pad.value(axis);
+                if value != 0.0 {
+                    self.input
+                        .process_gamepad_axis(slot, format!("{axis:?}"), value);
+                }
+            }
         }
     }
 }
+
+/// The axes read again when the window regains focus.
+const STICKS: [gilrs::Axis; 8] = [
+    gilrs::Axis::LeftStickX,
+    gilrs::Axis::LeftStickY,
+    gilrs::Axis::LeftZ,
+    gilrs::Axis::RightStickX,
+    gilrs::Axis::RightStickY,
+    gilrs::Axis::RightZ,
+    gilrs::Axis::DPadX,
+    gilrs::Axis::DPadY,
+];
 
 impl ApplicationHandler for PlayerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -352,6 +444,9 @@ impl ApplicationHandler for PlayerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let WindowEvent::Focused(focused) = event {
+            self.window_focus_changed(focused);
+        }
         if self.taken_before_the_game(&event) {
             return;
         }
@@ -408,7 +503,9 @@ impl ApplicationHandler for PlayerApp {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        if !self.cursor_captured {
+        // Raw motion flows while the cursor is captured, the window has
+        // focus and no text field has the keyboard (ADR 0110).
+        if !self.cursor_captured || !self.window_focused || self.text_has_focus() {
             return;
         }
 
@@ -451,6 +548,9 @@ impl PlayerApp {
             }
             self.input
                 .set_screen_size(new_size.width as f64, new_size.height as f64);
+            if self.cursor_captured {
+                self.centre_the_cursor();
+            }
     }
 
     fn handle_keyboard_input(
@@ -650,8 +750,16 @@ impl PlayerApp {
         if let WindowEvent::ModifiersChanged(modifiers) = event {
             self.key_modifiers = modifiers.state();
         }
-        // Input egui wants stops here (see egui_input for the rules).
-        if self.egui_sees_input() {
+        // A captured cursor's moves reach no one, real or scripted: it reads
+        // as the window centre (ADR 0110).
+        if self.cursor_captured && matches!(event, WindowEvent::CursorMoved { .. }) {
+            return true;
+        }
+        // Input egui wants stops here (see egui_input for the rules). A
+        // captured cursor's buttons and wheel skip egui, but for the release
+        // of a press egui took before the capture (ADR 0110).
+        let skip_egui = self.cursor_captured && self.egui_input.skips_captured(event);
+        if self.egui_sees_input() && !skip_egui {
             if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
                 let response = egui_winit.on_window_event(window, event);
                 let wants_keyboard = self.egui_ctx.wants_keyboard_input();
@@ -690,6 +798,13 @@ impl PlayerApp {
                 // for the events after it, extensions see it too, and so
                 // does the next key's `KeyInput`.
                 self.taken_before_the_game(&WindowEvent::ModifiersChanged(state.into()));
+            }
+            // Raw motion takes a real mouse's gate (ADR 0110), but for the
+            // window's focus: captures run unfocused.
+            ScriptEvent::Look(dx, dy) => {
+                if self.cursor_captured && !self.text_has_focus() {
+                    self.input.process_mouse_raw_delta(dx, dy);
+                }
             }
             ScriptEvent::Text(text) => {
                 if self.egui_sees_input() {

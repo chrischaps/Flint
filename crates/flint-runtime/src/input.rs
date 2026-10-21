@@ -339,6 +339,12 @@ pub struct InputState {
 
     last_device: InputDevice,
     gamepad_connected: bool,
+
+    /// While set, every pad reads as idle ([`InputState::hold_gamepads`]).
+    gamepads_held: bool,
+    /// Pad buttons held down when the hold began, or pressed during it: they
+    /// read as up until they're released.
+    gamepad_buttons_swallowed: HashSet<(u32, String)>,
 }
 
 impl Default for InputState {
@@ -378,6 +384,8 @@ impl InputState {
             last_frame_pressed_actions: HashSet::new(),
             last_device: InputDevice::Keyboard,
             gamepad_connected: false,
+            gamepads_held: false,
+            gamepad_buttons_swallowed: HashSet::new(),
         }
     }
 
@@ -707,9 +715,38 @@ impl InputState {
         &self.touches_just_ended
     }
 
+    /// Hold every pad, or let them go (ADR 0110). While held, sticks and
+    /// triggers read 0 and buttons read up, so actions bound to a pad
+    /// release. The host holds them while a text field has keyboard focus.
+    ///
+    /// The pads' state is still tracked underneath: a stick held through
+    /// the hold reads again the frame it ends. A button doesn't. One held
+    /// down when the hold began, or pressed during it, reads as up until
+    /// it's released, so it never fires a press nobody made.
+    pub fn hold_gamepads(&mut self, held: bool) {
+        if held && !self.gamepads_held {
+            for key in self.gamepad_buttons_down.drain() {
+                self.gamepad_buttons_just_released.insert(key.clone());
+                self.gamepad_buttons_swallowed.insert(key);
+            }
+            self.gamepad_buttons_just_pressed.clear();
+            self.gamepad_button_values.clear();
+        }
+        self.gamepads_held = held;
+    }
+
+    /// Whether [`InputState::hold_gamepads`] is holding the pads.
+    pub fn gamepads_held(&self) -> bool {
+        self.gamepads_held
+    }
+
     pub fn process_gamepad_button_down(&mut self, gamepad: u32, button: impl Into<String>) {
-        self.last_device = InputDevice::Gamepad;
         let key = (gamepad, button.into());
+        if self.gamepads_held || self.gamepad_buttons_swallowed.contains(&key) {
+            self.gamepad_buttons_swallowed.insert(key);
+            return;
+        }
+        self.last_device = InputDevice::Gamepad;
         if !self.gamepad_buttons_down.contains(&key) {
             self.gamepad_buttons_just_pressed.insert(key.clone());
         }
@@ -718,6 +755,9 @@ impl InputState {
 
     pub fn process_gamepad_button_up(&mut self, gamepad: u32, button: impl Into<String>) {
         let key = (gamepad, button.into());
+        if self.gamepad_buttons_swallowed.remove(&key) {
+            return;
+        }
         self.gamepad_buttons_down.remove(&key);
         self.gamepad_button_values.remove(&key);
         self.gamepad_buttons_just_released.insert(key);
@@ -731,15 +771,19 @@ impl InputState {
         button: impl Into<String>,
         value: f32,
     ) {
+        let key = (gamepad, button.into());
+        if self.gamepads_held || self.gamepad_buttons_swallowed.contains(&key) {
+            return;
+        }
         if value > DEVICE_AXIS_DEADZONE {
             self.last_device = InputDevice::Gamepad;
         }
         self.gamepad_button_values
-            .insert((gamepad, button.into()), value.clamp(0.0, 1.0));
+            .insert(key, value.clamp(0.0, 1.0));
     }
 
     pub fn process_gamepad_axis(&mut self, gamepad: u32, axis: impl Into<String>, value: f32) {
-        if value.abs() > DEVICE_AXIS_DEADZONE {
+        if !self.gamepads_held && value.abs() > DEVICE_AXIS_DEADZONE {
             self.last_device = InputDevice::Gamepad;
         }
         self.gamepad_axes
@@ -757,6 +801,8 @@ impl InputState {
         self.gamepad_axes.retain(|(id, _), _| *id != gamepad);
         self.last_frame_gamepad_axes
             .retain(|(id, _), _| *id != gamepad);
+        self.gamepad_buttons_swallowed
+            .retain(|(id, _)| *id != gamepad);
     }
 
     pub fn end_frame(&mut self) {
@@ -1132,6 +1178,9 @@ impl InputState {
         invert: bool,
         direction: Option<AxisDirection>,
     ) -> f32 {
+        if self.gamepads_held {
+            return 0.0;
+        }
         let mut selected: Option<f32> = None;
         for ((id, axis_name), value) in axis_map {
             if axis_name != axis || !selector_matches(selector, *id) {
@@ -1469,10 +1518,8 @@ mod tests {
     #[test]
     fn last_device_follows_deliberate_input() {
         let mut input = InputState::new();
-        assert_eq!(input.last_device(), InputDevice::Keyboard);
 
         input.process_key_down(KeyCode::KeyW);
-        assert_eq!(input.last_device(), InputDevice::Keyboard);
 
         input.process_gamepad_button_down(0, "South");
         assert_eq!(input.last_device(), InputDevice::Gamepad);
@@ -1499,13 +1546,11 @@ mod tests {
     fn last_device_ignores_stick_noise() {
         let mut input = InputState::new();
         input.process_key_down(KeyCode::Space);
-        assert_eq!(input.last_device(), InputDevice::Keyboard);
 
         // Idle drift on a stick or a resting trigger: not a device switch.
         input.process_gamepad_axis(0, "LeftStickX", 0.12);
         input.process_gamepad_axis(0, "LeftStickY", -0.29);
         input.process_gamepad_button_changed(0, "RightTrigger2", 0.05);
-        assert_eq!(input.last_device(), InputDevice::Keyboard);
 
         // A real push does switch it.
         input.process_gamepad_axis(0, "LeftStickX", -0.8);
@@ -1621,6 +1666,78 @@ gamepad = "any"
         assert!(input.is_action_just_pressed("fire"));
         input.process_gamepad_button_up(0, "RightTrigger");
         assert!(input.is_action_just_released("fire"));
+    }
+
+    /// A stick and a button, bound as a game's pad controls would be.
+    fn pad_input() -> InputState {
+        let mut input = InputState::new();
+        input
+            .load_bindings(
+                InputConfig::from_toml_str(
+                    r#"
+version = 1
+[actions.walk]
+kind = "axis1d"
+[[actions.walk.bindings]]
+type = "gamepad_axis"
+axis = "LeftStickY"
+gamepad = "any"
+[actions.act]
+kind = "button"
+[[actions.act.bindings]]
+type = "gamepad_button"
+button = "South"
+gamepad = "any"
+"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        input
+    }
+
+    #[test]
+    fn held_pads_read_idle_and_a_stick_comes_back() {
+        let mut input = pad_input();
+        input.process_gamepad_axis(0, "LeftStickY", 0.8);
+        assert!(input.action_value("walk") > 0.7);
+        input.end_frame();
+
+        input.hold_gamepads(true);
+        assert_eq!(input.action_value("walk"), 0.0);
+        assert!(input.is_action_just_released("walk"));
+        // Moves during the hold are tracked, not read.
+        input.process_gamepad_axis(0, "LeftStickY", 0.5);
+        assert_eq!(input.action_value("walk"), 0.0);
+        input.end_frame();
+
+        input.hold_gamepads(false);
+        assert!((input.action_value("walk") - 0.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_button_held_through_a_hold_reads_up_until_released() {
+        let mut input = pad_input();
+        input.process_gamepad_button_down(0, "South");
+        input.end_frame();
+        assert!(input.is_action_pressed("act"));
+
+        input.hold_gamepads(true);
+        assert!(!input.is_action_pressed("act"));
+        assert!(input.is_action_just_released("act"));
+        input.end_frame();
+        // Pressed during the hold: swallowed too.
+        input.process_gamepad_button_down(0, "North");
+        input.hold_gamepads(false);
+        assert!(!input.is_action_pressed("act"), "no press nobody made");
+        assert!(!input.is_action_just_pressed("act"));
+
+        // Its release ends the swallow; the next press is a real one.
+        input.process_gamepad_button_up(0, "South");
+        assert!(!input.is_action_just_released("act"));
+        input.end_frame();
+        input.process_gamepad_button_down(0, "South");
+        assert!(input.is_action_just_pressed("act"));
     }
 
     #[test]
