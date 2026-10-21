@@ -36,6 +36,9 @@ struct MaterialUniforms {
     // with its light unchanged.
     glow_surface: f32,
     _pad_e2: u32,
+    // Multiplies the vertex colour, as surface and as per-vertex light
+    // (ADR 0102: the entity's `material.vertex_tint_*`). w is unused.
+    vertex_tint: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -500,7 +503,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (dm == 4u) {
         var col: vec3<f32>;
         if (material.use_vertex_color == 1u) {
-            col = in.color.rgb;
+            col = in.color.rgb * material.vertex_tint.rgb;
         } else {
             col = material.base_color.rgb;
         }
@@ -521,7 +524,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var albedo: vec3<f32>;
     var alpha: f32;
     if (material.use_vertex_color == 1u) {
-        albedo = in.color.rgb;
+        albedo = in.color.rgb * material.vertex_tint.rgb;
         alpha = in.color.a;
     } else {
         albedo = material.base_color.rgb;
@@ -530,14 +533,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Emission (ADR 0076). Per-vertex: alpha 1 is lit surface, 0 is pure
     // light giving off its rgb; vertex alpha is no longer opacity.
-    // `glow_surface` (ADR 0096) lights the light part as surface too.
+    // `glow_surface` (ADR 0096) lights the light part as surface too, and
+    // `vertex_tint` (ADR 0102) colours its light as it does the surface.
     var emission = material.emissive.rgb;
     if (material.has_emissive_tex == 1u) {
         emission *= textureSample(emissive_texture, emissive_sampler, scaled_uv).rgb;
     }
     if (material.use_vertex_color == 1u && material.vertex_emission == 1u) {
         let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
-        emission += in.color.rgb * glow * material.emissive.w;
+        emission += in.color.rgb * material.vertex_tint.rgb * glow * material.emissive.w;
         albedo = albedo * (1.0 - glow * (1.0 - material.glow_surface));
         alpha = 1.0;
     }

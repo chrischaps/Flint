@@ -84,6 +84,10 @@ pub struct MaterialUniforms {
     /// are set apart. 0 is the mesh as uploaded.
     pub glow_surface: f32,
     pub _pad_emissive: u32,
+    /// Multiplies every vertex colour, `rgb` only, as surface and as
+    /// per-vertex light (ADR 0102: the entity's `material.vertex_tint_*`).
+    /// White is the mesh as uploaded. Unused without `use_vertex_color`.
+    pub vertex_tint: [f32; 4],
 }
 
 impl MaterialUniforms {
@@ -108,6 +112,7 @@ impl MaterialUniforms {
             vertex_emission: 0,
             glow_surface: 0.0,
             _pad_emissive: 0,
+            vertex_tint: [1.0; 4],
         }
     }
 
@@ -132,6 +137,7 @@ impl MaterialUniforms {
             vertex_emission: 0,
             glow_surface: 0.0,
             _pad_emissive: 0,
+            vertex_tint: [1.0; 4],
         }
     }
 

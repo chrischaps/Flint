@@ -9,5 +9,8 @@ opacity = { type = "float", description = "Opacity 0.0-1.0", default = 1.0 }
 blend_mode = { type = "string", description = "Blend mode: alpha, additive, multiply", default = "alpha" }
 emissive_scale = { type = "float", description = "Multiplies the mesh's emission (its own and per-vertex), read every frame. 1 = as uploaded, 0 = no light. Imported and runtime meshes; inherited from the parent.", default = 1.0 }
 glow_surface = { type = "float", description = "How much of each per-vertex light part is also lit surface, 0.0-1.0, read every frame. Its light is unchanged (emissive_scale sets that). 0 = as uploaded. Inherited from the parent.", default = 0.0 }
+vertex_tint_r = { type = "float", description = "Red of the tint a vertex-coloured mesh's colours are multiplied by, surface and per-vertex light alike, read every frame. Set all three or none; none = white, the mesh as uploaded. Imported and runtime meshes; inherited from the parent." }
+vertex_tint_g = { type = "float", description = "Green of the vertex tint (see vertex_tint_r)." }
+vertex_tint_b = { type = "float", description = "Blue of the vertex tint (see vertex_tint_r)." }
 cast_shadows = { type = "bool", description = "Whether the mesh casts shadows, read every frame. false keeps it out of the shadow map, opaque or transparent. Imported, runtime, skinned and procedural meshes; inherited from the parent.", default = true }
 texture_scale = { type = "float", description = "UV multiplier for texture tiling. Default 1.0. Values < 1 make textures appear larger.", default = 1.0 }
