@@ -215,11 +215,12 @@ mod tests {
         // (render_mode/mode_mix/mode_time/pad + mode_params vec4) were
         // appended after inv_view_proj (224); the color-grade rows
         // (lift+enabled / gamma+pad / gain+pad, ADR 0050) grew it to 272,
-        // with film grain reusing the former _pad slot. Any other size means
-        // the Rust struct and the WGSL mirror have diverged.
+        // with film grain reusing the former _pad slot; the fog rows (aerial
+        // tint, height fog density, ADR 0101) grew it to 304. Any other size
+        // means the Rust struct and the WGSL mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 272, "PostProcessUniforms size changed");
+        assert_eq!(size, 304, "PostProcessUniforms size changed");
     }
 
     #[test]

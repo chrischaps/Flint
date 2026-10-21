@@ -123,6 +123,11 @@ fxaa = false
 | `fog_height_enabled` | bool | `false` | Height-based fog |
 | `fog_height_falloff` | f32 | `0.1` | How quickly height fog thins with altitude |
 | `fog_height_origin` | f32 | `0.0` | World Y where height fog is densest |
+| `fog_height_density` | f32 | `0.0` | Height fog's density at its origin; 0 adds none (ADR 0101) |
+| `fog_tint_color` | `[f32; 3]` | `[0.42, 0.50, 0.65]` | Aerial tint colour (ADR 0101) |
+| `fog_tint_strength` | f32 | `0.0` | How much tint the farthest things take; 0 is off |
+| `fog_tint_start` | f32 | `100.0` | Distance at which the tint comes in |
+| `fog_tint_end` | f32 | `1000.0` | Distance at which it reaches full strength |
 | `dither_enabled` | bool | `false` | Ordered dither |
 | `dither_intensity` | f32 | `0.03` | Dither strength |
 | `volumetric_enabled` | bool | `false` | Volumetric light (god rays) |

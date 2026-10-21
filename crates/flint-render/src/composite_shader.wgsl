@@ -58,6 +58,15 @@ struct PostProcessUniforms {
     _pad3: f32,
     grade_gain: vec3<f32>,
     _pad4: f32,
+    // Aerial tint and height fog density (ADR 0101), two appended rows.
+    // fog_tint_strength 0 = no tint; fog_tint_end is kept > fog_tint_start
+    // on the CPU so smoothstep is defined.
+    fog_tint_color: vec3<f32>,
+    fog_tint_strength: f32,
+    fog_tint_start: f32,
+    fog_tint_end: f32,
+    fog_height_density: f32,
+    _pad5: f32,
 };
 
 @group(0) @binding(0)
@@ -160,12 +169,35 @@ fn coc_at(uv: vec2<f32>) -> f32 {
         * params.dof_strength;
 }
 
-// Compute fog factor from depth buffer
-fn compute_fog(uv: vec2<f32>) -> f32 {
+// Height fog's optical depth along the view ray to `world_pos`, `dist`
+// away (ADR 0101). The density is fog_height_density at
+// fog_height_origin and falls by e every 1/fog_height_falloff metres
+// above it (rising below it), integrated exactly along the ray:
+//   density_at_eye * dist * (1 - e^-x) / x,  x = falloff * (p.y - eye.y)
+// Unlike the distance fog it isn't held off by fog_start: it's a layer of
+// air, and lies round the camera too. The exponents are clamped so a
+// camera or a ray deep under the origin stays finite (it's fully fogged
+// there anyway).
+fn height_fog_depth(world_pos: vec3<f32>, dist: f32) -> f32 {
+    let k = max(params.fog_height_falloff, 1e-5);
+    let eye = min(-k * (params.camera_pos.y - params.fog_height_origin), 30.0);
+    let at_eye = params.fog_height_density * exp(eye);
+    let x = max(k * (world_pos.y - params.camera_pos.y), -30.0);
+    // The share of the eye's density the ray averages; 1 - x/2 near level.
+    var share = 1.0 - 0.5 * x;
+    if (abs(x) > 1e-3) {
+        share = (1.0 - exp(-x)) / x;
+    }
+    return at_eye * dist * share;
+}
+
+// Fog at a UV from the depth buffer: x = the fog's share (0..1), y = the
+// aerial tint's share (0..fog_tint_strength), both 0 for the sky.
+fn compute_fog(uv: vec2<f32>) -> vec2<f32> {
     let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
     // Skip the sky; everything drawn is fogged, however far
     if (is_sky_depth(depth)) {
-        return 0.0;
+        return vec2<f32>(0.0, 0.0);
     }
 
     let world_pos = world_pos_from_depth(uv, depth);
@@ -173,18 +205,22 @@ fn compute_fog(uv: vec2<f32>) -> f32 {
 
     // Exponential distance fog with start offset
     let dist_factor = max(dist - params.fog_start, 0.0);
-    let dist_fog = 1.0 - exp(-params.fog_density * dist_factor);
+    var fog = 1.0 - exp(-params.fog_density * dist_factor);
 
-    // Height fog (exponential falloff above fog_height_origin)
-    var height_fog = 0.0;
+    // Height fog adds its optical depth to the distance fog's (ADR 0101)
     if (params.fog_height_enabled > 0.5) {
-        let height_above = max(world_pos.y - params.fog_height_origin, 0.0);
-        height_fog = exp(-params.fog_height_falloff * height_above);
-        // Modulate by distance so nearby objects aren't fully fogged
-        height_fog = height_fog * dist_fog;
+        let optical = params.fog_density * dist_factor + height_fog_depth(world_pos, dist);
+        fog = 1.0 - exp(-min(optical, 80.0));
     }
 
-    return clamp(max(dist_fog, height_fog), 0.0, 1.0);
+    // Aerial tint: far things take fog_tint_color over a distance ramp
+    var tint = 0.0;
+    if (params.fog_tint_strength > 0.0) {
+        tint = params.fog_tint_strength
+            * smoothstep(params.fog_tint_start, params.fog_tint_end, dist);
+    }
+
+    return vec2<f32>(clamp(fog, 0.0, 1.0), tint);
 }
 
 // 8x8 Bayer ordered dither matrix — returns value in [0, 1)
@@ -569,9 +605,14 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     color = color + bloom * params.bloom_intensity;
 
     // ── Fog (applied in linear HDR space, before tonemapping) ──
+    // The aerial tint lies under the fog, so the farthest things still run
+    // into fog_color, and with it the sky's horizon (ADR 0101).
     if (params.fog_enabled > 0.5) {
-        let fog_factor = compute_fog(uv);
-        color = mix(color, params.fog_color, fog_factor);
+        let fog = compute_fog(uv);
+        if (fog.y > 0.0) {
+            color = mix(color, params.fog_tint_color, fog.y);
+        }
+        color = mix(color, params.fog_color, fog.x);
     }
 
     // ── Exposure → Tonemapping ──
