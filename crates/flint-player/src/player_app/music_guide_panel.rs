@@ -91,9 +91,9 @@ fn stick_pad(ui: &mut egui::Ui, label: &str, actual: [f32; 2], target: Option<[f
         painter.rect_stroke(
             rect.shrink(1.0),
             2.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+            egui::Stroke::new(1.0f32, egui::Color32::from_gray(90)),
         );
-        let cross = egui::Stroke::new(0.5, egui::Color32::from_gray(60));
+        let cross = egui::Stroke::new(0.5f32, egui::Color32::from_gray(60));
         painter.line_segment(
             [
                 egui::pos2(rect.left(), center.y),
@@ -112,7 +112,7 @@ fn stick_pad(ui: &mut egui::Ui, label: &str, actual: [f32; 2], target: Option<[f
             painter.circle_stroke(
                 to_screen(t),
                 5.0,
-                egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 120)),
+                egui::Stroke::new(1.5f32, egui::Color32::from_rgb(255, 200, 120)),
             );
         }
         painter.circle_filled(
@@ -132,7 +132,7 @@ fn trigger_bar(ui: &mut egui::Ui, label: &str, actual: f32, target: Option<f64>)
         painter.rect_stroke(
             rect,
             2.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
+            egui::Stroke::new(1.0f32, egui::Color32::from_gray(90)),
         );
         let fill = egui::Rect::from_min_size(
             rect.min,
@@ -147,7 +147,7 @@ fn trigger_bar(ui: &mut egui::Ui, label: &str, actual: f32, target: Option<f64>)
             let x = rect.left() + rect.width() * (t.clamp(0.0, 1.0) as f32);
             painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 120)),
+                egui::Stroke::new(2.0f32, egui::Color32::from_rgb(255, 200, 120)),
             );
         }
         ui.label(

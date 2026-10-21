@@ -2169,7 +2169,7 @@ impl PreviewApp {
                                                 egui::pos2(rect.left() + pad, rect.top() + 1.0),
                                                 egui::pos2(rect.right() - pad, rect.top() + 1.0),
                                             ],
-                                            egui::Stroke::new(1.0, egui::Color32::from_gray(70)),
+                                            egui::Stroke::new(1.0f32, egui::Color32::from_gray(70)),
                                         );
                                         let hover = resp.hover_pos();
                                         let mut hover_label: Option<String> = None;
@@ -2185,7 +2185,7 @@ impl PreviewApp {
                                                     egui::pos2(x, rect.top()),
                                                     egui::pos2(x, rect.top() + 10.0),
                                                 ],
-                                                egui::Stroke::new(2.0, col),
+                                                egui::Stroke::new(2.0f32, col),
                                             );
                                             // Alternate label rows so neighbours don't collide
                                             let row = (i % 2) as f32;
@@ -2212,7 +2212,7 @@ impl PreviewApp {
                                                 egui::pos2(px, rect.top() - 2.0),
                                                 egui::pos2(px, rect.bottom()),
                                             ],
-                                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                                            egui::Stroke::new(1.0f32, egui::Color32::WHITE),
                                         );
                                         if let Some(label) = hover_label {
                                             resp.clone().on_hover_text(label);

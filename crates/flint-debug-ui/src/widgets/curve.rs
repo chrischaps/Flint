@@ -121,11 +121,11 @@ impl<'a> CurveEditor<'a> {
             let y = inner.top() + f * inner.height();
             painter.line_segment(
                 [Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())],
-                Stroke::new(1.0, grid),
+                Stroke::new(1.0f32, grid),
             );
             painter.line_segment(
                 [Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)],
-                Stroke::new(1.0, grid),
+                Stroke::new(1.0f32, grid),
             );
         }
 
@@ -140,7 +140,7 @@ impl<'a> CurveEditor<'a> {
             };
             pts.push(to_screen(t, v));
         }
-        painter.add(egui::Shape::line(pts, Stroke::new(2.0, accent)));
+        painter.add(egui::Shape::line(pts, Stroke::new(2.0f32, accent)));
 
         // Keys, with interaction
         let pointer = response.hover_pos();
@@ -222,7 +222,7 @@ impl<'a> CurveEditor<'a> {
             let is_active = active == Some(i) || hovered == Some(i);
             let fill = if is_active { Color32::WHITE } else { accent };
             painter.circle_filled(p, KEY_RADIUS, fill);
-            painter.circle_stroke(p, KEY_RADIUS, Stroke::new(1.0, visuals.extreme_bg_color));
+            painter.circle_stroke(p, KEY_RADIUS, Stroke::new(1.0f32, visuals.extreme_bg_color));
         }
 
         if let Some(h) = hovered {
@@ -350,7 +350,7 @@ impl<'a> GradientEditor<'a> {
             );
             painter.rect_filled(r, 0.0, col);
         }
-        painter.rect_stroke(bar, 3.0, Stroke::new(1.0, ui.visuals().weak_text_color()));
+        painter.rect_stroke(bar, 3.0, Stroke::new(1.0f32, ui.visuals().weak_text_color()));
 
         // Handles
         let pointer = response.hover_pos();
@@ -435,7 +435,7 @@ impl<'a> GradientEditor<'a> {
             painter.add(egui::Shape::convex_polygon(
                 tri,
                 fill,
-                Stroke::new(1.0, outline),
+                Stroke::new(1.0f32, outline),
             ));
         }
 
