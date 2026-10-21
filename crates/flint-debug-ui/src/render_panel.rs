@@ -210,6 +210,16 @@ impl RenderDebugPanel {
                 0.0..=1.0,
             );
             f.pp_changed |= drag(ui, "Height origin", &mut self.pp.fog_height_origin, 0.25);
+            f.pp_changed |= slider_log(
+                ui,
+                "Height density",
+                &mut self.pp.fog_height_density,
+                0.0..=0.5,
+            );
+            f.pp_changed |= color_row(ui, "Tint color", &mut self.pp.fog_tint_color);
+            f.pp_changed |= slider(ui, "Tint strength", &mut self.pp.fog_tint_strength, 0.0..=1.0);
+            f.pp_changed |= drag(ui, "Tint start", &mut self.pp.fog_tint_start, 1.0);
+            f.pp_changed |= drag(ui, "Tint end", &mut self.pp.fog_tint_end, 1.0);
         });
 
         section(ui, "Bloom", false, |ui| {

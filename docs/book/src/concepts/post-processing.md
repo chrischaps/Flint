@@ -84,18 +84,27 @@ In the scene viewer, the Rendering & Effects menu offers **DoF follow**: the foc
 
 ## Fog
 
-Distance-based fog blends a configurable fog color into the scene based on pixel depth. Height-based falloff can be layered on top so fog is thicker near the ground and thins out at higher elevations. Fog is applied in linear HDR space, before tonemapping.
+Distance-based fog blends a configurable fog color into the scene based on pixel depth. A layer of height fog can be added to it, thick low down and thinning with altitude, and an aerial tint can turn far things toward a second colour. Fog is applied in linear HDR space, before tonemapping.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `fog_enabled` | bool | `false` | Enable distance fog |
+| `fog_enabled` | bool | `false` | Enable distance fog (and the height fog and tint below) |
 | `fog_color` | [f32; 3] | `[0.7, 0.75, 0.82]` | Fog color (linear RGB) |
 | `fog_density` | f32 | `0.02` | Exponential density factor |
 | `fog_start` | f32 | `5.0` | Distance where fog begins |
 | `fog_end` | f32 | `100.0` | Distance where fog reaches full opacity |
-| `fog_height_enabled` | bool | `false` | Enable height-based falloff |
-| `fog_height_falloff` | f32 | `0.1` | How quickly fog thins with altitude |
-| `fog_height_origin` | f32 | `0.0` | World Y where fog is thickest |
+| `fog_height_enabled` | bool | `false` | Add the height fog layer |
+| `fog_height_density` | f32 | `0.0` | Height fog's density at `fog_height_origin`; 0 adds none |
+| `fog_height_falloff` | f32 | `0.1` | How quickly height fog thins with altitude (density falls by e every `1/falloff` m) |
+| `fog_height_origin` | f32 | `0.0` | World Y where height fog has `fog_height_density` |
+| `fog_tint_color` | [f32; 3] | `[0.42, 0.50, 0.65]` | Aerial tint colour (linear RGB) |
+| `fog_tint_strength` | f32 | `0.0` | How much of the tint the farthest things take; 0 is off |
+| `fog_tint_start` | f32 | `100.0` | Distance where the tint starts to come in |
+| `fog_tint_end` | f32 | `1000.0` | Distance where it reaches `fog_tint_strength` |
+
+**Height fog** (ADR 0101) is a layer of air whose density is `fog_height_density` at `fog_height_origin` and falls exponentially above it (and rises below it). The composite integrates that density exactly along each view ray, from the camera to the pixel, and adds it to the distance fog's optical depth: `fog = 1 - exp(-(fog_density * max(d - fog_start, 0) + height_depth))`. So a view low in the layer goes milky at a short distance, a view across it from above sees only the hollows fill, and the layer lies round the camera too (it isn't held off by `fog_start`). The layer is one horizontal slab across the whole scene: mist that keeps to valleys at different heights still needs geometry or particles. Before ADR 0101, height fog took `max(distance fog, exp(-falloff × h) × distance fog)`, which is never more than the distance fog, so it did nothing on screen. `fog_height_density` defaults to 0, so a scene that turned height fog on then looks as it did.
+
+**The aerial tint** (ADR 0101) mixes `fog_tint_color` over each drawn pixel by `fog_tint_strength × smoothstep(fog_tint_start, fog_tint_end, d)`, before the fog is mixed in. Far land turns blue (aerial perspective), while the farthest of it still runs into `fog_color` and, with a fog the colour of the sky's horizon, into the sky with no line. Like the fog, the tint is light in the air, not a surface colour: keep it with the hour, darker at night, as you would `fog_color`. It leaves the sky alone.
 
 Fog reaches **everything drawn, at any distance** (ADR 0078). The sky and skybox never write depth and the scene clears it to exactly 1.0, so the composite treats a pixel as sky only when its depth is 1.0; any geometry inside the camera's far plane is fogged. Set `far` to what the scene draws, not larger. SSAO, volumetric lighting and depth of field use the same sky test. Before ADR 0078 the cut was depth ≥ 0.9999, which with a 1 m near plane is about 2.9 km at `far` = 4 km and never more than 10 km, so a ground running to the horizon ended in an unfogged band.
 
@@ -356,7 +365,7 @@ There are no longer per-effect function keys. ADR 0053 consolidated every render
 | Post chain | Post-processing on/off, exposure, vignette + intensity + smoothness, chromatic aberration, radial blur, desaturate. Player only: **Freeze script post overrides**, so a running script cannot fight your edits |
 | SSAO | Enabled, radius, intensity, bias, samples |
 | Depth of field | Strength, focus distance, focus range |
-| Fog | Enabled, color, density, start, end, height fog + falloff + origin |
+| Fog | Enabled, color, density, start, end, height fog + falloff + origin + density, tint color + strength + start + end |
 | Bloom | Enabled, intensity, threshold, soft threshold |
 | Grade / Grain / FXAA | Lift, gamma, gain, Neutral grade button, film grain, FXAA |
 | Kuwahara | Enabled, radius, sharpness, hardness, anisotropy |

@@ -49,6 +49,21 @@ pub struct PostProcessConfig {
     pub fog_height_enabled: bool,
     pub fog_height_falloff: f32,
     pub fog_height_origin: f32,
+    /// Height fog's density at `fog_height_origin` (ADR 0101). It falls by
+    /// e every `1 / fog_height_falloff` metres above the origin, and its
+    /// optical depth along each view ray adds to the distance fog's. 0 (the
+    /// default) adds nothing, so a scene that only turned height fog on
+    /// looks as it did when height fog did nothing.
+    pub fog_height_density: f32,
+    /// Aerial tint (ADR 0101): far things take `fog_tint_color` (linear),
+    /// up to `fog_tint_strength` (0 = off, the default), ramping in over
+    /// `fog_tint_start..fog_tint_end` metres from the camera. It lies under
+    /// the fog, so the farthest things still run into `fog_color`. Rides
+    /// `fog_enabled`, and leaves the sky alone.
+    pub fog_tint_color: [f32; 3],
+    pub fog_tint_strength: f32,
+    pub fog_tint_start: f32,
+    pub fog_tint_end: f32,
     pub dither_enabled: bool,
     pub dither_intensity: f32,
     pub volumetric_enabled: bool,
@@ -121,6 +136,11 @@ impl Default for PostProcessConfig {
             fog_height_enabled: false,
             fog_height_falloff: 0.1,
             fog_height_origin: 0.0,
+            fog_height_density: 0.0,
+            fog_tint_color: [0.42, 0.50, 0.65],
+            fog_tint_strength: 0.0,
+            fog_tint_start: 100.0,
+            fog_tint_end: 1000.0,
             dither_enabled: false,
             dither_intensity: 0.03,
             volumetric_enabled: false,
@@ -182,6 +202,11 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.fog_height_enabled = pp_def.fog_height_enabled;
     config.fog_height_falloff = pp_def.fog_height_falloff;
     config.fog_height_origin = pp_def.fog_height_origin;
+    config.fog_height_density = pp_def.fog_height_density;
+    config.fog_tint_color = pp_def.fog_tint_color;
+    config.fog_tint_strength = pp_def.fog_tint_strength;
+    config.fog_tint_start = pp_def.fog_tint_start;
+    config.fog_tint_end = pp_def.fog_tint_end;
     config.chromatic_aberration = pp_def.chromatic_aberration;
     config.radial_blur = pp_def.radial_blur;
     config.desaturate = pp_def.desaturate;
@@ -259,6 +284,13 @@ pub struct PostProcessUniforms {
     pub _pad3: f32,
     pub grade_gain: [f32; 3],
     pub _pad4: f32,
+    // Aerial tint and height fog density (ADR 0101) — two appended rows.
+    pub fog_tint_color: [f32; 3],
+    pub fog_tint_strength: f32,
+    pub fog_tint_start: f32,
+    pub fog_tint_end: f32,
+    pub fog_height_density: f32,
+    pub _pad5: f32,
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -2962,6 +2994,13 @@ impl PostProcessPipeline {
             _pad3: 0.0,
             grade_gain: config.grade_gain,
             _pad4: 0.0,
+            fog_tint_color: config.fog_tint_color,
+            fog_tint_strength: config.fog_tint_strength.max(0.0),
+            fog_tint_start: config.fog_tint_start,
+            // smoothstep needs start < end
+            fog_tint_end: config.fog_tint_end.max(config.fog_tint_start + 1e-3),
+            fog_height_density: config.fog_height_density.max(0.0),
+            _pad5: 0.0,
         };
 
         queue.write_buffer(
@@ -3295,10 +3334,12 @@ mod tests {
     /// at 112..176, DoF row (strength/focus/range/pad) at 176..192, mode
     /// scalars (render_mode/mode_mix/mode_time/pad) at 192..208, mode_params
     /// vec4 at 208..224, grade rows (lift+enabled / gamma+pad / gain+pad)
-    /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44).
+    /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44),
+    /// fog rows (tint color+strength / tint start+end+height density+pad)
+    /// at 272..304 (ADR 0101).
     #[test]
     fn composite_uniforms_match_wgsl_layout() {
-        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 272);
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 304);
         assert_eq!(std::mem::size_of::<PostProcessUniforms>() % 16, 0);
     }
 
@@ -3312,5 +3353,68 @@ mod tests {
         let mut warm = config.clone();
         warm.grade_gain = [1.05, 1.0, 0.95];
         assert!(warm.grade_active());
+    }
+
+    /// `height_fog_depth` in composite_shader.wgsl, line for line.
+    fn height_fog_depth(c: &PostProcessConfig, eye: [f32; 3], p: [f32; 3]) -> f32 {
+        let dist = (0..3).map(|i| (p[i] - eye[i]).powi(2)).sum::<f32>().sqrt();
+        let k = c.fog_height_falloff.max(1e-5);
+        let at_eye = c.fog_height_density * (-k * (eye[1] - c.fog_height_origin)).min(30.0).exp();
+        let x = (k * (p[1] - eye[1])).max(-30.0);
+        let share = if x.abs() > 1e-3 {
+            (1.0 - (-x).exp()) / x
+        } else {
+            1.0 - 0.5 * x
+        };
+        at_eye * dist * share
+    }
+
+    /// The closed form is the density integrated along the ray (ADR 0101):
+    /// level, climbing, falling and close to level.
+    #[test]
+    fn height_fog_is_its_density_along_the_ray() {
+        let c = PostProcessConfig {
+            fog_height_density: 0.02,
+            fog_height_falloff: 0.15,
+            fog_height_origin: 1.0,
+            ..PostProcessConfig::default()
+        };
+        let eye = [0.0, 6.0, 0.0];
+        let ends: [[f32; 3]; 4] = [
+            [300.0, 6.0, 0.0],
+            [80.0, 40.0, 30.0],
+            [50.0, -3.0, -20.0],
+            [200.0, 6.004, 0.0],
+        ];
+        for p in ends {
+            let steps = 20_000;
+            let dist = (0..3).map(|i| (p[i] - eye[i]).powi(2)).sum::<f32>().sqrt();
+            let density: f32 = (0..steps)
+                .map(|s| {
+                    let t = (s as f32 + 0.5) / steps as f32;
+                    let y = eye[1] + (p[1] - eye[1]) * t;
+                    (-c.fog_height_falloff * (y - c.fog_height_origin)).exp()
+                })
+                .sum::<f32>()
+                / steps as f32;
+            let numeric = c.fog_height_density * density * dist;
+            let closed = height_fog_depth(&c, eye, p);
+            assert!(
+                (closed - numeric).abs() < 1e-3 * numeric,
+                "{p:?}: {closed} vs {numeric}"
+            );
+        }
+        // Thicker toward the origin: the same ray, low and high.
+        let low = height_fog_depth(&c, [0.0, 1.5, 0.0], [100.0, 1.5, 0.0]);
+        let high = height_fog_depth(&c, [0.0, 30.0, 0.0], [100.0, 30.0, 0.0]);
+        assert!(low > 10.0 * high, "{low} vs {high}");
+        // Off by default: a scene that only turned height fog on adds
+        // nothing, and there's no tint.
+        let off = PostProcessConfig {
+            fog_height_falloff: 0.15,
+            ..PostProcessConfig::default()
+        };
+        assert_eq!(height_fog_depth(&off, eye, [300.0, 0.0, 0.0]), 0.0);
+        assert_eq!(off.fog_tint_strength, 0.0);
     }
 }
