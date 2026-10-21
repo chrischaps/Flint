@@ -78,7 +78,7 @@ parent = "main_hall"
 ```
 
 The ECS layer tracks these relationships, enabling:
-- Hierarchical transforms (child positions are relative to parent)
+- Hierarchical transforms (child positions are relative to parent). A parent with no `transform` is a bare group: it moves nothing, and its children are placed relative to the nearest ancestors above it that have one
 - Tree queries ("find all children of main_hall")
 - Cascading operations (deleting a parent removes children)
 
