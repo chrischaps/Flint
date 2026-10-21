@@ -142,6 +142,18 @@ Loading needs no audio device. Without one, `play` does nothing and returns `Ok`
 
 `ExtensionGpu::upload_mesh(name, vertices, indices, material)` creates or replaces a named mesh. `remove_mesh(name)` removes it. `ctx.attach_mesh(entity, name)` makes an entity draw it. A mesh can be rebuilt as often as its data changes, and the old GPU buffers are freed once the frame lets go of them. Vertex colours, culling and the `runtime = true` scene flag are covered in [Rendering: Runtime meshes](../concepts/rendering.md#runtime-meshes).
 
+`upload_mesh_with(name, vertices, indices, material, MeshOptions { ray_target: true })` uploads a mesh that rays meet too (ADR 0105): wherever an entity draws it, `ctx.rays` and scripts' `raycast_meshes` and `screen_to_mesh` find its triangles. `ctx.rays` is the scene as the last frame drew it:
+
+```rust
+gpu.upload_mesh_with("houses", &vertices, &indices, material, MeshOptions { ray_target: true });
+// ... a frame later, or in a script:
+if let Some(hit) = ctx.rays.segment(head, camera_wants) {
+    // a wall `hit.distance` from the head; come in to it
+}
+```
+
+An upload without the option, or `remove_mesh`, stops it being a target. The triangles are kept on the CPU under a bounding volume hierarchy, built at each upload, so make targets of what rays need to meet. Native functions reach the same scene through `Projector::ray_scene()`, and `Projector::screen_to_mesh(x, y)` picks under a screen point.
+
 ## Game UI with egui
 
 `ui()` draws into the same egui pass as the script HUD and the debug panels. Back to front, the order is:

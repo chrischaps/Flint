@@ -323,6 +323,22 @@ The `raycast()` function automatically excludes the calling entity's collider fr
 | `point_x`, `point_y`, `point_z` | `f64` | World-space hit position |
 | `normal_x`, `normal_y`, `normal_z` | `f64` | Surface normal at hit point |
 
+`raycast()` meets physics colliders. To meet what's drawn, the runtime meshes a host uploaded as ray targets (see [Rendering: Runtime meshes](rendering.md#runtime-meshes)), use `raycast_meshes` and `screen_to_mesh` (ADR 0105). They need no physics, meet the drawn triangles from either side, and answer with the same fields as `raycast()`, the normal turned back toward the ray's origin:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `raycast_meshes(ox, oy, oz, dx, dy, dz, max_dist)` | `Map` or `()` | The nearest ray target the ray meets within `max_dist` world units. `(dx, dy, dz)` needn't be unit length; `distance` is in world units |
+| `screen_to_mesh(x, y)` | `Map` or `()` | The nearest ray target under a screen point (e.g. the cursor), for picking a wall or a roof |
+
+They meet the targets where the last frame drew them. A camera rig that keeps out of walls casts from the player's head toward where it wants to stand, and comes in to the hit:
+
+```rust
+let d = [cx - hx, cy - hy, cz - hz];
+let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+let hit = raycast_meshes(hx, hy, hz, d[0], d[1], d[2], len);
+let clear = if hit == () { 1.0 } else { hit.distance / len };   // the share of the way that's open
+```
+
 **`move_character`** performs collision-corrected kinematic movement using Rapier's shape-sweep. The entity must have `rigidbody` and `collider` components. The returned map contains the corrected position and a `grounded` flag:
 
 ```rust
@@ -675,6 +691,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `find_nearest_interactable()` | `Map` or `()` | Nearest interactable entity info, or `()` if none in range |
 | `world_to_screen(x, y, z)` | `Map` | A world point in logical points as `#{x, y, depth, visible}`; `visible` is false behind the camera |
 | `screen_to_ground(x, y, plane_y)` | `[x, z]` or `()` | The point on the plane `y = plane_y` under a screen point, or `()` where the view doesn't reach it |
+| `screen_to_mesh(x, y)` | `Map` or `()` | The drawn ray target under a screen point, as `raycast_meshes` answers (see [Physics API](#physics-api)) |
 | `screen_to_heightfield(x, y)` | `[x, y, z]` or `()` | The game's ground under a screen point, where the ray first comes down onto the ground field the host registered, or `()` with none registered or where the ray misses it |
 | `ground_height(x, z)` | `f64` or `()` | World y of the registered ground field at (x, z), or `()` with none registered or off its edge |
 

@@ -192,6 +192,14 @@ impl ScriptSystem {
         Projector::new(self.engine.ctx.clone())
     }
 
+    /// The meshes drawn as ray targets (ADR 0105), which `raycast_meshes`,
+    /// `screen_to_mesh` and [`Projector::ray_scene`] cast against. The host
+    /// hands over the renderer's after each update, so scripts see where the
+    /// last frame drew them.
+    pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_core::ray_mesh::RayScene>) {
+        crate::lock_or_recover(&self.engine.ctx).ray_scene = scene;
+    }
+
     /// Drain commands produced by scripts this frame
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()

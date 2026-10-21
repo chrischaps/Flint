@@ -21,9 +21,14 @@
 //! point on a hill, where `screen_to_ground` would cut a plane at the wrong
 //! height, and [`Projector::ground_height`] reads it anywhere. Scripts get
 //! the same as `screen_to_heightfield(x, y)` and `ground_height(x, z)`.
+//!
+//! What the renderer draws as ray targets (ADR 0105) is here too:
+//! [`Projector::ray_scene`] to cast along any line, and
+//! [`Projector::screen_to_mesh`] for the drawn thing under a screen point.
 
 use std::sync::{Arc, Mutex};
 
+pub use flint_core::ray_mesh::{RayHit, RayScene};
 pub use flint_terrain::GroundField;
 
 use crate::context::ScriptCallContext;
@@ -86,6 +91,25 @@ impl Projector {
     /// registered, or off its edge.
     pub fn ground_height(&self, x: f32, z: f32) -> Option<f32> {
         self.ground()?.height_at(x, z)
+    }
+
+    /// The meshes drawn as ray targets, where the last frame drew them
+    /// (ADR 0105): cast through it from native code, as scripts'
+    /// `raycast_meshes` does. Take it once and cast as often as you like.
+    pub fn ray_scene(&self) -> Arc<RayScene> {
+        crate::lock_or_recover(&self.ctx).ray_scene.clone()
+    }
+
+    /// The nearest ray target drawn under the screen point (x, y): picking
+    /// against what's drawn rather than the ground (ADR 0105). `None` where
+    /// the ray meets none.
+    pub fn screen_to_mesh(&self, x: f32, y: f32) -> Option<RayHit> {
+        let (view, scene) = {
+            let c = crate::lock_or_recover(&self.ctx);
+            (View::of(&c), c.ray_scene.clone())
+        };
+        let (origin, dir) = view.screen_ray(x, y)?;
+        scene.cast(origin, dir, f32::INFINITY)
     }
 }
 
@@ -400,5 +424,67 @@ mod tests {
         let p = view.world_to_screen([4.0, 0.0, -3.0]).unwrap();
         let [x, z] = view.screen_to_ground(p.x, p.y, 0.0).unwrap();
         assert!((x - 4.0).abs() < 1e-3 && (z + 3.0).abs() < 1e-3, "{x} {z}");
+    }
+    /// A 2 m box standing on the origin, as a scene of one ray target.
+    fn a_box() -> std::sync::Arc<super::RayScene> {
+        let p: Vec<[f32; 3]> = (0..8)
+            .map(|k| {
+                [
+                    if k & 1 == 0 { -1.0 } else { 1.0 },
+                    if k & 2 == 0 { 0.0 } else { 2.0 },
+                    if k & 4 == 0 { -1.0 } else { 1.0 },
+                ]
+            })
+            .collect();
+        let quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+        let i: Vec<u32> = quads.iter().flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]]).collect();
+        let mut scene = super::RayScene::new();
+        let mesh = std::sync::Arc::new(flint_core::ray_mesh::RayMesh::new(&p, &i));
+        let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        scene.add(flint_core::EntityId::from_raw(42), mesh, identity);
+        std::sync::Arc::new(scene)
+    }
+
+    #[test]
+    fn a_click_picks_the_drawn_thing_under_it() {
+        let mut s = system();
+        let projector = s.projector();
+        assert!(projector.screen_to_mesh(640.0, 360.0).is_none(), "no scene yet");
+        s.set_ray_scene(a_box());
+        // The camera looks at the origin from (0, 10, 20), so mid-screen
+        // meets the box's top front edge region: its front face or its top.
+        let hit = projector.screen_to_mesh(640.0, 360.0).unwrap();
+        assert_eq!(hit.entity.raw(), 42);
+        let back = projector.view().world_to_screen(hit.point).unwrap();
+        assert!((back.x - 640.0).abs() < 0.01 && (back.y - 360.0).abs() < 0.01, "{back:?}");
+        // The top, (0, 2, 0), is met at its own point, facing up.
+        let top = projector.view().world_to_screen([0.0, 2.0, 0.0]).unwrap();
+        let hit = projector.screen_to_mesh(top.x, top.y).unwrap();
+        assert!((hit.point[1] - 2.0).abs() < 1e-3 && hit.normal[1] > 0.99, "{hit:?}");
+        // Off to the side the ray misses.
+        assert!(projector.screen_to_mesh(10.0, 10.0).is_none());
+    }
+
+    #[test]
+    fn scripts_cast_through_the_same_scene() {
+        let mut s = system();
+        s.set_ray_scene(a_box());
+        let engine = s.rhai_engine_mut();
+        let out: rhai::Map = engine
+            .eval("raycast_meshes(-5.0, 1.0, 0.0, 1.0, 0.0, 0.0, 100.0)")
+            .unwrap();
+        assert_eq!(out["entity"].as_int().unwrap(), 42);
+        assert_eq!(out["distance"].as_float().unwrap(), 4.0);
+        assert_eq!(out["point_x"].as_float().unwrap(), -1.0);
+        assert_eq!(out["normal_x"].as_float().unwrap(), -1.0);
+        for missed in [
+            "raycast_meshes(-5.0, 1.0, 0.0, 1.0, 0.0, 0.0, 3.0)",
+            "raycast_meshes(-5.0, 3.0, 0.0, 1.0, 0.0, 0.0, 100.0)",
+            "screen_to_mesh(10.0, 10.0)",
+        ] {
+            assert!(engine.eval::<rhai::Dynamic>(missed).unwrap().is_unit(), "{missed}");
+        }
+        let picked: rhai::Map = engine.eval("screen_to_mesh(640.0, 360.0)").unwrap();
+        assert_eq!(picked["entity"].as_int().unwrap(), 42);
     }
 }

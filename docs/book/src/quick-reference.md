@@ -320,6 +320,7 @@ position = [0, 0, 0]
 | `fade_anim_layer(id, idx, w, secs)` | --- | Ramp a layer's weight over `secs` |
 | `play_sequence(id, name)` / `stop_sequence(id)` | --- | Drive the animator from `animations/*.sequence.toml` (cues → `on_sequence_cue`) |
 | `raycast(ox,oy,oz, dx,dy,dz, dist)` | `Map`/`()` | Cast a ray, get hit info |
+| `raycast_meshes(ox,oy,oz, dx,dy,dz, dist)` / `screen_to_mesh(x, y)` | `Map`/`()` | The same against the meshes drawn as ray targets, no physics needed: a wall in the camera's way, the roof under the cursor (ADR 0105) |
 | `move_character(id, dx, dy, dz)` | `#{x,y,z,grounded}` | Collision-corrected movement |
 | `spawn_entity(name)` | `i64` | Create a new entity |
 | `load_scene(path)` | --- | Transition to a new scene |
