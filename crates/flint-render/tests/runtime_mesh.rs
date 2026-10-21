@@ -603,6 +603,102 @@ fn glow_surface_slides_light_to_surface_after_upload() {
     assert!(close(painted, gpu.centre_pixel()), "surface vertices don't change");
 }
 
+/// `material.vertex_tint_*` (ADR 0102) multiplies a mesh's vertex colours
+/// every frame, its per-vertex light and its lit surface alike: white
+/// light uploaded once and tinted green draws as green light uploaded, and
+/// as green paint under `glow_surface`. The parent's tint reaches a child,
+/// the child's own wins, and a tint missing a channel is no tint.
+#[test]
+fn vertex_tint_colours_light_and_surface_after_upload() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let set = |world: &mut FlintWorld, name: &str, fields: &[(&str, f64)]| {
+        let id = world.get_id(name).unwrap();
+        let mut material = toml::Table::new();
+        for (k, v) in fields {
+            material.insert((*k).into(), (*v).into());
+        }
+        world.set_component(id, "material", material.into()).unwrap();
+    };
+    let green = [("vertex_tint_r", 0.0), ("vertex_tint_g", 1.0), ("vertex_tint_b", 0.0)];
+    let material = |name: &str| ImportedMaterial {
+        roughness: 1.0,
+        metallic: 0.0,
+        vertex_emission: true,
+        ..ImportedMaterial::vertex_colored(name)
+    };
+    let (white, indices) = square(20.0, [0.25, 0.25, 0.25, 0.0]);
+    let (light, _) = square(20.0, [0.0, 0.25, 0.0, 0.0]);
+    let (paint, _) = square(20.0, [0.0, 0.25, 0.0, 1.0]);
+    renderer.load_procedural_mesh(&gpu.device, "lamp", &white, &indices, material("lamp"));
+    renderer.load_procedural_mesh(&gpu.device, "light", &light, &indices, material("light"));
+    renderer.load_procedural_mesh(&gpu.device, "paint", &paint, &indices, material("paint"));
+    // The sun off, as in the test above: the ambient is the only light.
+    let sun = world.spawn("sun").unwrap();
+    let mut off = toml::Table::new();
+    off.insert("type".into(), "directional".into());
+    off.insert("intensity".into(), 0.0.into());
+    world.set_component(sun, "light", off.into()).unwrap();
+    let shoot = |renderer: &mut SceneRenderer, world: &mut FlintWorld, mesh: &str| {
+        spawn(world, "shot", mesh, [0.0; 3]);
+        gpu.frame(renderer, world, &camera);
+        world.despawn(world.get_id("shot").unwrap()).unwrap();
+        gpu.centre_pixel()
+    };
+
+    // The references: green light, and green paint under the sky.
+    let green_light = shoot(&mut renderer, &mut world, "light");
+    assert!(green_light[1] > 100 && green_light[0] < 30, "light: {green_light:?}");
+    renderer.set_ambient([1.0; 3], [1.0; 3]);
+    let green_paint = shoot(&mut renderer, &mut world, "paint");
+    assert!(green_paint[1] > 20 && green_paint[0] < 10, "paint: {green_paint:?}");
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+
+    let parent = world.spawn("window").unwrap();
+    spawn(&mut world, "lamp", "lamp", [0.0; 3]);
+    world.set_parent(world.get_id("lamp").unwrap(), parent).unwrap();
+    gpu.frame(&mut renderer, &world, &camera);
+    let grey = gpu.centre_pixel();
+    assert!(grey[0] > 100 && grey[1] > 100, "untinted, it's white light: {grey:?}");
+
+    // Tinted, the white light is the green light.
+    set(&mut world, "lamp", &green);
+    gpu.frame(&mut renderer, &world, &camera);
+    let tinted = gpu.centre_pixel();
+    assert!(close(green_light, tinted), "tinted light: {tinted:?} vs {green_light:?}");
+
+    // And as paint, the green paint.
+    renderer.set_ambient([1.0; 3], [1.0; 3]);
+    let painted = [green.as_slice(), &[("glow_surface", 1.0), ("emissive_scale", 0.0)]].concat();
+    set(&mut world, "lamp", &painted);
+    gpu.frame(&mut renderer, &world, &camera);
+    let seen = gpu.centre_pixel();
+    assert!(close(green_paint, seen), "tinted paint: {seen:?} vs {green_paint:?}");
+    renderer.set_ambient([0.0; 3], [0.0; 3]);
+
+    // From the parent; the child's own tint wins.
+    set(&mut world, "lamp", &[]);
+    set(&mut world, "window", &green);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(green_light, gpu.centre_pixel()), "the parent's tint reaches the child");
+    set(&mut world, "lamp", &[("vertex_tint_r", 1.0), ("vertex_tint_g", 1.0), ("vertex_tint_b", 1.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(grey, gpu.centre_pixel()), "the child's own tint wins");
+
+    // A tint missing a channel is none: the parent's, then white.
+    set(&mut world, "lamp", &[("vertex_tint_r", 0.0)]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(green_light, gpu.centre_pixel()), "half a tint falls to the parent's");
+    set(&mut world, "window", &[]);
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(grey, gpu.centre_pixel()), "and with none, white");
+}
+
 /// An imported model's data maps are sampled as stored, whatever they're
 /// called (a glTF texture is often just `texture_<i>`): a metallic-roughness
 /// texel of 0.5 shades like factors of 0.5, not the 0.21 an sRGB decode

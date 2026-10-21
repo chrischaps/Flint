@@ -57,7 +57,7 @@ Two ECS components tint an imported model without touching the GLB:
 - `material.base_color_r/g/b[/a]` on the entity (or its direct parent) replaces the base colour of **every** primitive the entity draws. Scripts write it with `set_material_color`.
 - `material_overrides` maps glTF **material names** to colours: `Frame = [0.9, 0.3, 0.1]`, `Capsule = [0.2, 0.6, 1.0, 0.5]`. The renderer looks it up on the drawn entity and then on each ancestor, so a single component on a model's root entity recolours the matching materials on all of its expanded child nodes, including meshes that mix several materials. A three-component value keeps the material's own alpha. It takes precedence over `material.base_color_*` for the named material. Scripts write it with `set_material_override(id, name, r, g, b, a)`.
 
-Both are re-read whenever the renderer re-extracts the world (every frame in the player), so colour changes are live.
+Both are re-read whenever the renderer re-extracts the world (every frame in the player), so colour changes are live. A vertex-coloured mesh ignores both: tint it with `material.vertex_tint_*` ([Tinting vertex colours per entity](#tinting-vertex-colours-per-entity)).
 
 ### Runtime meshes
 
@@ -229,6 +229,22 @@ Upload the sliding faces as pure light (alpha 0) at the colour you want, once. T
 | 0 | 1.6 | light only, bright at night |
 
 A vertex of alpha `a` is lit as surface by `a + (1 − a) × glow_surface` of its colour and gives off `(1 − a)` of it times the strength, as before. It applies wherever per-vertex emission does, skinned or not, with the same inheritance from the parent as `emissive_scale`, and the same cost when it changes. Values are clamped to 0..1.
+
+#### Tinting vertex colours per entity
+
+**`material.vertex_tint_r/g/b`** (ADR 0102) multiplies every vertex colour of the entity's meshes, as surface and as per-vertex light alike, every frame. Leave it unset for white, the mesh as uploaded. Set all three or none. An entity with no tint of its own takes its parent's, as with `emissive_scale`, and a new tint costs the same. Negative values count as 0, and values over 1 brighten.
+
+It's separate from `material.base_color_*`, which a vertex-coloured mesh ignores: many meshes are uploaded with a material colour equal to their vertices', and multiplying the two would darken them. A glTF's `COLOR_0` isn't read yet (see the roadmap), so nothing imported changes either.
+
+With the two fields above, a face uploaded once as white light (alpha 0) can move in colour as well as in brightness. A window that's glass by day and lamp-coloured at night, with surface share `S` and light `R`, takes:
+
+| Field | Value |
+|---|---|
+| `vertex_tint_*` | `mix(glass, lamp, R / (S + R))` |
+| `glow_surface` | `S` |
+| `emissive_scale` | `R` |
+
+Its albedo is then the hue times `S` and its light the hue times `R`, the same as a vertex rebuilt every hour with that colour.
 
 ## Debug Visualization
 

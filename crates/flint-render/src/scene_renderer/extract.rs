@@ -69,6 +69,21 @@ impl SceneRenderer {
             .clamp(0.0, 1.0)
     }
 
+    /// ECS `material.vertex_tint_r/g/b` for a model entity (ADR 0102): what
+    /// its vertex colours are multiplied by, surface and per-vertex light
+    /// alike, read every frame and inherited like `emissive_scale`. All
+    /// three or none; white when neither sets one. Negatives count as 0.
+    pub(super) fn ecs_vertex_tint(world: &FlintWorld, entity_id: EntityId) -> [f32; 4] {
+        let read = |id: EntityId| {
+            let m = world.get_components(id)?.get(comp::MATERIAL)?;
+            let c = |k: &str| m.get(k).and_then(toml_f32).map(|v| v.max(0.0));
+            Some([c("vertex_tint_r")?, c("vertex_tint_g")?, c("vertex_tint_b")?, 1.0])
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .unwrap_or([1.0; 4])
+    }
+
     /// ECS `material.cast_shadows` for an entity (ADR 0100): false keeps
     /// its draws out of the shadow cascades, opaque, transparent and
     /// skinned alike. True when neither it nor its parent sets one, so a GLB
@@ -213,6 +228,7 @@ impl SceneRenderer {
             material_uniforms.set_emission(&gpu_mesh.material);
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
+            material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             let (transform_buffer, transform_bind_group) =
@@ -403,6 +419,7 @@ impl SceneRenderer {
             material_uniforms.set_emission(&gpu_mesh.material);
             material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
             material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
+            material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             // Read opacity and blend_mode from ECS material component
