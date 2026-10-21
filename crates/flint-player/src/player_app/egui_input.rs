@@ -167,7 +167,7 @@ fn egui_key(key: KeyCode) -> Option<egui::Key> {
 }
 
 /// The character a key types on a US layout.
-fn typed_char(key: KeyCode, shift: bool) -> Option<char> {
+pub(super) fn typed_char(key: KeyCode, shift: bool) -> Option<char> {
     let pick = |plain, shifted| Some(if shift { shifted } else { plain });
     let name = format!("{key:?}");
     let single = |s: &str| {

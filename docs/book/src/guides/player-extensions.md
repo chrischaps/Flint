@@ -60,6 +60,7 @@ fn main() -> anyhow::Result<()> {
 | `register_script_api(&mut rhai::Engine)` | Once, inside `add_extension` | Native functions and types for scripts |
 | `pre_update(&mut ExtensionCtx)` | Every frame, before the scripts' `on_update` | Writing the world, firing events, uploading meshes |
 | `on_window_event(&WindowEvent) -> bool` | Every window event that egui didn't take | Game input the scene's input config can't express |
+| `on_key(&KeyInput) -> bool` | Every key egui didn't take, real or from `--input-script` | Keys a capture should be able to press |
 | `ui(&egui::Context)` | Every frame, inside the player's egui pass | The game's own panels and windows |
 | `fonts(&mut egui::FontDefinitions)` | Whenever the player installs egui's fonts | Fonts the project's `fonts/` folder can't give |
 
@@ -164,6 +165,20 @@ Once any extension is installed, or any debug panel is open, every window event 
 - **Escape** in a focused text field unfocuses the field instead of quitting.
 
 Next, `on_window_event` offers each remaining event to the extensions in order. Returning `true` consumes it, and later extensions and the player don't see it. Only input events can be consumed. Lifecycle events such as `Resized`, `CloseRequested` and `RedrawRequested` always reach every extension and the player, whatever an extension returns.
+
+A key then goes to the same extension's `on_key`, unless its `on_window_event` took it. `KeyInput` holds the key's `KeyCode`, whether it went down or up, whether the OS is repeating it, the character it stands for (winit's `logical_key`, on the release too), the modifiers held, and whether `--input-script` pressed it. `pressed()` is a first press. A scripted key comes **only** to `on_key` (ADR 0103): winit's `KeyEvent` can't be built outside winit, so there is no `KeyboardInput` to show `on_window_event`. Read keys in `on_key`, then, and a capture can press them; handle each key in one hook or the other, not both. Keys winit can't name, and the synthetic presses it sends for keys held as the window gains focus, come only to `on_window_event`.
+
+```rust
+fn on_key(&mut self, key: &KeyInput) -> bool {
+    if key.character == Some("?") {
+        if key.pressed() {
+            self.help_open = !self.help_open;
+        }
+        return true; // the release too, so the game sees neither
+    }
+    false
+}
+```
 
 egui's verdicts come from the previous frame. A key pressed in the same frame as the click that focuses a field still reaches the game.
 

@@ -7,7 +7,9 @@ pub mod extension;
 mod player_app;
 pub mod spline_gen;
 
-pub use extension::{ExtensionAudio, ExtensionCtx, ExtensionGpu, PlayerExtension, SoundOptions};
+pub use extension::{
+    ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, PlayerExtension, SoundOptions,
+};
 pub use flint_audio::Bus;
 pub use flint_render::{
     river_points, GrassGround, GrassHeight, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex,
