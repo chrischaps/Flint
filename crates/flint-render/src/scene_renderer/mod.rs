@@ -77,6 +77,9 @@ pub(super) struct DrawCall {
     index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,
     is_wireframe: bool,
+    /// Whether the draw goes into the shadow cascades: the entity's
+    /// `material.cast_shadows`, true unless it says otherwise (ADR 0100).
+    casts_shadow: bool,
     transform_buffer: Arc<wgpu::Buffer>,
     transform_bind_group: Arc<wgpu::BindGroup>,
     material_buffer: Arc<wgpu::Buffer>, // kept alive for bind group
@@ -176,6 +179,8 @@ struct SkinnedDrawCall {
     entity_id: Option<flint_core::EntityId>,
     blend_mode: BlendMode,
     sort_depth: f32,
+    /// As [`DrawCall::casts_shadow`].
+    casts_shadow: bool,
 }
 
 /// Configuration for creating a SceneRenderer
@@ -2388,16 +2393,20 @@ impl SceneRenderer {
         // Grass: BLADE_INDEX_COUNT indices per instance
         triangles += self.grass_instance_count * BLADE_INDEX_COUNT / 3;
 
-        // Shadow stats: estimate as main pass × CASCADE_COUNT
+        // Shadow stats: estimate as main pass × CASCADE_COUNT, counting only
+        // the draws that cast (ADR 0100)
         let cascade_count = crate::shadow::CASCADE_COUNT as u32;
-        let shadow_entity_draws = entity_draws + skinned_draws + terrain_draws;
+        let casting = self.entity_draws.iter().filter(|d| d.casts_shadow);
+        let casting_skinned = self.skinned_entity_draws.iter().filter(|d| d.casts_shadow);
+        let shadow_entity_draws =
+            (casting.clone().count() + casting_skinned.clone().count()) as u32 + terrain_draws;
         let shadow_draw_calls = shadow_entity_draws * cascade_count;
         let shadow_triangles = {
             let mut t: u32 = 0;
-            for d in &self.entity_draws {
+            for d in casting {
                 t += d.index_count / 3;
             }
-            for d in &self.skinned_entity_draws {
+            for d in casting_skinned {
                 t += d.index_count / 3;
             }
             for d in &self.terrain_draws {
@@ -3003,6 +3012,7 @@ impl SceneRenderer {
             index_buffer: index_buffer.clone(),
             index_count,
             is_wireframe,
+            casts_shadow: true,
             transform_buffer: binds.transform_buffer.clone(),
             transform_bind_group: binds.transform_bind_group.clone(),
             material_buffer: binds.material_buffer.clone(),
@@ -3067,6 +3077,7 @@ impl SceneRenderer {
             index_buffer: Arc::new(index_buffer),
             index_count: mesh.indices.len() as u32,
             is_wireframe,
+            casts_shadow: true,
             transform_buffer: Arc::new(transform_buffer),
             transform_bind_group: Arc::new(transform_bind_group),
             material_buffer: Arc::new(material_buffer),
