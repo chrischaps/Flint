@@ -803,6 +803,11 @@ impl PlayerApp {
             return;
         }
         let mut fired_events = Vec::new();
+        let rays = self
+            .scene_renderer
+            .as_ref()
+            .map(|r| r.ray_scene())
+            .unwrap_or_default();
         for ext in &mut self.extensions {
             let gpu = match (&mut self.scene_renderer, &self.render_context) {
                 (Some(renderer), Some(context)) => Some(crate::extension::ExtensionGpu {
@@ -820,6 +825,7 @@ impl PlayerApp {
                 gpu,
                 persist: &mut self.persistent_store,
                 audio: crate::extension::ExtensionAudio::new(&mut self.audio),
+                rays: rays.clone(),
                 fired_events: &mut fired_events,
             };
             ext.pre_update(&mut ctx);
@@ -1253,6 +1259,8 @@ impl PlayerApp {
             };
             renderer.aspect_ratio = self.camera.aspect;
             renderer.update_from_world(&self.world, &context.device);
+            // Next frame's scripts cast against what this one draws (ADR 0105).
+            self.script.set_ray_scene(renderer.ray_scene());
         }
 
         // Pack (camera-sorted) and upload particle instances (ADR 0068)

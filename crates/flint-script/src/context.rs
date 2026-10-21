@@ -552,6 +552,10 @@ pub struct ScriptCallContext {
     /// The game's ground, for `screen_to_heightfield` and `ground_height`
     /// (ADR 0095). Set through `Projector::set_ground`; survives `clear()`.
     pub ground: Option<Arc<flint_terrain::GroundField>>,
+    /// The meshes drawn as ray targets, where the last frame drew them, for
+    /// `raycast_meshes` and `screen_to_mesh` (ADR 0105). Set by the host
+    /// after each render update (`ScriptSystem::set_ray_scene`).
+    pub ray_scene: Arc<flint_core::ray_mesh::RayScene>,
     /// Real text measurement, installed by the host once a text backend
     /// exists: `(text, size, font family, letter spacing) -> (width, height)`
     /// in logical points. `measure_text` falls back to a glyph-count
@@ -636,6 +640,7 @@ impl ScriptCallContext {
             data_cache: std::collections::HashMap::new(),
             terrain_height_fn: None,
             ground: None,
+            ray_scene: Arc::default(),
             text_measurer: None,
             camera_follow: CameraFollowState::default(),
             shake: ShakeState::default(),

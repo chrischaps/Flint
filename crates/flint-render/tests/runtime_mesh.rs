@@ -3,7 +3,8 @@
 //! Also how an imported model's textures are sampled (the same frame rig),
 //! a grass mask repainted in part after upload, and grass blades standing
 //! on the blend of their ground's heights, and a mesh kept out of the
-//! shadow map by `material.cast_shadows`.
+//! shadow map by `material.cast_shadows`. And meshes made ray targets,
+//! met where their entities draw them (ADR 0105).
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
@@ -1085,4 +1086,57 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
     set(&mut world, "sheet", &[("cast_shadows", true.into())]);
     gpu.frame(&mut renderer, &world, &camera);
     assert!(close(solid, gpu.centre_pixel()), "the child's own value wins");
+}
+
+#[test]
+fn a_ray_target_is_met_where_each_entity_draws_it() {
+    use flint_core::ray_mesh::RayMesh;
+    use std::sync::Arc;
+
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let mut world = FlintWorld::new();
+    spawn(&mut world, "near", "floor", [0.0, 1.0, 0.0]);
+    spawn(&mut world, "far", "floor", [0.0, 5.0, 0.0]);
+    spawn(&mut world, "other", "plain", [0.0, 3.0, 0.0]);
+    let camera = Camera::default();
+    let (vertices, indices) = square(1.0, [0.5, 0.5, 0.5, 1.0]);
+    let positions: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
+    let upload = |renderer: &mut SceneRenderer, name: &str| {
+        renderer.load_procedural_mesh(
+            &gpu.device,
+            name,
+            &vertices,
+            &indices,
+            ImportedMaterial::vertex_colored(name),
+        );
+    };
+    upload(&mut renderer, "floor");
+    upload(&mut renderer, "plain");
+    renderer.set_ray_mesh("floor", Some(Arc::new(RayMesh::new(&positions, &indices))));
+    assert!(renderer.ray_scene().is_empty(), "nothing placed before an update");
+    gpu.frame(&mut renderer, &world, &camera);
+
+    // Straight up from below: the floor at y = 1, not "plain" at 3.
+    let scene = renderer.ray_scene();
+    assert_eq!(scene.len(), 2);
+    let hit = scene.cast([0.0, 0.0, 0.0], [0.0, 1.0, 0.0], 100.0).unwrap();
+    assert_eq!(hit.entity, world.get_id("near").unwrap());
+    assert!((hit.distance - 1.0).abs() < 1e-5, "{hit:?}");
+    // From above, the higher one.
+    let hit = scene.cast([0.0, 9.0, 0.0], [0.0, -1.0, 0.0], 100.0).unwrap();
+    assert_eq!(hit.entity, world.get_id("far").unwrap());
+
+    // An upload without the flag, or a remove, ends it from the next update;
+    // a scene already taken keeps answering for its frame.
+    upload(&mut renderer, "floor");
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(renderer.ray_scene().is_empty());
+    assert_eq!(scene.len(), 2);
+    renderer.set_ray_mesh("floor", Some(Arc::new(RayMesh::new(&positions, &indices))));
+    gpu.frame(&mut renderer, &world, &camera);
+    assert_eq!(renderer.ray_scene().len(), 2);
+    assert!(renderer.remove_mesh("floor"));
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(renderer.ray_scene().is_empty());
 }

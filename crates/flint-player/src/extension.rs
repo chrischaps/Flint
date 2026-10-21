@@ -137,6 +137,11 @@ pub struct ExtensionCtx<'a> {
     /// The player's audio: play sounds, load sounds made in memory, and set
     /// the mixer buses (ADR 0084). See [`ExtensionAudio`].
     pub audio: ExtensionAudio<'a>,
+    /// The meshes uploaded as ray targets ([`MeshOptions::ray_target`]),
+    /// where the last frame drew them (ADR 0105): cast a ray or a segment
+    /// through it to find the first thing drawn along it. Empty until the
+    /// first frame is drawn. Scripts cast through the same scene.
+    pub rays: std::sync::Arc<flint_core::ray_mesh::RayScene>,
     /// Events fired with `fire_event`, queued for this frame's scripts.
     pub(crate) fired_events: &'a mut Vec<GameEvent>,
 }
@@ -366,6 +371,28 @@ impl ExtensionGpu<'_> {
             .load_procedural_mesh(self.device, name, vertices, indices, material);
     }
 
+    /// [`upload_mesh`](Self::upload_mesh), with [`MeshOptions`]: a mesh
+    /// uploaded with `ray_target` is met by rays cast through
+    /// [`ExtensionCtx::rays`] and by scripts' `raycast_meshes` and
+    /// `screen_to_mesh`, wherever an entity draws it (ADR 0105). An upload
+    /// without it, or [`remove_mesh`](Self::remove_mesh), stops it being one.
+    pub fn upload_mesh_with(
+        &mut self,
+        name: &str,
+        vertices: &[Vertex],
+        indices: &[u32],
+        material: ImportedMaterial,
+        options: MeshOptions,
+    ) {
+        self.upload_mesh(name, vertices, indices, material);
+        if options.ray_target {
+            let positions: Vec<[f32; 3]> = vertices.iter().map(|v| v.position).collect();
+            let mesh = flint_core::ray_mesh::RayMesh::new(&positions, indices);
+            self.renderer
+                .set_ray_mesh(name, Some(std::sync::Arc::new(mesh)));
+        }
+    }
+
     /// Remove the runtime mesh `name`; entities naming it draw nothing
     /// until it is uploaded again. Returns whether it existed.
     pub fn remove_mesh(&mut self, name: &str) -> bool {
@@ -449,6 +476,16 @@ impl ExtensionGpu<'_> {
     pub fn clear_water_bodies(&mut self) {
         self.renderer.clear_water_bodies();
     }
+}
+
+/// How a runtime mesh takes part beyond being drawn, for
+/// [`ExtensionGpu::upload_mesh_with`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MeshOptions {
+    /// Rays meet it (ADR 0105): the camera can keep out of it and a click
+    /// can pick it. Its triangles are kept on the CPU in a bounding volume
+    /// hierarchy, built at upload, so mark only what rays need to meet.
+    pub ray_target: bool,
 }
 
 /// Whether an extension may consume `event`. Lifecycle events must always

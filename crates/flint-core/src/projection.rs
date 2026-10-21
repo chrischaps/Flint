@@ -90,7 +90,7 @@ fn transform_point(m: &[[f64; 4]; 4], p: [f64; 3]) -> Option<[f64; 3]> {
 
 /// Inverse of a column-major 4x4, in `f64`, by Gauss-Jordan elimination with
 /// partial pivoting. `None` when the matrix is singular.
-fn mat4_inverse_f64(m: &[[f32; 4]; 4]) -> Option<[[f64; 4]; 4]> {
+pub(crate) fn mat4_inverse_f64(m: &[[f32; 4]; 4]) -> Option<[[f64; 4]; 4]> {
     // Row-major working copy [a | I].
     let mut a = [[0.0f64; 8]; 4];
     for (r, row) in a.iter_mut().enumerate() {

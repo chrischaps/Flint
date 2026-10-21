@@ -1723,6 +1723,21 @@ fn write_rotation_quat(comps: &mut flint_ecs::DynamicComponents, q: [f32; 4]) {
     );
 }
 
+/// A mesh ray's hit as scripts see it: the keys `raycast` answers with.
+fn ray_hit_dynamic(hit: Option<flint_core::ray_mesh::RayHit>) -> Dynamic {
+    let Some(hit) = hit else {
+        return Dynamic::UNIT;
+    };
+    let mut map = Map::new();
+    map.insert("entity".into(), Dynamic::from(hit.entity.raw() as i64));
+    map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+    for (k, axis) in ["x", "y", "z"].iter().enumerate() {
+        map.insert(format!("point_{axis}").into(), Dynamic::from(hit.point[k] as f64));
+        map.insert(format!("normal_{axis}").into(), Dynamic::from(hit.normal[k] as f64));
+    }
+    Dynamic::from(map)
+}
+
 fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // raycast(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
     {
@@ -2801,6 +2816,43 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                 Some(h) => Dynamic::from(h as f64),
                 None => Dynamic::UNIT,
             }
+        });
+    }
+
+    // raycast_meshes(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
+    // The nearest mesh drawn as a ray target (ADR 0105) that the ray from
+    // (ox, oy, oz) along (dx, dy, dz) meets within max_dist world units:
+    // #{ entity, distance, point_x/y/z, normal_x/y/z }, as `raycast` answers,
+    // with the normal facing back along the ray. () when it meets none. The
+    // meshes stand where the last frame drew them.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "raycast_meshes",
+            move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
+                let scene = crate::lock_or_recover(&ctx).ray_scene.clone();
+                let o = [ox as f32, oy as f32, oz as f32];
+                let d = [dx as f32, dy as f32, dz as f32];
+                ray_hit_dynamic(scene.cast(o, d, max_dist as f32))
+            },
+        );
+    }
+
+    // screen_to_mesh(x, y) -> Map or ()
+    // The nearest mesh drawn as a ray target under a screen point (ADR 0105),
+    // as raycast_meshes answers: picking what's drawn, a wall or a roof,
+    // rather than the ground. () where the ray meets none.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("screen_to_mesh", move |x: f64, y: f64| -> Dynamic {
+            let (view, scene) = {
+                let c = crate::lock_or_recover(&ctx);
+                (crate::projector::View::of(&c), c.ray_scene.clone())
+            };
+            ray_hit_dynamic(
+                view.screen_ray(x as f32, y as f32)
+                    .and_then(|(o, d)| scene.cast(o, d, f32::INFINITY)),
+            )
         });
     }
 

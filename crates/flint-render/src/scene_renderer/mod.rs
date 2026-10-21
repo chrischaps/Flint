@@ -236,6 +236,10 @@ pub struct SceneRenderer {
     box_mesh_cache: HashMap<u64, CachedBoxMesh>,
     /// Bumped once per `update_from_world`; stamps cache entries.
     extract_frame: u64,
+    /// Runtime meshes uploaded as ray targets, by name (ADR 0105).
+    ray_meshes: HashMap<String, Arc<flint_core::ray_mesh::RayMesh>>,
+    /// Where the ray targets stood at the last `update_from_world`.
+    ray_scene: Arc<flint_core::ray_mesh::RayScene>,
     grid_draw: Option<DrawCall>,
     entity_draws: Vec<DrawCall>,
     skinned_entity_draws: Vec<SkinnedDrawCall>,
@@ -517,6 +521,8 @@ impl SceneRenderer {
             draw_bind_cache: HashMap::new(),
             box_mesh_cache: HashMap::new(),
             extract_frame: 0,
+            ray_meshes: HashMap::new(),
+            ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -1980,6 +1986,8 @@ impl SceneRenderer {
             draw_bind_cache: HashMap::new(),
             box_mesh_cache: HashMap::new(),
             extract_frame: 0,
+            ray_meshes: HashMap::new(),
+            ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
@@ -2299,14 +2307,42 @@ impl SceneRenderer {
         indices: &[u32],
         material: flint_import::ImportedMaterial,
     ) {
+        self.ray_meshes.remove(name);
         self.mesh_cache
             .upload_procedural(device, name, vertices, indices, material);
+    }
+
+    /// Make the mesh `name` a ray target (ADR 0105): from the next
+    /// `update_from_world`, every entity drawing it places `mesh` in
+    /// [`ray_scene`](Self::ray_scene) at its world matrix. Build `mesh` from
+    /// the positions and indices the mesh was uploaded with. `None` stops it
+    /// being one. Uploading the mesh again, or removing it, also stops it,
+    /// so set it again after each upload.
+    pub fn set_ray_mesh(&mut self, name: &str, mesh: Option<Arc<flint_core::ray_mesh::RayMesh>>) {
+        match mesh {
+            Some(m) => {
+                self.ray_meshes.insert(name.to_string(), m);
+            }
+            None => {
+                self.ray_meshes.remove(name);
+            }
+        }
+    }
+
+    /// The ray targets as the last `update_from_world` found them: each
+    /// entity drawing a mesh made one with [`set_ray_mesh`](Self::set_ray_mesh),
+    /// at its world matrix (ADR 0105). Cast rays through it to find what's
+    /// drawn along a line. A new scene is made each update, so a clone held
+    /// across frames goes on answering for the frame it came from.
+    pub fn ray_scene(&self) -> Arc<flint_core::ray_mesh::RayScene> {
+        self.ray_scene.clone()
     }
 
     /// Remove the named mesh. Returns whether it existed. Entities still
     /// naming it in `model.asset` draw nothing (or their `bounds` box, if
     /// they have one) until a mesh with that name is uploaded again (ADR 0074).
     pub fn remove_mesh(&mut self, name: &str) -> bool {
+        self.ray_meshes.remove(name);
         self.mesh_cache.remove(name)
     }
 
@@ -2789,6 +2825,9 @@ impl SceneRenderer {
         let tex_cache = self.texture_cache.take();
         let tex_cache_ref = tex_cache.as_ref().unwrap();
 
+        // The ray targets, placed afresh (ADR 0105).
+        let mut ray_scene = flint_core::ray_mesh::RayScene::new();
+
         for entity in world.all_entities() {
             let archetype = entity.archetype.as_deref().unwrap_or("unknown");
             let visual =
@@ -2817,6 +2856,10 @@ impl SceneRenderer {
                 });
 
             if let Some(asset_name) = &model_asset {
+                if let Some(mesh) = self.ray_meshes.get(asset_name) {
+                    ray_scene.add(entity.id, mesh.clone(), model_matrix);
+                }
+
                 // Check for skinned meshes first
                 if self.extract_skinned_entity(
                     device,
@@ -2905,6 +2948,7 @@ impl SceneRenderer {
         // entities that changed shape/model).
         let frame = self.extract_frame;
         self.draw_bind_cache.retain(|_, c| c.touched == frame);
+        self.ray_scene = Arc::new(ray_scene);
 
         // Put texture cache back
         self.texture_cache = tex_cache;

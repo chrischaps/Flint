@@ -16,6 +16,7 @@ pub mod ik;
 pub mod ocean;
 pub mod projection;
 pub mod quat;
+pub mod ray_mesh;
 pub mod spline;
 pub mod toml_util;
 mod types;
