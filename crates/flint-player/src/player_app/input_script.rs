@@ -26,18 +26,21 @@
 //! 8.0   type   200 planks         # text into the focused egui field
 //! ```
 //!
-//! Pad and wheel write `InputState` directly. Keys, the pointer (`mouse`,
-//! `click` and mouse buttons) and typed text come back from
+//! The pad writes `InputState` directly. Keys, the pointer (`mouse`,
+//! `click`, mouse buttons and the wheel) and typed text come back from
 //! [`InputScript::apply`] as [`ScriptEvent`]s, which the player routes the
 //! way it routes a real keyboard and mouse: egui first, then `InputState`
 //! (ADR 0082 for the pointer, ADR 0097 for keys). So a scripted click can
-//! press an egui button, one over a panel stays out of the world, a held
-//! Shift reaches egui's modifiers, and a key typed into a focused field
-//! never reaches the game.
+//! press an egui button, one over a panel stays out of the world, a wheel
+//! over a panel scrolls it rather than the camera behind it, a held Shift
+//! reaches egui's modifiers, and a key typed into a focused field never
+//! reaches the game.
 
 use flint_runtime::{parse_key_code, InputState};
 use winit::dpi::PhysicalPosition;
-use winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
+use winit::event::{
+    DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
+};
 use winit::keyboard::{KeyCode, ModifiersState};
 
 /// Gamepad slot the script drives, away from slot 0 so a real pad plugged in
@@ -51,6 +54,8 @@ pub enum PointerEvent {
     Moved(f64, f64),
     Pressed(MouseButton),
     Released(MouseButton),
+    /// The wheel turned (x, y) lines: up and right are positive.
+    Wheel(f32, f32),
 }
 
 impl PointerEvent {
@@ -69,6 +74,11 @@ impl PointerEvent {
             },
             PointerEvent::Pressed(b) => button(ElementState::Pressed, b),
             PointerEvent::Released(b) => button(ElementState::Released, b),
+            PointerEvent::Wheel(x, y) => WindowEvent::MouseWheel {
+                device_id,
+                delta: MouseScrollDelta::LineDelta(x, y),
+                phase: TouchPhase::Moved,
+            },
         }
     }
 }
@@ -314,9 +324,10 @@ impl InputScript {
     /// as they would with a real hand on the keys and mouse:
     /// - a release of something pressed this same frame, so scripts always
     ///   see the press;
-    /// - a mouse button press in the frame the pointer jumped, so egui has
-    ///   seen the pointer over its panels before it decides who gets the
-    ///   click. A glide's steps don't hold a press back.
+    /// - a mouse button press or a wheel turn in the frame the pointer
+    ///   jumped, so egui has seen the pointer over its panels before it
+    ///   decides who gets the click or the scroll. A glide's steps don't
+    ///   hold them back.
     pub fn apply(&mut self, now: f64, input: &mut InputState) -> Applied {
         let mut out = Applied::default();
         let mut pressed_keys: Vec<KeyCode> = Vec::new();
@@ -362,7 +373,13 @@ impl InputScript {
                     }
                     input.process_gamepad_button_up(SCRIPT_PAD, b.clone());
                 }
-                Action::Wheel(dx, dy) => input.process_mouse_wheel(*dx, *dy),
+                Action::Wheel(dx, dy) => {
+                    if jumped {
+                        break;
+                    }
+                    out.events
+                        .push(ScriptEvent::Pointer(PointerEvent::Wheel(*dx, *dy)));
+                }
                 Action::Pointer(x, y, over) => {
                     if *over > 0.0 {
                         self.glide = Some(Glide {
@@ -437,17 +454,46 @@ mod tests {
     }
 
     #[test]
-    fn wheel_lasts_one_frame() {
+    fn wheel_is_a_pointer_event() {
         let mut s = InputScript::parse("1.0 wheel 2\n1.0 wheel -0.5 1.5\n").unwrap();
         let mut input = InputState::new();
-        s.apply(0.5, &mut input);
+        assert!(s.apply(0.5, &mut input).events.is_empty());
+        assert_eq!(
+            s.apply(1.0, &mut input).pointer(),
+            vec![
+                PointerEvent::Wheel(0.0, 2.0),
+                PointerEvent::Wheel(1.5, -0.5)
+            ]
+        );
+        // The player routes it: the script itself leaves `InputState` alone.
         assert_eq!(input.mouse_wheel_delta(), (0.0, 0.0));
-        s.apply(1.0, &mut input);
-        assert_eq!(input.mouse_wheel_delta(), (1.5, 1.5));
-        input.end_frame();
-        s.apply(1.1, &mut input);
-        assert_eq!(input.mouse_wheel_delta(), (0.0, 0.0));
+        assert!(s.apply(1.1, &mut input).events.is_empty());
         assert!(InputScript::parse("0 wheel up").is_err());
+    }
+
+    #[test]
+    fn a_wheel_waits_a_frame_after_a_jump() {
+        let mut s = InputScript::parse("1.0 mouse 300 200\n1.0 wheel -10\n").unwrap();
+        let mut input = InputState::new();
+        assert_eq!(
+            s.apply(1.0, &mut input).pointer(),
+            vec![Moved(300.0, 200.0)]
+        );
+        assert_eq!(
+            s.apply(1.1, &mut input).pointer(),
+            vec![PointerEvent::Wheel(0.0, -10.0)]
+        );
+    }
+
+    #[test]
+    fn a_wheel_is_a_real_wheel_event() {
+        match PointerEvent::Wheel(0.5, -2.0).to_window_event() {
+            WindowEvent::MouseWheel {
+                delta: MouseScrollDelta::LineDelta(x, y),
+                ..
+            } => assert_eq!((x, y), (0.5, -2.0)),
+            other => panic!("not a wheel: {other:?}"),
+        }
     }
 
     #[test]

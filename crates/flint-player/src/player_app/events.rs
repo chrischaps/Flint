@@ -764,6 +764,10 @@ impl PlayerApp {
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.process_mouse_move(position.x, position.y);
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = wheel_lines(delta);
+                self.input.process_mouse_wheel(dx, dy);
+            }
             _ => {}
         }
     }

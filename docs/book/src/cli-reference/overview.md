@@ -118,11 +118,13 @@ next one. A glide moves the pointer a little every frame, as a hand would.
 The mouse takes the path a real one does (ADR 0082): egui first, then game
 extensions, then `InputState` and scripts. So a scripted click can press an
 egui button, drag between egui widgets or open a tooltip, and a click over a
-panel stays out of the world. Two things wait a frame, however coarse the
-frames: a button press in the frame the pointer jumped (egui decides who gets
-a click from where the pointer was the frame before), and any release in the
-frame of its press. A `click` therefore takes three frames: move, press,
-release.
+panel stays out of the world. The wheel goes the same way: turned over a
+panel, it scrolls the panel (`wheel -10` scrolls a list down) and the game's
+`mouse_wheel_*()` reads zero, as with a real wheel. Two things wait a frame,
+however coarse the frames: a button press or a wheel turn in the frame the
+pointer jumped (egui decides who gets a click or a scroll from where the
+pointer was the frame before), and any release in the frame of its press. A
+`click` therefore takes three frames: move, press, release.
 
 Keys take the path a real keyboard does too (ADR 0097). egui gets each one
 as egui-winit would have made it, the key and, on a press, the character it
