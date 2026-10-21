@@ -12,7 +12,7 @@ use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_vec3};
 use flint_core::{
     euler_deg_to_quat, mat4_scale, mat4_to_rigid, quat_rotate_vec3, rigid_inverse_apply, EntityId,
-    Vec3,
+    Transform, Vec3,
 };
 use flint_ecs::{DynamicComponents, FlintWorld};
 use rapier3d::na;
@@ -268,10 +268,16 @@ impl PhysicsSync {
                 }
                 return Some(mat);
             }
-            locals.push(world.get_transform(cur)?.to_matrix());
+            // A bare ancestor (no transform) is a grouping node: identity.
+            locals.push(
+                world
+                    .get_transform(cur)
+                    .unwrap_or(Transform::IDENTITY)
+                    .to_matrix(),
+            );
             match world.get_parent(cur) {
                 Some(p) => cur = p,
-                None => return world.get_world_matrix(parent),
+                None => return Some(world.get_frame_matrix(parent)),
             }
         }
     }
@@ -1260,6 +1266,35 @@ mod tests {
             (wp.x - 10.0).abs() < 1e-4,
             "world x keeps parent offset: {wp:?}"
         );
+    }
+
+    #[test]
+    fn child_under_a_bare_group_keeps_the_rig_offset() {
+        let mut world = FlintWorld::new();
+        let rig = world.spawn("rig").unwrap();
+        set_transform(&mut world, rig, [10.0, 0.0, 0.0]);
+        let group = world.spawn("group").unwrap();
+        world.set_parent(group, rig).unwrap();
+        let child = world.spawn("bob").unwrap();
+        set_transform(&mut world, child, [0.0, 5.0, 0.0]);
+        set_body(&mut world, child, "dynamic");
+        set_collider(&mut world, child, "sphere", [1.0, 1.0, 1.0]);
+        world.set_parent(child, group).unwrap();
+
+        let mut physics = PhysicsWorld::new();
+        let mut sync = PhysicsSync::new();
+        sync.sync_to_rapier(&world, &mut physics);
+        let t = *physics.get_rigid_body(sync.body_map[&child]).unwrap().translation();
+        assert!((t.x - 10.0).abs() < 1e-5 && (t.y - 5.0).abs() < 1e-5, "{t:?}");
+
+        for _ in 0..30 {
+            physics.step(1.0 / 60.0);
+        }
+        sync.sync_from_rapier(&mut world, &physics);
+
+        let local = world.get_transform(child).unwrap();
+        assert!(local.position.x.abs() < 1e-4, "local x stays 0: {local:?}");
+        assert!(local.position.y < 5.0, "local y falls: {local:?}");
     }
 
     #[test]

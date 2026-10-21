@@ -1059,13 +1059,9 @@ fn cast_shadows_false_keeps_a_mesh_out_of_the_shadow_map() {
     let lit = gpu.centre_pixel();
     assert!(lit[0] > 40, "the ground is lit: {lit:?}");
 
-    // 2% opaque, it still casts a solid shadow by default.
-    // A bare parent costs the child its own transform
-    // (chrischaps/TheCapitol#281), so this one sits at the origin.
+    // 2% opaque, it still casts a solid shadow by default. Its parent is a
+    // bare group, with no transform, there only to carry `cast_shadows`.
     let parent = world.spawn("mist").unwrap();
-    let mut origin = toml::Table::new();
-    origin.insert("position".into(), toml::Value::Array(vec![0.0.into(); 3]));
-    world.set_component(parent, "transform", origin.into()).unwrap();
     spawn(&mut world, "sheet", "sheet", [1.0, 2.0, 0.0]);
     world.set_parent(world.get_id("sheet").unwrap(), parent).unwrap();
     set(&mut world, "sheet", &[("opacity", 0.02.into())]);
