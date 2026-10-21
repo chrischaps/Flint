@@ -1365,6 +1365,7 @@ impl SceneRenderer {
             // Same f64 phase wrap as the ocean upload — keeps mode animation
             // precise over long sessions. Headless render leaves this 0.0.
             (self.ocean_time % 100_000.0) as f32,
+            self.ground_fog.as_ref(),
         );
 
         if fxaa_active {

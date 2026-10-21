@@ -92,7 +92,7 @@ The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone;
 
 ### Rendering & Effects Menu (F4, player and viewer)
 
-One panel for everything the old F-keys flipped. Sections: **Post chain** (enable, exposure, vignette, chromatic aberration, radial blur, desaturate; player-only "freeze script post overrides"), **SSAO** (radius, intensity, bias, samples), **Depth of field** (strength, focus distance, range; viewer adds DoF-follow-selection), **Fog** and height fog, **Bloom** with film grain and FXAA, **Kuwahara**, **Render mode** (none / Matrix / blood / drunk / Tron / underwater, mix, params), **Dither / Volumetric**, **Shadows** (enable, resolution — rebuilds the shadow pass), **Lighting** (ambient sky/ground, diffuse wrap, Oren-Nayar, sheen, reset), **Camera** (vertical FOV), **Shading** (debug mode combo). The viewer also has an authored-vs-viewer-default post switch.
+One panel for everything the old F-keys flipped. Sections: **Post chain** (enable, exposure, vignette, chromatic aberration, radial blur, desaturate; player-only "freeze script post overrides"), **SSAO** (radius, intensity, bias, samples), **Depth of field** (strength, focus distance, range; viewer adds DoF-follow-selection), **Fog** with height fog, the aerial tint and ground fog, **Bloom** with film grain and FXAA, **Kuwahara**, **Render mode** (none / Matrix / blood / drunk / Tron / underwater, mix, params), **Dither / Volumetric**, **Shadows** (enable, resolution — rebuilds the shadow pass), **Lighting** (ambient sky/ground, diffuse wrap, Oren-Nayar, sheen, reset), **Camera** (vertical FOV), **Shading** (debug mode combo). The viewer also has an authored-vs-viewer-default post switch.
 
 ### File Type Auto-Detection (`flint edit`)
 

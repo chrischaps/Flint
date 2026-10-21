@@ -15,6 +15,7 @@ pub mod frustum;
 pub mod gpu_select;
 mod gpu_mesh;
 pub mod grass_pipeline;
+pub mod ground_fog;
 mod headless;
 pub mod model_loader;
 pub mod ocean_pipeline;
@@ -41,6 +42,7 @@ pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use context::{RenderContext, RenderError};
 pub use gpu_select::{list_adapters, set_gpu_override};
+pub use ground_fog::GroundFog;
 pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
@@ -216,11 +218,59 @@ mod tests {
         // appended after inv_view_proj (224); the color-grade rows
         // (lift+enabled / gamma+pad / gain+pad, ADR 0050) grew it to 272,
         // with film grain reusing the former _pad slot; the fog rows (aerial
-        // tint, height fog density, ADR 0101) grew it to 304. Any other size
-        // means the Rust struct and the WGSL mirror have diverged.
+        // tint, height fog density, ADR 0101) grew it to 304, and the ground
+        // fog rows (ADR 0106) to 368. Any other size means the Rust struct
+        // and the WGSL mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 304, "PostProcessUniforms size changed");
+        assert_eq!(size, 368, "PostProcessUniforms size changed");
+    }
+
+    #[test]
+    fn post_process_uniforms_offsets_match_the_wgsl() {
+        // Every member of the WGSL struct sits where the Rust one puts it.
+        use crate::postprocess::PostProcessUniforms as U;
+        use std::mem::offset_of;
+        let module = naga::front::wgsl::parse_str(include_str!("composite_shader.wgsl")).unwrap();
+        let members = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { members, .. }
+                    if ty.name.as_deref() == Some("PostProcessUniforms") =>
+                {
+                    Some(members.clone())
+                }
+                _ => None,
+            })
+            .expect("PostProcessUniforms in the WGSL");
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|m| m.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name} not in the WGSL"))
+                .offset as usize
+        };
+        for (name, rust) in [
+            ("fog_tint_color", offset_of!(U, fog_tint_color)),
+            ("fog_height_density", offset_of!(U, fog_height_density)),
+            ("ground_fog_color", offset_of!(U, ground_fog_color)),
+            ("ground_fog_density", offset_of!(U, ground_fog_density)),
+            ("ground_fog_origin", offset_of!(U, ground_fog_origin)),
+            ("ground_fog_size", offset_of!(U, ground_fog_size)),
+            (
+                "ground_fog_floor_base",
+                offset_of!(U, ground_fog_floor_base),
+            ),
+            ("ground_fog_ceiling", offset_of!(U, ground_fog_ceiling)),
+            ("ground_fog_falloff", offset_of!(U, ground_fog_falloff)),
+            ("ground_fog_steps", offset_of!(U, ground_fog_steps)),
+            ("ground_fog_texel", offset_of!(U, ground_fog_texel)),
+            ("ground_fog_max_lod", offset_of!(U, ground_fog_max_lod)),
+            ("ground_fog_enabled", offset_of!(U, ground_fog_enabled)),
+        ] {
+            assert_eq!(offset(name), rust, "{name}");
+        }
     }
 
     #[test]
