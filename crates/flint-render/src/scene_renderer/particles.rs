@@ -202,6 +202,16 @@ impl SceneRenderer {
         self.world_line_px_per_point = px_per_point;
     }
 
+    /// Whether, once `render` returns, the context's depth view holds the
+    /// frame's scene depth, single sample, for overlays drawn against it
+    /// such as world text (ADR 0104). It doesn't with MSAA and no HDR
+    /// chain, where the multisampled depth is never resolved.
+    pub fn frame_depth_ready(&self) -> bool {
+        let has_postprocess =
+            self.postprocess_pipeline.is_some() && self.postprocess_resources.is_some();
+        !self.device_lost && (has_postprocess || self.sample_count == 1)
+    }
+
     /// Background colour of the main pass (linear RGBA). Editors use this
     /// to review alpha-blended effects against light and dark backdrops.
     pub fn set_clear_color(&mut self, rgba: [f32; 4]) {

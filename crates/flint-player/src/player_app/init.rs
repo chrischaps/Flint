@@ -65,6 +65,8 @@ impl PlayerApp {
             egui_winit: None,
             egui_renderer: None,
             draw_commands: Vec::new(),
+            world_texts: Vec::new(),
+            world_text_pipeline: None,
             ui_textures: HashMap::new(),
             ui_fonts: HashSet::new(),
             ui_fonts_warned: HashSet::new(),

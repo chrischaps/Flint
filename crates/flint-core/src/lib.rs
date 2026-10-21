@@ -20,6 +20,7 @@ pub mod spline;
 pub mod toml_util;
 mod types;
 pub mod world_line;
+pub mod world_text;
 
 pub use error::{FlintError, Result};
 pub use hash::ContentHash;

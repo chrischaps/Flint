@@ -1119,6 +1119,8 @@ impl PlayerApp {
         if let Some(renderer) = &mut self.scene_renderer {
             renderer.set_world_lines(world_lines, self.egui_ctx.pixels_per_point());
         }
+        // World text (ADR 0104) is laid out in the HUD's egui pass.
+        self.world_texts = self.script.drain_world_texts();
     }
 
     fn tick_av_systems(
@@ -1353,6 +1355,24 @@ impl PlayerApp {
         let ui_fonts = &self.ui_fonts;
         let ui_fonts_warned = &mut self.ui_fonts_warned;
 
+        // World text needs the frame's depth to be drawn against.
+        let world_texts = std::mem::take(&mut self.world_texts);
+        let text_view = (!world_texts.is_empty()
+            && self
+                .scene_renderer
+                .as_ref()
+                .is_some_and(|r| r.frame_depth_ready()))
+        .then(|| super::world_text::TextView {
+            view_proj: self.camera.view_projection_matrix(),
+            eye: self.camera.position_array(),
+            screen: [
+                context.config.width as f32 / self.egui_ctx.pixels_per_point(),
+                context.config.height as f32 / self.egui_ctx.pixels_per_point(),
+            ],
+            px_per_point: self.egui_ctx.pixels_per_point(),
+        });
+        let mut laid_text = Vec::new();
+
         let show_stats = self.show_stats;
         let stats_data = if show_stats {
             self.scene_renderer.as_ref().map(|r| {
@@ -1383,6 +1403,18 @@ impl PlayerApp {
             // UI go on their own Middle layer, above the game's panels and
             // windows and below the debug panels (ADR 0085).
             render_draw_commands(ctx, &draw_commands, ui_textures, ui_fonts, ui_fonts_warned);
+
+            // World text is laid out here, so the glyphs it needs go up
+            // with this pass's font atlas.
+            if let Some(view) = &text_view {
+                laid_text = super::world_text::lay_out(
+                    ctx,
+                    &world_texts,
+                    view,
+                    ui_fonts,
+                    ui_fonts_warned,
+                );
+            }
 
             // The game's own egui (PlayerExtension::ui). Its panels sit on
             // the background layer and its windows on Middle, both below
@@ -1416,6 +1448,9 @@ impl PlayerApp {
         let paint_jobs = self
             .egui_ctx
             .tessellate(full_output.shapes, full_output.pixels_per_point);
+        let glyphs = text_view
+            .map(|view| super::world_text::tessellate(&self.egui_ctx, laid_text, &view))
+            .unwrap_or_default();
 
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [context.config.width, context.config.height],
@@ -1441,6 +1476,22 @@ impl PlayerApp {
             &paint_jobs,
             &screen_descriptor,
         );
+
+        // World text goes under the HUD, against the scene's depth.
+        if !glyphs.is_empty() {
+            let pipeline = self.world_text_pipeline.get_or_insert_with(|| {
+                super::world_text::WorldTextPipeline::new(&context.device, context.hud_format)
+            });
+            pipeline.draw(
+                &context.device,
+                &context.queue,
+                &mut encoder,
+                target_view,
+                &context.depth_view,
+                &glyphs,
+                &egui_renderer,
+            );
+        }
 
         {
             let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

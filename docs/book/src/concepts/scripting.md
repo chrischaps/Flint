@@ -656,6 +656,7 @@ The draw API lets scripts render 2D overlays each frame via the `on_draw_ui()` c
 | `draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | World-space line projected with the frame's camera (near-plane clipped) |
 | `draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)` | Same, with explicit layer |
 | `draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)` | World-space line drawn in the 3D frame with a depth test: geometry in front of it hides it (see below) |
+| `draw_world_text(x, y, z, text, size, opts)` | Text at a world point, drawn with a depth test: a billboard, or painted on a plane (see below) |
 | `draw_ring(cx, cy, r_inner, r_outer, start_deg, end_deg, r, g, b, a, layer)` | Annular sector (`r_inner` = 0 gives a pie slice); see angle convention below |
 | `draw_arc(cx, cy, radius, start_deg, end_deg, r, g, b, a, thickness, layer)` | Stroked arc: a ring centred on `radius`, `thickness` wide |
 | `draw_polygon(points, r, g, b, a, layer)` | Convex filled polygon; `points` is `[[x, y], ...]` or a flat `[x0, y0, x1, y1, ...]` list (ints or floats) |
@@ -696,6 +697,28 @@ fn ring(cx, cz, y, r, steps) {
 ```
 
 Rust hosts can set the same lines on the renderer directly with `SceneRenderer::set_world_lines(lines, pixels_per_point)`.
+
+#### Text in the world
+
+`draw_text_opts` at a `world_to_screen` point floats over everything, so a name on a sign shows through the roof in front of it. `draw_world_text(x, y, z, text, size, opts)` writes text in the world instead. Like a world line, it's drawn over the finished image, before the HUD, and hidden wherever the scene's depth is nearer, glyph by glyph: a name half behind a post is half drawn. It doesn't write depth, and fog, bloom and tonemapping don't touch it. It's laid out in the HUD's fonts and colours, so it looks like the same text drawn with `draw_text_opts`.
+
+`opts` takes `draw_text_opts`'s keys: `font`, `color`, `align`, `stroke`, `spacing` and `shadow`. There's no `layer`, and no clip rect. The text is centred on the point unless `align` (`"left"`, `"center"`, `"right"`) or `valign` (`"top"`, `"middle"`, `"bottom"`) say otherwise.
+
+Without `facing`, the text is a billboard: it faces the screen at `size` logical points wherever the point is, like a name tag, and takes the point's depth. With `facing: [nx, ny, nz]` it lies in the plane through the point with that normal, as if painted there, and reads from that side. It isn't drawn from behind, so paint a two-sided sign twice, once on each face. `up` (default `[0, 1, 0]`) says which way the letters stand; only its part across the plane counts. On a plane every length is in world units: `size` is the em, and `spacing`, the stroke's width and the shadow's offset are world units too. The letters are rasterised at the size the em spans on screen, in whole pixels from 4 to 128, so they stay sharp as the camera comes close.
+
+```rust
+// A shop's name on both faces of its sign, fitted to a 0.5 m board.
+fn sign(x, y, z, fx, fz, name) {
+    let m = measure_text_ex(name, 20.0, "display", 0.0);
+    let size = (0.5 * 20.0 / m.width).min(0.13);
+    for side in [1.0, -1.0] {
+        draw_world_text(x + fx * side * 0.03, y, z + fz * side * 0.03, name, size,
+            #{ font: "display", color: [0.98, 0.93, 0.80, 1.0], facing: [fx * side, 0.0, fz * side] });
+    }
+}
+```
+
+The point is pulled toward the camera by the world lines' 0.2% (`DEPTH_SLACK`), so text painted on a surface doesn't fight it. A plane's text that reaches behind the camera isn't drawn at all, and nor is any text whose point is behind it or past the far plane. Scripts decide when text is too small to read: there's no minimum size.
 
 `find_nearest_interactable()` returns a map with `entity` (ID), `prompt_text`, `interaction_type`, and `distance` fields when an interactable entity is within range.
 
