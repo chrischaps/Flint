@@ -222,8 +222,8 @@ pub fn river_points(
 }
 
 /// How a body looks where it differs from the sea. Everything else (foam,
-/// refraction, sky reflection, the shoreline band) is the `ocean`
-/// component's, or the defaults when the scene has none.
+/// refraction, sky reflection, the shoreline band's colour and pace) is the
+/// `ocean` component's, or the defaults when the scene has none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WaterBodyLook {
     /// Water in wave shadow; `None` takes the ocean's.
@@ -238,6 +238,11 @@ pub struct WaterBodyLook {
     /// further before they blend away and pulse less; shorter stretches
     /// less on fast water.
     pub flow_period: f32,
+    /// The shoreline band's width (ADR 0088), as a share of the ocean's
+    /// `shore_foam_width`: 1 the sea's band, 0 none (ADR 0099). Shallow
+    /// water whose whole bed lies within the sea's band would otherwise
+    /// foam from bank to bank.
+    pub shore_foam: f32,
 }
 
 impl Default for WaterBodyLook {
@@ -248,6 +253,7 @@ impl Default for WaterBodyLook {
             wave_scale: 0.3,
             flow_foam: 1.0,
             flow_period: 2.0,
+            shore_foam: 1.0,
         }
     }
 }
@@ -263,6 +269,7 @@ impl WaterBodyLook {
             wave_scale: f("wave_scale", d.wave_scale).clamp(0.0, 2.0),
             flow_foam: f("flow_foam", d.flow_foam).clamp(0.0, 2.0),
             flow_period: f("flow_period", d.flow_period).clamp(0.25, 30.0),
+            shore_foam: f("shore_foam", d.shore_foam).clamp(0.0, 4.0),
         }
     }
 
@@ -277,7 +284,7 @@ impl WaterBodyLook {
                 self.wave_scale,
                 if flowing { self.flow_foam } else { 0.0 },
                 if flowing { self.flow_period } else { 0.0 },
-                0.0,
+                self.shore_foam,
             ],
         }
     }
@@ -289,17 +296,18 @@ impl WaterBodyLook {
 pub struct WaterBodyUniformsGpu {
     pub deep_color: [f32; 4],
     pub shallow_color: [f32; 4],
-    /// [wave_scale, flow_foam, flow_period (0 = still), 0].
+    /// [wave_scale, flow_foam, flow_period (0 = still), shore_foam].
     pub params: [f32; 4],
 }
 
 impl WaterBodyUniformsGpu {
-    /// The sea itself, as a body: its own colours, full waves, no flow.
+    /// The sea itself, as a body: its own colours, full waves, no flow,
+    /// its own shoreline band.
     pub fn sea(sea: &crate::OceanVisuals) -> Self {
         Self {
             deep_color: sea.deep_color,
             shallow_color: sea.shallow_color,
-            params: [1.0, 0.0, 0.0, 0.0],
+            params: [1.0, 0.0, 0.0, 1.0],
         }
     }
 }
@@ -672,5 +680,23 @@ mod tests {
         assert_eq!(still.shallow_color, sea.shallow_color);
         assert_eq!(still.params[1..3], [0.0, 0.0]);
         assert_eq!(look.to_gpu(&sea, true).params[2], 2.0);
+    }
+
+    #[test]
+    fn a_body_scales_the_sea_s_shore_band() {
+        let sea = crate::OceanVisuals::default();
+        // The sea and a default body keep the ocean's band whole.
+        assert_eq!(WaterBodyUniformsGpu::sea(&sea).params[3], 1.0);
+        assert_eq!(WaterBodyLook::default().to_gpu(&sea, false).params[3], 1.0);
+        let stream: toml::Value =
+            toml::from_str("shape = 'river'
+shore_foam = 0.25").unwrap();
+        let look = WaterBodyLook::from_component(&stream);
+        assert_eq!(look.shore_foam, 0.25);
+        // Still or flowing, the band is the body's.
+        assert_eq!(look.to_gpu(&sea, false).params[3], 0.25);
+        assert_eq!(look.to_gpu(&sea, true).params[3], 0.25);
+        let none: toml::Value = toml::from_str("shore_foam = -1").unwrap();
+        assert_eq!(WaterBodyLook::from_component(&none).shore_foam, 0.0);
     }
 }
