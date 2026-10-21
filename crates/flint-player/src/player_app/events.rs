@@ -391,6 +391,8 @@ impl ApplicationHandler for PlayerApp {
             WindowEvent::RedrawRequested => {
                 self.tick();
                 self.render();
+                // The frame's end, for the profiler (ADR 0109).
+                profiling::finish_frame!();
                 if self.music_exit_requested || self.exit_requested {
                     event_loop.exit();
                 }

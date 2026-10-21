@@ -27,6 +27,7 @@ use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
 use std::collections::HashSet;
 
 impl PlayerApp {
+    #[profiling::function]
     pub(super) fn render(&mut self) {
         // On Android, window may be None between suspended() and resumed()
         if self.window.is_none() {
@@ -546,6 +547,18 @@ impl PlayerApp {
             }
         }
 
+        // F2's stats show the GPU's time too (ADR 0108): time the frame
+        // while they're up. Timing the game turned on stays on after.
+        if self.show_stats {
+            if !renderer.gpu_timing() {
+                self.stats_gpu_timing =
+                    renderer.set_gpu_timing(&context.device, &context.queue, true);
+            }
+        } else if self.stats_gpu_timing {
+            renderer.set_gpu_timing(&context.device, &context.queue, false);
+            self.stats_gpu_timing = false;
+        }
+
         if let Err(e) = renderer.render(context, &self.camera, &view) {
             tracing::warn!("Render error: {:?}", e);
         }
@@ -558,6 +571,9 @@ impl PlayerApp {
             ..Default::default()
         });
         self.render_hud(&hud_view);
+        if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
+            renderer.finish_gpu_timings(&context.device, &context.queue);
+        }
 
         // Capture the composited frame (scene + HUD) before it is presented.
         if let Some(path) = self.capture_path_due() {
@@ -576,6 +592,10 @@ impl PlayerApp {
                     self.capture.perf_entity_draws += stats.entity_draws as u64;
                     self.capture.perf_culled += stats.culled_draws as u64;
                     self.capture.perf_triangles += stats.triangles as u64;
+                    if stats.gpu_frame_ms > 0.0 {
+                        self.capture.perf_gpu_ms += stats.gpu_frame_ms as f64;
+                        self.capture.perf_gpu_frames += 1;
+                    }
                 }
             }
             if self.clock.total_time >= exit_after {
@@ -601,6 +621,14 @@ impl PlayerApp {
                         avg(self.capture.perf_culled),
                         avg(self.capture.perf_triangles)
                     );
+                    // GPU time, when the frames were timed (--stats, ADR 0108).
+                    let gpu_frames = self.capture.perf_gpu_frames;
+                    if gpu_frames > 0 {
+                        eprintln!(
+                            "[perf] avg GPU {:.2} ms/frame over {gpu_frames} timed frames",
+                            self.capture.perf_gpu_ms / gpu_frames as f64
+                        );
+                    }
                 }
             }
         }
@@ -686,6 +714,7 @@ impl PlayerApp {
         }
     }
 
+    #[profiling::function]
     pub(super) fn tick(&mut self) {
         // Music session drain + guide/timeline panel feed (F3, ADR 0018).
         self.tick_music_session();
@@ -798,6 +827,7 @@ impl PlayerApp {
         self.finish_frame();
     }
 
+    #[profiling::function]
     fn run_extension_pre_updates(&mut self) {
         if self.extensions.is_empty() {
             return;
@@ -865,6 +895,7 @@ impl PlayerApp {
         self.input.end_frame();
     }
 
+    #[profiling::function]
     fn tick_music_session(&mut self) {
         // Music session (F3, ADR 0018): while a session is active the capture
         // thread owns the pad — its drain replaces the player's own polling,
@@ -920,6 +951,7 @@ impl PlayerApp {
         }
     }
 
+    #[profiling::function]
     fn tick_fixed_physics(&mut self, config: &StateConfig, has_fps_player: bool) {
         // Fixed-timestep physics loop (skip when paused, but still consume steps to avoid spiral)
         self.physics.begin_frame(self.clock.pending_fixed_ratio());
@@ -973,6 +1005,7 @@ impl PlayerApp {
         game_events
     }
 
+    #[profiling::function]
     fn run_scripts(&mut self, config: &StateConfig, game_events: &Vec<flint_runtime::GameEvent>) {
         // Set transition state for script access
         match &self.transition_phase {
@@ -1104,6 +1137,7 @@ impl PlayerApp {
         }
     }
 
+    #[profiling::function]
     fn drive_script_ui(&mut self) {
         // on_draw_ui() ALWAYS runs (pause menus, transition visuals need to draw)
         self.script.call_draw_uis(&mut self.world);
@@ -1129,6 +1163,7 @@ impl PlayerApp {
         self.world_texts = self.script.drain_world_texts();
     }
 
+    #[profiling::function]
     fn tick_av_systems(
         &mut self,
         config: &StateConfig,
@@ -1228,6 +1263,7 @@ impl PlayerApp {
         }
     }
 
+    #[profiling::function]
     fn tick_procgen(&mut self) {
         // Process procgen generation queue (frame-budgeted)
         {
@@ -1248,6 +1284,7 @@ impl PlayerApp {
         }
     }
 
+    #[profiling::function]
     fn sync_renderer(&mut self) {
         // Refresh renderer with updated transforms
         if let (Some(renderer), Some(context)) = (&mut self.scene_renderer, &self.render_context) {
@@ -1340,6 +1377,7 @@ impl PlayerApp {
         }
     }
 
+    #[profiling::function]
     fn render_hud(&mut self, target_view: &wgpu::TextureView) {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
@@ -1432,7 +1470,10 @@ impl PlayerApp {
             }
 
             #[cfg(feature = "debug-hud")]
-            let debug_width = super::debug_panels::show_debug_panels(ctx, &mut debug_panels);
+            let debug_width =
+                super::debug_panels::show_debug_panels(ctx, &mut debug_panels, &mut |panel, ui| {
+                    super::debug_panels::draw_panel(panel, &mut extensions, ui)
+                });
             #[cfg(not(feature = "debug-hud"))]
             let debug_width = 0.0;
 
@@ -1472,6 +1513,12 @@ impl PlayerApp {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("HUD Encoder"),
             });
+        // The HUD's GPU time, with the renderer's phases (ADR 0108).
+        let ui_scope = self
+            .scene_renderer
+            .as_mut()
+            .and_then(|r| r.gpu_timer_mut())
+            .map(|t| t.begin(&mut encoder, "UI"));
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -1521,6 +1568,12 @@ impl PlayerApp {
             egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
 
+        if let (Some(timer), Some(scope)) = (
+            self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
+            ui_scope,
+        ) {
+            timer.end(&mut encoder, scope);
+        }
         context.queue.submit(std::iter::once(encoder.finish()));
 
         for id in &full_output.textures_delta.free {
@@ -1626,6 +1679,18 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, 
                     ));
 
                     ui.separator();
+
+                    // GPU time per phase (ADR 0108), where the device can time
+                    if !stats.gpu_passes.is_empty() {
+                        ui.label(format!("GPU: {:.2}ms", stats.gpu_frame_ms));
+                        for pass in &stats.gpu_passes {
+                            ui.colored_label(
+                                egui::Color32::from_gray(170),
+                                format!("  {:<13}{:>6.2}", pass.label, pass.ms),
+                            );
+                        }
+                        ui.separator();
+                    }
 
                     // Resolution
                     ui.colored_label(

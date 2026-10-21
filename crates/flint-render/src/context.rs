@@ -70,7 +70,9 @@ impl RenderContext {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("Flint Device"),
-                    required_features: wgpu::Features::empty(),
+                    // Timestamps where the adapter has them, so the
+                    // renderer's GPU timing can be turned on (ADR 0108).
+                    required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                     required_limits: limits,
                     memory_hints: Default::default(),
                 },

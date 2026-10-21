@@ -426,3 +426,82 @@ fn scripted_keys_reach_on_key_and_one_taken_stays_out_of_the_game() {
         ]
     );
 }
+
+/// Names two debug panels and logs each draw (ADR 0107).
+#[cfg(feature = "debug-hud")]
+struct PanelGame {
+    log: Log,
+    frame: u32,
+}
+
+#[cfg(feature = "debug-hud")]
+impl PlayerExtension for PanelGame {
+    fn ui(&mut self, _ctx: &egui::Context) {
+        self.frame += 1;
+    }
+    fn debug_panels(&self) -> Vec<String> {
+        vec!["Net".into(), "Town".into()]
+    }
+    fn debug_panel_ui(&mut self, name: &str, ui: &mut egui::Ui) {
+        ui.label(name);
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("{name} {}", self.frame));
+    }
+}
+
+#[cfg(feature = "debug-hud")]
+#[test]
+fn a_game_names_debug_panels_that_f3_opens_and_it_draws() {
+    let log = Log::default();
+    let mut app = headless_app();
+    app.add_extension(Box::new(PanelGame {
+        log: log.clone(),
+        frame: 0,
+    }));
+    let names: Vec<&str> = app.debug_panels.iter().map(|p| p.name()).collect();
+    assert_eq!(names, ["Net", "Town"], "added with the extension");
+    assert!(app.debug_panels.iter().all(|p| !p.is_open()), "closed");
+
+    app.handle_debug_key(winit::keyboard::KeyCode::F3);
+    assert!(
+        app.debug_panels.iter().all(|p| p.is_open()),
+        "F3 opens them"
+    );
+
+    // One egui pass, as the frame runs it: the game's ui, then the panels.
+    let ctx = egui::Context::default();
+    let mut extensions = std::mem::take(&mut app.extensions);
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1600.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(input, |ctx| {
+        for ext in extensions.iter_mut() {
+            ext.ui(ctx);
+        }
+        super::debug_panels::show_debug_panels(ctx, &mut app.debug_panels, &mut |panel, ui| {
+            super::debug_panels::draw_panel(panel, &mut extensions, ui)
+        });
+    });
+    app.extensions = extensions;
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["Net 1", "Town 1"],
+        "drawn by the extension, after its ui"
+    );
+
+    // Building the panels again (a scene load) keeps them, still open.
+    app.debug_panels[1].toggle();
+    app.create_extension_debug_panels();
+    let open: Vec<(&str, bool)> = app
+        .debug_panels
+        .iter()
+        .map(|p| (p.name(), p.is_open()))
+        .collect();
+    assert_eq!(open, [("Net", true), ("Town", false)]);
+}

@@ -46,8 +46,8 @@ Music commands are detailed in [Music Commands](cli-reference/music.md).
 | Left Click | Fire |
 | R | Reload |
 | 1 / 2 | Weapon slots |
-| F2 | Toggle render stats overlay |
-| F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) |
+| F2 | Toggle render stats overlay (with the GPU's time per phase, where the device can time) |
+| F3 | Toggle scene debug panels (ocean, day/time, camera, grass, weather… — only those the scene uses; never the F4 menu) and the game's own (ADR 0107) |
 | F4 | Toggle the **Rendering & Effects** menu (all render/post toggles and parameters, debug shading mode, shadows, lighting levers) |
 | F9 | Force a music-session full-fail (debug builds, session running) |
 | `` ` `` / `\` | Music Guide overlay / Manifest Map strip (debug builds, session running) |

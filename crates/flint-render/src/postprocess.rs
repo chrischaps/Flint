@@ -2074,6 +2074,7 @@ impl PostProcessPipeline {
         queue: &wgpu::Queue,
         resources: &PostProcessResources,
         target_view: &wgpu::TextureView,
+        timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         let (Some(fxaa), Some(fxaa_res)) = (&self.fxaa, &resources.fxaa) else {
             return;
@@ -2111,6 +2112,12 @@ impl PostProcessPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FXAA Encoder"),
         });
+        // Timed inside this submission, so a wait for the swapchain image
+        // before it runs isn't counted (ADR 0108).
+        let timed = timer.map(|t| {
+            let scope = t.begin(&mut encoder, "FXAA");
+            (t, scope)
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("FXAA Pass"),
@@ -2130,6 +2137,9 @@ impl PostProcessPipeline {
             pass.set_bind_group(0, &uniform_bg, &[]);
             pass.set_bind_group(1, &texture_bg, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let Some((timer, scope)) = timed {
+            timer.end(&mut encoder, scope);
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
@@ -2951,6 +2961,7 @@ impl PostProcessPipeline {
         camera: &Camera,
         time: f32,
         ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
+        timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_view = if config.enabled && config.ssao_enabled {
@@ -3154,6 +3165,12 @@ impl PostProcessPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Composite Encoder"),
         });
+        // Timed inside this submission, so a wait for the swapchain image
+        // before it runs isn't counted (ADR 0108).
+        let timed = timer.map(|t| {
+            let scope = t.begin(&mut encoder, "Composite");
+            (t, scope)
+        });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3179,6 +3196,9 @@ impl PostProcessPipeline {
             pass.draw(0..3, 0..1);
         }
 
+        if let Some((timer, scope)) = timed {
+            timer.end(&mut encoder, scope);
+        }
         queue.submit(std::iter::once(encoder.finish()));
     }
 }

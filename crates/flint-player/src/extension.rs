@@ -113,6 +113,26 @@ pub trait PlayerExtension {
     /// Families exist from the first egui pass after the call, so laying
     /// text out in one from `ui` is safe on every frame.
     fn fonts(&mut self, _defs: &mut egui::FontDefinitions) {}
+
+    /// Name the game's own debug panels (ADR 0107). Each joins the
+    /// engine's (grass, ocean, camera, ...): F3 opens and closes it with
+    /// them, and it docks in their columns under its name. The player asks
+    /// when it builds its panels, on each scene load and when the extension
+    /// is added, so a name given later appears at the next scene load.
+    /// Empty, the default, adds none.
+    ///
+    /// Only a player built with its `debug-hud` feature (the default) has
+    /// debug panels. Without it this is never called.
+    fn debug_panels(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Draw the contents of the debug panel `name`, one that
+    /// [`debug_panels`](Self::debug_panels) named. Called every frame while
+    /// the panel is open, after [`ui`](Self::ui), so it reads the game's
+    /// state as `ui` left it. The heading and the scrolling are the
+    /// player's.
+    fn debug_panel_ui(&mut self, _name: &str, _ui: &mut egui::Ui) {}
 }
 
 /// What an extension can reach during `pre_update`.

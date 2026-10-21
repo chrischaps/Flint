@@ -115,6 +115,9 @@ pub struct CaptureConfig {
     pub(crate) perf_entity_draws: u64,
     pub(crate) perf_culled: u64,
     pub(crate) perf_triangles: u64,
+    /// GPU frame times summed over frames that had one (ADR 0108)
+    pub(crate) perf_gpu_ms: f64,
+    pub(crate) perf_gpu_frames: u64,
 }
 
 /// Game seconds ignored by the `--exit-after` frame-time report (loading,
@@ -310,6 +313,9 @@ pub struct PlayerApp {
     // Rendering stats overlay (F2 toggle)
     show_stats: bool,
     stats_frame_times: std::collections::VecDeque<f64>,
+    /// The player turned the renderer's GPU timing on for the overlay
+    /// (ADR 0108), so it turns it off again when the overlay closes
+    stats_gpu_timing: bool,
 
     // Procedural generation resolver for runtime asset resolution
     procgen_resolver: flint_procgen::ProcGenResolver,

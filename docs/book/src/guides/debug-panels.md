@@ -8,7 +8,7 @@ Panels are dev surface. They compile only when the player's `debug-hud` cargo fe
 
 | Key | What it toggles | Host |
 |-----|-----------------|------|
-| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles) | player |
+| `F3` | Every scene-component panel the current scene created (ocean, day/time, weather, grass, camera, reality, visitor, dead calm, particles), and every panel a game added | player |
 | `F4` | The **Rendering & Effects** panel, on its own so it never flips out of phase with F3 | player and scene viewer |
 | `` ` `` (backquote) | **Music Guide**, only while a [music session](../concepts/music-sessions.md) runs | player |
 | `\` (backslash) | **Manifest Map** timeline strip, same condition | player |
@@ -24,7 +24,7 @@ Side panels are fold-open headers distributed across up to three columns. Column
 
 A panel can instead ask for the `Bottom` layout, a full-width strip. The Manifest Map uses it; timeline-shaped panels should.
 
-Columns open 300 points wide. Drag a column's left edge to resize it, between 280 points and half the window. The F2 stats overlay sits just left of the columns.
+Columns open 300 points wide. Drag a column's left edge to resize it, between 280 points and half the window. The F2 stats overlay sits just left of the columns. It shows the GPU's time per phase too, where the device can time ([Profiling](profiling.md)).
 
 The panels are the top layer of the player's egui pass. Back to front, it draws script UI (`on_draw_ui`), then a game's own egui (`PlayerExtension::ui`), then the debug panels. The panels float on egui's Foreground order instead of being egui `SidePanel`s. A `SidePanel` always paints on the background layer, under any egui window a game opens, so the panels would end up hidden behind the game's UI.
 
@@ -85,7 +85,32 @@ For the render panel the player adds **Freeze script post overrides**: while fro
 
 ## Adding a Panel from a Game
 
-A panel is any type implementing the `DebugPanel` trait from `flint-debug-ui`:
+A game that wraps the player adds its own panels through its [extension](player-extensions.md) (ADR 0107). Name them in `debug_panels`, and draw each one's contents in `debug_panel_ui`:
+
+```rust
+impl PlayerExtension for MyGame {
+    fn debug_panels(&self) -> Vec<String> {
+        vec!["Net".into(), "Economy".into()]
+    }
+
+    fn debug_panel_ui(&mut self, name: &str, ui: &mut egui::Ui) {
+        match name {
+            "Net" => {
+                ui.label(format!("RTT {:.0} ms", self.net.rtt_ms()));
+                ui.label(format!("{} msgs/s in", self.net.rate_in()));
+            }
+            "Economy" => self.economy.debug_ui(ui),
+            _ => {}
+        }
+    }
+}
+```
+
+They join the engine's panels after them: F3 opens and closes them with the rest, they fold open in the same columns with their names as headings, and opening one frees the cursor. `debug_panel_ui` runs only while its panel is open, after the extension's `ui`, with the game's own state in reach: there's nothing to share through an `Arc`. The player asks for the names when it builds its panels, at each scene load and when the extension is added, and a panel open across a rebuild stays open. Without the `debug-hud` feature neither method is called.
+
+### Inside the engine
+
+An engine panel is any type implementing the `DebugPanel` trait from `flint-debug-ui`:
 
 ```rust
 pub trait DebugPanel {
@@ -103,6 +128,8 @@ pub trait DebugPanel {
 
 The player holds `Vec<Box<dyn DebugPanel>>` and renders them generically. Construction follows one pattern: look for the first entity carrying the driving component, build a config from that component, and push the panel with the scene path and entity name so Commit to File knows where to write. The host then downcasts through `as_any_mut` when it needs the concrete config to apply. Unknown panel names take the default column weight; nothing else needs registering.
 
+The game's panels go through this trait too, on a small panel the player holds for each name, whose contents it draws by calling the extension.
+
 Keep panels out of the felt experience. They are judgment-shaped by design and should never double as a HUD; the script-driven [UI](../concepts/scripting.md) is for that.
 
 ## Further Reading
@@ -111,3 +138,4 @@ Keep panels out of the felt experience. They are judgment-shaped by design and s
 - [Lighting](../concepts/lighting.md): the lighting levers group
 - [Music Sessions](../concepts/music-sessions.md): the Music Guide and Manifest Map
 - [The Scene Viewer](../getting-started/viewing.md): the viewer's F4 extras
+- [Profiling](profiling.md): GPU time per phase in F2, and the `profile` feature
