@@ -369,3 +369,60 @@ fn an_extension_write_starts_the_save_debounce() {
         Some("hello")
     );
 }
+
+/// Logs every key `on_key` sees, and takes the ones that stand for `?`.
+struct QuestionTaker {
+    log: Log,
+}
+
+impl PlayerExtension for QuestionTaker {
+    fn on_key(&mut self, key: &crate::extension::KeyInput) -> bool {
+        self.log.lock().unwrap().push(format!(
+            "{:?} {:?} {:?} shift={} scripted={}",
+            key.key,
+            key.state,
+            key.character,
+            key.modifiers.shift_key(),
+            key.scripted
+        ));
+        key.character == Some("?")
+    }
+}
+
+#[test]
+fn scripted_keys_reach_on_key_and_one_taken_stays_out_of_the_game() {
+    use super::input_script::InputScript;
+    use winit::keyboard::KeyCode;
+
+    let mut app = headless_app();
+    let log = Log::default();
+    app.add_extension(Box::new(QuestionTaker { log: log.clone() }));
+    app.capture.input_script = Some(
+        InputScript::parse("0 down ShiftLeft\n0 tap Slash\n0.5 up ShiftLeft\n0.5 tap KeyW\n")
+            .unwrap(),
+    );
+    app.clock.frame_step = Some(0.25);
+
+    app.tick();
+    assert!(app.input.is_key_down(KeyCode::ShiftLeft));
+    assert!(
+        !app.input.is_key_down(KeyCode::Slash),
+        "the extension took it"
+    );
+    app.input.end_frame();
+    app.tick();
+    app.input.end_frame();
+    app.tick();
+    assert!(app.input.is_key_down(KeyCode::KeyW));
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "ShiftLeft Pressed None shift=true scripted=true",
+            "Slash Pressed Some(\"?\") shift=true scripted=true",
+            "Slash Released Some(\"?\") shift=true scripted=true",
+            "ShiftLeft Released None shift=false scripted=true",
+            "KeyW Pressed Some(\"w\") shift=false scripted=true",
+        ]
+    );
+}

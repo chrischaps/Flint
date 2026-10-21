@@ -645,6 +645,9 @@ impl PlayerApp {
     /// Whether egui or an extension takes a window event before the player
     /// and scripts see it.
     fn taken_before_the_game(&mut self, event: &WindowEvent) -> bool {
+        if let WindowEvent::ModifiersChanged(modifiers) = event {
+            self.key_modifiers = modifiers.state();
+        }
         // Input egui wants stops here (see egui_input for the rules).
         if self.egui_sees_input() {
             if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
@@ -661,8 +664,8 @@ impl PlayerApp {
         }
 
         // Game extensions next; they may consume input but never lifecycle
-        // events (see PlayerExtension::on_window_event).
-        crate::extension::dispatch_window_event(&mut self.extensions, event)
+        // events (see PlayerExtension::on_window_event and on_key).
+        crate::extension::dispatch_window_event(&mut self.extensions, event, self.key_modifiers)
     }
 
     /// Whether egui sees input before the game: whenever it can have
@@ -682,7 +685,8 @@ impl PlayerApp {
             ScriptEvent::Key(key, state) => self.scripted_key(key, state),
             ScriptEvent::Modifiers(state) => {
                 // A real `ModifiersChanged`: egui-winit keeps the modifiers
-                // for the events after it, and extensions see it too.
+                // for the events after it, extensions see it too, and so
+                // does the next key's `KeyInput`.
                 self.taken_before_the_game(&WindowEvent::ModifiersChanged(state.into()));
             }
             ScriptEvent::Text(text) => {
@@ -701,8 +705,9 @@ impl PlayerApp {
     /// A key from `--input-script` (ADR 0097). egui gets what egui-winit
     /// would have made of it, and the same gate as a real key decides
     /// whether the game does: a key typed into a focused field stops there.
-    /// Extensions never see one: `on_window_event` takes a winit
-    /// `KeyboardInput`, whose `KeyEvent` can't be built outside winit.
+    /// Then extensions' `on_key` (ADR 0103), which may take it. Their
+    /// `on_window_event` never sees one: it takes a winit `KeyboardInput`,
+    /// whose `KeyEvent` can't be built outside winit.
     fn scripted_key(&mut self, key: KeyCode, state: ElementState) {
         let pressed = state == ElementState::Pressed;
         if self.egui_sees_input() {
@@ -721,6 +726,20 @@ impl PlayerApp {
             if self.egui_input.consumes(routed, false, wants_keyboard) {
                 return;
             }
+        }
+        let mut buf = [0; 4];
+        let character = super::egui_input::typed_char(key, self.key_modifiers.shift_key())
+            .map(|c| &*c.encode_utf8(&mut buf));
+        let input = crate::extension::KeyInput {
+            key,
+            state,
+            repeat: false,
+            character,
+            modifiers: self.key_modifiers,
+            scripted: true,
+        };
+        if crate::extension::dispatch_key(&mut self.extensions, &input) {
+            return;
         }
         // As a real key, through the debug keys (H9), but Esc doesn't quit.
         if pressed {

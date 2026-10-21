@@ -132,10 +132,12 @@ sees a held modifier on the clicks and drags that follow, and so do
 extensions. Then the same focus rule as a real key: while an egui field has
 keyboard focus, the key stops there, and `InputState`, scripts and the debug
 keys never see it. `type` sends the rest of its line as egui text, spaces and
-all, without pressing any keys; click a field first to focus it. Two
-differences from a real keyboard: extensions' `on_window_event` never sees a
-scripted key (winit's `KeyEvent` can't be built outside winit), and a scripted
-Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
+all, without pressing any keys; click a field first to focus it. A key egui
+passes on goes to game extensions' `on_key` next, as a real one does (ADR
+0103), with the character it stands for on a US layout. Two differences from
+a real keyboard: extensions' `on_window_event` never sees a scripted key
+(winit's `KeyEvent` can't be built outside winit), so read keys in `on_key`
+to script them, and a scripted Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
 during a capture, so keep it outside.
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not

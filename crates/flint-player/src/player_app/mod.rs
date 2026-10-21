@@ -201,6 +201,8 @@ pub struct PlayerApp {
     // Window options
     pub fullscreen: bool,
     cursor_captured: bool,
+    /// The modifiers held now, real or scripted, for `PlayerExtension::on_key`.
+    key_modifiers: winit::keyboard::ModifiersState,
 
     // Environment
     pub skybox_path: Option<String>,

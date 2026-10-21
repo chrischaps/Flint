@@ -75,6 +75,7 @@ impl PlayerApp {
             content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
             cursor_captured: false,
+            key_modifiers: Default::default(),
             skybox_path: None,
             scene_ambient: None,
             msaa_sample_count: 1,

@@ -27,7 +27,8 @@ use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_render::{Camera, GrassGround, SceneRenderer, Vertex};
 use flint_runtime::{GameClock, GameEvent, InputState, PersistentStore};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
+use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
 
 /// Hooks an embedding game installs with `PlayerApp::add_extension`.
 ///
@@ -62,6 +63,25 @@ pub trait PlayerExtension {
     /// in a focused text field or a click on an egui window, never arrives
     /// here.
     fn on_window_event(&mut self, _event: &WindowEvent) -> bool {
+        false
+    }
+
+    /// See a key go down or up before the player does: a real one, or one
+    /// an `--input-script` plays (ADR 0103). Return `true` to consume it,
+    /// as for `on_window_event`.
+    ///
+    /// A scripted key has no winit `KeyEvent` (nothing outside winit can
+    /// build one), so it never reaches `on_window_event`. Read keys here and
+    /// a capture can press them. A real key comes here straight after this
+    /// extension's `on_window_event` passes on its `KeyboardInput`, so
+    /// handle a key in one hook or the other, not both. Keys winit can't
+    /// name (`PhysicalKey::Unidentified`), and the synthetic presses winit
+    /// sends for keys held as the window gains focus, come only to
+    /// `on_window_event`.
+    ///
+    /// egui sees keys first, as it does window events: a key typed into a
+    /// focused field never arrives here.
+    fn on_key(&mut self, _key: &KeyInput) -> bool {
         false
     }
 
@@ -446,20 +466,87 @@ pub(crate) fn is_consumable(event: &WindowEvent) -> bool {
     )
 }
 
+/// A key going down or up, for [`PlayerExtension::on_key`]: a real one or
+/// one an `--input-script` plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyInput<'a> {
+    /// The key where it sits on the keyboard, whatever the layout.
+    pub key: KeyCode,
+    pub state: ElementState,
+    /// The OS repeating a held key. Never set on a scripted key.
+    pub repeat: bool,
+    /// The character the key stands for (winit's `logical_key`, when it's
+    /// a character), on the release as on the press, and under Ctrl too:
+    /// `?` for Shift and Slash on a US layout. A scripted key is read on a
+    /// US layout.
+    pub character: Option<&'a str>,
+    /// The modifiers held as the key moved.
+    pub modifiers: ModifiersState,
+    /// Whether an `--input-script` pressed it.
+    pub scripted: bool,
+}
+
+impl KeyInput<'_> {
+    /// A first press: down, and not the OS repeating it.
+    pub fn pressed(&self) -> bool {
+        self.state == ElementState::Pressed && !self.repeat
+    }
+}
+
+/// The `KeyInput` a real `KeyboardInput` is, if `on_key` should see it.
+fn key_input<'a>(event: &'a WindowEvent, modifiers: ModifiersState) -> Option<KeyInput<'a>> {
+    let WindowEvent::KeyboardInput {
+        event,
+        is_synthetic: false,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let PhysicalKey::Code(key) = event.physical_key else {
+        return None;
+    };
+    let character = match &event.logical_key {
+        Key::Character(c) => Some(c.as_str()),
+        _ => None,
+    };
+    Some(KeyInput {
+        key,
+        state: event.state,
+        repeat: event.repeat,
+        character,
+        modifiers,
+        scripted: false,
+    })
+}
+
 /// Offer `event` to each extension in order. Returns whether one consumed
 /// it; the rest are skipped once one has. Non-consumable events go to
-/// every extension and are never reported as consumed.
+/// every extension and are never reported as consumed. A key goes to each
+/// extension's `on_window_event` and then its `on_key`, with `modifiers`
+/// the ones held now.
 pub(crate) fn dispatch_window_event(
     extensions: &mut [Box<dyn PlayerExtension>],
     event: &WindowEvent,
+    modifiers: ModifiersState,
 ) -> bool {
     let consumable = is_consumable(event);
+    let key = key_input(event, modifiers);
     for ext in extensions.iter_mut() {
         if ext.on_window_event(event) && consumable {
             return true;
         }
+        if key.as_ref().is_some_and(|key| ext.on_key(key)) {
+            return true;
+        }
     }
     false
+}
+
+/// Offer a scripted key to each extension's `on_key` in order. Returns
+/// whether one consumed it.
+pub(crate) fn dispatch_key(extensions: &mut [Box<dyn PlayerExtension>], key: &KeyInput) -> bool {
+    extensions.iter_mut().any(|ext| ext.on_key(key))
 }
 
 #[cfg(test)]
@@ -519,6 +606,28 @@ mod tests {
                 .push(format!("{} event", self.name));
             self.consume
         }
+        fn on_key(&mut self, key: &KeyInput) -> bool {
+            self.log.lock().unwrap().push(format!(
+                "{} key {:?} {:?}",
+                self.name, key.key, key.character
+            ));
+            self.consume
+        }
+    }
+
+    fn dispatch(exts: &mut [Box<dyn PlayerExtension>], event: &WindowEvent) -> bool {
+        dispatch_window_event(exts, event, ModifiersState::empty())
+    }
+
+    fn question_mark() -> KeyInput<'static> {
+        KeyInput {
+            key: KeyCode::Slash,
+            state: ElementState::Pressed,
+            repeat: false,
+            character: Some("?"),
+            modifiers: ModifiersState::SHIFT,
+            scripted: true,
+        }
     }
 
     fn recorders(consume: [bool; 2]) -> (Vec<Box<dyn PlayerExtension>>, Log) {
@@ -548,14 +657,14 @@ mod tests {
     #[test]
     fn unconsumed_input_reaches_every_extension_in_order() {
         let (mut exts, log) = recorders([false, false]);
-        assert!(!dispatch_window_event(&mut exts, &cursor_moved()));
+        assert!(!dispatch(&mut exts, &cursor_moved()));
         assert_eq!(*log.lock().unwrap(), ["a event", "b event"]);
     }
 
     #[test]
     fn first_consumer_stops_input_events() {
         let (mut exts, log) = recorders([true, false]);
-        assert!(dispatch_window_event(&mut exts, &cursor_moved()));
+        assert!(dispatch(&mut exts, &cursor_moved()));
         assert_eq!(*log.lock().unwrap(), ["a event"]);
     }
 
@@ -563,15 +672,9 @@ mod tests {
     fn lifecycle_events_cannot_be_consumed() {
         let (mut exts, log) = recorders([true, true]);
         let resized = WindowEvent::Resized(winit::dpi::PhysicalSize::new(800, 600));
-        assert!(!dispatch_window_event(&mut exts, &resized));
-        assert!(!dispatch_window_event(
-            &mut exts,
-            &WindowEvent::RedrawRequested
-        ));
-        assert!(!dispatch_window_event(
-            &mut exts,
-            &WindowEvent::CloseRequested
-        ));
+        assert!(!dispatch(&mut exts, &resized));
+        assert!(!dispatch(&mut exts, &WindowEvent::RedrawRequested));
+        assert!(!dispatch(&mut exts, &WindowEvent::CloseRequested));
         // Every extension still saw every event.
         assert_eq!(log.lock().unwrap().len(), 6);
     }
@@ -581,6 +684,37 @@ mod tests {
         struct Empty;
         impl PlayerExtension for Empty {}
         let mut exts: Vec<Box<dyn PlayerExtension>> = vec![Box::new(Empty)];
-        assert!(!dispatch_window_event(&mut exts, &cursor_moved()));
+        assert!(!dispatch(&mut exts, &cursor_moved()));
+        assert!(!dispatch_key(&mut exts, &question_mark()));
+    }
+
+    #[test]
+    fn a_key_reaches_every_extension_until_one_takes_it() {
+        let (mut exts, log) = recorders([false, false]);
+        assert!(!dispatch_key(&mut exts, &question_mark()));
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["a key Slash Some(\"?\")", "b key Slash Some(\"?\")"]
+        );
+
+        let (mut exts, log) = recorders([true, false]);
+        assert!(dispatch_key(&mut exts, &question_mark()));
+        assert_eq!(*log.lock().unwrap(), ["a key Slash Some(\"?\")"]);
+    }
+
+    #[test]
+    fn only_a_first_press_is_pressed() {
+        let press = question_mark();
+        assert!(press.pressed());
+        assert!(!KeyInput {
+            repeat: true,
+            ..press
+        }
+        .pressed());
+        assert!(!KeyInput {
+            state: ElementState::Released,
+            ..press
+        }
+        .pressed());
     }
 }
