@@ -13,7 +13,8 @@ pub use extension::{
 };
 pub use flint_audio::Bus;
 pub use flint_render::{
-    river_points, GrassGround, GrassHeight, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex,
+    river_points, GrassGround, GrassHeight, GroundFog, RiverPoint, WaterBodyLook, WaterBodyMesh,
+    WaterVertex,
 };
 pub use flint_core::ray_mesh::{RayHit, RayMesh, RayScene};
 pub use flint_script::{Projector, ScreenPoint, View};

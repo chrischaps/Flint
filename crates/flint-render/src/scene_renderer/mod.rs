@@ -397,6 +397,8 @@ pub struct SceneRenderer {
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
     postprocess_config: PostProcessConfig,
+    /// The ground fog's map, set by the game (ADR 0106).
+    ground_fog: Option<crate::ground_fog::GroundFogGpu>,
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
     // Parallax: camera offset in world units + orthographic viewport height
@@ -631,6 +633,7 @@ impl SceneRenderer {
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
+            ground_fog: None,
             surface_format,
             camera_offset: [0.0, 0.0],
             ortho_height: 10.0,
@@ -2098,6 +2101,7 @@ impl SceneRenderer {
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
+            ground_fog: None,
             surface_format,
             camera_offset: [0.0, 0.0],
             ortho_height: 10.0,
@@ -3418,6 +3422,32 @@ impl SceneRenderer {
                 &flint_core::ocean::OceanParams::default(),
             ));
         }
+    }
+
+    /// Lay a ground fog on the floors of `fog`'s map (ADR 0106), replacing
+    /// any set: a fog with a floor of its own under each texel, so a mist
+    /// can fill hollows at many heights. How it looks (its density, colour,
+    /// falloff and steps) is the post-process config's `ground_fog_*`, and
+    /// it shows only while `ground_fog_density` is over 0. Errs when the
+    /// map is bad, and keeps what was set; a map with no fog on it clears it.
+    pub fn set_ground_fog(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        fog: &crate::ground_fog::GroundFog,
+    ) -> Result<(), String> {
+        self.ground_fog = crate::ground_fog::GroundFogGpu::new(device, queue, fog)?;
+        Ok(())
+    }
+
+    /// Remove the ground fog. Returns whether one was set.
+    pub fn clear_ground_fog(&mut self) -> bool {
+        self.ground_fog.take().is_some()
+    }
+
+    /// Whether a ground fog is set (with fog somewhere on its map).
+    pub fn has_ground_fog(&self) -> bool {
+        self.ground_fog.is_some()
     }
 
     /// Draw water on a game's own mesh (ADR 0094): a lake at its level, a

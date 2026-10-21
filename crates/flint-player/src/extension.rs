@@ -445,6 +445,24 @@ impl ExtensionGpu<'_> {
         self.renderer.unload_grass();
     }
 
+    /// Lay a ground fog over a world rectangle (ADR 0106): each texel of
+    /// the map has a floor and an amount, and the fog lies on that floor,
+    /// thinning upward, so a mist can fill valleys at many heights where
+    /// the height fog is one level layer. Replaces any set. How it looks
+    /// is the post-process config's `ground_fog_*` (it shows only while
+    /// `ground_fog_density` is over 0), so set the map once, and again
+    /// when the ground changes, and change the look as often as you like.
+    /// Errs when the map's texels don't fill its size, or a value isn't
+    /// finite; a map with no fog on it clears it.
+    pub fn set_ground_fog(&mut self, fog: &crate::GroundFog) -> Result<(), String> {
+        self.renderer.set_ground_fog(self.device, self.queue, fog)
+    }
+
+    /// Remove the ground fog. Returns whether one was set.
+    pub fn clear_ground_fog(&mut self) -> bool {
+        self.renderer.clear_ground_fog()
+    }
+
     /// Draw water on the game's own mesh (ADR 0094): a lake at its own
     /// level, a river stepping down a valley. It shades as the `ocean` does
     /// (waves, Fresnel, refraction, the cel ramp, shoreline foam), with the

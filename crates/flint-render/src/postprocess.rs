@@ -64,6 +64,19 @@ pub struct PostProcessConfig {
     pub fog_tint_strength: f32,
     pub fog_tint_start: f32,
     pub fog_tint_end: f32,
+    /// Ground fog (ADR 0106): fog on floors of its own, read from the map
+    /// set with `SceneRenderer::set_ground_fog`, so a mist can fill hollows
+    /// at many heights. Its density per metre at a texel's floor where the
+    /// texel's amount is 1; 0 (the default) is off, as is a renderer with
+    /// no map. Unlit and in `ground_fog_color` (linear), it lies under the
+    /// distance fog and the aerial tint, and rides `enabled`, not
+    /// `fog_enabled`.
+    pub ground_fog_density: f32,
+    pub ground_fog_color: [f32; 3],
+    /// It falls by e every `1 / ground_fog_falloff` metres over the floor.
+    pub ground_fog_falloff: f32,
+    /// Steps each view ray marches through it, 1..=64 (clamped at upload).
+    pub ground_fog_steps: u32,
     pub dither_enabled: bool,
     pub dither_intensity: f32,
     pub volumetric_enabled: bool,
@@ -141,6 +154,10 @@ impl Default for PostProcessConfig {
             fog_tint_strength: 0.0,
             fog_tint_start: 100.0,
             fog_tint_end: 1000.0,
+            ground_fog_density: 0.0,
+            ground_fog_color: [0.8, 0.82, 0.86],
+            ground_fog_falloff: 0.5,
+            ground_fog_steps: 24,
             dither_enabled: false,
             dither_intensity: 0.03,
             volumetric_enabled: false,
@@ -291,6 +308,21 @@ pub struct PostProcessUniforms {
     pub fog_tint_end: f32,
     pub fog_height_density: f32,
     pub _pad5: f32,
+    // Ground fog (ADR 0106) — four appended rows. The box the pass marches
+    // runs from ground_fog_floor_base up to ground_fog_ceiling, over
+    // origin..origin + size in X and Z.
+    pub ground_fog_color: [f32; 3],
+    pub ground_fog_density: f32,
+    pub ground_fog_origin: [f32; 2],
+    pub ground_fog_size: [f32; 2],
+    pub ground_fog_floor_base: f32,
+    pub ground_fog_ceiling: f32,
+    pub ground_fog_falloff: f32,
+    pub ground_fog_steps: f32,
+    pub ground_fog_texel: f32,
+    pub ground_fog_max_lod: f32,
+    pub ground_fog_enabled: f32,
+    pub _pad6: f32,
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -1000,6 +1032,8 @@ pub struct PostProcessPipeline {
     pub white_texture_view: wgpu::TextureView,
     // Cached hemisphere kernel (generated once)
     pub ssao_kernel: [[f32; 4]; SSAO_KERNEL_SIZE],
+    // 1x1 clear map bound when no ground fog is set (ADR 0106)
+    pub ground_fog_empty_view: wgpu::TextureView,
     // Volumetric (god rays) pipelines and resources
     pub volumetric_pipeline: wgpu::RenderPipeline,
     pub volumetric_uniform_bgl: wgpu::BindGroupLayout,
@@ -1159,6 +1193,17 @@ impl PostProcessPipeline {
                         binding: 5,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // The ground fog's map (ADR 0106), read through binding 5
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -1949,6 +1994,24 @@ impl PostProcessPipeline {
         let volumetric_black_view =
             volumetric_black_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // 1x1 clear ground fog map (zero-initialised) for when none is set
+        let ground_fog_empty_view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Ground Fog Empty Map"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::ground_fog::FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
         // --- Kuwahara pipelines (only when enabled) ---
         let kuwahara = if kuwahara_enabled {
             Some(KuwaharaPipelines::new(device))
@@ -1995,6 +2058,7 @@ impl PostProcessPipeline {
             volumetric_blur_texture_bgl,
             volumetric_blur_uniform_buffer,
             volumetric_black_view,
+            ground_fog_empty_view,
             kuwahara,
             // FXAA is created on demand via ensure_fxaa_resources (ADR 0050)
             fxaa: None,
@@ -2886,6 +2950,7 @@ impl PostProcessPipeline {
         depth_view: &wgpu::TextureView,
         camera: &Camera,
         time: f32,
+        ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_view = if config.enabled && config.ssao_enabled {
@@ -2929,9 +2994,17 @@ impl PostProcessPipeline {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(
+                        ground_fog.map_or(&self.ground_fog_empty_view, |g| &g.view),
+                    ),
+                },
             ],
         });
         let effects_on = config.enabled;
+        let ground_fog = ground_fog.filter(|_| effects_on && config.ground_fog_density > 0.0);
+        let falloff = config.ground_fog_falloff.max(1e-3);
         let uniforms = PostProcessUniforms {
             exposure: config.exposure,
             bloom_intensity: if effects_on && config.bloom_enabled {
@@ -3001,6 +3074,19 @@ impl PostProcessPipeline {
             fog_tint_end: config.fog_tint_end.max(config.fog_tint_start + 1e-3),
             fog_height_density: config.fog_height_density.max(0.0),
             _pad5: 0.0,
+            ground_fog_color: config.ground_fog_color,
+            ground_fog_density: config.ground_fog_density.max(0.0),
+            ground_fog_origin: ground_fog.map_or([0.0; 2], |g| g.origin),
+            ground_fog_size: ground_fog.map_or([1.0; 2], |g| g.size),
+            ground_fog_floor_base: ground_fog.map_or(0.0, |g| g.floor_base),
+            // Over the highest floor the fog has thinned to e^-7 by here
+            ground_fog_ceiling: ground_fog.map_or(0.0, |g| g.floor_top + 7.0 / falloff),
+            ground_fog_falloff: falloff,
+            ground_fog_steps: config.ground_fog_steps.clamp(1, 64) as f32,
+            ground_fog_texel: ground_fog.map_or(1.0, |g| g.texel),
+            ground_fog_max_lod: ground_fog.map_or(0.0, |g| (g.mip_count - 1) as f32),
+            ground_fog_enabled: if ground_fog.is_some() { 1.0 } else { 0.0 },
+            _pad6: 0.0,
         };
 
         queue.write_buffer(
@@ -3336,10 +3422,12 @@ mod tests {
     /// vec4 at 208..224, grade rows (lift+enabled / gamma+pad / gain+pad)
     /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44),
     /// fog rows (tint color+strength / tint start+end+height density+pad)
-    /// at 272..304 (ADR 0101).
+    /// at 272..304 (ADR 0101), ground fog rows (color+density / origin+size
+    /// / floor base, ceiling, falloff, steps / texel, max lod, enabled, pad)
+    /// at 304..368 (ADR 0106).
     #[test]
     fn composite_uniforms_match_wgsl_layout() {
-        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 304);
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 368);
         assert_eq!(std::mem::size_of::<PostProcessUniforms>() % 16, 0);
     }
 

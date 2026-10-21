@@ -4,13 +4,14 @@
 //! a grass mask repainted in part after upload, and grass blades standing
 //! on the blend of their ground's heights, and a mesh kept out of the
 //! shadow map by `material.cast_shadows`. And meshes made ray targets,
-//! met where their entities draw them (ADR 0105).
+//! met where their entities draw them (ADR 0105), and a ground fog lying
+//! on its map's floors (ADR 0106).
 //!
 //! These need a GPU adapter. Without one each test prints a note and passes.
 
 use flint_ecs::FlintWorld;
 use flint_import::{ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
-use flint_render::{Camera, DebugMode, RendererConfig, SceneRenderer, Vertex};
+use flint_render::{Camera, DebugMode, GroundFog, RendererConfig, SceneRenderer, Vertex};
 
 const SIZE: u32 = 64;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -1139,4 +1140,86 @@ fn a_ray_target_is_met_where_each_entity_draws_it() {
     assert!(renderer.remove_mesh("floor"));
     gpu.frame(&mut renderer, &world, &camera);
     assert!(renderer.ray_scene().is_empty());
+}
+
+#[test]
+fn a_ground_fog_lies_on_its_floors() {
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    let mut world = FlintWorld::new();
+    // From (10, 10, 10), looking down at the middle of dark ground.
+    let camera = Camera::default();
+    let close = |a: [u8; 4], b: [u8; 4]| (0..3).all(|i| a[i].abs_diff(b[i]) <= 3);
+    let (ground, indices) = square(40.0, [0.2, 0.2, 0.2, 1.0]);
+    let material = ImportedMaterial::vertex_colored("ground");
+    renderer.load_procedural_mesh(&gpu.device, "ground", &ground, &indices, material);
+    spawn(&mut world, "ground", "ground", [0.0; 3]);
+    gpu.frame(&mut renderer, &world, &camera);
+    let clear = gpu.centre_pixel();
+
+    // A red fog, dense at its floor and thinning by e a metre over it. With
+    // no map it isn't there.
+    let mut config = renderer.post_process_config().clone();
+    config.ground_fog_density = 2.0;
+    config.ground_fog_color = [1.0, 0.0, 0.0];
+    config.ground_fog_falloff = 1.0;
+    renderer.set_post_process_config(config.clone());
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(clear, gpu.centre_pixel()), "no map, no fog");
+
+    let fog = |renderer: &mut SceneRenderer, texels: &[[f32; 2]]| -> Result<(), String> {
+        let map = GroundFog {
+            origin: [-30.0, -30.0],
+            size: [60.0, 60.0],
+            width: 16,
+            depth: 16,
+            texels,
+        };
+        renderer.set_ground_fog(&gpu.device, &gpu.queue, &map)
+    };
+    // On the ground's floor it lies thick round the middle.
+    let on_ground = vec![[0.0, 1.0]; 256];
+    fog(&mut renderer, &on_ground).unwrap();
+    gpu.frame(&mut renderer, &world, &camera);
+    let thick = gpu.centre_pixel();
+    assert!(
+        thick[0] > clear[0] + 80 && thick[1] <= clear[1] + 5,
+        "fogged red: {thick:?} vs {clear:?}"
+    );
+
+    // On a floor 6 m under the ground, it has thinned to nothing by the
+    // ground: the floor, not the scene's level, says where it lies.
+    fog(&mut renderer, &vec![[-6.0, 1.0]; 256]).unwrap();
+    gpu.frame(&mut renderer, &world, &camera);
+    let under = gpu.centre_pixel();
+    assert!(
+        under[0] < clear[0] + 6,
+        "thin 6 m over its floor: {under:?} vs {clear:?}"
+    );
+
+    // Half as much of it where the map says so.
+    fog(&mut renderer, &vec![[0.0, 0.25]; 256]).unwrap();
+    gpu.frame(&mut renderer, &world, &camera);
+    let some = gpu.centre_pixel();
+    assert!(
+        some[0] > clear[0] + 10 && some[0] + 10 < thick[0],
+        "a quarter: {some:?}"
+    );
+
+    // A bad map is refused and keeps what was set; a clear map clears it,
+    // and so does a density of 0.
+    assert!(fog(&mut renderer, &on_ground[..10]).is_err());
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(some, gpu.centre_pixel()), "the bad map kept the last");
+    fog(&mut renderer, &on_ground).unwrap();
+    config.ground_fog_density = 0.0;
+    renderer.set_post_process_config(config.clone());
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(clear, gpu.centre_pixel()), "density 0 is off");
+    config.ground_fog_density = 2.0;
+    renderer.set_post_process_config(config);
+    fog(&mut renderer, &vec![[0.0, 0.0]; 256]).unwrap();
+    assert!(!renderer.has_ground_fog());
+    gpu.frame(&mut renderer, &world, &camera);
+    assert!(close(clear, gpu.centre_pixel()), "a clear map clears it");
 }
