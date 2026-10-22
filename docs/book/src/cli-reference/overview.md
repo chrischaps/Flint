@@ -108,6 +108,8 @@ An input script plays its events at set game times. `#` starts a comment:
 8.0   down    ShiftLeft          # held modifiers reach egui: a shift-drag
 9.0   type    200 planks         # text into the focused egui field
 9.5   tap     Enter
+10.0  look    40 -10             # raw mouse motion, for mouse-look
+10.5  look    300 0 1.5          # spread over 1.5 s
 ```
 
 The mouse buttons are `MouseLeft`, `MouseRight`, `MouseMiddle`, `MouseBack`
@@ -141,6 +143,8 @@ a real keyboard: extensions' `on_window_event` never sees a scripted key
 (winit's `KeyEvent` can't be built outside winit), so read keys in `on_key`
 to script them, and a scripted Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
 during a capture, so keep it outside.
+
+`look` feeds raw mouse motion, what `mouse_delta_x()` / `mouse_delta_y()` read, at once or spread over the seconds given. As a real mouse's motion, it reaches the game only while the cursor is captured and no egui field has focus ([Cursor Capture and Input Gates](../concepts/input-gates.md), ADR 0110). The script's pad plays whether or not the window has focus. A real pad doesn't.
 
 Times are `GameClock` seconds (what scripts see via `total_time()`), not
 wall-clock seconds since launch, so a capture lands on the same gameplay

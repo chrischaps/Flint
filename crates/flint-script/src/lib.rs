@@ -220,6 +220,17 @@ impl ScriptSystem {
         c.mouse_pos_logical = (x, y);
     }
 
+    /// Whether the cursor is captured now, for `is_cursor_captured()`
+    /// (ADR 0110).
+    pub fn set_cursor_captured(&mut self, captured: bool) {
+        crate::lock_or_recover(&self.engine.ctx).cursor_captured = captured;
+    }
+
+    /// Whether `is_cursor_captured()` reads true (ADR 0110).
+    pub fn cursor_captured(&self) -> bool {
+        crate::lock_or_recover(&self.engine.ctx).cursor_captured
+    }
+
     /// Sync loaded chunk IDs so scripts can query `is_chunk_loaded`
     pub fn set_loaded_chunk_ids(&mut self, ids: std::collections::HashSet<String>) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);

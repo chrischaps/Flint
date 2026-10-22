@@ -82,6 +82,8 @@ impl PlayerApp {
             content_store: Some(ContentStore::new(".flint/assets")),
             fullscreen,
             cursor_captured: false,
+            window_focused: true,
+            real_pad_slots: Default::default(),
             key_modifiers: Default::default(),
             skybox_path: None,
             scene_ambient: None,

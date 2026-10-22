@@ -6,6 +6,8 @@ mod debug_panels;
 mod egui_input;
 mod events;
 #[cfg(test)]
+mod capture_gate_tests;
+#[cfg(test)]
 mod debug_key_tests;
 #[cfg(test)]
 mod extension_tests;
@@ -209,6 +211,12 @@ pub struct PlayerApp {
     // Window options
     pub fullscreen: bool,
     cursor_captured: bool,
+    /// Whether the window has the keyboard focus; real pads are dropped
+    /// and released while it doesn't (ADR 0110).
+    window_focused: bool,
+    /// The `InputState` slots real pads (gilrs) have written, released when
+    /// the window loses focus.
+    real_pad_slots: std::collections::HashSet<u32>,
     /// The modifiers held now, real or scripted, for `PlayerExtension::on_key`.
     key_modifiers: winit::keyboard::ModifiersState,
 

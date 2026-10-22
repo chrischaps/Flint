@@ -716,6 +716,10 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick(&mut self) {
+        // Pads are held while a text field has focus (ADR 0110), before
+        // they're polled.
+        self.gate_gamepads();
+
         // Music session drain + guide/timeline panel feed (F3, ADR 0018).
         self.tick_music_session();
 
@@ -857,6 +861,7 @@ impl PlayerApp {
                 audio: crate::extension::ExtensionAudio::new(&mut self.audio),
                 rays: rays.clone(),
                 fired_events: &mut fired_events,
+                cursor_captured: self.cursor_captured,
             };
             ext.pre_update(&mut ctx);
         }
@@ -1046,6 +1051,7 @@ impl PlayerApp {
             self.script
                 .set_mouse_position(mx as f32 / ppp, my as f32 / ppp);
         }
+        self.script.set_cursor_captured(self.cursor_captured);
 
         // Sync loaded chunk IDs so scripts can query is_chunk_loaded()
         let chunk_ids: HashSet<String> = self.loaded_chunks.keys().cloned().collect();

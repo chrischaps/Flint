@@ -120,6 +120,27 @@ impl EguiInputGate {
     }
 }
 
+impl EguiInputGate {
+    /// Whether a mouse event skips egui while the cursor is captured
+    /// (ADR 0110). The cursor is hidden at the window centre, so a move, a
+    /// click or a turn of the wheel there is the game's, whatever egui drew under
+    /// it. A release whose press egui took before the capture still goes to
+    /// egui, so nothing stays pressed there. Keys and touch are unaffected.
+    pub(super) fn skips_captured(&self, event: &WindowEvent) -> bool {
+        if matches!(
+            event,
+            WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. }
+        ) {
+            return true;
+        }
+        match classify(event) {
+            Routed::Release(held @ Held::Mouse(_)) => !self.held_by_egui.contains(&held),
+            Routed::Press(Held::Mouse(_)) => true,
+            _ => false,
+        }
+    }
+}
+
 /// What egui-winit would push for a key from `--input-script` (ADR 0097).
 ///
 /// A scripted key has no winit `KeyEvent` (one can't be built outside

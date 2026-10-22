@@ -105,7 +105,7 @@ All functions are available globally in every script. Entity IDs are passed as `
 | `is_mouse_pressed(button)` | `bool` | Mouse button held: `0` left, `1` right, `2` middle |
 | `is_mouse_just_pressed(button)` | `bool` | Mouse button went down this frame |
 
-`mouse_x()` / `mouse_y()` and the button queries are what menus and other screen-space UI hit-test against; they are always fed, whether or not the cursor is captured. In scenes with a player character the first left click also captures the cursor for mouse-look (it still registers as a press).
+`mouse_x()` / `mouse_y()` and the button queries are what menus and other screen-space UI hit-test against. The buttons are always fed, whether or not the cursor is captured. While it's captured, `mouse_x()` / `mouse_y()` read the window centre, and clicks skip egui ([Cursor Capture and Input Gates](input-gates.md)). In scenes with a player character the first left click also captures the cursor for mouse-look (it still registers as a press).
 
 Action names are defined by input configuration files and are fully customizable per game. The built-in defaults include: `move_forward`, `move_backward`, `move_left`, `move_right`, `jump`, `interact`, `sprint`, `weapon_1`, `weapon_2`, `reload`, `fire`. Games can define arbitrary custom actions in their input config TOML files and query them from scripts with `is_action_pressed("custom_action")`.
 
@@ -231,7 +231,8 @@ A handful of probes per frame is cheap. Thousands are not.
 | `any_input_just_pressed()` | `bool` | True on the frame any key, mouse button, or gamepad button was pressed |
 | `last_input_device()` | `String` | `"keyboard"`, `"mouse"`, `"gamepad"` or `"touch"`: the device of the most recent deliberate input |
 | `gamepad_connected()` | `bool` | True while at least one gamepad is attached |
-| `set_cursor_captured(captured)` | | Capture (hide + lock) or release the mouse cursor |
+| `set_cursor_captured(captured)` | | Capture (hide + lock) or release the mouse cursor, at the end of this frame |
+| `is_cursor_captured()` | `bool` | Whether the cursor is captured now ([Cursor Capture and Input Gates](input-gates.md)) |
 
 `any_input_just_pressed` reads **raw** presses and bypasses action maps
 entirely — it is for "press any key to continue", where the whole point is that
