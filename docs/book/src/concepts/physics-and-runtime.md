@@ -253,7 +253,10 @@ Configs are loaded with deterministic precedence (later layers override earlier)
 
 1. **Engine built-in defaults** --- hardcoded WASD + mouse baseline (always present)
 2. **Game default config** --- `<game_root>/config/input.toml` (checked into the repo)
-3. **User overrides** --- `~/.flint/input_{game_id}.toml` (per-player remapping, written at runtime)
+3. **User overrides** --- per-player remapping, written at runtime. The first that exists of:
+   - `<scene_dir>/.flint/input.user.toml` (project-local, for development)
+   - `<config>/flint/input_{game_id}.toml`, where `<config>` is the OS config directory (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.config` on Linux)
+   - `<config>/flint/input.user.toml`, shared by games with no `game_id` of their own (or `game_id = "flint"`)
 4. **CLI override** --- `--input-config <path>` flag (one-off testing/debugging)
 
 Scenes can also reference an input config via the `input_config` field in the `[scene]` table.
@@ -297,7 +300,7 @@ Bindings can be remapped at runtime through the `rebind_action()` API:
    - **Replace** --- clear all existing bindings, set the new one
    - **Add** --- append to the binding list (allows multiple inputs for one action)
    - **Swap** --- remove this binding from any other action, assign to target
-4. User overrides are automatically saved to `~/.flint/input_{game_id}.toml`
+4. User overrides are automatically saved to `<config>/flint/input_{game_id}.toml`, or back to the project-local `.flint/input.user.toml` if that's the one that was loaded. The user override is looked up once the game default has set `game_id`, so a game's rebinds are found on the next start
 
 ## Runtime Physics Updates
 
