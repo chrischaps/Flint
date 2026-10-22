@@ -523,7 +523,7 @@ fn on_interact() {
 }
 ```
 
-## Input Configuration (`config/input.toml`, `~/.flint/input_{game_id}.toml`)
+## Input Configuration (`config/input.toml`, `<config>/flint/input_{game_id}.toml`)
 
 Define action-to-binding mappings for keyboard, mouse, and gamepad input. Loaded with layered precedence: engine defaults → game config → user overrides → CLI override.
 

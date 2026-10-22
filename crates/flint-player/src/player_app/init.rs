@@ -4,7 +4,7 @@
 //! path calls (`load_pending_sprites`) live here with the rest of the
 //! loading surface.
 
-use super::input_config::resolve_input_paths;
+use super::input_config::{resolve_input_paths, resolve_user_override};
 use super::scene_loading;
 use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
@@ -649,7 +649,7 @@ impl PlayerApp {
             .load_bindings(InputConfig::built_in_defaults())
             .context("failed to load built-in input defaults")?;
 
-        let paths = resolve_input_paths(
+        let mut paths = resolve_input_paths(
             Path::new(&self.scene_path),
             self.scene_input_config.as_deref(),
             self.input_config_override.as_deref(),
@@ -666,6 +666,10 @@ impl PlayerApp {
             }
         }
 
+        // Now the game default has set the game id, find the player's own
+        // rebinds: they're saved under it.
+        paths.user_override =
+            resolve_user_override(Path::new(&self.scene_path), &self.input.config().game_id);
         if let Some(path) = &paths.user_override {
             if path.exists() {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {

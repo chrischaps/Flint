@@ -12,12 +12,13 @@ use super::music_guide_panel;
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::input_config::{
-    fallback_user_override_path, gamepad_id_to_u32, write_user_override_file, PendingRebind,
+    fallback_user_override_path, gamepad_id_to_u32, user_override_save_path,
+    write_user_override_file, PendingRebind,
 };
 use anyhow::Result;
 use flint_runtime::{Binding, RebindMode};
 use gilrs::EventType;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -251,18 +252,13 @@ impl PlayerApp {
             return Ok(());
         };
 
-        let mut target = paths.user_override.clone().unwrap_or_else(|| {
-            fallback_user_override_path(Path::new(&self.scene_path), &self.input.config().game_id)
-                .unwrap_or_else(|| PathBuf::from(".flint/input.user.toml"))
-        });
+        let scene_path = Path::new(&self.scene_path);
+        let game_id = &self.input.config().game_id;
+        let mut target =
+            user_override_save_path(scene_path, game_id, paths.user_override.as_deref());
 
         if let Err(err) = write_user_override_file(&target, &self.user_override_config) {
-            let Some(fallback) = fallback_user_override_path(
-                Path::new(&self.scene_path),
-                &self.input.config().game_id,
-            ) else {
-                return Err(err);
-            };
+            let fallback = fallback_user_override_path(scene_path, game_id);
             if fallback != target {
                 write_user_override_file(&fallback, &self.user_override_config)?;
                 target = fallback;
