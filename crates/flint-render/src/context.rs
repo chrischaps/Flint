@@ -138,8 +138,12 @@ impl RenderContext {
             } else {
                 vec![]
             },
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: frame_latency(),
         };
+        tracing::info!(
+            "surface frame latency: {}",
+            config.desired_maximum_frame_latency
+        );
         surface.configure(&device, &config);
 
         let (depth_texture, depth_view) = create_depth_texture(&device, &config);
@@ -290,10 +294,29 @@ impl RenderContext {
         }
     }
 
+    /// True when every presented frame waits for a vblank (Fifo), so frame
+    /// times can be paced to the display's refresh (`GameClock`).
+    pub fn presents_on_vblank(&self) -> bool {
+        matches!(
+            self.config.present_mode,
+            wgpu::PresentMode::AutoVsync | wgpu::PresentMode::Fifo | wgpu::PresentMode::FifoRelaxed
+        )
+    }
+
     /// Get aspect ratio
     pub fn aspect_ratio(&self) -> f32 {
         self.size.width as f32 / self.size.height as f32
     }
+}
+
+/// Frames the CPU may queue ahead of the display. `FLINT_FRAME_LATENCY`
+/// overrides the default of 2 (1 to 3).
+fn frame_latency() -> u32 {
+    std::env::var("FLINT_FRAME_LATENCY")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|n| n.clamp(1, 3))
+        .unwrap_or(2)
 }
 
 fn create_depth_texture(

@@ -581,11 +581,15 @@ impl PlayerApp {
         }
 
         output.present();
+        let presented = std::time::Instant::now();
 
         if let Some(exit_after) = self.capture.exit_after {
             if self.clock.total_time >= super::PERF_SKIP_SECS {
                 self.capture.perf_frames += 1;
                 self.capture.perf_time += self.clock.delta_time;
+                self.capture
+                    .perf_pacing
+                    .record(self.clock.delta_time, presented);
                 if let Some(renderer) = &self.scene_renderer {
                     let stats = renderer.collect_stats();
                     self.capture.perf_draws += stats.draw_calls as u64;
@@ -611,6 +615,13 @@ impl PlayerApp {
                         super::PERF_SKIP_SECS,
                         1000.0 / avg_ms
                     );
+                    // How even they were: a mean hides bursts (#406).
+                    if let Some(dt) = self.capture.perf_pacing.dt() {
+                        eprintln!("[perf] dt: {dt}");
+                    }
+                    if let Some(present) = self.capture.perf_pacing.present() {
+                        eprintln!("[perf] present to present: {present}");
+                    }
                     // The F2 overlay's main figures, averaged, so a capture
                     // can compare draw counts and culling headlessly (H9).
                     let avg = |sum: u64| sum as f64 / frames as f64;

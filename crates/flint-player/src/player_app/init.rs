@@ -251,6 +251,7 @@ impl PlayerApp {
 
         self.render_context = Some(render_context);
         self.scene_renderer = Some(scene_renderer);
+        self.update_vsync_pacing();
 
         // Saved persistent store (save/persist.toml) before any script's
         // on_init runs, so persist_get sees last session's values.
