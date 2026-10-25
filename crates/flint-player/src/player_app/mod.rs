@@ -20,6 +20,7 @@ pub mod input_script;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
+mod pacing;
 mod persist;
 pub(crate) mod scene_loading;
 mod script_commands;
@@ -120,6 +121,9 @@ pub struct CaptureConfig {
     /// GPU frame times summed over frames that had one (ADR 0108)
     pub(crate) perf_gpu_ms: f64,
     pub(crate) perf_gpu_frames: u64,
+    /// The same frames' dt and present-to-present times, reported as a
+    /// spread so uneven pacing shows at an even mean.
+    pub(crate) perf_pacing: pacing::Pacing,
 }
 
 /// Game seconds ignored by the `--exit-after` frame-time report (loading,

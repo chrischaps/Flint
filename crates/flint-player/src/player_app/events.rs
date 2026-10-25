@@ -456,6 +456,10 @@ impl ApplicationHandler for PlayerApp {
                 self.handle_resize(new_size);
             }
 
+            WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                self.update_vsync_pacing();
+            }
+
             WindowEvent::KeyboardInput {
                 device_id, event, ..
             } => {
@@ -547,6 +551,29 @@ impl PlayerApp {
             if self.cursor_captured {
                 self.centre_the_cursor();
             }
+    }
+
+    /// Pace the clock to the window's monitor when frames wait for vblank
+    /// (#406 in The Capitol). On start, and again when the window moves, since
+    /// another monitor can have another refresh. `FLINT_PACING=0` turns it off.
+    pub(super) fn update_vsync_pacing(&mut self) {
+        let on_vblank = self
+            .render_context
+            .as_ref()
+            .is_some_and(|c| c.presents_on_vblank());
+        let disabled = std::env::var("FLINT_PACING").is_ok_and(|v| v == "0");
+        let period = (on_vblank && !disabled)
+            .then(|| self.window.as_ref()?.current_monitor()?.refresh_rate_millihertz())
+            .flatten()
+            .filter(|&mhz| mhz > 0)
+            .map(|mhz| 1000.0 / mhz as f64);
+        if period != self.clock.vsync_period() {
+            tracing::info!(
+                "frame pacing: {}",
+                period.map_or("off".to_string(), |p| format!("{:.2} Hz", 1.0 / p))
+            );
+            self.clock.set_vsync_period(period);
+        }
     }
 
     fn handle_keyboard_input(
