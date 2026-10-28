@@ -117,7 +117,8 @@ pub(super) struct CachedDrawBinds {
 /// 23's DX12 backend has a shader-visible sampler heap of 2048, so one bind
 /// group per entity ran it dry at about 512 entities and panicked (Capitol
 /// #525). The buffer's per-frame fields (debug mode, tonemapping) are the
-/// same for every draw, so sharing it is safe.
+/// same for every draw, so sharing it is safe. More than about 512 distinct
+/// looks would still run it dry; wgpu 25 dedups DX12 samplers (Capitol #577).
 pub(super) struct SharedMaterial {
     pub buffer: Arc<wgpu::Buffer>,
     pub bind_group: Arc<wgpu::BindGroup>,
