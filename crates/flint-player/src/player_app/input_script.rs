@@ -12,9 +12,10 @@
 //! 0.0   down   KeyW               # hold a key (names as in input configs)
 //! 2.5   up     KeyW
 //! 3.0   tap    KeyF 0.4           # down now, up 0.4 s later (default 0.06)
-//! 3.0   axis   LeftStickX -0.35   # stick / trigger value on the script pad
+//! 3.0   axis   LeftStickX -0.35   # stick value on the script pad
 //! 4.0   press  South              # gamepad button down
 //! 4.2   release South
+//! 4.5   pull   RightTrigger2 0.6  # a trigger pulled part-way (0 lets go)
 //! 5.0   wheel  1                  # wheel lines this frame: up is +, in
 //! 5.5   wheel  -0.5 2             # a line is a notch; then an x amount
 //! 6.0   mouse  640 360            # pointer to window pixels (as screenshots)
@@ -27,6 +28,11 @@
 //! 9.0   look   40 -10             # raw mouse motion, as mouse-look reads
 //! 9.5   look   300 0 1.5          #   it; spread over 1.5 s
 //! ```
+//!
+//! `pull` is an analog button's travel, as a real pad's trigger sends it
+//! (gilrs' `ButtonChanged`): a binding to that button reads the value, not
+//! the digital 0 or 1. It sets the value alone, so a script that also wants
+//! the button's press edge adds a `press` and `release` of its own.
 //!
 //! The pad writes `InputState` directly. Keys, the pointer (`mouse`,
 //! `click`, mouse buttons and the wheel) and typed text come back from
@@ -163,6 +169,8 @@ enum Action {
     Axis(String, f32),
     ButtonDown(String),
     ButtonUp(String),
+    /// An analog button's travel (a trigger part-way), 0 to 1.
+    Pull(String, f32),
     Wheel(f32, f32),
     /// Pointer to (x, y), at once or gliding over the seconds given.
     Pointer(f64, f64, f64),
@@ -293,6 +301,14 @@ impl InputScript {
                         .map_err(|_| bad("bad axis value"))?;
                     events.push((t, Action::Axis(f[2].to_string(), v)));
                 }
+                "pull" => {
+                    let v: f32 = f
+                        .get(3)
+                        .ok_or_else(|| bad("pull needs a value"))?
+                        .parse()
+                        .map_err(|_| bad("bad pull value"))?;
+                    events.push((t, Action::Pull(f[2].to_string(), v)));
+                }
                 "press" => events.push((t, Action::ButtonDown(f[2].to_string()))),
                 "release" => events.push((t, Action::ButtonUp(f[2].to_string()))),
                 "wheel" => {
@@ -416,6 +432,9 @@ impl InputScript {
                     }
                     input.process_gamepad_button_up(SCRIPT_PAD, b.clone());
                 }
+                Action::Pull(b, v) => {
+                    input.process_gamepad_button_changed(SCRIPT_PAD, b.clone(), *v)
+                }
                 Action::Wheel(dx, dy) => {
                     if jumped {
                         break;
@@ -512,6 +531,36 @@ mod tests {
         .unwrap();
         let times: Vec<f64> = s.events.iter().map(|e| e.0).collect();
         assert_eq!(times, vec![0.5, 0.7, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn pull_is_a_trigger_part_way() {
+        let mut input = InputState::new();
+        input
+            .load_bindings(
+                flint_runtime::InputConfig::from_toml_str(
+                    r#"
+version = 1
+[actions.zoom_in]
+kind = "axis1d"
+[[actions.zoom_in.bindings]]
+type = "gamepad_button"
+button = "RightTrigger2"
+gamepad = "any"
+"#,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut s =
+            InputScript::parse("1.0 pull RightTrigger2 0.6
+2.0 pull RightTrigger2 0
+").unwrap();
+        s.apply(1.0, &mut input);
+        assert!((input.action_value("zoom_in") - 0.6).abs() < 1e-6, "a half pull");
+        s.apply(2.0, &mut input);
+        assert_eq!(input.action_value("zoom_in"), 0.0, "let go");
+        assert!(InputScript::parse("0 pull RightTrigger2").is_err());
     }
 
     #[test]
