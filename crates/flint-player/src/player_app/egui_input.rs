@@ -153,6 +153,30 @@ impl EguiInputGate {
     }
 }
 
+/// Whether an event comes from a real keyboard, mouse, wheel or touch: what
+/// a capture drops (`CaptureConfig::is_capture`). Lifecycle events (focus,
+/// resize, redraw, close) aren't.
+pub(super) fn is_device_input(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::KeyboardInput { .. }
+            | WindowEvent::ModifiersChanged(_)
+            | WindowEvent::Ime(_)
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::Touch(_)
+            | WindowEvent::PinchGesture { .. }
+            | WindowEvent::PanGesture { .. }
+            | WindowEvent::RotationGesture { .. }
+            | WindowEvent::DoubleTapGesture { .. }
+            | WindowEvent::TouchpadPressure { .. }
+            | WindowEvent::AxisMotion { .. }
+    )
+}
+
 /// What egui-winit would push for a key from `--input-script` (ADR 0097).
 ///
 /// A scripted key has no winit `KeyEvent` (one can't be built outside

@@ -148,8 +148,10 @@ impl PlayerApp {
         for event in events {
             let gamepad = gamepad_id_to_u32(event.id);
             self.real_pad_slots.insert(gamepad);
-            // A real pad is ignored while the window is unfocused (ADR 0110).
-            if !self.window_focused && event.event != EventType::Disconnected {
+            // A real pad is ignored while the window is unfocused (ADR 0110),
+            // and by a capture, which hears its script's pad alone.
+            let deaf = !self.window_focused || self.capture.is_capture();
+            if deaf && event.event != EventType::Disconnected {
                 continue;
             }
             match event.event {
@@ -326,6 +328,13 @@ impl PlayerApp {
         self.input.mouse_position = (w / 2.0, h / 2.0);
     }
 
+    /// Whether a capture drops this real window event: it hears its
+    /// script alone. The script's events take `taken_before_the_game`
+    /// directly, never `window_event`, so they're never asked.
+    pub(super) fn capture_drops(&self, event: &WindowEvent) -> bool {
+        self.capture.is_capture() && super::egui_input::is_device_input(event)
+    }
+
     /// Whether an egui text field has the keyboard (the text-focus gate of
     /// ADR 0073): keys, pads and raw mouse motion stay out of the game. Only
     /// a `TextEdit` counts, not any focused widget (ADR 0110's amendment).
@@ -356,7 +365,7 @@ impl PlayerApp {
         };
         // Drain what came in before the change, so it isn't replayed.
         while gilrs.next_event().is_some() {}
-        if !focused {
+        if !focused || self.capture.is_capture() {
             return;
         }
         for (id, pad) in gilrs.gamepads() {
@@ -444,6 +453,9 @@ impl ApplicationHandler for PlayerApp {
         if let WindowEvent::Focused(focused) = event {
             self.window_focus_changed(focused);
         }
+        if self.capture_drops(&event) {
+            return;
+        }
         if self.taken_before_the_game(&event) {
             return;
         }
@@ -505,8 +517,13 @@ impl ApplicationHandler for PlayerApp {
         event: DeviceEvent,
     ) {
         // Raw motion flows while the cursor is captured, the window has
-        // focus and no text field has the keyboard (ADR 0110).
-        if !self.cursor_captured || !self.window_focused || self.text_has_focus() {
+        // focus and no text field has the keyboard (ADR 0110), and never
+        // into a capture (`look` is the script's).
+        if !self.cursor_captured
+            || !self.window_focused
+            || self.text_has_focus()
+            || self.capture.is_capture()
+        {
             return;
         }
 

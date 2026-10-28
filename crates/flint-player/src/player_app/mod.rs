@@ -131,6 +131,15 @@ pub struct CaptureConfig {
 pub(crate) const PERF_SKIP_SECS: f64 = 2.0;
 
 impl CaptureConfig {
+    /// Whether this run is a capture: it shoots, stops on its own or plays
+    /// an input script. A capture hears its script alone: real keys, the
+    /// mouse, the wheel and real pads are dropped before egui or the game
+    /// sees them, so a stray scroll over its window can't move its shot
+    /// (ADR 0110's amendment).
+    pub fn is_capture(&self) -> bool {
+        self.path.is_some() || self.exit_after.is_some() || self.input_script.is_some()
+    }
+
     /// Build a capture schedule. `every <= 0` means single-shot.
     pub fn new(
         path: Option<std::path::PathBuf>,

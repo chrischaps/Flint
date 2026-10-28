@@ -38,6 +38,10 @@ While the window is unfocused, real pads are ignored. Losing focus releases them
 
 The input script's pad isn't a real one. Captures often run with the window in the background, so its `axis`, `press` and `release` play on whatever the focus.
 
+## During a capture
+
+A run that shoots (`--screenshot`), stops on its own (`--exit-after`) or plays an input script (`--input-script`) is a capture, and it hears its script alone. Real keys, the mouse, the wheel, touch and real pads are dropped before egui or the game sees them, and so is raw mouse motion. A scroll or a key on a capture window that pops up under someone's cursor can't move its shot, so two runs of one capture compare. Lifecycle events still arrive: the window resizes, gains and loses focus, and closes from its close button. The script's own events take the path real ones would, with every gate above (`CaptureConfig::is_capture`).
+
 ## In input scripts
 
 `look dx dy [secs]` feeds raw mouse motion, as a real mouse's device motion arrives: at once, or spread over `secs` of game time. It takes the same gates as a real mouse: it reaches the game only while the cursor is captured and no text field has focus, but it doesn't wait on the window's focus.
