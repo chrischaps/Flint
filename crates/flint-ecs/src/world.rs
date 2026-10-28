@@ -275,10 +275,19 @@ impl FlintWorld {
             .collect()
     }
 
-    /// Get info about all entities
+    /// Get info about all entities, by name.
+    ///
+    /// The name map is a `HashMap`, whose order changes per process, and
+    /// the renderer draws in this order: where two surfaces tie in depth,
+    /// the pixels on their edges flipped between runs of the same capture.
+    /// Names, unlike ids, don't depend on what was spawned first (a scene
+    /// file's own map, a build that lands on another frame), so sorting by
+    /// name makes the order the same run to run.
     pub fn all_entities(&self) -> Vec<EntityInfo> {
-        self.name_map
-            .iter()
+        let mut named: Vec<(&String, &EntityId)> = self.name_map.iter().collect();
+        named.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        named
+            .into_iter()
             .map(|(name, id)| {
                 let components = self.components.get(id);
                 let archetype = components.and_then(|c| c.archetype.clone());
@@ -779,6 +788,16 @@ mod tests {
             "new id {} should be > 10000",
             next.raw()
         );
+    }
+
+    #[test]
+    fn all_entities_come_by_name_whatever_the_spawn_order() {
+        let mut world = FlintWorld::new();
+        for name in ["walls", "floor", "roof", "door", "chimney"] {
+            world.spawn(name).unwrap();
+        }
+        let names: Vec<String> = world.all_entities().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["chimney", "door", "floor", "roof", "walls"]);
     }
 
     #[test]
