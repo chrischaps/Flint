@@ -5,10 +5,13 @@
 //! window event goes to egui first. An input event egui wants is consumed:
 //! extensions, the player and scripts never see it.
 //!
-//! - Keyboard and IME: consumed while an egui widget has keyboard focus
-//!   (`wants_keyboard_input`), such as a `TextEdit` being typed in. Unlike
-//!   egui-winit's own verdict, Tab is not consumed when nothing is focused,
-//!   so a game can still bind it.
+//! - Keyboard and IME: consumed while a text field has keyboard focus
+//!   ([`text_field_focused`]), a `TextEdit` being typed in. Any other focus
+//!   (a button, a tab, a slot a game's pad ring sits on) leaves the keys to
+//!   the game, though egui still sees them, so Enter clicks the focused
+//!   button. egui's own `wants_keyboard_input` is true for any focus, so
+//!   it isn't used. Unlike egui-winit's own verdict, Tab is not consumed
+//!   when no field is focused, so a game can still bind it.
 //! - Pointer: egui-winit's verdict. Buttons and the wheel over an egui area
 //!   (`wants_pointer_input`), and cursor movement only while egui is using
 //!   the pointer (dragging a slider). Clicks on empty space reach the game.
@@ -82,6 +85,15 @@ pub(super) fn classify(event: &WindowEvent) -> Routed {
     }
 }
 
+/// Whether a text field has the keyboard: egui's focused widget is a
+/// `TextEdit`, which keeps a `TextEditState` under its id (ADR 0110's
+/// amendment). Unlike `Context::wants_keyboard_input`, a focused button,
+/// tab or slot doesn't count, so it doesn't hold the pads or take keys.
+pub(super) fn text_field_focused(ctx: &egui::Context) -> bool {
+    ctx.memory(|m| m.focused())
+        .is_some_and(|id| egui::text_edit::TextEditState::load(ctx, id).is_some())
+}
+
 /// Remembers which held keys and buttons belong to egui.
 #[derive(Default)]
 pub(super) struct EguiInputGate {
@@ -91,7 +103,7 @@ pub(super) struct EguiInputGate {
 impl EguiInputGate {
     /// Whether egui takes this event. Call after egui-winit has seen it:
     /// `egui_consumed` is its verdict, `wants_keyboard` is
-    /// `Context::wants_keyboard_input()`.
+    /// [`text_field_focused`].
     pub(super) fn consumes(
         &mut self,
         routed: Routed,

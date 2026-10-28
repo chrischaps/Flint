@@ -167,6 +167,30 @@ fn pad_axes_read_zero_while_a_field_has_focus() {
     assert!(app.input.action_value("walk") > 0.7);
 }
 
+/// Run one egui frame on the app's context with a button focused.
+fn focus_a_button(app: &PlayerApp) {
+    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.button("Buy").request_focus();
+        });
+    });
+}
+
+#[test]
+fn a_focused_button_leaves_the_pads_to_the_game() {
+    // egui counts any focus as wanting the keyboard; the gate counts only
+    // a text field (ADR 0110's amendment), so a pad ring's focused button
+    // between frames holds nothing.
+    let mut app = headless_app("0 axis LeftStickY 0.8
+");
+    app.add_extension(Box::new(Bare));
+    focus_a_button(&app);
+    assert!(app.egui_ctx.wants_keyboard_input());
+    assert!(!app.text_has_focus());
+    app.tick();
+    assert!(app.input.action_value("walk") > 0.7);
+}
+
 #[test]
 fn pad_axes_read_zero_while_the_window_is_unfocused() {
     let mut app = headless_app("");

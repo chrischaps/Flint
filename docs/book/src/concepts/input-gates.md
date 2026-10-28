@@ -30,6 +30,8 @@ While an egui text field has keyboard focus, keys stop at egui (ADR 0073). Pads 
 - **Pads are held.** Sticks and triggers read 0 and buttons read up, so a pad-bound action releases the frame focus arrives (`InputState::hold_gamepads`). The pads are still tracked underneath, so a stick held through it reads again the frame the field lets go. A button doesn't. One held when the field took focus, or pressed while it had it, reads as up until it's released. It never fires a press nobody made.
 - **Raw mouse motion is dropped**, so typing with the mouse-look on doesn't turn the view.
 
+Only a text field counts: a widget that keeps a `TextEditState` (a `TextEdit`, or anything built on one). egui's own `Context::wants_keyboard_input()` is true for *any* focused widget, so the player doesn't use it. A focused button, tab or checkbox holds nothing: keys still reach egui, so Enter or Space clicks the focused button, and they reach the game too. A game that steers egui's focus from the pad (a ring moved round the widgets with the d-pad) can keep a button focused between frames without losing the pad.
+
 ## The window's focus
 
 While the window is unfocused, real pads are ignored. Losing focus releases them, so a character walking on a stick stops. Getting focus back reads the sticks where they stand, but a held button needs a fresh press. Raw mouse motion is dropped while the window is unfocused, too.

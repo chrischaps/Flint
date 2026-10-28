@@ -327,9 +327,10 @@ impl PlayerApp {
     }
 
     /// Whether an egui text field has the keyboard (the text-focus gate of
-    /// ADR 0073): keys, pads and raw mouse motion stay out of the game.
+    /// ADR 0073): keys, pads and raw mouse motion stay out of the game. Only
+    /// a `TextEdit` counts, not any focused widget (ADR 0110's amendment).
     pub(super) fn text_has_focus(&self) -> bool {
-        self.egui_sees_input() && self.egui_ctx.wants_keyboard_input()
+        self.egui_sees_input() && super::egui_input::text_field_focused(&self.egui_ctx)
     }
 
     /// Hold the pads while a text field has focus (ADR 0110). Called at the
@@ -785,7 +786,7 @@ impl PlayerApp {
         if self.egui_sees_input() && !skip_egui {
             if let (Some(egui_winit), Some(window)) = (&mut self.egui_winit, &self.window) {
                 let response = egui_winit.on_window_event(window, event);
-                let wants_keyboard = self.egui_ctx.wants_keyboard_input();
+                let wants_keyboard = super::egui_input::text_field_focused(&self.egui_ctx);
                 let routed = super::egui_input::classify(event);
                 if self
                     .egui_input
@@ -862,7 +863,7 @@ impl PlayerApp {
             } else {
                 Routed::Release(held)
             };
-            let wants_keyboard = self.egui_ctx.wants_keyboard_input();
+            let wants_keyboard = super::egui_input::text_field_focused(&self.egui_ctx);
             if self.egui_input.consumes(routed, false, wants_keyboard) {
                 return;
             }

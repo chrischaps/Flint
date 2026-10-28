@@ -95,6 +95,21 @@ fn a_focused_egui_field_keeps_scripted_keys_from_the_game() {
 }
 
 #[test]
+fn a_focused_button_leaves_scripted_keys_to_the_game() {
+    let mut app = with_script("0 down KeyW
+");
+    app.add_extension(Box::new(Bare));
+    let _ = app.egui_ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.button("Buy").request_focus();
+        });
+    });
+    assert!(app.egui_ctx.wants_keyboard_input(), "egui counts any focus");
+    app.tick();
+    assert!(app.input.is_key_down(KeyCode::KeyW), "only a field takes keys");
+}
+
+#[test]
 fn scripted_keys_reach_the_game_when_no_field_has_focus() {
     let mut app = with_script("0 down ShiftLeft\n0 down KeyW\n");
     app.add_extension(Box::new(Bare));
