@@ -111,6 +111,39 @@ pub(super) struct CachedDrawBinds {
     pub touched: u64,
 }
 
+/// One material's uniform buffer and bind group, shared by every draw whose
+/// `material_key` matches. A city is thousands of entities but only a few
+/// hundred looks, and each material bind group spends four samplers: wgpu
+/// 23's DX12 backend has a shader-visible sampler heap of 2048, so one bind
+/// group per entity ran it dry at about 512 entities and panicked (Capitol
+/// #525). The buffer's per-frame fields (debug mode, tonemapping) are the
+/// same for every draw, so sharing it is safe.
+pub(super) struct SharedMaterial {
+    pub buffer: Arc<wgpu::Buffer>,
+    pub bind_group: Arc<wgpu::BindGroup>,
+    pub touched: u64,
+}
+
+/// The per-draw binds and the shared materials they point at.
+#[derive(Default)]
+pub(super) struct DrawBindCache {
+    pub draws: HashMap<(flint_core::EntityId, u32), CachedDrawBinds>,
+    pub materials: HashMap<u64, SharedMaterial>,
+}
+
+impl DrawBindCache {
+    pub fn clear(&mut self) {
+        self.draws.clear();
+        self.materials.clear();
+    }
+
+    /// Drop the entries and materials no draw used in `frame`.
+    pub fn retain_frame(&mut self, frame: u64) {
+        self.draws.retain(|_, c| c.touched == frame);
+        self.materials.retain(|_, m| m.touched == frame);
+    }
+}
+
 /// One uploaded procedural box, shared by every `bounds` entity with the
 /// same size/colour/wireframe (a tiled park is mostly identical boxes).
 pub(super) struct CachedBoxMesh {
@@ -231,7 +264,7 @@ pub struct SceneRenderer {
     mesh_cache: MeshCache,
     /// Per-(entity, sub-mesh) transform/material resources reused across
     /// frames; see `CachedDrawBinds`.
-    draw_bind_cache: HashMap<(flint_core::EntityId, u32), CachedDrawBinds>,
+    draw_bind_cache: DrawBindCache,
     /// Uploaded procedural boxes keyed by size/colour/wireframe.
     box_mesh_cache: HashMap<u64, CachedBoxMesh>,
     /// Bumped once per `update_from_world`; stamps cache entries.
@@ -522,7 +555,7 @@ impl SceneRenderer {
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
-            draw_bind_cache: HashMap::new(),
+            draw_bind_cache: DrawBindCache::default(),
             box_mesh_cache: HashMap::new(),
             extract_frame: 0,
             ray_meshes: HashMap::new(),
@@ -1989,7 +2022,7 @@ impl SceneRenderer {
             billboard_pipeline: Some(billboard_pipeline),
             archetype_visuals,
             mesh_cache: MeshCache::new(),
-            draw_bind_cache: HashMap::new(),
+            draw_bind_cache: DrawBindCache::default(),
             box_mesh_cache: HashMap::new(),
             extract_frame: 0,
             ray_meshes: HashMap::new(),
@@ -3011,7 +3044,7 @@ impl SceneRenderer {
         // Drop cached resources nothing used this frame (despawned entities,
         // entities that changed shape/model).
         let frame = self.extract_frame;
-        self.draw_bind_cache.retain(|_, c| c.touched == frame);
+        self.draw_bind_cache.retain_frame(frame);
         self.ray_scene = Arc::new(ray_scene);
 
         // Put texture cache back
@@ -3019,12 +3052,13 @@ impl SceneRenderer {
     }
 
     /// Transform + material resources for one draw of `key`, created on
-    /// first use and reused afterwards; the material side is rebuilt when
-    /// `material_key` changes. Free-standing over the cache and pipeline so
+    /// first use and reused afterwards; the material side is looked up again
+    /// when `material_key` changes, and shared with every other draw of the
+    /// same key (see `SharedMaterial`). Free-standing over the cache and pipeline so
     /// callers holding other `self` fields borrowed can still use it.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn cached_binds<'a>(
-        cache: &'a mut HashMap<(flint_core::EntityId, u32), CachedDrawBinds>,
+        cache: &'a mut DrawBindCache,
         frame: u64,
         device: &wgpu::Device,
         pipeline: &RenderPipeline,
@@ -3037,7 +3071,7 @@ impl SceneRenderer {
         metallic_roughness: (&wgpu::TextureView, &wgpu::Sampler),
         emissive: (&wgpu::TextureView, &wgpu::Sampler),
     ) -> &'a CachedDrawBinds {
-        let make_material = |device: &wgpu::Device| {
+        let shared = cache.materials.entry(material_key).or_insert_with(|| {
             let (b, bg) = Self::create_material_bind_with_textures(
                 device,
                 pipeline,
@@ -3051,22 +3085,26 @@ impl SceneRenderer {
                 emissive.0,
                 emissive.1,
             );
-            (Arc::new(b), Arc::new(bg))
-        };
-        let entry = cache.entry(key).or_insert_with(|| {
+            SharedMaterial {
+                buffer: Arc::new(b),
+                bind_group: Arc::new(bg),
+                touched: frame,
+            }
+        });
+        shared.touched = frame;
+        let (mb, mbg) = (shared.buffer.clone(), shared.bind_group.clone());
+        let entry = cache.draws.entry(key).or_insert_with(|| {
             let (tb, tbg) = Self::create_transform_bind(device, pipeline, transform_uniforms);
-            let (mb, mbg) = make_material(device);
             CachedDrawBinds {
                 transform_buffer: Arc::new(tb),
                 transform_bind_group: Arc::new(tbg),
-                material_buffer: mb,
-                material_bind_group: mbg,
+                material_buffer: mb.clone(),
+                material_bind_group: mbg.clone(),
                 material_key,
                 touched: frame,
             }
         });
         if entry.material_key != material_key {
-            let (mb, mbg) = make_material(device);
             entry.material_buffer = mb;
             entry.material_bind_group = mbg;
             entry.material_key = material_key;

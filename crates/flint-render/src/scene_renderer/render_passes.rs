@@ -277,7 +277,11 @@ impl SceneRenderer {
             queue.write_buffer(&grid.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         }
 
-        // Update entity transforms and write debug_mode + tonemapping into each material buffer
+        // Update entity transforms and write debug_mode + tonemapping into each material buffer.
+        // Draws of the same look share a material buffer (`SharedMaterial`), so
+        // each buffer's flags are written once.
+        let mut flagged: std::collections::HashSet<*const wgpu::Buffer> =
+            std::collections::HashSet::new();
         for draw in &self.entity_draws {
             let uniforms = TransformUniforms {
                 view_proj,
@@ -288,21 +292,23 @@ impl SceneRenderer {
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
-            // Write debug_mode at byte offset 28 in the material buffer
-            // Layout: base_color(16) + metallic(4) + roughness(4) + use_vertex_color(4) = 28
-            queue.write_buffer(
-                &draw.material_buffer,
-                28,
-                bytemuck::cast_slice(&[debug_mode_u32]),
-            );
+            if flagged.insert(std::ptr::from_ref::<wgpu::Buffer>(&draw.material_buffer)) {
+                // Write debug_mode at byte offset 28 in the material buffer
+                // Layout: base_color(16) + metallic(4) + roughness(4) + use_vertex_color(4) = 28
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    28,
+                    bytemuck::cast_slice(&[debug_mode_u32]),
+                );
 
-            // Write enable_tonemapping at byte offset 32
-            // Layout: ... + debug_mode(4) = 32
-            queue.write_buffer(
-                &draw.material_buffer,
-                32,
-                bytemuck::cast_slice(&[tonemapping_u32]),
-            );
+                // Write enable_tonemapping at byte offset 32
+                // Layout: ... + debug_mode(4) = 32
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    32,
+                    bytemuck::cast_slice(&[tonemapping_u32]),
+                );
+            }
         }
 
         // Update skinned entity transforms
@@ -316,16 +322,18 @@ impl SceneRenderer {
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
-            queue.write_buffer(
-                &draw.material_buffer,
-                28,
-                bytemuck::cast_slice(&[debug_mode_u32]),
-            );
-            queue.write_buffer(
-                &draw.material_buffer,
-                32,
-                bytemuck::cast_slice(&[tonemapping_u32]),
-            );
+            if flagged.insert(std::ptr::from_ref::<wgpu::Buffer>(&draw.material_buffer)) {
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    28,
+                    bytemuck::cast_slice(&[debug_mode_u32]),
+                );
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    32,
+                    bytemuck::cast_slice(&[tonemapping_u32]),
+                );
+            }
         }
 
         // Update transparent entity transforms
@@ -339,16 +347,18 @@ impl SceneRenderer {
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
-            queue.write_buffer(
-                &draw.material_buffer,
-                28,
-                bytemuck::cast_slice(&[debug_mode_u32]),
-            );
-            queue.write_buffer(
-                &draw.material_buffer,
-                32,
-                bytemuck::cast_slice(&[tonemapping_u32]),
-            );
+            if flagged.insert(std::ptr::from_ref::<wgpu::Buffer>(&draw.material_buffer)) {
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    28,
+                    bytemuck::cast_slice(&[debug_mode_u32]),
+                );
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    32,
+                    bytemuck::cast_slice(&[tonemapping_u32]),
+                );
+            }
         }
 
         // Update transparent skinned entity transforms
@@ -362,16 +372,18 @@ impl SceneRenderer {
             };
             queue.write_buffer(&draw.transform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
-            queue.write_buffer(
-                &draw.material_buffer,
-                28,
-                bytemuck::cast_slice(&[debug_mode_u32]),
-            );
-            queue.write_buffer(
-                &draw.material_buffer,
-                32,
-                bytemuck::cast_slice(&[tonemapping_u32]),
-            );
+            if flagged.insert(std::ptr::from_ref::<wgpu::Buffer>(&draw.material_buffer)) {
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    28,
+                    bytemuck::cast_slice(&[debug_mode_u32]),
+                );
+                queue.write_buffer(
+                    &draw.material_buffer,
+                    32,
+                    bytemuck::cast_slice(&[tonemapping_u32]),
+                );
+            }
         }
 
         // Update terrain chunk transforms
