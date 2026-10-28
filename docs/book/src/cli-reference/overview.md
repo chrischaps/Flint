@@ -77,6 +77,11 @@ makes it the tool for verifying `on_draw_ui` output:
 flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
 ```
 
+With `--screenshot`, `--exit-after` or `--input-script`, the run is a capture
+and ignores the real keyboard, mouse and pads, so a stray scroll over its
+window can't change the shot. Only the input script drives it (see
+[input gates](../concepts/input-gates.md#during-a-capture)).
+
 | Flag | Description |
 |------|-------------|
 | `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`) |

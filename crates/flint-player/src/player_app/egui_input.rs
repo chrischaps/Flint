@@ -82,6 +82,30 @@ pub(super) fn classify(event: &WindowEvent) -> Routed {
     }
 }
 
+/// Whether an event comes from a real keyboard, mouse, wheel or touch: what
+/// a capture drops (`CaptureConfig::is_capture`). Lifecycle events (focus,
+/// resize, redraw, close) aren't.
+pub(super) fn is_device_input(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::KeyboardInput { .. }
+            | WindowEvent::ModifiersChanged(_)
+            | WindowEvent::Ime(_)
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::Touch(_)
+            | WindowEvent::PinchGesture { .. }
+            | WindowEvent::PanGesture { .. }
+            | WindowEvent::RotationGesture { .. }
+            | WindowEvent::DoubleTapGesture { .. }
+            | WindowEvent::TouchpadPressure { .. }
+            | WindowEvent::AxisMotion { .. }
+    )
+}
+
 /// Remembers which held keys and buttons belong to egui.
 #[derive(Default)]
 pub(super) struct EguiInputGate {

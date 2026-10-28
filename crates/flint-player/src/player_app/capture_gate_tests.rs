@@ -183,6 +183,56 @@ fn pad_axes_read_zero_while_the_window_is_unfocused() {
 }
 
 #[test]
+fn a_capture_hears_its_script_alone() {
+    let device_id = DeviceId::dummy();
+    let wheel = WindowEvent::MouseWheel {
+        device_id,
+        delta: winit::event::MouseScrollDelta::LineDelta(0.0, 3.0),
+        phase: winit::event::TouchPhase::Moved,
+    };
+    let click = WindowEvent::MouseInput {
+        device_id,
+        state: ElementState::Pressed,
+        button: MouseButton::Left,
+    };
+    let moved = WindowEvent::CursorMoved {
+        device_id,
+        position: winit::dpi::PhysicalPosition::new(10.0, 20.0),
+    };
+    let resized = WindowEvent::Resized(winit::dpi::PhysicalSize::new(800, 600));
+    // An input script, a screenshot or an exit time makes a capture
+    let mut app = headless_app("1.0 wheel 2
+");
+    assert!(app.capture.is_capture());
+    for real in [&wheel, &click, &moved] {
+        assert!(app.capture_drops(real), "{real:?}");
+    }
+    assert!(!app.capture_drops(&resized), "lifecycle events still arrive");
+    assert!(!app.capture_drops(&WindowEvent::Focused(true)));
+    app.capture.input_script = None;
+    app.capture.exit_after = Some(4.0);
+    assert!(app.capture_drops(&wheel));
+    app.capture.exit_after = None;
+    app.capture.path = Some("shot.png".into());
+    assert!(app.capture_drops(&wheel));
+    // A run that's no capture hears the real mouse
+    app.capture.path = None;
+    assert!(!app.capture.is_capture());
+    assert!(!app.capture_drops(&wheel));
+}
+
+#[test]
+fn a_captures_script_still_reaches_the_game() {
+    // The script's keys take the path a real keyboard's does, past the
+    // capture's gate: the frame they play on, the game sees them.
+    let mut app = headless_app("0 down KeyW
+");
+    app.add_extension(Box::new(Bare));
+    app.tick();
+    assert!(app.input.is_key_down(winit::keyboard::KeyCode::KeyW));
+}
+
+#[test]
 fn the_script_pad_plays_on_while_the_window_is_unfocused() {
     // Captures run unfocused: the input script's pad isn't a real one.
     let mut app = headless_app("0 axis LeftStickY 0.8\n");
