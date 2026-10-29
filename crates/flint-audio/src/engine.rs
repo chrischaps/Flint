@@ -15,6 +15,23 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// `StaticSoundData::from_file`, which kira leaves out of wasm32 builds. The
+/// web reads the bytes and decodes them from memory instead; `std::fs` fails
+/// there at run time until the vfs lands (docs/design/web.md).
+fn static_sound_from_file(
+    path: impl AsRef<Path>,
+) -> std::result::Result<StaticSoundData, kira::sound::FromFileError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        StaticSoundData::from_file(path)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bytes = std::fs::read(path)?;
+        StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
+    }
+}
+
 /// Distances for a placed one-shot when the caller names none: full volume
 /// within 1 m, silent past 25 m.
 pub const DEFAULT_DISTANCES: (f32, f32) = (1.0, 25.0);
@@ -144,7 +161,7 @@ impl AudioEngine {
             return Ok(());
         }
 
-        let sound_data = StaticSoundData::from_file(path).map_err(|e| {
+        let sound_data = static_sound_from_file(path).map_err(|e| {
             flint_core::FlintError::AudioError(format!(
                 "Failed to load '{}': {}",
                 path.display(),

@@ -43,3 +43,6 @@ android/local.properties
 
 # Architecture analyzer output
 arch-data.json
+
+# trunk output for the web spike (crates/flint-player/index.html)
+/crates/flint-player/dist/

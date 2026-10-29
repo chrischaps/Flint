@@ -13,6 +13,11 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
+# Browser entry for the web spike (#95): `trunk serve` in this directory.
+[[bin]]
+name = "flint-web"
+path = "src/bin/flint_web.rs"
+
 [features]
 default = ["debug-hud"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
@@ -56,9 +61,23 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
-egui-winit = { workspace = true }
 image = { workspace = true }
 dirs = { workspace = true }
 gilrs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# ahash (egui, hecs, rhai) pulls getrandom 0.3; on the web it needs the JS
+# backend, plus the matching cfg in .cargo/config.toml.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+# egui-winit's default `clipboard` feature pulls arboard, which has no web
+# backend. Pinned here rather than inherited so its defaults can go.
+egui-winit = { version = "0.30.0", default-features = false }
+# The flint-web spike entry (src/bin/flint_web.rs, index.html).
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["console", "Performance", "Window"] }
+console_error_panic_hook = "0.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit = { workspace = true }
