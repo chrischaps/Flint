@@ -9,7 +9,7 @@
 *.swo
 
 # Claude Code local settings
-.claude/
+.claude/*
 
 # Worktrees and brainstorming artifacts
 .worktrees/
@@ -43,3 +43,7 @@ android/local.properties
 
 # Architecture analyzer output
 arch-data.json
+!.claude/settings.json
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/next-issue/
