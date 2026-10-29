@@ -1223,3 +1223,54 @@ fn a_ground_fog_lies_on_its_floors() {
     gpu.frame(&mut renderer, &world, &camera);
     assert!(close(clear, gpu.centre_pixel()), "a clear map clears it");
 }
+
+/// Thousands of distinct material looks draw on every backend. wgpu 23's
+/// DX12 backend copies each bind group's samplers into one 2048-slot
+/// shader-visible heap, with no sharing; when a material bind group held
+/// four samplers, the 513th distinct look ran it dry and the device panicked
+/// (Capitol #577). Materials now share the light group's one sampler, so a
+/// look spends none. Run with `WGPU_BACKEND=dx12` to test the heap itself.
+#[test]
+fn thousands_of_distinct_looks_draw() {
+    const LOOKS: usize = 3000;
+    let gpu = gpu_or_skip!();
+    let mut renderer = gpu.renderer();
+    renderer.set_tonemapping(false);
+    let mut world = FlintWorld::new();
+    let camera = Camera::default();
+    let (tile, indices) = square(20.0, [0.5, 0.5, 0.5, 1.0]);
+    renderer.load_procedural_mesh(
+        &gpu.device,
+        "tile",
+        &tile,
+        &indices,
+        ImportedMaterial::vertex_colored("tile"),
+    );
+    // Each tile its own tint, so each its own material key and bind group.
+    for i in 0..LOOKS {
+        let name = format!("tile_{i}");
+        spawn(&mut world, &name, "tile", [0.0; 3]);
+        let mut material = toml::Table::new();
+        material.insert("vertex_tint_r".into(), (i as f64 / LOOKS as f64).into());
+        material.insert("vertex_tint_g".into(), 0.5.into());
+        material.insert("vertex_tint_b".into(), 0.5.into());
+        let id = world.get_id(&name).unwrap();
+        world.set_component(id, "material", material.into()).unwrap();
+    }
+
+    gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    gpu.frame(&mut renderer, &world, &camera);
+    let validation = pollster::block_on(gpu.device.pop_error_scope());
+    let out_of_memory = pollster::block_on(gpu.device.pop_error_scope());
+    assert!(validation.is_none(), "{LOOKS} looks: {validation:?}");
+    assert!(out_of_memory.is_none(), "{LOOKS} looks: {out_of_memory:?}");
+    let stats = renderer.collect_stats();
+    eprintln!(
+        "{LOOKS} looks on {:?}: {} entity draws",
+        flint_render::gpu_select::backends(),
+        stats.entity_draws
+    );
+    assert_eq!(stats.entity_draws as usize, LOOKS);
+    assert!(gpu.centre_pixel()[1] > 0, "the tiles drew");
+}
