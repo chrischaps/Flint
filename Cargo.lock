@@ -1824,7 +1824,6 @@ dependencies = [
  "flint-core",
  "gltf",
  "image",
- "noise",
  "rand 0.9.2",
  "rand_chacha",
  "serde",

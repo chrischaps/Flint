@@ -7,7 +7,6 @@ description = "Procedural generation subsystem for the Flint engine"
 
 [dependencies]
 flint-core = { workspace = true }
-noise = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
