@@ -70,11 +70,57 @@ fn project_root(scene_path: &Path) -> PathBuf {
     parent_dir_or_cwd(scene_path)
 }
 
+/// Where the store lives on the web (#104): a browser has no project folder
+/// to write `save/` into, and every game on one site shares its
+/// `localStorage`, so each game's store is its own [`user_files`] entry,
+/// named for the input config's `game_id`:
+/// `/config/flint/save_<game_id>.toml` (`flint:/config/flint/save_flint_kart.toml`).
+/// A game with no id shares `save.toml`.
+///
+/// [`user_files`]: crate::user_files
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn web_persist_path(game_id: &str) -> PathBuf {
+    let game_id = game_id.trim();
+    let filename = if game_id.is_empty() || game_id == "flint" {
+        "save.toml".to_string()
+    } else {
+        format!("save_{game_id}.toml")
+    };
+    crate::user_files::config_dir()
+        .unwrap_or_else(|| PathBuf::from("/config"))
+        .join("flint")
+        .join(filename)
+}
+
 impl PlayerApp {
     /// Read `save/persist.toml` into the store. A missing file is not an
     /// error and creates nothing; a malformed one is logged and ignored so a
     /// corrupt save never blocks the game from starting.
     pub(super) fn load_persistent_store(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let path = web_persist_path(&self.input.config().game_id);
+            let loaded = crate::user_files::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|text| match text {
+                    Some(text) => self.persistent_store.load_from_str(&text).map(|()| true),
+                    None => Ok(false),
+                });
+            match loaded {
+                Ok(true) => tracing::info!(
+                    "persist: loaded {} keys from {}",
+                    self.persistent_store.keys().len(),
+                    crate::user_files::storage_key(&path)
+                ),
+                Ok(false) => tracing::info!(
+                    "persist: nothing saved at {} (fresh store)",
+                    crate::user_files::storage_key(&path)
+                ),
+                Err(e) => tracing::warn!("persist: failed to load {}: {e}", path.display()),
+            }
+            return;
+        }
+        #[allow(unreachable_code)]
         let path = persist_path(&self.scene_path);
         if !vfs::is_file(&path) {
             tracing::info!("persist: no save file at {} (fresh store)", path.display());
@@ -93,6 +139,32 @@ impl PlayerApp {
     /// Write the store to `save/persist.toml` now, creating `save/` on
     /// demand. `reason` is for the log line only.
     pub(super) fn save_persistent_store(&mut self, reason: &str) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let path = web_persist_path(&self.input.config().game_id);
+            let saved = self
+                .persistent_store
+                .to_toml_string()
+                .and_then(|text| crate::user_files::write(&path, &text).map_err(|e| e.to_string()));
+            match saved {
+                Ok(()) => {
+                    self.persistent_store.mark_clean();
+                    tracing::info!(
+                        "persist: saved {} keys to {} ({reason})",
+                        self.persistent_store.keys().len(),
+                        crate::user_files::storage_key(&path)
+                    );
+                }
+                // Mark it clean anyway: a full or blocked localStorage would
+                // otherwise retry (and warn) every second for the session.
+                Err(e) => {
+                    self.persistent_store.mark_clean();
+                    tracing::warn!("persist: failed to save {}: {e}", path.display());
+                }
+            }
+            return;
+        }
+        #[allow(unreachable_code)]
         let path = persist_path(&self.scene_path);
         if let Some(dir) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(dir) {
@@ -131,6 +203,16 @@ impl PlayerApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_persist_path_is_one_entry_per_game() {
+        let kart = web_persist_path("flint_kart");
+        assert_eq!(kart.file_name().unwrap(), "save_flint_kart.toml");
+        assert_eq!(kart.parent().unwrap().file_name().unwrap(), "flint");
+        assert_ne!(kart, web_persist_path("float"));
+        assert_eq!(web_persist_path("").file_name().unwrap(), "save.toml");
+        assert_eq!(web_persist_path("flint"), web_persist_path(" "));
+    }
 
     #[test]
     fn persist_path_is_project_root_save_dir() {
