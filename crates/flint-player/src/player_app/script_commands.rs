@@ -190,6 +190,23 @@ impl PlayerApp {
     /// for want of a device. Says whether there is sound.
     pub fn start_audio(&mut self) -> bool {
         let had_sound = self.audio.engine.is_available();
+        // A music session clocks its suite on kira's manager itself, which
+        // the browser's worklet mix (#136) keeps on the audio thread; such a
+        // scene mixes on the main thread, as before.
+        #[cfg(target_arch = "wasm32")]
+        if !had_sound
+            && !self
+                .world
+                .entities_with_component(music_session::MUSIC_SESSION)
+                .is_empty()
+        {
+            tracing::info!(
+                "[flint-audio] a music_session needs kira here: mixing on the main thread"
+            );
+            self.audio
+                .engine
+                .set_web_mixer(flint_audio::engine::WebMixer::MainThread);
+        }
         if !self.audio.start(&self.world) {
             return false;
         }
