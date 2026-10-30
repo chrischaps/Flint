@@ -51,9 +51,7 @@ impl PlayerApp {
             }
         };
 
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = context.frame_view(&output.texture);
 
         // Apply script-driven post-processing overrides before rendering.
         // The Rendering & Effects panel's freeze switch (ADR 0053) skips the
@@ -727,6 +725,10 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick(&mut self) {
+        // The page's Begin click and the browser's pointer lock (#102).
+        #[cfg(target_arch = "wasm32")]
+        self.sync_pointer_lock();
+
         // Pads are held while a text field has focus (ADR 0110), before
         // they're polled.
         self.gate_gamepads();
@@ -736,6 +738,12 @@ impl PlayerApp {
 
         // Advance game clock
         self.clock.tick();
+        if self.hold_at.is_some_and(|t| self.clock.total_time >= t)
+            && self.clock.frame_step != Some(0.0)
+        {
+            self.clock.frame_step = Some(0.0);
+            tracing::info!("game time held at {:.3} s", self.clock.total_time);
+        }
 
         // `--stats`: the overlay starts open, and F2 can still close it.
         if std::mem::take(&mut self.capture.show_stats) {

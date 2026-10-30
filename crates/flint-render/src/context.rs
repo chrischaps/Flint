@@ -37,6 +37,12 @@ pub struct RenderContext {
     /// sRGB suffix, so egui's own gamma handling applies and alpha blends in
     /// display space.
     pub hud_format: wgpu::TextureFormat,
+    /// Format the scene's last pass writes the swapchain in: always sRGB
+    /// when the surface can give an sRGB view. A desktop surface is sRGB
+    /// itself; a browser canvas offers only `Bgra8Unorm`/`Rgba8Unorm`, so
+    /// it is configured plain with an sRGB view format (#102) and the frame
+    /// is drawn through that view (see [`Self::frame_view`]).
+    pub view_format: wgpu::TextureFormat,
 }
 
 impl RenderContext {
@@ -88,6 +94,11 @@ impl RenderContext {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+        // Without an sRGB surface (WebGPU canvases), draw through an sRGB
+        // view of the plain one, so the encode happens on write exactly as
+        // it does on the desktop. Without it the web frame came out darker
+        // and more saturated (docs/design/web.md).
+        let view_format = surface_format.add_srgb_suffix();
 
         // Ask for COPY_SRC on the swapchain when the surface allows it so the
         // player can screenshot the presented frame (HUD included). Some
@@ -135,6 +146,8 @@ impl RenderContext {
             // against the scene happens in display space, not linear space.
             view_formats: if surface_format.remove_srgb_suffix() != surface_format {
                 vec![surface_format.remove_srgb_suffix()]
+            } else if view_format != surface_format {
+                vec![view_format]
             } else {
                 vec![]
             },
@@ -160,6 +173,16 @@ impl RenderContext {
             adapter,
             surface_copyable,
             hud_format: surface_format.remove_srgb_suffix(),
+            view_format,
+        })
+    }
+
+    /// The view of a swapchain texture that scene passes draw into, in
+    /// [`Self::view_format`].
+    pub fn frame_view(&self, texture: &wgpu::Texture) -> wgpu::TextureView {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.view_format),
+            ..Default::default()
         })
     }
 
