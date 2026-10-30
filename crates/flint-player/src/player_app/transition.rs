@@ -561,6 +561,10 @@ impl PlayerApp {
             &mut self.audio,
             &self.scene_path,
             self.scene_preload_audio,
+            // In the browser the audio may already be here at a scene change, and
+            // decoding it all in one frame is the stall #124 removed:
+            // queue it. The desktop decodes up front, as a load can afford.
+            cfg!(target_arch = "wasm32"),
         );
         self.audio
             .initialize(&mut self.world)

@@ -86,7 +86,8 @@ scene = "scenes/float.scene.toml"
 schemas = ["engine/schemas", "schemas"]   # the default
 exclude = ["scenes/mixamo_spike.scene.toml", "scenes/snap_*.scene.toml"]
 include = []          # wins over any exclude
-[late]                # replaces the default
+[late]                # replaces the default; fetched in this order
+ambience = ["audio/ocean_loop.ogg", "audio/wind_light.ogg"]
 audio = ["**/*.ogg", "**/*.wav", "**/*.mp3", "**/*.flac"]
 ```
 
@@ -101,6 +102,39 @@ autoplay `audio_source` whose sound isn't loaded yet now waits unsynced
 starts when its file arrives. One-shot sounds a script fires before then are
 lost, the same as with a missing file. `flint-player --bundle` adds the late
 bundles three seconds in, so the desktop takes the same path.
+
+**Ambience first, then decoded a little a frame (#124).** Late parts are
+fetched one after another in the order `[late]` lists them, and a file goes to
+the first part that matches, so a game puts what it plays from the first
+second in a small part of its own: Float's ocean and wind are 0.33 MB before
+6.78 MB of songs and one-shots. Nothing is decoded in the frame it lands.
+`load_audio_from_world` with `queue` (every web load, and the late-bundle
+path everywhere) hands each sound to `AudioEngine::queue_sound`, and
+`tick_av_systems` calls `decode_queued` with 2 ms a frame
+(`AUDIO_DECODE_BUDGET`). `flint_audio::decode` does what kira's
+`StaticSoundData::from_cursor` does, one symphonia packet at a time, into an
+`Arc<[Frame]>` sized from the stream's frame count, so finishing a song costs
+no copy (the copy alone was a 67 ms frame). The queue takes audible autoplay
+sources first, then the rest smallest first, so one-shots come before songs.
+A script that plays a queued sound decodes it on the spot if its file is
+64 KB or less (`DECODE_NOW_BYTES`); a bigger one goes to the front and that
+play is skipped, with a warning that says so. kira's `StreamingSoundData`
+was the other way. It decodes on a thread of its own
+(`std::thread::spawn` in kira's `decode_scheduler.rs`), and this wasm build
+has none.
+
+Measured in headless Chrome 156, the line throttled to 1.5 MB/s from the main
+bundle on (job tooling `arrive.mjs`, the `?perf=1` readout):
+
+| | before (play.chaps.dev, main) | after |
+|---|---|---|
+| sea heard | with everything, after a 900–983 ms frame (+5.7 s and +27 s after Begin in two runs) | decoded and started +0.81 to +0.85 s after Begin (four runs, one unthrottled) |
+| worst frame while the audio lands and decodes | 900 and 983 ms (1017/1600/800 ms unthrottled) | 16.8–16.9 ms (three runs). A first cut, 4 ms a frame and a `Vec` copied into the `Arc` at the end, still had 50–67 ms frames as each song finished |
+| late audio buffers | 35–41 | 9–15, all in the first second's startup frames, which both builds share |
+| decoding cost | one frame | 49 sounds in 0.7–0.8 s of frame time, spread over about 6 s; each song over 64–71 frames, longest step 2.6 ms |
+
+The first second after Begin still has 250–930 ms frames in both builds:
+startup, not sound.
 
 **Checked before it's written.** A missing file should fail in the packer,
 not as a pink texture deep in play. Before writing, the packer:
@@ -598,8 +632,9 @@ Mixing Float's sea and one song costs about 0.27 ms a buffer, so the mix
 isn't the hazard. Heavy frames are. Decoding happens before Begin:
 `ocean_loop.ogg` (156 KB) took 28 ms, `music_day.ogg` (1.26 MB) 241 ms, and
 `music_dusk.ogg` (1.43 MB) 100 ms in another run.
-A song decoded mid-game would stall that long, so Float should decode its
-four songs up front, or behind a scene change. If heavy frames drop sound
+A song decoded in one go mid-game stalls that long. Since #124 it doesn't
+happen that way: sounds decode a packet at a time, 2 ms a frame (see "Audio
+comes late" above). If heavy frames drop sound
 once Float's ocean renders, follow Soba's threaded AudioWorklet build. It
 needs cross-origin isolation headers.
 
