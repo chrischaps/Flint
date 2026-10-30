@@ -91,7 +91,12 @@ async fn select_by_name(
     filter: &str,
 ) -> Option<wgpu::Adapter> {
     let filter = filter.to_lowercase();
+    // A browser hands out one adapter through `requestAdapter`; with no list
+    // to filter, the web falls back to the power preference below.
+    #[cfg(not(target_arch = "wasm32"))]
     let adapters = instance.enumerate_adapters(backends());
+    #[cfg(target_arch = "wasm32")]
+    let adapters: Vec<wgpu::Adapter> = Vec::new();
     let available: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
 
     let matched = adapters.into_iter().find(|a| {
@@ -118,8 +123,11 @@ async fn select_by_name(
 
 /// List available adapters as `(name, device type, backend)` strings.
 pub fn list_adapters() -> Vec<String> {
-    instance()
-        .enumerate_adapters(backends())
+    #[cfg(not(target_arch = "wasm32"))]
+    let adapters = instance().enumerate_adapters(backends());
+    #[cfg(target_arch = "wasm32")]
+    let adapters: Vec<wgpu::Adapter> = Vec::new();
+    adapters
         .iter()
         .map(|a| {
             let i = a.get_info();

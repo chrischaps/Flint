@@ -20,6 +20,23 @@ use kira::sound::static_sound::StaticSoundData;
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend, StartTime};
 use std::path::{Path, PathBuf};
 
+/// `StaticSoundData::from_file`, which kira leaves out of wasm32 builds. The
+/// web reads the bytes and decodes them from memory instead; `std::fs` fails
+/// there at run time until the vfs lands (docs/design/web.md).
+fn static_sound_from_file(
+    path: impl AsRef<Path>,
+) -> std::result::Result<StaticSoundData, kira::sound::FromFileError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        StaticSoundData::from_file(path)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bytes = std::fs::read(path)?;
+        StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
+    }
+}
+
 /// Beats of silence before sample 0 (at the first anchor's tempo), giving
 /// every stem's start a scheduled future clock time — the same lookahead
 /// pattern reintegration entries will use.
@@ -57,13 +74,13 @@ impl StemResolver for FileStems {
         let Some(file) = &decl.file else {
             return Ok(None);
         };
-        StaticSoundData::from_file(self.base_dir.join(file))
+        static_sound_from_file(self.base_dir.join(file))
             .map(Some)
             .map_err(|e| FlintError::AudioError(format!("bus '{bus}' ({file}): {e}")))
     }
 
     fn load_alternate(&self, bus: &str, file: &str) -> Result<Option<StaticSoundData>> {
-        StaticSoundData::from_file(self.base_dir.join(file))
+        static_sound_from_file(self.base_dir.join(file))
             .map(Some)
             .map_err(|e| FlintError::AudioError(format!("alternate for bus '{bus}' ({file}): {e}")))
     }

@@ -47,3 +47,6 @@ arch-data.json
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/next-issue/
+
+# trunk output for the web spike (crates/flint-player/index.html)
+/crates/flint-player/dist/

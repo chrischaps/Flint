@@ -178,10 +178,17 @@ impl ScriptEngine {
     /// modules. Installing a fresh `FileModuleResolver` is the cache clear:
     /// the Engine owns its resolver, so re-creating it is simpler than
     /// keeping a handle just to call `clear_cache`.
+    ///
+    /// rhai has no file resolver on wasm32, so `import` stays unresolved
+    /// there until the vfs supplies one (docs/design/web.md).
     pub fn set_module_base(&mut self, dir: std::path::PathBuf) {
-        let resolver =
-            rhai::module_resolvers::FileModuleResolver::new_with_path_and_extension(&dir, "rhai");
-        self.engine.set_module_resolver(resolver);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let resolver = rhai::module_resolvers::FileModuleResolver::new_with_path_and_extension(
+                &dir, "rhai",
+            );
+            self.engine.set_module_resolver(resolver);
+        }
         self.module_base = Some(dir);
     }
 
