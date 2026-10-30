@@ -52,6 +52,7 @@ use winit::event::{
     DeviceId, ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
 };
 use winit::keyboard::{KeyCode, ModifiersState};
+use flint_core::vfs;
 
 /// Gamepad slot the script drives, away from slot 0 so a real pad plugged in
 /// at the same time does not overwrite its values.
@@ -249,7 +250,7 @@ fn parse_mouse_button(name: &str) -> Option<MouseButton> {
 
 impl InputScript {
     pub fn load(path: &str) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)
+        let text = vfs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("input script {path}: {e}"))?;
         Self::parse(&text).map_err(|e| anyhow::anyhow!("input script {path}: {e}"))
     }

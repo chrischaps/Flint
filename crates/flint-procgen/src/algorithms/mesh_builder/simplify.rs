@@ -767,4 +767,31 @@ mod tests {
         assert_eq!(result.triangle_count(), original_tris);
         assert_eq!(result.vertex_count(), mesh.vertex_count());
     }
+
+    #[test]
+    fn thousand_triangle_sphere_to_quarter() {
+        // The case named in issue #19: 1000 triangles down to 250, +-10%.
+        let mesh = sphere(&SphereParams {
+            radius: 1.0,
+            segments: 25,
+            rings: 20,
+        });
+        assert_eq!(mesh.triangle_count(), 1000);
+
+        let simplified = simplify(&mesh, 250);
+        let count = simplified.triangle_count();
+        assert!(
+            (225..=275).contains(&count),
+            "expected 250 +- 10%, got {count}"
+        );
+        assert!(simplified.validate().is_ok());
+        for tri in simplified.indices.chunks_exact(3) {
+            assert!(tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2]);
+        }
+        // Still roughly a unit sphere: no vertex wanders far off the surface.
+        for v in &simplified.vertices {
+            let r = (v.position[0].powi(2) + v.position[1].powi(2) + v.position[2].powi(2)).sqrt();
+            assert!((0.8..=1.05).contains(&r), "vertex at radius {r}");
+        }
+    }
 }

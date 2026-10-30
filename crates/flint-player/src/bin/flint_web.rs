@@ -12,10 +12,10 @@
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
 //!
 //! The engine schemas are compiled in (`build.rs`). Files the scene points
-//! at (models, textures, scripts, audio) still go through `std::fs`, which
-//! has no files on the web; they load once the vfs (#97) and game bundles
-//! (#98) land. Until then the web player draws scenes made of the engine's
-//! own geometry.
+//! at (models, textures, scripts, audio) are read through `flint_core::vfs`
+//! (#97), which has nothing in it on the web until game bundles (#98) fill
+//! it. Until then the web player draws scenes made of the engine's own
+//! geometry.
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080

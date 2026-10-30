@@ -3,8 +3,9 @@
 Status: async startup done (#99, epic #94). The browser entry runs the real
 `PlayerApp`: it fetches a scene, opens the WebGPU device without blocking,
 and draws the scene to a page canvas that follows the window's size. Files
-the scene points at (models, textures, scripts, audio) still wait on the
-vfs (#97) and game bundles (#98), so the web draws scenes made of the
+the scene points at (models, textures, scripts, audio) go through the vfs
+(#97), which stays empty on the web until game bundles (#98) fill it, so
+the web draws scenes made of the
 engine's own geometry: boxes, the procedural sky, the Gerstner ocean.
 
 ## Try it
@@ -16,6 +17,15 @@ cd crates/flint-player
 trunk serve                 # http://127.0.0.1:8080, the First Light scene
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
 ```
+
+CI keeps this compiling (#96). The `wasm32 check` job in
+`.github/workflows/ci.yml` runs `scripts/wasm-check.sh` on every PR: a wasm32
+clippy pass over `flint-player` and the workspace crates it links, with every
+lint off but `disallowed_methods`, configured in
+`scripts/wasm-clippy/clippy.toml` to deny `Instant::now`, `SystemTime::now`
+and their `elapsed()`. Those are the calls that compile but panic. The 32
+sites that predate the check are marked with an allow naming #100, so
+`grep -rn disallowed_methods crates` is that ticket's list.
 
 The page is `crates/flint-player/index.html` and builds the `flint-web` bin
 (`src/bin/flint_web.rs`), the web twin of `main.rs`. Its arguments come from
@@ -89,8 +99,8 @@ Five errors in all, against the seven crates the issue was worried about:
 |---|---|---|
 | `getrandom` 0.3 (via ahash: egui, hecs, rhai) | refuses to build: "wasm32-unknown-unknown targets are not supported by default" | `wasm_js` feature on a wasm-only dep in `flint-player`, plus `--cfg getrandom_backend="wasm_js"` in `.cargo/config.toml` |
 | `egui-winit` → `arboard` | no web clipboard backend (8 errors) | `egui-winit` with `default-features = false` on wasm only. This also drops `links`/`webbrowser` |
-| `kira` / `cpal` | builds. `StaticSoundData::from_file` is not there on wasm (flint-audio once, flint-music twice) | `static_sound_from_file` helper: `from_file` on native, `std::fs::read` + `from_cursor` on web. cpal builds without its `wasm-bindgen` feature, so it gets the null host and there is no sound yet |
-| `rhai` | builds. `module_resolvers::FileModuleResolver` is not there | `ScriptEngine::set_module_base` skips installing the resolver on wasm, so `import` is unresolved there |
+| `kira` / `cpal` | builds. `StaticSoundData::from_file` is not there on wasm (flint-audio once, flint-music twice) | `static_sound_from_file` helper: `from_file` on native, `std::fs::read` + `from_cursor` on web. Since #97 both targets read through the vfs and decode with `from_cursor`. cpal builds without its `wasm-bindgen` feature, so it gets the null host and there is no sound yet |
+| `rhai` | builds. `module_resolvers::FileModuleResolver` is not there | `ScriptEngine::set_module_base` skipped the resolver on wasm. Since #97 it installs `VfsModuleResolver` (flint-script) on every target, so `import` resolves through the vfs |
 | `wgpu` 23 | builds (WebGPU backend by default, no naga or wgpu-core). `Instance::enumerate_adapters` is not there | `gpu_select` treats the adapter list as empty on wasm. `--gpu` / `WGPU_ADAPTER_NAME` fall back to `request_adapter` |
 | `rapier3d` / `parry3d` | builds clean | none |
 | `gilrs` (xinput-only features, ADR 0011) | builds clean. gilrs-core picks its web Gamepad backend by target | none needed to compile. M2 still owes per-target features |
@@ -103,7 +113,7 @@ Five errors in all, against the seven crates the issue was worried about:
 These are what M1 and M2 owe (`#97` vfs, `#98` async startup, the shim
 tickets). Counts are for the runtime crates the player links:
 
-- **`std::fs`** returns `Unsupported` on wasm32-unknown-unknown. LLVM can
+- **`std::fs`** (done in #97: every runtime read now goes through `flint_core::vfs`; the web player installs a `MemorySource` filled from its bundle, which #98 fetches) returns `Unsupported` on wasm32-unknown-unknown. LLVM can
   *prove* that, so it deletes everything behind a file read. The real
   `flint-player` bin comes out at 2.4 MB with 4 imports because `load_scene`
   always fails and the whole engine after it is dead code. Any size number

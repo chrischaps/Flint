@@ -105,7 +105,8 @@ impl PersistentStore {
 
     /// Load the store from a TOML file, replacing all current data.
     pub fn load_from_file(&mut self, path: &Path) -> Result<(), String> {
-        let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
+        let content =
+            flint_core::vfs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
         let table: toml::map::Map<String, toml::Value> =
             toml::from_str(&content).map_err(|e| format!("parse error: {e}"))?;
         self.data.clear();

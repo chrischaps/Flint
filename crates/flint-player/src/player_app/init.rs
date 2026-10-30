@@ -29,6 +29,7 @@ use flint_runtime::{
 use flint_script::context::DrawCommand;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
+use flint_core::vfs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -412,7 +413,7 @@ impl PlayerApp {
             spec_dirs.push(scene_dir.join("models"));
             let dir_refs: Vec<&Path> = spec_dirs
                 .iter()
-                .filter(|d| d.is_dir())
+                .filter(|d| vfs::is_dir(d))
                 .map(|d| d.as_path())
                 .collect();
             self.procgen_resolver.discover_and_index(&dir_refs);
@@ -510,7 +511,7 @@ impl PlayerApp {
             // Search scene dir first, then parent (game root)
             let skybox_path = {
                 let p = scene_dir.join(skybox_rel);
-                if p.exists() {
+                if vfs::exists(&p) {
                     p
                 } else if let Some(parent) = scene_dir.parent() {
                     parent.join(skybox_rel)
@@ -519,7 +520,7 @@ impl PlayerApp {
                 }
             };
 
-            if skybox_path.exists() {
+            if vfs::exists(&skybox_path) {
                 scene_renderer.load_skybox(
                     &render_context.device,
                     &render_context.queue,
@@ -713,7 +714,7 @@ impl PlayerApp {
         );
 
         if let Some(path) = &paths.game_default {
-            if path.exists() {
+            if vfs::exists(path) {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load game input config '{}'", path.display())
                 })?;
@@ -728,7 +729,7 @@ impl PlayerApp {
         paths.user_override =
             resolve_user_override(Path::new(&self.scene_path), &self.input.config().game_id);
         if let Some(path) = &paths.user_override {
-            if path.exists() {
+            if vfs::exists(path) {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load user input config '{}'", path.display())
                 })?;
@@ -740,7 +741,7 @@ impl PlayerApp {
         }
 
         if let Some(path) = &paths.cli_override {
-            if path.exists() {
+            if vfs::exists(path) {
                 let cfg = InputConfig::load_from_file(path).with_context(|| {
                     format!("failed to load CLI input config '{}'", path.display())
                 })?;
@@ -850,8 +851,8 @@ impl PlayerApp {
         ];
 
         for path in &candidates {
-            if path.exists() {
-                if let Ok(img) = image::open(path) {
+            if vfs::exists(path) {
+                if let Ok(img) = flint_render::open_image(path) {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
                     let color_image =

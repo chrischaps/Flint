@@ -19,7 +19,7 @@ use clap::Parser;
 use flint_player::PlayerApp;
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
-use std::path::Path;
+use flint_core::vfs;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 #[derive(Parser)]
@@ -139,7 +139,7 @@ fn main() -> Result<()> {
     let existing: Vec<&str> = all_schemas
         .iter()
         .map(|s| s.as_str())
-        .filter(|p| Path::new(p).exists())
+        .filter(|p| vfs::exists(p))
         .collect();
     let registry = if !existing.is_empty() {
         SchemaRegistry::load_from_directories(&existing).context("Failed to load schemas")?

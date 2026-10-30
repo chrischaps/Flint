@@ -16,6 +16,7 @@ use flint_physics::PhysicsSystem;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::SceneRenderer;
 use flint_script::ScriptSystem;
+use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -69,11 +70,11 @@ pub(super) fn load_terrain_from_world_inner(
         // Resolve heightmap path (scene dir, then parent)
         let hm_path = {
             let p = scene_dir.join(&heightmap_rel);
-            if p.exists() {
+            if vfs::exists(&p) {
                 p
             } else if let Some(parent) = scene_dir.parent() {
                 let pp = parent.join(&heightmap_rel);
-                if pp.exists() {
+                if vfs::exists(&pp) {
                     pp
                 } else {
                     p
@@ -187,18 +188,18 @@ pub(super) fn load_terrain_from_world_inner(
             // Load splat map pixels for grass compute shader
             let splat_path = {
                 let p = scene_dir.join(&config.splat_map_path);
-                if p.exists() {
+                if vfs::exists(&p) {
                     p
                 } else {
                     scene_dir
                         .parent()
                         .map(|pp| pp.join(&config.splat_map_path))
-                        .filter(|pp| pp.exists())
+                        .filter(|pp| vfs::exists(pp))
                         .unwrap_or(p)
                 }
             };
 
-            if let Ok(splat_img) = image::open(&splat_path) {
+            if let Ok(splat_img) = flint_render::open_image(&splat_path) {
                 let splat_rgba = splat_img.to_rgba8();
                 let (sw, sh) = splat_rgba.dimensions();
 
@@ -302,11 +303,11 @@ fn load_grass_ground(
         let mask_path = {
             let p = scene_dir.join(mask_rel);
             match scene_dir.parent().map(|pp| pp.join(mask_rel)) {
-                Some(pp) if !p.exists() && pp.exists() => pp,
+                Some(pp) if !vfs::exists(&p) && vfs::exists(&pp) => pp,
                 _ => p,
             }
         };
-        let mask = match image::open(&mask_path) {
+        let mask = match flint_render::open_image(&mask_path) {
             Ok(img) => img.to_luma8(),
             Err(e) => {
                 tracing::warn!(
@@ -538,7 +539,7 @@ pub(super) fn load_audio_from_world(
             let mut loaded = false;
             for dir in &search_dirs {
                 let audio_path = dir.join(&file_name);
-                if audio_path.exists() {
+                if vfs::exists(&audio_path) {
                     match audio.engine.load_sound(&file_name, &audio_path) {
                         Ok(_) => {
                             println!("Loaded audio: {}", file_name);
@@ -566,10 +567,9 @@ pub(super) fn load_audio_from_world(
     }
     for dir in &search_dirs {
         let audio_dir = dir.join("audio");
-        if audio_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&audio_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
+        if vfs::is_dir(&audio_dir) {
+            if let Ok(entries) = vfs::read_dir(&audio_dir) {
+                for path in entries {
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
                         let rel_name =
@@ -614,11 +614,11 @@ pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut Anima
         .unwrap_or_else(|| Path::new("."));
 
     let mut anim_dir = scene_dir.join("animations");
-    if !anim_dir.is_dir() {
+    if !vfs::is_dir(&anim_dir) {
         // Check parent directory (game project structure)
         if let Some(parent) = scene_dir.parent() {
             let parent_anim = parent.join("animations");
-            if parent_anim.is_dir() {
+            if vfs::is_dir(&parent_anim) {
                 anim_dir = parent_anim;
             } else {
                 return;
@@ -628,13 +628,12 @@ pub(super) fn load_animations_from_world(scene_path: &str, animation: &mut Anima
         }
     }
 
-    let entries = match std::fs::read_dir(&anim_dir) {
+    let entries = match vfs::read_dir(&anim_dir) {
         Ok(e) => e,
         Err(_) => return,
     };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for path in entries {
         if path
             .file_name()
             .and_then(|n| n.to_str())
@@ -659,12 +658,11 @@ pub(super) fn load_sequences_from_world(scene_path: &str, animation: &mut Animat
     let Some(anim_dir) = resolve_animations_dir(scene_path) else {
         return;
     };
-    let entries = match std::fs::read_dir(&anim_dir) {
+    let entries = match vfs::read_dir(&anim_dir) {
         Ok(e) => e,
         Err(_) => return,
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for path in entries {
         if path
             .file_name()
             .and_then(|n| n.to_str())
@@ -695,11 +693,11 @@ fn resolve_animations_dir(scene_path: &str) -> Option<std::path::PathBuf> {
         .parent()
         .unwrap_or_else(|| Path::new("."));
     let local = scene_dir.join("animations");
-    if local.is_dir() {
+    if vfs::is_dir(&local) {
         return Some(local);
     }
     let up = scene_dir.parent()?.join("animations");
-    up.is_dir().then_some(up)
+    vfs::is_dir(&up).then_some(up)
 }
 
 /// Load `.sprite.toml` files from the `animations/` directory next to the scene.
@@ -710,10 +708,10 @@ pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mu
         .unwrap_or_else(|| Path::new("."));
 
     let mut anim_dir = scene_dir.join("animations");
-    if !anim_dir.is_dir() {
+    if !vfs::is_dir(&anim_dir) {
         if let Some(parent) = scene_dir.parent() {
             let parent_anim = parent.join("animations");
-            if parent_anim.is_dir() {
+            if vfs::is_dir(&parent_anim) {
                 anim_dir = parent_anim;
             } else {
                 return;
@@ -723,13 +721,12 @@ pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mu
         }
     }
 
-    let entries = match std::fs::read_dir(&anim_dir) {
+    let entries = match vfs::read_dir(&anim_dir) {
         Ok(e) => e,
         Err(_) => return,
     };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for path in entries {
         if path
             .file_name()
             .and_then(|n| n.to_str())
@@ -764,7 +761,7 @@ pub(super) fn load_sprite_animations_from_world(scene_path: &str, animation: &mu
 /// Otherwise resolve relative to the current scene's directory.
 pub(super) fn resolve_scene_path(current_scene: &str, target: &str) -> String {
     let target_path = Path::new(target);
-    if target_path.is_absolute() || target_path.exists() {
+    if target_path.is_absolute() || vfs::exists(&target_path) {
         return target.to_string();
     }
 
@@ -773,14 +770,14 @@ pub(super) fn resolve_scene_path(current_scene: &str, target: &str) -> String {
         .unwrap_or_else(|| Path::new("."));
 
     let resolved = current_dir.join(target);
-    if resolved.exists() {
+    if vfs::exists(&resolved) {
         return resolved.to_string_lossy().to_string();
     }
 
     // Try parent directory (game root)
     if let Some(parent) = current_dir.parent() {
         let parent_resolved = parent.join(target);
-        if parent_resolved.exists() {
+        if vfs::exists(&parent_resolved) {
             return parent_resolved.to_string_lossy().to_string();
         }
     }

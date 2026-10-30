@@ -4,7 +4,7 @@
 //! each with a column/row position and a per-frame duration. Clips are
 //! loaded from `.sprite.toml` files and driven by `SpriteAnimSync`.
 
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -66,7 +66,7 @@ fn default_loop_mode() -> LoopMode {
 ///
 /// A single file can define multiple clips under `[animation.NAME]` sections.
 pub fn load_sprite_clips_from_file(path: &Path) -> Result<Vec<SpriteAnimClip>> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
+    let content = vfs::read_to_string(path).map_err(|e| {
         FlintError::AnimationError(format!("Failed to read {}: {}", path.display(), e))
     })?;
     load_sprite_clips_from_str(&content, path)

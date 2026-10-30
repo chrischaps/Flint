@@ -6,6 +6,7 @@
 
 use crate::engine::ScriptEngine;
 use flint_core::components as comp;
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{HashMap, HashSet};
@@ -98,7 +99,7 @@ impl ScriptSync {
             }
 
             let script_path = scripts_dir.join(source);
-            if !script_path.exists() {
+            if !vfs::exists(&script_path) {
                 tracing::warn!("File not found: {}", script_path.display());
                 self.discovered.insert(entity_id);
                 continue;
@@ -108,7 +109,7 @@ impl ScriptSync {
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
                     println!("[script] Loaded: {} → {}", entity_name, source);
-                    // Record file timestamp
+                    // Record file timestamp (hot reload watches the disk)
                     if let Ok(meta) = std::fs::metadata(&script_path) {
                         if let Ok(modified) = meta.modified() {
                             self.file_timestamps.insert(script_path.clone(), modified);
@@ -152,6 +153,7 @@ impl ScriptSync {
                 continue;
             }
 
+            // Hot reload watches the disk (a memory source has no mtimes).
             let current_modified = match std::fs::metadata(&script_path) {
                 Ok(meta) => meta.modified().ok(),
                 Err(_) => continue,
@@ -191,7 +193,9 @@ impl ScriptSync {
 }
 
 /// Snapshot every `.rhai` file under `lib` (recursively) with its mtime.
-/// Empty when the folder does not exist.
+/// Empty when the folder does not exist. Hot reload watches the disk, so
+/// this stays on `std::fs`.
+#[allow(clippy::disallowed_methods)] // hot reload polls the disk; native only (#97)
 fn scan_lib(lib: &Path) -> HashMap<PathBuf, SystemTime> {
     fn walk(dir: &Path, out: &mut HashMap<PathBuf, SystemTime>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -224,7 +228,7 @@ pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
         .unwrap_or_else(|| Path::new("."));
 
     let scripts_dir = scene_dir.join("scripts");
-    if scripts_dir.is_dir() {
+    if vfs::is_dir(&scripts_dir) {
         sync.set_scripts_dir(scripts_dir);
         return;
     }
@@ -232,7 +236,7 @@ pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
     // Check parent directory (game project structure: scenes/ and scripts/ are siblings)
     if let Some(parent) = scene_dir.parent() {
         let scripts_dir = parent.join("scripts");
-        if scripts_dir.is_dir() {
+        if vfs::is_dir(&scripts_dir) {
             sync.set_scripts_dir(scripts_dir);
         }
     }

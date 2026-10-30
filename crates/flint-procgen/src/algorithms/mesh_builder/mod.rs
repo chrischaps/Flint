@@ -1,7 +1,7 @@
 //! Mesh construction toolkit for procedural generation.
 //!
-//! Provides primitive shapes (cylinder, sphere, cone, tapered cylinder),
-//! curve extrusion, UV mapping, normal/tangent computation, and mesh
+//! Provides primitive shapes (cylinder, sphere, cone, tapered cylinder,
+//! cuboid), curve extrusion with arbitrary cross-sections, UV mapping, normal/tangent computation, and mesh
 //! simplification via quadric error metrics.
 
 pub mod extrude;
@@ -12,12 +12,12 @@ pub mod tangents;
 pub mod uv;
 
 pub use extrude::{
-    build_spine_from_positions, extrude_along_curve, spine_from_spline_samples, ExtrudeParams,
-    ExtrudePoint,
+    build_spine_from_positions, extrude_along_curve, extrude_profile_along_curve,
+    spine_from_spline_samples, CrossSection, ExtrudeParams, ExtrudePoint,
 };
 pub use normals::compute_normals;
 pub use primitives::{
-    cone, cylinder, ellipsoid, sphere, tapered_cylinder, ConeParams, CylinderParams,
+    cone, cuboid, cylinder, ellipsoid, sphere, tapered_cylinder, ConeParams, CylinderParams,
     EllipsoidParams, SphereParams, TaperedCylinderParams,
 };
 pub use simplify::simplify;
@@ -88,6 +88,84 @@ impl MeshBuilder {
         let base = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&mesh.vertices);
         self.indices.extend(mesh.indices.iter().map(|i| i + base));
+    }
+
+    /// Merge another MeshData with a column-major affine transform applied
+    /// (the layout of `Transform::to_matrix`).
+    ///
+    /// Positions take the full matrix. Normals take the inverse-transpose of
+    /// its linear part, so non-uniform scale keeps them perpendicular to the
+    /// surface; tangents take the linear part. A mirroring transform
+    /// (negative determinant) reverses each triangle's winding and flips the
+    /// tangent handedness, so the merged copy still faces outward.
+    pub fn merge_transformed(&mut self, mesh: &MeshData, matrix: &[[f32; 4]; 4]) {
+        let base = self.vertices.len() as u32;
+        let m = matrix;
+        // Linear part as rows: lin[row][col] = m[col][row].
+        let lin = [
+            [m[0][0], m[1][0], m[2][0]],
+            [m[0][1], m[1][1], m[2][1]],
+            [m[0][2], m[1][2], m[2][2]],
+        ];
+        // Cofactor matrix = det * inverse-transpose; the det factor washes out
+        // on normalisation, except its sign, which `cof_sign` restores.
+        let cof = [
+            [
+                lin[1][1] * lin[2][2] - lin[1][2] * lin[2][1],
+                lin[1][2] * lin[2][0] - lin[1][0] * lin[2][2],
+                lin[1][0] * lin[2][1] - lin[1][1] * lin[2][0],
+            ],
+            [
+                lin[0][2] * lin[2][1] - lin[0][1] * lin[2][2],
+                lin[0][0] * lin[2][2] - lin[0][2] * lin[2][0],
+                lin[0][1] * lin[2][0] - lin[0][0] * lin[2][1],
+            ],
+            [
+                lin[0][1] * lin[1][2] - lin[0][2] * lin[1][1],
+                lin[0][2] * lin[1][0] - lin[0][0] * lin[1][2],
+                lin[0][0] * lin[1][1] - lin[0][1] * lin[1][0],
+            ],
+        ];
+        let det = lin[0][0] * cof[0][0] + lin[0][1] * cof[0][1] + lin[0][2] * cof[0][2];
+        let mirrored = det < 0.0;
+        let cof_sign = if mirrored { -1.0 } else { 1.0 };
+
+        let apply = |mat: &[[f32; 3]; 3], v: [f32; 3]| -> Vec3 {
+            Vec3::new(
+                mat[0][0] * v[0] + mat[0][1] * v[1] + mat[0][2] * v[2],
+                mat[1][0] * v[0] + mat[1][1] * v[1] + mat[1][2] * v[2],
+                mat[2][0] * v[0] + mat[2][1] * v[1] + mat[2][2] * v[2],
+            )
+        };
+
+        self.vertices.extend(mesh.vertices.iter().map(|v| {
+            let p = apply(&lin, v.position) + Vec3::new(m[3][0], m[3][1], m[3][2]);
+            let n = apply(&cof, v.normal) * cof_sign;
+            let t = apply(&lin, [v.tangent[0], v.tangent[1], v.tangent[2]]);
+            let n = if n.length() > 1e-12 {
+                n.normalized()
+            } else {
+                n
+            };
+            let t = if t.length() > 1e-12 {
+                t.normalized()
+            } else {
+                t
+            };
+            Vertex {
+                position: p.to_array(),
+                normal: n.to_array(),
+                tangent: [t.x, t.y, t.z, v.tangent[3] * cof_sign],
+                uv: v.uv,
+            }
+        }));
+        for tri in mesh.indices.chunks_exact(3) {
+            if mirrored {
+                self.add_triangle(tri[0] + base, tri[2] + base, tri[1] + base);
+            } else {
+                self.add_triangle(tri[0] + base, tri[1] + base, tri[2] + base);
+            }
+        }
     }
 
     /// Merge another MeshData and record a [`SubMesh`] for the added indices.
@@ -351,6 +429,125 @@ mod tests {
         for v in &mesh.vertices {
             let len = Vec3::from_array(v.normal).length();
             assert!((len - 1.0).abs() < 1e-4);
+        }
+    }
+
+    fn translation(x: f32, y: f32, z: f32) -> [[f32; 4]; 4] {
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [x, y, z, 1.0],
+        ]
+    }
+
+    /// Every triangle's vertex normals are perpendicular to its edges (for a
+    /// flat-shaded mesh) and agree with its winding.
+    fn assert_flat_normals_match_faces(mesh: &MeshData) {
+        for tri in mesh.indices.chunks_exact(3) {
+            let p = |i: u32| Vec3::from_array(mesh.vertices[i as usize].position);
+            let e1 = p(tri[1]) - p(tri[0]);
+            let e2 = p(tri[2]) - p(tri[0]);
+            let face = e1.cross(&e2).normalized();
+            for &i in tri {
+                let v = &mesh.vertices[i as usize];
+                let n = Vec3::from_array(v.normal);
+                assert!((n.length() - 1.0).abs() < 1e-5, "normal not unit");
+                assert!(n.dot(&face) > 0.9999, "normal off face: {}", n.dot(&face));
+                let t = Vec3::new(v.tangent[0], v.tangent[1], v.tangent[2]);
+                assert!(t.dot(&n).abs() < 1e-5, "tangent leaves the surface");
+            }
+        }
+    }
+
+    #[test]
+    fn merge_two_unit_cubes_bounds() {
+        let cube = cuboid(1.0, 1.0, 1.0);
+        let mut b = MeshBuilder::new();
+        b.merge_transformed(&cube, &translation(-2.0, 0.0, 0.0));
+        b.merge_transformed(&cube, &translation(3.0, 1.0, 0.5));
+        let mesh = b.build();
+
+        assert_eq!(mesh.vertex_count(), 48);
+        assert_eq!(mesh.triangle_count(), 24);
+        assert!(mesh.validate().is_ok());
+        let bb = &mesh.bounding_box;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(close(bb.min.x, -2.5) && close(bb.max.x, 3.5));
+        assert!(close(bb.min.y, -0.5) && close(bb.max.y, 1.5));
+        assert!(close(bb.min.z, -0.5) && close(bb.max.z, 1.0));
+        assert_flat_normals_match_faces(&mesh);
+    }
+
+    #[test]
+    fn merge_matches_transform_to_matrix() {
+        let t = flint_core::Transform::default()
+            .with_position(Vec3::new(1.0, 2.0, 3.0))
+            .with_rotation(Vec3::new(30.0, 45.0, 10.0))
+            .with_scale(Vec3::new(2.0, 2.0, 2.0));
+        let cube = cuboid(1.0, 1.0, 1.0);
+        let mut b = MeshBuilder::new();
+        b.merge_transformed(&cube, &t.to_matrix());
+        let mesh = b.build();
+
+        // A corner lands where the matrix sends it.
+        let m = t.to_matrix();
+        let src = cube.vertices[0].position;
+        let expect: Vec<f32> = (0..3)
+            .map(|r| m[0][r] * src[0] + m[1][r] * src[1] + m[2][r] * src[2] + m[3][r])
+            .collect();
+        for k in 0..3 {
+            assert!((mesh.vertices[0].position[k] - expect[k]).abs() < 1e-5);
+        }
+        assert_flat_normals_match_faces(&mesh);
+    }
+
+    #[test]
+    fn merge_non_uniform_scale_and_shear_keeps_normals_perpendicular() {
+        // Squash Y, stretch X, and shear X by Y: a plain linear transform of
+        // the normals would tilt them off the faces.
+        let m = [
+            [3.0, 0.0, 0.0, 0.0],
+            [1.5, 0.25, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let mut b = MeshBuilder::new();
+        b.merge_transformed(&cuboid(1.0, 1.0, 1.0), &m);
+        assert_flat_normals_match_faces(&b.build());
+    }
+
+    #[test]
+    fn merge_mirror_flips_winding_and_handedness() {
+        let mirror = [
+            [-1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let cube = cuboid(1.0, 1.0, 1.0);
+        let mut b = MeshBuilder::new();
+        b.merge_transformed(&cube, &mirror);
+        let mesh = b.build();
+        assert_flat_normals_match_faces(&mesh);
+        for (a, src) in mesh.vertices.iter().zip(&cube.vertices) {
+            assert_eq!(a.tangent[3], -src.tangent[3]);
+        }
+    }
+
+    #[test]
+    fn compute_normals_unit_length_on_primitives() {
+        let mut b = MeshBuilder::new();
+        b.merge(&sphere(&SphereParams {
+            radius: 2.0,
+            segments: 12,
+            rings: 8,
+        }));
+        b.merge_transformed(&cuboid(1.0, 2.0, 1.0), &translation(4.0, 0.0, 0.0));
+        b.compute_normals();
+        for v in &b.build().vertices {
+            let n = Vec3::from_array(v.normal);
+            assert!((n.dot(&n) - 1.0).abs() < 1e-4);
         }
     }
 }

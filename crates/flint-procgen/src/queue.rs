@@ -101,6 +101,7 @@ impl ProcGenQueue {
     ///
     /// Reprioritizes if the camera has moved significantly, then generates
     /// assets in priority order (closest first) until the budget is exhausted.
+    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn process_frame(
         &mut self,
         camera_pos: [f32; 3],

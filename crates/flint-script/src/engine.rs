@@ -6,9 +6,11 @@
 
 use crate::api;
 use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
+use crate::module_resolver::VfsModuleResolver;
 use flint_core::callbacks as cb;
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -175,20 +177,15 @@ impl ScriptEngine {
     }
 
     /// Point `import "name"` at `<dir>/name.rhai` and drop any cached
-    /// modules. Installing a fresh `FileModuleResolver` is the cache clear:
+    /// modules. Installing a fresh `VfsModuleResolver` is the cache clear:
     /// the Engine owns its resolver, so re-creating it is simpler than
-    /// keeping a handle just to call `clear_cache`.
+    /// keeping a handle to its cache.
     ///
-    /// rhai has no file resolver on wasm32, so `import` stays unresolved
-    /// there until the vfs supplies one (docs/design/web.md).
+    /// Modules are read through the vfs, so `import` resolves on every
+    /// target, from the disk or a memory source.
     pub fn set_module_base(&mut self, dir: std::path::PathBuf) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let resolver = rhai::module_resolvers::FileModuleResolver::new_with_path_and_extension(
-                &dir, "rhai",
-            );
-            self.engine.set_module_resolver(resolver);
-        }
+        self.engine
+            .set_module_resolver(VfsModuleResolver::new(dir.clone()));
         self.module_base = Some(dir);
     }
 
@@ -218,7 +215,7 @@ impl ScriptEngine {
 
     /// Compile from a file path
     pub fn compile_file(&self, path: &std::path::Path) -> Result<AST, String> {
-        let source = std::fs::read_to_string(path)
+        let source = vfs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
         self.compile(&source)
     }
@@ -1366,6 +1363,60 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_script_loads_from_memory_source() {
+        // A web build has no disk: the scene's scripts/ folder is found, and
+        // the script and the module it imports are read and run, entirely
+        // from an in-memory bundle.
+        use crate::sync::{load_scripts_from_scene, ScriptSync};
+        use flint_core::vfs::{self, MemorySource};
+
+        let mut bundle = MemorySource::new();
+        bundle.insert(
+            "game/scripts/greeter.rhai",
+            r#"fn on_init() {
+            import "greet" as greet;
+            set_field(self_entity(), "probe", "coh", greet::value());
+        }"#,
+        );
+        bundle.insert("game/scripts/lib/greet.rhai", "fn value() { 3.0 }");
+        vfs::scoped(Arc::new(bundle), || {
+            let mut engine = ScriptEngine::new();
+            let mut world = FlintWorld::new();
+            let id = world.spawn("greeter").unwrap();
+            probe_component(&mut world, id);
+            world
+                .set_component(
+                    id,
+                    comp::SCRIPT,
+                    toml::Value::Table({
+                        let mut m = toml::map::Map::new();
+                        m.insert("source".into(), toml::Value::String("greeter.rhai".into()));
+                        m
+                    }),
+                )
+                .unwrap();
+
+            // scenes/ and scripts/ are siblings, so this takes the parent
+            // fallback in load_scripts_from_scene.
+            let mut sync = ScriptSync::new();
+            load_scripts_from_scene("game/levels/demo.scene.toml", &mut sync);
+            engine.set_module_base(sync.lib_dir().unwrap());
+            sync.discover_and_load(&world, &mut engine);
+            assert_eq!(engine.scripts.len(), 1, "the script must load");
+
+            engine.call_inits(&mut world);
+            assert_eq!(probe_float(&world, id, "coh"), 3.0);
+
+            // A module that is not in the bundle fails like a missing file.
+            let err = engine.engine.run(r#"import "nope" as nope;"#).unwrap_err();
+            assert!(
+                matches!(*err, rhai::EvalAltResult::ErrorModuleNotFound(ref p, _) if p == "nope"),
+                "{err}"
+            );
+        });
     }
 
     #[test]

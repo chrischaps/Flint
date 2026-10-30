@@ -1,8 +1,8 @@
 //! Constraint registry for loading and managing constraint definitions
 
 use crate::types::{ConstraintDef, ConstraintFile, Severity};
+use flint_core::vfs;
 use flint_core::{FlintError, Result};
-use std::fs;
 use std::path::Path;
 
 /// Registry that holds all loaded constraint definitions
@@ -24,10 +24,8 @@ impl ConstraintRegistry {
         let mut registry = Self::new();
         let constraints_path = path.as_ref().join("constraints");
 
-        if constraints_path.exists() {
-            for entry in fs::read_dir(&constraints_path)? {
-                let entry = entry?;
-                let file_path = entry.path();
+        if vfs::exists(&constraints_path) {
+            for file_path in vfs::read_dir(&constraints_path)? {
                 if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
                     registry.load_file(&file_path)?;
                 }
@@ -39,7 +37,7 @@ impl ConstraintRegistry {
 
     /// Load constraints from a TOML file
     pub fn load_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let content = fs::read_to_string(path)?;
+        let content = vfs::read_to_string(path)?;
         self.load_string(&content)
     }
 

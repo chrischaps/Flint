@@ -9,6 +9,7 @@
 
 use crate::SceneRenderer;
 use flint_core::components as comp;
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult};
@@ -88,7 +89,7 @@ pub fn is_runtime_model(model: &toml::Value) -> bool {
 /// Resolve the file path for a model asset name.
 fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<PathBuf> {
     if let Some(path) = config.overrides.get(asset_name) {
-        if path.exists() {
+        if vfs::exists(path) {
             return Some(path.clone());
         }
     }
@@ -98,7 +99,7 @@ fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<Path
             .scene_dir
             .join("models")
             .join(format!("{}.{}", asset_name, ext));
-        if p.exists() {
+        if vfs::exists(&p) {
             return Some(p);
         }
     }
@@ -107,7 +108,7 @@ fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<Path
             let p = parent
                 .join("models")
                 .join(format!("{}.{}", asset_name, ext));
-            if p.exists() {
+            if vfs::exists(&p) {
                 return Some(p);
             }
         }
@@ -118,7 +119,7 @@ fn resolve_model_path(config: &ModelLoadConfig, asset_name: &str) -> Option<Path
 /// Resolve the file path for a texture name.
 fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<PathBuf> {
     if let Some(path) = config.overrides.get(tex_name) {
-        if path.exists() {
+        if vfs::exists(path) {
             return Some(path.clone());
         }
     }
@@ -145,7 +146,7 @@ fn resolve_texture_path(config: &ModelLoadConfig, tex_name: &str) -> Option<Path
     for dir in &search_dirs {
         for name in &candidates {
             let p = dir.join(name);
-            if p.exists() {
+            if vfs::exists(&p) {
                 return Some(p);
             }
         }

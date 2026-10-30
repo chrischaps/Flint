@@ -35,7 +35,7 @@ use crate::session::{FileStems, SuiteSession};
 use crate::status::status_line_with_coherence;
 use crate::tempo::ms_to_samples;
 use crate::{validate_chart, validate_manifest, validate_manifest_assets, Chart, SuiteManifest};
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use kira::backend::Backend;
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend};
 use std::path::{Path, PathBuf};
@@ -129,7 +129,7 @@ fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
     // other failure must be LOUD — a corrupt calibration file silently
     // reading as "no calibration" would run the session with a wrong 0 ms
     // offset, corrupting judgment (and any [H] verdict on top of it).
-    let entries = match std::fs::read_dir(&dir) {
+    let entries = match vfs::read_dir(&dir) {
         Ok(e) => e,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
         Err(err) => {
@@ -141,8 +141,9 @@ fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
         }
     };
     let mut names: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .iter()
+        .filter_map(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
         .filter(|n| n.starts_with(prefix) && n.ends_with(".toml"))
         .collect();
     names.sort();
@@ -151,7 +152,7 @@ fn newest_toml(base_dir: &Path, prefix: &str) -> Option<(String, toml::Value)> {
     // silently pretending nothing exists.
     while let Some(name) = names.pop() {
         let path = dir.join(&name);
-        let text = match std::fs::read_to_string(&path) {
+        let text = match vfs::read_to_string(&path) {
             Ok(t) => t,
             Err(err) => {
                 tracing::warn!(
@@ -233,7 +234,7 @@ fn resolve_session_config<T: Default>(
     let path = explicit
         .map(Path::to_path_buf)
         .unwrap_or_else(|| base_dir.join(default_file));
-    if explicit_given || path.exists() {
+    if explicit_given || vfs::exists(&path) {
         let cfg = load(&path)
             .map_err(|e| FlintError::ValidationError(format!("loading {}: {e}", path.display())))?;
         Ok((cfg, path, true))
@@ -648,7 +649,7 @@ impl ChartCore {
             }
             Err(e) => notices.push(format!("reload failed, keeping current config: {e}")),
         }
-        if self.ladder_path.exists() {
+        if vfs::exists(&self.ladder_path) {
             match LadderConfig::load(&self.ladder_path) {
                 Ok(cfg) => {
                     self.ladder.reconfigure(cfg);
@@ -664,7 +665,7 @@ impl ChartCore {
                 }
             }
         }
-        if self.gradient_path.exists() {
+        if vfs::exists(&self.gradient_path) {
             match GradientConfig::load(&self.gradient_path) {
                 Ok(cfg) => {
                     self.gradient.reconfigure(cfg);
@@ -1375,6 +1376,7 @@ impl ChartSession {
         });
         let haptics = crate::haptics::HapticsDriver::new(haptics_cfg);
 
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -1534,6 +1536,7 @@ impl ChartSession {
         // monotonic RAW clock; a seam's backwards jump would poison the fit.
         // Events therefore arrive stamped in raw samples and are re-mapped to
         // suite time at ingest.
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         self.bridge
             .observe(Instant::now(), self.session.raw_clock_sample());
 
@@ -1715,7 +1718,7 @@ impl ChartSession {
         // reload only when the file exists, failure keeps the current
         // config, success re-sends the engine settings (lead changes must
         // reach already-scheduled bursts).
-        if self.haptics_path.exists() {
+        if vfs::exists(&self.haptics_path) {
             match crate::haptics::HapticsConfig::load(&self.haptics_path) {
                 Ok(cfg) => {
                     self.haptics.reconfigure(cfg);
