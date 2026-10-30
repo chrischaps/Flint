@@ -6,6 +6,7 @@ license.workspace = true
 description = "Game loop, input, and event system for Flint engine"
 
 [dependencies]
+web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 toml = { workspace = true }

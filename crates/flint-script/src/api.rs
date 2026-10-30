@@ -2128,8 +2128,8 @@ fn register_math_api(engine: &mut Engine) {
 
     engine.register_fn("random", || -> f64 {
         // Simple pseudo-random based on time — no external crate needed
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let t = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
         // Simple hash to get a 0..1 value
@@ -2138,8 +2138,8 @@ fn register_math_api(engine: &mut Engine) {
     });
 
     engine.register_fn("random_range", |min: f64, max: f64| -> f64 {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let t = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
         let hash = t.wrapping_mul(2654435761);

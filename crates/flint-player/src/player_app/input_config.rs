@@ -1,5 +1,6 @@
 //! Input configuration helpers — path resolution, user override persistence, and rebind state.
 
+use crate::user_files;
 use anyhow::Result;
 use flint_core::FlintError;
 use flint_runtime::InputConfig;
@@ -64,8 +65,9 @@ pub(super) fn resolve_input_paths(
 /// if there is one, else this game's own `<config>/flint/input_<game_id>.toml`
 /// (where rebinds are saved), else the shared `<config>/flint/input.user.toml`
 /// that games without an id use, and older builds read for every game.
+/// On the web `<config>` is `/config` in `localStorage` ([`user_files`]).
 pub(super) fn resolve_user_override(scene_path: &Path, game_id: &str) -> Option<PathBuf> {
-    resolve_user_override_in(scene_path, game_id, dirs::config_dir().as_deref())
+    resolve_user_override_in(scene_path, game_id, user_files::config_dir().as_deref())
 }
 
 fn resolve_user_override_in(
@@ -74,15 +76,29 @@ fn resolve_user_override_in(
     config_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let local = project_local_override(scene_path);
-    if local.exists() {
+    if user_files::exists(&local) {
         return Some(local);
     }
     let config_dir = config_dir?;
     let game = user_override_in(config_dir, game_id);
-    if game.exists() {
+    if user_files::exists(&game) {
         return Some(game);
     }
-    Some(user_override_in(config_dir, "")).filter(|shared| *shared != game && shared.exists())
+    Some(user_override_in(config_dir, ""))
+        .filter(|shared| *shared != game && user_files::exists(shared))
+}
+
+/// The user override at `path`, or `None` when there is no such file.
+pub(super) fn read_user_override_file(path: &Path) -> Result<Option<InputConfig>> {
+    let text = user_files::read(path).map_err(|e| {
+        FlintError::RuntimeError(format!(
+            "failed to read input config '{}': {e}",
+            path.display()
+        ))
+    })?;
+    Ok(text
+        .map(|text| InputConfig::from_toml_str(&text))
+        .transpose()?)
 }
 
 /// Where a rebind is saved: back to the project-local file when that's the
@@ -94,7 +110,12 @@ pub(super) fn user_override_save_path(
     game_id: &str,
     loaded: Option<&Path>,
 ) -> PathBuf {
-    user_override_save_path_in(scene_path, game_id, loaded, dirs::config_dir().as_deref())
+    user_override_save_path_in(
+        scene_path,
+        game_id,
+        loaded,
+        user_files::config_dir().as_deref(),
+    )
 }
 
 fn user_override_save_path_in(
@@ -111,7 +132,7 @@ fn user_override_save_path_in(
 }
 
 pub(super) fn fallback_user_override_path(scene_path: &Path, game_id: &str) -> PathBuf {
-    fallback_user_override_path_in(scene_path, game_id, dirs::config_dir().as_deref())
+    fallback_user_override_path_in(scene_path, game_id, user_files::config_dir().as_deref())
 }
 
 fn fallback_user_override_path_in(
@@ -143,17 +164,9 @@ fn project_local_override(scene_path: &Path) -> PathBuf {
 }
 
 pub(super) fn write_user_override_file(path: &Path, config: &InputConfig) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            FlintError::RuntimeError(format!(
-                "failed to create directory '{}': {e}",
-                parent.display()
-            ))
-        })?;
-    }
     let toml_str = toml::to_string_pretty(config)
         .map_err(|e| FlintError::RuntimeError(format!("failed to serialize input config: {e}")))?;
-    std::fs::write(path, toml_str).map_err(|e| {
+    user_files::write(path, &toml_str).map_err(|e| {
         FlintError::RuntimeError(format!(
             "failed to write input config '{}': {e}",
             path.display()
@@ -215,7 +228,7 @@ mod tests {
         let path = resolve_user_override_in(scene, &input.config().game_id, Some(config_dir));
         if let Some(path) = &path {
             input
-                .merge_bindings(InputConfig::load_from_file(path).unwrap())
+                .merge_bindings(read_user_override_file(path).unwrap().unwrap())
                 .unwrap();
         }
         (input, path)

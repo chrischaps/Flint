@@ -5,7 +5,7 @@ use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use std::time::Instant;
+use web_time::Instant;
 use winit::keyboard::KeyCode;
 
 #[derive(Debug, Clone)]

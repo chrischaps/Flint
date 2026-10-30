@@ -5,7 +5,7 @@
 //! is fine for the expected cache sizes (dozens of entries).
 
 use std::collections::HashMap;
-use std::time::Instant;
+use web_time::Instant;
 
 use flint_core::ContentHash;
 

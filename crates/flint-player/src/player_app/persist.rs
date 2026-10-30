@@ -12,7 +12,7 @@
 //! immediately when a script calls `persist_save()`.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use web_time::Instant;
 
 use super::PlayerApp;
 

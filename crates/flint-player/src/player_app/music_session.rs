@@ -21,7 +21,7 @@ use flint_music::chart_session::{
 use flint_music::{InputEvent, Tick, VisualFrame};
 use flint_runtime::InputState;
 use std::path::Path;
-use std::time::Instant;
+use web_time::Instant;
 
 /// Component name in scene TOML (schema: `schemas/components/music_session.toml`).
 pub const MUSIC_SESSION: &str = "music_session";

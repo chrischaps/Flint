@@ -4,7 +4,7 @@
 //! path calls (`load_pending_sprites`) live here with the rest of the
 //! loading surface.
 
-use super::input_config::{resolve_input_paths, resolve_user_override};
+use super::input_config::{read_user_override_file, resolve_input_paths, resolve_user_override};
 use super::scene_loading;
 use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
@@ -671,11 +671,12 @@ impl PlayerApp {
         // rebinds: they're saved under it.
         paths.user_override =
             resolve_user_override(Path::new(&self.scene_path), &self.input.config().game_id);
+        // A user file, so localStorage on the web (crate::user_files).
         if let Some(path) = &paths.user_override {
-            if path.exists() {
-                let cfg = InputConfig::load_from_file(path).with_context(|| {
-                    format!("failed to load user input config '{}'", path.display())
-                })?;
+            let cfg = read_user_override_file(path).with_context(|| {
+                format!("failed to load user input config '{}'", path.display())
+            })?;
+            if let Some(cfg) = cfg {
                 self.user_override_config = cfg.clone();
                 self.input
                     .merge_bindings(cfg)

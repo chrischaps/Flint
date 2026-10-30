@@ -3,7 +3,7 @@
 //! The [`ProcGenQueue`] spreads generation work across frames within a
 //! configurable time budget, prioritizing assets closest to the camera.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use flint_core::ContentHash;
 

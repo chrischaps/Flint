@@ -39,7 +39,7 @@ use flint_core::{FlintError, Result};
 use kira::backend::Backend;
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use web_time::Instant;
 
 // --- timing-offset files ----------------------------------------------------
 // Reading the committed logs in `<base_dir>/logs/latency/`: output-latency
@@ -1375,8 +1375,8 @@ impl ChartSession {
         });
         let haptics = crate::haptics::HapticsDriver::new(haptics_cfg);
 
-        let epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let epoch = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let log_path = cfg
