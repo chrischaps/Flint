@@ -116,6 +116,11 @@ struct Args {
     /// capture shows it
     #[arg(long)]
     stats: bool,
+
+    /// Print a perf line every 10 s: frame p50/p99, each phase's CPU time
+    /// and each pass's GPU time, as the web page's `?perf=1` copies it
+    #[arg(long)]
+    perf: bool,
 }
 
 fn main() -> Result<()> {
@@ -212,6 +217,9 @@ fn main() -> Result<()> {
         app.capture.input_script = Some(flint_player::InputScript::load(path)?);
     }
     app.capture.show_stats = args.stats;
+    if args.perf {
+        app.enable_perf(true);
+    }
     app.clock.frame_step = args.frame_step.filter(|s| *s > 0.0);
 
     // Apply initial mixer bus volumes from CLI (e.g. --music-volume 0)

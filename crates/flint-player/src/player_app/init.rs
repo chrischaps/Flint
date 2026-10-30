@@ -142,6 +142,7 @@ impl PlayerApp {
             show_stats: false,
             stats_frame_times: std::collections::VecDeque::new(),
             stats_gpu_timing: false,
+            perf: None,
             procgen_resolver: flint_procgen::ProcGenResolver::new(),
             loaded_chunks: HashMap::new(),
             #[cfg(target_os = "android")]

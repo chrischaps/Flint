@@ -29,7 +29,6 @@ use std::collections::HashSet;
 impl PlayerApp {
     #[profiling::function]
     pub(super) fn render(&mut self) {
-        let render_start = web_time::Instant::now();
         // On Android, window may be None between suspended() and resumed()
         if self.window.is_none() {
             return;
@@ -546,9 +545,10 @@ impl PlayerApp {
             }
         }
 
-        // F2's stats show the GPU's time too (ADR 0108): time the frame
-        // while they're up. Timing the game turned on stays on after.
-        if self.show_stats {
+        // F2's stats show the GPU's time too (ADR 0108), as does the perf
+        // readout unless it was asked not to (#120): time the frame while
+        // either is up. Timing the game turned on stays on after.
+        if self.show_stats || self.perf.as_ref().is_some_and(|p| p.gpu_wanted) {
             if !renderer.gpu_timing() {
                 self.stats_gpu_timing =
                     renderer.set_gpu_timing(&context.device, &context.queue, true);
@@ -560,6 +560,10 @@ impl PlayerApp {
 
         if let Err(e) = renderer.render(context, &self.camera, &view) {
             tracing::warn!("Render error: {:?}", e);
+        }
+        // A field borrow, not `perf_mark`: `context` is still held.
+        if let Some(perf) = &mut self.perf {
+            perf.mark(super::perf::Phase::Render);
         }
 
         // Render egui HUD overlay on top of the 3D scene
@@ -573,6 +577,7 @@ impl PlayerApp {
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.finish_gpu_timings(&context.device, &context.queue);
         }
+        self.perf_mark(super::perf::Phase::Hud);
 
         // Capture the composited frame (scene + HUD) before it is presented.
         if let Some(path) = self.capture_path_due() {
@@ -580,23 +585,12 @@ impl PlayerApp {
         }
 
         output.present();
-        let presented = self
-            .capture
-            .phases
-            .lap(super::phases::Phase::Render, render_start);
-        let steps = std::mem::take(&mut self.capture.physics_steps);
-        if self.clock.total_time >= super::PERF_SKIP_SECS {
-            self.capture.phases.end_frame(steps);
-        } else {
-            // Loading and shader warm-up, as the frame-time report skips.
-            self.capture.phases = Default::default();
-        }
-        // `?perf=<s>` on the web: where the CPU time went, every s seconds.
-        if let Some(every) = self.capture.perf_every {
-            if let Some(line) = self.capture.phases.report_due(every, self.clock.total_time) {
-                tracing::info!("[perf] phases: {line}");
-            }
-        }
+        let presented = web_time::Instant::now();
+        self.perf_mark(super::perf::Phase::Present);
+        #[cfg(target_arch = "wasm32")]
+        self.show_perf();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.print_perf();
 
         if let Some(exit_after) = self.capture.exit_after {
             if self.clock.total_time >= super::PERF_SKIP_SECS {
@@ -647,10 +641,6 @@ impl PlayerApp {
                         avg(self.capture.perf_culled),
                         avg(self.capture.perf_triangles)
                     );
-                    // Where the CPU time went (#104).
-                    if let Some(line) = self.capture.phases.summary() {
-                        eprintln!("[perf] phases: {line}");
-                    }
                     // GPU time, when the frames were timed (--stats, ADR 0108).
                     let gpu_frames = self.capture.perf_gpu_frames;
                     if gpu_frames > 0 {
@@ -746,8 +736,11 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick(&mut self) {
-        use super::phases::Phase;
-        let lap = web_time::Instant::now();
+        // A frame begins: the perf readout's clock (#120).
+        if let Some(perf) = &mut self.perf {
+            perf.begin_frame();
+        }
+        use super::perf::Phase;
 
         // The page's Begin click and the browser's pointer lock (#102).
         #[cfg(target_arch = "wasm32")]
@@ -800,6 +793,7 @@ impl PlayerApp {
         // the scripts run, so a collision reaches scripts one frame after the
         // step that produced it.
         let game_events = self.collect_game_events();
+        self.perf_mark(Phase::Input);
 
         // on_update runs BEFORE the fixed physics loop. Scripts pose kinematic
         // bodies with this frame's delta_time, and PhysicsSystem::begin_frame
@@ -815,7 +809,7 @@ impl PlayerApp {
         // physics tick's mutable borrow, so scripts get their own scope here
         // and the later script calls (UI, sprite-anim-end callbacks) another
         // below.
-        let lap = {
+        {
             let _state_scope = self.script.state_scope(
                 &mut self.state_machine,
                 &mut self.persistent_store,
@@ -827,15 +821,17 @@ impl PlayerApp {
             // parameters — session tick above precedes set_conducted, which
             // precedes provide_context/on_update: F4/ADR 0020 ordering), then
             // on_update.
-            let lap = self.capture.phases.lap(Phase::Input, lap);
             self.run_scripts(&config, &game_events);
-            self.capture.phases.lap(Phase::Scripts, lap)
-        };
+        }
+        self.perf_mark(Phase::Scripts);
+        if let Some(perf) = &mut self.perf {
+            perf.record_scripts(self.script.update_times());
+        }
 
         // Fixed-timestep physics + FPS camera/listener follow, against the
         // poses and joint targets the scripts just wrote
         self.tick_fixed_physics(&config, has_fps_player);
-        let lap = self.capture.phases.lap(Phase::Physics, lap);
+        self.perf_mark(Phase::Physics);
 
         // Script pointers again for every remaining script call this frame —
         // including the sprite-anim-end callbacks inside tick_av_systems —
@@ -859,12 +855,12 @@ impl PlayerApp {
 
         // on_draw_ui (always runs), script commands, draw-command collection
         self.drive_script_ui();
-        let lap = self.capture.phases.lap(Phase::ScriptUi, lap);
+        self.perf_mark(Phase::ScriptUi);
 
         // Audio triggers, animations + sprite-end callbacks, bone matrices,
         // bone probes, particles
         self.tick_av_systems(&config, &game_events);
-        let lap = self.capture.phases.lap(Phase::AvSystems, lap);
+        self.perf_mark(Phase::AnimFx);
 
         // Frame-budgeted procgen queue
         self.tick_procgen();
@@ -877,7 +873,7 @@ impl PlayerApp {
 
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();
-        self.capture.phases.lap(Phase::Sync, lap);
+        self.perf_mark(Phase::Sync);
     }
 
     #[profiling::function]
@@ -1023,7 +1019,6 @@ impl PlayerApp {
             }
 
             self.clock.consume_fixed_step();
-            self.capture.physics_steps += 1;
         }
 
         // Update camera from player character position (FPS mode)

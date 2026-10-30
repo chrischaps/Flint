@@ -155,6 +155,10 @@ pub struct ScriptEngine {
     /// Base directory for `import "name"` (`<scripts>/lib`). `None` until a
     /// scene sets it; the resolver then maps `import "x"` to `<lib>/x.rhai`.
     module_base: Option<std::path::PathBuf>,
+    /// Each script's last `on_update`, ms, by source path: kept only while
+    /// [`set_update_timing`](Self::set_update_timing) is on (the perf
+    /// readout, Flint#120). Scripts sharing a file add up.
+    update_times: Option<Vec<(String, f32)>>,
 }
 
 impl ScriptEngine {
@@ -173,6 +177,7 @@ impl ScriptEngine {
             ctx,
             scripts: HashMap::new(),
             module_base: None,
+            update_times: None,
         }
     }
 
@@ -301,13 +306,53 @@ impl ScriptEngine {
                     let mut c = crate::lock_or_recover(&self.ctx);
                     c.current_entity = entity_id;
                 }
+                let began = self.update_times.is_some().then(web_time::Instant::now);
                 if let Err(e) =
                     self.engine
                         .call_fn::<()>(&mut script.scope, &script.ast, cb::ON_UPDATE, ())
                 {
                     tracing::warn!("on_update error ({}): {}", script.source_path, e);
                 }
+                if let Some(began) = began {
+                    let path = script.source_path.clone();
+                    self.add_update_time(&path, began);
+                }
             }
+        }
+    }
+
+    /// Time each script's `on_update` (see [`update_times`](Self::update_times)).
+    pub fn set_update_timing(&mut self, on: bool) {
+        self.update_times = on.then(Vec::new);
+    }
+
+    /// The last frame's time per script file, ms; empty unless timing is
+    /// on. The script system's own steps are there too, in brackets.
+    pub fn update_times(&self) -> &[(String, f32)] {
+        self.update_times.as_deref().unwrap_or(&[])
+    }
+
+    /// Whether [`set_update_timing`](Self::set_update_timing) is on.
+    pub fn timing(&self) -> bool {
+        self.update_times.is_some()
+    }
+
+    /// Start a frame's times afresh.
+    pub(crate) fn clear_update_times(&mut self) {
+        if let Some(times) = &mut self.update_times {
+            times.clear();
+        }
+    }
+
+    /// Add the time since `began` to `label`'s, when timing.
+    pub(crate) fn add_update_time(&mut self, label: &str, began: web_time::Instant) {
+        let Some(times) = &mut self.update_times else {
+            return;
+        };
+        let ms = began.elapsed().as_secs_f32() * 1000.0;
+        match times.iter_mut().find(|(p, _)| p == label) {
+            Some((_, t)) => *t += ms,
+            None => times.push((label.to_string(), ms)),
         }
     }
 

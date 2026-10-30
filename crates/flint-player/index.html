@@ -4,7 +4,8 @@
      ?game=<id> plays a game the site packed, ?bundle=<game.flintpack> one
      packed by `flint bundle` (#98), and ?scene=<url>&msaa=4&width=&height=
      steer it (src/bin/flint_web.rs). ?embed=1 is the iframe view: the world
-     and its Begin button. See docs/design/web.md. -->
+     and its Begin button. ?perf=1 shows the perf readout (#120). See
+     docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -80,6 +81,29 @@
         opacity: 0; transition: opacity 0.6s ease;
       }
       #relook[data-on] { opacity: 1; transition-delay: 0.4s; }
+
+      /* The perf readout (?perf=1, #120): the player fills it twice a
+         second. It sits over the gate so it reads from the first frame,
+         and Copy takes the whole of it as one line for an issue. */
+      #perf {
+        position: fixed; top: 12px; right: 12px; z-index: 5;
+        max-width: calc(100vw - 24px); box-sizing: border-box;
+        padding: 10px 12px; border-radius: 8px;
+        color: rgba(236, 242, 255, 0.92); background: rgba(9, 13, 32, 0.72);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        font: 11px/1.45 ui-monospace, "SF Mono", Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+      #perf[hidden] { display: none; }
+      #perf pre { margin: 0; font: inherit; white-space: pre; overflow-x: auto; }
+      #perf button {
+        margin-top: 8px; padding: 5px 12px; border: 0; border-radius: 999px; cursor: pointer;
+        font: 500 10px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.18em;
+        text-transform: uppercase; color: #0d1229; background: rgba(255, 250, 242, 0.88);
+      }
+      #perf button[data-done] { background: rgba(176, 236, 196, 0.92); }
+      html[data-door] #perf { display: none; }
 
       /* Embed mode (?embed=1, #103): an iframe gets the world and its
          Begin button, nothing else. The hairline stays, centred low, so a
@@ -174,6 +198,32 @@
     <div id="relook">click to look around</div>
     <div class="mark">Flint<small id="status">starting</small><div id="progress"><i></i></div></div>
     <section class="door" id="door" hidden></section>
+    <aside id="perf" hidden>
+      <pre id="perf-text"></pre>
+      <button id="perf-copy" type="button">Copy line</button>
+    </aside>
+    <script>
+      // The perf readout's Copy (#120): the player keeps the line in
+      // data-line. Without clipboard access the line is selected instead.
+      document.getElementById("perf-copy").addEventListener("click", async (e) => {
+        const button = e.currentTarget;
+        const line = document.getElementById("perf").dataset.line || "";
+        try {
+          await navigator.clipboard.writeText(line);
+          button.textContent = "Copied";
+        } catch {
+          const text = document.getElementById("perf-text");
+          text.textContent = line;
+          getSelection().selectAllChildren(text);
+          button.textContent = "Selected";
+        }
+        button.dataset.done = "";
+        setTimeout(() => {
+          button.textContent = "Copy line";
+          delete button.dataset.done;
+        }, 1600);
+      });
+    </script>
 
     <!-- The doorway (#103). Trunk's loader (Trunk.toml) waits on
          window.flintDoorway before it fetches the wasm. It opens when there is
