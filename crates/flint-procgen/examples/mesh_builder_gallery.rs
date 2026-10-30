@@ -22,6 +22,7 @@ fn material(name: &str, rgb: [f32; 3], roughness: f32) -> MaterialData {
         base_color: [rgb[0], rgb[1], rgb[2], 1.0],
         metallic: 0.0,
         roughness,
+        normal_map: None,
     }
 }
 

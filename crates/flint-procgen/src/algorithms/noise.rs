@@ -164,6 +164,30 @@ impl PerlinNoise {
         let child = rng.fork("perlin");
         Self::new(child.seed())
     }
+
+    /// 2D Perlin that repeats every `period_x` × `period_y` lattice cells.
+    ///
+    /// The lattice corners are wrapped before hashing, so the field and its
+    /// derivatives match exactly across the seam: sampling `[0, period)` on
+    /// each axis gives a texture that tiles (or wraps around a cylinder).
+    /// Periods below 1 are treated as 1.
+    pub fn sample_2d_periodic(&self, x: f64, y: f64, period_x: i64, period_y: i64) -> f64 {
+        let (px, py) = (period_x.max(1), period_y.max(1));
+        let (xi, xf) = split(x);
+        let (yi, yf) = split(y);
+        let (x0, x1) = (xi.rem_euclid(px), (xi + 1).rem_euclid(px));
+        let (y0, y1) = (yi.rem_euclid(py), (yi + 1).rem_euclid(py));
+        let p = &self.perm;
+
+        let n00 = grad2(p.hash2(x0, y0), xf, yf);
+        let n10 = grad2(p.hash2(x1, y0), xf - 1.0, yf);
+        let n01 = grad2(p.hash2(x0, y1), xf, yf - 1.0);
+        let n11 = grad2(p.hash2(x1, y1), xf - 1.0, yf - 1.0);
+
+        let u = fade(xf);
+        let v = fade(yf);
+        lerp(lerp(n00, n10, u), lerp(n01, n11, u), v).clamp(-1.0, 1.0)
+    }
 }
 
 /// 3D Perlin with the cube-edge gradients peaks slightly above 1 (1.0025 over
@@ -1258,6 +1282,24 @@ mod tests {
                 assert_eq!(n.sample_3d(x, y, (i + j) as f64), 0.0);
             }
         }
+    }
+
+    /// Shifting by a whole period on either axis lands on the same value, and
+    /// inside one period the field is the ordinary Perlin it was built from.
+    #[test]
+    fn periodic_perlin_repeats_on_its_period() {
+        let n = PerlinNoise::new(11);
+        for (x, y, _) in points() {
+            let a = n.sample_2d_periodic(x, y, 6, 3);
+            for (dx, dy) in [(6.0, 0.0), (0.0, -3.0), (-12.0, 9.0)] {
+                let b = n.sample_2d_periodic(x + dx, y + dy, 6, 3);
+                assert!(
+                    (a - b).abs() < 1e-9,
+                    "({x}, {y}) + ({dx}, {dy}): {a} vs {b}"
+                );
+            }
+        }
+        assert_eq!(n.sample_2d_periodic(2.3, 1.7, 8, 8), n.sample_2d(2.3, 1.7));
     }
 
     /// Small steps produce small changes: catches seams at cell or simplex

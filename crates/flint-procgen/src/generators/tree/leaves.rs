@@ -123,6 +123,7 @@ fn generate_billboard_leaves(
         base_color: params.color_base,
         metallic: 0.0,
         roughness: 0.8,
+        normal_map: None,
     });
 
     // Combine tip positions with along-branch positions
@@ -231,6 +232,7 @@ fn generate_mesh_leaves(
         base_color: params.color_base,
         metallic: 0.0,
         roughness: 0.8,
+        normal_map: None,
     });
 
     // Combine tip positions with along-branch positions
