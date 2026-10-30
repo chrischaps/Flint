@@ -13,8 +13,9 @@
 #   line    one sentence under the title
 #   controls  the gate's small line on how it's played (default: sound on ·
 #           mouse to look · Esc frees the pointer)
-#   touch   that line on a phone or tablet (default: sound on · a paired pad
-#           plays it all · touch controls are coming; #132)
+#   touch   that line on a phone or tablet, also under the chooser's card
+#           there (default: sound on · the controls come up at a touch · a
+#           paired pad plays it all; #134)
 #   page    the game's page on chaps.dev
 #   video   a film of the game for browsers without WebGPU: any https URL,
 #           or a path in the game's repo, copied beside its bundle
@@ -26,23 +27,27 @@ id = "float"
 title = "SET + DRIFT"
 line = "Sit at the edge of a raft at sea, from sunrise to stars. There is nothing to win."
 repo = "chrischaps/Float"
-# engine-catchup: the engine subtree at Flint main, bundle.toml (#102) and
-# the sea and wind in an early ambience bundle (#124)
-ref = "73cb26b52134632c2bcfd406e5300fed82eaa626"
+# engine-catchup: the engine subtree at Flint main, bundle.toml (#102), the
+# sea and wind in an early ambience bundle (#124), and a touch layout: drag
+# to look, two buttons to scoot (#134)
+ref = "bd19afab86a619b7b7fc6a70dd244fb61e659e2d"
 page = "https://chaps.dev/projects/float/"
 video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
 poster = "https://chaps.dev/projects/float/poster-day.jpg"
 film = "Meanwhile, one whole day at sea, filmed in the game."
+touch = "sound on · drag anywhere to look · ◀ ▶ to scoot along the edge"
 
 [[game]]
 id = "kart"
 title = "Flint Kart"
-line = "Six karts, three laps, one drift-boost at a time. Keys or a pad."
+line = "Six karts, three laps, one drift-boost at a time. Keys, a pad or a phone."
 controls = "sound on · WASD or a pad · Shift or LB to drift · E or X for items"
+touch = "sound on · left thumb steers, up for gas, down to brake · hold DRIFT, tap ITEM"
 repo = "chrischaps/FlintKart"
-# engine-catchup: trike-backports, the engine subtree at Flint main, and
-# bundle.toml with the film and poster under web/ (#104)
-ref = "25029fbdf18cd6fa0844ebecad24b204d8a6db3c"
+# engine-catchup: trike-backports, the engine subtree at Flint main,
+# bundle.toml with the film and poster under web/ (#104), and the engine's
+# touch stick, DRIFT and ITEM in place of its script joystick (#134)
+ref = "b2df1f58094c244373e6b256438c16feebc4649a"
 page = "https://chaps.dev/projects/flint-kart/"
 # Paths, not URLs: build.py copies them from the repo beside the bundle.
 video = "web/kart-race.mp4"

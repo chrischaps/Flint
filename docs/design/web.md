@@ -922,6 +922,81 @@ untouched page animation frames after about 30 s. A CDP screenshot woke
 it, with one frame of 55.8 s. That happens with or without pacing, so
 pre-Begin windows longer than that can't be trusted.
 
+## The shipped games on a phone (#134)
+
+#133 gave the engine on-screen controls. This is them in the two games
+play.chaps.dev serves, and the page around them on a small screen.
+
+**SET + DRIFT** is drag to look and two buttons to scoot, nothing else: the
+whole screen is the look region (`sensitivity = 0.7`, about 100° for a
+swipe across a phone), and two buttons drive the `scoot` axis from its two
+ends. That needed one engine change: a touch button's **`value`** (default
+1), what it adds to its action while held, so ◀ adds +1 and ▶ adds -1 as A
+and D do. A lone glyph label draws as an icon (0.62 of the radius, not the
+16-point word size). The title card's "Press Any Key" reads
+`any_input_just_pressed()`, which knew keys, mouse buttons and pad buttons
+but not fingers, so a phone could never lift it. A finger landing now
+counts.
+
+**Flint Kart** gets the engine's floating stick under the left thumb (x
+steers, up is gas, down brakes), DRIFT held and ITEM tapped by the right.
+They replace the script joystick it had from the Android port. Its menus
+are tapped, and a floating stick in the lower left would take the first
+card's taps, so scripts can now put the controls away:
+**`set_touch_controls(false)`** hides them and lets every touch through
+(a finger already seen still counts, so `true` brings them back already
+showing). The menu scene calls it on entering. The race HUD brings them
+out while racing and puts them away under the pause and finish menus. On a
+short touch screen the HUD drops its standings board for DRIFT and ITEM
+(the big position stays). The hints say "tap" and "ITEM" for a finger.
+
+**The page** at 390 px wide: no horizontal scroll, every target 44 px or
+more on a coarse pointer (Begin was 43, 39 in the embed), hovers only where
+there is hover (a tapped card no longer stays lifted), the chooser's cards
+carry each game's `touch` line, and the gate says "best held sideways" in
+portrait. Once playing on a touch screen, the bottom corners are the
+game's: the wordmark fades from under the stick, and the full-screen
+button (which sat on ▶) hides in full screen and waits at the bottom centre
+out of it.
+
+**Measured.** Both games are bundled as play.chaps.dev bundles them. They
+were served to a Pixel 8 Pro over `adb reverse` and driven over CDP by
+**touch events only** after Begin (`Input.dispatchTouchEvent`; Begin
+itself is a `click()` with a user gesture, which a synthetic touch doesn't
+give). Kart was steered by a coach: the game's own AI driver run for the
+player's kart, logging what it would do, turned into thumb positions on
+the stick and presses on DRIFT and ITEM. Every run uses `?perf=1`, Chrome
+156, DPR 2.25, the default scene scale 0.67 and `fps=auto`.
+
+| Pixel 8 Pro, Chrome 156 | canvas | frame p50 / p90 / p99 ms | CPU ms a frame | GPU ms | audio late | thermal |
+|---|---|---|---|---|---|---|
+| Kart, Oval Plus, lap 1 | 2244x1008 | 33.3 / 33.4 / 41.7 | 26.1 | | 0 of 907 | 0 at the start |
+| Kart, Oval Plus, at the finish | 2244x1008 | 41.7 / 50.1 / 66.7 | 40.9 (scripts 11.2, sync 9.5, render 9.3) | 8.3 | 0 of 3,626 | warming |
+| SET + DRIFT, landscape, 10 s windows over 60 s | 2244x1008 | 33.3 / 33.4 / 33.5–41.6 | 21.1–23.3 (render 9.6, scripts 5.8) | 7.5 | 7 of 1,810 | 1, skin 39 °C |
+| SET + DRIFT, portrait, right after | 1008x2005 | 33.4 / 41.7 / 50.0 | 30.9 (render 12.4, scripts 8.3) | 9.7 | 6 of 1,134 | 1 |
+
+Kart finished its three laps in 2:14.30 (6th), touch only. The coach
+loses time over USB at 24–30 fps (51 s laps against the AI's 22); a thumb
+on the glass has no such lag. The same harness in desktop Chrome with touch
+emulation finished in 1:35.21 at 16.7 ms flat.
+
+**Memory**, SET + DRIFT, landscape: Chrome's GPU process 783 MB PSS, 423
+MB of it graphics (GL 351, EGL 72); the page's renderer 766 MB RSS (an
+isolated process, so `dumpsys meminfo` won't itemise it); the JS heap
+17–62 MB. The wasm heap isn't readable from the page, because wasm-bindgen
+doesn't expose the module's memory there.
+
+**No change to the default `?scale=`.** Neither game holds 60 on the phone,
+but both are CPU-bound (21–41 ms of CPU against 7.5–9.7 of GPU), and #140
+found that a smaller scene doesn't help a CPU-bound frame. `fps=auto` holds
+SET + DRIFT at an even 30 (p90 33.4 in every window, landscape). Kart
+holds it on the first lap and slips to 42–50 ms as the race goes on and
+the phone warms: its scripts (kart_controller 4.3, item_manager 3.0) and
+`sync` grow. That is a CPU ticket, not a scale one.
+
+The harness (`touchrace.mjs`, `floatphone.mjs`, `chooser.mjs`) is in the
+Vault beside #104's race harness.
+
 ## Async startup (#99)
 
 A desktop makes the window and then blocks on `RenderContext::new`. A

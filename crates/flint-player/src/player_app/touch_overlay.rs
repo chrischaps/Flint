@@ -108,7 +108,13 @@ pub(super) fn paint(ctx: &egui::Context, widgets: &[TouchWidget], opacity: f32) 
                     (shade(0.24, opacity), light(0.62, opacity))
                 };
                 painter.circle(c, *radius, fill, Stroke::new(1.5_f32, ring));
-                let size = (radius * 0.34).clamp(10.0, 16.0);
+                // A word fits a small face; a lone glyph (an arrow) reads
+                // as an icon, so it gets a larger one.
+                let size = if label.chars().count() == 1 {
+                    (radius * 0.62).clamp(14.0, 30.0)
+                } else {
+                    (radius * 0.34).clamp(10.0, 16.0)
+                };
                 let text = if *held {
                     shade(0.85, opacity)
                 } else {

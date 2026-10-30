@@ -54,6 +54,7 @@ anchor = "bottom_right"
 offset = [100, 110]
 radius = 42
 # label = "jump"                   # default: the action's name
+# value = 1.0                      # what it adds while held; -1 for an axis's other end
 
 [touch_controls.look]
 region = [0.5, 0.0, 0.5, 1.0]      # default: the right half
@@ -79,7 +80,25 @@ A **floating** stick's base jumps to wherever a thumb lands in its region (by de
 
 ### Buttons and the menu
 
-A button holds its action at 1 while a finger is on it (within 1.15x its radius). The menu is a small three-bar button; its action defaults to `pause`, so a game's own pause menu opens with no Escape key. Every action a control drives should exist in the config, even with no bindings of its own, as in `[actions.pause]` above.
+A button holds its action at its `value` (default 1) while a finger is on it (within 1.15x its radius). Two buttons can share one axis action from its two ends, as SET + DRIFT's scoot does:
+
+```toml
+[[touch_controls.buttons]]
+action = "scoot"                   # an axis1d action: A is +1, D is -1
+value = 1.0
+label = "◀"
+anchor = "bottom_left"
+offset = [64, 64]
+
+[[touch_controls.buttons]]
+action = "scoot"
+value = -1.0
+label = "▶"
+anchor = "bottom_right"
+offset = [64, 64]
+```
+
+ The menu is a small three-bar button; its action defaults to `pause`, so a game's own pause menu opens with no Escape key. Every action a control drives should exist in the config, even with no bindings of its own, as in `[actions.pause]` above.
 
 ### Look
 
@@ -108,6 +127,17 @@ The controls are drawn on their own Foreground egui layer, over the script UI an
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `touch_controls_visible()` | `bool` | Whether the controls are on screen now |
+| `set_touch_controls(enabled)` | | `false` puts the controls away, `true` brings them back. While away they hold no fingers and every touch reaches the game, so a menu's rows can be tapped where a floating stick would take them. Applied after the frame's scripts; it lasts across scene changes, like `set_cursor_captured` |
+
+Flint Kart's menu scene calls `set_touch_controls(false)` on entering, and its race HUD brings them out while racing and puts them away under the pause and finish menus:
+
+```rust
+let want = if current_state() != "paused" && !finish_menu_active { 1 } else { 0 };
+if want != touch_controls_out {
+    set_touch_controls(want == 1);
+    touch_controls_out = want;
+}
+```
 
 Actions the controls drive read like any others: `is_action_pressed("jump")`, `action_value("move_x")`.
 
@@ -127,5 +157,6 @@ The controls' offsets are points, so on a scaled display a button sits at its of
 
 ## Further Reading
 
+- [Playing on Mobile](../guides/playing-on-mobile.md) --- the shipped games' layouts, and how a phone runs them
 - [Touch Input](touch-input.md) --- touch zones, taps, swipes and the raw touch API
 - [Cursor Capture and Input Gates](input-gates.md) --- who hears the mouse and keys

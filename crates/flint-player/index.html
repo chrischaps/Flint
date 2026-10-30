@@ -100,7 +100,8 @@
         border: 0; border-radius: 999px; padding: 15px 36px; cursor: pointer;
         box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); transition: transform 0.2s ease;
       }
-      .gate button:hover { transform: translateY(-1px); }
+      @media (hover: hover) { .gate button:hover { transform: translateY(-1px); } }
+      .gate button:active { transform: scale(0.97); }
       .gate button:focus { outline: none; }
       .gate button:focus-visible { outline: 1.5px solid rgba(255, 255, 255, 0.6); outline-offset: 4px; }
       .gate small { display: block; margin-top: 18px; font-size: 12px; letter-spacing: 0.04em; opacity: 0.58; }
@@ -123,7 +124,8 @@
         font-size: 12px; letter-spacing: 0.08em; cursor: pointer; user-select: none;
         opacity: 0.74; transition: opacity 0.2s ease;
       }
-      .gate .wide:hover, .gate .wide:has(:focus-visible) { opacity: 1; }
+      .gate .wide:has(:focus-visible) { opacity: 1; }
+      @media (hover: hover) { .gate .wide:hover { opacity: 1; } }
       .gate .wide input {
         appearance: none; -webkit-appearance: none; margin: 0; flex: none;
         width: 26px; height: 15px; border-radius: 999px; cursor: pointer;
@@ -154,7 +156,8 @@
         opacity: 0.55; transition: opacity 0.25s ease, background 0.25s ease;
         -webkit-tap-highlight-color: transparent;
       }
-      #fullscreen:hover, #fullscreen:focus-visible { opacity: 1; background: rgba(9, 13, 32, 0.6); outline: none; }
+      #fullscreen:focus-visible, #fullscreen:active { opacity: 1; background: rgba(9, 13, 32, 0.6); outline: none; }
+      @media (hover: hover) { #fullscreen:hover { opacity: 1; background: rgba(9, 13, 32, 0.6); } }
       #fullscreen[hidden] { display: none; }
       #fullscreen svg { width: 18px; height: 18px; }
       #fullscreen .out, html[data-fullscreen] #fullscreen .in { display: none; }
@@ -230,7 +233,7 @@
         text-transform: uppercase; text-decoration: none; opacity: 0.82;
         border-bottom: 1px solid rgba(255, 255, 255, 0.35); padding-bottom: 3px;
       }
-      .door .more:hover { opacity: 1; border-color: rgba(255, 255, 255, 0.8); }
+      @media (hover: hover) { .door .more:hover { opacity: 1; border-color: rgba(255, 255, 255, 0.8); } }
 
       /* No WebGPU: the game's film fills the frame, the reason sits low. */
       .door.film { place-items: end start; min-height: 100vh; }
@@ -259,10 +262,17 @@
         background: rgba(255, 255, 255, 0.04); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
         transition: transform 0.25s ease, box-shadow 0.25s ease;
       }
-      .games a:hover, .games a:focus-visible {
+      .games a:focus-visible {
         transform: translateY(-2px); outline: none;
         box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 14px 40px rgba(0, 0, 0, 0.35);
       }
+      @media (hover: hover) {
+        .games a:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 14px 40px rgba(0, 0, 0, 0.35);
+        }
+      }
+      .games a:active { transform: scale(0.985); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3); }
       .games img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #18204a; }
       .games .text { display: block; padding: 16px 18px 18px; }
       .games strong { display: block; font: 300 22px/1.2 ui-serif, Georgia, serif; letter-spacing: 0.04em; }
@@ -271,6 +281,51 @@
         display: inline-block; margin-top: 14px; font-size: 11px; font-weight: 500;
         letter-spacing: 0.24em; text-transform: uppercase; opacity: 0.8;
       }
+      .games .hands { display: none; }
+
+      /* A finger (#134): hover never comes, so nothing waits on it (the
+         hovers above are for a mouse only). Every target is at least 44
+         points, the small print is a little larger, a card says how it's
+         played by touch, and the gate asks for the phone sideways, as the
+         games are laid out for a landscape screen. */
+      @media (pointer: coarse) {
+        /* Once playing, the bottom-left corner is the left thumb's: the
+           wordmark leaves it to the stick. */
+        html:has(.gate[data-gone]) .mark { opacity: 0; transition: opacity 1.2s ease 0.6s; }
+        #fullscreen { width: 44px; height: 44px; }
+        /* The bottom corners are the game's buttons (SET + DRIFT's scoot
+           sat under this one). In full screen a phone's back gesture leaves
+           it, so the button goes; out of it, it waits at the bottom centre. */
+        html:has(.gate[data-gone]) #fullscreen {
+          right: auto; left: calc(50% - 22px); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        }
+        html[data-fullscreen]:has(.gate[data-gone]) #fullscreen { opacity: 0; pointer-events: none; }
+        .gate button { padding: 18px 40px; }
+        html[data-embed] .gate button { padding: 17px 34px; }
+        .gate small { font-size: 13px; opacity: 0.7; }
+        .gate .wide { min-height: 44px; padding: 0 10px; margin-top: 8px; }
+        .gate .home { font-size: 13px; }
+        .door .more { padding: 18px 0 8px; }
+        .games .hands {
+          display: block; margin-top: 10px; font-size: 13px; line-height: 1.45; opacity: 0.6;
+        }
+        .games .go { margin-top: 12px; padding: 4px 0; }
+      }
+      .gate .turn { display: none; }
+      @media (pointer: coarse) and (orientation: portrait) {
+        .gate .turn {
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+          margin: 16px auto 0; font-size: 13px; letter-spacing: 0.04em; opacity: 0.74;
+        }
+        .gate .turn svg { width: 22px; height: 22px; animation: turn 2.6s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .gate .turn svg { animation: none; transform: rotate(-90deg); } }
+      }
+      @keyframes turn {
+        0%, 25% { transform: rotate(0); }
+        55%, 85% { transform: rotate(-90deg); }
+        100% { transform: rotate(0); }
+      }
+      html[data-embed] .gate .turn { display: none; }
     </style>
   </head>
   <body>
@@ -287,6 +342,7 @@
         <p class="home" id="gate-home" hidden>For the whole screen, tap <b>Share</b>
           <svg viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M6 1v8M3 3.5 6 1l3 2.5M3.5 6H1.5v7h9V6h-2"/></svg>
           then <b>Add to Home Screen</b>, and play from there.</p>
+        <p class="turn"><svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="6.5" y="2" width="9" height="18" rx="2"/><path d="M10 17.5h2"/></svg>best held sideways</p>
       </div>
     </div>
     <div id="relook">click to look around</div>
@@ -448,7 +504,7 @@
         // player asks for no pointer lock there (web_page.rs), so the gate
         // says nothing about a mouse or Esc.
         const touchFirst = matchMedia("(pointer: coarse)").matches;
-        const TOUCH_CONTROLS = "sound on · a paired pad plays it all · touch controls are coming";
+        const TOUCH_CONTROLS = "sound on · the controls come up at a touch · a paired pad plays it all";
         if (touchFirst) {
           root.dataset.touch = "";
           document.getElementById("gate-controls").textContent = TOUCH_CONTROLS;
@@ -579,6 +635,7 @@
                   { className: "text" },
                   el("strong", { textContent: g.title }),
                   g.line ? el("span", { className: "line", textContent: g.line }) : "",
+                  touchFirst && g.touch ? el("span", { className: "hands", textContent: g.touch }) : "",
                   el("span", { className: "go", textContent: "Play" }),
                 ),
               ),

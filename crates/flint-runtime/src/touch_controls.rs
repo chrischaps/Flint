@@ -135,7 +135,7 @@ pub struct TouchStick {
     pub right: Option<String>,
 }
 
-/// A round button that holds a bool action while a finger is on it.
+/// A round button that holds an action while a finger is on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TouchButton {
     pub action: String,
@@ -148,6 +148,11 @@ pub struct TouchButton {
     pub offset: [f32; 2],
     #[serde(default = "default_button_radius")]
     pub radius: f32,
+    /// What the button adds to its action while held: 1 presses a button
+    /// action, and -1 drives an axis action's other end, so two buttons can
+    /// share one axis (#134).
+    #[serde(default = "default_button_value")]
+    pub value: f32,
 }
 
 /// Dragging here turns the view, as raw mouse motion does.
@@ -193,6 +198,9 @@ fn default_button_offset() -> [f32; 2] {
 }
 fn default_button_radius() -> f32 {
     38.0
+}
+fn default_button_value() -> f32 {
+    1.0
 }
 fn default_look_region() -> [f32; 4] {
     [0.5, 0.0, 0.5, 1.0]
@@ -332,6 +340,9 @@ pub struct TouchControls {
     mode: TouchControlsMode,
     /// A real finger has touched since the last key or pad input.
     touch_seen: bool,
+    /// Put away by the game (`set_touch_controls(false)`), e.g. while a menu
+    /// wants every tap. Survives scene changes, as cursor capture does.
+    suspended: bool,
     screen: (f64, f64),
     pixels_per_point: f64,
     /// Safe-area insets in points: left, top, right, bottom.
@@ -378,9 +389,25 @@ impl TouchControls {
         self.insets = insets.map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
     }
 
+    /// Put the controls away (`false`) or bring them back (`true`). While
+    /// away they hold no fingers and every touch reaches the game, but a
+    /// finger still counts as seen, so they return already showing.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.suspended = !enabled;
+        if !self.visible() {
+            self.release_all();
+        }
+    }
+
+    /// Whether the game has the controls out (see [`Self::set_enabled`]).
+    pub fn enabled(&self) -> bool {
+        !self.suspended
+    }
+
     /// Whether the controls are on screen now.
     pub fn visible(&self) -> bool {
         self.config.is_some()
+            && !self.suspended
             && match self.mode {
                 TouchControlsMode::Auto => self.touch_seen,
                 TouchControlsMode::Always => true,
@@ -515,13 +542,12 @@ impl TouchControls {
             }
         }
         for grip in self.grips.values() {
-            let held = match grip {
-                Grip::Button(i) => config.buttons[*i].action == action,
-                Grip::Menu => config.menu.as_ref().is_some_and(|m| m.action == action),
-                _ => false,
-            };
-            if held {
-                add(1.0);
+            match grip {
+                Grip::Button(i) if config.buttons[*i].action == action => {
+                    add(config.buttons[*i].value)
+                }
+                Grip::Menu if config.menu.as_ref().is_some_and(|m| m.action == action) => add(1.0),
+                _ => {}
             }
         }
         out
@@ -868,6 +894,54 @@ mod tests {
         assert_eq!(c.action_value("pause"), Some(1.0));
         c.touch_end(2);
         assert_eq!(c.action_value("pause"), None);
+    }
+
+    #[test]
+    fn two_buttons_drive_one_axis_from_either_end() {
+        let mut c = TouchControls::new();
+        c.set_config(Some(
+            toml::from_str(
+                r#"
+                [[buttons]]
+                action = "scoot"
+                anchor = "bottom_left"
+                offset = [80, 80]
+                [[buttons]]
+                action = "scoot"
+                value = -1.0
+                anchor = "bottom_right"
+                offset = [80, 80]
+                "#,
+            )
+            .unwrap(),
+        ));
+        c.set_metrics((1000.0, 500.0), 1.0, [0.0; 4]);
+        c.note_touch();
+        assert!(c.touch_start(1, (80.0, 420.0)));
+        assert_eq!(c.action_value("scoot"), Some(1.0));
+        assert!(c.touch_start(2, (920.0, 420.0)));
+        assert_eq!(c.action_value("scoot"), Some(0.0), "both held cancel");
+        c.touch_end(1);
+        assert_eq!(c.action_value("scoot"), Some(-1.0));
+    }
+
+    #[test]
+    fn put_away_controls_let_every_touch_through() {
+        let mut c = controls();
+        assert!(c.touch_start(1, (100.0, 400.0)));
+        c.set_enabled(false);
+        assert!(!c.visible());
+        assert!(c.widgets().is_empty());
+        assert_eq!(
+            c.action_value("move_forward"),
+            Some(0.0),
+            "the stick let go"
+        );
+        assert!(!c.would_grab((920.0, 420.0)));
+        assert!(!c.touch_start(2, (920.0, 420.0)));
+        c.set_enabled(true);
+        assert!(c.visible(), "back already showing: a finger was seen");
+        assert!(c.touch_start(3, (920.0, 420.0)));
     }
 
     #[test]
