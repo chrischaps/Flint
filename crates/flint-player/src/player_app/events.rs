@@ -278,6 +278,10 @@ impl PlayerApp {
     /// buttons and wheel reach the game but not egui. Without a window
     /// (headless tests) only the state changes.
     pub(super) fn capture_cursor(&mut self) {
+        // Fingers on the on-screen controls need the cursor free (#133).
+        if self.input.touch_controls_visible() {
+            return;
+        }
         if let Some(window) = &self.window {
             // A browser locks the pointer only from a gesture: the lock is
             // asked for once a frame while one is live (`sync_pointer_lock`).
@@ -841,6 +845,18 @@ impl PlayerApp {
         if self.cursor_captured && matches!(event, WindowEvent::CursorMoved { .. }) {
             return true;
         }
+        // The on-screen touch controls sit above egui and the extensions:
+        // a finger on a stick or button goes straight to them (#133). Any
+        // finger landing brings them up first, even one egui then takes,
+        // or the first touch on a page with an extension would show none.
+        if let WindowEvent::Touch(touch) = event {
+            if touch.phase == winit::event::TouchPhase::Started {
+                self.input.touch_controls_mut().note_touch();
+            }
+            if self.touch_controls_take(touch) {
+                return false;
+            }
+        }
         // Input egui wants stops here (see egui_input for the rules). A
         // captured cursor's buttons and wheel skip egui, but for the release
         // of a press egui took before the capture (ADR 0110).
@@ -887,6 +903,20 @@ impl PlayerApp {
             }
             // Raw motion takes a real mouse's gate (ADR 0110), but for the
             // window's focus: captures run unfocused.
+            // A finger takes a real one's path, but is already in surface
+            // pixels (no web rescale, no Android joystick guess).
+            ScriptEvent::Touch(id, phase, x, y) => {
+                let event = WindowEvent::Touch(winit::event::Touch {
+                    device_id: winit::event::DeviceId::dummy(),
+                    phase,
+                    location: winit::dpi::PhysicalPosition::new(x, y),
+                    force: None,
+                    id,
+                });
+                if !self.taken_before_the_game(&event) {
+                    self.touch_on_surface(id, phase, x, y);
+                }
+            }
             ScriptEvent::Look(dx, dy) => {
                 if self.cursor_captured && !self.text_has_focus() {
                     self.input.process_mouse_raw_delta(dx, dy);
@@ -1043,14 +1073,23 @@ impl PlayerApp {
             }
 
             // Normal touch processing
-            self.input.disable_touch_emulation();
-
-            let id = touch.id;
             let x = touch.location.x;
             let y = touch.location.y;
             #[cfg(target_arch = "wasm32")]
             let (x, y) = self.touch_to_surface(x, y);
-            match touch.phase {
+            self.touch_on_surface(touch.id, touch.phase, x, y);
+    }
+
+    /// A finger at (x, y) in surface pixels, real or scripted.
+    pub(super) fn touch_on_surface(
+        &mut self,
+        id: u64,
+        phase: winit::event::TouchPhase,
+        x: f64,
+        y: f64,
+    ) {
+            self.input.disable_touch_emulation();
+            match phase {
                 winit::event::TouchPhase::Started => {
                     self.input.process_touch_start(id, x, y);
                 }

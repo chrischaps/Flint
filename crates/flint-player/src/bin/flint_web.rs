@@ -94,6 +94,8 @@ mod web {
         perf: Option<bool>,
         /// `loop=poll`: the old flat-out loop, for comparison (#121).
         poll: bool,
+        /// `touch=always|never`: the on-screen touch controls (#133).
+        touch: flint_runtime::TouchControlsMode,
         /// `fps=`: which refreshes are drawn (#140).
         fps: flint_player::FrameRateSetting,
     }
@@ -128,6 +130,9 @@ mod web {
                     _ => Some(true),
                 }),
                 poll: get("loop").as_deref() == Some("poll"),
+                touch: get("touch")
+                    .and_then(|v| flint_runtime::TouchControlsMode::parse(&v))
+                    .unwrap_or_default(),
                 fps: get("fps")
                     .and_then(|v| flint_player::FrameRateSetting::parse(&v))
                     .unwrap_or_else(|| {
@@ -224,6 +229,7 @@ mod web {
         );
         app.msaa_sample_count = args.msaa;
         app.render_scale = args.render_scale;
+        app.input.touch_controls_mut().set_mode(args.touch);
         app.clock.frame_step = args.frame_step;
         app.hold_at = args.hold_at;
         app.set_frame_rate(args.fps);

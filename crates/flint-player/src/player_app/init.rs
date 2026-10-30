@@ -130,6 +130,7 @@ impl PlayerApp {
                 version: 1,
                 game_id: String::new(),
                 actions: Default::default(),
+                touch_controls: None,
             },
             pending_rebind: None,
             gilrs: None,
