@@ -13,3 +13,15 @@ kira = { workspace = true }
 glam = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+
+# The browser (#101). kira already turns on cpal's WebAudio host for wasm32;
+# naming it here keeps sound from hanging on that default, and cpal is what
+# `web::WebAudioBackend` builds its stream on.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { version = "0.16", features = ["wasm-bindgen"] }
+send_wrapper = "0.6"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "console", "Performance", "Window", "AudioContext", "BaseAudioContext",
+    "AudioContextState", "EventTarget", "Event",
+] }

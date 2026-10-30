@@ -9,7 +9,7 @@ use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::track::{
     SpatialTrackBuilder, SpatialTrackDistances, SpatialTrackHandle, TrackBuilder, TrackHandle,
 };
-use kira::{AudioManager, DefaultBackend, Easing, Tween};
+use kira::{AudioManager, Easing, Tween};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -31,6 +31,14 @@ fn static_sound_from_file(
         StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
     }
 }
+
+/// The kira backend sound goes through: cpal's default device on the
+/// desktop, and in the browser a WebAudio stream that measures its own
+/// steadiness (`crate::web`).
+#[cfg(not(target_arch = "wasm32"))]
+pub type AudioBackend = kira::DefaultBackend;
+#[cfg(target_arch = "wasm32")]
+pub type AudioBackend = crate::web::WebAudioBackend;
 
 /// Distances for a placed one-shot when the caller names none: full volume
 /// within 1 m, silent past 25 m.
@@ -65,11 +73,21 @@ impl Bus {
 
 /// Wraps Kira's AudioManager with sound caching and listener management
 pub struct AudioEngine {
-    manager: Option<AudioManager<DefaultBackend>>,
+    manager: Option<AudioManager<AudioBackend>>,
     listener: Option<kira::listener::ListenerHandle>,
     sound_cache: HashMap<String, StaticSoundData>,
     master_volume: f64,
     filter_handle: Option<FilterHandle>,
+    /// The cutoff and bus volumes last asked for, so a manager started
+    /// later (the web's click) opens where the game already is.
+    filter_cutoff: f64,
+    bus_volumes: [f64; 2],
+    /// The WebAudio stream's steadiness, shared with its backend.
+    #[cfg(target_arch = "wasm32")]
+    meter: std::sync::Arc<std::sync::Mutex<crate::meter::BufferMeter>>,
+    /// Frames per WebAudio buffer (see `web::WebAudioSettings`).
+    #[cfg(target_arch = "wasm32")]
+    buffer_frames: u32,
     /// Music mixer bus (sub-track of main)
     music_bus: Option<TrackHandle>,
     /// SFX mixer bus (sub-track of main); all spatial tracks hang off this
@@ -86,50 +104,117 @@ impl Default for AudioEngine {
 }
 
 impl AudioEngine {
+    /// An engine with sound. On the desktop it opens the default device
+    /// now (silent if there is none). In the browser it stays silent until
+    /// [`start`](Self::start) is called from a user gesture, since an
+    /// `AudioContext` made before one is kept suspended.
     pub fn new() -> Self {
-        // Set up main track with a low-pass filter (fully open at 20 kHz by default)
-        let mut settings = kira::AudioManagerSettings::<DefaultBackend>::default();
-        let filter_handle = settings.main_track_builder.add_effect(
-            FilterBuilder::new()
-                .mode(FilterMode::LowPass)
-                .cutoff(20000.0),
-        );
+        #[allow(unused_mut)]
+        let mut engine = Self::silent();
+        #[cfg(not(target_arch = "wasm32"))]
+        engine.start();
+        engine
+    }
 
-        // Try to create the audio manager; gracefully fail if no device
-        let mut manager = AudioManager::<DefaultBackend>::new(settings)
-            .map_err(|e| tracing::warn!("No audio device available ({e}), running silent"))
-            .ok();
-
-        // Create the music and SFX buses as children of the main track
-        let (music_bus, sfx_bus) = match &mut manager {
-            Some(m) => (
-                m.add_sub_track(TrackBuilder::new())
-                    .map_err(|e| tracing::warn!("Failed to create music bus: {e}"))
-                    .ok(),
-                m.add_sub_track(TrackBuilder::new())
-                    .map_err(|e| tracing::warn!("Failed to create sfx bus: {e}"))
-                    .ok(),
-            ),
-            None => (None, None),
-        };
-
-        let has_audio = manager.is_some();
+    /// An engine that loads and caches sounds but plays none until
+    /// [`start`](Self::start).
+    pub fn silent() -> Self {
         Self {
-            manager,
+            manager: None,
             listener: None,
             sound_cache: HashMap::new(),
             master_volume: 1.0,
-            filter_handle: if has_audio { Some(filter_handle) } else { None },
-            music_bus,
-            sfx_bus,
+            filter_handle: None,
+            filter_cutoff: 20000.0,
+            bus_volumes: [1.0, 1.0],
+            #[cfg(target_arch = "wasm32")]
+            meter: Default::default(),
+            #[cfg(target_arch = "wasm32")]
+            buffer_frames: crate::web::WebAudioSettings::default().buffer_frames,
+            music_bus: None,
+            sfx_bus: None,
             oneshot_tracks: Vec::new(),
         }
+    }
+
+    /// Open the audio device, if it isn't open, and say whether there is
+    /// sound. In the browser, call it from the click (or key) handler that
+    /// begins the game. Failing leaves the engine silent, as before, and a
+    /// later call tries again.
+    pub fn start(&mut self) -> bool {
+        if self.manager.is_some() {
+            return true;
+        }
+        // Main track with a low-pass filter, at the cutoff last asked for
+        // (fully open at 20 kHz by default)
+        #[allow(unused_mut)]
+        let mut settings = kira::AudioManagerSettings::<AudioBackend>::default();
+        #[cfg(target_arch = "wasm32")]
+        {
+            settings.backend_settings.meter = self.meter.clone();
+            settings.backend_settings.buffer_frames = self.buffer_frames;
+        }
+        let filter_handle = settings.main_track_builder.add_effect(
+            FilterBuilder::new()
+                .mode(FilterMode::LowPass)
+                .cutoff(self.filter_cutoff),
+        );
+
+        // Try to create the audio manager; gracefully fail if no device
+        let Some(mut manager) = AudioManager::<AudioBackend>::new(settings)
+            .map_err(|e| tracing::warn!("No audio device available ({e}), running silent"))
+            .ok()
+        else {
+            return false;
+        };
+
+        // Create the music and SFX buses as children of the main track
+        self.music_bus = manager
+            .add_sub_track(TrackBuilder::new())
+            .map_err(|e| tracing::warn!("Failed to create music bus: {e}"))
+            .ok();
+        self.sfx_bus = manager
+            .add_sub_track(TrackBuilder::new())
+            .map_err(|e| tracing::warn!("Failed to create sfx bus: {e}"))
+            .ok();
+        self.manager = Some(manager);
+        self.filter_handle = Some(filter_handle);
+        let [sfx, music] = self.bus_volumes;
+        if music != 1.0 {
+            self.set_bus_volume(Bus::Music, music);
+        }
+        if sfx != 1.0 {
+            self.set_bus_volume(Bus::Sfx, sfx);
+        }
+        true
+    }
+
+    /// Frames per WebAudio buffer for the next [`start`](Self::start).
+    /// Two buffers are in flight, so one buffer is how long a frame may
+    /// hold the main thread before sound drops (2048 at 44.1 kHz is 46 ms).
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_buffer_frames(&mut self, frames: u32) {
+        self.buffer_frames = frames;
+    }
+
+    /// How steadily the browser's audio stream has been fed since it
+    /// opened: buffers, late ones, slack and mix time. `None` on the
+    /// desktop, and before [`start`](Self::start).
+    pub fn buffer_stats(&self) -> Option<crate::meter::BufferStats> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.manager.is_some() {
+                return self.meter.lock().ok().map(|m| m.stats());
+            }
+        }
+        None
     }
 
     /// Set a mixer bus volume (linear amplitude, 0.0 = mute, 1.0 = unity).
     /// Applies multiplicatively on top of per-sound volumes, so script-driven
     /// fades keep working underneath.
     pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
+        self.bus_volumes[bus as usize] = volume;
         let handle = match bus {
             Bus::Music => &mut self.music_bus,
             Bus::Sfx => &mut self.sfx_bus,
@@ -151,7 +236,7 @@ impl AudioEngine {
     /// Mutable access to the underlying kira manager, for hosts that start
     /// additional clocked content (the music suite) on the same device stream.
     /// Handles created on it must drop before this engine (ADR 0017).
-    pub fn manager_mut(&mut self) -> Option<&mut AudioManager<DefaultBackend>> {
+    pub fn manager_mut(&mut self) -> Option<&mut AudioManager<AudioBackend>> {
         self.manager.as_mut()
     }
 
@@ -241,6 +326,11 @@ impl AudioEngine {
 
         self.listener = Some(handle);
         Ok(())
+    }
+
+    /// Whether the listener has been created
+    pub fn has_listener(&self) -> bool {
+        self.listener.is_some()
     }
 
     /// Update listener position and orientation from yaw/pitch angles
@@ -465,6 +555,7 @@ impl AudioEngine {
 
     /// Set the low-pass filter cutoff frequency (Hz). 20000 = fully open, lower = more muffled.
     pub fn set_filter_cutoff(&mut self, hz: f32) {
+        self.filter_cutoff = hz as f64;
         if let Some(handle) = &mut self.filter_handle {
             let tween = Tween {
                 duration: Duration::from_millis(16),
@@ -545,6 +636,24 @@ mod tests {
         engine.load_sound_from_bytes("wav", wav).unwrap();
         assert_eq!(engine.sound_cache["wav"].frames.len(), 441);
         assert!(engine.load_sound_from_bytes("junk", vec![1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn a_silent_engine_remembers_its_mix_for_start() {
+        let mut engine = AudioEngine::silent();
+        assert!(!engine.is_available() && !engine.has_listener());
+        engine.set_filter_cutoff(800.0);
+        engine.set_bus_volume(Bus::Music, 0.25);
+        // Sounds load and cache without a device, ready for the click.
+        engine
+            .load_sound_from_samples("sea", 22_050, &[&[0.0, 0.1, 0.0]])
+            .unwrap();
+        assert!(engine.has_sound("sea"));
+        assert_eq!(engine.filter_cutoff, 800.0);
+        assert_eq!(engine.bus_volumes, [1.0, 0.25]);
+        assert!(engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).is_ok());
+        assert!(!engine.has_listener(), "no listener without a device");
+        assert!(engine.buffer_stats().is_none());
     }
 
     #[test]
