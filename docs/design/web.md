@@ -413,6 +413,66 @@ phone or a slow laptop falls behind (#121, #122).
 the check of each script's modified time every frame. Windows file stats
 stall now and then. The web has no disk to check, so it never pays it.
 
+## Render scale (#122)
+
+The surface is the canvas's CSS size times `devicePixelRatio`, so a DPR 2
+laptop pays four times DPR 1's pixels in every full-screen pass. Now the
+3D scene can be drawn below the surface's size and the HUD at full DPR:
+
+- `SceneRenderer::set_render_scale(device, s)` sizes the HDR chain (HDR
+  buffer, bloom mips, SSAO, volumetric, Kuwahara, MSAA targets, the ocean
+  grab) at `s` of the surface on each side, `0.25..=1`. The composite
+  already samples the HDR buffer by UV, so drawing it into the full-size
+  surface is the upscale (bilinear).
+- Below 1 the scene draws against a depth buffer of its own size
+  (`render_scale.rs`, `ScaledDepth`), and a fullscreen pass copies it,
+  nearest texel, into the caller's surface-sized depth view after the
+  composite (`depth_upscale.wgsl`). World lines, world text and the
+  viewer's overlays keep testing against the scene there, unchanged.
+- At scale 1 none of it exists and the frame is drawn as before. Desktop
+  captures of `showcase_tavern` and `shoreline` (1600x900, fixed step,
+  held at 3 s) match main's pixel for pixel.
+
+**The policy** is the player's (`player_app/render_scale.rs`): a ceiling,
+which is the fixed scale capped further by pixel ratio, and an optional
+dynamic step under it. A page caps at DPR 1.5 (`WEB_DPR_CAP`), so DPR 2
+draws at 0.75 a side, 56% of the pixels, and DPR 3 at 0.5. `?scale=<f>`
+(or `--render-scale`) draws at that scale whatever the DPR; `?scale=1` is
+native. `auto` keeps the cap and steps down by eighths of it, to half,
+after two 2 s windows whose median frame is over 1.2x the refresh period
+(or 60 Hz's, whichever is longer), so a 30 Hz display isn't over budget.
+It tries a step back up after 10 s calm; if that step is over budget in
+its first two windows it comes back down at once, and the next try waits
+twice as long, up to 160 s, so a scene on the edge doesn't pump. Stalls
+over 250 ms are ignored, and `frame_step` turns it off. The desktop
+default is scale 1 with no cap.
+
+The perf readout says `scene 1440x810 px, scale 0.75 (56% of the pixels)`
+under the canvas line, and F2's stats show `1600x900, scene 800x450`.
+
+**Measured** (Chrome 156 over CDP, DPR 2 emulated, RTX 4070 laptop,
+release build, Float held at 06:00 with `?frame_step=&hold_at=48.75`):
+
+| | scene | GPU ms/frame | Shadows | Scene | SSAO | Bloom | Composite |
+|---|---|---|---|---|---|---|---|
+| `?scale=1` | 1920x1080 | 3.32 | 1.42 | 0.50 | 1.16 | 0.19 | 0.04 |
+| default (cap 1.5) | 1440x810 | 2.80 | 1.23 | 0.33 | 0.95 | 0.16 | 0.11 |
+
+On this GPU the frame was never short of time (rAF p50 16.7 ms either
+way), and the shadow cascades don't depend on the surface, so the saving
+is small here. It grows with fill rate: on the desktop tavern
+(1600x900, Kuwahara + SSAO), GPU time went 6.39 → 4.18 → 2.42 ms at
+scales 1, 0.75 and 0.5, SSAO alone 2.56 → 0.46 ms at half. Composite
+costs a little more upscaling than copying one to one. The depth copy
+isn't a timed scope of its own.
+
+The capped frame against native, both at DPR 2: mean absolute difference
+0.86/255, 0.94% of pixels more than 16/255 apart (less than #102's browser
+against desktop). The HUD's text ("SET + DRIFT", "PRESS ANY KEY") is the
+same pixels give or take the scene showing through behind it. Float's
+halftone dots are a world-space grid, so they stay where they are; their
+antialiased edges are a scene pixel wide, so they're a little softer.
+
 ## Async startup (#99)
 
 A desktop makes the window and then blocks on `RenderContext::new`. A
