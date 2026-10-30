@@ -284,9 +284,13 @@ pub(crate) struct PerfContext {
     pub triangles: u32,
     /// Game time, seconds.
     pub game_time: f64,
-    /// Late audio buffers of all buffers so far, and one buffer's length in
-    /// ms; `None` before the sound starts.
-    pub audio: Option<(u64, u64, f64)>,
+    /// Late audio buffers of all buffers so far, one buffer's length and
+    /// the mean time to mix one, ms; `None` before the sound starts, and on
+    /// the desktop, whose device stream isn't metered.
+    pub audio: Option<(u64, u64, f64, f64)>,
+    /// The voices and spatial tracks being mixed, and how many of each are
+    /// paused because nobody can hear them (#138); `None` without sound.
+    pub mix: Option<flint_audio::MixCounts>,
     /// What the GPU lines are.
     pub gpu: GpuSource,
 }
@@ -360,11 +364,26 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         count(c.triangles)
     ));
     line(match c.audio {
-        Some((late, buffers, buffer_ms)) => {
-            format!("audio  {late} late of {buffers} ({buffer_ms:.0} ms buffers)")
-        }
+        Some((late, buffers, buffer_ms, mix_ms)) => format!(
+            "audio  {late} late of {buffers} ({buffer_ms:.0} ms buffers), mix {mix_ms:.2} ms"
+        ),
         None => "audio  not started".to_string(),
     });
+    if let Some(m) = c.mix {
+        line(format!(
+            "voices {} of {} mixed, {} of {} spatial tracks",
+            m.live_voices(),
+            m.voices,
+            m.live_tracks(),
+            m.tracks
+        ));
+        if m.skipped_oneshots + m.stolen_oneshots > 0 {
+            line(format!(
+                "       {} one-shots out of earshot, {} stolen",
+                m.skipped_oneshots, m.stolen_oneshots
+            ));
+        }
+    }
     line(String::new());
     line(format!("cpu ms   mean   max   ({:.2} a frame)", s.cpu_mean));
     for p in &s.phases {
@@ -455,8 +474,19 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
         c.draw_calls,
         count(c.triangles)
     ));
-    if let Some((late, buffers, _)) = c.audio {
-        parts.push(format!("audio {late}/{buffers} late"));
+    if let Some((late, buffers, _, mix_ms)) = c.audio {
+        parts.push(format!("audio {late}/{buffers} late mix {mix_ms:.2} ms"));
+    }
+    if let Some(m) = c.mix {
+        parts.push(format!(
+            "voices {}/{} tracks {}/{} one-shots {} unheard {} stolen",
+            m.live_voices(),
+            m.voices,
+            m.live_tracks(),
+            m.tracks,
+            m.skipped_oneshots,
+            m.stolen_oneshots
+        ));
     }
     parts.join(" | ")
 }
@@ -539,7 +569,8 @@ impl super::PlayerApp {
                     .audio
                     .engine
                     .buffer_stats()
-                    .map(|b| (b.late, b.buffers, b.buffer_ms)),
+                    .map(|b| (b.late, b.buffers, b.buffer_ms, b.mix_mean_ms)),
+                mix: self.audio.mix_counts(),
                 gpu,
             },
         ))
@@ -692,7 +723,15 @@ mod tests {
             draw_calls: 212,
             triangles: 1_234_567,
             game_time: 812.4,
-            audio: Some((3, 1200, 46.4)),
+            audio: Some((3, 1200, 46.4, 2.5)),
+            mix: Some(flint_audio::MixCounts {
+                voices: 18,
+                paused_voices: 11,
+                tracks: 9,
+                paused_tracks: 5,
+                skipped_oneshots: 2,
+                stolen_oneshots: 1,
+            }),
             gpu: GpuSource::Timed {
                 passes: vec![("Scene", 3.1), ("SSAO", 0.8)],
                 frame_ms: 3.9,
@@ -716,7 +755,8 @@ mod tests {
             "scripts 2.00/2.0",
             "Scene 3.10",
             "212 draws 1.2M tris",
-            "audio 3/1200 late",
+            "audio 3/1200 late mix 2.50 ms",
+            "voices 7/18 tracks 4/9 one-shots 2 unheard 1 stolen",
         ] {
             assert!(line.contains(part), "{part:?} missing from {line}");
         }

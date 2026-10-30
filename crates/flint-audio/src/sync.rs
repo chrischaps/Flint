@@ -21,6 +21,12 @@ struct SpatialEntry {
     handles: Vec<StaticSoundHandle>,
     last_volume: f64,
     last_pitch: f64,
+    looping: bool,
+    /// Where the track was last put, and the distance it falls silent at
+    position: Vec3,
+    max_distance: f32,
+    /// Paused because nobody can hear it (#138)
+    culled: bool,
 }
 
 /// Non-spatial entry: sound handles + cached parameters
@@ -28,7 +34,31 @@ struct NonSpatialEntry {
     handles: Vec<StaticSoundHandle>,
     last_volume: f64,
     last_pitch: f64,
+    looping: bool,
+    /// Paused because it's at volume 0 (#138)
+    culled: bool,
 }
+
+/// At or below this `audio_source.volume` a loop is paused: `amplitude_to_db`
+/// makes it -60 dB, which kira would still mix sample by sample.
+pub const SILENT_VOLUME: f64 = 0.001;
+
+/// A spatial loop pauses once the listener is this share past its
+/// `max_distance`, and resumes inside [`RESUME_REACH`] of it, so walking
+/// along the edge doesn't flutter it on and off. At `max` it's -60 dB, so it
+/// is back before it can be heard.
+pub const CULL_REACH: f32 = 1.1;
+pub const RESUME_REACH: f32 = 1.05;
+
+/// Culled loops fade out and back in over this, so neither end clicks. A
+/// paused loop picks up where it stopped, not from its start.
+pub const CULL_FADE: Duration = Duration::from_millis(100);
+
+const CULL_TWEEN: Tween = Tween {
+    duration: CULL_FADE,
+    easing: kira::Easing::Linear,
+    start_time: kira::StartTime::Immediate,
+};
 
 /// Tracks which entities have been synced to Kira and holds their spatial track handles
 #[derive(Default)]
@@ -189,6 +219,10 @@ impl AudioSync {
                                 handles,
                                 last_volume: volume,
                                 last_pitch: pitch,
+                                looping,
+                                position: transform.position,
+                                max_distance,
+                                culled: false,
                             },
                         );
                     }
@@ -213,6 +247,8 @@ impl AudioSync {
                         handles,
                         last_volume: volume,
                         last_pitch: pitch,
+                        looping,
+                        culled: false,
                     },
                 );
             }
@@ -235,9 +271,75 @@ impl AudioSync {
                 None => continue,
             };
 
+            entry.position = position;
             let pos = to_glam_vec3(position);
             entry.track.set_position(pos, tween);
         }
+    }
+
+    /// Pause looping sources nobody can hear, and resume them when someone
+    /// can (#138): a spatial loop past its `max_distance` from `listener`,
+    /// and any loop at volume 0 (Float starts its songs, weather beds and
+    /// wash loops that way and only ever fades them). kira skips a paused
+    /// track's sounds and spatialisation, and a paused sound's resampling.
+    /// Call after [`update_positions`](Self::update_positions) and
+    /// [`update_parameters`](Self::update_parameters).
+    pub fn cull_inaudible(&mut self, listener: Option<Vec3>) {
+        for entry in self.spatial_map.values_mut() {
+            if !entry.looping || entry.handles.is_empty() {
+                continue;
+            }
+            let reach = if entry.culled {
+                RESUME_REACH
+            } else {
+                CULL_REACH
+            };
+            let far = listener
+                .is_some_and(|l| (l - entry.position).length() > entry.max_distance * reach);
+            let cull = far || entry.last_volume <= SILENT_VOLUME;
+            if cull != entry.culled {
+                if cull {
+                    entry.track.pause(CULL_TWEEN);
+                } else {
+                    entry.track.resume(CULL_TWEEN);
+                }
+                entry.culled = cull;
+            }
+        }
+        for entry in self.non_spatial_map.values_mut() {
+            if !entry.looping || entry.handles.is_empty() {
+                continue;
+            }
+            let cull = entry.last_volume <= SILENT_VOLUME;
+            if cull != entry.culled {
+                for handle in &mut entry.handles {
+                    if cull {
+                        handle.pause(CULL_TWEEN);
+                    } else {
+                        handle.resume(CULL_TWEEN);
+                    }
+                }
+                entry.culled = cull;
+            }
+        }
+    }
+
+    /// Mark the `audio_source`s' paused tracks and voices in `counts`,
+    /// which [`AudioEngine::mix_counts`] filled with everything kira holds.
+    pub fn add_mix_counts(&self, counts: &mut crate::engine::MixCounts) {
+        for entry in self.spatial_map.values().filter(|e| e.culled) {
+            counts.paused_tracks += 1;
+            counts.paused_voices += entry.track.num_sounds();
+        }
+        for entry in self.non_spatial_map.values().filter(|e| e.culled) {
+            counts.paused_voices += entry.handles.len();
+        }
+    }
+
+    /// How many sources are paused because nobody can hear them (#138).
+    pub fn culled_count(&self) -> usize {
+        self.spatial_map.values().filter(|e| e.culled).count()
+            + self.non_spatial_map.values().filter(|e| e.culled).count()
     }
 
     /// Read audio_source pitch/volume from ECS and push changes to Kira sound handles
@@ -389,6 +491,97 @@ mod tests {
 
         // Entity without audio_source should not be synced
         assert!(!sync.is_synced(id));
+    }
+
+    /// A world with a far spatial loop, a near one at volume 0, a near
+    /// audible one and a silent non-spatial bed, synced on a real device.
+    /// `None` where there's no audio device (CI).
+    fn culling_scene() -> Option<(FlintWorld, AudioSync, AudioEngine, [EntityId; 4])> {
+        let mut engine = AudioEngine::new();
+        if !engine.is_available() {
+            eprintln!("no audio device: culling test skipped");
+            return None;
+        }
+        let tone: Vec<f32> = (0..4410).map(|i| (i as f32 * 0.05).sin() * 0.1).collect();
+        engine
+            .load_sound_from_samples("hum", 44_100, &[&tone])
+            .ok()?;
+        engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).ok()?;
+
+        let mut world = FlintWorld::new();
+        let mut spawn = |name: &str, at: [f32; 3], volume: f64, spatial: bool| {
+            let id = world.spawn(name).unwrap();
+            let position = at.iter().map(|&v| toml::Value::Float(v as f64)).collect();
+            world
+                .set_field(id, "transform", "position", toml::Value::Array(position))
+                .unwrap();
+            for (field, value) in [
+                ("file", toml::Value::String("hum".into())),
+                ("loop", toml::Value::Boolean(true)),
+                ("spatial", toml::Value::Boolean(spatial)),
+                ("volume", toml::Value::Float(volume)),
+                ("max_distance", toml::Value::Float(12.0)),
+            ] {
+                world.set_field(id, "audio_source", field, value).unwrap();
+            }
+            id
+        };
+        let far = spawn("far", [40.0, 0.0, 0.0], 0.8, true);
+        let quiet = spawn("quiet", [2.0, 0.0, 0.0], 0.0, true);
+        let near = spawn("near", [3.0, 0.0, 0.0], 0.8, true);
+        let bed = spawn("bed", [0.0, 0.0, 0.0], 0.0, false);
+        let mut sync = AudioSync::new();
+        sync.sync_new_sources(&world, &mut engine);
+        sync.update_positions(&world);
+        Some((world, sync, engine, [far, quiet, near, bed]))
+    }
+
+    #[test]
+    fn loops_nobody_can_hear_pause_and_come_back() {
+        let Some((mut world, mut sync, engine, [far, quiet, near, _bed])) = culling_scene() else {
+            return;
+        };
+        let culled = |s: &AudioSync, id| {
+            s.spatial_map
+                .get(&id)
+                .map(|e| e.culled)
+                .or_else(|| s.non_spatial_map.get(&id).map(|e| e.culled))
+                .unwrap()
+        };
+        sync.cull_inaudible(engine.listener_position());
+        // Out of earshot, at volume 0 and the silent bed pause; the one you
+        // can hear plays on.
+        assert!(culled(&sync, far) && culled(&sync, quiet) && !culled(&sync, near));
+        assert_eq!(sync.culled_count(), 3);
+        let mut counts = engine.mix_counts().unwrap();
+        sync.add_mix_counts(&mut counts);
+        assert_eq!((counts.paused_tracks, counts.paused_voices), (2, 3));
+
+        // Fading the quiet one up brings it back...
+        world
+            .set_field(quiet, "audio_source", "volume", toml::Value::Float(0.4))
+            .unwrap();
+        sync.update_parameters(&world);
+        sync.cull_inaudible(engine.listener_position());
+        assert!(!culled(&sync, quiet));
+
+        // ...and the far one resumes only once well inside reach, not at
+        // the edge it was culled past.
+        let listener = |x: f32| Some(Vec3::new(x, 0.0, 0.0));
+        sync.cull_inaudible(listener(40.0 - 12.0 * 1.08));
+        assert!(
+            culled(&sync, far),
+            "between resume and cull reach: stays paused"
+        );
+        sync.cull_inaudible(listener(40.0 - 12.0));
+        assert!(!culled(&sync, far));
+        sync.cull_inaudible(listener(40.0 - 12.0 * 1.08));
+        assert!(
+            !culled(&sync, far),
+            "and stays playing until past cull reach"
+        );
+        sync.cull_inaudible(listener(40.0 - 12.0 * 1.2));
+        assert!(culled(&sync, far));
     }
 
     #[test]

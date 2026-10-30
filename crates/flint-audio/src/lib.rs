@@ -15,7 +15,7 @@ pub mod trigger;
 pub mod web;
 
 use engine::AudioEngine;
-pub use engine::Bus;
+pub use engine::{Bus, MixCounts};
 use flint_core::{Result, Vec3};
 use flint_ecs::FlintWorld;
 use flint_runtime::{GameEvent, RuntimeSystem};
@@ -80,6 +80,15 @@ impl AudioSystem {
     /// Set the low-pass filter cutoff frequency on the master bus (Hz)
     pub fn set_filter_cutoff(&mut self, hz: f32) {
         self.engine.set_filter_cutoff(hz);
+    }
+
+    /// The voices and spatial tracks kira is mixing, and how many of each
+    /// are paused because nobody can hear them (#138). `None` without a
+    /// device.
+    pub fn mix_counts(&self) -> Option<MixCounts> {
+        let mut counts = self.engine.mix_counts()?;
+        self.sync.add_mix_counts(&mut counts);
+        Some(counts)
     }
 
     /// Set a mixer bus volume (linear amplitude; 0.0 mutes the bus)
@@ -161,6 +170,9 @@ impl RuntimeSystem for AudioSystem {
 
         // Propagate per-frame pitch/volume changes from ECS to Kira handles
         self.sync.update_parameters(world);
+
+        // Pause loops nobody can hear: out of earshot, or at volume 0
+        self.sync.cull_inaudible(self.engine.listener_position());
 
         // Reload trigger rules for any new entities
         self.triggers.load_rules(world);
