@@ -72,34 +72,19 @@ impl GpuMesh {
 
 /// A GPU-resident skinned mesh with bone buffer for skeletal animation
 pub struct GpuSkinnedMesh {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    /// Shared by every draw of the mesh: skinning happens in the vertex
+    /// shader, so no draw needs geometry of its own (#121).
+    pub vertex_buffer: Arc<wgpu::Buffer>,
+    pub index_buffer: Arc<wgpu::Buffer>,
     pub index_count: u32,
     pub material: ImportedMaterial,
     pub bone_buffer: wgpu::Buffer,
     pub bone_bind_group: wgpu::BindGroup,
     pub skin_index: usize,
-    vertex_data: Vec<u8>,
     index_data: Vec<u8>,
 }
 
 impl GpuSkinnedMesh {
-    pub fn create_vertex_buffer_copy(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Skinned Vertex Buffer Copy"),
-            contents: &self.vertex_data,
-            usage: wgpu::BufferUsages::VERTEX,
-        })
-    }
-
-    pub fn create_index_buffer_copy(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Skinned Index Buffer Copy"),
-            contents: &self.index_data,
-            usage: wgpu::BufferUsages::INDEX,
-        })
-    }
-
     /// Reinterpret the raw index data as a slice of u32 triangle indices
     pub fn triangle_indices(&self) -> Vec<u32> {
         bytemuck::cast_slice::<u8, u32>(&self.index_data).to_vec()
@@ -457,12 +442,11 @@ impl MeshCache {
                     })
                     .collect();
 
-                let vertex_data = bytemuck::cast_slice(&vertices).to_vec();
                 let index_data = bytemuck::cast_slice(&mesh.indices).to_vec();
 
                 let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some(&format!("{} Skinned Vertex Buffer", name)),
-                    contents: &vertex_data,
+                    contents: bytemuck::cast_slice(&vertices),
                     usage: wgpu::BufferUsages::VERTEX,
                 });
 
@@ -489,14 +473,13 @@ impl MeshCache {
                 });
 
                 GpuSkinnedMesh {
-                    vertex_buffer,
-                    index_buffer,
+                    vertex_buffer: Arc::new(vertex_buffer),
+                    index_buffer: Arc::new(index_buffer),
                     index_count: mesh.indices.len() as u32,
                     material,
                     bone_buffer,
                     bone_bind_group,
                     skin_index,
-                    vertex_data,
                     index_data,
                 }
             })

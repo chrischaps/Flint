@@ -196,17 +196,34 @@ pub(super) fn hash_parts(parts: &[&[u8]]) -> u64 {
     h
 }
 
-/// A draw call for a skinned mesh (has bone bind group)
+/// One skinned draw's bone bind group, kept across frames like
+/// [`CachedDrawBinds`]. It points at the entity's own bone buffer once
+/// `update_bone_matrices` has made one, and at the asset's shared buffer
+/// before that; `from_entity` records which, so the switch rebuilds it.
+pub(super) struct CachedBoneBind {
+    pub from_entity: bool,
+    pub bind_group: Arc<wgpu::BindGroup>,
+    pub touched: u64,
+}
+
+/// The `draw_bind_cache` key bit that keeps a skinned draw's binds apart
+/// from a static draw's of the same entity and sub-mesh index.
+pub(super) const SKINNED_DRAW_KEY: u32 = 1 << 31;
+
+/// A draw call for a skinned mesh (has bone bind group). Everything in it
+/// is shared or cached: until #121 each frame made each skinned sub-mesh
+/// four buffers (two of them copies of the mesh) and three bind groups,
+/// which Firefox's WebGPU paid for in garbage collection.
 #[allow(dead_code)]
 struct SkinnedDrawCall {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    vertex_buffer: Arc<wgpu::Buffer>,
+    index_buffer: Arc<wgpu::Buffer>,
     index_count: u32,
-    transform_buffer: wgpu::Buffer,
-    transform_bind_group: wgpu::BindGroup,
-    material_buffer: wgpu::Buffer,
-    material_bind_group: wgpu::BindGroup,
-    bone_bind_group: wgpu::BindGroup,
+    transform_buffer: Arc<wgpu::Buffer>,
+    transform_bind_group: Arc<wgpu::BindGroup>,
+    material_buffer: Arc<wgpu::Buffer>,
+    material_bind_group: Arc<wgpu::BindGroup>,
+    bone_bind_group: Arc<wgpu::BindGroup>,
     /// Unique-edge index buffer for wireframe debug modes (shares the
     /// skinned vertex buffer, so the lines follow the animated pose).
     wire_index_buffer: Option<wgpu::Buffer>,
@@ -465,6 +482,8 @@ pub struct SceneRenderer {
     /// shared by every entity that instances the asset, so entities playing
     /// different clips need their own storage or the last upload wins.
     entity_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
+    /// Bone bind groups of skinned draws, by entity and sub-mesh.
+    skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
 }
 
 impl SceneRenderer {
@@ -574,6 +593,7 @@ impl SceneRenderer {
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
+            skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
@@ -1916,6 +1936,7 @@ impl SceneRenderer {
     pub fn clear_model_data(&mut self) {
         self.mesh_cache.clear();
         self.draw_bind_cache.clear();
+        self.skinned_bone_binds.clear();
         self.box_mesh_cache.clear();
         if let Some(tc) = &mut self.texture_cache {
             tc.clear_user_textures();
@@ -2045,6 +2066,7 @@ impl SceneRenderer {
             ray_meshes: HashMap::new(),
             ray_scene: Arc::default(),
             entity_bone_buffers: HashMap::new(),
+            skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
@@ -2316,6 +2338,7 @@ impl SceneRenderer {
     /// Drop per-entity bone buffers (call when a scene is unloaded).
     pub fn clear_entity_bone_buffers(&mut self) {
         self.entity_bone_buffers.clear();
+        self.skinned_bone_binds.clear();
     }
 
     /// Load a texture from an image file into the texture cache
@@ -3068,6 +3091,7 @@ impl SceneRenderer {
         // entities that changed shape/model).
         let frame = self.extract_frame;
         self.draw_bind_cache.retain_frame(frame);
+        self.skinned_bone_binds.retain(|_, b| b.touched == frame);
         self.ray_scene = Arc::new(ray_scene);
 
         // Put texture cache back
@@ -3254,6 +3278,23 @@ impl SceneRenderer {
             sort_depth: 0.0,
             world_aabb: None,
         }
+    }
+
+    /// A skinned draw's bind group over `bones`, the entity's own bone
+    /// buffer or the asset's shared one.
+    pub(super) fn create_bone_bind(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        bones: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: bones.as_entire_binding(),
+            }],
+            label: Some("Skinned Draw Bone Bind Group"),
+        })
     }
 
     fn create_transform_bind(

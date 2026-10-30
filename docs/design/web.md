@@ -2,8 +2,8 @@
 
 Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
 (#100), sound (#101), game bundles (#98), first light (#102),
-[play.chaps.dev](#playchapsdev-103) (#103) and [Flint Kart](#flint-kart-104)
-(#104) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
+[play.chaps.dev](#playchapsdev-103) (#103), [Flint Kart](#flint-kart-104)
+(#104) and Firefox's frame rate ([#121](#firefoxs-cadence-121)) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
 with a progress bar, serves every read from it through the vfs, opens the
 WebGPU device without blocking and draws to a page canvas that follows the
 window's size. A Begin gate starts the sound and locks the pointer with one
@@ -53,6 +53,7 @@ the query string instead of clap:
 | `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
 | `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |
 | `perf=1\|cpu` | `--perf` | the perf readout in a corner (#120): frame times, each phase's CPU time, the slowest scripts and each pass's GPU time ([The perf readout](#the-perf-readout-120)) |
+| `loop=poll` | | winit's flat-out `ControlFlow::Poll`, as before #121, to compare against the default of one frame per `requestAnimationFrame` ([Firefox's cadence](#firefoxs-cadence-121)) |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
 and `schemas/archetypes`), since a browser can't list a directory. A
@@ -485,6 +486,8 @@ behind wall time: day 3 began at 507 s, not 395 s. Sound breaks up: 9,842
 of 18,442 buffers were late. The flat 83 ms cadence looks like
 presentation, not work. Firefox doesn't show a WebGPU canvas the way
 Chrome does. Profiling it is follow-up work, not part of this change.
+(It wasn't presentation: [Firefox's cadence (#121)](#firefoxs-cadence-121)
+found the loop and the skinned draws, and Firefox now holds 16.7 ms.)
 
 **Not run:** Safari (no way to run it from Windows), and a person
 listening on speakers and looking with a real mouse and pad.
@@ -563,7 +566,8 @@ falling at night were the same thing.
 panel): of ~9.5 ms a frame, **sync** is ~5.9 ms (renderer sync with the
 world, procgen, post overrides), render ~2.0 and scripts ~1.4. On the
 desktop sync is ~1.8 ms of ~5.3. It is the first place to look when a
-phone or a slow laptop falls behind (#121, #122).
+phone or a slow laptop falls behind (#121, #122). #121 found it: the
+skinned draws were rebuilt every frame, and sync is now ~0.3 ms.
 
 **On the desktop** (`--perf`, Vulkan): the scripts phase spiked to 30 to
 80 ms every few seconds, once 1.5 s, and the readout named `[hot reload]`,
@@ -629,6 +633,73 @@ against desktop). The HUD's text ("SET + DRIFT", "PRESS ANY KEY") is the
 same pixels give or take the scene showing through behind it. Float's
 halftone dots are a world-space grid, so they stay where they are; their
 antialiased edges are a scene pixel wide, so they're a little softer.
+
+## Firefox's cadence (#121)
+
+Firefox 159 on Windows drew Float at p50 83.3 ms, five refreshes, with a
+stall of 1 to 3 s every few seconds and half the audio buffers late.
+There were two causes, one on top of the other, and neither was Firefox's
+presentation: the sky-only shim page held 16.7 ms in the same browser
+(99% of 5,373 frames).
+
+All of these runs are headed Firefox 159 over WebDriver BiDi, Float's
+title from `?bundle=float.flintpack&perf=cpu`, DPR 1.5 on a 2100x1223
+canvas, timed by a `requestAnimationFrame` loop of the driver's own. They
+were made before the [render scale](#render-scale-122) landed, so the
+scene drew at the full DPR; a quarter of the pixels changed nothing here.
+
+| build | frames | p50 ms | p90 ms | mean ms | over 250 ms | audio late |
+|---|---|---|---|---|---|---|
+| before: `ControlFlow::Poll` (90 s) | 893 | 83.3 | 83.3 | 101.8 | 13 | 933 of 2,086 |
+| the loop on rAF (5 min) | 10,858 | 16.7 | 33.3 | 23.7 | 5 | 9 of 6,481 |
+| and skinned draws cached (5 min) | 17,947 | 16.7 | 16.7 | 16.7 | 0 | 0 of 6,480 |
+
+The last run's worst frame was 66.7 ms; 17,912 of its frames were one
+refresh. The player's CPU went from 10.2 ms a frame to 3.2 to 4.7, and
+`sync` from 6.1 to 0.3.
+
+**The loop.** `flint_web.rs` ran winit with `ControlFlow::Poll`, which on
+the web posts the next turn of the loop with `scheduler.postTask` as soon
+as the last one ends, so the main thread never went idle. Chrome still
+ran its frames at 16.7 ms; Firefox's refresh driver got one turn in five.
+Now the loop waits (`ControlFlow::Wait`), `about_to_wait` asks for a
+redraw, and winit draws in the browser's `requestAnimationFrame`.
+`?loop=poll` brings the old loop back to compare. Chrome is unchanged
+(p50 16.7, p99 16.8 either way), and its worst `sync` frame went from
+15 to 18 ms to 7 to 8.
+
+**The garbage.** That left a third of the frames at two refreshes and a
+hitch of about 250 ms every 12 s. Neither changed at a quarter of the
+pixels (`width=640&height=360`), so it wasn't fill. The Firefox Profiler
+(`MOZ_PROFILER_STARTUP`, read from its JSON) put each hitch at the end of
+a major GC, `ALLOC_TRIGGER` after 44.7 MB of JS allocation, with the main
+thread nearly idle through it; the cycle collector was clearing 130,000
+refcounted objects every 6 s. Wrapping the page's `GPUDevice` and
+friends counted, per frame:
+
+| per frame | before | after |
+|---|---|---|
+| `createBuffer` | 386 | 0.5 |
+| `createBindGroup` | 327 | 36 |
+| `writeBuffer` | 435 (314 KB) | 243 (292 KB) |
+| `submit` | 23 | 22 |
+
+A build without `wasm-opt` keeps the wasm's names, so the JS stack of
+each call named its caller: `update_from_world`'s skinned path. Every
+frame, each skinned sub-mesh got a transform buffer and bind group, a
+material buffer and bind group, a bone bind group, and copies of its
+vertex and index buffers, so Float's hands, body and birds made hundreds
+of WebGPU objects a frame. On the desktop that costs CPU; in Firefox each
+is also a DOM object for the GC and the cycle collector. Skinned draws now
+go through `draw_bind_cache` like static ones (`SKINNED_DRAW_KEY` keeps
+their keys apart), the bone bind group is cached per draw in
+`skinned_bone_binds` and rebuilt when the entity's own bone buffer
+arrives, and the mesh's buffers are shared through `Arc`.
+
+**Not done.** Bloom still submits twelve times a frame, one per step,
+because its steps share one uniform buffer (`PostProcessPipeline::run_bloom`);
+it makes 24 of the 36 bind groups left. Firefox no longer shows the cost,
+but it's the next to go. Safari wasn't run.
 
 ## Async startup (#99)
 

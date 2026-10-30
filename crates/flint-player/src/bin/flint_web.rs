@@ -35,6 +35,9 @@
 //!                   the last 10 s, each phase's CPU time, each pass's GPU
 //!                   time where the adapter has timestamp-query (`cpu`
 //!                   leaves GPU timing off), and a line to copy
+//!   loop=poll       run winit's loop flat out (`ControlFlow::Poll`), as
+//!                   before #121, to compare against; the default draws once
+//!                   per `requestAnimationFrame`
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -82,6 +85,8 @@ mod web {
         hold_at: Option<f64>,
         /// `Some(gpu)`: show the perf readout, timing the GPU too when true.
         perf: Option<bool>,
+        /// `loop=poll`: the old flat-out loop, for comparison (#121).
+        poll: bool,
     }
 
     impl WebArgs {
@@ -113,6 +118,7 @@ mod web {
                     "0" => None,
                     _ => Some(true),
                 }),
+                poll: get("loop").as_deref() == Some("poll"),
             }
         }
     }
@@ -179,7 +185,18 @@ mod web {
         status(&title);
 
         let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
-        event_loop.set_control_flow(ControlFlow::Poll);
+        // Draw once per requestAnimationFrame: `about_to_wait` asks for a
+        // redraw, winit waits for the browser's next frame, and the main
+        // thread sleeps in between. Poll queued a new task as soon as the
+        // last one ended, so the thread never went idle; Chrome still ran
+        // its frames, but Firefox starved its own refresh driver and showed
+        // one frame in five, with stalls of seconds and broken sound (#121,
+        // docs/design/web.md).
+        event_loop.set_control_flow(if args.poll {
+            ControlFlow::Poll
+        } else {
+            ControlFlow::Wait
+        });
         let mut app = PlayerApp::new(
             loaded.world,
             loaded.scene_path,
