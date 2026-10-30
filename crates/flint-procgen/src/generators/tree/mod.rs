@@ -1238,6 +1238,13 @@ target_triangles = 200
         let lods = output.as_mesh_lods().unwrap();
         assert_eq!(lods.len(), targets.len());
 
+        // Same spec, same seed, same LODs. The simplifier once summed its
+        // boundary quadrics in hash-map order, so every run differed.
+        let again = TreeGenerator
+            .generate(&spec, &mut SeededRng::new(spec.seed.value.unwrap_or(42)))
+            .unwrap();
+        assert!(again == output, "the oak's LODs changed between two runs");
+
         let report = crate::validate::validate_output(
             &output,
             &spec,
