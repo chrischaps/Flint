@@ -78,9 +78,11 @@ impl FileSource for DiskSource {
     }
 
     fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
-        std::fs::read_dir(path)?
-            .map(|entry| entry.map(|e| e.path()))
-            .collect()
+        // An entry that can't be read is skipped, as the loops this replaced
+        // (`entries.flatten()`) did.
+        Ok(std::fs::read_dir(path)?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .collect())
     }
 
     fn kind(&self, path: &Path) -> Option<EntryKind> {
