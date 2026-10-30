@@ -4,6 +4,7 @@
 //! is reached. Uses f64 internally for numerical stability with large meshes.
 
 use crate::types::{BoundingBox, MeshData, Vertex};
+use flint_core::Vec3;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// Simplify a mesh to approximately `target_triangles` using quadric error metrics.
@@ -619,8 +620,15 @@ impl SimplifyState {
             let i1 = new_index[resolved[tri[1] as usize] as usize];
             let i2 = new_index[resolved[tri[2] as usize] as usize];
 
-            // Skip degenerate
+            // Skip degenerate: repeated corners, or distinct corners that
+            // collapses have left on one line (a UV seam's twin vertices
+            // share a position, so a triangle across the seam can flatten)
             if i0 == i1 || i1 == i2 || i0 == i2 {
+                continue;
+            }
+            let corner = |i: u32| Vec3::from_array(vertices[i as usize].position);
+            let (p0, p1, p2) = (corner(i0), corner(i1), corner(i2));
+            if 0.5 * (p1 - p0).cross(&(p2 - p0)).length() <= 1e-10 {
                 continue;
             }
             indices.push(i0);
