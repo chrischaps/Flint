@@ -1,6 +1,6 @@
 //! Game clock with fixed-timestep accumulator
 
-use std::time::Instant;
+use web_time::Instant;
 
 /// The longest step a frame takes, in seconds.
 const MAX_DELTA: f64 = 0.25;

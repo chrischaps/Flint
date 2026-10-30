@@ -33,6 +33,7 @@ use flint_core::vfs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 use winit::dpi::PhysicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
@@ -147,6 +148,10 @@ impl PlayerApp {
             android_axis_reader: None,
             extensions: Vec::new(),
             egui_input: Default::default(),
+            #[cfg(target_arch = "wasm32")]
+            pending_render: Default::default(),
+            #[cfg(target_arch = "wasm32")]
+            event_proxy: None,
         }
     }
 
@@ -176,6 +181,34 @@ impl PlayerApp {
     /// `ExtensionCtx::camera`.
     pub fn projector(&self) -> crate::Projector {
         self.script.projector()
+    }
+
+    /// Take the scene file's player settings: audio preload, skybox,
+    /// ambient and shading levers, camera and post-processing. Both entries
+    /// (`main.rs` and the web's `flint_web.rs`) call it after `new`.
+    pub fn apply_scene_settings(&mut self, scene_file: &flint_scene::SceneFile) {
+        self.scene_preload_audio = scene_file.scene.preload_audio;
+
+        // Skybox path + ambient from scene environment settings
+        if let Some(env) = &scene_file.environment {
+            self.skybox_path = env.skybox.clone();
+            if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
+                self.scene_ambient = Some((
+                    env.ambient_sky
+                        .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
+                    env.ambient_ground
+                        .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
+                ));
+            }
+            self.scene_diffuse_wrap = env.diffuse_wrap;
+            self.scene_oren_nayar = env.oren_nayar;
+            self.scene_sheen = env
+                .sheen_strength
+                .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s));
+        }
+
+        self.scene_camera = scene_file.camera.clone();
+        self.scene_post_process = scene_file.post_process.clone();
     }
 
     /// Set the schema paths used for scene loading (preserved across transitions).
@@ -233,12 +266,36 @@ impl PlayerApp {
         }
     }
 
+    /// The first `resumed`: the window, then the GPU device. A desktop
+    /// blocks on the device and finishes here. A browser can't block, so on
+    /// the web the device request runs as a promise and `finish_initialize`
+    /// follows when it lands (see `web_startup.rs`).
     pub(super) fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        // Window, then renderer + model/procgen loading (context and
-        // renderer stay locals until the environment pass is done — they
-        // are stored on self only once fully built, as before).
         let window = self.create_window(event_loop)?;
-        let (render_context, mut scene_renderer) = self.init_render_and_models(&window)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let render_context = pollster::block_on(RenderContext::new(window.clone()))
+                .context("Failed to initialize render context")?;
+            self.finish_initialize(window, render_context)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.request_render_context(window);
+            Ok(())
+        }
+    }
+
+    /// Everything after the device: renderer, models, input, egui, the
+    /// scene's environment and the game systems.
+    pub(super) fn finish_initialize(
+        &mut self,
+        window: Arc<Window>,
+        render_context: RenderContext,
+    ) -> Result<()> {
+        // Renderer + model/procgen loading (context and renderer stay locals
+        // until the environment pass is done — they are stored on self only
+        // once fully built, as before).
+        let (render_context, mut scene_renderer) = self.init_render_and_models(render_context)?;
 
         // Input bindings, gamepad backend, egui overlay
         self.init_input_and_egui(&window, &render_context);
@@ -281,7 +338,10 @@ impl PlayerApp {
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Result<Arc<Window>> {
         let window_attrs = Window::default_attributes().with_title("Flint Player");
-        #[cfg(not(target_os = "android"))]
+        // In a browser the page's canvas is the window, sized by its CSS.
+        #[cfg(target_arch = "wasm32")]
+        let window_attrs = super::web_startup::canvas_attributes(window_attrs);
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         let window_attrs = window_attrs.with_inner_size(PhysicalSize::new(
             self.window_size.0.max(1),
             self.window_size.1.max(1),
@@ -304,12 +364,8 @@ impl PlayerApp {
 
     fn init_render_and_models(
         &mut self,
-        window: &Arc<Window>,
+        render_context: RenderContext,
     ) -> Result<(RenderContext, SceneRenderer)> {
-        // Initialize rendering
-        let render_context = pollster::block_on(RenderContext::new(window.clone()))
-            .context("Failed to initialize render context")?;
-
         self.camera.aspect = render_context.aspect_ratio();
         self.camera.fov = 70.0; // Slightly wider FOV for first-person
 

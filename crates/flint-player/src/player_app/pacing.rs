@@ -6,7 +6,7 @@
 //! game steps by) and the wall time from one `present()` returning to the
 //! next (what the swapchain was handed).
 
-use std::time::Instant;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Pacing {

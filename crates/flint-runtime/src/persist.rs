@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// A key-value store that persists across scene transitions.
 ///

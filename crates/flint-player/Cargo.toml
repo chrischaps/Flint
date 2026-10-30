@@ -59,6 +59,7 @@ toml = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
+web-time = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 image = { workspace = true }
@@ -74,10 +75,16 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # egui-winit's default `clipboard` feature pulls arboard, which has no web
 # backend. Pinned here rather than inherited so its defaults can go.
 egui-winit = { version = "0.30.0", default-features = false }
-# The flint-web spike entry (src/bin/flint_web.rs, index.html).
+# Async startup (player_app/web_startup.rs) and the flint-web entry
+# (src/bin/flint_web.rs, index.html).
+wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["console", "Performance", "Window"] }
+web-sys = { version = "0.3", features = [
+    "console", "Document", "Element", "HtmlCanvasElement", "Location",
+    "Performance", "Request", "Response", "UrlSearchParams", "Window",
+] }
 console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit = { workspace = true }

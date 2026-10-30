@@ -1,10 +1,21 @@
-//! Flint on the web, M0 spike (#95, docs/design/web.md).
+//! Flint in a browser (#94; async startup #99, docs/design/web.md).
 //!
-//! The smallest proof that the player's stack reaches a browser: winit makes
-//! a canvas, wgpu opens a device on the WebGPU backend, and every frame
-//! clears it to the sky. The sky drifts slowly through dawn, noon, dusk and
-//! night so a still page is visibly alive. No scene, scripts or assets yet;
-//! those wait on the vfs and async startup tickets.
+//! The web twin of `main.rs`. Arguments come from the page's query string
+//! instead of clap, the scene arrives by `fetch`, and the player starts with
+//! winit's `spawn_app` instead of the blocking `run_app`. `PlayerApp` then
+//! asks for its GPU device without blocking (`player_app/web_startup.rs`)
+//! and finishes starting up when it lands.
+//!
+//! Query string (all optional):
+//!   scene=<url>     scene TOML, relative to the page (default: the demo scene)
+//!   msaa=1|4        scene-pass MSAA (ADR 0058)
+//!   width=, height= fix the canvas to this many CSS pixels instead of the page
+//!
+//! The engine schemas are compiled in (`build.rs`). Files the scene points
+//! at (models, textures, scripts, audio) still go through `std::fs`, which
+//! has no files on the web; they load once the vfs (#97) and game bundles
+//! (#98) land. Until then the web player draws scenes made of the engine's
+//! own geometry.
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -22,228 +33,142 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use std::sync::Arc;
-    use winit::application::ApplicationHandler;
-    use winit::event::WindowEvent;
-    use winit::event_loop::{ActiveEventLoop, EventLoop};
-    use winit::platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys};
-    use winit::window::{Window, WindowId};
+    use flint_player::{PlayerApp, WEB_CANVAS_ID};
+    use flint_schema::SchemaRegistry;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    use winit::event_loop::{ControlFlow, EventLoop};
+    use winit::platform::web::EventLoopExtWebSys;
 
-    /// One day of sky, in sRGB, at evenly spaced stops; the last wraps to the
-    /// first. Night, dawn, morning, noon, afternoon, dusk.
-    const SKY: [[f64; 3]; 6] = [
-        [0.05, 0.07, 0.16],
-        [0.93, 0.62, 0.52],
-        [0.62, 0.80, 0.95],
-        [0.45, 0.70, 0.96],
-        [0.70, 0.78, 0.90],
-        [0.96, 0.50, 0.36],
-    ];
-    /// Seconds for the sky to go round once.
-    const DAY_SECONDS: f64 = 60.0;
-    /// Start a little after dawn, so the first frame is already sky blue.
-    const START_PHASE: f64 = 2.0 / 6.0;
-
-    struct Gpu {
-        surface: wgpu::Surface<'static>,
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        config: wgpu::SurfaceConfiguration,
+    mod engine_schemas {
+        include!(concat!(env!("OUT_DIR"), "/engine_schemas.rs"));
     }
 
-    #[derive(Default)]
-    struct App {
-        window: Option<Arc<Window>>,
-        gpu: Rc<RefCell<Option<Gpu>>>,
+    /// The scene a bare page plays, copied next to it by trunk (index.html).
+    const DEFAULT_SCENE: &str = "scenes/web_first_light.scene.toml";
+
+    /// What `main.rs` takes from clap, read from the query string.
+    struct WebArgs {
+        scene: String,
+        msaa: u32,
+        size: Option<(u32, u32)>,
+    }
+
+    impl WebArgs {
+        fn from_query() -> Self {
+            let params = web_sys::window()
+                .and_then(|w| w.location().search().ok())
+                .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok());
+            let get = |key: &str| params.as_ref().and_then(|p| p.get(key));
+            let num = |key: &str| get(key).and_then(|v| v.parse::<u32>().ok());
+            Self {
+                scene: get("scene").unwrap_or_else(|| DEFAULT_SCENE.to_string()),
+                msaa: num("msaa").filter(|&m| m == 1 || m == 4).unwrap_or(1),
+                size: num("width").zip(num("height")),
+            }
+        }
     }
 
     pub fn run() {
         console_error_panic_hook::set_once();
-        let event_loop = EventLoop::new().expect("event loop");
-        event_loop.spawn_app(App::default());
-    }
-
-    fn log(msg: &str) {
-        web_sys::console::log_1(&msg.into());
-    }
-
-    fn now_seconds() -> f64 {
-        web_sys::window()
-            .and_then(|w| w.performance())
-            .map_or(0.0, |p| p.now() / 1000.0)
-    }
-
-    fn srgb_to_linear(c: f64) -> f64 {
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    }
-
-    /// The sky at `t` seconds, eased between stops, as a linear clear colour
-    /// (the surface is sRGB, so the GPU encodes it back on write).
-    fn sky_at(t: f64, srgb_surface: bool) -> wgpu::Color {
-        let day = (t / DAY_SECONDS + START_PHASE).fract() * SKY.len() as f64;
-        let i = day.floor() as usize;
-        let f = day.fract();
-        let f = f * f * (3.0 - 2.0 * f);
-        let (a, b) = (SKY[i], SKY[(i + 1) % SKY.len()]);
-        let mix = |k: usize| {
-            let c = a[k] + (b[k] - a[k]) * f;
-            if srgb_surface {
-                srgb_to_linear(c)
-            } else {
-                c
+        tracing_wasm::set_as_global_default_with_config(
+            tracing_wasm::WASMLayerConfigBuilder::new()
+                .set_max_level(tracing::Level::INFO)
+                .build(),
+        );
+        wasm_bindgen_futures::spawn_local(async {
+            if let Err(e) = start().await {
+                status(&format!("couldn't start: {e}"));
+                web_sys::console::error_1(&format!("[flint-web] {e}").into());
             }
-        };
-        wgpu::Color { r: mix(0), g: mix(1), b: mix(2), a: 1.0 }
-    }
-
-    async fn init_gpu(window: Arc<Window>) -> Result<Gpu, String> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..Default::default()
         });
-        let surface = instance
-            .create_surface(window.clone())
-            .map_err(|e| format!("create_surface: {e}"))?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                // Chrome on Windows ignores the preference and says so in
-                // the console; leave it unset.
-                power_preference: wgpu::PowerPreference::None,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or("no WebGPU adapter (is WebGPU enabled in this browser?)")?;
-        let info = adapter.get_info();
-        log(&format!("[flint-web] adapter: {:?} via {:?}", info.name, info.backend));
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("flint-web"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
-            .await
-            .map_err(|e| format!("request_device: {e}"))?;
-
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(caps.formats[0]);
-        let size = window.inner_size();
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-        log(&format!(
-            "[flint-web] surface {}x{} {:?}",
-            config.width, config.height, config.format
-        ));
-        Ok(Gpu { surface, device, queue, config })
     }
 
-    impl Gpu {
-        fn resize(&mut self, width: u32, height: u32) {
-            self.config.width = width.max(1);
-            self.config.height = height.max(1);
-            self.surface.configure(&self.device, &self.config);
+    async fn start() -> Result<(), String> {
+        let args = WebArgs::from_query();
+        if let Some((w, h)) = args.size {
+            fix_canvas_size(w, h);
         }
 
-        fn draw(&mut self) {
-            let frame = match self.surface.get_current_texture() {
-                Ok(frame) => frame,
-                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                    self.surface.configure(&self.device, &self.config);
-                    return;
-                }
-                Err(e) => {
-                    log(&format!("[flint-web] frame skipped: {e}"));
-                    return;
-                }
-            };
-            let view = frame.texture.create_view(&Default::default());
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sky clear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(sky_at(
-                            now_seconds(),
-                            self.config.format.is_srgb(),
-                        )),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            self.queue.submit([encoder.finish()]);
-            frame.present();
+        let registry = engine_registry()?;
+        status(&format!("loading {}", args.scene));
+        let text = fetch_text(&args.scene).await?;
+        let (world, scene_file) = flint_scene::load_scene_string(&text, &registry)
+            .map_err(|e| format!("{}: {e}", args.scene))?;
+        tracing::info!(
+            "[flint-web] scene {:?}: {} entities",
+            scene_file.scene.name,
+            world.entity_count()
+        );
+        status(&scene_file.scene.name);
+
+        let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+        event_loop.set_control_flow(ControlFlow::Poll);
+        let mut app = PlayerApp::new(
+            world,
+            args.scene,
+            false,
+            None,
+            scene_file.scene.input_config.clone(),
+        );
+        app.msaa_sample_count = args.msaa;
+        app.apply_scene_settings(&scene_file);
+        app.set_event_proxy(event_loop.create_proxy());
+        // Returns at once: the browser drives the loop from here on.
+        event_loop.spawn_app(app);
+        Ok(())
+    }
+
+    fn engine_registry() -> Result<SchemaRegistry, String> {
+        let mut registry = SchemaRegistry::new();
+        for toml in engine_schemas::COMPONENTS {
+            registry
+                .load_component_string(toml)
+                .map_err(|e| format!("engine component schema: {e}"))?;
+        }
+        for toml in engine_schemas::ARCHETYPES {
+            registry
+                .load_archetype_string(toml)
+                .map_err(|e| format!("engine archetype schema: {e}"))?;
+        }
+        Ok(registry)
+    }
+
+    async fn fetch_text(url: &str) -> Result<String, String> {
+        let js = |e: wasm_bindgen::JsValue| format!("{url}: {e:?}");
+        let window = web_sys::window().ok_or("no window")?;
+        let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
+            .await
+            .map_err(js)?
+            .dyn_into()
+            .map_err(js)?;
+        if !response.ok() {
+            return Err(format!("{url}: HTTP {}", response.status()));
+        }
+        JsFuture::from(response.text().map_err(js)?)
+            .await
+            .map_err(js)?
+            .as_string()
+            .ok_or_else(|| format!("{url}: not text"))
+    }
+
+    fn fix_canvas_size(width: u32, height: u32) {
+        let canvas = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id(WEB_CANVAS_ID));
+        if let Some(canvas) = canvas {
+            let style = format!("width: {width}px !important; height: {height}px !important;");
+            let _ = canvas.set_attribute("style", &style);
         }
     }
 
-    impl ApplicationHandler for App {
-        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-            if self.window.is_some() {
-                return;
-            }
-            let attrs = Window::default_attributes()
-                .with_title("Flint")
-                .with_append(true);
-            let window = Arc::new(event_loop.create_window(attrs).expect("canvas"));
-            self.window = Some(window.clone());
-
-            // wgpu's device request is a JS promise: the event loop keeps
-            // running while it resolves, and the first redraw follows it.
-            let slot = self.gpu.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                match init_gpu(window.clone()).await {
-                    Ok(gpu) => {
-                        *slot.borrow_mut() = Some(gpu);
-                        window.request_redraw();
-                    }
-                    Err(e) => web_sys::console::error_1(&format!("[flint-web] {e}").into()),
-                }
-            });
-        }
-
-        fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-            match event {
-                WindowEvent::Resized(size) => {
-                    if let Some(gpu) = self.gpu.borrow_mut().as_mut() {
-                        gpu.resize(size.width, size.height);
-                    }
-                }
-                WindowEvent::RedrawRequested => {
-                    if let Some(gpu) = self.gpu.borrow_mut().as_mut() {
-                        gpu.draw();
-                    }
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
-                }
-                _ => {}
-            }
+    /// The small line under the wordmark: what's loading, or what failed.
+    fn status(text: &str) {
+        let el = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("status"));
+        if let Some(el) = el {
+            el.set_text_content(Some(text));
         }
     }
 }
