@@ -191,6 +191,7 @@ impl Backend for WebAudioBackend {
                     let wait = last_request.map_or(0.0, |l| t0 - l);
                     last_request = Some(t0);
                     let Ok(mut m) = meter.lock() else { return };
+                    m.peak(data.iter().fold(0.0f32, |p, s| p.max(s.abs())) as f64);
                     let lines = m.record(slack, mix, t0, wait);
                     if let Some(l) = lines.late {
                         warn(&l);
