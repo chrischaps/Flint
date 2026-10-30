@@ -601,6 +601,66 @@ pub(crate) fn browser_name(user_agent: &str) -> String {
     }
 }
 
+/// The fingers the page has seen (#132), for the readout: where the ones
+/// down now are, in `InputState`'s 0-1 screen space, how many were ever
+/// down at once and how many have touched in all. Fed once a frame.
+#[derive(Default)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) struct TouchSeen {
+    /// The fingers down at the last look, by id.
+    down: Vec<(u64, (f64, f64))>,
+    /// The last fingers that were down, kept after they lift.
+    last: Vec<(f64, f64)>,
+    peak: usize,
+    started: usize,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl TouchSeen {
+    /// Take the fingers down this frame.
+    pub(crate) fn observe(&mut self, touches: impl IntoIterator<Item = (u64, (f64, f64))>) {
+        let mut now: Vec<(u64, (f64, f64))> = touches.into_iter().collect();
+        now.sort_by_key(|(id, _)| *id);
+        self.started += now
+            .iter()
+            .filter(|(id, _)| !self.down.iter().any(|(d, _)| d == id))
+            .count();
+        self.peak = self.peak.max(now.len());
+        if !now.is_empty() {
+            self.last = now.iter().map(|(_, p)| *p).collect();
+        }
+        self.down = now;
+    }
+
+    /// The readout's row, once a finger has touched.
+    pub(crate) fn line(&self) -> Option<String> {
+        if self.started == 0 {
+            return None;
+        }
+        let at = |ps: &[(f64, f64)]| {
+            ps.iter()
+                .map(|(x, y)| format!("({x:.2} {y:.2})"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let now = if self.down.is_empty() {
+            format!("none down, last {}", at(&self.last))
+        } else {
+            let ps: Vec<_> = self.down.iter().map(|(_, p)| *p).collect();
+            format!("{} down {}", self.down.len(), at(&ps))
+        };
+        Some(format!(
+            "touch  {now}\n       most {} at once, {} in all",
+            self.peak, self.started
+        ))
+    }
+
+    /// The copyable line's part.
+    pub(crate) fn part(&self) -> Option<String> {
+        (self.started > 0).then(|| format!("touch most {} of {}", self.peak, self.started))
+    }
+}
+
 /// 1, 1.5, 2.25: a pixel ratio without trailing zeros.
 fn trim(x: f64) -> String {
     let s = format!("{x:.2}");
@@ -783,5 +843,28 @@ mod tests {
         assert!(readout(&s, &c).contains("?perf=cpu"));
         c.dpr = 1.5;
         assert!(readout(&s, &c).contains("DPR 1.5"));
+    }
+
+    #[test]
+    fn touches_count_fingers_once_and_keep_the_last_after_they_lift() {
+        let mut t = TouchSeen::default();
+        assert_eq!(t.line(), None);
+        t.observe([(7, (0.25, 0.5))]);
+        t.observe([(7, (0.3, 0.5)), (9, (0.75, 0.4))]);
+        t.observe([(9, (0.75, 0.4)), (7, (0.3, 0.5)), (11, (0.5, 0.9))]);
+        assert_eq!(
+            t.line().unwrap(),
+            "touch  3 down (0.30 0.50) (0.75 0.40) (0.50 0.90)
+       most 3 at once, 3 in all"
+        );
+        t.observe([]);
+        t.observe([(12, (0.1, 0.2))]);
+        t.observe([]);
+        assert_eq!(
+            t.line().unwrap(),
+            "touch  none down, last (0.10 0.20)
+       most 3 at once, 4 in all"
+        );
+        assert_eq!(t.part().unwrap(), "touch most 3 of 4");
     }
 }
