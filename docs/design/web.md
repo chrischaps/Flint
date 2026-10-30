@@ -1,8 +1,8 @@
 # Flint on the Web
 
 Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
-(#100), sound (#101), game bundles (#98) and first light (#102) done, epic
-#94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
+(#100), sound (#101), game bundles (#98), first light (#102) and
+[play.chaps.dev](#playchapsdev-103) (#103) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
 with a progress bar, serves every read from it through the vfs, opens the
 WebGPU device without blocking and draws to a page canvas that follows the
 window's size. A Begin gate starts the sound and locks the pointer with one
@@ -38,6 +38,9 @@ the query string instead of clap:
 
 | Query | Desktop flag | Meaning |
 |---|---|---|
+| `game=<id>` | | a game play.chaps.dev packed: the bundle at `games/<id>/<id>.flintpack` ([play.chaps.dev](#playchapsdev-103)). `bundle` wins over it |
+| `embed=1` | | the iframe view: the world and its Begin button, no wordmark, title or hints |
+| `webgpu=0` | | show the no-WebGPU film in any browser, to check it |
 | `bundle=<url>` | `--bundle` | a `.flintpack` from `flint bundle`, relative to the page. Its manifest names the scene and schemas; its late bundles are fetched beside it |
 | `scene=<url>` | `<scene>` | with `bundle`: a scene inside it instead of the manifest's. Without: a scene TOML fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
 | `msaa=1\|4` | `--msaa` | scene-pass MSAA |
@@ -140,6 +143,103 @@ panic right after startup ("time not implemented on this platform"): this
 was measured before #100 moved those sites to `web-time`. With every engine read now live, the release
 wasm is 14.2 MB after `wasm-opt -Oz`, 5.1 MB gzipped (it was 9.4 / 3.5 MB
 while the vfs left file-reading code dead).
+
+## play.chaps.dev (#103)
+
+**One address for every game.** `play.chaps.dev/?game=float` plays SET +
+DRIFT, and the next game is one more `?game=`. A subdomain per game was the
+other choice. One site wins because the player is the same 14 MB of wasm for
+every game, so a visitor who has played one has the engine cached for the
+next. It also needs one DNS record and one Pages site, and a new game is a
+few lines in `tools/play-site/games.toml`, not a new repo.
+
+**What the site is.** `.github/workflows/play.yml` builds it on every push
+to `main` that touches the player, and on a manual run:
+
+1. `trunk build --release --public-url ./` in `crates/flint-player`, the
+   player page;
+2. `cargo build -p flint-cli`, for `flint bundle`;
+3. `python tools/play-site/build.py`, which fetches each game in
+   `games.toml` at its pinned commit (a GitHub tarball; nothing to clone),
+   packs it with `flint bundle --name <id>` into `games/<id>/`, and writes
+   `games.json` (what the page shows) and `built-from.txt` (the Flint
+   commit and each game's);
+4. `actions/upload-pages-artifact` and `actions/deploy-pages`. This repo's
+   Pages site serves the result, with `play.chaps.dev` as its custom domain.
+
+A pull request that touches the page, the bundler or the site builds it the
+same way, as a trial, and publishes nothing; the site it would have deployed
+is the run's `github-pages` artifact. Soba deploys by pushing to a Pages
+repo with a deploy key. This deploy uses Pages from Actions instead: there
+is no new secret, and no repo's history grows by 25 MB of wasm and bundles
+on every push.
+
+A game is pinned to a **commit**, not a branch, so a push to a game's repo
+can't change or break the site between Flint deploys. Moving a game forward
+means changing its `ref`. Float is pinned to its `engine-catchup` branch
+(#102): the engine subtree at Flint `main`, plus its `bundle.toml`.
+
+**The doorway.** Before any wasm is fetched, an inline script in
+`index.html` decides whether this visit can play:
+
+- no `?game=` (or `bundle`/`scene`) and a `games.json` beside the page:
+  the chooser, a card per game with its poster;
+- a `?game=` the site doesn't have: the chooser, saying so;
+- no `navigator.gpu`, or no adapter from `requestAdapter()`: the game's
+  film from chaps.dev, full-bleed and muted, with the reason and the
+  browsers that play it. A missing adapter gets its own reason (hardware
+  acceleration off, or a blocklisted GPU);
+- otherwise the gate takes the game's title and line from `games.json`
+  (not the scene file's name), and the player loads.
+
+`Trunk.toml` makes this hold. Its `pattern_script` loader awaits
+`window.flintDoorway`, a promise the doorway resolves only when the game
+can play. Its `pattern_preload` preloads only the 90 KB JS glue. Trunk's
+default loader also preloads the wasm, so even a browser that can't play
+would have downloaded 14 MB. Under `trunk serve` there is no `games.json`
+and the page plays what the query names, as before. `shims.html` has no
+doorway, so it awaits `undefined` and starts at once.
+
+**Embed.** `?game=float&embed=1` is for iframes. It shows the world and its
+Begin button, with the progress hairline centred low, and no wordmark,
+title or hints. Without WebGPU it shows the film with the reason, without
+the caption or the browser list. To embed it:
+
+```html
+<iframe src="https://play.chaps.dev/?game=float&embed=1"
+        allow="autoplay; fullscreen; gamepad" allowfullscreen
+        style="width: 100%; aspect-ratio: 16 / 9; border: 0"></iframe>
+```
+
+A click on Begin inside the iframe is the iframe's own user activation, and
+it starts the sound and locks the pointer. `allow="gamepad"` lets the pad
+through to a cross-origin frame.
+
+**Checked locally** (the site assembled by `build.py` from Float at
+`c06e1c9`, served by `python -m http.server`):
+
+| Visit | Browser | Result |
+|---|---|---|
+| `/` | headless Chrome 156 | the chooser; 0.45 MB fetched (the poster), no wasm |
+| `/?game=float` | headless Chrome, WebGPU | the gate reads SET + DRIFT; the world runs behind it from the bundle |
+| `/?game=float` | Firefox 159, `dom.webgpu.enabled` off | the film and "SET + DRIFT plays in the browser through WebGPU, and this browser doesn't offer it". The server log shows the page, the JS glue and `games.json`, and no wasm or bundle |
+| `/?game=float&embed=1` in an 800x450 iframe on another origin | headless Chrome | Begin only; a real mouse click on it lifted the gate onto Float's title screen |
+
+**Setting it up** (once, by hand; none of it is in the repo):
+
+1. Porkbun DNS for chaps.dev: a `CNAME` record, `play` → `chrischaps.github.io`.
+2. This repo's Pages, built by Actions, on that domain:
+   `gh api -X POST repos/chrischaps/Flint/pages -f build_type=workflow`, then
+   `gh api -X PUT repos/chrischaps/Flint/pages -f cname=play.chaps.dev`, and
+   **Enforce HTTPS** once GitHub has issued the certificate. WebGPU needs a
+   secure context.
+3. Run the **Play site** workflow (or push to `main`).
+
+**Not done here.** Safari can't be run from Windows. Firefox on macOS was
+stood in for by Firefox on Windows with WebGPU turned off, which takes the
+same path. The threaded AudioWorklet build would need cross-origin isolation
+headers, which GitHub Pages can't set (the issue's second risk). Nothing
+needs them yet: #101 renders sound on the main thread.
 
 ## First light: Float (#102)
 

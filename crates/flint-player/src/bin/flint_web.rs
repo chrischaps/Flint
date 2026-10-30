@@ -14,7 +14,9 @@
 //! it couldn't find at start.
 //!
 //! Query string (all optional):
-//!   bundle=<url>    a .flintpack, relative to the page
+//!   game=<id>       a game on play.chaps.dev (#103): the bundle at
+//!                   games/<id>/<id>.flintpack, which the site's deploy packs
+//!   bundle=<url>    a .flintpack, relative to the page (wins over game)
 //!   scene=<path>    with bundle: a scene inside it instead of the manifest's;
 //!                   without: a scene TOML fetched from <url> (default: the
 //!                   first-light demo, which needs no other files)
@@ -82,7 +84,9 @@ mod web {
                     .filter(|s| s.is_finite() && *s >= 0.0)
             };
             Self {
-                bundle: get("bundle").filter(|b| !b.is_empty()),
+                bundle: get("bundle")
+                    .filter(|b| !b.is_empty())
+                    .or_else(|| get("game").as_deref().and_then(game_bundle)),
                 scene: get("scene").filter(|s| !s.is_empty()),
                 msaa: num("msaa").filter(|&m| m == 1 || m == 4).unwrap_or(1),
                 size: num("width").zip(num("height")),
@@ -90,6 +94,17 @@ mod web {
                 hold_at: secs("hold_at"),
             }
         }
+    }
+
+    /// Where play.chaps.dev keeps a game's bundle (`tools/play-site/build.py`
+    /// packs each one there). An id is a bundle name: lowercase letters,
+    /// digits, `-` and `_`, so a query can't point outside `games/`.
+    fn game_bundle(id: &str) -> Option<String> {
+        let ok = !id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+        ok.then(|| format!("games/{id}/{id}.flintpack"))
     }
 
     pub fn run() {
@@ -425,11 +440,14 @@ mod web {
             flint_player::web_begin();
             return;
         };
-        if let Some(el) = element("gate-title") {
-            el.set_text_content(Some(title));
-        }
-        if let Some(el) = element("gate-line") {
-            el.set_text_content(Some(line));
+        // The page may have named the game already (play.chaps.dev's
+        // doorway, from games.json); the scene's own name is the fallback.
+        for (id, text) in [("gate-title", title), ("gate-line", line)] {
+            if let Some(el) = element(id) {
+                if el.text_content().is_none_or(|t| t.is_empty()) {
+                    el.set_text_content(Some(text));
+                }
+            }
         }
         let _ = gate.set_attribute("data-ready", "");
         if let Ok(button) = button.clone().dyn_into::<web_sys::HtmlElement>() {
