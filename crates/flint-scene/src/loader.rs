@@ -5,7 +5,7 @@ use crate::prefab;
 use flint_core::Result;
 use flint_ecs::FlintWorld;
 use flint_schema::{validate_component_data, SchemaRegistry};
-use std::fs;
+use flint_core::vfs;
 use std::path::Path;
 
 /// Load a scene from a TOML file (with prefab expansion)
@@ -14,7 +14,7 @@ pub fn load_scene<P: AsRef<Path>>(
     registry: &SchemaRegistry,
 ) -> Result<(FlintWorld, SceneFile)> {
     let path = path.as_ref();
-    let content = fs::read_to_string(path)?;
+    let content = vfs::read_to_string(path)?;
     let mut scene_file: SceneFile = toml::from_str(&content)?;
 
     // Expand prefab instances into entities before building world
@@ -46,7 +46,7 @@ pub fn reload_scene<P: AsRef<Path>>(
     registry: &SchemaRegistry,
 ) -> Result<SceneFile> {
     let path = path.as_ref();
-    let content = fs::read_to_string(path)?;
+    let content = vfs::read_to_string(path)?;
     let mut scene_file: SceneFile = toml::from_str(&content)?;
 
     // Expand prefab instances

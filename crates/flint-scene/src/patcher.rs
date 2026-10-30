@@ -19,7 +19,7 @@ pub type DirtyField = (String, String, String);
 impl SceneDocument {
     /// Parse a scene file into an editable document
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content = fs::read_to_string(path.as_ref())
+        let content = flint_core::vfs::read_to_string(path.as_ref())
             .map_err(|e| format!("Failed to read scene file: {}", e))?;
         Self::from_str(&content)
     }
