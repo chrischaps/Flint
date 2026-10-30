@@ -75,11 +75,11 @@ This script is version-controllable, reproducible, and can run in CI.
 
 ## The Viewer as Validator
 
-The `flint serve --watch` viewer and `flint play` command are verification tools, not authoring tools. They answer the question: *"Does the scene I built look correct?"*
+The `flint edit --watch` viewer and `flint play` command are verification tools, not authoring tools. They answer the question: *"Does the scene I built look correct?"*
 
 ```bash
 # Edit the TOML in your text editor, viewer updates automatically
-flint serve levels/tavern.scene.toml --watch
+flint edit levels/tavern.scene.toml --watch
 
 # Walk through the scene to verify physics, audio, and interactions
 flint play levels/tavern.scene.toml

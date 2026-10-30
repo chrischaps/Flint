@@ -24,6 +24,22 @@ struct MaterialUniforms {
     opacity: f32,
     alpha_cutoff: f32,
     texture_scale: f32,
+    // Emission (ADR 0076): rgb = the material's own light, w = per-vertex
+    // emission scale (vertex alpha is then how much is surface).
+    emissive: vec4<f32>,
+    // 1 when `emissive_texture` holds the material's emissive map; its rgb
+    // multiplies `emissive.rgb` (glTF `emissiveTexture`).
+    has_emissive_tex: u32,
+    // 1 when vertex alpha is the surface share, not opacity (ADR 0090), so
+    // a strength of 0 leaves the light parts dark.
+    vertex_emission: u32,
+    // How much of a per-vertex light part is also lit surface (ADR 0096),
+    // with its light unchanged.
+    glow_surface: f32,
+    _pad_e2: u32,
+    // Multiplies the vertex colour, as surface and as per-vertex light
+    // (ADR 0102: the entity's `material.vertex_tint_*`). w is unused.
+    vertex_tint: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -34,18 +50,15 @@ var<uniform> material: MaterialUniforms;
 
 @group(1) @binding(1)
 var base_color_texture: texture_2d<f32>;
-@group(1) @binding(2)
-var base_color_sampler: sampler;
 
 @group(1) @binding(3)
 var normal_map_texture: texture_2d<f32>;
-@group(1) @binding(4)
-var normal_map_sampler: sampler;
 
 @group(1) @binding(5)
 var metallic_roughness_texture: texture_2d<f32>;
-@group(1) @binding(6)
-var metallic_roughness_sampler: sampler;
+
+@group(1) @binding(7)
+var emissive_texture: texture_2d<f32>;
 
 struct DirectionalLight {
     direction: vec3<f32>,
@@ -115,6 +128,12 @@ struct ShadowUniforms {
 
 @group(2) @binding(3)
 var<uniform> shadow: ShadowUniforms;
+
+// Every material's textures share this one sampler (linear, repeating). It
+// lives here, bound once a frame, not in each material's group, so a material
+// bind group spends no DX12 sampler descriptors (Capitol #577).
+@group(2) @binding(4)
+var material_sampler: sampler;
 
 // Bind group 3: Bone matrices (storage buffer for arbitrary bone counts)
 @group(3) @binding(0)
@@ -206,8 +225,12 @@ fn perturb_normal(N: vec3<f32>, world_pos: vec3<f32>, uv: vec2<f32>, map_normal:
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
 
+    // Guard only against a truly degenerate UV parameterisation. The
+    // derivatives are per screen pixel, so a 1k texture magnified over a
+    // few hundred pixels yields det ~ 1e-5 to 1e-6; an absolute 1e-4
+    // threshold silently discarded every normal map on a close-up mesh.
     let det = duv1.x * duv2.y - duv1.y * duv2.x;
-    if (abs(det) < 0.0001) {
+    if (abs(det) < 1e-12) {
         return N;
     }
     let inv_det = 1.0 / det;
@@ -413,7 +436,7 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
     if (dm == 4u) {
         var col: vec3<f32>;
         if (material.use_vertex_color == 1u) {
-            col = in.color.rgb;
+            col = in.color.rgb * material.vertex_tint.rgb;
         } else {
             col = material.base_color.rgb;
         }
@@ -430,15 +453,30 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
     var albedo: vec3<f32>;
     var alpha: f32;
     if (material.use_vertex_color == 1u) {
-        albedo = in.color.rgb;
+        albedo = in.color.rgb * material.vertex_tint.rgb;
         alpha = in.color.a;
     } else {
         albedo = material.base_color.rgb;
         alpha = material.base_color.a;
     }
 
+    // Emission (ADR 0076). Per-vertex: alpha 1 is lit surface, 0 is pure
+    // light giving off its rgb; vertex alpha is no longer opacity.
+    // `glow_surface` (ADR 0096) lights the light part as surface too, and
+    // `vertex_tint` (ADR 0102) colours its light as it does the surface.
+    var emission = material.emissive.rgb;
+    if (material.has_emissive_tex == 1u) {
+        emission *= textureSample(emissive_texture, material_sampler, scaled_uv).rgb;
+    }
+    if (material.use_vertex_color == 1u && material.vertex_emission == 1u) {
+        let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
+        emission += in.color.rgb * material.vertex_tint.rgb * glow * material.emissive.w;
+        albedo = albedo * (1.0 - glow * (1.0 - material.glow_surface));
+        alpha = 1.0;
+    }
+
     if (material.has_base_color_tex == 1u) {
-        let tex_color = textureSample(base_color_texture, base_color_sampler, scaled_uv);
+        let tex_color = textureSample(base_color_texture, material_sampler, scaled_uv);
         albedo = tex_color.rgb * albedo;
         alpha = tex_color.a * alpha;
     }
@@ -446,7 +484,7 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
     var metallic = material.metallic;
     var roughness = material.roughness;
     if (material.has_metallic_roughness_tex == 1u) {
-        let mr = textureSample(metallic_roughness_texture, metallic_roughness_sampler, scaled_uv);
+        let mr = textureSample(metallic_roughness_texture, material_sampler, scaled_uv);
         roughness = mr.g * material.roughness;
         metallic = mr.b * material.metallic;
     }
@@ -454,7 +492,7 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var N = normalize(in.normal);
     if (material.has_normal_map == 1u) {
-        let map_sample = textureSample(normal_map_texture, normal_map_sampler, scaled_uv);
+        let map_sample = textureSample(normal_map_texture, material_sampler, scaled_uv);
         let map_normal = map_sample.rgb * 2.0 - 1.0;
         N = perturb_normal(N, in.world_pos, scaled_uv, map_normal);
     }
@@ -505,7 +543,9 @@ fn fs_skinned(in: VertexOutput) -> @location(0) vec4<f32> {
     let hemisphere_mix = dot(N, vec3<f32>(0.0, 1.0, 0.0)) * 0.5 + 0.5;
     let ambient = mix(ground_color, sky_color, hemisphere_mix) * albedo;
 
-    var color = ambient + Lo;
+    // Emission goes on after lighting and before tonemapping, so it reads the
+    // same under any light and bloom picks it up.
+    var color = ambient + Lo + emission;
 
     let final_alpha = alpha * material.opacity;
 

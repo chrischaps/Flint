@@ -26,7 +26,7 @@ Every scene is a TOML file you can read, diff, and version. Every operation is a
 
 ![Wireframe debug visualization](images/debug-wireframe.png)
 
-*Wireframe debug mode (F1) reveals mesh topology — one of seven built-in debug visualizations for inspecting geometry, normals, depth, UVs, and material properties.*
+*Wireframe debug mode reveals mesh topology — one of eight built-in shading modes (chosen from the F4 Rendering & Effects menu, or `--debug-mode` headlessly) for inspecting geometry, normals, depth, UVs, and material properties.*
 
 ## What It Looks Like
 
@@ -48,7 +48,7 @@ flint query "entities where archetype == 'door'" --scene levels/tavern.scene.tom
 flint validate levels/tavern.scene.toml --fix --dry-run
 
 # See it in 3D with PBR rendering
-flint serve levels/tavern.scene.toml --watch
+flint edit levels/tavern.scene.toml --watch
 
 # Walk around in first person
 flint play levels/tavern.scene.toml
@@ -79,7 +79,7 @@ The engine supports:
 - **Interactable entities** with HUD prompts, proximity detection, and scripted behaviors
 - **AI asset generation** with pluggable providers (Flux textures, Meshy 3D models, ElevenLabs audio), style guides, batch scene resolution, model validation, and build manifests
 - **Billboard sprites** with camera-facing quads and sprite sheet animation
-- **GPU particle system** with instanced rendering, per-emitter pooling, alpha/additive blending, and configurable emission shapes
+- **GPU particle system** with instanced rendering, reusable `*.particles.toml` effects (curves, forces, bursts, sub-emitters), four blend modes, a dedicated editor and deterministic headless snapshots
 - **Extensible input system** with config-driven bindings for keyboard, mouse, and gamepad with runtime rebinding
 - **Data-driven UI system** with TOML-defined layouts, style classes, anchor-based positioning, flow layouts, and runtime scripting API
 - **Game project architecture** for standalone games that include the engine as a git subtree

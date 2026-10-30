@@ -25,14 +25,17 @@ flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-player = { workspace = true }
 flint-terrain = { workspace = true }
+flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
 flint-viewer = { workspace = true }
+flint-debug-ui = { workspace = true }
 flint-music = { workspace = true }
 flint-input-capture = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
+toml_edit = { workspace = true }
 anyhow = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }

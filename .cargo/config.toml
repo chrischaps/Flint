@@ -8,3 +8,9 @@ rustflags = ["-C", "link-arg=/STACK:8388608"]
 
 [target.x86_64-pc-windows-gnu]
 rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]
+
+# The web player (docs/design/web.md). getrandom 0.3 needs both this cfg and
+# its `wasm_js` feature (set in flint-player's wasm32 dependencies) to reach
+# crypto.getRandomValues; without either it refuses to compile.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

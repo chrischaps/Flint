@@ -128,7 +128,7 @@ impl DebugPanel for ManifestMapPanel {
                 painter.rect_stroke(
                     band.shrink(0.5),
                     0.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 200, 120)),
+                    egui::Stroke::new(1.0f32, egui::Color32::from_rgb(255, 200, 120)),
                 );
                 let c = egui::pos2(x0 + 5.0, sec_top + SECTION_H * 0.5);
                 let r = 3.5;
@@ -170,7 +170,7 @@ impl DebugPanel for ManifestMapPanel {
                 let x = to_x(b.sample);
                 painter.line_segment(
                     [egui::pos2(x, ruler_top), egui::pos2(x, ruler_top + 5.0)],
-                    egui::Stroke::new(1.0, egui::Color32::from_gray(110)),
+                    egui::Stroke::new(1.0f32, egui::Color32::from_gray(110)),
                 );
                 if label_ok {
                     painter.text(
@@ -198,7 +198,7 @@ impl DebugPanel for ManifestMapPanel {
                     egui::pos2(x, ruler_top),
                     egui::pos2(x, hist_top + HISTORY_H),
                 ],
-                egui::Stroke::new(1.0, color),
+                egui::Stroke::new(1.0f32, color),
             );
             painter.text(
                 egui::pos2(x + 3.0, ruler_top + RULER_H - 2.0),
@@ -216,7 +216,7 @@ impl DebugPanel for ManifestMapPanel {
                 egui::pos2(rect.left(), hist_mid),
                 egui::pos2(rect.right(), hist_mid),
             ],
-            egui::Stroke::new(0.5, egui::Color32::from_gray(55)),
+            egui::Stroke::new(0.5f32, egui::Color32::from_gray(55)),
         );
         for p in &f.pulses {
             let x = to_x(p.sample);
@@ -239,7 +239,7 @@ impl DebugPanel for ManifestMapPanel {
             };
             painter.line_segment(
                 [egui::pos2(x, y0), egui::pos2(x, y1)],
-                egui::Stroke::new(1.0, color),
+                egui::Stroke::new(1.0f32, color),
             );
         }
 
@@ -252,27 +252,27 @@ impl DebugPanel for ManifestMapPanel {
                 SeamMarkKind::FullFail => {
                     painter.line_segment(
                         [egui::pos2(x, hist_top), egui::pos2(x, hist_top + HISTORY_H)],
-                        egui::Stroke::new(1.5, color),
+                        egui::Stroke::new(1.5f32, color),
                     );
                     let rx = to_x(s.re_entry_sample);
                     let y = hist_top + 3.0;
                     painter.line_segment(
                         [egui::pos2(x, y), egui::pos2(rx, y)],
-                        egui::Stroke::new(1.0, color.gamma_multiply(0.6)),
+                        egui::Stroke::new(1.0f32, color.gamma_multiply(0.6)),
                     );
                     // Arrowhead at the re-entry end: the rewind's direction.
                     painter.line_segment(
                         [egui::pos2(rx, y), egui::pos2(rx + 4.0, y - 3.0)],
-                        egui::Stroke::new(1.0, color.gamma_multiply(0.6)),
+                        egui::Stroke::new(1.0f32, color.gamma_multiply(0.6)),
                     );
                     painter.line_segment(
                         [egui::pos2(rx, y), egui::pos2(rx + 4.0, y + 3.0)],
-                        egui::Stroke::new(1.0, color.gamma_multiply(0.6)),
+                        egui::Stroke::new(1.0f32, color.gamma_multiply(0.6)),
                     );
                 }
                 SeamMarkKind::Seam => {
                     let y = hist_top + HISTORY_H - 5.0;
-                    let stroke = egui::Stroke::new(1.5, color);
+                    let stroke = egui::Stroke::new(1.5f32, color);
                     painter.line_segment([egui::pos2(x - 4.0, y - 4.0), egui::pos2(x, y)], stroke);
                     painter.line_segment([egui::pos2(x, y), egui::pos2(x - 4.0, y + 4.0)], stroke);
                 }
@@ -282,7 +282,7 @@ impl DebugPanel for ManifestMapPanel {
                             egui::pos2(x, hist_top + HISTORY_H - 8.0),
                             egui::pos2(x, hist_top + HISTORY_H),
                         ],
-                        egui::Stroke::new(1.5, color),
+                        egui::Stroke::new(1.5f32, color),
                     );
                 }
             }
@@ -293,7 +293,7 @@ impl DebugPanel for ManifestMapPanel {
         let (ph_color, ph_w) = if f.preroll {
             (egui::Color32::from_gray(120), 1.0)
         } else {
-            (egui::Color32::WHITE, 2.0)
+            (egui::Color32::WHITE, 2.0f32)
         };
         painter.line_segment(
             [egui::pos2(px, rect.top()), egui::pos2(px, rect.bottom())],

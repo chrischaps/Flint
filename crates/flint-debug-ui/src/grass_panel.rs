@@ -1,106 +1,8 @@
+use crate::widgets::{drag_f32, drag_vec3, drag_xyz};
 use crate::DebugPanel;
 use flint_scene::SceneDocument;
 use flint_terrain::GrassConfig;
 use std::path::PathBuf;
-
-// ---------------------------------------------------------------------------
-// Helper widgets
-// ---------------------------------------------------------------------------
-
-/// Single labeled drag value. Returns true if the value changed.
-fn drag_f32(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut f32,
-    speed: f64,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let before = *value;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::DragValue::new(value)
-                .speed(speed)
-                .range(range)
-                .max_decimals(3),
-        );
-    });
-    *value != before
-}
-
-/// Labeled [f32; 3] drag row with R/G/B prefixes (for colors). Returns true if any element changed.
-fn drag_vec3(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut [f32; 3],
-    speed: f64,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let before = *value;
-    let [r, g, b] = value;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.label("R");
-        ui.add(
-            egui::DragValue::new(r)
-                .speed(speed)
-                .range(range.clone())
-                .max_decimals(3),
-        );
-        ui.label("G");
-        ui.add(
-            egui::DragValue::new(g)
-                .speed(speed)
-                .range(range.clone())
-                .max_decimals(3),
-        );
-        ui.label("B");
-        ui.add(
-            egui::DragValue::new(b)
-                .speed(speed)
-                .range(range.clone())
-                .max_decimals(3),
-        );
-    });
-    before != [*r, *g, *b]
-}
-
-/// Labeled [f32; 3] drag row with X/Y/Z prefixes (for directions). Returns true if any element changed.
-fn drag_xyz(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut [f32; 3],
-    speed: f64,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let before = *value;
-    let [x, y, z] = value;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.label("X");
-        ui.add(
-            egui::DragValue::new(x)
-                .speed(speed)
-                .range(range.clone())
-                .max_decimals(3),
-        );
-        ui.label("Y");
-        ui.add(
-            egui::DragValue::new(y)
-                .speed(speed)
-                .range(range.clone())
-                .max_decimals(3),
-        );
-        ui.label("Z");
-        ui.add(
-            egui::DragValue::new(z)
-                .speed(speed)
-                .range(range.clone())
-                .max_decimals(3),
-        );
-    });
-    before != [*x, *y, *z]
-}
 
 // ---------------------------------------------------------------------------
 // Panel struct
@@ -111,6 +13,8 @@ pub struct GrassDebugPanel {
     original: GrassConfig,
     scene_path: PathBuf,
     terrain_entity_name: String,
+    /// The component whose `grass.*` fields a commit patches.
+    component: &'static str,
     open: bool,
     dirty: bool,
     density_changed: bool,
@@ -123,10 +27,18 @@ impl GrassDebugPanel {
             config,
             scene_path,
             terrain_entity_name,
+            component: "terrain",
             open: false,
             dirty: false,
             density_changed: false,
         }
+    }
+
+    /// Commit to `component`'s fields instead of the `terrain`'s, for grass
+    /// on a `grass_ground` (ADR 0089).
+    pub fn with_component(mut self, component: &'static str) -> Self {
+        self.component = component;
+        self
     }
 
     /// Read-only access to the working config for the player to push to the renderer.
@@ -219,45 +131,70 @@ impl GrassDebugPanel {
 
         let mut doc = SceneDocument::from_file(&self.scene_path)?;
 
-        doc.patch_field(entity, "terrain", "grass.enabled", &b(c.enabled))?;
-        doc.patch_field(entity, "terrain", "grass.density", &f(c.density))?;
-        doc.patch_field(entity, "terrain", "grass.max_distance", &f(c.max_distance))?;
-        doc.patch_field(entity, "terrain", "grass.fade_start", &f(c.fade_start))?;
+        doc.patch_field(entity, self.component, "grass.enabled", &b(c.enabled))?;
+        doc.patch_field(entity, self.component, "grass.density", &f(c.density))?;
         doc.patch_field(
             entity,
-            "terrain",
+            self.component,
+            "grass.max_distance",
+            &f(c.max_distance),
+        )?;
+        doc.patch_field(entity, self.component, "grass.fade_start", &f(c.fade_start))?;
+        doc.patch_field(
+            entity,
+            self.component,
             "grass.density_threshold",
             &f(c.density_threshold),
         )?;
-        doc.patch_field(entity, "terrain", "grass.blade_width", &f(c.blade_width))?;
-        doc.patch_field(entity, "terrain", "grass.blade_height", &f(c.blade_height))?;
         doc.patch_field(
             entity,
-            "terrain",
+            self.component,
+            "grass.blade_width",
+            &f(c.blade_width),
+        )?;
+        doc.patch_field(
+            entity,
+            self.component,
+            "grass.blade_height",
+            &f(c.blade_height),
+        )?;
+        doc.patch_field(
+            entity,
+            self.component,
             "grass.height_variation",
             &f(c.height_variation),
         )?;
-        doc.patch_field(entity, "terrain", "grass.color_base", &v3(c.color_base))?;
-        doc.patch_field(entity, "terrain", "grass.color_tip", &v3(c.color_tip))?;
-        doc.patch_field(entity, "terrain", "grass.color_dry", &v3(c.color_dry))?;
-        doc.patch_field(entity, "terrain", "grass.dry_amount", &f(c.dry_amount))?;
         doc.patch_field(
             entity,
-            "terrain",
+            self.component,
+            "grass.color_base",
+            &v3(c.color_base),
+        )?;
+        doc.patch_field(entity, self.component, "grass.color_tip", &v3(c.color_tip))?;
+        doc.patch_field(entity, self.component, "grass.color_dry", &v3(c.color_dry))?;
+        doc.patch_field(entity, self.component, "grass.dry_amount", &f(c.dry_amount))?;
+        doc.patch_field(
+            entity,
+            self.component,
             "grass.wind_direction",
             &v3(c.wind_direction),
         )?;
-        doc.patch_field(entity, "terrain", "grass.wind_speed", &f(c.wind_speed))?;
+        doc.patch_field(entity, self.component, "grass.wind_speed", &f(c.wind_speed))?;
         doc.patch_field(
             entity,
-            "terrain",
+            self.component,
             "grass.wind_strength",
             &f(c.wind_strength),
         )?;
-        doc.patch_field(entity, "terrain", "grass.bend_radius", &f(c.bend_radius))?;
         doc.patch_field(
             entity,
-            "terrain",
+            self.component,
+            "grass.bend_radius",
+            &f(c.bend_radius),
+        )?;
+        doc.patch_field(
+            entity,
+            self.component,
             "grass.bend_strength",
             &f(c.bend_strength),
         )?;

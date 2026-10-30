@@ -6,6 +6,7 @@
 
 use crate::engine::ScriptEngine;
 use flint_core::components as comp;
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use std::collections::{HashMap, HashSet};
@@ -21,6 +22,10 @@ pub struct ScriptSync {
     file_timestamps: HashMap<PathBuf, SystemTime>,
     /// Base scripts directory
     scripts_dir: Option<PathBuf>,
+    /// Snapshot of `<scripts>/lib/**/*.rhai` → modified time. Any
+    /// difference (edit, add, remove) invalidates the module cache and
+    /// recompiles every script, since imports are resolved per script.
+    lib_timestamps: HashMap<PathBuf, SystemTime>,
 }
 
 impl ScriptSync {
@@ -29,6 +34,7 @@ impl ScriptSync {
             discovered: HashSet::new(),
             file_timestamps: HashMap::new(),
             scripts_dir: None,
+            lib_timestamps: HashMap::new(),
         }
     }
 
@@ -37,11 +43,19 @@ impl ScriptSync {
         self.discovered.clear();
         self.file_timestamps.clear();
         self.scripts_dir = None;
+        self.lib_timestamps.clear();
     }
 
     /// Set the scripts directory (called during initialization)
     pub fn set_scripts_dir(&mut self, dir: PathBuf) {
+        self.lib_timestamps = scan_lib(&dir.join("lib"));
         self.scripts_dir = Some(dir);
+    }
+
+    /// `<scripts>/lib`, the shared-module base for `import`, once a
+    /// scripts directory is known (the folder itself need not exist yet).
+    pub fn lib_dir(&self) -> Option<PathBuf> {
+        self.scripts_dir.as_ref().map(|d| d.join("lib"))
     }
 
     /// Discover entities with `script` component and compile their scripts
@@ -85,7 +99,7 @@ impl ScriptSync {
             }
 
             let script_path = scripts_dir.join(source);
-            if !script_path.exists() {
+            if !vfs::exists(&script_path) {
                 tracing::warn!("File not found: {}", script_path.display());
                 self.discovered.insert(entity_id);
                 continue;
@@ -95,7 +109,7 @@ impl ScriptSync {
             match engine.compile_file(&script_path) {
                 Ok(ast) => {
                     println!("[script] Loaded: {} → {}", entity_name, source);
-                    // Record file timestamp
+                    // Record file timestamp (hot reload watches the disk)
                     if let Ok(meta) = std::fs::metadata(&script_path) {
                         if let Ok(modified) = meta.modified() {
                             self.file_timestamps.insert(script_path.clone(), modified);
@@ -119,12 +133,27 @@ impl ScriptSync {
             None => return,
         };
 
+        // A changed shared module invalidates every importer: drop the
+        // resolver cache and recompile all scripts this frame.
+        let lib_now = scan_lib(&scripts_dir.join("lib"));
+        let lib_changed = lib_now != self.lib_timestamps;
+        if lib_changed {
+            println!("[script] scripts/lib changed - reloading all scripts");
+            self.lib_timestamps = lib_now;
+            engine.reset_module_cache();
+        }
+
         // Collect scripts that need reloading
         let mut to_reload: Vec<(EntityId, PathBuf)> = Vec::new();
 
         for (entity_id, script) in &engine.scripts {
             let script_path = scripts_dir.join(&script.source_path);
+            if lib_changed {
+                to_reload.push((*entity_id, script_path));
+                continue;
+            }
 
+            // Hot reload watches the disk (a memory source has no mtimes).
             let current_modified = match std::fs::metadata(&script_path) {
                 Ok(meta) => meta.modified().ok(),
                 Err(_) => continue,
@@ -163,6 +192,34 @@ impl ScriptSync {
     }
 }
 
+/// Snapshot every `.rhai` file under `lib` (recursively) with its mtime.
+/// Empty when the folder does not exist. Hot reload watches the disk, so
+/// this stays on `std::fs`.
+#[allow(clippy::disallowed_methods)] // hot reload polls the disk; native only (#97)
+fn scan_lib(lib: &Path) -> HashMap<PathBuf, SystemTime> {
+    fn walk(dir: &Path, out: &mut HashMap<PathBuf, SystemTime>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rhai") {
+                if let Some(m) = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                {
+                    out.insert(path, m);
+                }
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    walk(lib, &mut out);
+    out
+}
+
 /// Load scripts from the `scripts/` directory next to the scene file.
 /// Also checks one level up (e.g. game root) for projects that use a `scenes/` subdirectory.
 pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
@@ -171,7 +228,7 @@ pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
         .unwrap_or_else(|| Path::new("."));
 
     let scripts_dir = scene_dir.join("scripts");
-    if scripts_dir.is_dir() {
+    if vfs::is_dir(&scripts_dir) {
         sync.set_scripts_dir(scripts_dir);
         return;
     }
@@ -179,7 +236,7 @@ pub fn load_scripts_from_scene(scene_path: &str, sync: &mut ScriptSync) {
     // Check parent directory (game project structure: scenes/ and scripts/ are siblings)
     if let Some(parent) = scene_dir.parent() {
         let scripts_dir = parent.join("scripts");
-        if scripts_dir.is_dir() {
+        if vfs::is_dir(&scripts_dir) {
             sync.set_scripts_dir(scripts_dir);
         }
     }

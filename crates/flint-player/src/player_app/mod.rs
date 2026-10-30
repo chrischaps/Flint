@@ -3,36 +3,58 @@
 //! Runs the game loop with physics, input, and first-person camera.
 
 mod debug_panels;
+mod egui_input;
 mod events;
+#[cfg(test)]
+mod capture_gate_tests;
+#[cfg(test)]
+mod debug_key_tests;
+#[cfg(test)]
+mod extension_tests;
+#[cfg(test)]
+mod hold_tests;
+#[cfg(test)]
+mod vfs_tests;
+pub mod fonts;
 mod frame;
 mod hud_render;
 mod init;
 mod input_config;
+pub mod input_script;
 #[cfg(feature = "debug-hud")]
 mod music_guide_panel;
 mod music_session;
-mod transition;
+mod pacing;
+mod persist;
 pub(crate) mod scene_loading;
 mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
+mod transition;
+#[cfg(target_arch = "wasm32")]
+pub mod web_page;
+#[cfg(target_arch = "wasm32")]
+pub mod web_startup;
+mod world_text;
 
 #[cfg(target_os = "android")]
 use events::AndroidGamepadTracker;
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
 use flint_audio::AudioSystem;
-use transition::TransitionPhase;
 use flint_ecs::FlintWorld;
 use flint_particles::ParticleSystem;
 use flint_physics::PhysicsSystem;
 use flint_render::{Camera, RenderContext, SceneRenderer};
-use flint_runtime::{GameClock, GameStateMachine, InputConfig, InputState, PersistentStore};
-use flint_script::context::DrawCommand;
+use flint_runtime::{
+    GameClock, GameStateMachine, InputConfig, InputState, PersistentStore, SaveDebounce,
+};
+use flint_script::context::DrawItem;
 use flint_script::ScriptSystem;
 use gilrs::Gilrs;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use transition::TransitionPhase;
 use winit::window::Window;
 
 // Component-name conventions shared by the debug panels (debug_panels.rs)
@@ -66,6 +88,82 @@ const CAMERA_TUNING_COMPONENT: &str = "camera_tuning";
 /// `timeline_panel::MANIFEST_MAP_PANEL`.
 #[cfg(feature = "debug-hud")]
 const GRASS_DEBUG_PANEL: &str = "Grass Debug";
+
+/// Frame-capture settings for the player (`--screenshot` family of flags).
+///
+/// Times are compared against `GameClock::total_time`, so they are game
+/// seconds since the first tick, not wall-clock seconds since launch.
+#[derive(Debug, Clone, Default)]
+pub struct CaptureConfig {
+    /// Output path. Base name for numbered files when `every` is set
+    /// (`hud.png` -> `hud_0001.png`, `hud_0002.png`, ...).
+    pub path: Option<std::path::PathBuf>,
+    /// Game time (s) at which to take the single screenshot. Default 0 =
+    /// first frame.
+    pub at: f64,
+    /// Interval (s) between repeated screenshots; None = single shot.
+    pub every: Option<f64>,
+    /// Game time (s) at which the player exits on its own.
+    pub exit_after: Option<f64>,
+    /// Timed input played into `InputState` (`--input-script`).
+    pub input_script: Option<input_script::InputScript>,
+    /// Open the F2 stats overlay on the first frame (`--stats`). F2 still
+    /// closes it.
+    pub show_stats: bool,
+    /// Internal: the first capture has been written.
+    pub(crate) taken: bool,
+    /// Internal: number of numbered frames written so far.
+    pub(crate) sequence: u32,
+    /// Internal: game time of the next scheduled interval capture.
+    pub(crate) next_due: f64,
+    /// Internal: frames presented and game time accumulated after the first
+    /// `PERF_SKIP_SECS`, reported on `--exit-after` as an average frame time.
+    pub(crate) perf_frames: u32,
+    pub(crate) perf_time: f64,
+    /// Internal: render stats summed over the same frames, reported beside
+    /// the frame time.
+    pub(crate) perf_draws: u64,
+    pub(crate) perf_entity_draws: u64,
+    pub(crate) perf_culled: u64,
+    pub(crate) perf_triangles: u64,
+    /// GPU frame times summed over frames that had one (ADR 0108)
+    pub(crate) perf_gpu_ms: f64,
+    pub(crate) perf_gpu_frames: u64,
+    /// The same frames' dt and present-to-present times, reported as a
+    /// spread so uneven pacing shows at an even mean.
+    pub(crate) perf_pacing: pacing::Pacing,
+}
+
+/// Game seconds ignored by the `--exit-after` frame-time report (loading,
+/// shader warm-up, first-frame texture uploads).
+pub(crate) const PERF_SKIP_SECS: f64 = 2.0;
+
+impl CaptureConfig {
+    /// Whether this run is a capture: it shoots, stops on its own or plays
+    /// an input script. A capture hears its script alone: real keys, the
+    /// mouse, the wheel and real pads are dropped before egui or the game
+    /// sees them, so a stray scroll over its window can't move its shot
+    /// (ADR 0110's amendment).
+    pub fn is_capture(&self) -> bool {
+        self.path.is_some() || self.exit_after.is_some() || self.input_script.is_some()
+    }
+
+    /// Build a capture schedule. `every <= 0` means single-shot.
+    pub fn new(
+        path: Option<std::path::PathBuf>,
+        at: f64,
+        every: Option<f64>,
+        exit_after: Option<f64>,
+    ) -> Self {
+        Self {
+            path,
+            at,
+            every: every.filter(|s| *s > 0.0),
+            exit_after,
+            ..Default::default()
+        }
+    }
+}
 
 pub struct PlayerApp {
     // Core state
@@ -104,8 +202,28 @@ pub struct PlayerApp {
     egui_renderer: Option<egui_wgpu::Renderer>,
 
     // Script-driven 2D draw commands
-    draw_commands: Vec<DrawCommand>,
+    draw_commands: Vec<DrawItem>,
+    /// Depth-tested world text queued this frame (ADR 0104), laid out in
+    /// the egui pass and drawn before the HUD.
+    world_texts: Vec<flint_core::world_text::WorldText>,
+    world_text_pipeline: Option<world_text::WorldTextPipeline>,
     ui_textures: HashMap<String, egui::TextureHandle>,
+    /// Family names registered from `<project>/fonts/` (file stems + manifest
+    /// aliases). The HUD renderer falls back to the default font for names
+    /// outside this set.
+    ui_fonts: HashSet<String>,
+    /// Unknown font names already warned about (one warn per name).
+    ui_fonts_warned: HashSet<String>,
+    /// The `fonts/` root the current font set was scanned from; rescan on
+    /// scene change only when this differs.
+    ui_fonts_root: Option<std::path::PathBuf>,
+    /// Whether egui has been given the fonts at least once. Until then
+    /// `refresh_project_fonts` always installs them.
+    ui_fonts_installed: bool,
+    /// Set after the first egui pass: `Context::fonts()` panics before then,
+    /// so the script `measure_text` closure falls back to an estimate until
+    /// this flips.
+    egui_fonts_ready: Arc<std::sync::atomic::AtomicBool>,
 
     // Asset catalog (optional, for content-addressed asset resolution)
     catalog: Option<AssetCatalog>,
@@ -114,6 +232,14 @@ pub struct PlayerApp {
     // Window options
     pub fullscreen: bool,
     cursor_captured: bool,
+    /// Whether the window has the keyboard focus; real pads are dropped
+    /// and released while it doesn't (ADR 0110).
+    window_focused: bool,
+    /// The `InputState` slots real pads (gilrs) have written, released when
+    /// the window loses focus.
+    real_pad_slots: std::collections::HashSet<u32>,
+    /// The modifiers held now, real or scripted, for `PlayerExtension::on_key`.
+    key_modifiers: winit::keyboard::ModifiersState,
 
     // Environment
     pub skybox_path: Option<String>,
@@ -122,6 +248,12 @@ pub struct PlayerApp {
     /// MSAA sample count for the scene renderer (1 = off, 4 = on; ADR 0058).
     /// Set from the --msaa CLI flag before the window/renderer exist.
     pub msaa_sample_count: u32,
+    /// Game time, in seconds, at which the clock stops (it steps by zero
+    /// from then on, and scripts keep running on a still world). With
+    /// `clock.frame_step` it holds a page on an exact moment for a
+    /// screenshot (#102, the web's `?hold_at=`); `--screenshot-at` is the
+    /// desktop's way.
+    pub hold_at: Option<f64>,
     /// Scene-authored diffuse terminator wrap; None = 0 = legacy shading
     pub scene_diffuse_wrap: Option<f32>,
     pub scene_oren_nayar: Option<f32>,
@@ -170,6 +302,20 @@ pub struct PlayerApp {
     /// (silent scenes start instantly); audio_source + session stems
     /// unaffected. Set from the scene file before startup, like msaa.
     pub scene_preload_audio: bool,
+    /// `vfs::generation()` when the scene's audio was last loaded. A late
+    /// bundle (#98) installs a grown file source mid-game; when the count
+    /// moves, the audio that couldn't be found before is loaded.
+    pub(super) audio_vfs_generation: u64,
+
+    /// Initial window size in physical pixels (`--width`/`--height`).
+    /// Ignored on Android, where the surface is the screen.
+    pub window_size: (u32, u32),
+    /// Screenshot capture driven by `--screenshot` / `--screenshot-at` /
+    /// `--screenshot-every` / `--exit-after`. Captures the presented frame
+    /// (scene + egui HUD) right before `present()`.
+    pub capture: CaptureConfig,
+    /// Set once `--exit-after` elapses; the redraw handler exits the loop.
+    exit_requested: bool,
 
     // Input config layering + remap persistence
     input_config_override: Option<String>,
@@ -184,6 +330,8 @@ pub struct PlayerApp {
     // State machine + persistence (survive scene transitions)
     state_machine: GameStateMachine,
     persistent_store: PersistentStore,
+    /// When to write `save/persist.toml` after a change (see `persist.rs`).
+    persist_debounce: SaveDebounce,
 
     // Scene transition lifecycle
     transition_phase: TransitionPhase,
@@ -197,10 +345,16 @@ pub struct PlayerApp {
     // Debug overlay panels (F3 toggle)
     #[cfg(feature = "debug-hud")]
     debug_panels: Vec<Box<dyn flint_debug_ui::DebugPanel>>,
+    /// F3 Particles panel toggle: when false the sim still runs but nothing
+    /// is uploaded to the renderer (ADR 0068).
+    particles_render_enabled: bool,
 
     // Rendering stats overlay (F2 toggle)
     show_stats: bool,
     stats_frame_times: std::collections::VecDeque<f64>,
+    /// The player turned the renderer's GPU timing on for the overlay
+    /// (ADR 0108), so it turns it off again when the overlay closes
+    stats_gpu_timing: bool,
 
     // Procedural generation resolver for runtime asset resolution
     procgen_resolver: flint_procgen::ProcGenResolver,
@@ -215,6 +369,22 @@ pub struct PlayerApp {
     // Android JNI axis reader for trigger/right-stick values from GameActivity
     #[cfg(target_os = "android")]
     android_axis_reader: Option<fn() -> [f32; 4]>,
+
+    /// Game-installed hooks (`add_extension`), in the order they were added.
+    extensions: Vec<Box<dyn crate::extension::PlayerExtension>>,
+    /// Which held keys and buttons belong to egui (game egui layer, ADR 0073).
+    egui_input: egui_input::EguiInputGate,
+
+    /// The device request in flight on the web (#99): `RenderContext::new`
+    /// resolves into it, and startup finishes on the loop.
+    #[cfg(target_arch = "wasm32")]
+    pending_render: web_startup::RenderSlot,
+    /// Wakes the event loop when the device arrives (`set_event_proxy`).
+    #[cfg(target_arch = "wasm32")]
+    event_proxy: Option<winit::event_loop::EventLoopProxy<()>>,
+    /// The browser's pointer lock, followed each frame (#102).
+    #[cfg(target_arch = "wasm32")]
+    pointer_lock: web_page::PointerLock,
 }
 
 use input_config::{InputConfigPaths, PendingRebind};

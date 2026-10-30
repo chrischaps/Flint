@@ -34,7 +34,7 @@ pub struct BitmapFont {
 impl BitmapFont {
     /// Parse a `.font.toml` file. Returns `None` on parse failure.
     pub fn load(path: &Path) -> Option<Self> {
-        let content = std::fs::read_to_string(path).ok()?;
+        let content = flint_core::vfs::read_to_string(path).ok()?;
         let table: toml::Value = content.parse().ok()?;
         let font = table.get("font")?;
 

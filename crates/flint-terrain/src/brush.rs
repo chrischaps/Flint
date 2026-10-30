@@ -200,8 +200,11 @@ pub fn apply_splat_brush(
 
 /// Cast a ray against a heightmap and find the UV intersection point.
 ///
-/// Uses ray marching with binary search refinement.
-/// Returns `Some((u, v))` if the ray hits the terrain.
+/// The heightmap is `res` x `res` samples spanning `0..width` x `0..depth`,
+/// with world y = sample x `height_scale`. Returns `Some((u, v))` if the ray
+/// hits the terrain. It's [`GroundField::ray`](crate::GroundField::ray)'s
+/// march (ADR 0095): the ray is clipped to the terrain's box, so it may
+/// start anywhere, then stepped a texel at a time and the crossing bisected.
 pub fn ray_heightmap_intersect(
     origin: [f32; 3],
     dir: [f32; 3],
@@ -212,73 +215,34 @@ pub fn ray_heightmap_intersect(
     height_scale: f32,
 ) -> Option<(f32, f32)> {
     let res = res as usize;
-
-    // Normalize direction
-    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-    if len < 1e-8 {
+    if res < 2
+        || heights.len() < res * res
+        || width.is_nan()
+        || width <= 0.0
+        || depth.is_nan()
+        || depth <= 0.0
+    {
         return None;
     }
-    let d = [dir[0] / len, dir[1] / len, dir[2] / len];
-
-    // March along ray with adaptive step
-    let max_dist = (width * width + depth * depth + (height_scale * height_scale)).sqrt() * 2.0;
-    let step = (width.min(depth)) / res as f32;
-
-    let mut t = 0.0f32;
-    let mut prev_above = true;
-
-    while t < max_dist {
-        let px = origin[0] + d[0] * t;
-        let py = origin[1] + d[1] * t;
-        let pz = origin[2] + d[2] * t;
-
-        // Convert to UV
-        let u = px / width;
-        let v = pz / depth;
-
-        if !(-0.1..=1.1).contains(&u) || !(-0.1..=1.1).contains(&v) {
-            // Way out of bounds — if we were in bounds before, we've exited
-            if t > step * 2.0 {
-                return None;
-            }
-            t += step;
-            continue;
-        }
-
-        let terrain_h =
-            sample_bilinear(heights, res, u.clamp(0.0, 1.0), v.clamp(0.0, 1.0)) * height_scale;
-        let above = py > terrain_h;
-
-        if !above && prev_above && t > 0.0 {
-            // Binary search refinement
-            let mut lo = t - step;
-            let mut hi = t;
-            for _ in 0..16 {
-                let mid = (lo + hi) * 0.5;
-                let mx = origin[0] + d[0] * mid;
-                let my = origin[1] + d[1] * mid;
-                let mz = origin[2] + d[2] * mid;
-                let mu = (mx / width).clamp(0.0, 1.0);
-                let mv = (mz / depth).clamp(0.0, 1.0);
-                let mh = sample_bilinear(heights, res, mu, mv) * height_scale;
-                if my > mh {
-                    lo = mid;
-                } else {
-                    hi = mid;
-                }
-            }
-
-            let final_t = (lo + hi) * 0.5;
-            let fu = ((origin[0] + d[0] * final_t) / width).clamp(0.0, 1.0);
-            let fv = ((origin[2] + d[2] * final_t) / depth).clamp(0.0, 1.0);
-            return Some((fu, fv));
-        }
-
-        prev_above = above;
-        t += step;
-    }
-
-    None
+    let (lo, hi) = heights[..res * res]
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &h| {
+            (lo.min(h), hi.max(h))
+        });
+    let (a, b) = (lo * height_scale, hi * height_scale);
+    let step = width.min(depth) / (res - 1) as f32;
+    let hit = crate::ground::march(
+        origin,
+        dir,
+        [0.0, a.min(b), 0.0],
+        [width, a.max(b), depth],
+        step,
+        |x, z| sample_bilinear(heights, res, x / width, z / depth) * height_scale,
+    )?;
+    Some((
+        (hit[0] / width).clamp(0.0, 1.0),
+        (hit[2] / depth).clamp(0.0, 1.0),
+    ))
 }
 
 fn falloff_weight(dist: f32, falloff: f32) -> f32 {

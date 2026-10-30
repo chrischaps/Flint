@@ -24,7 +24,7 @@ use crate::input_stream::{
     InputEvent, LeanSample, PressureSample, PressureSide, PulseEvent, SwaySample,
 };
 use crate::tempo::ms_to_samples;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use std::io::{BufRead, Write};
 use std::path::Path;
 
@@ -260,8 +260,8 @@ pub fn read_session(path: &Path) -> Result<(SessionHeader, Vec<InputEvent>)> {
 }
 
 fn read_session_inner(path: &Path) -> Result<(SessionHeader, Vec<(i64, InputEvent)>)> {
-    let file = std::fs::File::open(path)?;
-    let mut lines = std::io::BufReader::new(file).lines();
+    let bytes = vfs::read(path)?;
+    let mut lines = std::io::Cursor::new(bytes).lines();
     let header_line = lines
         .next()
         .ok_or_else(|| FlintError::ParseError("session file is empty".into()))??;

@@ -1,29 +1,25 @@
 //! GPU-instanced particle render pipeline
 //!
-//! Renders camera-facing quads via instanced draw calls.
-//! Two pipelines: alpha blend and additive blend.
-//! Instance data comes from a storage buffer (supports 10,000+ particles).
+//! Renders camera-facing quads via instanced draw calls. One pipeline per
+//! [`ParticleBlendMode`] (alpha, additive, premultiplied, multiply), all
+//! sharing a single persistent storage buffer of [`ParticleInstance`]s that
+//! is grown on demand and written once per frame (ADR 0068). Instance data
+//! is the same `#[repr(C)]` type the simulation packs — no per-crate copy.
 
 use bytemuck::{Pod, Zeroable};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-/// GPU instance data for a single particle — matches WGSL struct layout
-/// AND flint-particles' `ParticleInstance` (the player casts between them).
-/// 64 bytes, 16-byte aligned (4 x vec4).
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct ParticleInstanceGpu {
-    pub pos_size: [f32; 4],       // xyz = position, w = size
-    pub color: [f32; 4],          // rgba
-    pub rotation_frame: [f32; 4], // x = rotation, y = frame, z = frames_x, w = frames_y
-    pub vel_stretch: [f32; 4],    // xyz = velocity * stretch, w > 0 = enabled
-}
+pub use flint_particles::{ParticleBlendMode, ParticleInstance};
 
 /// Data for one emitter's particle draw, provided by the particle system
 pub struct ParticleDrawData<'a> {
-    pub instances: &'a [ParticleInstanceGpu],
+    pub instances: &'a [ParticleInstance],
     pub texture: &'a str,
-    pub additive: bool,
+    pub blend: ParticleBlendMode,
+    /// View distance of the emitter origin; order-dependent blends draw
+    /// far-to-near.
+    pub sort_key: f32,
 }
 
 /// Camera uniforms shared across all particle draws in a frame
@@ -37,26 +33,31 @@ pub struct ParticleUniforms {
     pub _pad1: f32,
 }
 
-/// A particle draw call (one per emitter with alive particles)
+/// A particle draw call (one per emitter with alive particles), indexing a
+/// range of the shared instance buffer.
 pub struct ParticleDrawCall {
-    pub instance_buffer: wgpu::Buffer,
+    pub first_instance: u32,
     pub instance_count: u32,
-    pub texture_bind_group: wgpu::BindGroup,
-    pub instance_bind_group: wgpu::BindGroup,
-    pub additive: bool,
+    pub texture_bind_group: Arc<wgpu::BindGroup>,
+    pub blend: ParticleBlendMode,
+    pub sort_key: f32,
 }
 
-/// The particle rendering pipeline (alpha + additive variants)
+/// The particle rendering pipeline (one variant per blend mode)
 pub struct ParticlePipeline {
-    pub alpha_pipeline: wgpu::RenderPipeline,
-    pub additive_pipeline: wgpu::RenderPipeline,
+    pipelines: [wgpu::RenderPipeline; 4],
     pub uniform_bind_group_layout: wgpu::BindGroupLayout,
     pub instance_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub quad_index_buffer: wgpu::Buffer,
     pub uniform_buffer: wgpu::Buffer,
     pub uniform_bind_group: wgpu::BindGroup,
+    instance_buffer: wgpu::Buffer,
+    instance_capacity: u32,
+    instance_bind_group: wgpu::BindGroup,
 }
+
+const INITIAL_INSTANCE_CAPACITY: u32 = 1024;
 
 impl ParticlePipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, sample_count: u32) -> Self {
@@ -140,94 +141,50 @@ impl ParticlePipeline {
             bias: wgpu::DepthBiasState::default(),
         };
 
-        // Alpha blend pipeline
-        let alpha_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Particle Alpha Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_particle"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_particle"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(depth_stencil.clone()),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
-
-        // Additive blend pipeline (src_alpha + One)
-        let additive_blend = wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
+        let make = |mode: ParticleBlendMode| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(&format!("Particle {} Pipeline", mode.as_str())),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_particle"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_particle"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(blend_state(mode)),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(depth_stencil.clone()),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
+                cache: None,
+            })
         };
-
-        let additive_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Particle Additive Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_particle"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_particle"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(additive_blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(depth_stencil),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-            cache: None,
-        });
+        let pipelines = [
+            make(ParticleBlendMode::Alpha),
+            make(ParticleBlendMode::Additive),
+            make(ParticleBlendMode::Premultiplied),
+            make(ParticleBlendMode::Multiply),
+        ];
 
         // Shared quad index buffer
         let quad_indices: [u32; 6] = [0, 1, 2, 2, 1, 3];
@@ -259,15 +216,174 @@ impl ParticlePipeline {
             label: Some("Particle Uniform Bind Group"),
         });
 
+        let (instance_buffer, instance_bind_group) = Self::create_instance_buffer(
+            device,
+            &instance_bind_group_layout,
+            INITIAL_INSTANCE_CAPACITY,
+        );
+
         Self {
-            alpha_pipeline,
-            additive_pipeline,
+            pipelines,
             uniform_bind_group_layout,
             instance_bind_group_layout,
             texture_bind_group_layout,
             quad_index_buffer,
             uniform_buffer,
             uniform_bind_group,
+            instance_buffer,
+            instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            instance_bind_group,
+        }
+    }
+
+    fn create_instance_buffer(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        capacity: u32,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Particle Instance Buffer"),
+            size: capacity as u64 * std::mem::size_of::<ParticleInstance>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+            label: Some("Particle Instance Bind Group"),
+        });
+        (buffer, bind_group)
+    }
+
+    /// Pipeline variant for a blend mode.
+    pub fn pipeline(&self, mode: ParticleBlendMode) -> &wgpu::RenderPipeline {
+        &self.pipelines[mode.index()]
+    }
+
+    pub fn instance_bind_group(&self) -> &wgpu::BindGroup {
+        &self.instance_bind_group
+    }
+
+    pub fn instance_capacity(&self) -> u32 {
+        self.instance_capacity
+    }
+
+    /// Grow the shared instance buffer (next power of two) so it holds at
+    /// least `needed` instances. Returns `true` when it was reallocated.
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, needed: u32) -> bool {
+        if needed <= self.instance_capacity {
+            return false;
+        }
+        let capacity = needed.max(INITIAL_INSTANCE_CAPACITY).next_power_of_two();
+        let (buffer, bind_group) =
+            Self::create_instance_buffer(device, &self.instance_bind_group_layout, capacity);
+        self.instance_buffer = buffer;
+        self.instance_bind_group = bind_group;
+        self.instance_capacity = capacity;
+        true
+    }
+
+    /// Upload the frame's packed instances (call after `ensure_capacity`).
+    pub fn write_instances(&self, queue: &wgpu::Queue, instances: &[ParticleInstance]) {
+        if instances.is_empty() {
+            return;
+        }
+        debug_assert!(instances.len() as u32 <= self.instance_capacity);
+        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+    }
+
+    /// Bind group for a sprite texture.
+    pub fn create_texture_bind_group(
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+        label: &str,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+            label: Some(label),
+        })
+    }
+}
+
+/// wgpu blend state for each particle blend mode.
+pub fn blend_state(mode: ParticleBlendMode) -> wgpu::BlendState {
+    use wgpu::{BlendComponent, BlendFactor, BlendOperation, BlendState};
+    match mode {
+        ParticleBlendMode::Alpha => BlendState::ALPHA_BLENDING,
+        ParticleBlendMode::Additive => BlendState {
+            color: BlendComponent {
+                src_factor: BlendFactor::SrcAlpha,
+                dst_factor: BlendFactor::One,
+                operation: BlendOperation::Add,
+            },
+            alpha: BlendComponent {
+                src_factor: BlendFactor::One,
+                dst_factor: BlendFactor::One,
+                operation: BlendOperation::Add,
+            },
+        },
+        ParticleBlendMode::Premultiplied => BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        ParticleBlendMode::Multiply => BlendState {
+            color: BlendComponent {
+                src_factor: BlendFactor::Dst,
+                dst_factor: BlendFactor::OneMinusSrcAlpha,
+                operation: BlendOperation::Add,
+            },
+            alpha: BlendComponent {
+                src_factor: BlendFactor::Zero,
+                dst_factor: BlendFactor::One,
+                operation: BlendOperation::Add,
+            },
+        },
+    }
+}
+
+/// Order draws for correct blending: order-dependent modes far-to-near
+/// (stable on the caller's deterministic order), additive last.
+pub fn sort_particle_draws(draws: &mut [ParticleDrawCall]) {
+    draws.sort_by(|a, b| {
+        let ka = a.blend.is_order_independent();
+        let kb = b.blend.is_order_independent();
+        ka.cmp(&kb).then_with(|| {
+            if ka {
+                std::cmp::Ordering::Equal
+            } else {
+                b.sort_key
+                    .partial_cmp(&a.sort_key)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }
+        })
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_instance_type_is_64_bytes() {
+        assert_eq!(std::mem::size_of::<ParticleInstance>(), 64);
+    }
+
+    #[test]
+    fn blend_index_matches_pipeline_order() {
+        for (i, m) in ParticleBlendMode::ALL.iter().enumerate() {
+            assert_eq!(m.index(), i);
         }
     }
 }

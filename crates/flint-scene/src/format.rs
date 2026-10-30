@@ -88,6 +88,19 @@ pub struct PostProcessDef {
     pub fog_height_falloff: f32,
     #[serde(default)]
     pub fog_height_origin: f32,
+    /// Height fog's density at `fog_height_origin` (ADR 0101); 0 adds none.
+    #[serde(default)]
+    pub fog_height_density: f32,
+    /// Aerial tint (ADR 0101): far things take this colour, up to
+    /// `fog_tint_strength` (0 = off), over `fog_tint_start..fog_tint_end` m.
+    #[serde(default = "default_fog_tint_color")]
+    pub fog_tint_color: [f32; 3],
+    #[serde(default)]
+    pub fog_tint_strength: f32,
+    #[serde(default = "default_fog_tint_start")]
+    pub fog_tint_start: f32,
+    #[serde(default = "default_fog_tint_end")]
+    pub fog_tint_end: f32,
     #[serde(default)]
     pub dither_enabled: bool,
     #[serde(default = "default_dither_intensity")]
@@ -200,6 +213,18 @@ fn default_fog_end() -> f32 {
 
 fn default_fog_height_falloff() -> f32 {
     0.1
+}
+
+fn default_fog_tint_color() -> [f32; 3] {
+    [0.42, 0.50, 0.65]
+}
+
+fn default_fog_tint_start() -> f32 {
+    100.0
+}
+
+fn default_fog_tint_end() -> f32 {
+    1000.0
 }
 
 fn default_dof_focus_distance() -> f32 {

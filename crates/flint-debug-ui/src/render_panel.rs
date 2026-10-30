@@ -210,6 +210,36 @@ impl RenderDebugPanel {
                 0.0..=1.0,
             );
             f.pp_changed |= drag(ui, "Height origin", &mut self.pp.fog_height_origin, 0.25);
+            f.pp_changed |= slider_log(
+                ui,
+                "Height density",
+                &mut self.pp.fog_height_density,
+                0.0..=0.5,
+            );
+            f.pp_changed |= color_row(ui, "Tint color", &mut self.pp.fog_tint_color);
+            f.pp_changed |= slider(ui, "Tint strength", &mut self.pp.fog_tint_strength, 0.0..=1.0);
+            f.pp_changed |= drag(ui, "Tint start", &mut self.pp.fog_tint_start, 1.0);
+            f.pp_changed |= drag(ui, "Tint end", &mut self.pp.fog_tint_end, 1.0);
+            // Ground fog (ADR 0106): shows where the game has set a map
+            f.pp_changed |= slider_log(
+                ui,
+                "Ground density",
+                &mut self.pp.ground_fog_density,
+                0.0..=2.0,
+            );
+            f.pp_changed |= color_row(ui, "Ground color", &mut self.pp.ground_fog_color);
+            f.pp_changed |= slider_log(
+                ui,
+                "Ground falloff",
+                &mut self.pp.ground_fog_falloff,
+                0.05..=5.0,
+            );
+            let r = ui.horizontal(|ui| {
+                ui.label("Ground steps");
+                ui.add(egui::Slider::new(&mut self.pp.ground_fog_steps, 1..=64))
+                    .changed()
+            });
+            f.pp_changed |= r.inner;
         });
 
         section(ui, "Bloom", false, |ui| {

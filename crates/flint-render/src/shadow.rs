@@ -22,6 +22,16 @@ pub struct ShadowDrawUniforms {
     pub model: [[f32; 4]; 4],
 }
 
+/// Byte stride between per-draw shadow uniforms in the shared draw buffer.
+/// Dynamic uniform offsets must be multiples of
+/// `min_uniform_buffer_offset_alignment`, which is 256 on every backend we
+/// ship on; `ShadowDrawUniforms` is 128 bytes, so each slot is half padding.
+pub const SHADOW_DRAW_STRIDE: u64 = 256;
+
+/// Initial number of per-draw slots in the shared shadow draw buffer
+/// (grows on demand; sized for a few hundred entities × cascades).
+const SHADOW_DRAW_INITIAL_CAPACITY: u32 = 1024;
+
 /// Uniform data passed to the main shader for shadow sampling
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -67,6 +77,14 @@ pub struct ShadowPass {
     pub cascade_views: Vec<wgpu::TextureView>,
     pub shadow_sampler: wgpu::Sampler,
     pub shadow_uniforms_buffer: wgpu::Buffer,
+    /// One uniform buffer for every shadow draw of the frame (all cascades),
+    /// bound once with a dynamic offset per draw. Replaces the per-draw
+    /// `create_buffer_init` + `create_bind_group` pair, which cost more CPU
+    /// than the draws themselves once a scene had a few hundred entities.
+    pub draw_buffer: wgpu::Buffer,
+    pub draw_bind_group: wgpu::BindGroup,
+    /// Number of `SHADOW_DRAW_STRIDE` slots `draw_buffer` holds.
+    pub draw_capacity: u32,
     pub resolution: u32,
     pub enabled: bool,
     shadow_uniforms: ShadowUniforms,
@@ -87,8 +105,10 @@ impl ShadowPass {
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                            ShadowDrawUniforms,
+                        >() as u64),
                     },
                     count: None,
                 }],
@@ -249,6 +269,12 @@ impl ShadowPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let (draw_buffer, draw_bind_group) = Self::create_draw_buffer(
+            device,
+            &shadow_bind_group_layout,
+            SHADOW_DRAW_INITIAL_CAPACITY,
+        );
+
         Self {
             shadow_pipeline,
             shadow_bind_group_layout,
@@ -259,10 +285,72 @@ impl ShadowPass {
             cascade_views,
             shadow_sampler,
             shadow_uniforms_buffer,
+            draw_buffer,
+            draw_bind_group,
+            draw_capacity: SHADOW_DRAW_INITIAL_CAPACITY,
             resolution,
             enabled: true,
             shadow_uniforms,
         }
+    }
+
+    fn create_draw_buffer(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        capacity: u32,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Shadow Draw Uniforms (all draws)"),
+            size: SHADOW_DRAW_STRIDE * capacity as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(std::mem::size_of::<ShadowDrawUniforms>() as u64),
+                }),
+            }],
+            label: Some("Shadow Draw Bind Group (dynamic offset)"),
+        });
+        (buffer, bind_group)
+    }
+
+    /// Make sure the shared draw buffer holds at least `draws` slots,
+    /// growing geometrically so a busy scene reallocates a handful of times.
+    pub fn ensure_draw_capacity(&mut self, device: &wgpu::Device, draws: u32) {
+        if draws <= self.draw_capacity {
+            return;
+        }
+        let mut capacity = self.draw_capacity.max(1);
+        while capacity < draws {
+            capacity *= 2;
+        }
+        let (buffer, bind_group) =
+            Self::create_draw_buffer(device, &self.shadow_bind_group_layout, capacity);
+        self.draw_buffer = buffer;
+        self.draw_bind_group = bind_group;
+        self.draw_capacity = capacity;
+    }
+
+    /// Upload one frame's shadow draw uniforms, one `SHADOW_DRAW_STRIDE`
+    /// slot each, in the order the passes will bind them.
+    pub fn write_draw_uniforms(&self, queue: &wgpu::Queue, draws: &[ShadowDrawUniforms]) {
+        if draws.is_empty() {
+            return;
+        }
+        debug_assert!(draws.len() as u32 <= self.draw_capacity);
+        let stride = SHADOW_DRAW_STRIDE as usize;
+        let mut bytes = vec![0u8; stride * draws.len()];
+        for (i, d) in draws.iter().enumerate() {
+            let src = bytemuck::bytes_of(d);
+            bytes[i * stride..i * stride + src.len()].copy_from_slice(src);
+        }
+        queue.write_buffer(&self.draw_buffer, 0, &bytes);
     }
 
     /// Compute cascade splits and light view-projection matrices.

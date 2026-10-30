@@ -122,6 +122,7 @@ fn validate_field_value(
                 })
             }
         }
+        (FieldType::Table, toml::Value::Table(_)) => Ok(()),
         (FieldType::Array { element }, toml::Value::Array(arr)) => {
             for (i, item) in arr.iter().enumerate() {
                 validate_field_value(&format!("{}[{}]", field_name, i), element, item, None, None)?;

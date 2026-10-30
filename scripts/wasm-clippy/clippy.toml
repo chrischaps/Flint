@@ -1,0 +1,23 @@
+# Calls that compile for wasm32-unknown-unknown but panic there at run time
+# ("time not implemented on this platform"). CI's wasm job denies them in
+# every crate flint-player links (.github/workflows/ci.yml). #100 moved the
+# sites that predated the check to web-time, so there are no time allows.
+#
+# File reads are denied too: `std::fs` fails on wasm32, so every runtime read
+# goes through `flint_core::vfs` (#97), which the web player backs with its
+# bundle. Writes, and hot reload's polling of the disk, stay native.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "panics on wasm32; use web_time::Instant (#100)" },
+    { path = "std::time::Instant::elapsed", reason = "calls Instant::now, which panics on wasm32; use web_time::Instant (#100)" },
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32; use web_time::SystemTime (#100)" },
+    { path = "std::time::SystemTime::elapsed", reason = "calls SystemTime::now, which panics on wasm32; use web_time::SystemTime (#100)" },
+    { path = "std::fs::read", reason = "no file system on wasm32; use flint_core::vfs::read (#97)" },
+    { path = "std::fs::read_to_string", reason = "no file system on wasm32; use flint_core::vfs::read_to_string (#97)" },
+    { path = "std::fs::read_dir", reason = "no file system on wasm32; use flint_core::vfs::read_dir (#97)" },
+    { path = "std::fs::File::open", reason = "no file system on wasm32; read the bytes with flint_core::vfs::read (#97)" },
+    { path = "std::path::Path::exists", reason = "no file system on wasm32; use flint_core::vfs::exists (#97)" },
+    { path = "std::path::Path::is_file", reason = "no file system on wasm32; use flint_core::vfs::is_file (#97)" },
+    { path = "std::path::Path::is_dir", reason = "no file system on wasm32; use flint_core::vfs::is_dir (#97)" },
+    { path = "image::open", reason = "reads the disk; use flint_render::open_image (#97)" },
+    { path = "gltf::import", reason = "reads the disk; use flint_import::import_gltf (#97)" },
+]

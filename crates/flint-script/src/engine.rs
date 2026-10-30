@@ -5,10 +5,12 @@
 //! that temporarily lends the FlintWorld to scripts.
 
 use crate::api;
-use crate::context::{DrawCommand, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
+use crate::context::{DrawItem, InputSnapshot, ScriptCallContext, ScriptCommand, WorldScope};
+use crate::module_resolver::VfsModuleResolver;
 use flint_core::callbacks as cb;
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f64;
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
 use flint_runtime::GameEvent;
@@ -34,6 +36,7 @@ pub struct ScriptInstance {
     pub has_on_scene_enter: bool,
     pub has_on_animation_end: bool,
     pub has_on_sequence_cue: bool,
+    pub has_on_event: bool,
     pub init_called: bool,
 }
 
@@ -53,6 +56,7 @@ impl ScriptInstance {
         let has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
         let has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         let has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
+        let has_on_event = has_function(&ast, cb::ON_EVENT);
 
         Self {
             ast,
@@ -71,6 +75,7 @@ impl ScriptInstance {
             has_on_scene_enter,
             has_on_animation_end,
             has_on_sequence_cue,
+            has_on_event,
             init_called: false,
         }
     }
@@ -91,6 +96,7 @@ impl ScriptInstance {
         self.has_on_scene_enter = has_function(&ast, cb::ON_SCENE_ENTER);
         self.has_on_animation_end = has_function(&ast, cb::ON_ANIMATION_END);
         self.has_on_sequence_cue = has_function(&ast, cb::ON_SEQUENCE_CUE);
+        self.has_on_event = has_function(&ast, cb::ON_EVENT);
         self.ast = ast;
         // Don't reset init_called — hot-reload preserves state
     }
@@ -115,6 +121,7 @@ const CALLBACK_ARITIES: &[(&str, usize)] = &[
     (cb::ON_SCENE_EXIT, 0),
     (cb::ON_SCENE_ENTER, 0),
     (cb::ON_ANIMATION_END, 1),
+    (cb::ON_EVENT, 2),
 ];
 
 /// Warn at load time if a script defines a callback with the wrong number of parameters.
@@ -145,6 +152,9 @@ pub struct ScriptEngine {
     engine: Engine,
     pub(crate) ctx: Arc<Mutex<ScriptCallContext>>,
     pub(crate) scripts: HashMap<EntityId, ScriptInstance>,
+    /// Base directory for `import "name"` (`<scripts>/lib`). `None` until a
+    /// scene sets it; the resolver then maps `import "x"` to `<lib>/x.rhai`.
+    module_base: Option<std::path::PathBuf>,
 }
 
 impl ScriptEngine {
@@ -162,7 +172,40 @@ impl ScriptEngine {
             engine,
             ctx,
             scripts: HashMap::new(),
+            module_base: None,
         }
+    }
+
+    /// Point `import "name"` at `<dir>/name.rhai` and drop any cached
+    /// modules. Installing a fresh `VfsModuleResolver` is the cache clear:
+    /// the Engine owns its resolver, so re-creating it is simpler than
+    /// keeping a handle to its cache.
+    ///
+    /// Modules are read through the vfs, so `import` resolves on every
+    /// target, from the disk or a memory source.
+    pub fn set_module_base(&mut self, dir: std::path::PathBuf) {
+        self.engine
+            .set_module_resolver(VfsModuleResolver::new(dir.clone()));
+        self.module_base = Some(dir);
+    }
+
+    /// Re-install the module resolver on the same base path, discarding
+    /// every cached module (used when a `scripts/lib` file changes).
+    pub fn reset_module_cache(&mut self) {
+        if let Some(dir) = self.module_base.clone() {
+            self.set_module_base(dir);
+        }
+    }
+
+    /// Current module base directory, if a scene has set one.
+    pub fn module_base(&self) -> Option<&std::path::Path> {
+        self.module_base.as_deref()
+    }
+
+    /// The underlying Rhai engine, for registering native functions on top
+    /// of Flint's API (see `ScriptSystem::rhai_engine_mut`).
+    pub fn rhai_engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
     }
 
     /// Compile a Rhai source file into an AST
@@ -172,7 +215,7 @@ impl ScriptEngine {
 
     /// Compile from a file path
     pub fn compile_file(&self, path: &std::path::Path) -> Result<AST, String> {
-        let source = std::fs::read_to_string(path)
+        let source = vfs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
         self.compile(&source)
     }
@@ -290,10 +333,22 @@ impl ScriptEngine {
         }
     }
 
-    /// Drain all accumulated draw commands
-    pub fn drain_draw_commands(&self) -> Vec<DrawCommand> {
+    /// Drain all accumulated draw commands (and reset the clip stack)
+    pub fn drain_draw_commands(&self) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.ctx);
-        std::mem::take(&mut c.draw_commands)
+        c.take_draw_items()
+    }
+
+    /// Drain the depth-tested world lines scripts queued this frame
+    pub fn drain_world_lines(&self) -> Vec<flint_core::world_line::WorldLine> {
+        let mut c = crate::lock_or_recover(&self.ctx);
+        std::mem::take(&mut c.world_lines)
+    }
+
+    /// Drain the depth-tested world text scripts queued this frame
+    pub fn drain_world_texts(&self) -> Vec<flint_core::world_text::WorldText> {
+        let mut c = crate::lock_or_recover(&self.ctx);
+        std::mem::take(&mut c.world_texts)
     }
 
     /// Route game events to appropriate script callbacks
@@ -322,6 +377,9 @@ impl ScriptEngine {
                 }
                 GameEvent::ActionPressed(action) => {
                     self.call_action_on_all(action, world);
+                }
+                GameEvent::Custom { name, data } => {
+                    self.call_event_on_all(name, data);
                 }
                 _ => {}
             }
@@ -408,6 +466,48 @@ impl ScriptEngine {
         }
     }
 
+    /// Broadcast a custom event to every script that defines
+    /// `on_event(name, data)`, in entity-id order so delivery is
+    /// deterministic. `data` always arrives as a map: a non-table payload
+    /// is wrapped as `#{ value: .. }` (ADR 0072).
+    fn call_event_on_all(&mut self, name: &str, data: &toml::Value) {
+        let mut entity_ids: Vec<EntityId> = self
+            .scripts
+            .iter()
+            .filter(|(_, s)| s.has_on_event)
+            .map(|(id, _)| *id)
+            .collect();
+        if entity_ids.is_empty() {
+            return;
+        }
+        entity_ids.sort_by_key(|id| id.raw());
+
+        let data = match data {
+            toml::Value::Table(_) => api::toml_to_dynamic(data.clone()),
+            other => {
+                let mut map = rhai::Map::new();
+                map.insert("value".into(), api::toml_to_dynamic(other.clone()));
+                rhai::Dynamic::from(map)
+            }
+        };
+
+        for entity_id in entity_ids {
+            let script = self.scripts.get_mut(&entity_id).unwrap();
+            {
+                let mut c = crate::lock_or_recover(&self.ctx);
+                c.current_entity = entity_id;
+            }
+            if let Err(e) = self.engine.call_fn::<()>(
+                &mut script.scope,
+                &script.ast,
+                cb::ON_EVENT,
+                (name.to_string(), data.clone()),
+            ) {
+                tracing::warn!("on_event error ({}): {}", script.source_path, e);
+            }
+        }
+    }
+
     fn call_action_on_all(&mut self, action: &str, world: &FlintWorld) {
         let entity_ids: Vec<EntityId> = self.scripts.keys().copied().collect();
         for entity_id in entity_ids {
@@ -468,6 +568,7 @@ impl ScriptEngine {
         let mut c = crate::lock_or_recover(&self.ctx);
         c.commands.clear();
         c.draw_commands.clear();
+        c.clip_stack.clear();
         c.ui_system.clear();
     }
 
@@ -1035,6 +1136,34 @@ mod tests {
     }
 
     #[test]
+    fn test_mouse_wheel_reaches_scripts() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("wheel").unwrap();
+        probe_component(&mut world, id);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_update() {
+                let me = self_entity();
+                set_field(me, "probe", "wx", mouse_wheel_x());
+                set_field(me, "probe", "wy", mouse_wheel_y());
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "wheel.rhai".into());
+        let input = InputSnapshot {
+            mouse_wheel: (-0.5, 2.0),
+            ..Default::default()
+        };
+        engine.provide_context(input, 0.016, 0.0);
+        engine.call_updates(&mut world);
+        assert_eq!(probe_float(&world, id, "wx"), -0.5);
+        assert_eq!(probe_float(&world, id, "wy"), 2.0);
+    }
+
+    #[test]
     fn test_conducted_neutral_defaults() {
         // Never call set_conducted: getters must read as a clean, settled
         // world so bindings never branch on session existence.
@@ -1237,6 +1366,60 @@ mod tests {
     }
 
     #[test]
+    fn test_script_loads_from_memory_source() {
+        // A web build has no disk: the scene's scripts/ folder is found, and
+        // the script and the module it imports are read and run, entirely
+        // from an in-memory bundle.
+        use crate::sync::{load_scripts_from_scene, ScriptSync};
+        use flint_core::vfs::{self, MemorySource};
+
+        let mut bundle = MemorySource::new();
+        bundle.insert(
+            "game/scripts/greeter.rhai",
+            r#"fn on_init() {
+            import "greet" as greet;
+            set_field(self_entity(), "probe", "coh", greet::value());
+        }"#,
+        );
+        bundle.insert("game/scripts/lib/greet.rhai", "fn value() { 3.0 }");
+        vfs::scoped(Arc::new(bundle), || {
+            let mut engine = ScriptEngine::new();
+            let mut world = FlintWorld::new();
+            let id = world.spawn("greeter").unwrap();
+            probe_component(&mut world, id);
+            world
+                .set_component(
+                    id,
+                    comp::SCRIPT,
+                    toml::Value::Table({
+                        let mut m = toml::map::Map::new();
+                        m.insert("source".into(), toml::Value::String("greeter.rhai".into()));
+                        m
+                    }),
+                )
+                .unwrap();
+
+            // scenes/ and scripts/ are siblings, so this takes the parent
+            // fallback in load_scripts_from_scene.
+            let mut sync = ScriptSync::new();
+            load_scripts_from_scene("game/levels/demo.scene.toml", &mut sync);
+            engine.set_module_base(sync.lib_dir().unwrap());
+            sync.discover_and_load(&world, &mut engine);
+            assert_eq!(engine.scripts.len(), 1, "the script must load");
+
+            engine.call_inits(&mut world);
+            assert_eq!(probe_float(&world, id, "coh"), 3.0);
+
+            // A module that is not in the bundle fails like a missing file.
+            let err = engine.engine.run(r#"import "nope" as nope;"#).unwrap_err();
+            assert!(
+                matches!(*err, rhai::EvalAltResult::ErrorModuleNotFound(ref p, _) if p == "nope"),
+                "{err}"
+            );
+        });
+    }
+
+    #[test]
     fn test_input_api() {
         let mut engine = ScriptEngine::new();
         let mut world = FlintWorld::new();
@@ -1306,11 +1489,79 @@ mod tests {
         let commands = engine.drain_commands();
         assert_eq!(commands.len(), 1);
         match &commands[0] {
-            ScriptCommand::PlaySound { name, volume } => {
+            ScriptCommand::PlaySound {
+                name,
+                volume,
+                pitch,
+            } => {
                 assert_eq!(name, "bang.ogg");
                 assert!((volume - 1.0).abs() < 1e-10);
+                assert!((pitch - 1.0).abs() < 1e-10);
             }
             _ => panic!("Expected PlaySound command"),
+        }
+    }
+
+    #[test]
+    fn test_play_sound_pitch_and_falloff() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("snd_opts").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                play_sound("click", 0.5, 1.2);
+                play_sound_at("bell", 1.0, 2.0, 3.0, #{ volume: 0.8, max_distance: 400, rolloff: 0.7 });
+                play_sound_at("tap", 0.0, 0.0, 0.0, #{});
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let commands = engine.drain_commands();
+        assert_eq!(commands.len(), 3);
+        match &commands[0] {
+            ScriptCommand::PlaySound { volume, pitch, .. } => {
+                assert!((volume - 0.5).abs() < 1e-10);
+                assert!((pitch - 1.2).abs() < 1e-6);
+            }
+            other => panic!("Expected PlaySound, got {other:?}"),
+        }
+        match &commands[1] {
+            ScriptCommand::PlaySoundAt {
+                name,
+                position,
+                volume,
+                pitch,
+                distances,
+                rolloff,
+            } => {
+                assert_eq!(name, "bell");
+                assert_eq!(*position, (1.0, 2.0, 3.0));
+                assert!((volume - 0.8).abs() < 1e-6);
+                assert!((pitch - 1.0).abs() < 1e-10);
+                assert_eq!(*distances, Some((1.0, 400.0)));
+                assert_eq!(*rolloff, Some(0.7));
+            }
+            other => panic!("Expected PlaySoundAt, got {other:?}"),
+        }
+        match &commands[2] {
+            ScriptCommand::PlaySoundAt {
+                volume,
+                distances,
+                rolloff,
+                ..
+            } => {
+                assert!((volume - 1.0).abs() < 1e-10);
+                assert_eq!(*distances, None);
+                assert_eq!(*rolloff, None);
+            }
+            other => panic!("Expected PlaySoundAt, got {other:?}"),
         }
     }
 
@@ -1720,6 +1971,164 @@ mod tests {
         );
     }
 
+    fn quat_dot(a: [f32; 4], b: [f32; 4]) -> f32 {
+        (0..4).map(|i| a[i] * b[i]).sum::<f32>().abs()
+    }
+
+    fn spawn_with_quat(world: &mut FlintWorld, name: &str, q: Option<[f32; 4]>) -> EntityId {
+        let id = world.spawn(name).unwrap();
+        let mut m = toml::map::Map::new();
+        m.insert(
+            "position".into(),
+            toml::Value::Array(vec![
+                toml::Value::Float(0.0),
+                toml::Value::Float(0.0),
+                toml::Value::Float(0.0),
+            ]),
+        );
+        if let Some(q) = q {
+            m.insert(
+                "rotation_quat".into(),
+                toml::Value::Array(q.iter().map(|c| toml::Value::Float(*c as f64)).collect()),
+            );
+        }
+        world
+            .set_component(id, "transform", toml::Value::Table(m))
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn rotate_local_composes_onto_identity() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "spinner", None);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                rotate_local(me, 0.0, 45.0, 0.0);
+                rotate_local(me, 0.0, 45.0, 0.0);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        let expected = flint_core::euler_deg_to_quat(0.0, 90.0, 0.0);
+        assert!(
+            quat_dot(t.effective_quat(), expected) > 0.9999,
+            "two 45° yaws should be 90°: {:?}",
+            t.rotation_quat
+        );
+    }
+
+    #[test]
+    fn rotate_local_composes_onto_rest_quaternion() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        // Rest pose leaned 15° about X (like a fork axis); drive 30° about its own X.
+        let rest = flint_core::euler_deg_to_quat(15.0, 0.0, 0.0);
+        let id = spawn_with_quat(&mut world, "fork", Some(rest));
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                rotate_local(self_entity(), 30.0, 0.0, 0.0);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let t = world.get_transform(id).unwrap();
+        let expected = flint_core::euler_deg_to_quat(45.0, 0.0, 0.0);
+        assert!(
+            quat_dot(t.effective_quat(), expected) > 0.9999,
+            "rest 15° + 30° should be 45°: {:?}",
+            t.rotation_quat
+        );
+    }
+
+    #[test]
+    fn set_and_get_rotation_quat_round_trip() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "quat", None);
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_rotation_quat(me, 0.0, 0.7071, 0.0, 0.7071);
+                let q = get_rotation_quat(me);
+                set_field(me, "probe", "y", q.y);
+                set_field(me, "probe", "w", q.w);
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let comps = world.get_components(id).unwrap();
+        let y = comps
+            .get_field("probe", "y")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        let w = comps
+            .get_field("probe", "w")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        assert!((y - 0.70710677).abs() < 1e-4 && (w - 0.70710677).abs() < 1e-4);
+        let t = world.get_transform(id).unwrap();
+        assert!(t.rotation_quat.is_some());
+        assert_eq!(
+            t.rotation.y, 0.0,
+            "Euler zeroed when the quaternion is authoritative"
+        );
+    }
+
+    #[test]
+    fn set_joint_target_writes_motor_target() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = spawn_with_quat(&mut world, "piston", None);
+        let mut j = toml::map::Map::new();
+        j.insert("type".into(), toml::Value::String("prismatic".into()));
+        world
+            .set_component(id, "joint", toml::Value::Table(j))
+            .unwrap();
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                set_joint_target(self_entity(), 0.25);
+                set_field(self_entity(), "probe", "t", get_joint_target(self_entity()));
+            }
+        "#,
+            )
+            .unwrap();
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        let comps = world.get_components(id).unwrap();
+        let t = comps
+            .get_field("joint", "motor_target")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        assert!((t - 0.25).abs() < 1e-9);
+        let probe = comps
+            .get_field("probe", "t")
+            .and_then(|v| v.as_float())
+            .unwrap();
+        assert!((probe - 0.25).abs() < 1e-9);
+    }
+
     #[test]
     fn test_set_material_color_from_script() {
         let mut engine = ScriptEngine::new();
@@ -1765,6 +2174,37 @@ mod tests {
         assert!((mat.get("base_color_g").unwrap().as_float().unwrap() - 0.0).abs() < 0.01);
         assert!((mat.get("base_color_b").unwrap().as_float().unwrap() - 0.0).abs() < 0.01);
         assert!((mat.get("base_color_a").unwrap().as_float().unwrap() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_set_material_override_from_script() {
+        let mut engine = ScriptEngine::new();
+        let mut world = FlintWorld::new();
+        let id = world.spawn("liveried").unwrap();
+
+        let ast = engine
+            .compile(
+                r#"
+            fn on_init() {
+                let me = self_entity();
+                set_material_override(me, "Frame", 0.2, 0.4, 0.6, 1.0);
+                set_material_override(me, "Capsule", 1.0, 0.5, 0.0, 0.4);
+            }
+        "#,
+            )
+            .unwrap();
+
+        engine.add_script(id, ast, "test.rhai".into());
+        engine.call_inits(&mut world);
+
+        // The component is created on demand, keyed by glTF material name.
+        let ov = world.get_component(id, "material_overrides").unwrap();
+        let frame = ov.get("Frame").unwrap().as_array().unwrap();
+        let f = |i: usize| frame[i].as_float().unwrap();
+        assert!((f(0) - 0.2).abs() < 1e-6 && (f(1) - 0.4).abs() < 1e-6);
+        assert!((f(2) - 0.6).abs() < 1e-6 && (f(3) - 1.0).abs() < 1e-6);
+        let glass = ov.get("Capsule").unwrap().as_array().unwrap();
+        assert!((glass[3].as_float().unwrap() - 0.4).abs() < 1e-6);
     }
 
     #[test]

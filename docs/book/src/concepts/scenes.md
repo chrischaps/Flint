@@ -27,6 +27,7 @@ archetype = "room"
 | `version` | yes | Format version (currently "1.0") |
 | `description` | no | Optional description |
 | `input_config` | no | Path or name of an input config file for this scene (see [Input System](physics-and-runtime.md#input-system)) |
+| `preload_audio` | no | Default `true`. When `false`, the player skips the blanket preload of every file under `audio/` at scene load, so a scene with a large audio folder starts instantly. Sounds named by `audio_source` components and music-session stems still load through their own paths; only the convenience preload for script-triggered sounds is skipped (ADR 0066, scene audio preload opt-out). See [Audio](audio.md#preloading). |
 
 ### The `[entities.*]` Tables
 
@@ -79,8 +80,14 @@ The `flint-scene` crate handles serialization. Scenes are loaded into the ECS wo
 When a scene is loaded:
 1. The TOML is parsed into a scene structure
 2. Each entity definition creates an ECS entity with a stable `EntityId`
-3. Parent-child relationships are established
-4. The entity ID counter is adjusted to be above any existing ID (preventing collisions on subsequent creates)
+3. If the entity names an archetype, the archetype's `defaults` are written in first for every component the entity did not author itself
+4. Each authored component is validated against its component schema. Failures are **warnings, not errors**: the loader logs `[scene] entity '<name>' component '<comp>': <reason>` through `tracing` and keeps going. Without a tracing subscriber you will not see them, so a scene that loads is not necessarily a scene that validates. Run `flint validate` for an authoritative answer.
+5. The authored data is merged field-by-field into whatever the archetype put there (see [Schemas](schemas.md))
+6. For every component the entity explicitly lists, any field that has a `default` in its component schema and is still unset is filled in. Defaults are applied only to components the entity wrote a table for, not to archetype-required components it left out entirely, and validation in step 4 ran on the authored data *before* defaults landed, so a missing required field still warns even though a default will fill it.
+7. Parent-child relationships are established
+8. The entity ID counter is adjusted to be above any existing ID (preventing collisions on subsequent creates)
+
+Step 6 is why scripts can read `get_field(id, "item", "enabled")` and get a bool rather than `()` even when the scene author never wrote the field.
 
 When a scene is saved:
 1. All entities are serialized to their TOML representation
@@ -89,7 +96,7 @@ When a scene is saved:
 
 ## Reload Behavior
 
-Scene reload is a full re-parse. When `flint serve --watch` detects a file change:
+Scene reload is a full re-parse. When `flint edit --watch` detects a file change:
 
 1. The entire scene file is re-read and re-parsed
 2. The old world state is replaced with the new one

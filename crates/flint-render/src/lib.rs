@@ -12,8 +12,11 @@ mod camera;
 mod context;
 mod debug;
 pub mod frustum;
+pub mod gpu_select;
+pub mod gpu_timer;
 mod gpu_mesh;
 pub mod grass_pipeline;
+pub mod ground_fog;
 mod headless;
 pub mod model_loader;
 pub mod ocean_pipeline;
@@ -30,25 +33,32 @@ pub mod sky_pipeline;
 pub mod skybox_pipeline;
 pub mod sprite2d_pipeline;
 pub mod terrain_pipeline;
+pub mod water_body;
 mod texture_cache;
+pub mod world_line_pipeline;
 
 pub use atlas::{AtlasRegistry, TextureAtlas};
 pub use billboard_pipeline::BillboardPipeline;
 pub use bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 pub use camera::{Camera, CameraMode};
 pub use context::{RenderContext, RenderError};
+pub use gpu_select::{list_adapters, set_gpu_override};
+pub use gpu_timer::{GpuPassTime, GpuScope, GpuTimer, GpuTimings};
+pub use ground_fog::GroundFog;
 pub use debug::{DebugMode, DebugState};
 pub use frustum::Frustum;
 pub use gpu_mesh::{GpuMesh, GpuSkinnedMesh, MeshCache};
 pub use grass_pipeline::{
-    GrassComputeUniforms, GrassEntityPosition, GrassInstanceGpu, GrassPipeline,
-    GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT, MAX_GRASS_ENTITIES,
+    check_grass_mask_patch, grass_dispatch_window, GrassComputeUniforms, GrassEntityPosition, GrassGround, GrassHeight,
+    GrassInstanceGpu, GrassPipeline, GrassRenderUniforms, GrassVertex, BLADE_INDEX_COUNT,
+    MAX_GRASS_ENTITIES,
 };
 pub use headless::HeadlessContext;
 pub use ocean_pipeline::{OceanPipeline, OceanUniformsGpu, OceanVisuals};
 pub use orbit_controller::OrbitCameraController;
 pub use particle_pipeline::{
-    ParticleDrawCall, ParticleDrawData, ParticleInstanceGpu, ParticlePipeline, ParticleUniforms,
+    ParticleBlendMode, ParticleDrawCall, ParticleDrawData, ParticleInstance, ParticlePipeline,
+    ParticleUniforms,
 };
 pub use pipeline::{
     DirectionalLight, LightUniforms, MaterialUniforms, PointLight, RenderPipeline, SpotLight,
@@ -60,11 +70,14 @@ pub use postprocess::{
 };
 pub use primitives::{
     create_box_mesh, create_plane_mesh, generate_normal_arrows, generate_skeleton_lines,
-    generate_skeleton_lines_colored, triangles_to_wireframe_indices, Mesh, SkinnedMesh,
-    SkinnedVertex, Vertex,
+    generate_skeleton_lines_colored, srgb_to_linear, triangles_to_wireframe_indices, Mesh,
+    SkinnedMesh, SkinnedVertex, Vertex,
 };
 pub use render_stats::{format_count, RenderStats};
-pub use scene_renderer::{ArchetypeVisual, LightingLevers, RendererConfig, SceneRenderer};
+pub use scene_renderer::{
+    load_particle_textures, ArchetypeVisual, LightingLevers, RendererConfig, SceneRenderer,
+    DEFAULT_CLEAR_COLOR,
+};
 pub use skinned_pipeline::SkinnedPipeline;
 pub use sky_pipeline::{SkyParams, SkyPipeline, SkyUniformsGpu};
 pub use skybox_pipeline::SkyboxPipeline;
@@ -72,7 +85,8 @@ pub use sprite2d_pipeline::{
     Sprite2dBatch, Sprite2dInstanceGpu, Sprite2dPipeline, Sprite2dUniforms,
 };
 pub use terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
-pub use texture_cache::TextureCache;
+pub use water_body::{river_points, RiverPoint, WaterBodyLook, WaterBodyMesh, WaterVertex};
+pub use texture_cache::{open_image, TextureCache};
 
 #[cfg(test)]
 mod tests {
@@ -86,6 +100,32 @@ mod tests {
         )
         .validate(&module)
         .expect("shader.wgsl failed validation");
+    }
+
+    /// The material group (1) holds no samplers in either PBR shader: they
+    /// share the light group's one `material_sampler`. wgpu 23's DX12 backend
+    /// copies every bind group's samplers into a 2048-slot heap, so samplers
+    /// in the material group cap a scene's distinct looks (Capitol #577).
+    #[test]
+    fn material_group_holds_no_samplers() {
+        for (name, source) in [
+            ("shader.wgsl", include_str!("shader.wgsl")),
+            ("skinned_shader.wgsl", include_str!("skinned_shader.wgsl")),
+        ] {
+            let module = naga::front::wgsl::parse_str(source).expect(name);
+            let mut material_sampler = None;
+            for (_, var) in module.global_variables.iter() {
+                let Some(binding) = &var.binding else { continue };
+                if !matches!(module.types[var.ty].inner, naga::TypeInner::Sampler { .. }) {
+                    continue;
+                }
+                assert_ne!(binding.group, 1, "{name}: a sampler in the material group");
+                if var.name.as_deref() == Some("material_sampler") {
+                    material_sampler = Some((binding.group, binding.binding));
+                }
+            }
+            assert_eq!(material_sampler, Some((2, 4)), "{name}: material_sampler at group 2, binding 4");
+        }
     }
 
     #[test]
@@ -107,9 +147,16 @@ mod tests {
     }
 
     #[test]
-    fn particle_shader_wgsl_parses() {
+    fn particle_shader_wgsl_parses_and_validates() {
         let source = include_str!("particle_shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("particle_shader.wgsl failed to parse");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("particle_shader.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("particle_shader.wgsl failed validation");
     }
 
     #[test]
@@ -119,9 +166,19 @@ mod tests {
     }
 
     #[test]
-    fn ocean_shader_wgsl_parses() {
+    fn ocean_shader_wgsl_parses_and_validates() {
+        // Validated too: a failure here would otherwise only show as the
+        // pipeline's catch_unwind quietly turning the ocean (and every water
+        // body) off.
         let source = include_str!("ocean_shader.wgsl");
-        naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("ocean_shader.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("ocean_shader.wgsl failed validation");
     }
 
     #[test]
@@ -188,11 +245,60 @@ mod tests {
         // (render_mode/mode_mix/mode_time/pad + mode_params vec4) were
         // appended after inv_view_proj (224); the color-grade rows
         // (lift+enabled / gamma+pad / gain+pad, ADR 0050) grew it to 272,
-        // with film grain reusing the former _pad slot. Any other size means
-        // the Rust struct and the WGSL mirror have diverged.
+        // with film grain reusing the former _pad slot; the fog rows (aerial
+        // tint, height fog density, ADR 0101) grew it to 304, and the ground
+        // fog rows (ADR 0106) to 368. Any other size means the Rust struct
+        // and the WGSL mirror have diverged.
         let size = std::mem::size_of::<crate::postprocess::PostProcessUniforms>();
         assert_eq!(size % 16, 0, "PostProcessUniforms not 16-byte aligned");
-        assert_eq!(size, 272, "PostProcessUniforms size changed");
+        assert_eq!(size, 368, "PostProcessUniforms size changed");
+    }
+
+    #[test]
+    fn post_process_uniforms_offsets_match_the_wgsl() {
+        // Every member of the WGSL struct sits where the Rust one puts it.
+        use crate::postprocess::PostProcessUniforms as U;
+        use std::mem::offset_of;
+        let module = naga::front::wgsl::parse_str(include_str!("composite_shader.wgsl")).unwrap();
+        let members = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { members, .. }
+                    if ty.name.as_deref() == Some("PostProcessUniforms") =>
+                {
+                    Some(members.clone())
+                }
+                _ => None,
+            })
+            .expect("PostProcessUniforms in the WGSL");
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|m| m.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name} not in the WGSL"))
+                .offset as usize
+        };
+        for (name, rust) in [
+            ("fog_tint_color", offset_of!(U, fog_tint_color)),
+            ("fog_height_density", offset_of!(U, fog_height_density)),
+            ("ground_fog_color", offset_of!(U, ground_fog_color)),
+            ("ground_fog_density", offset_of!(U, ground_fog_density)),
+            ("ground_fog_origin", offset_of!(U, ground_fog_origin)),
+            ("ground_fog_size", offset_of!(U, ground_fog_size)),
+            (
+                "ground_fog_floor_base",
+                offset_of!(U, ground_fog_floor_base),
+            ),
+            ("ground_fog_ceiling", offset_of!(U, ground_fog_ceiling)),
+            ("ground_fog_falloff", offset_of!(U, ground_fog_falloff)),
+            ("ground_fog_steps", offset_of!(U, ground_fog_steps)),
+            ("ground_fog_texel", offset_of!(U, ground_fog_texel)),
+            ("ground_fog_max_lod", offset_of!(U, ground_fog_max_lod)),
+            ("ground_fog_enabled", offset_of!(U, ground_fog_enabled)),
+        ] {
+            assert_eq!(offset(name), rust, "{name}");
+        }
     }
 
     #[test]
@@ -318,7 +424,29 @@ mod tests {
     #[test]
     fn grass_compute_shader_wgsl_parses() {
         let source = include_str!("grass_compute.wgsl");
-        naga::front::wgsl::parse_str(source).expect("grass_compute.wgsl failed to parse");
+        let module =
+            naga::front::wgsl::parse_str(source).expect("grass_compute.wgsl failed to parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("grass_compute.wgsl failed validation");
+
+        // The uniforms the Rust side writes must match the shader's struct
+        let span = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("GrassComputeUniforms"))
+            .map(|(_, ty)| match &ty.inner {
+                naga::TypeInner::Struct { span, .. } => *span,
+                _ => panic!("GrassComputeUniforms is not a struct"),
+            })
+            .expect("GrassComputeUniforms in grass_compute.wgsl");
+        assert_eq!(
+            span as usize,
+            std::mem::size_of::<crate::GrassComputeUniforms>()
+        );
     }
 
     #[test]

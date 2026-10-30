@@ -4,7 +4,7 @@
 //! appropriate draw-list on `SceneRenderer`.
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
-use super::{SceneRenderer, SkinnedDrawCall};
+use super::{hash_parts, transform_aabb, SceneRenderer, SkinnedDrawCall};
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
@@ -49,6 +49,110 @@ impl SceneRenderer {
             })
     }
 
+    /// ECS `material.emissive_scale` for a model entity (ADR 0090), on the
+    /// entity and then its parent like the tint above, read every frame so
+    /// a game can change a mesh's glow after upload. 1 when neither sets
+    /// one; negative values count as 0.
+    pub(super) fn ecs_emissive_scale(world: &FlintWorld, entity_id: EntityId) -> f32 {
+        Self::ecs_material_f32(world, entity_id, "emissive_scale")
+            .unwrap_or(1.0)
+            .max(0.0)
+    }
+
+    /// ECS `material.glow_surface` for a model entity (ADR 0096): how much
+    /// of each per-vertex light part is lit surface too, read every frame
+    /// and inherited like `emissive_scale`. 0 when neither sets one;
+    /// clamped to 0..1.
+    pub(super) fn ecs_glow_surface(world: &FlintWorld, entity_id: EntityId) -> f32 {
+        Self::ecs_material_f32(world, entity_id, "glow_surface")
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0)
+    }
+
+    /// ECS `material.vertex_tint_r/g/b` for a model entity (ADR 0102): what
+    /// its vertex colours are multiplied by, surface and per-vertex light
+    /// alike, read every frame and inherited like `emissive_scale`. All
+    /// three or none; white when neither sets one. Negatives count as 0.
+    pub(super) fn ecs_vertex_tint(world: &FlintWorld, entity_id: EntityId) -> [f32; 4] {
+        let read = |id: EntityId| {
+            let m = world.get_components(id)?.get(comp::MATERIAL)?;
+            let c = |k: &str| m.get(k).and_then(toml_f32).map(|v| v.max(0.0));
+            Some([c("vertex_tint_r")?, c("vertex_tint_g")?, c("vertex_tint_b")?, 1.0])
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .unwrap_or([1.0; 4])
+    }
+
+    /// ECS `material.cast_shadows` for an entity (ADR 0100): false keeps
+    /// its draws out of the shadow cascades, opaque, transparent and
+    /// skinned alike. True when neither it nor its parent sets one, so a GLB
+    /// expanded into child nodes stops casting as one.
+    pub(super) fn ecs_casts_shadow(world: &FlintWorld, entity_id: EntityId) -> bool {
+        let read = |id: EntityId| {
+            world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get("cast_shadows"))
+                .and_then(|v| v.as_bool())
+        };
+        read(entity_id)
+            .or_else(|| world.get_parent(entity_id).and_then(read))
+            .unwrap_or(true)
+    }
+
+    /// A number in the `material` component of `entity_id`, or else of its
+    /// parent.
+    fn ecs_material_f32(world: &FlintWorld, entity_id: EntityId, key: &str) -> Option<f32> {
+        let read = |id: EntityId| {
+            world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL))
+                .and_then(|m| m.get(key))
+                .and_then(toml_f32)
+        };
+        read(entity_id).or_else(|| world.get_parent(entity_id).and_then(read))
+    }
+
+    /// ECS `material_overrides.<name>` tint for one glTF material, looked up on
+    /// the entity and then every ancestor (a GLB expanded into a node hierarchy
+    /// keeps its meshes several levels below the entity a scene author sees).
+    /// Values are `[r, g, b]` or `[r, g, b, a]`; a missing alpha keeps
+    /// `gltf_alpha` so a three-component override on a blended glass material
+    /// stays translucent. `None` when no ancestor overrides this material.
+    fn ecs_material_override(
+        world: &FlintWorld,
+        entity_id: EntityId,
+        material_name: &str,
+        gltf_alpha: f32,
+    ) -> Option<[f32; 4]> {
+        if material_name.is_empty() {
+            return None;
+        }
+        let mut cur = Some(entity_id);
+        let mut depth = 0;
+        while let Some(id) = cur {
+            if depth > 32 {
+                break;
+            }
+            let hit = world
+                .get_components(id)
+                .and_then(|c| c.get(comp::MATERIAL_OVERRIDES))
+                .and_then(|m| m.get(material_name))
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    let f = |i: usize| arr.get(i).and_then(toml_f32);
+                    Some([f(0)?, f(1)?, f(2)?, f(3).unwrap_or(gltf_alpha)])
+                });
+            if hit.is_some() {
+                return hit;
+            }
+            cur = world.get_parent(id);
+            depth += 1;
+        }
+        None
+    }
+
     /// Extract a skinned (skeletal) entity into draw calls.
     /// Returns `true` if skinned meshes were found (caller should `continue`).
     pub(super) fn extract_skinned_entity(
@@ -77,27 +181,38 @@ impl SceneRenderer {
                 _pad: 0.0,
             };
 
-            let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+            let (bc_view, _, has_bc) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.base_color_texture.as_deref(),
                 &tex_cache.default_white,
             );
-            let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+            let (nm_view, _, has_nm) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.normal_texture.as_deref(),
                 &tex_cache.default_normal,
             );
-            let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+            let (mr_view, _, has_mr) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.metallic_roughness_texture.as_deref(),
                 &tex_cache.default_metallic_roughness,
+            );
+            let (em_view, _, has_em) = Self::resolve_texture(
+                tex_cache,
+                gpu_mesh.material.emissive_texture.as_deref(),
+                &tex_cache.default_white,
             );
 
             // Material color override (entity, then parent) — same contract as
             // the static model path, so a scene can tint a skinned figure via
             // `material.base_color_r/g/b` too.
-            let base_color = Self::ecs_base_color_override(world, entity_id)
-                .unwrap_or(gpu_mesh.material.base_color);
+            let base_color = Self::ecs_material_override(
+                world,
+                entity_id,
+                &gpu_mesh.material.name,
+                gpu_mesh.material.base_color[3],
+            )
+            .or_else(|| Self::ecs_base_color_override(world, entity_id))
+            .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(
                 base_color,
@@ -110,6 +225,11 @@ impl SceneRenderer {
             if gpu_mesh.material.use_vertex_color {
                 material_uniforms.use_vertex_color = 1;
             }
+            material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
+            material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
+            material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
+            material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             let (transform_buffer, transform_bind_group) =
                 Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
@@ -118,11 +238,9 @@ impl SceneRenderer {
                 &self.pipeline,
                 &material_uniforms,
                 bc_view,
-                bc_sampler,
                 nm_view,
-                nm_sampler,
                 mr_view,
-                mr_sampler,
+                em_view,
             );
 
             let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -167,6 +285,7 @@ impl SceneRenderer {
 
             let is_transparent = ecs_opacity < 1.0
                 || gltf_alpha < 1.0
+                || base_color[3] < 1.0
                 || blend_mode != BlendMode::Alpha
                 || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
 
@@ -205,6 +324,7 @@ impl SceneRenderer {
                 entity_id: Some(entity_id),
                 blend_mode,
                 sort_depth: 0.0,
+                casts_shadow: Self::ecs_casts_shadow(world, entity_id),
             };
 
             if is_transparent {
@@ -238,7 +358,7 @@ impl SceneRenderer {
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
 
-        for gpu_mesh in gpu_meshes {
+        for (mesh_index, gpu_mesh) in gpu_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
                 view_proj: [[0.0; 4]; 4],
                 model: model_matrix,
@@ -248,27 +368,38 @@ impl SceneRenderer {
             };
 
             // Resolve textures for this material
-            let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+            let (bc_view, _, has_bc) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.base_color_texture.as_deref(),
                 &tex_cache.default_white,
             );
-            let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+            let (nm_view, _, has_nm) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.normal_texture.as_deref(),
                 &tex_cache.default_normal,
             );
-            let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+            let (mr_view, _, has_mr) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.metallic_roughness_texture.as_deref(),
                 &tex_cache.default_metallic_roughness,
             );
+            let (em_view, _, has_em) = Self::resolve_texture(
+                tex_cache,
+                gpu_mesh.material.emissive_texture.as_deref(),
+                &tex_cache.default_white,
+            );
 
-            // Material color override: check entity first, then inherit from parent.
-            // This lets scripts color a parent entity and have all child meshes
-            // (e.g. expanded GLB nodes) pick up the tint automatically.
-            let base_color = Self::ecs_base_color_override(world, entity_id)
-                .unwrap_or(gpu_mesh.material.base_color);
+            // Material colour: a per-material-name override on any ancestor wins
+            // (`material_overrides`), then the entity/parent `material.base_color_*`
+            // tint, then the glTF material itself.
+            let base_color = Self::ecs_material_override(
+                world,
+                entity_id,
+                &gpu_mesh.material.name,
+                gpu_mesh.material.base_color[3],
+            )
+            .or_else(|| Self::ecs_base_color_override(world, entity_id))
+            .unwrap_or(gpu_mesh.material.base_color);
 
             let mut material_uniforms = MaterialUniforms::from_pbr(
                 base_color,
@@ -281,6 +412,11 @@ impl SceneRenderer {
             if gpu_mesh.material.use_vertex_color {
                 material_uniforms.use_vertex_color = 1;
             }
+            material_uniforms.set_emission(&gpu_mesh.material);
+            material_uniforms.scale_emission(Self::ecs_emissive_scale(world, entity_id));
+            material_uniforms.glow_surface = Self::ecs_glow_surface(world, entity_id);
+            material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
+            material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
             // Read opacity and blend_mode from ECS material component
             let ecs_opacity = world
@@ -311,21 +447,66 @@ impl SceneRenderer {
                 || blend_mode != BlendMode::Alpha
                 || gpu_mesh.material.alpha_mode == flint_import::AlphaMode::Blend;
 
-            let mut draw = Self::create_imported_draw_call(
+            // Texture identity rides in the key: a map that finishes loading
+            // later flips its `has_*` flag and rebuilds the material binds.
+            let material_key = hash_parts(&[
+                bytemuck::bytes_of(&material_uniforms),
+                gpu_mesh
+                    .material
+                    .base_color_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .normal_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .metallic_roughness_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .emissive_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+            ]);
+            let binds = Self::cached_binds(
+                &mut self.draw_bind_cache,
+                self.extract_frame,
                 device,
                 &self.pipeline,
-                gpu_mesh,
-                transform_uniforms,
-                material_uniforms,
+                (entity_id, mesh_index as u32),
+                &transform_uniforms,
+                &material_uniforms,
+                material_key,
                 bc_view,
-                bc_sampler,
                 nm_view,
-                nm_sampler,
                 mr_view,
-                mr_sampler,
+                em_view,
             );
-            draw.entity_id = Some(entity_id);
-            draw.blend_mode = blend_mode;
+            let mut draw = Self::draw_from_cache(
+                &gpu_mesh.vertex_buffer,
+                &gpu_mesh.index_buffer,
+                gpu_mesh.index_count,
+                false,
+                binds,
+                model_matrix,
+                inv_transpose,
+                entity_id,
+                blend_mode,
+            );
+            draw.casts_shadow = Self::ecs_casts_shadow(world, entity_id);
+            draw.world_aabb = Some(transform_aabb(
+                &model_matrix,
+                gpu_mesh.aabb_min,
+                gpu_mesh.aabb_max,
+            ));
 
             if is_transparent {
                 self.transparent_draws.push(draw);
@@ -879,10 +1060,33 @@ impl SceneRenderer {
             (visual.default_size, [0.0, 0.0, 0.0])
         };
 
-        let mesh = if visual.wireframe {
-            create_wireframe_box_mesh(size[0], size[1], size[2], visual.color)
+        // The box geometry is uploaded once per distinct size/colour/wireframe
+        // and shared; the CPU-side mesh is only built for the debug overlays.
+        let build_mesh = || {
+            if visual.wireframe {
+                create_wireframe_box_mesh(size[0], size[1], size[2], visual.color)
+            } else {
+                create_box_mesh(size[0], size[1], size[2], visual.color)
+            }
+        };
+        let mesh_key = hash_parts(&[
+            bytemuck::bytes_of(&size),
+            bytemuck::bytes_of(&visual.color),
+            &[visual.wireframe as u8],
+        ]);
+        let (box_vb, box_ib, box_index_count) = {
+            let cached =
+                Self::cached_box_mesh(&mut self.box_mesh_cache, device, mesh_key, build_mesh);
+            (
+                cached.vertex_buffer.clone(),
+                cached.index_buffer.clone(),
+                cached.index_count,
+            )
+        };
+        let mesh = if need_overlay || need_normals {
+            Some(build_mesh())
         } else {
-            create_box_mesh(size[0], size[1], size[2], visual.color)
+            None
         };
 
         let mut model = model_matrix;
@@ -937,10 +1141,11 @@ impl SceneRenderer {
             .unwrap_or_default();
         let proc_blend_mode = parse_blend_mode(&proc_blend_mode_str);
         let proc_is_transparent = proc_opacity < 1.0 || proc_blend_mode != BlendMode::Alpha;
+        let casts_shadow = Self::ecs_casts_shadow(world, entity_id);
 
         if !visual.wireframe {
             if let Some(tex_name) = &material_texture {
-                let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+                let (bc_view, _, has_bc) = Self::resolve_texture(
                     tex_cache,
                     Some(tex_name.as_str()),
                     &tex_cache.default_white,
@@ -961,12 +1166,12 @@ impl SceneRenderer {
                     // Try companion PBR maps (e.g. tavern_brick_normal, tavern_brick_roughness)
                     let normal_name = format!("{}_normal", tex_name);
                     let roughness_name = format!("{}_roughness", tex_name);
-                    let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+                    let (nm_view, _, has_nm) = Self::resolve_texture(
                         tex_cache,
                         Some(normal_name.as_str()),
                         &tex_cache.default_normal,
                     );
-                    let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+                    let (mr_view, _, has_mr) = Self::resolve_texture(
                         tex_cache,
                         Some(roughness_name.as_str()),
                         &tex_cache.default_metallic_roughness,
@@ -980,37 +1185,72 @@ impl SceneRenderer {
                     material_uniforms.opacity = proc_opacity;
                     material_uniforms.texture_scale = proc_texture_scale;
 
-                    let mut draw = Self::create_textured_draw_call(
+                    let material_key = hash_parts(&[
+                        b"textured",
+                        bytemuck::bytes_of(&material_uniforms),
+                        tex_name.as_bytes(),
+                    ]);
+                    let binds = Self::cached_binds(
+                        &mut self.draw_bind_cache,
+                        self.extract_frame,
                         device,
                         &self.pipeline,
-                        &mesh,
-                        transform_uniforms,
-                        material_uniforms,
+                        (entity_id, 0),
+                        &transform_uniforms,
+                        &material_uniforms,
+                        material_key,
                         bc_view,
-                        bc_sampler,
                         nm_view,
-                        nm_sampler,
                         mr_view,
-                        mr_sampler,
+                        &tex_cache.default_white.view,
                     );
-                    draw.entity_id = Some(entity_id);
-                    draw.blend_mode = proc_blend_mode;
+                    let mut draw = Self::draw_from_cache(
+                        &box_vb,
+                        &box_ib,
+                        box_index_count,
+                        false,
+                        binds,
+                        model,
+                        inv_transpose,
+                        entity_id,
+                        proc_blend_mode,
+                    );
+                    draw.casts_shadow = casts_shadow;
                     if proc_is_transparent {
                         self.transparent_draws.push(draw);
                     } else {
                         self.entity_draws.push(draw);
                     }
                 } else {
-                    let mut draw = Self::create_draw_call(
+                    let material_uniforms = MaterialUniforms::procedural();
+                    let material_key =
+                        hash_parts(&[b"procedural", bytemuck::bytes_of(&material_uniforms)]);
+                    let binds = Self::cached_binds(
+                        &mut self.draw_bind_cache,
+                        self.extract_frame,
                         device,
                         &self.pipeline,
-                        &mesh,
-                        false,
-                        transform_uniforms,
-                        MaterialUniforms::procedural(),
-                        tex_cache,
+                        (entity_id, 0),
+                        &transform_uniforms,
+                        &material_uniforms,
+                        material_key,
+                        &tex_cache.default_white.view,
+                        &tex_cache.default_normal.view,
+                        &tex_cache.default_metallic_roughness.view,
+                        &tex_cache.default_white.view,
                     );
-                    draw.entity_id = Some(entity_id);
+                    let mut draw = Self::draw_from_cache(
+                        &box_vb,
+                        &box_ib,
+                        box_index_count,
+                        false,
+                        binds,
+                        model,
+                        inv_transpose,
+                        entity_id,
+                        BlendMode::Alpha,
+                    );
+                    draw.casts_shadow = casts_shadow;
                     self.entity_draws.push(draw);
                 }
             } else {
@@ -1038,17 +1278,33 @@ impl SceneRenderer {
                 mat_uniforms.opacity = proc_opacity;
                 mat_uniforms.texture_scale = proc_texture_scale;
 
-                let mut draw = Self::create_draw_call(
+                let material_key = hash_parts(&[b"colour", bytemuck::bytes_of(&mat_uniforms)]);
+                let binds = Self::cached_binds(
+                    &mut self.draw_bind_cache,
+                    self.extract_frame,
                     device,
                     &self.pipeline,
-                    &mesh,
-                    false,
-                    transform_uniforms,
-                    mat_uniforms,
-                    tex_cache,
+                    (entity_id, 0),
+                    &transform_uniforms,
+                    &mat_uniforms,
+                    material_key,
+                    &tex_cache.default_white.view,
+                    &tex_cache.default_normal.view,
+                    &tex_cache.default_metallic_roughness.view,
+                    &tex_cache.default_white.view,
                 );
-                draw.entity_id = Some(entity_id);
-                draw.blend_mode = proc_blend_mode;
+                let mut draw = Self::draw_from_cache(
+                    &box_vb,
+                    &box_ib,
+                    box_index_count,
+                    false,
+                    binds,
+                    model,
+                    inv_transpose,
+                    entity_id,
+                    proc_blend_mode,
+                );
+                draw.casts_shadow = casts_shadow;
                 if proc_is_transparent {
                     self.transparent_draws.push(draw);
                 } else {
@@ -1056,18 +1312,42 @@ impl SceneRenderer {
                 }
             }
         } else {
-            let mut draw = Self::create_draw_call(
+            let material_uniforms = MaterialUniforms::procedural();
+            let material_key = hash_parts(&[b"wire", bytemuck::bytes_of(&material_uniforms)]);
+            let binds = Self::cached_binds(
+                &mut self.draw_bind_cache,
+                self.extract_frame,
                 device,
                 &self.pipeline,
-                &mesh,
-                true,
-                transform_uniforms,
-                MaterialUniforms::procedural(),
-                tex_cache,
+                (entity_id, 0),
+                &transform_uniforms,
+                &material_uniforms,
+                material_key,
+                &tex_cache.default_white.view,
+                &tex_cache.default_normal.view,
+                &tex_cache.default_metallic_roughness.view,
+                &tex_cache.default_white.view,
             );
-            draw.entity_id = Some(entity_id);
+            let draw = Self::draw_from_cache(
+                &box_vb,
+                &box_ib,
+                box_index_count,
+                true,
+                binds,
+                model,
+                inv_transpose,
+                entity_id,
+                BlendMode::Alpha,
+            );
             self.entity_draws.push(draw);
         }
+
+        // Debug overlays are rebuilt every frame; they only exist in the
+        // wireframe/normals debug modes so the cost is opt-in.
+        let mesh = match mesh {
+            Some(m) => m,
+            None => return,
+        };
 
         // Generate wireframe overlay for procedural solid shapes
         if need_overlay && !visual.wireframe {

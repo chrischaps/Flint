@@ -94,12 +94,29 @@ pub struct UiElement {
 }
 
 /// A style property value that can be overridden at runtime
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StyleValue {
     Float(f32),
     Color([f32; 4]),
     String(String),
     Bool(bool),
+    /// Drop shadow `[dx, dy, r, g, b, a]`: offset plus colour
+    Shadow(f32, f32, [f32; 4]),
+}
+
+impl StyleValue {
+    /// Interpret a numeric array the way `.style.toml` and
+    /// `ui_set_style_array` do: 3 values → opaque `Color`, 4 values →
+    /// `Color` (also used for `padding` and `uv`), 6 values → `Shadow`
+    /// `[dx, dy, r, g, b, a]`.
+    pub fn from_numbers(values: &[f32]) -> Option<Self> {
+        match values {
+            [r, g, b] => Some(StyleValue::Color([*r, *g, *b, 1.0])),
+            [r, g, b, a] => Some(StyleValue::Color([*r, *g, *b, *a])),
+            [dx, dy, r, g, b, a] => Some(StyleValue::Shadow(*dx, *dy, [*r, *g, *b, *a])),
+            _ => None,
+        }
+    }
 }
 
 impl UiElement {

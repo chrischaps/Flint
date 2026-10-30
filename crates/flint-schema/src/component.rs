@@ -16,6 +16,9 @@ pub enum FieldType {
     Vec3,
     Transform,
     Color,
+    /// A TOML table with no fixed shape (one animator layer, say). Validated
+    /// only as "is a table"; the component that reads it checks its keys.
+    Table,
     #[serde(rename = "enum")]
     Enum {
         values: Vec<String>,
@@ -37,6 +40,7 @@ impl FieldType {
             FieldType::Vec3 => "vec3",
             FieldType::Transform => "transform",
             FieldType::Color => "color",
+            FieldType::Table => "table",
             FieldType::Enum { .. } => "enum",
             FieldType::Array { .. } => "array",
         }
@@ -156,18 +160,56 @@ impl FieldSchemaDefinition {
     }
 }
 
+impl FieldSchemaDefinition {
+    /// The type name this field writes that the parser doesn't know, if any:
+    /// its own type, or its array element's. An unknown name still loads (as
+    /// `String`), so this is how the loader and tests catch a typo.
+    pub fn unknown_type_name(&self) -> Option<&str> {
+        let (type_str, element) = match self {
+            FieldSchemaDefinition::Simple(t) => (t.as_str(), None),
+            FieldSchemaDefinition::Detailed(d) => (d.field_type.as_str(), d.element.as_deref()),
+        };
+        if known_field_type(type_str, None, None).is_none() {
+            return Some(type_str);
+        }
+        if type_str == "array" {
+            if let Some(e) = element {
+                if known_field_type(e, None, None).is_none() {
+                    return Some(e);
+                }
+            }
+        }
+        None
+    }
+}
+
 fn parse_field_type(
     type_str: &str,
     enum_values: Option<&Vec<String>>,
     array_element: Option<&str>,
 ) -> FieldType {
-    match type_str {
-        "bool" => FieldType::Bool,
+    // Unknown names fall back to String. The registry warns about them at
+    // load, naming the schema and field (see `unknown_type_name`).
+    known_field_type(type_str, enum_values, array_element).unwrap_or(FieldType::String)
+}
+
+fn known_field_type(
+    type_str: &str,
+    enum_values: Option<&Vec<String>>,
+    array_element: Option<&str>,
+) -> Option<FieldType> {
+    Some(match type_str {
+        // `boolean` / `integer` are the TOML spec's names; schemas write them.
+        "bool" | "boolean" => FieldType::Bool,
         "i32" => FieldType::I32,
         "i64" => FieldType::I64,
-        "f32" => FieldType::F32,
+        // `float` / `int` are what most engine schemas write; without these
+        // arms they fell through to String and every numeric field warned.
+        "f32" | "float" => FieldType::F32,
         "f64" => FieldType::F64,
-        "string" => FieldType::String,
+        "int" | "integer" => FieldType::I32,
+        // An entity is referred to by name; no variant checks it exists yet.
+        "string" | "entity_ref" => FieldType::String,
         "vec3" => FieldType::Vec3,
         // vec2/vec4 have no dedicated variant; validate as a float array so
         // schema-driven validation doesn't misreport them as strings.
@@ -176,10 +218,12 @@ fn parse_field_type(
         },
         "transform" => FieldType::Transform,
         "color" => FieldType::Color,
+        "table" => FieldType::Table,
         "enum" => FieldType::Enum {
             values: enum_values.cloned().unwrap_or_default(),
         },
         "array" => {
+            // An array with no `element` is an array of strings.
             let element_type = array_element
                 .map(|e| parse_field_type(e, None, None))
                 .unwrap_or(FieldType::String);
@@ -187,6 +231,61 @@ fn parse_field_type(
                 element: Box::new(element_type),
             }
         }
-        _ => FieldType::String, // Default fallback
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn def(type_str: &str, element: Option<&str>) -> FieldSchemaDefinition {
+        FieldSchemaDefinition::Detailed(DetailedFieldSchema {
+            field_type: type_str.into(),
+            values: None,
+            default: None,
+            required: None,
+            description: None,
+            min: None,
+            max: None,
+            element: element.map(Into::into),
+        })
+    }
+
+    #[test]
+    fn toml_spelled_names_parse() {
+        assert_eq!(
+            def("integer", None).to_field_schema().field_type,
+            FieldType::I32
+        );
+        assert_eq!(
+            def("boolean", None).to_field_schema().field_type,
+            FieldType::Bool
+        );
+        assert_eq!(
+            def("table", None).to_field_schema().field_type,
+            FieldType::Table
+        );
+        assert_eq!(
+            def("array", Some("table")).to_field_schema().field_type,
+            FieldType::Array {
+                element: Box::new(FieldType::Table)
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_names_are_reported() {
+        assert_eq!(def("intger", None).unknown_type_name(), Some("intger"));
+        assert_eq!(
+            def("array", Some("flaot")).unknown_type_name(),
+            Some("flaot")
+        );
+        assert_eq!(
+            FieldSchemaDefinition::Simple("nope".into()).unknown_type_name(),
+            Some("nope")
+        );
+        assert_eq!(def("array", None).unknown_type_name(), None);
+        assert_eq!(def("string", None).unknown_type_name(), None);
     }
 }

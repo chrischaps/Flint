@@ -3,14 +3,14 @@
 //! the decomposition ADR). `music_session.rs` (the session integration
 //! itself) is deliberately separate and unchanged.
 
-use super::PlayerApp;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
+use super::scene_loading;
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
+use super::PlayerApp;
 use super::TransitionPhase;
-use super::scene_loading;
 use flint_core::events::TRANSITION_COMPLETE;
 use flint_core::Vec3 as FlintVec3;
 use flint_runtime::GameEvent;
@@ -22,12 +22,16 @@ impl PlayerApp {
     pub(super) fn process_script_commands(&mut self, commands: Vec<ScriptCommand>) {
         for cmd in commands {
             match cmd {
-                ScriptCommand::PlaySound { name, volume } => {
+                ScriptCommand::PlaySound {
+                    name,
+                    volume,
+                    pitch,
+                } => {
                     if self.audio.engine.is_available() {
                         if let Err(e) = self.audio.engine.play_non_spatial(
                             &name,
                             volume,
-                            1.0,
+                            pitch,
                             false,
                             flint_audio::Bus::Sfx,
                         ) {
@@ -40,14 +44,20 @@ impl PlayerApp {
                     position,
                     volume,
                     pitch,
+                    distances,
+                    rolloff,
                 } => {
                     let pos =
                         FlintVec3::new(position.0 as f32, position.1 as f32, position.2 as f32);
-                    if let Err(e) = self
-                        .audio
-                        .engine
-                        .play_at_position(&name, pos, volume, pitch)
-                    {
+                    if let Err(e) = self.audio.engine.play_oneshot_at(
+                        &name,
+                        pos,
+                        volume,
+                        pitch,
+                        distances.unwrap_or(flint_audio::engine::DEFAULT_DISTANCES),
+                        rolloff.unwrap_or(flint_audio::engine::DEFAULT_ROLLOFF),
+                        flint_audio::Bus::Sfx,
+                    ) {
                         tracing::warn!(target: "script", "play_sound_at error: {:?}", e);
                     }
                 }
@@ -81,7 +91,39 @@ impl PlayerApp {
                 },
                 ScriptCommand::EmitBurst { entity_id, count } => {
                     let eid = flint_core::EntityId(entity_id as u64);
-                    self.particles.sync.queue_burst(eid, count as u32);
+                    self.particles.sync.queue_burst(eid, count.max(0) as u32);
+                }
+                ScriptCommand::PlayEffect {
+                    handle,
+                    name,
+                    position,
+                } => {
+                    let pos = [position.0 as f32, position.1 as f32, position.2 as f32];
+                    if !self.particles.sync.spawn_effect(handle, &name, pos) {
+                        tracing::warn!(
+                            target: "script",
+                            "play_effect: unknown particle effect '{}' (expected particles/{}.particles.toml)",
+                            name,
+                            name
+                        );
+                    }
+                }
+                ScriptCommand::StopEffect { handle } => {
+                    self.particles.sync.stop_effect(handle);
+                }
+                ScriptCommand::SetEffectParam {
+                    handle,
+                    param,
+                    value,
+                } => {
+                    if !self.particles.sync.set_effect_param(handle, &param, value) {
+                        tracing::warn!(
+                            target: "script",
+                            "set_effect_param: unknown handle {} or param '{}'",
+                            handle,
+                            param
+                        );
+                    }
                 }
                 ScriptCommand::LoadScene { path } => {
                     if self.transition_phase.is_idle() {
@@ -138,6 +180,23 @@ impl PlayerApp {
                 }
             }
         }
+    }
+
+    /// Begin sound, from the user gesture that begins the game (#101). A
+    /// browser gives no sound before one, so the web player runs silent
+    /// until this is called from its Begin click; on the desktop the device
+    /// opened at start and this does nothing new. Loops already in the
+    /// scene start, and so does the scene's music session if it was skipped
+    /// for want of a device. Says whether there is sound.
+    pub fn start_audio(&mut self) -> bool {
+        let had_sound = self.audio.engine.is_available();
+        if !self.audio.start(&self.world) {
+            return false;
+        }
+        if !had_sound && self.music_session.is_none() {
+            self.start_music_session();
+        }
+        true
     }
 
     /// Start the scene-declared music session, if any (F3, ADR 0019): find

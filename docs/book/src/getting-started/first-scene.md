@@ -127,7 +127,7 @@ You can edit scene files in three ways:
 2. **Text editor** --- open the TOML file directly
 3. **Programmatically** --- any tool that can write TOML
 
-All three approaches produce the same result. The `flint serve --watch` viewer detects changes from any source and reloads automatically.
+All three approaches produce the same result. The `flint edit --watch` viewer detects changes from any source and reloads automatically.
 
 ## Validating Scenes
 

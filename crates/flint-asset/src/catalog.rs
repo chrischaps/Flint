@@ -1,9 +1,9 @@
 //! Asset catalog for managing asset metadata
 
 use crate::types::{AssetFile, AssetMeta, AssetRef, AssetType};
+use flint_core::vfs;
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 
 /// Catalog of known assets and their metadata
@@ -29,15 +29,12 @@ impl AssetCatalog {
     }
 
     fn scan_directory(catalog: &mut AssetCatalog, dir: &Path) -> Result<()> {
-        if !dir.exists() {
+        if !vfs::exists(dir) {
             return Ok(());
         }
 
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
+        for path in vfs::read_dir(dir)? {
+            if vfs::is_dir(&path) {
                 Self::scan_directory(catalog, &path)?;
             } else if path
                 .file_name()
@@ -45,7 +42,7 @@ impl AssetCatalog {
                 .map(|n| n.ends_with(".asset.toml"))
                 .unwrap_or(false)
             {
-                let content = fs::read_to_string(&path)?;
+                let content = vfs::read_to_string(&path)?;
                 let file: AssetFile = toml::from_str(&content).map_err(|e| {
                     FlintError::AssetError(format!("Failed to parse {}: {}", path.display(), e))
                 })?;

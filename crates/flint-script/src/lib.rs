@@ -10,13 +10,17 @@
 
 pub mod api;
 pub mod context;
+pub mod draw2d;
 pub mod engine;
+pub mod module_resolver;
+pub mod projector;
 pub mod sync;
 pub mod ui;
 
-pub use context::DrawCommand;
 pub use context::StateScope;
 pub use context::{ConductedCue, ConductedPulse, ConductedSnapshot, CueParam};
+pub use context::{DrawCommand, DrawItem};
+pub use projector::{GroundField, Projector, ScreenPoint, View};
 use context::{InputSnapshot, ScriptCommand};
 use engine::ScriptEngine;
 use flint_core::Result;
@@ -117,7 +121,21 @@ impl ScriptSystem {
             actions_just_released: snapshot_actions_released(input),
             action_values: snapshot_action_values(input),
             any_just_pressed: input.any_just_pressed(),
+            last_device: input.last_device().as_str().to_string(),
+            gamepad_connected: input.gamepad_connected(),
             mouse_delta: input.raw_mouse_delta(),
+            mouse_wheel: {
+                let (x, y) = input.mouse_wheel_delta();
+                (x as f64, y as f64)
+            },
+            mouse_buttons_down: (0..3_u32)
+                .filter(|b| input.is_mouse_button_down(*b))
+                .map(|b| b as i64)
+                .collect(),
+            mouse_buttons_just_pressed: (0..3_u32)
+                .filter(|b| input.is_mouse_button_just_pressed(*b))
+                .map(|b| b as i64)
+                .collect(),
             touches,
             touch_just_started,
             touch_just_ended,
@@ -161,6 +179,28 @@ impl ScriptSystem {
         c.camera_direction = direction;
     }
 
+    /// Camera view-projection (column-major) for world-space debug drawing
+    /// (`draw_line_3d`, `world_to_screen`). Pass the matrix the frame renders with.
+    pub fn set_camera_view_proj(&mut self, view_proj: [[f32; 4]; 4]) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.camera_view_proj = view_proj;
+    }
+
+    /// A cloneable handle on the camera `world_to_screen` uses, for native
+    /// functions a game registers (ADR 0087). Inside a script call it's
+    /// the camera this frame renders with; see [`Projector`].
+    pub fn projector(&self) -> Projector {
+        Projector::new(self.engine.ctx.clone())
+    }
+
+    /// The meshes drawn as ray targets (ADR 0105), which `raycast_meshes`,
+    /// `screen_to_mesh` and [`Projector::ray_scene`] cast against. The host
+    /// hands over the renderer's after each update, so scripts see where the
+    /// last frame drew them.
+    pub fn set_ray_scene(&mut self, scene: std::sync::Arc<flint_core::ray_mesh::RayScene>) {
+        crate::lock_or_recover(&self.engine.ctx).ray_scene = scene;
+    }
+
     /// Drain commands produced by scripts this frame
     pub fn drain_commands(&mut self) -> Vec<ScriptCommand> {
         self.engine.drain_commands()
@@ -171,6 +211,25 @@ impl ScriptSystem {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.screen_width = w;
         c.screen_height = h;
+    }
+
+    /// Set the cursor position in logical points (the `screen_width` space)
+    /// for `mouse_x()` / `mouse_y()`. The host divides the physical cursor
+    /// position by its pixels-per-point before calling this.
+    pub fn set_mouse_position(&mut self, x: f32, y: f32) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.mouse_pos_logical = (x, y);
+    }
+
+    /// Whether the cursor is captured now, for `is_cursor_captured()`
+    /// (ADR 0110).
+    pub fn set_cursor_captured(&mut self, captured: bool) {
+        crate::lock_or_recover(&self.engine.ctx).cursor_captured = captured;
+    }
+
+    /// Whether `is_cursor_captured()` reads true (ADR 0110).
+    pub fn cursor_captured(&self) -> bool {
+        crate::lock_or_recover(&self.engine.ctx).cursor_captured
     }
 
     /// Sync loaded chunk IDs so scripts can query `is_chunk_loaded`
@@ -232,15 +291,32 @@ impl ScriptSystem {
         self.engine.call_draw_uis(world);
     }
 
-    /// Drain draw commands produced by scripts this frame
-    pub fn drain_draw_commands(&mut self) -> Vec<DrawCommand> {
+    /// Drain draw commands produced by scripts this frame (each stamped
+    /// with the clip rect active when it was issued)
+    pub fn drain_draw_commands(&mut self) -> Vec<DrawItem> {
         self.engine.drain_draw_commands()
     }
 
-    /// Generate draw commands from the data-driven UI system
-    pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawCommand> {
+    /// Drain the depth-tested world lines (`draw_world_line`, ADR 0083)
+    /// scripts queued this frame, for `SceneRenderer::set_world_lines`
+    pub fn drain_world_lines(&mut self) -> Vec<flint_core::world_line::WorldLine> {
+        self.engine.drain_world_lines()
+    }
+
+    /// Drain the depth-tested world text (`draw_world_text`, ADR 0104)
+    /// scripts queued this frame, for the host to lay out and draw
+    pub fn drain_world_texts(&mut self) -> Vec<flint_core::world_text::WorldText> {
+        self.engine.drain_world_texts()
+    }
+
+    /// Generate draw commands from the data-driven UI system (unclipped)
+    pub fn generate_ui_draw_commands(&mut self, screen_w: f32, screen_h: f32) -> Vec<DrawItem> {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
-        c.ui_system.generate_draw_commands(screen_w, screen_h)
+        c.ui_system
+            .generate_draw_commands(screen_w, screen_h)
+            .into_iter()
+            .map(DrawItem::unclipped)
+            .collect()
     }
 
     /// Call on_animation_end(clip_name) for entities whose sprite animation finished
@@ -331,15 +407,36 @@ impl ScriptSystem {
         )
     }
 
-    /// Set up the script system's scripts directory from the scene path
+    /// Set up the script system's scripts directory from the scene path.
+    /// Also points `import` at `<scripts>/lib` and starts watching it.
     pub fn load_scripts_from_scene(&mut self, scene_path: &str) {
         sync::load_scripts_from_scene(scene_path, &mut self.sync);
+        if let Some(lib) = self.sync.lib_dir() {
+            self.engine.set_module_base(lib);
+        }
+    }
+
+    /// The Rhai engine, for a host that registers its own native functions
+    /// (flint-player's `PlayerExtension::register_script_api`). Flint's API
+    /// is already registered; a later registration with the same name and
+    /// parameter types replaces it. The engine survives `clear()`, so
+    /// registrations last across scene transitions. With rhai's `sync`
+    /// feature, registered closures must be `Send + Sync`.
+    pub fn rhai_engine_mut(&mut self) -> &mut rhai::Engine {
+        self.engine.rhai_engine_mut()
     }
 
     /// Set the terrain height sampling callback for scripts
     pub fn set_terrain_height_fn(&mut self, f: Option<Box<dyn Fn(f32, f32) -> f32 + Send + Sync>>) {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.terrain_height_fn = f;
+    }
+
+    /// Install (or clear) the host's real text measurer used by
+    /// `measure_text` / `measure_text_ex`.
+    pub fn set_text_measurer(&mut self, f: Option<context::TextMeasurer>) {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.text_measurer = f;
     }
 }
 
@@ -373,6 +470,11 @@ impl RuntimeSystem for ScriptSystem {
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
         // Check for hot-reloaded scripts
         self.sync.check_hot_reload(&mut self.engine);
+
+        // Check for edited .ui.toml / .style.toml / token files
+        crate::lock_or_recover(&self.engine.ctx)
+            .ui_system
+            .poll_reload();
 
         // Discover any new script entities
         self.sync.discover_and_load(world, &mut self.engine);
@@ -465,6 +567,37 @@ mod tests {
         let system = ScriptSystem::new();
         let commands = system.engine.drain_commands();
         assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn host_registered_functions_reach_scripts_and_survive_clear() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::<i64>::new()));
+        let mut system = ScriptSystem::new();
+        {
+            let seen = seen.clone();
+            let rhai = system.rhai_engine_mut();
+            rhai.register_fn("host_answer", || 42_i64);
+            rhai.register_fn("host_record", move |v: i64| seen.lock().unwrap().push(v));
+            // Replaces Flint's own delta_time() for every script.
+            rhai.register_fn("delta_time", || 7.0_f64);
+        }
+
+        let source = "fn on_update() { host_record(host_answer()); host_record(delta_time().to_int()); }";
+        let mut world = FlintWorld::new();
+        let id = world.spawn("host").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "host.rhai".into());
+        system.engine.call_updates(&mut world);
+        assert_eq!(*seen.lock().unwrap(), [42, 7]);
+
+        // A scene transition keeps the engine and its registrations.
+        system.clear();
+        let id = world.spawn("host2").unwrap();
+        let ast = system.engine.compile(source).unwrap();
+        system.engine.add_script(id, ast, "host.rhai".into());
+        system.engine.call_updates(&mut world);
+        assert_eq!(*seen.lock().unwrap(), [42, 7, 42, 7]);
     }
 
     #[test]

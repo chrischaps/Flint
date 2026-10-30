@@ -871,6 +871,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-random"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1553,6 +1563,7 @@ dependencies = [
  "flint-ecs",
  "flint-import",
  "flint-runtime",
+ "log",
  "serde",
  "toml",
 ]
@@ -1605,13 +1616,17 @@ dependencies = [
 name = "flint-audio"
 version = "0.1.0"
 dependencies = [
+ "cpal",
  "flint-core",
  "flint-ecs",
  "flint-runtime",
  "glam",
  "kira",
+ "send_wrapper",
  "toml",
  "tracing",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1630,10 +1645,12 @@ dependencies = [
  "flint-asset-gen",
  "flint-constraint",
  "flint-core",
+ "flint-debug-ui",
  "flint-ecs",
  "flint-import",
  "flint-input-capture",
  "flint-music",
+ "flint-particles",
  "flint-physics",
  "flint-player",
  "flint-procgen",
@@ -1653,6 +1670,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "toml_edit 0.22.27",
  "tracing",
  "tracing-subscriber",
  "wgpu",
@@ -1715,6 +1733,7 @@ dependencies = [
  "flint-asset",
  "flint-core",
  "gltf",
+ "image",
  "serde",
  "thiserror 2.0.18",
  "toml",
@@ -1729,6 +1748,7 @@ dependencies = [
  "gilrs",
  "gilrs-core",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1742,6 +1762,7 @@ dependencies = [
  "symphonia",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1752,7 +1773,9 @@ dependencies = [
  "flint-core",
  "flint-ecs",
  "flint-runtime",
+ "serde",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -1765,6 +1788,7 @@ dependencies = [
  "flint-runtime",
  "rapier3d",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -1774,6 +1798,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "clap",
+ "console_error_panic_hook",
  "dirs",
  "egui",
  "egui-wgpu",
@@ -1796,13 +1821,24 @@ dependencies = [
  "flint-schema",
  "flint-script",
  "flint-terrain",
+ "getrandom 0.3.4",
  "gilrs",
  "image",
+ "js-sys",
+ "kira",
  "pollster",
+ "profiling",
+ "rhai",
  "serde_json",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "tracing-wasm",
+ "tracy-client",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "wgpu",
  "winit",
 ]
@@ -1814,13 +1850,13 @@ dependencies = [
  "flint-core",
  "gltf",
  "image",
- "noise",
  "rand 0.9.2",
  "rand_chacha",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "web-time",
 ]
 
 [[package]]
@@ -1854,14 +1890,17 @@ name = "flint-render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "flint-asset",
  "flint-core",
  "flint-ecs",
  "flint-import",
+ "flint-particles",
  "flint-scene",
  "flint-terrain",
  "image",
  "naga",
  "pollster",
+ "profiling",
  "thiserror 2.0.18",
  "toml",
  "tracing",
@@ -1877,6 +1916,7 @@ dependencies = [
  "flint-ecs",
  "serde",
  "toml",
+ "web-time",
  "winit",
 ]
 
@@ -1902,6 +1942,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -1915,9 +1956,11 @@ dependencies = [
  "flint-runtime",
  "flint-scene",
  "flint-schema",
+ "flint-terrain",
  "rhai",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1946,6 +1989,7 @@ dependencies = [
  "flint-debug-ui",
  "flint-ecs",
  "flint-import",
+ "flint-particles",
  "flint-render",
  "flint-scene",
  "flint-schema",
@@ -2083,6 +2127,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "generator"
+version = "0.8.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54ade96dc9003043bce7c035c85a9df5a858bfb2039c5a2e6fdf00f324f6c551"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows-link",
+ "windows-result 0.4.1",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2120,9 +2179,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2866,6 +2927,19 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "loom"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
+dependencies = [
+ "cfg-if",
+ "generator",
+ "scoped-tls",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "loop9"
@@ -3929,6 +4003,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 dependencies = [
  "profiling-procmacros",
+ "tracy-client",
 ]
 
 [[package]]
@@ -5198,6 +5273,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-wasm"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4575c663a174420fa2d78f4108ff68f65bf2fbb7dd89f33749b6e826b3626e07"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "tracy-client"
+version = "0.18.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6131992ff3e2cb96f407eb4eb005427ba15e2687260d99089b90e60e33169ce0"
+dependencies = [
+ "loom",
+ "once_cell",
+ "tracy-client-sys",
+]
+
+[[package]]
+name = "tracy-client-sys"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab27f167b093214c68413a2e0bcd318f0591af475597405ff68138ba0a433379"
+dependencies = [
+ "cc",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
 name = "triple_buffer"
 version = "8.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5888,6 +5995,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d1043d8214f791817bab27572aaa8af63732e11bf84aa21a45a78d6c317ae0e"
 dependencies = [
  "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-result"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]

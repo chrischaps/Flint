@@ -1,0 +1,13 @@
+[component.material_overrides]
+description = """Per-glTF-material base-colour overrides for model entities.
+Each key is a material name from the GLB (e.g. Frame, Capsule); each value is
+[r, g, b] or [r, g, b, a] in 0.0-1.0. A three-component value keeps the
+material's own alpha, so a blended glass stays translucent. The renderer looks
+the component up on the drawn entity and then every ancestor, so placing it on
+a model's root entity recolours the matching materials on all expanded nodes,
+including nodes whose mesh mixes several materials. Wins over
+material.base_color_r/g/b for the named material only. Scripts:
+set_material_override(id, name, r, g, b, a)."""
+
+# Keys are material names, so no fixed fields are declared.
+[component.material_overrides.fields]

@@ -15,9 +15,12 @@ pub use leaves::generate_leaves;
 pub use lod::generate_lods;
 pub use trunk::{generate_trunk, TrunkOutput};
 
+use crate::algorithms::lsystem::grammar::{self, Grammar};
 use crate::algorithms::mesh_builder::MeshBuilder;
 use crate::generator::{GenerationCost, Generator};
-use crate::generators::util::{parse_hex_color, toml_f32, toml_string, toml_u32};
+use crate::generators::util::{
+    parse_hex_color, toml_f32, toml_string, toml_string_array, toml_u32,
+};
 use crate::output::{GeneratorOutput, OutputKind};
 use crate::spec::ProcGenSpec;
 use crate::types::{BranchSegment, ImageData, MeshData};
@@ -188,6 +191,8 @@ pub enum CrownShape {
     Sphere,
     Ellipsoid,
     Hemisphere,
+    /// A box `2 * crown_radius` wide and deep, `crown_radius * crown_height_ratio` tall.
+    Box,
 }
 
 // ─── BranchParams ───────────────────────────────────────────────────────────
@@ -227,12 +232,27 @@ pub struct BranchParams {
     pub influence_distance: f32,
     /// Growth step size per iteration.
     pub step_size: f32,
+    /// Pipe model exponent for branch radii (2 = da Vinci's rule).
+    pub pipe_exponent: f32,
 
     // ── L-system specific ──
     /// Number of L-system rewriting iterations.
     pub lsystem_iterations: u32,
     /// Angle variation range for stochastic L-system (degrees).
     pub lsystem_angle_variation: f32,
+    /// A text grammar (`lsystem_preset`, or `lsystem_axiom` plus
+    /// `lsystem_rules`). When set it replaces the built-in branching rule.
+    pub lsystem_grammar: Option<Grammar>,
+    /// Turtle angle for the grammar, degrees. Defaults to the preset's angle,
+    /// else the middle of `branch_angle_min..max`.
+    pub lsystem_angle: Option<f32>,
+    /// Fixed length of a bare `F`. When unset, the grammar's crown is scaled
+    /// to reach `lsystem_size` metres from the trunk tip instead.
+    pub lsystem_step: Option<f32>,
+    /// Crown reach in metres when `lsystem_step` is unset.
+    pub lsystem_size: f32,
+    /// Bend toward the ground per step (negative bends upward toward light).
+    pub lsystem_tropism: f32,
 }
 
 impl Default for BranchParams {
@@ -254,9 +274,15 @@ impl Default for BranchParams {
             kill_distance: 0.5,
             influence_distance: 4.0,
             step_size: 0.3,
+            pipe_exponent: 2.0,
 
             lsystem_iterations: 3,
             lsystem_angle_variation: 10.0,
+            lsystem_grammar: None,
+            lsystem_angle: None,
+            lsystem_step: None,
+            lsystem_size: 4.0,
+            lsystem_tropism: 0.0,
         }
     }
 }
@@ -348,11 +374,12 @@ impl BranchParams {
                 "sphere" | "Sphere" => CrownShape::Sphere,
                 "ellipsoid" | "Ellipsoid" => CrownShape::Ellipsoid,
                 "hemisphere" | "Hemisphere" => CrownShape::Hemisphere,
+                "box" | "Box" => CrownShape::Box,
                 other => {
                     return Err(ProcGenError::InvalidParameter {
                         name: "crown_shape".into(),
                         reason: format!(
-                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", or \"hemisphere\""
+                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", \"hemisphere\" or \"box\""
                         ),
                     });
                 }
@@ -389,6 +416,15 @@ impl BranchParams {
         if let Some(v) = table.get("step_size") {
             p.step_size = toml_f32(v, "step_size")?;
         }
+        if let Some(v) = table.get("branch_pipe_exponent") {
+            p.pipe_exponent = toml_f32(v, "branch_pipe_exponent")?;
+            if p.pipe_exponent < 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_pipe_exponent".into(),
+                    reason: "must be at least 1".into(),
+                });
+            }
+        }
 
         // L-system params
         if let Some(v) = table.get("lsystem_iterations") {
@@ -402,6 +438,49 @@ impl BranchParams {
         }
         if let Some(v) = table.get("lsystem_angle_variation") {
             p.lsystem_angle_variation = toml_f32(v, "lsystem_angle_variation")?;
+        }
+
+        // Text grammar: a named preset, or an axiom with rules.
+        if let Some(v) = table.get("lsystem_preset") {
+            let name = toml_string(v, "lsystem_preset")?;
+            let preset = grammar::preset(&name).ok_or_else(|| {
+                let names: Vec<&str> = grammar::PRESETS.iter().map(|p| p.name).collect();
+                ProcGenError::InvalidParameter {
+                    name: "lsystem_preset".into(),
+                    reason: format!("unknown preset \"{name}\"; expected one of {names:?}"),
+                }
+            })?;
+            p.lsystem_grammar = Some(preset.grammar());
+            p.lsystem_angle = Some(preset.angle);
+            if !table.contains_key("lsystem_iterations") {
+                p.lsystem_iterations = preset.iterations as u32;
+            }
+        }
+        match (table.get("lsystem_axiom"), table.get("lsystem_rules")) {
+            (None, None) => {}
+            (Some(axiom), Some(rules)) => {
+                let axiom = toml_string(axiom, "lsystem_axiom")?;
+                let rules = toml_string_array(rules, "lsystem_rules")?;
+                p.lsystem_grammar = Some(Grammar::parse(&axiom, &rules)?);
+            }
+            _ => {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "lsystem_rules".into(),
+                    reason: "lsystem_axiom and lsystem_rules go together".into(),
+                });
+            }
+        }
+        if let Some(v) = table.get("lsystem_angle") {
+            p.lsystem_angle = Some(toml_f32(v, "lsystem_angle")?);
+        }
+        if let Some(v) = table.get("lsystem_step") {
+            p.lsystem_step = Some(toml_f32(v, "lsystem_step")?);
+        }
+        if let Some(v) = table.get("lsystem_size") {
+            p.lsystem_size = toml_f32(v, "lsystem_size")?;
+        }
+        if let Some(v) = table.get("lsystem_tropism") {
+            p.lsystem_tropism = toml_f32(v, "lsystem_tropism")?;
         }
 
         Ok(p)
@@ -745,6 +824,23 @@ impl Generator for TreeGenerator {
                 "branch_angle_max": { "type": "number", "default": 40.0 },
                 "branch_length_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7 },
                 "branch_radius_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6 },
+                "crown_shape": { "type": "string", "enum": ["sphere", "ellipsoid", "hemisphere", "box"], "default": "sphere" },
+                "crown_radius": { "type": "number", "exclusiveMinimum": 0.0, "default": 3.0 },
+                "crown_height_ratio": { "type": "number", "exclusiveMinimum": 0.0, "default": 1.5 },
+                "num_attraction_points": { "type": "integer", "minimum": 0, "default": 500 },
+                "kill_distance": { "type": "number", "exclusiveMinimum": 0.0, "default": 0.5 },
+                "influence_distance": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 },
+                "step_size": { "type": "number", "exclusiveMinimum": 0.0, "default": 0.3 },
+                "branch_pipe_exponent": { "type": "number", "minimum": 1.0, "default": 2.0 },
+                "lsystem_iterations": { "type": "integer", "minimum": 1, "default": 3 },
+                "lsystem_angle_variation": { "type": "number", "minimum": 0.0, "default": 10.0 },
+                "lsystem_preset": { "type": "string", "enum": ["fractal_plant", "weed", "stochastic_plant", "bush"] },
+                "lsystem_axiom": { "type": "string" },
+                "lsystem_rules": { "type": "array", "items": { "type": "string" } },
+                "lsystem_angle": { "type": "number" },
+                "lsystem_step": { "type": "number", "exclusiveMinimum": 0.0 },
+                "lsystem_size": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 },
+                "lsystem_tropism": { "type": "number", "default": 0.0 },
                 "leaf_style": { "type": "string", "enum": ["billboard", "mesh", "none"], "default": "billboard" },
                 "leaf_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8 },
                 "leaf_color_base": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#2D8C0D" },

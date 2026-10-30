@@ -49,6 +49,34 @@ pub struct PostProcessConfig {
     pub fog_height_enabled: bool,
     pub fog_height_falloff: f32,
     pub fog_height_origin: f32,
+    /// Height fog's density at `fog_height_origin` (ADR 0101). It falls by
+    /// e every `1 / fog_height_falloff` metres above the origin, and its
+    /// optical depth along each view ray adds to the distance fog's. 0 (the
+    /// default) adds nothing, so a scene that only turned height fog on
+    /// looks as it did when height fog did nothing.
+    pub fog_height_density: f32,
+    /// Aerial tint (ADR 0101): far things take `fog_tint_color` (linear),
+    /// up to `fog_tint_strength` (0 = off, the default), ramping in over
+    /// `fog_tint_start..fog_tint_end` metres from the camera. It lies under
+    /// the fog, so the farthest things still run into `fog_color`. Rides
+    /// `fog_enabled`, and leaves the sky alone.
+    pub fog_tint_color: [f32; 3],
+    pub fog_tint_strength: f32,
+    pub fog_tint_start: f32,
+    pub fog_tint_end: f32,
+    /// Ground fog (ADR 0106): fog on floors of its own, read from the map
+    /// set with `SceneRenderer::set_ground_fog`, so a mist can fill hollows
+    /// at many heights. Its density per metre at a texel's floor where the
+    /// texel's amount is 1; 0 (the default) is off, as is a renderer with
+    /// no map. Unlit and in `ground_fog_color` (linear), it lies under the
+    /// distance fog and the aerial tint, and rides `enabled`, not
+    /// `fog_enabled`.
+    pub ground_fog_density: f32,
+    pub ground_fog_color: [f32; 3],
+    /// It falls by e every `1 / ground_fog_falloff` metres over the floor.
+    pub ground_fog_falloff: f32,
+    /// Steps each view ray marches through it, 1..=64 (clamped at upload).
+    pub ground_fog_steps: u32,
     pub dither_enabled: bool,
     pub dither_intensity: f32,
     pub volumetric_enabled: bool,
@@ -121,6 +149,15 @@ impl Default for PostProcessConfig {
             fog_height_enabled: false,
             fog_height_falloff: 0.1,
             fog_height_origin: 0.0,
+            fog_height_density: 0.0,
+            fog_tint_color: [0.42, 0.50, 0.65],
+            fog_tint_strength: 0.0,
+            fog_tint_start: 100.0,
+            fog_tint_end: 1000.0,
+            ground_fog_density: 0.0,
+            ground_fog_color: [0.8, 0.82, 0.86],
+            ground_fog_falloff: 0.5,
+            ground_fog_steps: 24,
             dither_enabled: false,
             dither_intensity: 0.03,
             volumetric_enabled: false,
@@ -182,6 +219,11 @@ pub fn post_process_config_from_def(pp_def: &flint_scene::PostProcessDef) -> Pos
     config.fog_height_enabled = pp_def.fog_height_enabled;
     config.fog_height_falloff = pp_def.fog_height_falloff;
     config.fog_height_origin = pp_def.fog_height_origin;
+    config.fog_height_density = pp_def.fog_height_density;
+    config.fog_tint_color = pp_def.fog_tint_color;
+    config.fog_tint_strength = pp_def.fog_tint_strength;
+    config.fog_tint_start = pp_def.fog_tint_start;
+    config.fog_tint_end = pp_def.fog_tint_end;
     config.chromatic_aberration = pp_def.chromatic_aberration;
     config.radial_blur = pp_def.radial_blur;
     config.desaturate = pp_def.desaturate;
@@ -259,6 +301,28 @@ pub struct PostProcessUniforms {
     pub _pad3: f32,
     pub grade_gain: [f32; 3],
     pub _pad4: f32,
+    // Aerial tint and height fog density (ADR 0101) — two appended rows.
+    pub fog_tint_color: [f32; 3],
+    pub fog_tint_strength: f32,
+    pub fog_tint_start: f32,
+    pub fog_tint_end: f32,
+    pub fog_height_density: f32,
+    pub _pad5: f32,
+    // Ground fog (ADR 0106) — four appended rows. The box the pass marches
+    // runs from ground_fog_floor_base up to ground_fog_ceiling, over
+    // origin..origin + size in X and Z.
+    pub ground_fog_color: [f32; 3],
+    pub ground_fog_density: f32,
+    pub ground_fog_origin: [f32; 2],
+    pub ground_fog_size: [f32; 2],
+    pub ground_fog_floor_base: f32,
+    pub ground_fog_ceiling: f32,
+    pub ground_fog_falloff: f32,
+    pub ground_fog_steps: f32,
+    pub ground_fog_texel: f32,
+    pub ground_fog_max_lod: f32,
+    pub ground_fog_enabled: f32,
+    pub _pad6: f32,
 }
 
 /// Uniform data for bloom passes (threshold/downsample/upsample).
@@ -968,6 +1032,8 @@ pub struct PostProcessPipeline {
     pub white_texture_view: wgpu::TextureView,
     // Cached hemisphere kernel (generated once)
     pub ssao_kernel: [[f32; 4]; SSAO_KERNEL_SIZE],
+    // 1x1 clear map bound when no ground fog is set (ADR 0106)
+    pub ground_fog_empty_view: wgpu::TextureView,
     // Volumetric (god rays) pipelines and resources
     pub volumetric_pipeline: wgpu::RenderPipeline,
     pub volumetric_uniform_bgl: wgpu::BindGroupLayout,
@@ -1127,6 +1193,17 @@ impl PostProcessPipeline {
                         binding: 5,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // The ground fog's map (ADR 0106), read through binding 5
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -1917,6 +1994,24 @@ impl PostProcessPipeline {
         let volumetric_black_view =
             volumetric_black_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // 1x1 clear ground fog map (zero-initialised) for when none is set
+        let ground_fog_empty_view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Ground Fog Empty Map"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::ground_fog::FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
         // --- Kuwahara pipelines (only when enabled) ---
         let kuwahara = if kuwahara_enabled {
             Some(KuwaharaPipelines::new(device))
@@ -1963,6 +2058,7 @@ impl PostProcessPipeline {
             volumetric_blur_texture_bgl,
             volumetric_blur_uniform_buffer,
             volumetric_black_view,
+            ground_fog_empty_view,
             kuwahara,
             // FXAA is created on demand via ensure_fxaa_resources (ADR 0050)
             fxaa: None,
@@ -1978,6 +2074,7 @@ impl PostProcessPipeline {
         queue: &wgpu::Queue,
         resources: &PostProcessResources,
         target_view: &wgpu::TextureView,
+        timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         let (Some(fxaa), Some(fxaa_res)) = (&self.fxaa, &resources.fxaa) else {
             return;
@@ -2015,6 +2112,12 @@ impl PostProcessPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("FXAA Encoder"),
         });
+        // Timed inside this submission, so a wait for the swapchain image
+        // before it runs isn't counted (ADR 0108).
+        let timed = timer.map(|t| {
+            let scope = t.begin(&mut encoder, "FXAA");
+            (t, scope)
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("FXAA Pass"),
@@ -2034,6 +2137,9 @@ impl PostProcessPipeline {
             pass.set_bind_group(0, &uniform_bg, &[]);
             pass.set_bind_group(1, &texture_bg, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let Some((timer, scope)) = timed {
+            timer.end(&mut encoder, scope);
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
@@ -2854,6 +2960,8 @@ impl PostProcessPipeline {
         depth_view: &wgpu::TextureView,
         camera: &Camera,
         time: f32,
+        ground_fog: Option<&crate::ground_fog::GroundFogGpu>,
+        timer: Option<&mut crate::gpu_timer::GpuTimer>,
     ) {
         // SSAO: use blurred AO if enabled, white fallback otherwise
         let ssao_view = if config.enabled && config.ssao_enabled {
@@ -2897,9 +3005,17 @@ impl PostProcessPipeline {
                     binding: 5,
                     resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(
+                        ground_fog.map_or(&self.ground_fog_empty_view, |g| &g.view),
+                    ),
+                },
             ],
         });
         let effects_on = config.enabled;
+        let ground_fog = ground_fog.filter(|_| effects_on && config.ground_fog_density > 0.0);
+        let falloff = config.ground_fog_falloff.max(1e-3);
         let uniforms = PostProcessUniforms {
             exposure: config.exposure,
             bloom_intensity: if effects_on && config.bloom_enabled {
@@ -2962,6 +3078,26 @@ impl PostProcessPipeline {
             _pad3: 0.0,
             grade_gain: config.grade_gain,
             _pad4: 0.0,
+            fog_tint_color: config.fog_tint_color,
+            fog_tint_strength: config.fog_tint_strength.max(0.0),
+            fog_tint_start: config.fog_tint_start,
+            // smoothstep needs start < end
+            fog_tint_end: config.fog_tint_end.max(config.fog_tint_start + 1e-3),
+            fog_height_density: config.fog_height_density.max(0.0),
+            _pad5: 0.0,
+            ground_fog_color: config.ground_fog_color,
+            ground_fog_density: config.ground_fog_density.max(0.0),
+            ground_fog_origin: ground_fog.map_or([0.0; 2], |g| g.origin),
+            ground_fog_size: ground_fog.map_or([1.0; 2], |g| g.size),
+            ground_fog_floor_base: ground_fog.map_or(0.0, |g| g.floor_base),
+            // Over the highest floor the fog has thinned to e^-7 by here
+            ground_fog_ceiling: ground_fog.map_or(0.0, |g| g.floor_top + 7.0 / falloff),
+            ground_fog_falloff: falloff,
+            ground_fog_steps: config.ground_fog_steps.clamp(1, 64) as f32,
+            ground_fog_texel: ground_fog.map_or(1.0, |g| g.texel),
+            ground_fog_max_lod: ground_fog.map_or(0.0, |g| (g.mip_count - 1) as f32),
+            ground_fog_enabled: if ground_fog.is_some() { 1.0 } else { 0.0 },
+            _pad6: 0.0,
         };
 
         queue.write_buffer(
@@ -3029,6 +3165,12 @@ impl PostProcessPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Composite Encoder"),
         });
+        // Timed inside this submission, so a wait for the swapchain image
+        // before it runs isn't counted (ADR 0108).
+        let timed = timer.map(|t| {
+            let scope = t.begin(&mut encoder, "Composite");
+            (t, scope)
+        });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3054,6 +3196,9 @@ impl PostProcessPipeline {
             pass.draw(0..3, 0..1);
         }
 
+        if let Some((timer, scope)) = timed {
+            timer.end(&mut encoder, scope);
+        }
         queue.submit(std::iter::once(encoder.finish()));
     }
 }
@@ -3295,10 +3440,14 @@ mod tests {
     /// at 112..176, DoF row (strength/focus/range/pad) at 176..192, mode
     /// scalars (render_mode/mode_mix/mode_time/pad) at 192..208, mode_params
     /// vec4 at 208..224, grade rows (lift+enabled / gamma+pad / gain+pad)
-    /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44).
+    /// at 224..272 (ADR 0050; grain_intensity reused the former _pad @44),
+    /// fog rows (tint color+strength / tint start+end+height density+pad)
+    /// at 272..304 (ADR 0101), ground fog rows (color+density / origin+size
+    /// / floor base, ceiling, falloff, steps / texel, max lod, enabled, pad)
+    /// at 304..368 (ADR 0106).
     #[test]
     fn composite_uniforms_match_wgsl_layout() {
-        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 272);
+        assert_eq!(std::mem::size_of::<PostProcessUniforms>(), 368);
         assert_eq!(std::mem::size_of::<PostProcessUniforms>() % 16, 0);
     }
 
@@ -3312,5 +3461,68 @@ mod tests {
         let mut warm = config.clone();
         warm.grade_gain = [1.05, 1.0, 0.95];
         assert!(warm.grade_active());
+    }
+
+    /// `height_fog_depth` in composite_shader.wgsl, line for line.
+    fn height_fog_depth(c: &PostProcessConfig, eye: [f32; 3], p: [f32; 3]) -> f32 {
+        let dist = (0..3).map(|i| (p[i] - eye[i]).powi(2)).sum::<f32>().sqrt();
+        let k = c.fog_height_falloff.max(1e-5);
+        let at_eye = c.fog_height_density * (-k * (eye[1] - c.fog_height_origin)).min(30.0).exp();
+        let x = (k * (p[1] - eye[1])).max(-30.0);
+        let share = if x.abs() > 1e-3 {
+            (1.0 - (-x).exp()) / x
+        } else {
+            1.0 - 0.5 * x
+        };
+        at_eye * dist * share
+    }
+
+    /// The closed form is the density integrated along the ray (ADR 0101):
+    /// level, climbing, falling and close to level.
+    #[test]
+    fn height_fog_is_its_density_along_the_ray() {
+        let c = PostProcessConfig {
+            fog_height_density: 0.02,
+            fog_height_falloff: 0.15,
+            fog_height_origin: 1.0,
+            ..PostProcessConfig::default()
+        };
+        let eye = [0.0, 6.0, 0.0];
+        let ends: [[f32; 3]; 4] = [
+            [300.0, 6.0, 0.0],
+            [80.0, 40.0, 30.0],
+            [50.0, -3.0, -20.0],
+            [200.0, 6.004, 0.0],
+        ];
+        for p in ends {
+            let steps = 20_000;
+            let dist = (0..3).map(|i| (p[i] - eye[i]).powi(2)).sum::<f32>().sqrt();
+            let density: f32 = (0..steps)
+                .map(|s| {
+                    let t = (s as f32 + 0.5) / steps as f32;
+                    let y = eye[1] + (p[1] - eye[1]) * t;
+                    (-c.fog_height_falloff * (y - c.fog_height_origin)).exp()
+                })
+                .sum::<f32>()
+                / steps as f32;
+            let numeric = c.fog_height_density * density * dist;
+            let closed = height_fog_depth(&c, eye, p);
+            assert!(
+                (closed - numeric).abs() < 1e-3 * numeric,
+                "{p:?}: {closed} vs {numeric}"
+            );
+        }
+        // Thicker toward the origin: the same ray, low and high.
+        let low = height_fog_depth(&c, [0.0, 1.5, 0.0], [100.0, 1.5, 0.0]);
+        let high = height_fog_depth(&c, [0.0, 30.0, 0.0], [100.0, 30.0, 0.0]);
+        assert!(low > 10.0 * high, "{low} vs {high}");
+        // Off by default: a scene that only turned height fog on adds
+        // nothing, and there's no tint.
+        let off = PostProcessConfig {
+            fog_height_falloff: 0.15,
+            ..PostProcessConfig::default()
+        };
+        assert_eq!(height_fog_depth(&off, eye, [300.0, 0.0, 0.0]), 0.0);
+        assert_eq!(off.fog_tint_strength, 0.0);
     }
 }

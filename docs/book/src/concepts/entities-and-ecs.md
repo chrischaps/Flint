@@ -78,7 +78,7 @@ parent = "main_hall"
 ```
 
 The ECS layer tracks these relationships, enabling:
-- Hierarchical transforms (child positions are relative to parent)
+- Hierarchical transforms (child positions are relative to parent). A parent with no `transform` is a bare group: it moves nothing, and its children are placed relative to the nearest ancestors above it that have one
 - Tree queries ("find all children of main_hall")
 - Cascading operations (deleting a parent removes children)
 
@@ -97,7 +97,7 @@ style = "hinged"
 locked = false
 ```
 
-When you create an entity with `--archetype door`, Flint ensures it has the required components and fills in defaults for any missing values.
+When you create an entity with `--archetype door`, Flint ensures it has the required components and fills in defaults for any missing values. The scene loader does the same at load time: archetype defaults go in first, then the authored fields, then any component-schema `default` for a field the author left out (see [Scenes](scenes.md#loading-and-saving)).
 
 Archetypes are not rigid types --- an entity can have components beyond what its archetype specifies. The archetype defines the *minimum* set.
 

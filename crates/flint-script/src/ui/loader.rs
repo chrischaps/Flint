@@ -1,13 +1,15 @@
 //! TOML loading for .ui.toml layout files and .style.toml style files
 
-use super::element::{Anchor, ElementType, StyleValue, UiElement};
+use super::element::{Anchor, ElementType, UiElement};
 use super::style::StyleClass;
+use super::tokens::{toml_to_style_value, TokenSet};
+use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Parse a .ui.toml layout file into elements + style path
 pub fn load_layout(path: &Path) -> Result<(Vec<UiElement>, String), String> {
-    let content = std::fs::read_to_string(path)
+    let content = vfs::read_to_string(path)
         .map_err(|e| format!("Failed to read layout {}: {}", path.display(), e))?;
 
     let doc: toml::Value = content
@@ -93,9 +95,21 @@ pub fn load_layout(path: &Path) -> Result<(Vec<UiElement>, String), String> {
     Ok((elements, style_path))
 }
 
-/// Parse a .style.toml file into named style classes
-pub fn load_styles(path: &Path) -> Result<HashMap<String, StyleClass>, String> {
-    let content = std::fs::read_to_string(path)
+/// A parsed `.style.toml`: named classes plus the token tables that
+/// were used to resolve `"$name"` references inside them.
+pub struct StyleSheet {
+    pub classes: HashMap<String, StyleClass>,
+    pub tokens: TokenSet,
+}
+
+/// Parse a .style.toml file into named style classes.
+///
+/// `root_dir` is the project root, where a top-level `tokens = "ui/theme.toml"`
+/// resolves. String property values starting with `$` are looked up in the
+/// local `[tokens]` table and the shared file; unknown tokens warn once and
+/// leave the property unset.
+pub fn load_styles(path: &Path, root_dir: &Path) -> Result<StyleSheet, String> {
+    let content = vfs::read_to_string(path)
         .map_err(|e| format!("Failed to read style {}: {}", path.display(), e))?;
 
     let doc: toml::Value = content
@@ -106,9 +120,17 @@ pub fn load_styles(path: &Path) -> Result<HashMap<String, StyleClass>, String> {
         .as_table()
         .ok_or_else(|| format!("Style {} is not a TOML table", path.display()))?;
 
+    let style_dir = path.parent().unwrap_or(root_dir);
+    let mut tokens = TokenSet::from_style_table(table, root_dir, style_dir);
+
     let styles_table = match table.get("styles") {
         Some(toml::Value::Table(t)) => t,
-        _ => return Ok(HashMap::new()),
+        _ => {
+            return Ok(StyleSheet {
+                classes: HashMap::new(),
+                tokens,
+            })
+        }
     };
 
     let mut classes = HashMap::new();
@@ -122,7 +144,11 @@ pub fn load_styles(path: &Path) -> Result<HashMap<String, StyleClass>, String> {
         let mut properties = HashMap::new();
 
         for (key, val) in props_table {
-            if let Some(sv) = toml_to_style_value(val) {
+            let resolved = match val {
+                toml::Value::String(s) if TokenSet::is_reference(s) => tokens.resolve_style(key, s),
+                other => toml_to_style_value(other),
+            };
+            if let Some(sv) = resolved {
                 properties.insert(key.clone(), sv);
             }
         }
@@ -136,35 +162,5 @@ pub fn load_styles(path: &Path) -> Result<HashMap<String, StyleClass>, String> {
         );
     }
 
-    Ok(classes)
-}
-
-/// Convert a TOML value to a StyleValue
-fn toml_to_style_value(val: &toml::Value) -> Option<StyleValue> {
-    match val {
-        toml::Value::Float(f) => Some(StyleValue::Float(*f as f32)),
-        toml::Value::Integer(i) => Some(StyleValue::Float(*i as f32)),
-        toml::Value::String(s) => Some(StyleValue::String(s.clone())),
-        toml::Value::Boolean(b) => Some(StyleValue::Bool(*b)),
-        toml::Value::Array(arr) => {
-            // Color array [r, g, b, a] or padding [l, t, r, b]
-            if arr.len() == 4 {
-                let values: Vec<f32> = arr
-                    .iter()
-                    .filter_map(|v| match v {
-                        toml::Value::Float(f) => Some(*f as f32),
-                        toml::Value::Integer(i) => Some(*i as f32),
-                        _ => None,
-                    })
-                    .collect();
-                if values.len() == 4 {
-                    return Some(StyleValue::Color([
-                        values[0], values[1], values[2], values[3],
-                    ]));
-                }
-            }
-            None
-        }
-        _ => None,
-    }
+    Ok(StyleSheet { classes, tokens })
 }

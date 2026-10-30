@@ -14,6 +14,7 @@ use std::path::Path;
 #[derive(clap::Args)]
 pub struct RenderArgs {
     /// Path to scene file
+    #[arg(required_unless_present = "list_gpus", default_value = "")]
     pub scene: String,
 
     /// Output image path
@@ -208,6 +209,12 @@ pub struct RenderArgs {
     #[arg(long)]
     pub grain_time: Option<f32>,
 
+    /// Simulate particle emitters and effects for N seconds at a fixed
+    /// 1/60 s step before capturing (deterministic: same value, same
+    /// pixels). Default: no particles, so existing snapshots are unchanged
+    #[arg(long)]
+    pub particle_time: Option<f32>,
+
     /// Color grade lift as R,G,B (per-channel add post-ACES; neutral 0,0,0)
     #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
     pub grade_lift: Option<[f32; 3]>,
@@ -223,9 +230,25 @@ pub struct RenderArgs {
     /// Enable the FXAA anti-aliasing pass
     #[arg(long)]
     pub fxaa: bool,
+    /// GPU adapter to use (case-insensitive substring of the adapter name,
+    /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
+    /// high-performance adapter. Use --list-gpus to see names.
+    #[arg(long)]
+    pub gpu: Option<String>,
+
+    /// List available GPU adapters and exit
+    #[arg(long)]
+    pub list_gpus: bool,
 }
 
 pub fn run(args: RenderArgs) -> Result<()> {
+    if args.list_gpus {
+        for a in flint_render::list_adapters() {
+            println!("{a}");
+        }
+        return Ok(());
+    }
+    flint_render::set_gpu_override(args.gpu.clone());
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
     for dir in flint_schema::discover_schema_dirs(&args.scene) {
@@ -536,7 +559,38 @@ pub fn run(args: RenderArgs) -> Result<()> {
     renderer.ortho_height = camera.ortho_height;
     renderer.aspect_ratio = camera.aspect;
 
+    // Two-bone IK (ADR 0070): pose authored chains before the single frame.
+    flint_animation::IkPass::new().run(&mut world);
+
     renderer.update_from_world(&world, &ctx.device);
+
+    // Particles (ADR 0068): fixed-step, fixed-seed simulation so a snapshot
+    // at a given --particle-time is reproducible run to run.
+    if let Some(seconds) = args.particle_time {
+        use flint_runtime::RuntimeSystem;
+        let mut particles = flint_particles::ParticleSystem::new();
+        flint_particles::load_particle_effects_from_world(&args.scene, &mut particles);
+        particles
+            .initialize(&mut world)
+            .context("Failed to initialize particles")?;
+        let dirs = flint_particles::texture_search_dirs(&args.scene);
+        flint_render::load_particle_textures(
+            &mut renderer,
+            &ctx.device,
+            &ctx.queue,
+            &particles.sync,
+            &dirs,
+        );
+        particles.simulate_to(&world, seconds.max(0.0), 1.0 / 60.0);
+        particles.pack(Some(camera.position_array()));
+        renderer.update_particles_from(&ctx.device, &ctx.queue, &particles.sync);
+        println!(
+            "Particles: {} alive across {} emitter(s) at t = {:.2}s",
+            particles.sync.total_alive(),
+            particles.sync.emitter_count(),
+            seconds
+        );
+    }
 
     // Render
     renderer.render_to(
@@ -680,42 +734,7 @@ fn load_terrain_for_render(
         );
 
         // Load grass if enabled
-        let grass_config = {
-            let mut gc = flint_terrain::GrassConfig::default();
-            if let Some(enabled) = terrain_comp.get("grass.enabled") {
-                if enabled.as_bool().unwrap_or(false) {
-                    gc.enabled = true;
-                    gc.density = get_f32("grass.density", gc.density);
-                    gc.max_distance = get_f32("grass.max_distance", gc.max_distance);
-                    gc.fade_start = get_f32("grass.fade_start", gc.fade_start);
-                    gc.blade_width = get_f32("grass.blade_width", gc.blade_width);
-                    gc.blade_height = get_f32("grass.blade_height", gc.blade_height);
-                    gc.height_variation = get_f32("grass.height_variation", gc.height_variation);
-                    gc.wind_speed = get_f32("grass.wind_speed", gc.wind_speed);
-                    gc.wind_strength = get_f32("grass.wind_strength", gc.wind_strength);
-                    gc.bend_radius = get_f32("grass.bend_radius", gc.bend_radius);
-                    gc.bend_strength = get_f32("grass.bend_strength", gc.bend_strength);
-                    gc.density_threshold = get_f32("grass.density_threshold", gc.density_threshold);
-                    gc.density_layer =
-                        get_i32("grass.density_layer", gc.density_layer as i32) as u32;
-                    gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
-
-                    if let Some(v) = terrain_comp.get("grass.color_base").and_then(toml_vec3) {
-                        gc.color_base = v;
-                    }
-                    if let Some(v) = terrain_comp.get("grass.color_tip").and_then(toml_vec3) {
-                        gc.color_tip = v;
-                    }
-                    if let Some(v) = terrain_comp.get("grass.color_dry").and_then(toml_vec3) {
-                        gc.color_dry = v;
-                    }
-                    if let Some(v) = terrain_comp.get("grass.wind_direction").and_then(toml_vec3) {
-                        gc.wind_direction = v;
-                    }
-                }
-            }
-            gc
-        };
+        let grass_config = flint_terrain::GrassConfig::from_component(terrain_comp, false);
 
         if grass_config.enabled {
             let hm_data = heightmap.clone_heights();
@@ -777,5 +796,10 @@ fn load_terrain_for_render(
             terrain.chunks.len()
         );
         break; // Only one terrain for now
+    }
+
+    // Grass on a mesh ground (ADR 0089), as the player loads it
+    if flint_player::load_scene_grass_ground(world, scene_path, device, queue, renderer) {
+        println!("[grass] Enabled on grass_ground");
     }
 }

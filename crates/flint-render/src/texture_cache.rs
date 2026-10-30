@@ -1,9 +1,24 @@
 //! GPU texture cache — uploads imported textures and provides default fallbacks
 
+use flint_core::vfs;
 use flint_import::ImportedTexture;
 use std::collections::HashMap;
 use std::path::Path;
 use wgpu::util::DeviceExt;
+
+/// Open and decode an image file through the file layer: `image::open`, but
+/// the bytes come from [`vfs::read`] so a memory source works too. The format
+/// comes from the path's extension, as `image::open` does, falling back to
+/// sniffing the bytes when the extension names none.
+pub fn open_image(path: &Path) -> image::ImageResult<image::DynamicImage> {
+    let bytes = vfs::read(path).map_err(image::ImageError::IoError)?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    match image::ImageFormat::from_path(path) {
+        Ok(format) => reader.set_format(format),
+        Err(_) => reader = reader.with_guessed_format()?,
+    }
+    reader.decode()
+}
 
 /// A GPU-resident texture with its view and sampler
 pub struct GpuTexture {
@@ -14,6 +29,14 @@ pub struct GpuTexture {
     pub width: u32,
     /// Texture height in pixels
     pub height: u32,
+}
+
+/// Whether a loose image file is a data map, by its name: the companion
+/// maps `<tex>_normal` and `<tex>_roughness` are sampled linear, anything
+/// else as sRGB colour. Only for files on disk; a model's own textures go
+/// by how its materials use them.
+pub fn is_data_map_name(name: &str) -> bool {
+    name.contains("normal") || name.contains("roughness")
 }
 
 /// Cache of GPU textures, keyed by name, with built-in defaults
@@ -89,13 +112,19 @@ impl TextureCache {
         }
     }
 
-    /// Upload an imported texture to the GPU
+    /// Upload an imported texture to the GPU.
+    ///
+    /// `linear` is for data maps (normal, metallic-roughness): they're
+    /// sampled as stored. Colour maps (base colour, emissive) are sRGB. The
+    /// caller decides from how the material uses the texture, since a glTF
+    /// texture's name says nothing about it.
     pub fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         name: &str,
         imported: &ImportedTexture,
+        linear: bool,
     ) {
         if self.textures.contains_key(name) {
             return;
@@ -109,8 +138,7 @@ impl TextureCache {
             imported.height,
         );
 
-        // Determine if this is a normal map (use Rgba8Unorm, not sRGB)
-        let format = if name.contains("normal") {
+        let format = if linear {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
             wgpu::TextureFormat::Rgba8UnormSrgb
@@ -172,12 +200,12 @@ impl TextureCache {
             return Ok(false);
         }
 
-        let img = image::open(path)
+        let img = open_image(path)
             .map_err(|e| format!("Failed to open image '{}': {}", path.display(), e))?;
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
 
-        let format = if name.contains("normal") {
+        let format = if is_data_map_name(name) {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
             wgpu::TextureFormat::Rgba8UnormSrgb

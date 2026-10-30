@@ -1,17 +1,29 @@
 //! Space colonization algorithm for organic branching structures.
 //!
-//! Produces `Vec<BranchSegment>` from a cloud of attraction points scattered
-//! within a crown volume. The algorithm grows a tree graph toward those points,
-//! creating natural-looking canopies with adaptive branching density.
+//! Grows a tree graph toward a cloud of attraction points scattered within a
+//! crown volume (Runions et al., *Modeling Trees with a Space Colonization
+//! Algorithm*, 2007). Branches compete for the space they grow into, so the
+//! canopy fills its volume with adaptive branching density, which reads as
+//! more natural than an L-system for broadleaf crowns, roots and veins.
 //!
 //! # Algorithm Overview
 //!
-//! 1. Scatter attraction points inside a [`CrownVolume`] via rejection sampling
+//! 1. Scatter attraction points inside a [`CrownVolume`] via rejection
+//!    sampling ([`scatter_attraction_points`])
 //! 2. Grow a straight trunk from the root upward
-//! 3. Iteratively extend the tree toward nearby attraction points
-//! 4. Remove consumed attraction points when nodes grow close enough
-//! 5. Assign branching depth and radii via the pipe model (da Vinci's rule)
-//! 6. Convert the internal graph to `Vec<BranchSegment>`
+//! 3. Each iteration, every attraction point pulls on its closest node within
+//!    `influence_distance`; every pulled node grows one `step_size` toward the
+//!    mean of its pulls
+//! 4. Remove attraction points within `kill_distance` of a node
+//! 5. Stop when no points remain, none can pull, or `max_iterations` is hit
+//! 6. Assign branching depth and radii via the pipe model
+//!    (`r_parent^n = sum(r_child^n)`, da Vinci's rule at n = 2)
+//! 7. Convert the graph to `Vec<BranchSegment>` ([`branch_graph_to_segments`]),
+//!    the same format the L-system produces
+//!
+//! Each attraction point remembers its closest node; nodes are never removed,
+//! so an iteration only compares points against the nodes it just added. That
+//! keeps a step at O(points x new nodes) instead of O(points x all nodes).
 
 use crate::rng::SeededRng;
 use crate::types::BranchSegment;
@@ -29,18 +41,39 @@ pub enum CrownVolume {
     Ellipsoid { center: Vec3, radii: Vec3 },
     /// Upper hemisphere (y >= center.y) centered at `center` with the given `radius`.
     Hemisphere { center: Vec3, radius: f32 },
+    /// An axis-aligned box from `min` to `max` (hedges, espaliers, root beds).
+    Box { min: Vec3, max: Vec3 },
 }
 
 impl CrownVolume {
+    /// Check the volume encloses some space, so sampling terminates.
+    fn validate(&self) -> Result<()> {
+        let ok = match *self {
+            CrownVolume::Sphere { radius, .. } | CrownVolume::Hemisphere { radius, .. } => {
+                radius > 0.0
+            }
+            CrownVolume::Ellipsoid { radii, .. } => radii.x > 0.0 && radii.y > 0.0 && radii.z > 0.0,
+            CrownVolume::Box { min, max } => min.x <= max.x && min.y <= max.y && min.z <= max.z,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(ProcGenError::InvalidParameter {
+                name: "crown".into(),
+                reason: "volume must have positive extent".into(),
+            })
+        }
+    }
+
     /// Sample a random point inside this volume using rejection sampling.
-    fn sample(&self, rng: &mut SeededRng) -> [f32; 3] {
+    fn sample(&self, rng: &mut SeededRng) -> Vec3 {
         match *self {
             CrownVolume::Sphere { center, radius } => loop {
                 let x = rng.next_range(-radius, radius);
                 let y = rng.next_range(-radius, radius);
                 let z = rng.next_range(-radius, radius);
                 if x * x + y * y + z * z <= radius * radius {
-                    return [center.x + x, center.y + y, center.z + z];
+                    return center + Vec3::new(x, y, z);
                 }
             },
             CrownVolume::Ellipsoid { center, radii } => loop {
@@ -51,7 +84,7 @@ impl CrownVolume {
                 let ny = y / radii.y;
                 let nz = z / radii.z;
                 if nx * nx + ny * ny + nz * nz <= 1.0 {
-                    return [center.x + x, center.y + y, center.z + z];
+                    return center + Vec3::new(x, y, z);
                 }
             },
             CrownVolume::Hemisphere { center, radius } => loop {
@@ -59,11 +92,25 @@ impl CrownVolume {
                 let y = rng.next_range(0.0, radius);
                 let z = rng.next_range(-radius, radius);
                 if x * x + y * y + z * z <= radius * radius {
-                    return [center.x + x, center.y + y, center.z + z];
+                    return center + Vec3::new(x, y, z);
                 }
             },
+            CrownVolume::Box { min, max } => Vec3::new(
+                rng.next_range(min.x, max.x),
+                rng.next_range(min.y, max.y),
+                rng.next_range(min.z, max.z),
+            ),
         }
     }
+}
+
+/// Scatter `count` attraction points inside `volume`, deterministically from `rng`.
+pub fn scatter_attraction_points(
+    volume: &CrownVolume,
+    count: u32,
+    rng: &mut SeededRng,
+) -> Vec<Vec3> {
+    (0..count).map(|_| volume.sample(rng)).collect()
 }
 
 // ─── B. Parameters ──────────────────────────────────────────────────────────
@@ -73,7 +120,8 @@ impl CrownVolume {
 pub struct SpaceColonizationParams {
     /// Shape of the attraction point cloud.
     pub crown: CrownVolume,
-    /// Number of attraction points to scatter (default 500).
+    /// Number of attraction points to scatter (default 500). Zero grows the
+    /// trunk alone.
     pub num_attraction_points: u32,
     /// Remove a point when a node is this close (default 0.5).
     pub kill_distance: f32,
@@ -91,8 +139,11 @@ pub struct SpaceColonizationParams {
     pub max_nodes: u32,
     /// Root radius for the pipe model (default 0.3).
     pub base_radius: f32,
-    /// Terminal node radius (default 0.02).
+    /// Terminal node radius before scaling to `base_radius` (default 0.02).
     pub tip_radius: f32,
+    /// Pipe model exponent `n` in `r_parent^n = sum(r_child^n)` (default 2.0,
+    /// da Vinci's rule). Larger values keep inner branches thicker.
+    pub pipe_exponent: f32,
 }
 
 impl Default for SpaceColonizationParams {
@@ -112,18 +163,36 @@ impl Default for SpaceColonizationParams {
             max_nodes: 5000,
             base_radius: 0.3,
             tip_radius: 0.02,
+            pipe_exponent: 2.0,
         }
     }
 }
 
-// ─── C. Internal Graph Node ─────────────────────────────────────────────────
+// ─── C. Branch Graph ────────────────────────────────────────────────────────
 
-/// Internal tree graph node used during colonization.
-struct BranchNode {
-    position: [f32; 3],
-    parent: Option<usize>,
-    children: Vec<usize>,
-    depth: u32,
+/// One node of a grown branch graph. Node 0 is the root; every other node's
+/// `parent` has a lower index, so a forward pass visits parents first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BranchNode {
+    /// World-space position.
+    pub position: Vec3,
+    /// Pipe-model radius at this node.
+    pub radius: f32,
+    /// Index of the parent node; `None` only for the root.
+    pub parent: Option<usize>,
+    /// Branching depth: 0 on the trunk, +1 past each fork.
+    pub depth: u32,
+}
+
+/// The outcome of a colonization run.
+#[derive(Debug, Clone)]
+pub struct Colonization {
+    /// The grown tree graph (empty when nothing grew).
+    pub nodes: Vec<BranchNode>,
+    /// Growth iterations run.
+    pub iterations: u32,
+    /// Attraction points left unconsumed (out of reach, or the cap was hit).
+    pub unconsumed: usize,
 }
 
 // ─── D. SpaceColonization ───────────────────────────────────────────────────
@@ -158,265 +227,257 @@ impl SpaceColonization {
                 reason: "must be > 0".into(),
             });
         }
-        if params.num_attraction_points == 0 {
+        if params.pipe_exponent < 1.0 {
             return Err(ProcGenError::InvalidParameter {
-                name: "num_attraction_points".into(),
-                reason: "must be > 0".into(),
+                name: "pipe_exponent".into(),
+                reason: "must be >= 1".into(),
             });
         }
+        params.crown.validate()?;
         Ok(Self { params })
+    }
+
+    /// The validated parameters.
+    pub fn params(&self) -> &SpaceColonizationParams {
+        &self.params
+    }
+
+    /// Scatter attraction points in the crown and grow the graph toward them.
+    pub fn grow(&self, rng: &mut SeededRng) -> Result<Colonization> {
+        let p = &self.params;
+        let points = scatter_attraction_points(&p.crown, p.num_attraction_points, rng);
+        self.colonize(&points)
+    }
+
+    /// Grow the graph from `root_position` toward the given attraction points.
+    ///
+    /// Deterministic: the same points always give the same graph. Fails with
+    /// [`ProcGenError::BudgetExceeded`] past `max_nodes`.
+    pub fn colonize(&self, attractors: &[Vec3]) -> Result<Colonization> {
+        let p = &self.params;
+        let kill_sq = p.kill_distance * p.kill_distance;
+        let influence_sq = p.influence_distance * p.influence_distance;
+
+        let mut graph = Graph::default();
+        graph.push(p.root_position, None);
+        for _ in 0..p.trunk_steps {
+            let top = graph.positions.len() - 1;
+            let pos = graph.positions[top] + Vec3::new(0.0, p.step_size, 0.0);
+            graph.push(pos, Some(top));
+        }
+        graph.check_budget(p.max_nodes)?;
+
+        // Every live attraction point with its closest node so far.
+        let mut live: Vec<Attractor> = attractors
+            .iter()
+            .map(|&point| Attractor {
+                point,
+                closest: 0,
+                dist_sq: f32::INFINITY,
+            })
+            .collect();
+        let mut seen = 0; // nodes below this index are folded into `live`
+
+        let mut iterations = 0;
+        while iterations < p.max_iterations {
+            // Fold in the nodes added since last time, and kill what they reach.
+            let fresh = seen..graph.positions.len();
+            seen = fresh.end;
+            live.retain_mut(|a| {
+                for ni in fresh.clone() {
+                    let d = dist_sq(graph.positions[ni], a.point);
+                    if d < a.dist_sq {
+                        a.dist_sq = d;
+                        a.closest = ni;
+                    }
+                }
+                a.dist_sq >= kill_sq
+            });
+            if live.is_empty() {
+                break;
+            }
+
+            // Sum each node's pulls toward the points it is closest to, and
+            // remember the nearest of them.
+            let n = graph.positions.len();
+            let mut pull: Vec<Vec3> = vec![Vec3::ZERO; n];
+            let mut nearest: Vec<Option<&Attractor>> = vec![None; n];
+            for a in live.iter().filter(|a| a.dist_sq <= influence_sq) {
+                let dir = a.point - graph.positions[a.closest];
+                pull[a.closest] = pull[a.closest] + dir * (1.0 / a.dist_sq.sqrt());
+                if nearest[a.closest].is_none_or(|b| a.dist_sq < b.dist_sq) {
+                    nearest[a.closest] = Some(a);
+                }
+            }
+
+            let before = graph.positions.len();
+            for (ni, dir) in pull.into_iter().enumerate() {
+                let Some(near) = nearest[ni] else { continue };
+                let tolerance = p.step_size * 0.05;
+                let from = graph.positions[ni];
+                let len = dir.length();
+                let mut pos = from + dir * (p.step_size / len.max(1e-6));
+                if len < 1e-6 || graph.has_child_near(ni, pos, tolerance) {
+                    // Pulls that cancel out, or that already grew a child no
+                    // closer to them, would stall; step toward the nearest
+                    // point instead, which always gets closer to it.
+                    let toward = near.point - from;
+                    pos = from + toward * (p.step_size.min(near.dist_sq.sqrt()) / toward.length());
+                    if graph.has_child_near(ni, pos, tolerance) {
+                        continue;
+                    }
+                }
+                graph.push(pos, Some(ni));
+            }
+            graph.check_budget(p.max_nodes)?;
+            iterations += 1;
+            if graph.positions.len() == before {
+                break; // stalled: the rest is out of reach
+            }
+        }
+
+        // A lone root is not a branch.
+        if graph.positions.len() < 2 {
+            return Ok(Colonization {
+                nodes: Vec::new(),
+                iterations,
+                unconsumed: live.len(),
+            });
+        }
+
+        let depths = graph.depths();
+        let radii = pipe_radii(&graph.parents, p.tip_radius, p.pipe_exponent, p.base_radius);
+        let nodes = (0..graph.positions.len())
+            .map(|i| BranchNode {
+                position: graph.positions[i],
+                radius: radii[i],
+                parent: graph.parents[i],
+                depth: depths[i],
+            })
+            .collect();
+        Ok(Colonization {
+            nodes,
+            iterations,
+            unconsumed: live.len(),
+        })
     }
 
     /// Run the space colonization algorithm and produce branch segments.
     pub fn generate_segments(&self, rng: &mut SeededRng) -> Result<Vec<BranchSegment>> {
-        let p = &self.params;
-
-        // 1. Scatter attraction points
-        let mut attractors: Vec<[f32; 3]> = Vec::with_capacity(p.num_attraction_points as usize);
-        for _ in 0..p.num_attraction_points {
-            attractors.push(p.crown.sample(rng));
-        }
-
-        // 2. Grow trunk
-        let mut nodes: Vec<BranchNode> = Vec::new();
-        nodes.push(BranchNode {
-            position: [p.root_position.x, p.root_position.y, p.root_position.z],
-            parent: None,
-            children: Vec::new(),
-            depth: 0,
-        });
-
-        let trunk_step_len = if p.trunk_steps > 0 { p.step_size } else { 0.0 };
-
-        for i in 0..p.trunk_steps {
-            let parent_pos = nodes.last().unwrap().position;
-            let new_pos = [parent_pos[0], parent_pos[1] + trunk_step_len, parent_pos[2]];
-            let parent_idx = nodes.len() - 1;
-            let child_idx = nodes.len();
-            nodes[parent_idx].children.push(child_idx);
-            nodes.push(BranchNode {
-                position: new_pos,
-                parent: Some(parent_idx),
-                children: Vec::new(),
-                depth: 0,
-            });
-
-            if nodes.len() > p.max_nodes as usize {
-                return Err(ProcGenError::BudgetExceeded(format!(
-                    "node count {} exceeds max_nodes {} during trunk growth",
-                    nodes.len(),
-                    p.max_nodes
-                )));
-            }
-            let _ = i;
-        }
-
-        // 3. Colonization loop
-        let kill_dist_sq = p.kill_distance * p.kill_distance;
-        let influence_dist_sq = p.influence_distance * p.influence_distance;
-
-        for _iteration in 0..p.max_iterations {
-            if attractors.is_empty() {
-                break;
-            }
-
-            // For each attraction point, find the closest node within influence distance
-            // influence_map: node_index -> list of direction vectors toward attractors
-            let mut influence_map: Vec<(usize, Vec<[f32; 3]>)> = Vec::new();
-
-            for attractor in &attractors {
-                let mut closest_idx: Option<usize> = None;
-                let mut closest_dist_sq = f32::INFINITY;
-
-                for (ni, node) in nodes.iter().enumerate() {
-                    let dsq = dist_sq(&node.position, attractor);
-                    if dsq < closest_dist_sq && dsq <= influence_dist_sq {
-                        closest_dist_sq = dsq;
-                        closest_idx = Some(ni);
-                    }
-                }
-
-                if let Some(ni) = closest_idx {
-                    let dir = [
-                        attractor[0] - nodes[ni].position[0],
-                        attractor[1] - nodes[ni].position[1],
-                        attractor[2] - nodes[ni].position[2],
-                    ];
-                    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-                    if len > 1e-10 {
-                        let normalized = [dir[0] / len, dir[1] / len, dir[2] / len];
-                        // Find or create entry in influence_map
-                        if let Some(entry) = influence_map.iter_mut().find(|(idx, _)| *idx == ni) {
-                            entry.1.push(normalized);
-                        } else {
-                            influence_map.push((ni, vec![normalized]));
-                        }
-                    }
-                }
-            }
-
-            if influence_map.is_empty() {
-                // No attractors influenced any node — stall
-                break;
-            }
-
-            // For each influenced node, average directions and create a new child
-            let mut new_nodes: Vec<(usize, [f32; 3])> = Vec::new();
-            for (node_idx, dirs) in &influence_map {
-                let count = dirs.len() as f32;
-                let avg = [
-                    dirs.iter().map(|d| d[0]).sum::<f32>() / count,
-                    dirs.iter().map(|d| d[1]).sum::<f32>() / count,
-                    dirs.iter().map(|d| d[2]).sum::<f32>() / count,
-                ];
-                let len = (avg[0] * avg[0] + avg[1] * avg[1] + avg[2] * avg[2]).sqrt();
-                if len > 1e-10 {
-                    let norm = [avg[0] / len, avg[1] / len, avg[2] / len];
-                    let parent_pos = nodes[*node_idx].position;
-                    let child_pos = [
-                        parent_pos[0] + norm[0] * p.step_size,
-                        parent_pos[1] + norm[1] * p.step_size,
-                        parent_pos[2] + norm[2] * p.step_size,
-                    ];
-                    new_nodes.push((*node_idx, child_pos));
-                }
-            }
-
-            for (parent_idx, child_pos) in new_nodes {
-                let child_idx = nodes.len();
-                nodes[parent_idx].children.push(child_idx);
-                nodes.push(BranchNode {
-                    position: child_pos,
-                    parent: Some(parent_idx),
-                    children: Vec::new(),
-                    depth: 0,
-                });
-
-                if nodes.len() > p.max_nodes as usize {
-                    return Err(ProcGenError::BudgetExceeded(format!(
-                        "node count {} exceeds max_nodes {}",
-                        nodes.len(),
-                        p.max_nodes
-                    )));
-                }
-            }
-
-            // Remove attraction points within kill_distance of any node
-            attractors.retain(|att| {
-                for node in &nodes {
-                    if dist_sq(&node.position, att) < kill_dist_sq {
-                        return false;
-                    }
-                }
-                true
-            });
-        }
-
-        // 4. Assign depths — increment only at forks (2+ children)
-        assign_depths(&mut nodes);
-
-        // 5. Assign radii via pipe model (da Vinci's rule)
-        let radii = compute_pipe_radii(&nodes, p.base_radius, p.tip_radius);
-
-        // 6. Convert to BranchSegments
-        let mut segments = Vec::new();
-        for (i, node) in nodes.iter().enumerate() {
-            if let Some(parent_idx) = node.parent {
-                let parent = &nodes[parent_idx];
-                segments.push(BranchSegment {
-                    start: Vec3::new(parent.position[0], parent.position[1], parent.position[2]),
-                    end: Vec3::new(node.position[0], node.position[1], node.position[2]),
-                    radius_start: radii[parent_idx],
-                    radius_end: radii[i],
-                    depth: node.depth,
-                });
-            }
-        }
-
-        Ok(segments)
+        Ok(branch_graph_to_segments(&self.grow(rng)?.nodes))
     }
 }
 
-// ─── E. Depth Assignment ────────────────────────────────────────────────────
+/// An attraction point and the closest node it has seen.
+struct Attractor {
+    point: Vec3,
+    closest: usize,
+    dist_sq: f32,
+}
 
-/// Assign branching depth to each node. Depth increments at fork points
-/// (nodes with 2+ children).
-fn assign_depths(nodes: &mut [BranchNode]) {
-    if nodes.is_empty() {
-        return;
-    }
-    nodes[0].depth = 0;
-    // Process in index order; parents always have lower indices than children.
-    for i in 0..nodes.len() {
-        let parent_depth = nodes[i].depth;
-        let is_fork = nodes[i].children.len() >= 2;
-        let child_depth = if is_fork {
-            parent_depth + 1
-        } else {
-            parent_depth
-        };
-        // Collect children to avoid borrow conflict
-        let children: Vec<usize> = nodes[i].children.clone();
-        for &ci in &children {
-            nodes[ci].depth = child_depth;
+/// The growing graph, struct-of-arrays, with child lists for fork detection.
+#[derive(Default)]
+struct Graph {
+    positions: Vec<Vec3>,
+    parents: Vec<Option<usize>>,
+    children: Vec<Vec<usize>>,
+}
+
+impl Graph {
+    fn push(&mut self, position: Vec3, parent: Option<usize>) {
+        let idx = self.positions.len();
+        if let Some(p) = parent {
+            self.children[p].push(idx);
         }
+        self.positions.push(position);
+        self.parents.push(parent);
+        self.children.push(Vec::new());
+    }
+
+    fn has_child_near(&self, node: usize, pos: Vec3, tolerance: f32) -> bool {
+        self.children[node]
+            .iter()
+            .any(|&c| dist_sq(self.positions[c], pos) < tolerance * tolerance)
+    }
+
+    fn check_budget(&self, max_nodes: u32) -> Result<()> {
+        if self.positions.len() > max_nodes as usize {
+            return Err(ProcGenError::BudgetExceeded(format!(
+                "node count {} exceeds max_nodes {}",
+                self.positions.len(),
+                max_nodes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Branching depth per node: +1 below each fork (2+ children).
+    fn depths(&self) -> Vec<u32> {
+        let mut depths = vec![0u32; self.positions.len()];
+        for i in 1..self.positions.len() {
+            let parent = self.parents[i].expect("non-root node has a parent");
+            let fork = self.children[parent].len() >= 2;
+            depths[i] = depths[parent] + u32::from(fork);
+        }
+        depths
     }
 }
 
-// ─── F. Pipe Model Radii ────────────────────────────────────────────────────
+// ─── E. Pipe Model Radii ────────────────────────────────────────────────────
 
-/// Compute radii using the pipe model (da Vinci's rule).
+/// Compute radii using the pipe model.
 ///
-/// Terminal nodes get `tip_radius`. Working bottom-up, each parent's radius
-/// is `sqrt(sum(r_child^2))`. Finally, all radii are scaled so the root
-/// gets exactly `base_radius`.
-fn compute_pipe_radii(nodes: &[BranchNode], base_radius: f32, tip_radius: f32) -> Vec<f32> {
-    let n = nodes.len();
-    if n == 0 {
-        return Vec::new();
-    }
-
-    let mut radii = vec![0.0f32; n];
-
-    // Terminal nodes get tip_radius
-    for (i, node) in nodes.iter().enumerate() {
-        if node.children.is_empty() {
-            radii[i] = tip_radius;
+/// Leaves get `tip_radius`. Working bottom-up, each parent's radius is
+/// `(sum(r_child^n))^(1/n)`. Finally, all radii are scaled so the root
+/// gets exactly `base_radius`. `parents` must list parents before children.
+fn pipe_radii(parents: &[Option<usize>], tip_radius: f32, n: f32, base_radius: f32) -> Vec<f32> {
+    let mut sum = vec![0.0f32; parents.len()];
+    let mut radii = vec![0.0f32; parents.len()];
+    for i in (0..parents.len()).rev() {
+        radii[i] = if sum[i] > 0.0 {
+            sum[i].powf(1.0 / n)
+        } else {
+            tip_radius
+        };
+        if let Some(p) = parents[i] {
+            sum[p] += radii[i].powf(n);
         }
     }
-
-    // Bottom-up: process in reverse index order
-    for i in (0..n).rev() {
-        if !nodes[i].children.is_empty() {
-            let sum_sq: f32 = nodes[i]
-                .children
-                .iter()
-                .map(|&ci| radii[ci] * radii[ci])
-                .sum();
-            radii[i] = sum_sq.sqrt();
+    if let Some(&root) = radii.first() {
+        if root > 1e-10 {
+            let scale = base_radius / root;
+            radii.iter_mut().for_each(|r| *r *= scale);
         }
     }
-
-    // Scale so root gets base_radius
-    let root_radius = radii[0];
-    if root_radius > 1e-10 {
-        let scale = base_radius / root_radius;
-        for r in &mut radii {
-            *r *= scale;
-        }
-    }
-
     radii
+}
+
+// ─── F. Graph to Segments ───────────────────────────────────────────────────
+
+/// Convert a branch graph into one [`BranchSegment`] per parent-child edge,
+/// the format the L-system produces, so the tree mesher takes either.
+pub fn branch_graph_to_segments(nodes: &[BranchNode]) -> Vec<BranchSegment> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let parent = &nodes[node.parent?];
+            Some(BranchSegment {
+                start: parent.position,
+                end: node.position,
+                radius_start: parent.radius,
+                radius_end: node.radius,
+                depth: node.depth,
+            })
+        })
+        .collect()
 }
 
 // ─── G. Utility ─────────────────────────────────────────────────────────────
 
-/// Squared distance between two `[f32; 3]` points.
-fn dist_sq(a: &[f32; 3], b: &[f32; 3]) -> f32 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    let dz = a[2] - b[2];
-    dx * dx + dy * dy + dz * dz
+/// Squared distance between two points.
+fn dist_sq(a: Vec3, b: Vec3) -> f32 {
+    let d = a - b;
+    d.dot(&d)
 }
 
 // ─── H. Convenience Constructors ────────────────────────────────────────────
@@ -538,12 +599,203 @@ mod tests {
     }
 
     #[test]
-    fn reject_zero_attraction_points() {
-        let params = SpaceColonizationParams {
-            num_attraction_points: 0,
+    fn reject_degenerate_volume_and_exponent() {
+        let flat = SpaceColonizationParams {
+            crown: CrownVolume::Ellipsoid {
+                center: Vec3::ZERO,
+                radii: Vec3::new(1.0, 0.0, 1.0),
+            },
             ..Default::default()
         };
-        assert!(SpaceColonization::new(params).is_err());
+        assert!(SpaceColonization::new(flat).is_err());
+
+        let thin_pipe = SpaceColonizationParams {
+            pipe_exponent: 0.5,
+            ..Default::default()
+        };
+        assert!(SpaceColonization::new(thin_pipe).is_err());
+    }
+
+    // ── 1b. Issue #21 acceptance ───────────────────────────────────────
+
+    /// A crown just above the root, close enough to colonize without a trunk.
+    fn near_crown(points: u32) -> SpaceColonizationParams {
+        SpaceColonizationParams {
+            crown: CrownVolume::Sphere {
+                center: Vec3::new(0.0, 3.0, 0.0),
+                radius: 2.5,
+            },
+            num_attraction_points: points,
+            trunk_steps: 0,
+            max_iterations: 500,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn hundred_points_all_consumed_within_500_iterations() {
+        let gen = SpaceColonization::new(near_crown(100)).unwrap();
+        let out = gen.grow(&mut SeededRng::new(7)).unwrap();
+        assert_eq!(out.unconsumed, 0, "every attraction point is consumed");
+        assert!(out.iterations <= 500, "took {} iterations", out.iterations);
+    }
+
+    #[test]
+    fn graph_is_a_valid_tree() {
+        let gen = SpaceColonization::new(Default::default()).unwrap();
+        let nodes = gen.grow(&mut SeededRng::new(42)).unwrap().nodes;
+        assert!(nodes.len() > 10);
+        assert_eq!(nodes.iter().filter(|n| n.parent.is_none()).count(), 1);
+        assert!(nodes[0].parent.is_none(), "node 0 is the root");
+        for (i, n) in nodes.iter().enumerate().skip(1) {
+            let p = n.parent.expect("non-root has a parent");
+            assert!(p < i, "parent {p} of node {i} comes first");
+        }
+    }
+
+    #[test]
+    fn graph_nodes_are_deterministic() {
+        let gen = SpaceColonization::new(Default::default()).unwrap();
+        let a = gen.grow(&mut SeededRng::new(3)).unwrap().nodes;
+        let b = gen.grow(&mut SeededRng::new(3)).unwrap().nodes;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn root_is_thickest_and_radius_falls_with_depth() {
+        let gen = SpaceColonization::new(Default::default()).unwrap();
+        let nodes = gen.grow(&mut SeededRng::new(42)).unwrap().nodes;
+        let root = nodes[0].radius;
+        assert!(nodes.iter().all(|n| n.radius <= root + 1e-6));
+
+        let max_depth = nodes.iter().map(|n| n.depth).max().unwrap();
+        let mean = |d: u32| {
+            let rs: Vec<f32> = nodes
+                .iter()
+                .filter(|n| n.depth == d)
+                .map(|n| n.radius)
+                .collect();
+            rs.iter().sum::<f32>() / rs.len() as f32
+        };
+        assert!(mean(0) > mean(max_depth / 2));
+        assert!(mean(max_depth / 2) > mean(max_depth));
+
+        // And strictly per edge: a child is never thicker than its parent.
+        for n in &nodes[1..] {
+            assert!(n.radius <= nodes[n.parent.unwrap()].radius + 1e-6);
+        }
+    }
+
+    #[test]
+    fn higher_pipe_exponent_keeps_tips_thicker() {
+        let tip_mean = |n: f32| {
+            let gen = SpaceColonization::new(SpaceColonizationParams {
+                pipe_exponent: n,
+                ..Default::default()
+            })
+            .unwrap();
+            let segs = gen.generate_segments(&mut SeededRng::new(42)).unwrap();
+            segs.iter()
+                .map(|s| s.radius_end)
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert!(tip_mean(3.0) > tip_mean(2.0));
+    }
+
+    #[test]
+    fn segments_match_lsystem_format() {
+        let gen = SpaceColonization::new(Default::default()).unwrap();
+        let nodes = gen.grow(&mut SeededRng::new(42)).unwrap().nodes;
+        let segs = branch_graph_to_segments(&nodes);
+        assert_eq!(segs.len(), nodes.len() - 1, "one segment per edge");
+        for s in &segs {
+            assert!(s.length() > 0.0);
+            assert!(s.radius_start > 0.0 && s.radius_end > 0.0);
+            assert!(s.radius_end <= s.radius_start + 1e-6);
+        }
+    }
+
+    #[test]
+    fn zero_points_give_an_empty_graph() {
+        let gen = SpaceColonization::new(near_crown(0)).unwrap();
+        let out = gen.colonize(&[]).unwrap();
+        assert!(out.nodes.is_empty());
+        assert!(branch_graph_to_segments(&out.nodes).is_empty());
+
+        // With a trunk, the trunk alone grows.
+        let trunk = SpaceColonization::new(SpaceColonizationParams {
+            num_attraction_points: 0,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            trunk
+                .generate_segments(&mut SeededRng::new(1))
+                .unwrap()
+                .len(),
+            5
+        );
+    }
+
+    #[test]
+    fn one_point_grows_a_single_unforked_branch() {
+        let gen = SpaceColonization::new(near_crown(1)).unwrap();
+        let target = Vec3::new(1.0, 2.0, 0.5);
+        let out = gen.colonize(&[target]).unwrap();
+        assert_eq!(out.unconsumed, 0);
+        assert!(out.nodes.len() >= 2);
+        assert!(out.nodes.iter().all(|n| n.depth == 0), "no forks");
+        for (i, n) in out.nodes.iter().enumerate().skip(1) {
+            assert_eq!(n.parent, Some(i - 1), "a single chain");
+        }
+        let tip = out.nodes.last().unwrap().position;
+        assert!(
+            dist_sq(tip, target) < 0.5 * 0.5,
+            "the tip reaches the point"
+        );
+    }
+
+    #[test]
+    fn extreme_points_stay_out_of_reach() {
+        let gen = SpaceColonization::new(near_crown(3)).unwrap();
+        let far = [
+            Vec3::new(1.0e6, 0.0, 0.0),
+            Vec3::new(0.0, -1.0e6, 0.0),
+            Vec3::new(0.0, 0.0, 1.0e6),
+        ];
+        let out = gen.colonize(&far).unwrap();
+        assert!(out.nodes.is_empty());
+        assert_eq!(out.unconsumed, 3);
+        assert!(out.iterations <= 1, "stops at once instead of spinning");
+    }
+
+    #[test]
+    fn box_points_within_bounds() {
+        let (min, max) = (Vec3::new(-2.0, 1.0, -0.5), Vec3::new(2.0, 3.0, 0.5));
+        let pts =
+            scatter_attraction_points(&CrownVolume::Box { min, max }, 500, &mut SeededRng::new(1));
+        assert_eq!(pts.len(), 500);
+        for p in pts {
+            assert!(p.x >= min.x && p.x <= max.x);
+            assert!(p.y >= min.y && p.y <= max.y);
+            assert!(p.z >= min.z && p.z <= max.z);
+        }
+    }
+
+    #[test]
+    fn box_crown_grows_a_hedge() {
+        let gen = SpaceColonization::new(SpaceColonizationParams {
+            crown: CrownVolume::Box {
+                min: Vec3::new(-3.0, 0.5, -0.4),
+                max: Vec3::new(3.0, 2.0, 0.4),
+            },
+            trunk_steps: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let segs = gen.generate_segments(&mut SeededRng::new(5)).unwrap();
+        let reach = segs.iter().map(|s| s.end.x.abs()).fold(0.0f32, f32::max);
+        assert!(reach > 2.0, "the hedge spreads sideways, reach {reach}");
     }
 
     // ── 2. Basic convergence ───────────────────────────────────────────
@@ -717,9 +969,9 @@ mod tests {
 
         for _ in 0..1000 {
             let pt = volume.sample(&mut rng);
-            let dx = pt[0] - center.x;
-            let dy = pt[1] - center.y;
-            let dz = pt[2] - center.z;
+            let dx = pt.x - center.x;
+            let dy = pt.y - center.y;
+            let dz = pt.z - center.z;
             let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             assert!(
                 dist <= radius + 1e-6,
@@ -737,9 +989,9 @@ mod tests {
 
         for _ in 0..1000 {
             let pt = volume.sample(&mut rng);
-            let nx = (pt[0] - center.x) / radii.x;
-            let ny = (pt[1] - center.y) / radii.y;
-            let nz = (pt[2] - center.z) / radii.z;
+            let nx = (pt.x - center.x) / radii.x;
+            let ny = (pt.y - center.y) / radii.y;
+            let nz = (pt.z - center.z) / radii.z;
             let norm = nx * nx + ny * ny + nz * nz;
             assert!(
                 norm <= 1.0 + 1e-6,
@@ -757,18 +1009,18 @@ mod tests {
 
         for _ in 0..1000 {
             let pt = volume.sample(&mut rng);
-            let dx = pt[0] - center.x;
-            let dy = pt[1] - center.y;
-            let dz = pt[2] - center.z;
+            let dx = pt.x - center.x;
+            let dy = pt.y - center.y;
+            let dz = pt.z - center.z;
             let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             assert!(
                 dist <= radius + 1e-6,
                 "hemisphere point at distance {dist} exceeds radius {radius}"
             );
             assert!(
-                pt[1] >= center.y - 1e-6,
+                pt.y >= center.y - 1e-6,
                 "hemisphere point y={} should be >= center.y={}",
-                pt[1],
+                pt.y,
                 center.y
             );
         }

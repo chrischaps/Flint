@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use web_time::Instant;
 
 /// Ring capacity. With [`MIN_PAIR_SPACING`] the ring always spans ~2 s no
 /// matter how fast the session loop calls `observe`.

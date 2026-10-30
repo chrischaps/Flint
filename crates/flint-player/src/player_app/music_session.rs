@@ -20,8 +20,9 @@ use flint_music::chart_session::{
 };
 use flint_music::{InputEvent, Tick, VisualFrame};
 use flint_runtime::InputState;
+use flint_core::vfs;
 use std::path::Path;
-use std::time::Instant;
+use web_time::Instant;
 
 /// Component name in scene TOML (schema: `schemas/components/music_session.toml`).
 pub const MUSIC_SESSION: &str = "music_session";
@@ -234,7 +235,7 @@ impl MusicSession {
         // never through this field. Validate it so a typo is loud.
         if let Some(b) = comp_str(comp, "bindings") {
             let path = base_dir.join(&b);
-            if path.exists() {
+            if vfs::exists(&path) {
                 tracing::info!(
                     "music_session: bindings `{b}` present (load it via a `script` component)"
                 );

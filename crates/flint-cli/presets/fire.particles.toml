@@ -1,0 +1,47 @@
+# Fire — a tight additive cone of tumbling flames with drifting embers.
+# Created by `flint edit <file> --preset fire`; edit freely.
+
+name = "fire"
+
+[[emitters]]
+name = "flames"
+emission_rate = 45.0
+max_particles = 256
+lifetime = [0.35, 0.8]
+speed = [1.5, 3.0]
+direction = [0, 1, 0]
+spread = 18.0
+gravity = [0, 2.0, 0]
+blend_mode = "additive"
+size = { keys = [ { t = 0.0, v = [0.12, 0.12] }, { t = 0.3, v = [0.18, 0.22] }, { t = 1.0, v = [0.02, 0.02] } ], interp = "smooth" }
+size_scale = [0.8, 1.2]
+color = { keys = [ { t = 0.0, v = [1.0, 0.75, 0.15, 0.9] }, { t = 0.55, v = [1.0, 0.3, 0.02, 0.7] }, { t = 1.0, v = [0.35, 0.02, 0.0, 0.0] } ] }
+angular_velocity = [-90, 90]
+
+[emitters.shape]
+kind = "cone"
+radius = 0.15
+angle = 8.0
+
+[[emitters.forces]]
+kind = "noise"
+strength = 1.2
+frequency = 0.8
+speed = 0.6
+
+[[emitters]]
+name = "embers"
+emission_rate = 6.0
+max_particles = 64
+lifetime = [1.0, 2.5]
+speed = [1.0, 2.0]
+spread = 35.0
+gravity = [0, 0.8, 0]
+damping = 0.6
+blend_mode = "additive"
+size = { start = [0.03, 0.03], end = [0.0, 0.0] }
+color = { start = [1.0, 0.6, 0.2, 1.0], end = [1.0, 0.2, 0.0, 0.0] }
+
+[emitters.shape]
+kind = "sphere"
+radius = 0.1

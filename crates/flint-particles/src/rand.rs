@@ -1,5 +1,10 @@
-//! Lightweight xorshift32 PRNG — no external crate needed
+//! Lightweight xorshift32 PRNG — no external crate needed.
+//!
+//! Every emitter owns one, seeded from the effect seed, the owning entity
+//! and the emitter index, so spawn order across emitters never changes a
+//! result and headless snapshots are reproducible (ADR 0068).
 
+#[derive(Clone, Debug)]
 pub struct ParticleRng {
     state: u32,
 }
@@ -22,12 +27,41 @@ impl ParticleRng {
 
     /// Returns a float in [0, 1)
     pub fn next_f32(&mut self) -> f32 {
-        (self.next_u32() as f32) / (u32::MAX as f32)
+        // 24 mantissa bits keeps the result strictly below 1.0.
+        (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32
     }
 
-    /// Returns a float in [min, max)
+    /// Returns a float in [min, max); order-insensitive.
     pub fn range(&mut self, min: f32, max: f32) -> f32 {
-        min + self.next_f32() * (max - min)
+        let (lo, hi) = if min <= max { (min, max) } else { (max, min) };
+        lo + self.next_f32() * (hi - lo)
+    }
+
+    /// Returns an integer in [min, max] (inclusive); order-insensitive.
+    pub fn range_u32(&mut self, min: u32, max: u32) -> u32 {
+        let (lo, hi) = if min <= max { (min, max) } else { (max, min) };
+        if lo == hi {
+            return lo;
+        }
+        lo + (self.next_u32() % (hi - lo + 1))
+    }
+
+    /// True with probability `p`.
+    pub fn chance(&mut self, p: f32) -> bool {
+        if p >= 1.0 {
+            return true;
+        }
+        if p <= 0.0 {
+            return false;
+        }
+        self.next_f32() < p
+    }
+
+    /// Uniform point on the unit disc.
+    pub fn unit_disc(&mut self) -> [f32; 2] {
+        let r = self.next_f32().sqrt();
+        let theta = self.range(0.0, std::f32::consts::TAU);
+        [r * theta.cos(), r * theta.sin()]
     }
 
     /// Returns a random unit direction vector (uniformly on sphere surface)
@@ -47,7 +81,7 @@ impl ParticleRng {
     /// Returns a direction within a cone around `base_dir` with half-angle `angle_deg`
     pub fn cone_direction(&mut self, base_dir: [f32; 3], angle_deg: f32) -> [f32; 3] {
         if angle_deg <= 0.0 {
-            return base_dir;
+            return normalize(base_dir);
         }
         if angle_deg >= 180.0 {
             return self.random_direction();
@@ -70,16 +104,8 @@ impl ParticleRng {
 }
 
 /// Rotates `local` (assumed around +Z) to align with `forward`
-fn rotate_to_basis(forward: [f32; 3], local: [f32; 3]) -> [f32; 3] {
-    let fwd = normalize(forward);
-    let up = if fwd[1].abs() > 0.99 {
-        [1.0, 0.0, 0.0]
-    } else {
-        [0.0, 1.0, 0.0]
-    };
-    let right = normalize(cross(up, fwd));
-    let actual_up = cross(fwd, right);
-
+pub fn rotate_to_basis(forward: [f32; 3], local: [f32; 3]) -> [f32; 3] {
+    let (right, actual_up, fwd) = perpendicular_basis(forward);
     [
         right[0] * local[0] + actual_up[0] * local[1] + fwd[0] * local[2],
         right[1] * local[0] + actual_up[1] * local[1] + fwd[1] * local[2],
@@ -87,7 +113,20 @@ fn rotate_to_basis(forward: [f32; 3], local: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-fn normalize(v: [f32; 3]) -> [f32; 3] {
+/// Orthonormal `(right, up, forward)` with `forward` along `dir`.
+pub fn perpendicular_basis(dir: [f32; 3]) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    let fwd = normalize(dir);
+    let up = if fwd[1].abs() > 0.99 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let right = normalize(cross(up, fwd));
+    let actual_up = cross(fwd, right);
+    (right, actual_up, fwd)
+}
+
+pub fn normalize(v: [f32; 3]) -> [f32; 3] {
     let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     if len < 1e-10 {
         return [0.0, 1.0, 0.0];
@@ -95,7 +134,7 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
     [v[0] / len, v[1] / len, v[2] / len]
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -112,8 +151,34 @@ mod tests {
         let mut rng = ParticleRng::new(42);
         for _ in 0..1000 {
             let v = rng.range(0.0, 10.0);
-            assert!(v >= 0.0 && v < 10.0);
+            assert!((0.0..10.0).contains(&v));
+            // Descending ranges are tolerated.
+            let w = rng.range(10.0, 0.0);
+            assert!((0.0..10.0).contains(&w));
         }
+    }
+
+    #[test]
+    fn rng_next_f32_strictly_below_one() {
+        let mut rng = ParticleRng::new(0xFFFF_FFFF);
+        for _ in 0..10_000 {
+            assert!(rng.next_f32() < 1.0);
+        }
+    }
+
+    #[test]
+    fn rng_range_u32_inclusive() {
+        let mut rng = ParticleRng::new(5);
+        let mut seen_lo = false;
+        let mut seen_hi = false;
+        for _ in 0..2000 {
+            let v = rng.range_u32(3, 6);
+            assert!((3..=6).contains(&v));
+            seen_lo |= v == 3;
+            seen_hi |= v == 6;
+        }
+        assert!(seen_lo && seen_hi);
+        assert_eq!(rng.range_u32(4, 4), 4);
     }
 
     #[test]
@@ -133,5 +198,14 @@ mod tests {
         assert!((dir[0]).abs() < 0.01);
         assert!((dir[1] - 1.0).abs() < 0.01);
         assert!((dir[2]).abs() < 0.01);
+    }
+
+    #[test]
+    fn unit_disc_inside_circle() {
+        let mut rng = ParticleRng::new(3);
+        for _ in 0..1000 {
+            let [x, y] = rng.unit_disc();
+            assert!(x * x + y * y <= 1.0 + 1e-5);
+        }
     }
 }

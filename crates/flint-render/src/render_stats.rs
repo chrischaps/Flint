@@ -15,6 +15,9 @@ pub struct RenderStats {
     pub triangles: u32,
     // Per-system breakdown
     pub entity_draws: u32,
+    /// Opaque and transparent mesh draws skipped because their bounds were
+    /// outside the camera frustum. Not counted in `draw_calls`.
+    pub culled_draws: u32,
     pub skinned_draws: u32,
     pub terrain_draws: u32,
     pub terrain_total_chunks: u32,
@@ -28,6 +31,12 @@ pub struct RenderStats {
     // Shadow pass (estimated)
     pub shadow_draw_calls: u32,
     pub shadow_triangles: u32,
+    // GPU time (ADR 0108): empty unless the renderer's GPU timing is on and
+    // the device can time. Smoothed, and a frame or more late.
+    /// Each timed scope, in the order the frame began them.
+    pub gpu_passes: Vec<crate::gpu_timer::GpuPassTime>,
+    /// From the frame's first timestamp to its last; 0 when untimed.
+    pub gpu_frame_ms: f32,
     // Screen info (set by caller)
     pub resolution: [u32; 2],
 }

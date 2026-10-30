@@ -4,6 +4,8 @@
 //! Two-pass system: compute shader places instances, render pass draws cross-quads.
 
 use bytemuck::{Pod, Zeroable};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 /// Per-instance data written by compute shader, read by vertex shader.
@@ -36,9 +38,318 @@ pub struct GrassComputeUniforms {
     pub density_layer: u32,
     pub blade_height: f32,
     pub height_variation: f32,
-    pub _pad0: f32,
-    pub _pad1: f32,
-    pub _pad2: f32,
+    /// 1: a density weight above the threshold keeps a blade with that
+    /// probability, so the mask fades a field out. 0: full density above it.
+    pub scale_by_density: u32,
+    /// First grid cell of this frame's dispatch window (ADR 0089): only the
+    /// cells within `max_distance` of the camera are dispatched.
+    pub grid_start_x: u32,
+    pub grid_start_z: u32,
+    /// How the heightmap's samples lie over the ground (ADR 0098). 1: on
+    /// the grid's corners, the first at the origin and the last at the far
+    /// edge, as a terrain's mesh reads them. 0: one in the middle of each
+    /// texel's cell, as a [`GrassHeight::Map`] is read. Either way a blade
+    /// stands on the blend of the four samples round it.
+    pub height_at_corners: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
+    pub _pad2: u32,
+    /// The camera frustum's planes (`ax + by + cz + d >= 0` is inside),
+    /// each pushed out by [`grass_cull_padding`] (ADR 0092). A blade whose
+    /// root is outside any of them isn't drawn.
+    pub frustum_planes: [[f32; 4]; 6],
+}
+
+/// The grass draw's `DrawIndexedIndirect` arguments (ADR 0092). The compute
+/// pass counts its blades into `instance_count`, and the main pass and the
+/// shadow cascades draw from this buffer, so the CPU never reads it.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct GrassDrawArgs {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub first_instance: u32,
+}
+
+impl GrassDrawArgs {
+    /// The arguments each frame starts from: one blade mesh, no instances.
+    pub const RESET: Self = Self {
+        index_count: BLADE_INDEX_COUNT,
+        instance_count: 0,
+        first_index: 0,
+        base_vertex: 0,
+        first_instance: 0,
+    };
+    /// Byte offset of `instance_count`, for the stats read-back.
+    pub const INSTANCE_COUNT_OFFSET: u64 = 4;
+}
+
+/// How far the grass cull pushes each frustum plane out (ADR 0092).
+///
+/// A blade is culled by its root, so the planes move out by the tallest
+/// blade, and a blade leaning in from just outside the view still shows.
+/// With shadows on, a blade outside the view can also cast into it, as far
+/// as its shadow reaches along the ground: its height over the tangent of
+/// the sun's elevation. That reach is capped at eight blade heights (a sun
+/// about 7° up), past which the shadow is too faint and long to pop.
+/// `sun_direction` is the shadow-casting light's direction, or `None` when
+/// shadows are off.
+pub fn grass_cull_padding(max_blade_height: f32, sun_direction: Option<[f32; 3]>) -> f32 {
+    const MAX_SHADOW_REACH: f32 = 8.0;
+    let reach = sun_direction.map_or(0.0, |d| {
+        let across = (d[0] * d[0] + d[2] * d[2]).sqrt();
+        let down = d[1].abs();
+        if down * MAX_SHADOW_REACH <= across {
+            MAX_SHADOW_REACH
+        } else {
+            across / down
+        }
+    });
+    max_blade_height * (1.0 + reach)
+}
+
+/// The camera frustum's planes, each pushed out by `padding` world units,
+/// for the grass compute pass (ADR 0092).
+pub fn grass_cull_planes(view_proj: &[[f32; 4]; 4], padding: f32) -> [[f32; 4]; 6] {
+    let mut planes = crate::frustum::Frustum::from_view_projection(view_proj).planes;
+    for plane in &mut planes {
+        plane[3] += padding;
+    }
+    planes
+}
+
+/// Reads the number of blades drawn back to the CPU for [`RenderStats`],
+/// a frame or more late, without ever waiting on the GPU (ADR 0092).
+///
+/// Each frame [`record_copy`](Self::record_copy) copies the count into a
+/// small buffer, unless an earlier copy is still on its way, and after the
+/// submit [`start_map`](Self::start_map) maps it. [`poll`](Self::poll)
+/// picks the value up once the map has finished.
+///
+/// [`RenderStats`]: crate::RenderStats
+pub struct GrassCountReadback {
+    buffer: wgpu::Buffer,
+    /// A copy was recorded and hasn't been mapped yet
+    copy_recorded: bool,
+    /// A map is in flight; its callback sets `state`
+    mapping: bool,
+    /// 0 while the map is pending, 1 mapped, 2 failed
+    state: Arc<AtomicU8>,
+}
+
+impl GrassCountReadback {
+    pub fn new(device: &wgpu::Device) -> Self {
+        Self {
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Grass Count Read-back"),
+                size: 4,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            copy_recorded: false,
+            mapping: false,
+            state: Default::default(),
+        }
+    }
+
+    /// Records a copy of the count from the draw arguments, unless the last
+    /// one hasn't come back yet.
+    pub fn record_copy(&mut self, encoder: &mut wgpu::CommandEncoder, draw_args: &wgpu::Buffer) {
+        if self.mapping || self.copy_recorded {
+            return;
+        }
+        encoder.copy_buffer_to_buffer(
+            draw_args,
+            GrassDrawArgs::INSTANCE_COUNT_OFFSET,
+            &self.buffer,
+            0,
+            4,
+        );
+        self.copy_recorded = true;
+    }
+
+    /// Starts mapping the copy. Call after the submit that holds it.
+    pub fn start_map(&mut self) {
+        if !self.copy_recorded {
+            return;
+        }
+        self.copy_recorded = false;
+        self.mapping = true;
+        self.state.store(0, Ordering::Release);
+        let state = self.state.clone();
+        self.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                state.store(if result.is_ok() { 1 } else { 2 }, Ordering::Release);
+            });
+    }
+
+    /// The count, if a map has finished since the last call. Polls the
+    /// device without blocking.
+    pub fn poll(&mut self, device: &wgpu::Device) -> Option<u32> {
+        if !self.mapping {
+            return None;
+        }
+        device.poll(wgpu::Maintain::Poll);
+        match self.state.load(Ordering::Acquire) {
+            1 => {
+                let count = {
+                    let data = self.buffer.slice(..).get_mapped_range();
+                    u32::from_le_bytes([data[0], data[1], data[2], data[3]])
+                };
+                self.buffer.unmap();
+                self.mapping = false;
+                Some(count)
+            }
+            2 => {
+                self.mapping = false;
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The ground a game grows grass on instead of a Flint terrain (ADR 0089).
+///
+/// The ground is a world-space rectangle on the XZ plane, from `origin`
+/// (its minimum corner) across `size`. The mask and the heightmap each
+/// cover the whole rectangle, whatever their resolution: texel (0, 0) is at
+/// the origin and rows run toward +Z.
+#[derive(Clone, Copy, Debug)]
+pub struct GrassGround<'a> {
+    /// Minimum corner of the rectangle, world X and Z.
+    pub origin: [f32; 2],
+    /// Extent of the rectangle in world units, X and Z.
+    pub size: [f32; 2],
+    /// Where grass grows: one byte per texel, 0 none and 255 full density,
+    /// `mask_width × mask_height` bytes, row by row.
+    pub mask: &'a [u8],
+    pub mask_width: u32,
+    pub mask_height: u32,
+    /// Whether a mask value between the threshold and 255 thins the field
+    /// in proportion (`true`), or grows it at full density (`false`, the
+    /// terrain splat rule).
+    pub scale_by_mask: bool,
+    /// What the blades stand on.
+    pub height: GrassHeight<'a>,
+}
+
+/// The height of a [`GrassGround`].
+#[derive(Clone, Copy, Debug)]
+pub enum GrassHeight<'a> {
+    /// Level ground at world `y`.
+    Flat(f32),
+    /// World `y` per texel, `width × depth` values, row by row toward +Z.
+    /// Each value is the height at the middle of its texel's cell, and a
+    /// blade stands on the blend of the four round it (ADR 0098), so a
+    /// grid as coarse as the ground's own detail is enough. Within half a
+    /// cell of the rectangle's edge the height holds level.
+    Map {
+        heights: &'a [f32],
+        width: u32,
+        depth: u32,
+    },
+}
+
+impl GrassGround<'_> {
+    /// Checks the slices against their stated sizes.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.size[0] <= 0.0 || self.size[1] <= 0.0 {
+            return Err(format!(
+                "grass ground size must be positive, got {:?}",
+                self.size
+            ));
+        }
+        if self.mask_width == 0 || self.mask_height == 0 {
+            return Err("grass mask is empty".into());
+        }
+        let want = self.mask_width as usize * self.mask_height as usize;
+        if self.mask.len() != want {
+            return Err(format!(
+                "grass mask is {} bytes, {}x{} needs {want}",
+                self.mask.len(),
+                self.mask_width,
+                self.mask_height
+            ));
+        }
+        if let GrassHeight::Map {
+            heights,
+            width,
+            depth,
+        } = self.height
+        {
+            let want = width as usize * depth as usize;
+            if want == 0 || heights.len() != want {
+                return Err(format!(
+                    "grass heightmap is {} values, {width}x{depth} needs {want}",
+                    heights.len()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Checks a repaint of part of a `mask_width × mask_height` grass mask
+/// (ADR 0093): the rectangle at texel (`x`, `y`), `width × height`, must lie
+/// inside the mask, and `bytes` must hold one byte for each of its texels.
+pub fn check_grass_mask_patch(
+    mask_width: u32,
+    mask_height: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    bytes: usize,
+) -> Result<(), String> {
+    let fits = |at: u32, len: u32, of: u32| at.checked_add(len).is_some_and(|end| end <= of);
+    if !fits(x, width, mask_width) || !fits(y, height, mask_height) {
+        return Err(format!(
+            "grass mask patch {width}x{height} at ({x}, {y}) runs off the {mask_width}x{mask_height} mask"
+        ));
+    }
+    let want = width as usize * height as usize;
+    if bytes != want {
+        return Err(format!(
+            "grass mask patch is {bytes} bytes, {width}x{height} needs {want}"
+        ));
+    }
+    Ok(())
+}
+
+/// Grid cells, and the first cell, that a grass dispatch covers this frame.
+///
+/// The grid has a cell every `spacing` units from `origin` across `extent`.
+/// Only the cells within `max_distance` of the camera, on X and Z, can grow
+/// a blade, so the dispatch covers that square clipped to the grid. The
+/// cells keep their place in the whole grid, so a blade doesn't move as
+/// the window follows the camera. `None` when the camera is too far away.
+pub fn grass_dispatch_window(
+    origin: [f32; 2],
+    extent: [f32; 2],
+    spacing: f32,
+    camera_xz: [f32; 2],
+    max_distance: f32,
+) -> Option<([u32; 2], [u32; 2])> {
+    let mut start = [0u32; 2];
+    let mut count = [0u32; 2];
+    for axis in 0..2 {
+        let cells = (extent[axis] / spacing).ceil().max(0.0) as i64;
+        // One extra cell each side covers the jitter of half a cell.
+        let lo = ((camera_xz[axis] - max_distance - origin[axis]) / spacing).floor() as i64 - 1;
+        let hi = ((camera_xz[axis] + max_distance - origin[axis]) / spacing).ceil() as i64 + 1;
+        let lo = lo.clamp(0, cells);
+        let hi = hi.clamp(0, cells);
+        if hi <= lo {
+            return None;
+        }
+        start[axis] = lo as u32;
+        count[axis] = (hi - lo) as u32;
+    }
+    Some((start, count))
 }
 
 /// Uniform buffer for the render (vertex/fragment) shader.
@@ -517,5 +828,172 @@ impl GrassPipeline {
             blade_vertex_buffer,
             blade_index_buffer,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_covers_the_reach_of_the_camera_clipped_to_the_grid() {
+        // A 1000 m ground, a cell every 0.5 m, the camera in the middle
+        let (start, count) =
+            grass_dispatch_window([0.0, 0.0], [1000.0, 1000.0], 0.5, [500.0, 500.0], 40.0).unwrap();
+        // 460..540 m is cells 920..1080, with one more each side for jitter
+        assert_eq!(start, [919, 919]);
+        assert_eq!(count, [162, 162]);
+
+        // At a corner the window is clipped to the grid
+        let (start, count) =
+            grass_dispatch_window([0.0, 0.0], [1000.0, 1000.0], 0.5, [0.0, 1000.0], 40.0).unwrap();
+        assert_eq!(start, [0, 1919]);
+        assert_eq!(count, [81, 81]);
+    }
+
+    #[test]
+    fn window_keeps_cells_in_place_on_an_offset_ground() {
+        // Cells count from the ground's origin, not from the camera
+        let (a, _) =
+            grass_dispatch_window([-300.0, 200.0], [600.0, 600.0], 0.25, [0.0, 500.0], 10.0)
+                .unwrap();
+        let (b, _) =
+            grass_dispatch_window([-300.0, 200.0], [600.0, 600.0], 0.25, [1.0, 500.0], 10.0)
+                .unwrap();
+        assert_eq!(b[0] - a[0], 4); // 1 m further is four cells on
+        assert_eq!(a[1], b[1]);
+    }
+
+    #[test]
+    fn no_window_when_the_camera_is_out_of_reach() {
+        assert!(
+            grass_dispatch_window([0.0, 0.0], [100.0, 100.0], 0.5, [300.0, 50.0], 80.0).is_none()
+        );
+        assert!(
+            grass_dispatch_window([0.0, 0.0], [100.0, 100.0], 0.5, [50.0, -200.0], 80.0).is_none()
+        );
+    }
+
+    #[test]
+    fn cull_padding_reaches_as_far_as_a_blade_shadow() {
+        // Shadows off: the tallest blade
+        assert_eq!(grass_cull_padding(0.5, None), 0.5);
+        // A sun 45° up casts a shadow as long as the blade is tall
+        let pad = grass_cull_padding(0.5, Some([0.6, -0.8, 0.0].map(|v| v * 1.25)));
+        assert!((pad - 0.5 * (1.0 + 0.75)).abs() < 1e-5, "{pad}");
+        let pad = grass_cull_padding(0.5, Some([0.0, -1.0, 1.0]));
+        assert!((pad - 1.0).abs() < 1e-5, "{pad}");
+        // A sun on the horizon is capped at eight blade heights
+        assert_eq!(grass_cull_padding(0.5, Some([1.0, 0.0, 0.0])), 4.5);
+        assert_eq!(grass_cull_padding(0.5, Some([1.0, -0.01, 0.0])), 4.5);
+    }
+
+    #[test]
+    fn cull_planes_are_the_frustum_pushed_out() {
+        let camera = crate::Camera::new();
+        let view_proj = camera.view_projection_matrix();
+        let plain = crate::frustum::Frustum::from_view_projection(&view_proj).planes;
+        let padded = grass_cull_planes(&view_proj, 2.0);
+        for (p, q) in plain.iter().zip(&padded) {
+            assert_eq!(p[..3], q[..3]);
+            assert!((q[3] - p[3] - 2.0).abs() < 1e-5);
+        }
+        // A point just behind the camera is outside the plain frustum and
+        // inside the padded one
+        let eye = camera.position_array();
+        let fwd = {
+            let t = [
+                camera.target.x - eye[0],
+                camera.target.y - eye[1],
+                camera.target.z - eye[2],
+            ];
+            let len = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
+            t.map(|v| v / len)
+        };
+        let behind = [eye[0] - fwd[0], eye[1] - fwd[1], eye[2] - fwd[2]];
+        let inside = |planes: &[[f32; 4]; 6]| {
+            planes
+                .iter()
+                .all(|p| p[0] * behind[0] + p[1] * behind[1] + p[2] * behind[2] + p[3] >= 0.0)
+        };
+        assert!(!inside(&plain));
+        assert!(inside(&padded));
+    }
+
+    #[test]
+    fn draw_args_match_draw_indexed_indirect() {
+        // wgpu's DrawIndexedIndirectArgs: five 32-bit words, the count second
+        assert_eq!(std::mem::size_of::<GrassDrawArgs>(), 20);
+        let args = GrassDrawArgs {
+            instance_count: 7,
+            ..GrassDrawArgs::RESET
+        };
+        let bytes = bytemuck::bytes_of(&args);
+        let at = GrassDrawArgs::INSTANCE_COUNT_OFFSET as usize;
+        assert_eq!(u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()), 7);
+        assert_eq!(GrassDrawArgs::RESET.index_count, BLADE_INDEX_COUNT);
+    }
+
+    #[test]
+    fn ground_validation_checks_sizes() {
+        let mask = [255u8; 4];
+        let heights = [0.0f32; 6];
+        let ground = GrassGround {
+            origin: [0.0, 0.0],
+            size: [10.0, 10.0],
+            mask: &mask,
+            mask_width: 2,
+            mask_height: 2,
+            scale_by_mask: true,
+            height: GrassHeight::Flat(1.0),
+        };
+        assert!(ground.validate().is_ok());
+        assert!(GrassGround {
+            mask_width: 3,
+            ..ground
+        }
+        .validate()
+        .is_err());
+        assert!(GrassGround {
+            size: [0.0, 10.0],
+            ..ground
+        }
+        .validate()
+        .is_err());
+        let map = GrassHeight::Map {
+            heights: &heights,
+            width: 3,
+            depth: 2,
+        };
+        assert!(GrassGround {
+            height: map,
+            ..ground
+        }
+        .validate()
+        .is_ok());
+        let short = GrassHeight::Map {
+            heights: &heights,
+            width: 4,
+            depth: 2,
+        };
+        assert!(GrassGround {
+            height: short,
+            ..ground
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn mask_patch_must_fit_the_mask() {
+        assert!(check_grass_mask_patch(8, 4, 0, 0, 8, 4, 32).is_ok());
+        assert!(check_grass_mask_patch(8, 4, 5, 1, 3, 3, 9).is_ok());
+        assert!(check_grass_mask_patch(8, 4, 2, 2, 0, 0, 0).is_ok());
+        // Off the right edge, off the far edge, and the wrong length.
+        assert!(check_grass_mask_patch(8, 4, 6, 0, 3, 1, 3).is_err());
+        assert!(check_grass_mask_patch(8, 4, 0, 2, 1, 3, 3).is_err());
+        assert!(check_grass_mask_patch(8, 4, 0, 0, 2, 2, 5).is_err());
+        // No overflow past u32.
+        assert!(check_grass_mask_patch(8, 4, u32::MAX, 0, 2, 1, 2).is_err());
     }
 }

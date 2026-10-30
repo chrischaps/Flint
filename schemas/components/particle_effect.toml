@@ -1,0 +1,10 @@
+[component.particle_effect]
+description = "Places a reusable particle effect (a *.particles.toml asset from the scene's particles/ directory) at this entity's transform. Multi-emitter effects, curves, forces, bursts and sub-emitters are authored in the asset; this component only picks and tunes it (ADR 0068)"
+
+[component.particle_effect.fields]
+effect = { type = "string", default = "", description = "Effect name: the `name` field (or file stem) of a particles/<name>.particles.toml next to the scene or one level up" }
+playing = { type = "bool", default = false, description = "Current playback state (scripts toggle this; start_emitter / stop_emitter work on effects too)" }
+autoplay = { type = "bool", default = true, description = "Start playing on scene load" }
+scale = { type = "f32", default = 1.0, min = 0.0, max = 100.0, description = "Uniform multiplier on particle size, speed and shape distances" }
+emission_scale = { type = "f32", default = 1.0, min = 0.0, max = 100.0, description = "Multiplier on every emitter's emission rate" }
+seed = { type = "i32", default = 0, min = 0, max = 2147483647, description = "RNG seed override (0 = derive from the effect's seed and this entity)" }

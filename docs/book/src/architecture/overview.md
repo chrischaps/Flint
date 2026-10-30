@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Flint is structured as a twenty-three-crate Cargo workspace with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
+Flint is structured as a twenty-seven-member Cargo workspace (twenty-six crates under `crates/` plus the `tools/arch-analyzer` binary) with clear dependency layering. Each crate has a focused responsibility, and dependencies flow in one direction --- from the binaries down to core types.
 
 ## Workspace Structure
 
@@ -15,6 +15,9 @@ flint/
 │   ├── flint-android/      # Android entry point (NativeActivity, APK asset extraction)
 │   ├── flint-script/       # Rhai scripting: ScriptEngine, ScriptSync, hot-reload
 │   ├── flint-viewer/       # egui-based GUI inspector with hot-reload
+│   ├── flint-debug-ui/     # DebugPanel trait + the F3/F4 panel roster (Rendering & Effects, ocean, sky, ...)
+│   ├── flint-music/        # Rhythm sessions: suite manifests, charts, tempo maps, ladder, seam, replay
+│   ├── flint-input-capture/# 1 kHz gamepad capture thread stamped against the audio clock
 │   ├── flint-particles/    # GPU-instanced particle system with pooling and emission shapes
 │   ├── flint-animation/    # Two-tier animation: property tweens + skeletal/glTF
 │   ├── flint-audio/        # Kira spatial audio: 3D sounds, ambient loops, triggers
@@ -30,6 +33,9 @@ flint/
 │   ├── flint-ecs/          # hecs wrapper with stable IDs, names, hierarchy
 │   ├── flint-schema/       # Component/archetype schema loading and validation
 │   └── flint-core/         # Fundamental types: EntityId, Transform, Vec3, etc.
+├── tools/
+│   ├── arch-analyzer/      # syn-based workspace analyzer that emits crate/dependency/metrics JSON
+│   └── arch-viewer/        # Static web page that renders that JSON as an interactive graph
 ├── schemas/                # Default component, archetype, and constraint definitions
 ├── demo/                   # Showcase scenes and build scripts
 └── docs/                   # This documentation (mdBook)
@@ -52,7 +58,7 @@ Entity IDs are monotonically increasing 64-bit integers that never recycle. A `B
 
 ### Scene as Source of Truth
 
-The TOML file on disk is canonical. In-memory state is derived from it. The `serve --watch` viewer re-parses the entire file on change rather than attempting incremental updates. This is simpler and avoids synchronization bugs.
+The TOML file on disk is canonical. In-memory state is derived from it. The `flint edit` viewer (with `--watch`) re-parses the entire file on change rather than attempting incremental updates. This is simpler and avoids synchronization bugs.
 
 ### Fixed-Timestep Physics
 
@@ -72,7 +78,12 @@ All crates use `thiserror` for error types. Each crate defines its own error enu
 | Windowing | winit 0.30 | `ApplicationHandler` trait pattern |
 | Physics | Rapier 3D 0.22 | Mature Rust physics, character controller |
 | Audio | Kira 0.11 | Rust-native, game-focused, spatial audio |
-| GUI | egui 0.30 | Immediate-mode, easy integration with wgpu |
+| GUI | egui 0.30 | Immediate-mode, easy integration with wgpu; also drives the debug panels and player HUD |
+| Gamepads | gilrs + gilrs-core | Frame-rate polling in the player; direct 1 kHz polling and rumble in `flint-input-capture` |
+| Audio decoding | symphonia, hound | Stem decoding and WAV output for offline suite renders in `flint-music` |
+| Noise / RNG | noise, rand, rand_chacha | Deterministic procgen and terrain generation |
+| Node editor | egui-snarl | The texture pipeline editor inside `flint edit` |
+| Native dialogs | rfd | File pickers in the editors |
 | Scene format | TOML | Human-readable, diffable, good Rust support |
 | Query parser | pest | PEG grammar, good error messages |
 | Scripting | Rhai 1.24 | Sandboxed, embeddable, Rust-native |
@@ -90,17 +101,19 @@ User / AI Agent
       ├──────────────────────────────────┐
       ▼                                  ▼
   flint-cli                        flint-player
-  (scene authoring)                (interactive gameplay)
+  (scene authoring, rhythm tools)  (interactive gameplay)
       │                                  │
       ├──► flint-viewer    (GUI)         ├──► flint-runtime   (game loop, input)
       ├──► flint-query     (queries)     ├──► flint-physics   (Rapier 3D)
       ├──► flint-scene     (load/save)   ├──► flint-audio     (Kira spatial audio)
-      ├──► flint-render    (renderer)    ├──► flint-animation (tweens + skeletal)
-      ├──► flint-constraint(validation)  ├──► flint-particles (GPU particles)
-      ├──► flint-asset     (catalog)     ├──► flint-script    (Rhai scripting)
-      ├──► flint-asset-gen (AI gen)      ├──► flint-terrain   (heightmap terrain)
-      ├──► flint-procgen   (proc gen)    └──► flint-render    (PBR + skinned mesh)
-      ├──► flint-procgen-ai(AI procgen)          │
+      ├──► flint-render    (renderer)    ├──► flint-music     (rhythm sessions)
+      ├──► flint-constraint(validation)  ├──► flint-input-capture (1 kHz gamepad)
+      ├──► flint-asset     (catalog)     ├──► flint-animation (tweens + skeletal)
+      ├──► flint-asset-gen (AI gen)      ├──► flint-particles (GPU particles)
+      ├──► flint-procgen   (proc gen)    ├──► flint-script    (Rhai scripting)
+      ├──► flint-music     (suite tools) ├──► flint-terrain   (heightmap terrain)
+      ├──► flint-input-capture           ├──► flint-debug-ui  (F3/F4 panels, optional)
+      ├──► flint-player    (play)        └──► flint-render    (PBR + skinned mesh)
       └──► flint-import    (glTF import)         │
               │                                  ▼
               ▼                              flint-import  (glTF meshes + skins)
@@ -110,6 +123,8 @@ User / AI Agent
                                              flint-schema
                                              flint-core
 ```
+
+`flint-cli` depends on `flint-player` directly: `flint play` is the player embedded in the CLI, and the rhythm commands (`play-chart`, `replay-chart`, `render-suite`, ...) drive `flint-music` and `flint-input-capture` without a scene at all. `flint-procgen-ai` is tool-time only and is not a default workspace member.
 
 ## Crate Details
 
@@ -124,7 +139,7 @@ Fundamental types shared by all crates. Minimal external dependencies (`thiserro
 
 ### flint-schema
 
-Loads component and archetype definitions from TOML files. Provides a registry for introspection. Supports field types (`bool`, `i32`, `f32`, `string`, `vec3`, `enum`, `entity_ref`) with validation constraints.
+Loads component and archetype definitions from TOML files. Provides a registry for introspection. Supports field types (`bool`, `i32`, `i64`, `f32`, `f64`, `string`, `vec2`, `vec3`, `vec4`, `color`, `transform`, `enum`, `entity_ref`) with validation constraints. Since the scene loader started applying field defaults and validating on load, the registry is consulted at runtime as well as by `flint validate`.
 
 ### flint-ecs
 
@@ -169,10 +184,20 @@ wgpu 23 PBR renderer with:
 ### flint-viewer
 
 egui-based GUI inspector built on top of `flint-render`:
-- Entity tree with selection
+- Entity tree with selection, transform gizmos, undo/redo, TOML write-back
 - Component property editor
 - Constraint violation overlay
-- Hot-reload via file watching (`serve --watch`)
+- Hot-reload via file watching (`flint edit --watch`)
+- Hosts the `flint-debug-ui` panels, including the F4 Rendering & Effects menu
+
+### flint-debug-ui
+
+The summonable debug overlay shared by the viewer and the player:
+- `DebugPanel` trait (`name`, `ui`, `is_open`, `toggle`, `layout`, dirty tracking) and `PanelLayout::{SideRight, Bottom}`
+- `assign_columns()` balances open panels across three side columns by a per-panel weight
+- Panel roster: Rendering & Effects (`RENDER_DEBUG_PANEL`, F4), Ocean, Day / Time, Camera, Grass, Reality, Weather, Visitor, Dead Calm
+- Depends on `flint-render` (it mirrors and writes through to renderer state), `flint-terrain`, and `flint-scene`
+- Optional in the player behind the default-on `debug-hud` cargo feature; feature-off builds carry no debug surface
 
 ### flint-runtime
 
@@ -201,6 +226,26 @@ Kira 0.11 integration for game audio:
 - Spatial 3D audio with distance attenuation, non-spatial ambient loops
 - Graceful degradation when no audio device is available (headless/CI)
 
+### flint-music
+
+Data contract and runtime for rhythm-driven games ("linear composition, adaptive playback"). Originated in Starchild, engine-generic:
+- `SuiteManifest` (tempo map, sections, re-entry points, a fixed six-bus stem inventory) and `Chart` (continuous input curves, discrete pulses, scene cues), with `validate_manifest` / `validate_chart` cross-checking both against the stems on disk
+- `Conductor`, `TempoMap`, `MusicalPosition` --- beat/bar arithmetic and the `ClockBridge` that maps the audio clock onto game time
+- `ChartSession` / `ChartCore` --- the per-frame judgment loop producing `ConductedFrame` values that scripts read through the `conducted_*` API
+- `Coherence`, `Judge`, `Ladder` / `LadderDriver`, `Reintegrator` --- the disintegration ladder, hysteresis, and the seam that brings the ensemble back in
+- `GradientDriver`, `HapticsDriver`, `BusMixer` --- error-driven audio gradient, rumble entrainment, six-bus stem mixing
+- `SessionWriter` / `read_session` / `synthesize` --- `.session.jsonl` recording, replay, and synthetic input profiles
+- `render_offline` / `write_wav` --- headless suite rendering behind `flint render-suite`
+- Depends only on `flint-core` plus kira, symphonia, hound
+
+### flint-input-capture
+
+A dedicated thread that owns `Gilrs` and polls it at 1 kHz (`CaptureConfig::poll_hz`), stamping each event with a latency-compensated suite sample from the `ClockBridge` and emitting `flint-music` `InputEvent`s over a channel:
+- `VerbMap::{Prototype, Full}` maps sticks, buttons and triggers onto the chart verb space (`lean`, `sway`, `pulse`, `press`, `flick`, `pressure_l/r`); charts never see buttons
+- `measure_granularity` reports the driver's real poll cadence; `rumble` drives haptics directly over XInput
+- Uses the gilrs XInput backend on Windows because the default WGI backend delivers nothing to console apps
+- Depends on `flint-core` and `flint-music`
+
 ### flint-animation
 
 Two-tier animation system:
@@ -208,6 +253,8 @@ Two-tier animation system:
 - **Tier 2: Skeletal animation** --- `Skeleton` and `SkeletalClip` types for glTF skin/joint hierarchies. GPU vertex skinning via bone matrix storage buffer. Crossfade blending between clips.
 - `AnimationSync` bridges ECS `animator` components to property playback
 - `SkeletalSync` bridges ECS to skeletal playback with bone matrix computation
+- Layer stack (additive / override, per-joint masks, weight fades) and timed `.sequence.toml` playback with `on_sequence_cue` callbacks
+- glTF `CUBICSPLINE` samplers import with tangents and hemisphere-continuous quaternion keys
 
 ### flint-particles
 
@@ -276,7 +323,7 @@ Android entry point (excluded from default workspace members):
 
 ### flint-player
 
-Standalone player binary that wires together runtime, physics, audio, animation, particles, scripting, and rendering:
+Standalone player binary that wires together runtime, physics, audio, animation, particles, scripting, music sessions, and rendering. The `player_app` module is decomposed into named lifecycle files (ADR 0062): `init` (construction and loading), `frame` (the per-frame loop), `events` (window and key handling), `transition` (scene transitions), `scene_loading`, `script_commands`, `input_config`, `hud_render`, `debug_panels`, `music_session`, `music_guide_panel`, and `timeline_panel`.
 - Full game loop: clock tick, fixed-step physics, audio sync, animation advance, script update, first-person rendering
 - Scene loading with physics body creation from TOML collider/rigidbody components
 - Audio source loading and spatial listener tracking
@@ -286,10 +333,17 @@ Standalone player binary that wires together runtime, physics, audio, animation,
 - Billboard sprite rendering for Doom-style entities
 - First-person controls (WASD, mouse look, jump, sprint, interact, fire)
 - Optional asset catalog integration for runtime name-based asset resolution
+- Music-session lifecycle: starts a `flint-music` `ChartSession` on the shared Kira manager and hands the gamepad to `flint-input-capture` while a `music_session` component is active
+- Summonable debug overlay (F3 scene panels, F4 Rendering & Effects, Music Guide and Manifest Map strips) behind the `debug-hud` feature
+- Has its own `--msaa` flag; `flint play` (the CLI wrapper) does not expose it
 
 ### flint-cli
 
-Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Commands: `init`, `entity`, `scene`, `query`, `schema`, `edit`, `play`, `validate`, `asset`, `render`, `gen`, `prefab`.
+Binary crate with clap-derived command definitions. Routes commands to the appropriate subsystem crate. Scene commands: `init`, `entity`, `scene`, `query`, `schema`, `edit`, `play`, `validate`, `asset`, `render`, `gen`, `prefab`. Rhythm commands: `validate-suite`, `play-suite`, `calibrate`, `play-chart`, `replay-chart`, `render-suite`, `spike-rumble`. The pre-`edit` tools (`serve`, `preview`, `gen-preview`, `tex-edit`, `terrain-edit`, `spline-edit`) survive as hidden subcommands.
+
+### tools/arch-analyzer
+
+A workspace member outside `crates/`: a `syn`-based static analyzer (`flint-arch-analyzer`) that walks every crate's `Cargo.toml` and source, and writes crate, dependency-edge and per-crate metrics JSON to `tools/arch-viewer/arch-data.json`. `tools/arch-viewer` is a static HTML/JS page that renders that JSON as an interactive dependency graph. Neither is a default workspace member, and neither is a runtime dependency of the engine.
 
 ## Further Reading
 

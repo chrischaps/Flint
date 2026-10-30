@@ -124,27 +124,7 @@ pub(crate) fn quat_slerp(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
-pub(crate) fn quat_normalize(q: &[f32; 4]) -> [f32; 4] {
-    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
-    if len < 1e-10 {
-        return [0.0, 0.0, 0.0, 1.0];
-    }
-    [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
-}
-
-pub(crate) fn quat_conjugate(q: &[f32; 4]) -> [f32; 4] {
-    [-q[0], -q[1], -q[2], q[3]]
-}
-
-pub(crate) fn quat_mul(a: &[f32; 4], b: &[f32; 4]) -> [f32; 4] {
-    // Hamilton product: (x,y,z,w)
-    [
-        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
-        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
-        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
-        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
-    ]
-}
+pub(crate) use flint_core::{quat_conjugate, quat_mul, quat_normalize};
 
 #[cfg(test)]
 mod tests {

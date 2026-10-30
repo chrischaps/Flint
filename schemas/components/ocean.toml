@@ -40,6 +40,13 @@ splash_noise_scale = { type = "float", description = "World-space frequency of t
 splash_baseline = { type = "float", description = "Churn floor on calm water (0 = foam vanishes when flat)", default = 0.15 }
 splash_response = { type = "float", description = "Impact speed to churn gain (s/m): how hard waves striking the hull flare the foam", default = 1.0 }
 
+# ── Shoreline foam (where the scene behind the water is shallow) ────────
+shore_foam_width = { type = "float", description = "Foam where the opaque scene behind the water lies within this many metres below the surface: walls, piers, beaches (0 = off; needs post-processing)", default = 0.0 }
+shore_foam_strength = { type = "float", description = "Shoreline foam opacity gain", default = 1.0 }
+shore_foam_speed = { type = "float", description = "Shoreline foam lapping rate (0 = still)", default = 1.0 }
+shore_foam_color = { type = "vec4", description = "Shoreline foam color (RGBA linear)", default = [0.96, 0.99, 1.0, 1.0] }
+shore_foam_reach = { type = "float", description = "Measure the shoreline band across the water, to the nearest solid on screen standing up to this many metres above the surface, so it keeps its width from any angle (0 = off: depth along the view ray only)", default = 0.0 }
+
 # ── Refraction / turbidity (requires post-processing) ───────────────────
 turbidity = { type = "float", description = "Water cloudiness: 0 = glass-clear legs, high = murk in half a meter", default = 0.8 }
 refraction_strength = { type = "float", description = "Screen-space refraction distortion of underwater objects", default = 0.6 }

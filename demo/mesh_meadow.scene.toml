@@ -1,0 +1,126 @@
+# Mesh Meadow: compute grass on a plain mesh ground, under a painted mask
+# (ADR 0089). No terrain: the ground is a box, and demo/mesh_meadow/mask.png
+# says where the grass grows. It thins toward the rim and in grey patches,
+# and leaves a winding path and a clearing bare.
+#
+#   cargo run --bin flint -- play demo/mesh_meadow.scene.toml
+#   cargo run --bin flint -- render demo/mesh_meadow.scene.toml --output meadow.png
+
+[scene]
+name = "Mesh Meadow"
+version = "1.0"
+description = "Compute grass on a mesh plane under a painted density mask, with no terrain"
+
+[camera]
+position = [5.5, 1.7, 40.0]
+target = [0.0, 0.4, 4.0]
+fov = 55.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.06
+bloom_threshold = 1.2
+exposure = 1.25
+vignette_enabled = true
+vignette_intensity = 0.3
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 0.7
+fog_enabled = true
+fog_color = [0.82, 0.74, 0.62]
+fog_density = 0.003
+fog_start = 60.0
+fog_end = 300.0
+
+# --- Light: late afternoon, low from the west ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.16, 0.30, 0.58, 1.0]
+horizon_color = [0.86, 0.72, 0.52, 1.0]
+haze_color = [0.95, 0.80, 0.60, 0.7]
+cloud_tint = [1.0, 0.90, 0.78, 0.8]
+cloud_coverage = 0.3
+sun_glow = 1.4
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 50, 0]
+[entities.sun.directional_light]
+direction = [0.75, -0.38, 0.35]
+color = [1.0, 0.86, 0.66]
+intensity = 2.4
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [-0.4, -0.8, -0.4]
+color = [0.55, 0.65, 0.85]
+intensity = 0.35
+
+# --- The ground: a plain box, its top at y = 0 ---
+
+[entities.ground]
+archetype = "furniture"
+[entities.ground.transform]
+position = [0, 0, 0]
+[entities.ground.bounds]
+min = [-60, -0.2, -60]
+max = [60, 0, 60]
+[entities.ground.material]
+color = [0.13, 0.09, 0.055, 1.0]
+roughness = 0.95
+metallic = 0.0
+
+# --- The grass: a mask over the middle 96 m, level with the ground ---
+
+[entities.meadow]
+[entities.meadow.transform]
+position = [-48, 0, -48]
+[entities.meadow.grass_ground]
+mask = "mesh_meadow/mask.png"
+width = 96.0
+depth = 96.0
+scale_by_mask = true
+"grass.density" = 40.0
+"grass.max_distance" = 70.0
+"grass.fade_start" = 50.0
+"grass.blade_width" = 0.2
+"grass.blade_height" = 0.45
+"grass.height_variation" = 0.4
+"grass.color_base" = [0.12, 0.38, 0.08]
+"grass.color_tip" = [0.42, 0.70, 0.20]
+"grass.color_dry" = [0.62, 0.54, 0.24]
+"grass.dry_amount" = 0.3
+"grass.wind_direction" = [0.8, 0.0, 0.6]
+"grass.wind_speed" = 0.6
+"grass.wind_strength" = 0.1
+"grass.density_threshold" = 0.05
+
+# --- The clearing ---
+
+[entities.bench]
+archetype = "furniture"
+[entities.bench.transform]
+position = [0.4, 0.22, 3.0]
+rotation = [0, 15, 0]
+scale = [0.01, 0.01, 0.01]
+[entities.bench.model]
+asset = "wooden_bench"
+
+[entities.lantern]
+archetype = "furniture"
+[entities.lantern.transform]
+position = [-1.8, 1.28, 4.6]
+scale = [0.1, 0.1, 0.1]
+[entities.lantern.model]
+asset = "Lantern"
+
+[entities.barrel]
+archetype = "furniture"
+[entities.barrel.transform]
+position = [2.4, 0.48, 5.4]
+scale = [0.5, 0.5, 0.5]
+[entities.barrel.model]
+asset = "barrel"

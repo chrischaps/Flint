@@ -481,7 +481,7 @@ impl TransformGizmo {
             } else {
                 colors[i]
             };
-            let width = if is_active { 3.0 } else { 2.0 };
+            let width: f32 = if is_active { 3.0 } else { 2.0 };
 
             // Line
             painter.line_segment([center, end], egui::Stroke::new(width, color));
@@ -522,7 +522,7 @@ impl TransformGizmo {
             } else {
                 colors[i]
             };
-            let width = if is_active { 2.5 } else { 1.5 };
+            let width: f32 = if is_active { 2.5 } else { 1.5 };
 
             // Get the two axes perpendicular to this one
             let a = (i + 1) % 3;
@@ -569,7 +569,7 @@ impl TransformGizmo {
             } else {
                 colors[i]
             };
-            let width = if is_active { 3.0 } else { 2.0 };
+            let width: f32 = if is_active { 3.0 } else { 2.0 };
 
             // Line
             painter.line_segment([center, end], egui::Stroke::new(width, color));

@@ -45,6 +45,15 @@ pub struct ResolvedStyle {
     pub padding: [f32; 4], // L, T, R, B
     pub stroke_color: [f32; 4],
     pub stroke_width: f32,
+    /// Image sub-rectangle `[u0, v0, u1, v1]` in 0..1 texture space
+    /// (sprite-sheet cells, cropped atlases). Images only.
+    pub uv: [f32; 4],
+    /// Font family (file stem or `fonts.toml` alias); None = default font
+    pub font: Option<String>,
+    /// Extra glyph spacing in logical points
+    pub letter_spacing: f32,
+    /// Drop shadow: (colour, dx, dy)
+    pub shadow: Option<([f32; 4], f32, f32)>,
 
     // Layout
     pub layout: LayoutFlow,
@@ -73,6 +82,10 @@ impl Default for ResolvedStyle {
             padding: [0.0; 4],
             stroke_color: [0.0, 0.0, 0.0, 1.0],
             stroke_width: 0.0,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            font: None,
+            letter_spacing: 0.0,
+            shadow: None,
             layout: LayoutFlow::Stack,
             margin_bottom: 0.0,
         }
@@ -86,189 +99,106 @@ pub struct StyleClass {
     pub properties: HashMap<String, StyleValue>,
 }
 
+/// Every property name the style parser and `ui_set_style` understand.
+pub const KNOWN_PROPERTIES: &[&str] = &[
+    "x",
+    "y",
+    "width",
+    "height",
+    "width_pct",
+    "height_pct",
+    "height_auto",
+    "color",
+    "bg_color",
+    "font_size",
+    "font",
+    "letter_spacing",
+    "shadow",
+    "text_align",
+    "rounding",
+    "opacity",
+    "thickness",
+    "radius",
+    "layer",
+    "padding",
+    "stroke_color",
+    "stroke_width",
+    "layout",
+    "margin_bottom",
+    "uv",
+];
+
+/// True when `prop` is a property name the style system understands.
+pub fn is_known_property(prop: &str) -> bool {
+    KNOWN_PROPERTIES.contains(&prop)
+}
+
+/// Apply one named property to a resolved style. Returns `false` when the
+/// property name is unknown (a wrongly-typed value for a known name is
+/// ignored but still returns `true`).
+///
+/// This is the single place property names are interpreted: class
+/// resolution from `.style.toml` and runtime `ui_set_style` overrides both
+/// go through it, so anything the parser accepts a script can set too.
+pub fn apply_property(style: &mut ResolvedStyle, key: &str, val: &StyleValue) -> bool {
+    use StyleValue::*;
+    match (key, val) {
+        ("x", Float(v)) => style.x = *v,
+        ("y", Float(v)) => style.y = *v,
+        ("width", Float(v)) => style.width = *v,
+        ("height", Float(v)) => style.height = *v,
+        ("width_pct", Float(v)) => style.width_pct = Some(*v),
+        ("height_pct", Float(v)) => style.height_pct = Some(*v),
+        ("height_auto", Bool(v)) => style.height_auto = *v,
+        ("font_size", Float(v)) => style.font_size = *v,
+        ("rounding", Float(v)) => style.rounding = *v,
+        ("opacity", Float(v)) => style.opacity = *v,
+        ("thickness", Float(v)) => style.thickness = *v,
+        ("radius", Float(v)) => style.radius = *v,
+        ("layer", Float(v)) => style.layer = *v as i32,
+        ("margin_bottom", Float(v)) => style.margin_bottom = *v,
+        ("color", Color(c)) => style.color = *c,
+        ("bg_color", Color(c)) => style.bg_color = *c,
+        ("stroke_color", Color(c)) => style.stroke_color = *c,
+        ("stroke_width", Float(v)) => style.stroke_width = *v,
+        ("letter_spacing", Float(v)) => style.letter_spacing = *v,
+        ("shadow", Shadow(dx, dy, c)) => style.shadow = Some((*c, *dx, *dy)),
+        // Reuse Color([f32; 4]) for 4-value padding and image uv rects
+        ("padding", Color(p)) => style.padding = *p,
+        ("uv", Color(u)) => style.uv = *u,
+        ("text_align", String(s)) => {
+            style.text_align = match s.as_str() {
+                "center" => TextAlign::Center,
+                "right" => TextAlign::Right,
+                _ => TextAlign::Left,
+            }
+        }
+        ("layout", String(s)) => {
+            style.layout = match s.as_str() {
+                "horizontal" => LayoutFlow::Horizontal,
+                _ => LayoutFlow::Stack,
+            }
+        }
+        ("font", String(s)) => style.font = if s.is_empty() { None } else { Some(s.clone()) },
+        (k, _) => return is_known_property(k),
+    }
+    true
+}
+
 impl StyleClass {
     /// Resolve this class into a full ResolvedStyle, applying defaults for missing properties
     pub fn resolve(&self) -> ResolvedStyle {
         let mut style = ResolvedStyle::default();
-
         for (key, val) in &self.properties {
-            match key.as_str() {
-                "x" => {
-                    if let StyleValue::Float(v) = val {
-                        style.x = *v;
-                    }
-                }
-                "y" => {
-                    if let StyleValue::Float(v) = val {
-                        style.y = *v;
-                    }
-                }
-                "width" => {
-                    if let StyleValue::Float(v) = val {
-                        style.width = *v;
-                    }
-                }
-                "height" => {
-                    if let StyleValue::Float(v) = val {
-                        style.height = *v;
-                    }
-                }
-                "width_pct" => {
-                    if let StyleValue::Float(v) = val {
-                        style.width_pct = Some(*v);
-                    }
-                }
-                "height_pct" => {
-                    if let StyleValue::Float(v) = val {
-                        style.height_pct = Some(*v);
-                    }
-                }
-                "height_auto" => {
-                    if let StyleValue::Bool(v) = val {
-                        style.height_auto = *v;
-                    }
-                }
-                "font_size" => {
-                    if let StyleValue::Float(v) = val {
-                        style.font_size = *v;
-                    }
-                }
-                "rounding" => {
-                    if let StyleValue::Float(v) = val {
-                        style.rounding = *v;
-                    }
-                }
-                "opacity" => {
-                    if let StyleValue::Float(v) = val {
-                        style.opacity = *v;
-                    }
-                }
-                "thickness" => {
-                    if let StyleValue::Float(v) = val {
-                        style.thickness = *v;
-                    }
-                }
-                "radius" => {
-                    if let StyleValue::Float(v) = val {
-                        style.radius = *v;
-                    }
-                }
-                "layer" => {
-                    if let StyleValue::Float(v) = val {
-                        style.layer = *v as i32;
-                    }
-                }
-                "margin_bottom" => {
-                    if let StyleValue::Float(v) = val {
-                        style.margin_bottom = *v;
-                    }
-                }
-                "color" => {
-                    if let StyleValue::Color(c) = val {
-                        style.color = *c;
-                    }
-                }
-                "bg_color" => {
-                    if let StyleValue::Color(c) = val {
-                        style.bg_color = *c;
-                    }
-                }
-                "stroke_color" => {
-                    if let StyleValue::Color(c) = val {
-                        style.stroke_color = *c;
-                    }
-                }
-                "stroke_width" => {
-                    if let StyleValue::Float(v) = val {
-                        style.stroke_width = *v;
-                    }
-                }
-                "text_align" => {
-                    if let StyleValue::String(s) = val {
-                        style.text_align = match s.as_str() {
-                            "center" => TextAlign::Center,
-                            "right" => TextAlign::Right,
-                            _ => TextAlign::Left,
-                        };
-                    }
-                }
-                "layout" => {
-                    if let StyleValue::String(s) = val {
-                        style.layout = match s.as_str() {
-                            "horizontal" => LayoutFlow::Horizontal,
-                            _ => LayoutFlow::Stack,
-                        };
-                    }
-                }
-                "padding" => {
-                    if let StyleValue::Color(p) = val {
-                        // Reuse Color([f32;4]) for 4-value padding
-                        style.padding = *p;
-                    }
-                }
-                _ => {}
-            }
+            apply_property(&mut style, key, val);
         }
-
         style
     }
 
     /// Apply runtime overrides to a resolved style
     pub fn apply_overrides(style: &mut ResolvedStyle, overrides: &HashMap<String, StyleValue>) {
         for (key, val) in overrides {
-            match key.as_str() {
-                "x" => {
-                    if let StyleValue::Float(v) = val {
-                        style.x = *v;
-                    }
-                }
-                "y" => {
-                    if let StyleValue::Float(v) = val {
-                        style.y = *v;
-                    }
-                }
-                "width" => {
-                    if let StyleValue::Float(v) = val {
-                        style.width = *v;
-                    }
-                }
-                "height" => {
-                    if let StyleValue::Float(v) = val {
-                        style.height = *v;
-                    }
-                }
-                "font_size" => {
-                    if let StyleValue::Float(v) = val {
-                        style.font_size = *v;
-                    }
-                }
-                "rounding" => {
-                    if let StyleValue::Float(v) = val {
-                        style.rounding = *v;
-                    }
-                }
-                "opacity" => {
-                    if let StyleValue::Float(v) = val {
-                        style.opacity = *v;
-                    }
-                }
-                "layer" => {
-                    if let StyleValue::Float(v) = val {
-                        style.layer = *v as i32;
-                    }
-                }
-                "color" => {
-                    if let StyleValue::Color(c) = val {
-                        style.color = *c;
-                    }
-                }
-                "bg_color" => {
-                    if let StyleValue::Color(c) = val {
-                        style.bg_color = *c;
-                    }
-                }
-                _ => {}
-            }
+            apply_property(style, key, val);
         }
     }
 }

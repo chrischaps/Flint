@@ -1,0 +1,39 @@
+# Rain — a wide box of fast, stretched drops falling straight down, with
+# small splash puffs where each drop dies.
+# Created by `flint edit <file> --preset rain`; edit freely.
+
+name = "rain"
+
+[[emitters]]
+name = "drops"
+emission_rate = 400.0
+max_particles = 2000
+lifetime = [0.6, 0.7]
+speed = [9.0, 11.0]
+direction = [0, -1, 0]
+spread = 1.5
+gravity = [0, -2.0, 0]
+blend_mode = "alpha"
+stretch = 0.03
+size = { start = [0.015, 0.015], end = [0.015, 0.015] }
+color = [0.75, 0.82, 0.95, 0.55]
+rotation = 0.0
+on_death = { emitter = "splash", count = 1 }
+shape_offset = [0, 6.5, 0]
+
+[emitters.shape]
+kind = "box"
+extents = [4.0, 0.2, 4.0]
+
+[[emitters]]
+name = "splash"
+emission_rate = 0.0
+max_particles = 512
+lifetime = 0.25
+speed = [0.2, 0.6]
+direction = [0, 1, 0]
+spread = 70.0
+gravity = [0, -4.0, 0]
+blend_mode = "alpha"
+size = { start = [0.03, 0.03], end = [0.06, 0.06] }
+color = { start = [0.8, 0.85, 0.95, 0.5], end = [0.8, 0.85, 0.95, 0.0] }

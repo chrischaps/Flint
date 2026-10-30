@@ -275,10 +275,19 @@ impl FlintWorld {
             .collect()
     }
 
-    /// Get info about all entities
+    /// Get info about all entities, by name.
+    ///
+    /// The name map is a `HashMap`, whose order changes per process, and
+    /// the renderer draws in this order: where two surfaces tie in depth,
+    /// the pixels on their edges flipped between runs of the same capture.
+    /// Names, unlike ids, don't depend on what was spawned first (a scene
+    /// file's own map, a build that lands on another frame), so sorting by
+    /// name makes the order the same run to run.
     pub fn all_entities(&self) -> Vec<EntityInfo> {
-        self.name_map
-            .iter()
+        let mut named: Vec<(&String, &EntityId)> = self.name_map.iter().collect();
+        named.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        named
+            .into_iter()
             .map(|(name, id)| {
                 let components = self.components.get(id);
                 let archetype = components.and_then(|c| c.archetype.clone());
@@ -355,15 +364,29 @@ impl FlintWorld {
         })
     }
 
-    /// Get the world-space transform matrix for an entity, walking the parent chain
+    /// Get the world-space transform matrix for an entity, walking the parent chain.
+    /// `None` when the entity has no transform of its own. An ancestor without
+    /// one is a bare grouping node: it moves nothing, and the chain goes on
+    /// through it to the ancestors above (see [`Self::get_frame_matrix`]).
     pub fn get_world_matrix(&self, id: EntityId) -> Option<[[f32; 4]; 4]> {
-        let local = self.get_transform(id)?;
+        let local = self.get_transform(id)?.to_matrix();
+        Some(match self.parents.get(&id) {
+            Some(parent_id) => mat4_mul(&self.get_frame_matrix(*parent_id), &local),
+            None => local,
+        })
+    }
+
+    /// The frame an entity's children are placed in: its world matrix, with a
+    /// missing transform anywhere up the chain, this entity's included, taken
+    /// as identity. Unlike [`Self::get_world_matrix`] it always has an answer.
+    pub fn get_frame_matrix(&self, id: EntityId) -> [[f32; 4]; 4] {
+        let local = self
+            .get_transform(id)
+            .unwrap_or(Transform::IDENTITY)
+            .to_matrix();
         match self.parents.get(&id) {
-            Some(parent_id) => {
-                let parent_mat = self.get_world_matrix(*parent_id)?;
-                Some(mat4_mul(&parent_mat, &local.to_matrix()))
-            }
-            None => Some(local.to_matrix()),
+            Some(parent_id) => mat4_mul(&self.get_frame_matrix(*parent_id), &local),
+            None => local,
         }
     }
 
@@ -768,6 +791,16 @@ mod tests {
     }
 
     #[test]
+    fn all_entities_come_by_name_whatever_the_spawn_order() {
+        let mut world = FlintWorld::new();
+        for name in ["walls", "floor", "roof", "door", "chimney"] {
+            world.spawn(name).unwrap();
+        }
+        let names: Vec<String> = world.all_entities().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["chimney", "door", "floor", "roof", "walls"]);
+    }
+
+    #[test]
     fn test_spawn_with_id_duplicate_name_error() {
         let mut world = FlintWorld::new();
         let id1 = EntityId::from_raw(100);
@@ -960,6 +993,37 @@ intensity = 1.0
         let id = world.spawn("bare").unwrap();
         // No transform component set
         assert!(world.get_world_matrix(id).is_none());
+    }
+
+    #[test]
+    fn a_bare_parent_keeps_the_childs_transform() {
+        let mut world = FlintWorld::new();
+        let make_pos = |x: f32, y: f32, z: f32| {
+            let mut m = toml::map::Map::new();
+            m.insert(
+                "position".into(),
+                toml::Value::Array(vec![(x as f64).into(), (y as f64).into(), (z as f64).into()]),
+            );
+            toml::Value::Table(m)
+        };
+        let group = world.spawn("group").unwrap();
+        let child = world.spawn("child").unwrap();
+        world.set_component(child, "transform", make_pos(1.0, 2.0, 0.0)).unwrap();
+        world.set_parent(child, group).unwrap();
+
+        let pos = world.get_world_position(child).unwrap();
+        assert!((pos - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5, "under a bare parent: {pos:?}");
+
+        // The chain goes on through the bare parent to a placed grandparent.
+        let root = world.spawn("root").unwrap();
+        world.set_component(root, "transform", make_pos(10.0, 0.0, 0.0)).unwrap();
+        world.set_parent(group, root).unwrap();
+        let pos = world.get_world_position(child).unwrap();
+        assert!((pos - Vec3::new(11.0, 2.0, 0.0)).length() < 1e-5, "through it: {pos:?}");
+
+        // The bare parent itself still has no world matrix, but it has a frame.
+        assert!(world.get_world_matrix(group).is_none());
+        assert_eq!(world.get_frame_matrix(group)[3][0], 10.0);
     }
 
     // ── Name-based operations tests ────────────────────────────────

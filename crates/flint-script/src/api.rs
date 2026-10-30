@@ -4,10 +4,13 @@
 //! They access the world through the shared ScriptCallContext.
 
 use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
+use crate::projector::{clip_to_screen, project_clip, View};
 use flint_core::components as comp;
 use flint_core::events::TRANSITION_COMPLETE;
+use flint_core::vfs;
 use flint_core::EntityId;
-use rhai::{Dynamic, Engine, Map};
+use flint_core::{euler_deg_to_quat, quat_mul, quat_normalize};
+use rhai::{Array, Dynamic, Engine, ImmutableString, Map};
 use std::sync::{Arc, Mutex};
 
 /// Register all API functions on the Rhai engine
@@ -28,6 +31,7 @@ pub fn register_all(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     register_state_api(engine, ctx.clone());
     register_scene_api(engine, ctx.clone());
     register_persistence_api(engine, ctx.clone());
+    register_data_api(engine, ctx.clone());
     register_terrain_api(engine, ctx.clone());
     register_sprite_api(engine, ctx.clone());
     register_sprite_animation_api(engine, ctx.clone());
@@ -430,9 +434,10 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                 let c = crate::lock_or_recover(&ctx);
                 let world = unsafe { c.world_mut() };
                 if let Some(tv) = dynamic_to_toml(&val) {
-                    if let Some(comps) = world.get_components_mut(EntityId::from_raw(id as u64)) {
-                        comps.set_field(comp, field, tv);
-                    }
+                    // World-level set_field maintains the component index, so a
+                    // component created here (rigidbody, collider, joint, ...)
+                    // is visible to systems that scan by component.
+                    let _ = world.set_field(EntityId::from_raw(id as u64), comp, field, tv);
                 }
             },
         );
@@ -526,6 +531,130 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                         table.remove("rotation_quat");
                     }
                 }
+            }
+        });
+    }
+
+    // get_rotation_quat(id: i64) -> Map #{x, y, z, w}
+    // The rotation the entity renders with: `rotation_quat` when present,
+    // otherwise the Euler angles converted (ADR 0069).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_rotation_quat", move |id: i64| -> Map {
+            let mut map = Map::new();
+            if id < 0 {
+                return map;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            if let Some(transform) = world.get_transform(EntityId::from_raw(id as u64)) {
+                let q = transform.effective_quat();
+                map.insert("x".into(), Dynamic::from(q[0] as f64));
+                map.insert("y".into(), Dynamic::from(q[1] as f64));
+                map.insert("z".into(), Dynamic::from(q[2] as f64));
+                map.insert("w".into(), Dynamic::from(q[3] as f64));
+            }
+            map
+        });
+    }
+
+    // set_rotation_quat(id: i64, x: f64, y: f64, z: f64, w: f64)
+    // Writes the quaternion directly (normalised); the Euler `rotation` is
+    // zeroed because the quaternion takes precedence when present.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_rotation_quat",
+            move |id: i64, x: f64, y: f64, z: f64, w: f64| {
+                if id < 0 {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                if let Some(comps) = world.get_components_mut(eid) {
+                    let q = quat_normalize(&[x as f32, y as f32, z as f32, w as f32]);
+                    write_rotation_quat(comps, q);
+                }
+            },
+        );
+    }
+
+    // rotate_local(id: i64, x_deg: f64, y_deg: f64, z_deg: f64)
+    // Composes a rotation about the entity's OWN axes onto its current
+    // orientation (rest quaternion included), so a node whose rest pose is
+    // leaned can be driven about its own hinge axis.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("rotate_local", move |id: i64, x: f64, y: f64, z: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            let Some(current) = world.get_transform(eid).map(|t| t.effective_quat()) else {
+                return;
+            };
+            let delta = euler_deg_to_quat(x as f32, y as f32, z as f32);
+            let q = quat_normalize(&quat_mul(&current, &delta));
+            if let Some(comps) = world.get_components_mut(eid) {
+                write_rotation_quat(comps, q);
+            }
+        });
+    }
+
+    // set_joint_target(id: i64, value: f64) — writes joint.motor_target
+    // (degrees for hinge/spherical, metres for prismatic); physics picks it
+    // up on the next fixed step.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_joint_target", move |id: i64, value: f64| {
+            if id < 0 {
+                return;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_mut() };
+            let eid = EntityId::from_raw(id as u64);
+            if let Some(comps) = world.get_components_mut(eid) {
+                if comps.has(comp::JOINT) {
+                    comps.set_field(comp::JOINT, "motor_target", toml::Value::Float(value));
+                }
+            }
+        });
+    }
+
+    // get_joint_target(id: i64) -> f64
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_joint_target", move |id: i64| -> f64 {
+            if id < 0 {
+                return 0.0;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let world = unsafe { c.world_ref() };
+            world
+                .get_components(EntityId::from_raw(id as u64))
+                .and_then(|comps| comps.get_field(comp::JOINT, "motor_target"))
+                .and_then(flint_core::toml_util::toml_f64)
+                .unwrap_or(0.0)
+        });
+    }
+
+    // get_joint_position(id: i64) -> f64 or ()
+    // Simulated joint coordinate: hinge angle in degrees or prismatic
+    // displacement in metres, measured from the rest pose.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("get_joint_position", move |id: i64| -> Dynamic {
+            if id < 0 {
+                return Dynamic::UNIT;
+            }
+            let c = crate::lock_or_recover(&ctx);
+            let physics = unsafe { c.physics_ref() };
+            match physics.and_then(|p| p.joint_position(EntityId::from_raw(id as u64))) {
+                Some(v) => Dynamic::from(v as f64),
+                None => Dynamic::UNIT,
             }
         });
     }
@@ -662,6 +791,31 @@ fn register_entity_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) 
                     comps.set_field(comp::MATERIAL, "base_color_b", toml::Value::Float(b));
                     comps.set_field(comp::MATERIAL, "base_color_a", toml::Value::Float(a));
                 }
+            },
+        );
+    }
+
+    // set_material_override(entity_id: i64, material: &str, r: f64, g: f64, b: f64, a: f64)
+    // Per-glTF-material tint honoured by this entity's meshes and every
+    // descendant's (expanded GLB nodes), keyed by the material's name.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_material_override",
+            move |id: i64, material: &str, r: f64, g: f64, b: f64, a: f64| {
+                if id < 0 || material.is_empty() {
+                    return;
+                }
+                let c = crate::lock_or_recover(&ctx);
+                let world = unsafe { c.world_mut() };
+                let eid = EntityId::from_raw(id as u64);
+                let value = toml::Value::Array(vec![
+                    toml::Value::Float(r),
+                    toml::Value::Float(g),
+                    toml::Value::Float(b),
+                    toml::Value::Float(a),
+                ]);
+                let _ = world.set_field(eid, comp::MATERIAL_OVERRIDES, material, value);
             },
         );
     }
@@ -1084,6 +1238,32 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // last_input_device() -> String
+    // "keyboard" | "mouse" | "gamepad" | "touch": whichever device produced
+    // the most recent deliberate input (key/button press, stick push past
+    // the noise floor, touch start). Mouse motion does not count. Drives
+    // prompt glyph swaps.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("last_input_device", move || -> String {
+            let c = crate::lock_or_recover(&ctx);
+            if c.input.last_device.is_empty() {
+                "keyboard".to_string()
+            } else {
+                c.input.last_device.clone()
+            }
+        });
+    }
+
+    // gamepad_connected() -> bool
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("gamepad_connected", move || -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.gamepad_connected
+        });
+    }
+
     // mouse_delta_x() -> f64
     {
         let ctx = ctx.clone();
@@ -1099,6 +1279,58 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn("mouse_delta_y", move || -> f64 {
             let c = crate::lock_or_recover(&ctx);
             c.input.mouse_delta.1
+        });
+    }
+
+    // mouse_wheel_x() / mouse_wheel_y() -> f64 - wheel lines (notches)
+    // this frame; up and right are positive. A touchpad's pixel scroll
+    // arrives as fractions of a line. Zero while the cursor is over egui.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_wheel_x", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_wheel.0
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_wheel_y", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_wheel.1
+        });
+    }
+
+    // mouse_x() / mouse_y() -> f64 - cursor position in logical points
+    // (the same space as screen_width()/screen_height() and draw_*).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_x", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.mouse_pos_logical.0 as f64
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("mouse_y", move || -> f64 {
+            let c = crate::lock_or_recover(&ctx);
+            c.mouse_pos_logical.1 as f64
+        });
+    }
+
+    // is_mouse_pressed(button) / is_mouse_just_pressed(button) -> bool
+    // button: 0 left, 1 right, 2 middle.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_mouse_pressed", move |button: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_buttons_down.contains(&button)
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_mouse_just_pressed", move |button: i64| -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.mouse_buttons_just_pressed.contains(&button)
         });
     }
 }
@@ -1133,6 +1365,7 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             c.commands.push(ScriptCommand::PlaySound {
                 name: name.to_string(),
                 volume: 1.0,
+                pitch: 1.0,
             });
         });
     }
@@ -1145,6 +1378,20 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             c.commands.push(ScriptCommand::PlaySound {
                 name: name.to_string(),
                 volume,
+                pitch: 1.0,
+            });
+        });
+    }
+
+    // play_sound(name, volume, pitch) — 3-arg overload with pitch
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("play_sound", move |name: &str, volume: f64, pitch: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::PlaySound {
+                name: name.to_string(),
+                volume,
+                pitch,
             });
         });
     }
@@ -1161,6 +1408,8 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     position: (x, y, z),
                     volume: vol,
                     pitch: 1.0,
+                    distances: None,
+                    rolloff: None,
                 });
             },
         );
@@ -1172,12 +1421,35 @@ fn register_audio_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn(
             "play_sound_at",
             move |name: &str, x: f64, y: f64, z: f64, vol: f64, pitch: f64| {
-                let mut c = ctx.lock().unwrap();
+                let mut c = crate::lock_or_recover(&ctx);
                 c.commands.push(ScriptCommand::PlaySoundAt {
                     name: name.to_string(),
                     position: (x, y, z),
                     volume: vol,
                     pitch,
+                    distances: None,
+                    rolloff: None,
+                });
+            },
+        );
+    }
+
+    // play_sound_at(name, x, y, z, opts) — opts is a map with optional keys:
+    //   volume (1), pitch (1), min_distance (1), max_distance (25), rolloff (2)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "play_sound_at",
+            move |name: &str, x: f64, y: f64, z: f64, opts: Map| {
+                let o = SoundOpts::from_map(&opts);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::PlaySoundAt {
+                    name: name.to_string(),
+                    position: (x, y, z),
+                    volume: o.volume,
+                    pitch: o.pitch,
+                    distances: o.distances,
+                    rolloff: o.rolloff,
                 });
             },
         );
@@ -1431,6 +1703,41 @@ fn edit_anim_layer(
 }
 
 // ─── Physics / Raycast API ───────────────────────────────
+
+/// Store a quaternion as the entity's rotation. The Euler `rotation` is
+/// zeroed so readers that only know Euler see a neutral value rather than a
+/// stale one; `to_matrix()` uses the quaternion whenever it is present.
+fn write_rotation_quat(comps: &mut flint_ecs::DynamicComponents, q: [f32; 4]) {
+    comps.set_field(
+        comp::TRANSFORM,
+        "rotation_quat",
+        toml::Value::Array(q.iter().map(|c| toml::Value::Float(*c as f64)).collect()),
+    );
+    comps.set_field(
+        comp::TRANSFORM,
+        "rotation",
+        toml::Value::Array(vec![
+            toml::Value::Float(0.0),
+            toml::Value::Float(0.0),
+            toml::Value::Float(0.0),
+        ]),
+    );
+}
+
+/// A mesh ray's hit as scripts see it: the keys `raycast` answers with.
+fn ray_hit_dynamic(hit: Option<flint_core::ray_mesh::RayHit>) -> Dynamic {
+    let Some(hit) = hit else {
+        return Dynamic::UNIT;
+    };
+    let mut map = Map::new();
+    map.insert("entity".into(), Dynamic::from(hit.entity.raw() as i64));
+    map.insert("distance".into(), Dynamic::from(hit.distance as f64));
+    for (k, axis) in ["x", "y", "z"].iter().enumerate() {
+        map.insert(format!("point_{axis}").into(), Dynamic::from(hit.point[k] as f64));
+        map.insert(format!("normal_{axis}").into(), Dynamic::from(hit.normal[k] as f64));
+    }
+    Dynamic::from(map)
+}
 
 fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // raycast(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
@@ -1700,6 +2007,17 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
             c.cursor_captured_override = Some(captured);
         });
     }
+
+    // is_cursor_captured() -> bool — whether the cursor is captured now
+    // (ADR 0110). A set_cursor_captured() request shows from the next
+    // frame; Escape, F3/F4 and a lost capture show too. While captured,
+    // mouse_x()/mouse_y() read the window centre and clicks skip egui.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("is_cursor_captured", move || -> bool {
+            crate::lock_or_recover(&ctx).cursor_captured
+        });
+    }
 }
 
 // ─── 2D Physics API ──────────────────────────────────────
@@ -1811,8 +2129,8 @@ fn register_math_api(engine: &mut Engine) {
 
     engine.register_fn("random", || -> f64 {
         // Simple pseudo-random based on time — no external crate needed
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let t = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
         // Simple hash to get a 0..1 value
@@ -1821,8 +2139,8 @@ fn register_math_api(engine: &mut Engine) {
     });
 
     engine.register_fn("random_range", |min: f64, max: f64| -> f64 {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let t = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or_default()
             .subsec_nanos();
         let hash = t.wrapping_mul(2654435761);
@@ -1908,6 +2226,9 @@ fn register_event_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
 
 // ─── Particle API ─────────────────────────────────────────
 
+/// Monotonic handle source for `play_effect` (starts at 1 so 0 means "none").
+static NEXT_EFFECT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // emit_burst(entity_id, count) — fire N particles immediately
     {
@@ -1951,6 +2272,54 @@ fn register_particle_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>
                 );
             }
         });
+    }
+
+    // play_effect(name, x, y, z) -> handle — spawn a detached one-shot
+    // instance of a `particles/<name>.particles.toml` effect (ADR 0068).
+    // Returns 0 when the command could not be queued.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "play_effect",
+            move |name: &str, x: f64, y: f64, z: f64| -> i64 {
+                let handle = NEXT_EFFECT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::PlayEffect {
+                    handle,
+                    name: name.to_string(),
+                    position: (x, y, z),
+                });
+                handle as i64
+            },
+        );
+    }
+
+    // stop_effect(handle) — stop emission; particles already alive finish
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("stop_effect", move |handle: i64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::StopEffect {
+                handle: handle.max(0) as u64,
+            });
+        });
+    }
+
+    // set_effect_param(handle, param, value) — emission_scale | scale |
+    // playing (> 0.5) | x | y | z
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "set_effect_param",
+            move |handle: i64, param: &str, value: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.commands.push(ScriptCommand::SetEffectParam {
+                    handle: handle.max(0) as u64,
+                    param: param.to_string(),
+                    value,
+                });
+            },
+        );
     }
 
     // set_emission_rate(entity_id, rate) — update emission rate in ECS
@@ -2031,7 +2400,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_text",
             move |x: f64, y: f64, text: &str, size: f64, r: f64, g: f64, b: f64, a: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
@@ -2040,6 +2409,9 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     layer: 0,
                     align: 0,
                     stroke: None,
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
                 });
             },
         );
@@ -2060,7 +2432,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
@@ -2069,6 +2441,9 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     layer: layer as i32,
                     align: 0,
                     stroke: None,
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
                 });
             },
         );
@@ -2093,7 +2468,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   sa: f64,
                   sw: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Text {
+                c.push_draw(DrawCommand::Text {
                     x: x as f32,
                     y: y as f32,
                     text: text.to_string(),
@@ -2102,6 +2477,73 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     layer: 0,
                     align: 0,
                     stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
+                });
+            },
+        );
+    }
+
+    // draw_text_stroked_ex(x, y, text, size, r, g, b, a, sr, sg, sb, sa, stroke_w, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_text_stroked_ex",
+            move |x: f64,
+                  y: f64,
+                  text: &str,
+                  size: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  sr: f64,
+                  sg: f64,
+                  sb: f64,
+                  sa: f64,
+                  sw: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                    align: 0,
+                    stroke: Some(([sr as f32, sg as f32, sb as f32, sa as f32], sw as f32)),
+                    font: None,
+                    letter_spacing: 0.0,
+                    shadow: None,
+                });
+            },
+        );
+    }
+
+    // draw_text_opts(x, y, text, size, opts) — opts is a map with optional keys:
+    //   font (string), color ([r,g,b,a]), align ("left"|"center"|"right"),
+    //   stroke ([r,g,b,a,width]), spacing (px), layer (int), shadow ([dx,dy,r,g,b,a])
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_text_opts",
+            move |x: f64, y: f64, text: &str, size: f64, opts: Map| {
+                let o = TextOpts::from_map(&opts);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Text {
+                    x: x as f32,
+                    y: y as f32,
+                    text: text.to_string(),
+                    size: size as f32,
+                    color: o.color,
+                    layer: o.layer,
+                    align: o.align,
+                    stroke: o.stroke,
+                    font: o.font,
+                    letter_spacing: o.spacing,
+                    shadow: o.shadow,
                 });
             },
         );
@@ -2114,7 +2556,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_rect",
             move |x: f64, y: f64, w: f64, h: f64, r: f64, g: f64, b: f64, a: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::RectFilled {
+                c.push_draw(DrawCommand::RectFilled {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2143,7 +2585,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   rounding: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::RectFilled {
+                c.push_draw(DrawCommand::RectFilled {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2171,13 +2613,14 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::RectOutline {
+                c.push_draw(DrawCommand::RectOutline {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
                     h: h as f32,
                     color: [r as f32, g as f32, b as f32, a as f32],
                     thickness: thickness as f32,
+                    rounding: 0.0,
                     layer: 0,
                 });
             },
@@ -2191,7 +2634,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_circle",
             move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleFilled {
+                c.push_draw(DrawCommand::CircleFilled {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2209,7 +2652,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_circle_ex",
             move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleFilled {
+                c.push_draw(DrawCommand::CircleFilled {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2227,7 +2670,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_circle_outline",
             move |x: f64, y: f64, radius: f64, r: f64, g: f64, b: f64, a: f64, thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleOutline {
+                c.push_draw(DrawCommand::CircleOutline {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2254,7 +2697,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   thickness: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::CircleOutline {
+                c.push_draw(DrawCommand::CircleOutline {
                     x: x as f32,
                     y: y as f32,
                     radius: radius as f32,
@@ -2281,7 +2724,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   thickness: f64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Line {
+                c.push_draw(DrawCommand::Line {
                     x1: x1 as f32,
                     y1: y1 as f32,
                     x2: x2 as f32,
@@ -2290,6 +2733,248 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     thickness: thickness as f32,
                     layer: 0,
                 });
+            },
+        );
+    }
+
+    // world_to_screen(x, y, z) -> #{x, y, depth, visible}
+    // Projects a world point with the camera the last frame rendered with.
+    // `visible` is false behind the near plane (x/y are then meaningless).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("world_to_screen", move |x: f64, y: f64, z: f64| -> Map {
+            // The same answer `Projector` gives native code (ADR 0087).
+            let view = View::of(&crate::lock_or_recover(&ctx));
+            let mut map = Map::new();
+            let (sx, sy, depth, visible) =
+                match view.world_to_screen([x as f32, y as f32, z as f32]) {
+                    Some(p) => (p.x, p.y, p.depth, true),
+                    None => {
+                        let clip = project_clip(&view.view_proj, [x as f32, y as f32, z as f32]);
+                        (0.0, 0.0, clip[3], false)
+                    }
+                };
+            map.insert("x".into(), Dynamic::from(sx as f64));
+            map.insert("y".into(), Dynamic::from(sy as f64));
+            map.insert("depth".into(), Dynamic::from(depth as f64));
+            map.insert("visible".into(), Dynamic::from(visible));
+            map
+        });
+    }
+
+    // screen_to_ground(x, y, plane_y) -> [x, z] or ()
+    // The ground under a screen point: where the ray through (x, y) meets the
+    // plane y = plane_y. (x, y) is in logical points, the mouse_x()/mouse_y()
+    // space, and the camera is the one world_to_screen uses, so
+    // world_to_screen of the hit lands back on (x, y). () where the view
+    // doesn't reach the plane: sky, a level orthographic camera, or a plane
+    // behind the camera.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "screen_to_ground",
+            move |x: f64, y: f64, plane_y: f64| -> Dynamic {
+                let c = crate::lock_or_recover(&ctx);
+                match flint_core::projection::screen_to_ground(
+                    &c.camera_view_proj,
+                    x as f32,
+                    y as f32,
+                    c.screen_width,
+                    c.screen_height,
+                    plane_y as f32,
+                ) {
+                    Some([gx, gz]) => Dynamic::from_array(vec![
+                        Dynamic::from(gx as f64),
+                        Dynamic::from(gz as f64),
+                    ]),
+                    None => Dynamic::UNIT,
+                }
+            },
+        );
+    }
+
+    // screen_to_heightfield(x, y) -> [x, y, z] or ()
+    // The game's ground under a screen point (ADR 0095): where the ray
+    // through (x, y) first comes down onto the ground field the host
+    // registered with Projector::set_ground. () with no ground registered,
+    // or where the ray misses it (the sky, or past its edge); fall back to
+    // screen_to_ground there.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("screen_to_heightfield", move |x: f64, y: f64| -> Dynamic {
+            let (view, ground) = {
+                let c = crate::lock_or_recover(&ctx);
+                (crate::projector::View::of(&c), c.ground.clone())
+            };
+            match ground.and_then(|g| view.screen_to_heightfield(x as f32, y as f32, &g)) {
+                Some([gx, gy, gz]) => Dynamic::from_array(vec![
+                    Dynamic::from(gx as f64),
+                    Dynamic::from(gy as f64),
+                    Dynamic::from(gz as f64),
+                ]),
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
+    // ground_height(x, z) -> f64 or ()
+    // World y of the registered ground field at (x, z). () with none
+    // registered, or off its edge. (terrain_height reads a scene's terrain.)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ground_height", move |x: f64, z: f64| -> Dynamic {
+            let ground = crate::lock_or_recover(&ctx).ground.clone();
+            match ground.and_then(|g| g.height_at(x as f32, z as f32)) {
+                Some(h) => Dynamic::from(h as f64),
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
+    // raycast_meshes(ox, oy, oz, dx, dy, dz, max_dist) -> Map or ()
+    // The nearest mesh drawn as a ray target (ADR 0105) that the ray from
+    // (ox, oy, oz) along (dx, dy, dz) meets within max_dist world units:
+    // #{ entity, distance, point_x/y/z, normal_x/y/z }, as `raycast` answers,
+    // with the normal facing back along the ray. () when it meets none. The
+    // meshes stand where the last frame drew them.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "raycast_meshes",
+            move |ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, max_dist: f64| -> Dynamic {
+                let scene = crate::lock_or_recover(&ctx).ray_scene.clone();
+                let o = [ox as f32, oy as f32, oz as f32];
+                let d = [dx as f32, dy as f32, dz as f32];
+                ray_hit_dynamic(scene.cast(o, d, max_dist as f32))
+            },
+        );
+    }
+
+    // screen_to_mesh(x, y) -> Map or ()
+    // The nearest mesh drawn as a ray target under a screen point (ADR 0105),
+    // as raycast_meshes answers: picking what's drawn, a wall or a roof,
+    // rather than the ground. () where the ray meets none.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("screen_to_mesh", move |x: f64, y: f64| -> Dynamic {
+            let (view, scene) = {
+                let c = crate::lock_or_recover(&ctx);
+                (crate::projector::View::of(&c), c.ray_scene.clone())
+            };
+            ray_hit_dynamic(
+                view.screen_ray(x as f32, y as f32)
+                    .and_then(|(o, d)| scene.cast(o, d, f32::INFINITY)),
+            )
+        });
+    }
+
+    // draw_line_3d(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)
+    // World-space debug line, projected onto the HUD layer. Clipped against
+    // the near plane so a segment that passes the camera still draws.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_3d",
+            move |x1: f64,
+                  y1: f64,
+                  z1: f64,
+                  x2: f64,
+                  y2: f64,
+                  z2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                push_line_3d(
+                    &mut c,
+                    [x1, y1, z1],
+                    [x2, y2, z2],
+                    [r as f32, g as f32, b as f32, a as f32],
+                    thickness as f32,
+                    0,
+                );
+            },
+        );
+    }
+
+    // draw_world_line(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness)
+    // World-space line drawn in the 3D frame with a depth test (ADR 0083):
+    // geometry in front hides it. Projected with the camera the frame
+    // renders with; thickness in logical points, colour as the HUD's.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_world_line",
+            move |x1: f64,
+                  y1: f64,
+                  z1: f64,
+                  x2: f64,
+                  y2: f64,
+                  z2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.world_lines.push(flint_core::world_line::WorldLine {
+                    a: [x1 as f32, y1 as f32, z1 as f32],
+                    b: [x2 as f32, y2 as f32, z2 as f32],
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                });
+            },
+        );
+    }
+
+    // draw_world_text(x, y, z, text, size, opts)
+    // Text at a world point, drawn in the 3D frame with a depth test
+    // (ADR 0104): geometry in front hides it. opts are draw_text_opts's
+    // (font, color, align, stroke, spacing, shadow; no layer), centred on
+    // the point by default, plus valign ("top"|"middle"|"bottom"), and
+    // facing ([nx, ny, nz]) with up ([x, y, z], world up by default) to lay
+    // it in a plane. A billboard's size is in points; on a plane, every
+    // length is in world units.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_world_text",
+            move |x: f64, y: f64, z: f64, text: &str, size: f64, opts: Map| {
+                let t = world_text_from([x as f32, y as f32, z as f32], text, size as f32, &opts);
+                let mut c = crate::lock_or_recover(&ctx);
+                c.world_texts.push(t);
+            },
+        );
+    }
+
+    // draw_line_3d_ex(x1, y1, z1, x2, y2, z2, r, g, b, a, thickness, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_line_3d_ex",
+            move |x1: f64,
+                  y1: f64,
+                  z1: f64,
+                  x2: f64,
+                  y2: f64,
+                  z2: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                push_line_3d(
+                    &mut c,
+                    [x1, y1, z1],
+                    [x2, y2, z2],
+                    [r as f32, g as f32, b as f32, a as f32],
+                    thickness as f32,
+                    layer as i32,
+                );
             },
         );
     }
@@ -2310,7 +2995,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   thickness: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Line {
+                c.push_draw(DrawCommand::Line {
                     x1: x1 as f32,
                     y1: y1 as f32,
                     x2: x2 as f32,
@@ -2323,6 +3008,271 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         );
     }
 
+    // draw_rect_outline_ex(x, y, w, h, r, g, b, a, thickness, rounding, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_rect_outline_ex",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  rounding: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::RectOutline {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    rounding: rounding as f32,
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_rect_ex4(x, y, w, h, r, g, b, a, tl, tr, br, bl, layer)
+    // Filled rectangle with per-corner rounding (top-left, top-right,
+    // bottom-right, bottom-left).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_rect_ex4",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  tl: f64,
+                  tr: f64,
+                  br: f64,
+                  bl: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::RectRounded4 {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    rounding: [tl as f32, tr as f32, br as f32, bl as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_rect_gradient(x, y, w, h, r1, g1, b1, a1, r2, g2, b2, a2, vertical, layer)
+    // Linear two-colour fill: colour 1 -> colour 2, top->bottom when
+    // `vertical`, left->right otherwise.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_rect_gradient",
+            move |x: f64,
+                  y: f64,
+                  w: f64,
+                  h: f64,
+                  r1: f64,
+                  g1: f64,
+                  b1: f64,
+                  a1: f64,
+                  r2: f64,
+                  g2: f64,
+                  b2: f64,
+                  a2: f64,
+                  vertical: bool,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::RectGradient {
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
+                    color_a: [r1 as f32, g1 as f32, b1 as f32, a1 as f32],
+                    color_b: [r2 as f32, g2 as f32, b2 as f32, a2 as f32],
+                    vertical,
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_ring(cx, cy, r_inner, r_outer, start_deg, end_deg, r, g, b, a, layer)
+    // Annular sector. Degrees from 12 o'clock, clockwise (0 = up, 90 =
+    // right); `end_deg > start_deg`, sweep clamped to 360; r_inner 0 = pie.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_ring",
+            move |cx: f64,
+                  cy: f64,
+                  r_inner: f64,
+                  r_outer: f64,
+                  start_deg: f64,
+                  end_deg: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  layer: i64| {
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Ring {
+                    cx: cx as f32,
+                    cy: cy as f32,
+                    r_inner: r_inner as f32,
+                    r_outer: r_outer as f32,
+                    start_deg: start_deg as f32,
+                    end_deg: end_deg as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_arc(cx, cy, radius, start_deg, end_deg, r, g, b, a, thickness, layer)
+    // Sugar for a ring centred on `radius` with the given stroke thickness.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_arc",
+            move |cx: f64,
+                  cy: f64,
+                  radius: f64,
+                  start_deg: f64,
+                  end_deg: f64,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  layer: i64| {
+                let half = (thickness * 0.5) as f32;
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Ring {
+                    cx: cx as f32,
+                    cy: cy as f32,
+                    r_inner: (radius as f32 - half).max(0.0),
+                    r_outer: radius as f32 + half,
+                    start_deg: start_deg as f32,
+                    end_deg: end_deg as f32,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_polygon(points, r, g, b, a, layer) - convex fill.
+    // `points` is `[[x, y], ...]` or flat `[x0, y0, x1, y1, ...]` (ints or floats).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_polygon",
+            move |points: Array, r: f64, g: f64, b: f64, a: f64, layer: i64| {
+                let Some(points) = crate::draw2d::parse_points(&points) else {
+                    tracing::warn!(
+                        "draw_polygon: points must be [[x,y],...] or a flat even-length [x0,y0,...] list of numbers"
+                    );
+                    return;
+                };
+                if points.len() < 3 {
+                    return;
+                }
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::Polygon {
+                    points,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // draw_polygon_outline(points, r, g, b, a, thickness, closed, layer)
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "draw_polygon_outline",
+            move |points: Array,
+                  r: f64,
+                  g: f64,
+                  b: f64,
+                  a: f64,
+                  thickness: f64,
+                  closed: bool,
+                  layer: i64| {
+                let Some(points) = crate::draw2d::parse_points(&points) else {
+                    tracing::warn!(
+                        "draw_polygon_outline: points must be [[x,y],...] or a flat even-length [x0,y0,...] list of numbers"
+                    );
+                    return;
+                };
+                if points.len() < 2 {
+                    return;
+                }
+                let mut c = crate::lock_or_recover(&ctx);
+                c.push_draw(DrawCommand::PolygonOutline {
+                    points,
+                    color: [r as f32, g as f32, b as f32, a as f32],
+                    thickness: thickness as f32,
+                    closed,
+                    layer: layer as i32,
+                });
+            },
+        );
+    }
+
+    // push_clip(x, y, w, h) / pop_clip()
+    // Every draw call issued while a clip is pushed is confined to that rect
+    // (nested pushes intersect). Unbalanced pops are ignored and the stack
+    // resets each frame.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("push_clip", move |x: f64, y: f64, w: f64, h: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.push_clip([x as f32, y as f32, w as f32, h as f32]);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("pop_clip", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.pop_clip();
+        });
+    }
+
+    // push_over_ui() / pop_over_ui()
+    // Every draw call issued between them draws above the game's egui panels
+    // and windows instead of under them (ADR 0085). Pushes nest, unbalanced
+    // pops are ignored, and the depth resets each frame.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("push_over_ui", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.push_over_ui();
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("pop_over_ui", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.pop_over_ui();
+        });
+    }
+
     // draw_sprite(x, y, w, h, name)
     {
         let ctx = ctx.clone();
@@ -2330,7 +3280,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             "draw_sprite",
             move |x: f64, y: f64, w: f64, h: f64, name: &str| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Sprite {
+                c.push_draw(DrawCommand::Sprite {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2364,7 +3314,7 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                   a: f64,
                   layer: i64| {
                 let mut c = crate::lock_or_recover(&ctx);
-                c.draw_commands.push(DrawCommand::Sprite {
+                c.push_draw(DrawCommand::Sprite {
                     x: x as f32,
                     y: y as f32,
                     w: w as f32,
@@ -2426,15 +3376,33 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     {
         let ctx = ctx.clone();
         engine.register_fn("measure_text", move |text: &str, size: f64| -> Map {
-            drop(crate::lock_or_recover(&ctx));
-            // Approximate text width: average character width ~0.6 * font_size
-            let char_width = size * 0.6;
-            let width = text.len() as f64 * char_width;
+            let c = crate::lock_or_recover(&ctx);
+            let (w, h) = measure_text_with(&c, text, size as f32, None, 0.0);
+            drop(c);
             let mut map = Map::new();
-            map.insert("width".into(), Dynamic::from(width));
-            map.insert("height".into(), Dynamic::from(size));
+            map.insert("width".into(), Dynamic::from(w as f64));
+            map.insert("height".into(), Dynamic::from(h as f64));
             map
         });
+    }
+
+    // measure_text_ex(text, size, font, spacing) -> Map #{width, height}
+    // `font` is a family name ("" = default font); `spacing` is extra letter spacing in px.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "measure_text_ex",
+            move |text: &str, size: f64, font: &str, spacing: f64| -> Map {
+                let c = crate::lock_or_recover(&ctx);
+                let family = (!font.is_empty()).then_some(font);
+                let (w, h) = measure_text_with(&c, text, size as f32, family, spacing as f32);
+                drop(c);
+                let mut map = Map::new();
+                map.insert("width".into(), Dynamic::from(w as f64));
+                map.insert("height".into(), Dynamic::from(h as f64));
+                map
+            },
+        );
     }
 
     // move_character(entity_id, dx, dy, dz) -> Map #{x, y, z, grounded} or ()
@@ -2522,6 +3490,16 @@ fn register_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
                     map.insert("half_height".into(), Dynamic::from(half_height as f64));
                     Dynamic::from(map)
                 }
+                Some(flint_physics::ColliderExtents::Cylinder {
+                    radius,
+                    half_height,
+                }) => {
+                    let mut map = Map::new();
+                    map.insert("shape".into(), Dynamic::from("cylinder".to_string()));
+                    map.insert("radius".into(), Dynamic::from(radius as f64));
+                    map.insert("half_height".into(), Dynamic::from(half_height as f64));
+                    Dynamic::from(map)
+                }
                 None => Dynamic::UNIT,
             }
         });
@@ -2539,21 +3517,7 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("load_ui", move |layout_path: &str| -> i64 {
             let mut c = crate::lock_or_recover(&ctx);
             // Resolve relative to project root (scene's parent's parent)
-            let scene_dir = if c.current_scene_path.is_empty() {
-                std::path::PathBuf::from(".")
-            } else {
-                let p = std::path::Path::new(&c.current_scene_path);
-                // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
-                let root = p
-                    .parent()
-                    .and_then(|dir| dir.parent())
-                    .unwrap_or(std::path::Path::new("."));
-                if root.as_os_str().is_empty() {
-                    std::path::PathBuf::from(".")
-                } else {
-                    root.to_path_buf()
-                }
-            };
+            let scene_dir = project_root_for(&c.current_scene_path);
             c.ui_system.load(layout_path, &scene_dir)
         });
     }
@@ -2629,13 +3593,15 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         );
     }
 
-    // ui_set_style(element_id, prop, val)
+    // ui_set_style(element_id, prop, val) — every property the style parser
+    // accepts: numbers, strings (text_align / layout / font), bools
+    // (height_auto), arrays (color / padding / shadow), and "$token" strings
+    // for any of them.
     {
         let ctx = ctx.clone();
         engine.register_fn(
             "ui_set_style",
             move |element_id: &str, prop: &str, val: Dynamic| {
-                let mut c = crate::lock_or_recover(&ctx);
                 let style_val = if val.is_float() {
                     StyleValue::Float(val.as_float().unwrap_or(0.0) as f32)
                 } else if val.is_int() {
@@ -2644,9 +3610,48 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
                     StyleValue::String(val.into_string().unwrap_or_default())
                 } else if val.is_bool() {
                     StyleValue::Bool(val.as_bool().unwrap_or(false))
+                } else if val.is_array() {
+                    let arr = val.cast::<Array>();
+                    let values = array_to_f32s(&arr);
+                    match StyleValue::from_numbers(&values) {
+                        Some(sv) => sv,
+                        None => {
+                            tracing::warn!(
+                                "ui_set_style({element_id}, {prop}): expected 3, 4 or 6 numbers, got {}",
+                                arr.len()
+                            );
+                            return;
+                        }
+                    }
                 } else {
+                    tracing::warn!(
+                        "ui_set_style({element_id}, {prop}): unsupported value type {}",
+                        val.type_name()
+                    );
                     return;
                 };
+                let mut c = crate::lock_or_recover(&ctx);
+                c.ui_system.set_style(element_id, prop, style_val);
+            },
+        );
+    }
+
+    // ui_set_style_array(element_id, prop, array) — for array-valued props:
+    // color / bg_color / stroke_color / padding / uv ([a,b,c,d]) and shadow ([dx,dy,r,g,b,a])
+    {
+        let ctx = ctx.clone();
+        engine.register_fn(
+            "ui_set_style_array",
+            move |element_id: &str, prop: &str, val: Array| {
+                let values = array_to_f32s(&val);
+                let Some(style_val) = StyleValue::from_numbers(&values) else {
+                    tracing::warn!(
+                        "ui_set_style_array({element_id}, {prop}): expected 4 or 6 numbers, got {}",
+                        val.len()
+                    );
+                    return;
+                };
+                let mut c = crate::lock_or_recover(&ctx);
                 c.ui_system.set_style(element_id, prop, style_val);
             },
         );
@@ -2679,6 +3684,31 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // ui_hit(element_id, x, y) -> bool — point inside the element's resolved rect
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_hit", move |element_id: &str, x: f64, y: f64| -> bool {
+            let mut c = crate::lock_or_recover(&ctx);
+            let sw = c.screen_width;
+            let sh = c.screen_height;
+            c.ui_system.hit(element_id, x as f32, y as f32, sw, sh)
+        });
+    }
+
+    // ui_token(name) -> array | float | string | bool | ()
+    // Reads a style token ("accent", "$accent", "color.accent") from the
+    // loaded documents' [tokens] tables and shared token file.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("ui_token", move |name: &str| -> Dynamic {
+            let c = crate::lock_or_recover(&ctx);
+            match c.ui_system.token(name) {
+                Some(v) => toml_token_to_dynamic(&v),
+                None => Dynamic::UNIT,
+            }
+        });
+    }
+
     // ui_get_rect(element_id) -> Map #{x, y, w, h} or ()
     {
         let ctx = ctx.clone();
@@ -2698,6 +3728,31 @@ fn register_data_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
                 None => Dynamic::UNIT,
             }
         });
+    }
+}
+
+/// Convert a token value to what a script expects: numbers → FLOAT,
+/// numeric arrays → Array of FLOAT, strings/bools as-is, anything else `()`.
+fn toml_token_to_dynamic(v: &toml::Value) -> Dynamic {
+    match v {
+        toml::Value::Float(f) => Dynamic::from(*f),
+        toml::Value::Integer(i) => Dynamic::from(*i as f64),
+        toml::Value::String(s) => Dynamic::from(s.clone()),
+        toml::Value::Boolean(b) => Dynamic::from(*b),
+        toml::Value::Array(arr) => {
+            let out: Array = arr
+                .iter()
+                .map(|x| match x {
+                    toml::Value::Float(f) => Dynamic::from(*f),
+                    toml::Value::Integer(i) => Dynamic::from(*i as f64),
+                    toml::Value::String(s) => Dynamic::from(s.clone()),
+                    toml::Value::Boolean(b) => Dynamic::from(*b),
+                    _ => Dynamic::UNIT,
+                })
+                .collect();
+            Dynamic::from(out)
+        }
+        _ => Dynamic::UNIT,
     }
 }
 
@@ -2969,7 +4024,22 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
         });
     }
 
-    // persist_save(path)
+    // persist_save() -- flush the engine-managed save file now (the player
+    // otherwise writes it 1 s after the last change, on scene transitions
+    // and on exit).
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("persist_save", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            if c.persistent_store.is_null() {
+                return;
+            }
+            let store = unsafe { &mut *c.persistent_store };
+            store.request_flush();
+        });
+    }
+
+    // persist_save(path) -- explicit path, written immediately
     {
         let ctx = ctx.clone();
         engine.register_fn("persist_save", move |path: &str| {
@@ -2996,6 +4066,80 @@ fn register_persistence_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContex
             if let Err(e) = store.load_from_file(std::path::Path::new(path)) {
                 tracing::warn!("load error: {}", e);
             }
+        });
+    }
+}
+
+// ─── Data files API ──────────────────────────────────────
+
+/// Project root for a scene path: the scene directory's parent, or "." when
+/// the path is empty or has no such parent. The same rule `load_ui` and the
+/// player's `save/persist.toml` use.
+pub fn project_root_for(scene_path: &str) -> std::path::PathBuf {
+    if scene_path.is_empty() {
+        return std::path::PathBuf::from(".");
+    }
+    // scenes/oval_plus.scene.toml → parent "scenes" → parent "" → "."
+    let root = std::path::Path::new(scene_path)
+        .parent()
+        .and_then(|dir| dir.parent())
+        .unwrap_or(std::path::Path::new("."));
+    if root.as_os_str().is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        root.to_path_buf()
+    }
+}
+
+/// Read and cache a TOML file relative to the project root, returning the
+/// whole document as a Rhai map (`()` on failure, which is also logged).
+fn load_data_impl(c: &mut ScriptCallContext, path: &str, reload: bool) -> Dynamic {
+    let full = project_root_for(&c.current_scene_path).join(path);
+    let key = full.to_string_lossy().to_string();
+    if reload {
+        c.data_cache.remove(&key);
+    }
+    if let Some(v) = c.data_cache.get(&key) {
+        return toml_to_dynamic(v.clone());
+    }
+    let parsed = vfs::read_to_string(&full)
+        .map_err(|e| e.to_string())
+        .and_then(|text| text.parse::<toml::Value>().map_err(|e| e.to_string()));
+    match parsed {
+        Ok(v) => {
+            let d = toml_to_dynamic(v.clone());
+            c.data_cache.insert(key, v);
+            d
+        }
+        Err(e) => {
+            let message = format!("load_data('{}') failed (resolved to {}): {}", path, key, e);
+            tracing::warn!("{}", message);
+            c.commands.push(ScriptCommand::Log {
+                level: LogLevel::Warn,
+                message,
+            });
+            Dynamic::UNIT
+        }
+    }
+}
+
+fn register_data_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
+    // load_data(path) -> Map | ()  — parsed once per path, cached for the session.
+    // Types are preserved exactly (TOML integer → INT, float → FLOAT), unlike ui_token.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_data", move |path: &str| -> Dynamic {
+            let mut c = crate::lock_or_recover(&ctx);
+            load_data_impl(&mut c, path, false)
+        });
+    }
+
+    // load_data(path, reload) — reload = true drops the cached parse first.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("load_data", move |path: &str, reload: bool| -> Dynamic {
+            let mut c = crate::lock_or_recover(&ctx);
+            load_data_impl(&mut c, path, reload)
         });
     }
 }
@@ -3790,9 +4934,424 @@ fn register_screen_ui_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>
     }
 }
 
+// ─── Text option helpers ─────────────────────────────────
+
+/// Read a Rhai number (INT or FLOAT) as f32; anything else is `None`.
+fn dyn_to_f32(d: &Dynamic) -> Option<f32> {
+    if let Some(f) = d.clone().try_cast::<f64>() {
+        Some(f as f32)
+    } else {
+        d.clone().try_cast::<i64>().map(|i| i as f32)
+    }
+}
+
+/// Convert a Rhai array of numbers (INT or FLOAT mixed) to f32s, skipping non-numbers.
+pub(crate) fn array_to_f32s(arr: &Array) -> Vec<f32> {
+    arr.iter().filter_map(dyn_to_f32).collect()
+}
+
+/// Parsed `play_sound_at` option map. Every key is optional: full volume,
+/// normal pitch, and the engine's falloff. Naming only one distance keeps
+/// the engine's default (1 or 25) for the other.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SoundOpts {
+    pub volume: f64,
+    pub pitch: f64,
+    pub distances: Option<(f32, f32)>,
+    pub rolloff: Option<f32>,
+}
+
+impl SoundOpts {
+    pub(crate) fn from_map(opts: &Map) -> Self {
+        let get = |k: &str| opts.get(k).and_then(dyn_to_f32);
+        let (min, max) = (get("min_distance"), get("max_distance"));
+        Self {
+            volume: get("volume").map_or(1.0, f64::from),
+            pitch: get("pitch").map_or(1.0, f64::from),
+            distances: (min.is_some() || max.is_some())
+                .then(|| (min.unwrap_or(1.0), max.unwrap_or(25.0))),
+            rolloff: get("rolloff"),
+        }
+    }
+}
+
+/// Parsed `draw_text_opts` option map. Every key is optional; defaults are
+/// white, left-aligned, layer 0, no stroke/shadow, default font.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TextOpts {
+    pub color: [f32; 4],
+    pub align: u8,
+    pub layer: i32,
+    pub stroke: Option<([f32; 4], f32)>,
+    pub font: Option<String>,
+    pub spacing: f32,
+    pub shadow: Option<([f32; 4], f32, f32)>,
+}
+
+impl Default for TextOpts {
+    fn default() -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0, 1.0],
+            align: 0,
+            layer: 0,
+            stroke: None,
+            font: None,
+            spacing: 0.0,
+            shadow: None,
+        }
+    }
+}
+
+impl TextOpts {
+    pub(crate) fn from_map(opts: &Map) -> Self {
+        let mut o = Self::default();
+        if let Some(v) = opts.get("font") {
+            if let Some(s) = v.clone().try_cast::<ImmutableString>() {
+                if !s.is_empty() {
+                    o.font = Some(s.to_string());
+                }
+            }
+        }
+        if let Some(v) = opts.get("color") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [r, g, b, a] = array_to_f32s(&arr)[..] {
+                    o.color = [r, g, b, a];
+                }
+            }
+        }
+        if let Some(v) = opts.get("align") {
+            if let Some(s) = v.clone().try_cast::<ImmutableString>() {
+                o.align = match s.as_str() {
+                    "center" => 1,
+                    "right" => 2,
+                    _ => 0,
+                };
+            } else if let Some(i) = dyn_to_f32(v) {
+                o.align = (i as i64).clamp(0, 2) as u8;
+            }
+        }
+        if let Some(v) = opts.get("stroke") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [r, g, b, a, w] = array_to_f32s(&arr)[..] {
+                    o.stroke = Some(([r, g, b, a], w));
+                }
+            }
+        }
+        if let Some(v) = opts.get("spacing") {
+            if let Some(f) = dyn_to_f32(v) {
+                o.spacing = f;
+            }
+        }
+        if let Some(v) = opts.get("layer") {
+            if let Some(f) = dyn_to_f32(v) {
+                o.layer = f as i32;
+            }
+        }
+        if let Some(v) = opts.get("shadow") {
+            if let Some(arr) = v.clone().try_cast::<Array>() {
+                if let [dx, dy, r, g, b, a] = array_to_f32s(&arr)[..] {
+                    o.shadow = Some(([r, g, b, a], dx, dy));
+                }
+            }
+        }
+        o
+    }
+}
+
+/// A `draw_world_text` call as the host draws it: `draw_text_opts`'s
+/// options, centred and middled on the point unless `align` or `valign`
+/// say otherwise, and on a plane when `facing` is a usable normal.
+pub(crate) fn world_text_from(
+    at: [f32; 3],
+    text: &str,
+    size: f32,
+    opts: &Map,
+) -> flint_core::world_text::WorldText {
+    let o = TextOpts::from_map(opts);
+    let align = if opts.contains_key("align") { o.align } else { 1 };
+    let valign = match opts.get("valign") {
+        Some(v) => match v.clone().try_cast::<ImmutableString>() {
+            Some(s) => match s.as_str() {
+                "top" => 0,
+                "bottom" => 2,
+                _ => 1,
+            },
+            None => dyn_to_f32(v).map_or(1, |i| (i as i64).clamp(0, 2) as u8),
+        },
+        None => 1,
+    };
+    let vec3 = |key: &str| -> Option<[f32; 3]> {
+        let arr = opts.get(key)?.clone().try_cast::<Array>()?;
+        match array_to_f32s(&arr)[..] {
+            [x, y, z] => Some([x, y, z]),
+            _ => None,
+        }
+    };
+    let plane = vec3("facing")
+        .filter(|n| n.iter().any(|c| *c != 0.0))
+        .map(|normal| flint_core::world_text::TextPlane {
+            normal,
+            up: vec3("up").unwrap_or([0.0, 1.0, 0.0]),
+        });
+    flint_core::world_text::WorldText {
+        at,
+        text: text.to_string(),
+        size,
+        color: o.color,
+        align,
+        valign,
+        stroke: o.stroke,
+        font: o.font,
+        spacing: o.spacing,
+        shadow: o.shadow,
+        plane,
+    }
+}
+
+/// Measure text with the host's installed measurer, falling back to the
+/// glyph-count estimate (0.6 em per char) when none is installed.
+pub(crate) fn measure_text_with(
+    c: &ScriptCallContext,
+    text: &str,
+    size: f32,
+    font: Option<&str>,
+    spacing: f32,
+) -> (f32, f32) {
+    match &c.text_measurer {
+        Some(m) => m(text, size, font, spacing),
+        None => {
+            let chars = text.chars().count() as f32;
+            (chars * size * 0.6 + spacing * (chars - 1.0).max(0.0), size)
+        }
+    }
+}
+
+#[cfg(test)]
+mod text_opts_tests {
+    use super::*;
+
+    fn arr(vals: &[Dynamic]) -> Dynamic {
+        Dynamic::from(vals.to_vec())
+    }
+
+    #[test]
+    fn empty_opts_are_white_left_layer0() {
+        let o = TextOpts::from_map(&Map::new());
+        assert_eq!(o, TextOpts::default());
+        assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn parses_every_key_with_mixed_int_and_float() {
+        let mut m = Map::new();
+        m.insert("font".into(), Dynamic::from("display"));
+        m.insert(
+            "color".into(),
+            arr(&[
+                Dynamic::from(1_i64),
+                Dynamic::from(0.5_f64),
+                Dynamic::from(0_i64),
+                Dynamic::from(1.0_f64),
+            ]),
+        );
+        m.insert("align".into(), Dynamic::from("center"));
+        m.insert(
+            "stroke".into(),
+            arr(&[
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(1_i64),
+                Dynamic::from(2.0_f64),
+            ]),
+        );
+        m.insert("spacing".into(), Dynamic::from(1.5_f64));
+        m.insert("layer".into(), Dynamic::from(3_i64));
+        m.insert(
+            "shadow".into(),
+            arr(&[
+                Dynamic::from(2_i64),
+                Dynamic::from(3.0_f64),
+                Dynamic::from(0.0_f64),
+                Dynamic::from(0.0_f64),
+                Dynamic::from(0.0_f64),
+                Dynamic::from(0.6_f64),
+            ]),
+        );
+        let o = TextOpts::from_map(&m);
+        assert_eq!(o.font.as_deref(), Some("display"));
+        assert_eq!(o.color, [1.0, 0.5, 0.0, 1.0]);
+        assert_eq!(o.align, 1);
+        assert_eq!(o.stroke, Some(([0.0, 0.0, 0.0, 1.0], 2.0)));
+        assert_eq!(o.spacing, 1.5);
+        assert_eq!(o.layer, 3);
+        assert_eq!(o.shadow, Some(([0.0, 0.0, 0.0, 0.6], 2.0, 3.0)));
+    }
+
+    #[test]
+    fn malformed_arrays_and_empty_font_are_ignored() {
+        let mut m = Map::new();
+        m.insert("font".into(), Dynamic::from(""));
+        m.insert("color".into(), arr(&[Dynamic::from(1.0_f64)]));
+        m.insert("align".into(), Dynamic::from("right"));
+        m.insert("stroke".into(), Dynamic::from("nope"));
+        let o = TextOpts::from_map(&m);
+        assert_eq!(o.font, None);
+        assert_eq!(o.color, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(o.align, 2);
+        assert_eq!(o.stroke, None);
+    }
+
+    #[test]
+    fn world_text_is_a_centred_billboard_by_default() {
+        let t = world_text_from([1.0, 2.0, 3.0], "Ada's", 14.0, &Map::new());
+        assert_eq!(t.at, [1.0, 2.0, 3.0]);
+        assert_eq!(t.text, "Ada's");
+        assert_eq!((t.align, t.valign), (1, 1));
+        assert_eq!(t.color, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(t.plane, None);
+    }
+
+    #[test]
+    fn world_text_takes_the_text_opts_and_a_plane() {
+        let mut m = Map::new();
+        m.insert("font".into(), Dynamic::from("display"));
+        m.insert("align".into(), Dynamic::from("left"));
+        m.insert("valign".into(), Dynamic::from("bottom"));
+        m.insert(
+            "facing".into(),
+            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(-1.0_f64)]),
+        );
+        let t = world_text_from([0.0; 3], "x", 0.2, &m);
+        assert_eq!(t.font.as_deref(), Some("display"));
+        assert_eq!((t.align, t.valign), (0, 2));
+        let plane = t.plane.unwrap();
+        assert_eq!(plane.normal, [0.0, 0.0, -1.0]);
+        assert_eq!(plane.up, [0.0, 1.0, 0.0]);
+
+        m.insert(
+            "up".into(),
+            arr(&[Dynamic::from(1_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+        );
+        assert_eq!(world_text_from([0.0; 3], "x", 0.2, &m).plane.unwrap().up, [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn world_text_without_a_usable_normal_is_a_billboard() {
+        let mut m = Map::new();
+        m.insert(
+            "facing".into(),
+            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+        );
+        assert_eq!(world_text_from([0.0; 3], "x", 9.0, &m).plane, None);
+        m.insert("facing".into(), arr(&[Dynamic::from(1_i64)]));
+        assert_eq!(world_text_from([0.0; 3], "x", 9.0, &m).plane, None);
+    }
+
+    #[test]
+    fn measure_uses_installed_measurer() {
+        let mut c = ScriptCallContext::new();
+        assert_eq!(measure_text_with(&c, "abcd", 10.0, None, 0.0), (24.0, 10.0));
+        c.text_measurer = Some(Arc::new(
+            |text: &str, size: f32, font: Option<&str>, sp: f32| {
+                let base = if font == Some("display") { 2.0 } else { 1.0 };
+                (text.len() as f32 * size * base + sp, size * 1.5)
+            },
+        ));
+        assert_eq!(measure_text_with(&c, "abcd", 10.0, None, 0.0), (40.0, 15.0));
+        assert_eq!(
+            measure_text_with(&c, "ab", 10.0, Some("display"), 1.0),
+            (41.0, 15.0)
+        );
+    }
+
+    #[test]
+    fn style_array_maps_by_length() {
+        use crate::ui::element::StyleValue;
+        assert_eq!(
+            StyleValue::from_numbers(&array_to_f32s(&vec![
+                Dynamic::from(1_i64),
+                Dynamic::from(2.0_f64),
+                Dynamic::from(3_i64),
+                Dynamic::from(4_i64)
+            ])),
+            Some(StyleValue::Color([1.0, 2.0, 3.0, 4.0]))
+        );
+        assert_eq!(
+            StyleValue::from_numbers(&[1.0, 2.0, 0.0, 0.0, 0.0, 1.0]),
+            Some(StyleValue::Shadow(1.0, 2.0, [0.0, 0.0, 0.0, 1.0]))
+        );
+        assert_eq!(StyleValue::from_numbers(&[1.0, 2.0]), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_project_root_for() {
+        assert_eq!(project_root_for(""), std::path::PathBuf::from("."));
+        assert_eq!(
+            project_root_for("scenes/a.scene.toml"),
+            std::path::PathBuf::from(".")
+        );
+        assert_eq!(
+            project_root_for("C:/games/trike/scenes/a.scene.toml"),
+            std::path::PathBuf::from("C:/games/trike")
+        );
+    }
+
+    #[test]
+    fn test_load_data_types_cache_and_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "flint_data_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::create_dir_all(root.join("scenes")).unwrap();
+        std::fs::write(root.join("data/x.toml"), "n = 7\nf = 1.5\nb = true\ns = \"hi\"\n[nested]\nk = 2\n[[list]]\nid = \"a\"\n[[list]]\nid = \"b\"\n").unwrap();
+
+        let mut c = ScriptCallContext::new();
+        c.current_scene_path = root
+            .join("scenes/x.scene.toml")
+            .to_string_lossy()
+            .to_string();
+
+        let d = load_data_impl(&mut c, "data/x.toml", false);
+        assert!(d.is_map());
+        let m = d.cast::<Map>();
+        assert!(m["n"].is_int());
+        assert_eq!(m["n"].as_int().unwrap(), 7);
+        assert!(m["f"].is_float());
+        assert_eq!(m["b"].as_bool().unwrap(), true);
+        assert_eq!(m["s"].clone().into_string().unwrap(), "hi");
+        assert_eq!(m["nested"].clone().cast::<Map>()["k"].as_int().unwrap(), 2);
+        assert_eq!(m["list"].clone().cast::<Array>().len(), 2);
+        assert_eq!(c.data_cache.len(), 1);
+
+        // Cached: the file can change on disk and the same parse comes back
+        std::fs::write(root.join("data/x.toml"), "n = 8\n").unwrap();
+        let d2 = load_data_impl(&mut c, "data/x.toml", false);
+        assert_eq!(d2.cast::<Map>()["n"].as_int().unwrap(), 7);
+        // ...until a reload is asked for
+        let d3 = load_data_impl(&mut c, "data/x.toml", true);
+        assert_eq!(d3.cast::<Map>()["n"].as_int().unwrap(), 8);
+
+        // Missing file: unit, and a warning queued for the game log
+        let d4 = load_data_impl(&mut c, "data/missing.toml", false);
+        assert!(d4.is_unit());
+        assert!(c
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, ScriptCommand::Log { level: LogLevel::Warn, .. })));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn test_toml_to_dynamic_bool() {
@@ -3879,3 +5438,49 @@ mod tests {
         assert!((result - 1.0).abs() < 1e-10);
     }
 }
+
+/// Project a world-space segment with the frame's camera and record it as
+/// a HUD line. Clipped against the near plane so a segment that passes the
+/// camera still draws; fully-behind segments are dropped.
+fn push_line_3d(
+    c: &mut ScriptCallContext,
+    a: [f64; 3],
+    b: [f64; 3],
+    color: [f32; 4],
+    thickness: f32,
+    layer: i32,
+) {
+    let mut p = project_clip(&c.camera_view_proj, [a[0] as f32, a[1] as f32, a[2] as f32]);
+    let mut q = project_clip(&c.camera_view_proj, [b[0] as f32, b[1] as f32, b[2] as f32]);
+    const NEAR_W: f32 = 1e-3;
+    if p[3] <= NEAR_W && q[3] <= NEAR_W {
+        return;
+    }
+    if p[3] <= NEAR_W || q[3] <= NEAR_W {
+        // Move the behind-camera end onto the near plane (linear in clip space).
+        let t = (NEAR_W - p[3]) / (q[3] - p[3]);
+        let m = [
+            p[0] + (q[0] - p[0]) * t,
+            p[1] + (q[1] - p[1]) * t,
+            p[2] + (q[2] - p[2]) * t,
+            NEAR_W,
+        ];
+        if p[3] <= NEAR_W {
+            p = m;
+        } else {
+            q = m;
+        }
+    }
+    let (sx1, sy1) = clip_to_screen(p, c.screen_width, c.screen_height);
+    let (sx2, sy2) = clip_to_screen(q, c.screen_width, c.screen_height);
+    c.push_draw(DrawCommand::Line {
+        x1: sx1,
+        y1: sy1,
+        x2: sx2,
+        y2: sy2,
+        color,
+        thickness,
+        layer,
+    });
+}
+

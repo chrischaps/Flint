@@ -34,7 +34,19 @@ impl PhysicsWorld {
             rigid_body_set: RigidBodySet::new(),
             collider_set: ColliderSet::new(),
             gravity: vector![0.0, -9.81, 0.0],
-            integration_parameters: IntegrationParameters::default(),
+            integration_parameters: {
+                // One solver substep with four internal iterations. Rapier's
+                // default TGS profile substeps dynamic bodies but solves each
+                // substep against a kinematic body's start-of-step pose, so a
+                // joint child trails a script-driven parent by (n-1)/n of the
+                // parent's per-step travel. Flint drives vehicles and rigs
+                // kinematically and hangs sprung parts on them, which must
+                // keep up exactly; stacking piles of loose bodies matters less.
+                let mut p = IntegrationParameters::default();
+                p.num_solver_iterations = std::num::NonZeroUsize::new(1).unwrap();
+                p.num_internal_pgs_iterations = 4;
+                p
+            },
             physics_pipeline: PhysicsPipeline::new(),
             island_manager: IslandManager::new(),
             broad_phase: DefaultBroadPhase::new(),
@@ -123,6 +135,34 @@ impl PhysicsWorld {
             &mut self.rigid_body_set,
             true,
         );
+    }
+
+    /// Insert an impulse joint between two bodies (`body1` = parent, `body2` = child)
+    pub fn insert_impulse_joint(
+        &mut self,
+        body1: RigidBodyHandle,
+        body2: RigidBodyHandle,
+        data: impl Into<GenericJoint>,
+    ) -> ImpulseJointHandle {
+        self.impulse_joint_set.insert(body1, body2, data, true)
+    }
+
+    /// Remove an impulse joint, waking its bodies
+    pub fn remove_impulse_joint(&mut self, handle: ImpulseJointHandle) {
+        self.impulse_joint_set.remove(handle, true);
+    }
+
+    /// Mutable access to an impulse joint (motor targets, limits)
+    pub fn get_impulse_joint_mut(
+        &mut self,
+        handle: ImpulseJointHandle,
+    ) -> Option<&mut ImpulseJoint> {
+        self.impulse_joint_set.get_mut(handle)
+    }
+
+    /// Number of live impulse joints
+    pub fn impulse_joint_count(&self) -> usize {
+        self.impulse_joint_set.len()
     }
 
     /// Get a rigid body by handle

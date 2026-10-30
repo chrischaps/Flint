@@ -1,5 +1,6 @@
 //! Grass configuration — parsed from `[grass]` TOML section
 
+use flint_core::toml_util::{toml_f32, toml_vec3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +89,66 @@ impl GrassConfig {
         let area = terrain_width * terrain_depth;
         (self.density * area * 0.5).ceil() as u32
     }
+
+    /// How many instances the grass buffer holds for ground this size.
+    ///
+    /// Blades grow only within `max_distance` of the camera, so a big
+    /// ground needs no more than that disc holds, with a margin for the
+    /// jitter. A small one needs no more than [`max_instances`](Self::max_instances).
+    pub fn instance_capacity(&self, width: f32, depth: f32) -> u32 {
+        let disc = std::f32::consts::PI * self.max_distance * self.max_distance;
+        let near = (self.density * disc * 1.1).ceil() as u32;
+        self.max_instances(width, depth).min(near).max(1)
+    }
+
+    /// Read the `grass.*` fields of a `terrain` or `grass_ground` component.
+    /// `enabled_default` is what a missing `grass.enabled` means.
+    pub fn from_component(comp_value: &toml::Value, enabled_default: bool) -> Self {
+        let mut gc = Self::default();
+        let enabled = comp_value
+            .get("grass.enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(enabled_default);
+        if !enabled {
+            return gc;
+        }
+        let get_f32 = |key: &str, default: f32| -> f32 {
+            comp_value.get(key).and_then(toml_f32).unwrap_or(default)
+        };
+        gc.enabled = true;
+        gc.density = get_f32("grass.density", gc.density);
+        gc.max_distance = get_f32("grass.max_distance", gc.max_distance);
+        gc.fade_start = get_f32("grass.fade_start", gc.fade_start);
+        gc.blade_width = get_f32("grass.blade_width", gc.blade_width);
+        gc.blade_height = get_f32("grass.blade_height", gc.blade_height);
+        gc.height_variation = get_f32("grass.height_variation", gc.height_variation);
+        gc.wind_speed = get_f32("grass.wind_speed", gc.wind_speed);
+        gc.wind_strength = get_f32("grass.wind_strength", gc.wind_strength);
+        gc.bend_radius = get_f32("grass.bend_radius", gc.bend_radius);
+        gc.bend_strength = get_f32("grass.bend_strength", gc.bend_strength);
+        gc.density_threshold = get_f32("grass.density_threshold", gc.density_threshold);
+        gc.density_layer = comp_value
+            .get("grass.density_layer")
+            .and_then(|v| v.as_integer())
+            .map(|i| i as u32)
+            .unwrap_or(gc.density_layer);
+        gc.dry_amount = get_f32("grass.dry_amount", gc.dry_amount);
+
+        // Parse vec3 fields
+        if let Some(v) = comp_value.get("grass.color_base").and_then(toml_vec3) {
+            gc.color_base = v;
+        }
+        if let Some(v) = comp_value.get("grass.color_tip").and_then(toml_vec3) {
+            gc.color_tip = v;
+        }
+        if let Some(v) = comp_value.get("grass.color_dry").and_then(toml_vec3) {
+            gc.color_dry = v;
+        }
+        if let Some(v) = comp_value.get("grass.wind_direction").and_then(toml_vec3) {
+            gc.wind_direction = v;
+        }
+        gc
+    }
 }
 
 fn default_density() -> f32 {
@@ -149,6 +210,19 @@ mod tests {
         assert!(!cfg.enabled);
         assert_eq!(cfg.density, 8.0);
         assert_eq!(cfg.density_source, DensitySource::Splat);
+    }
+
+    #[test]
+    fn capacity_is_the_smaller_of_ground_and_view_disc() {
+        let cfg = GrassConfig::default(); // density 8, max_distance 80
+                                          // A small ground: half its area, as before
+        assert_eq!(
+            cfg.instance_capacity(64.0, 64.0),
+            cfg.max_instances(64.0, 64.0)
+        );
+        // A ground kilometres wide: only the disc round the camera
+        let disc = (8.0 * std::f32::consts::PI * 80.0 * 80.0 * 1.1).ceil() as u32;
+        assert_eq!(cfg.instance_capacity(6000.0, 6000.0), disc);
     }
 
     #[test]

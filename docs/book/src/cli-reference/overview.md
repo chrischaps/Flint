@@ -30,6 +30,15 @@ Flint's CLI is the primary interface for all engine operations. Below is a refer
 | `flint render <scene>` | Render a scene to PNG (headless) |
 | `flint gen <spec>` | Run a procedural generation spec to produce meshes or textures |
 | `flint prefab view <template>` | Preview a prefab template in the viewer |
+| `flint validate-suite <manifest>` | Validate a musical suite manifest and optional chart ([music commands](music.md)) |
+| `flint play-suite <manifest>` | Play a suite's stems sample-locked, no judgment |
+| `flint calibrate <manifest>` | Tap-to-beat latency calibration, written to `logs/latency/` |
+| `flint play-chart <manifest>` | Play a suite against its chart with live gamepad capture |
+| `flint replay-chart <manifest>` | Replay a recorded or synthetic session through judgment, headless |
+| `flint render-suite <manifest>` | Render a scripted suite session to WAV, offline and deterministic |
+| `flint spike-rumble` | Time the gamepad rumble command paths |
+
+The seven music commands are documented on their own page: [Music Commands](music.md).
 
 ## The `play` Command
 
@@ -47,9 +56,114 @@ flint play levels/tavern.scene.toml --schemas schemas --fullscreen
 | `--input-config <path>` | Input config overlay path (highest priority, overrides all other layers) |
 | `--music-volume <f32>` | Initial gain for the `music` mixer bus |
 | `--sfx-volume <f32>` | Initial gain for the `sfx` mixer bus |
+| `--gpu <name>` | GPU adapter to use (case-insensitive substring, e.g. `NVIDIA`). See [GPU Selection](#gpu-selection) |
+| `--list-gpus` | Print available GPU adapters and exit |
 
 `--music-volume 0` is the quickest way to audition a scene's sound design
 without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
+
+The standalone `flint-player` binary takes the same flags plus `--msaa <1|4>`
+(default `1`) for multisample anti-aliasing of the scene passes; `flint play`
+does not expose `--msaa`.
+
+### Player Screenshots (HUD included)
+
+`flint render` is headless and never runs scripts, so it cannot show a
+script-drawn HUD. The standalone `flint-player` can capture the frame it
+actually presents — scene *and* egui overlay — and exit on its own, which
+makes it the tool for verifying `on_draw_ui` output:
+
+```bash
+flint-player scenes/race.scene.toml --schemas engine/schemas --schemas schemas   --width 1280 --height 720   --screenshot renders/hud.png --screenshot-at 6 --exit-after 6.5
+```
+
+With `--screenshot`, `--exit-after` or `--input-script`, the run is a capture
+and ignores the real keyboard, mouse and pads, so a stray scroll over its
+window can't change the shot. Only the input script drives it (see
+[input gates](../concepts/input-gates.md#during-a-capture)).
+
+| Flag | Description |
+|------|-------------|
+| `--width <px>` / `--height <px>` | Initial window size in physical pixels (default `1280`x`720`; ignored with `--fullscreen`) |
+| `--screenshot <path>` | Write a PNG of the presented frame (scene + HUD). Parent directories are created |
+| `--screenshot-at <secs>` | Game time at which to capture: the first frame whose clock reaches this value (default `0`, the first frame) |
+| `--screenshot-every <secs>` | Keep capturing every N seconds after `--screenshot-at` until exit; files are numbered `hud_0001.png`, `hud_0002.png`, ... next to `--screenshot` |
+| `--exit-after <secs>` | Exit once game time reaches this value, printing the average frame time and the average draw calls, entity draws, culled draws and triangles per frame (both skip the first 2 s) |
+| `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time |
+| `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
+| `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
+
+An input script plays its events at set game times. `#` starts a comment:
+
+```text
+0.0   down    KeyW               # hold a key (names as in input configs)
+2.5   up      KeyW
+3.0   tap     KeyF 0.4           # down now, up 0.4 s later (default 0.06)
+3.0   axis    LeftStickX -0.35   # stick value on the script pad
+4.0   press   South              # gamepad button down
+4.2   release South
+4.5   pull    RightTrigger2 0.6  # a trigger pulled part-way (0 lets go)
+5.0   wheel   1                  # one wheel line up this frame
+5.5   wheel   -0.5 2             # half a line down, two lines right
+6.0   mouse   640 360            # pointer to (640, 360) in window pixels
+6.1   down    MouseLeft          # mouse buttons work with down, up and tap
+6.2   mouse   900 500 0.5        # glide there over 0.5 s: a drag
+6.8   up      MouseLeft
+7.0   click   320 200            # pointer there, then tap MouseLeft
+7.5   click   320 200 MouseRight
+8.0   down    ShiftLeft          # held modifiers reach egui: a shift-drag
+9.0   type    200 planks         # text into the focused egui field
+9.5   tap     Enter
+10.0  look    40 -10             # raw mouse motion, for mouse-look
+10.5  look    300 0 1.5          # spread over 1.5 s
+```
+
+`pull` sets an analog button's travel, as a real pad's trigger sends it: a
+`gamepad_button` binding to `RightTrigger2` reads 0.6, not the 0 or 1 that
+`press` gives. It sets the value alone, so add a `press` and `release` too
+when a script wants the button's press edge. `axis RightTrigger2` writes an
+axis of that name, which a button binding never reads.
+
+The mouse buttons are `MouseLeft`, `MouseRight`, `MouseMiddle`, `MouseBack`
+and `MouseForward`. Pointer positions are physical window pixels, the same
+pixels a screenshot has, so a point read off a capture can be clicked in the
+next one. A glide moves the pointer a little every frame, as a hand would.
+
+The mouse takes the path a real one does (ADR 0082): egui first, then game
+extensions, then `InputState` and scripts. So a scripted click can press an
+egui button, drag between egui widgets or open a tooltip, and a click over a
+panel stays out of the world. The wheel goes the same way: turned over a
+panel, it scrolls the panel (`wheel -10` scrolls a list down) and the game's
+`mouse_wheel_*()` reads zero, as with a real wheel. Two things wait a frame,
+however coarse the frames: a button press or a wheel turn in the frame the
+pointer jumped (egui decides who gets a click or a scroll from where the
+pointer was the frame before), and any release in the frame of its press. A
+`click` therefore takes three frames: move, press, release.
+
+Keys take the path a real keyboard does too (ADR 0097). egui gets each one
+as egui-winit would have made it, the key and, on a press, the character it
+types on a US layout (`KeyA` with Shift held types `A`; nothing while Ctrl is
+held). Shift, Ctrl, Alt and Super also send a `ModifiersChanged`, so egui
+sees a held modifier on the clicks and drags that follow, and so do
+extensions. Then the same focus rule as a real key: while an egui field has
+keyboard focus, the key stops there, and `InputState`, scripts and the debug
+keys never see it. `type` sends the rest of its line as egui text, spaces and
+all, without pressing any keys; click a field first to focus it. A key egui
+passes on goes to game extensions' `on_key` next, as a real one does (ADR
+0103), with the character it stands for on a US layout. Two differences from
+a real keyboard: extensions' `on_window_event` never sees a scripted key
+(winit's `KeyEvent` can't be built outside winit), so read keys in `on_key`
+to script them, and a scripted Esc doesn't quit the player. The real cursor still moves the pointer if it crosses the window
+during a capture, so keep it outside.
+
+`look` feeds raw mouse motion, what `mouse_delta_x()` / `mouse_delta_y()` read, at once or spread over the seconds given. As a real mouse's motion, it reaches the game only while the cursor is captured and no egui field has focus ([Cursor Capture and Input Gates](../concepts/input-gates.md), ADR 0110). The script's pad plays whether or not the window has focus. A real pad doesn't.
+
+Times are `GameClock` seconds (what scripts see via `total_time()`), not
+wall-clock seconds since launch, so a capture lands on the same gameplay
+moment regardless of load time. The capture reads the swapchain back on the
+GPU, so it requires a surface that advertises `COPY_SRC`; on adapters that do
+not (some GL/Android surfaces) the player logs a warning and skips the
+screenshot rather than failing. `flint play` does not expose these flags.
 
 ### Player Controls (Defaults)
 
@@ -66,12 +180,15 @@ These are the built-in defaults. Games can override any binding via input config
 | R | Reload |
 | 1 / 2 | Select weapon slot |
 | Escape | Release cursor / Exit |
-| F1 | Cycle debug rendering mode (PBR → Wireframe → Normals → Depth → UV → Unlit → Metal/Rough) |
-| F3 | Toggle debug panels (see below) |
-| F4 | Toggle shadows |
-| F5 | Toggle bloom |
-| F6 | Toggle post-processing pipeline |
+| F2 | Toggle the render stats overlay (FPS, frame time, draw stats) |
+| F3 | Toggle the scene debug panels (see below); leaves the Rendering & Effects panel alone |
+| F4 | Toggle the **Rendering & Effects** menu: every render and post-processing control, including debug shading mode, shadows, and the lighting levers |
+| F9 | Force a music-session full-fail (debug builds only, needs a running session) |
+| `` ` `` | Toggle the Music Guide overlay (debug builds only) |
+| `\` | Toggle the Manifest Map timeline strip (debug builds only) |
 | F11 | Toggle fullscreen |
+
+The per-effect F-keys of earlier releases (F1 debug mode, F4 shadows, F5 bloom, F6 post-processing and so on) are gone; all of those toggles and their parameters live in the F4 menu (see [Post-Processing: The Rendering & Effects menu](../concepts/post-processing.md#the-rendering--effects-menu-f4)). F9, `` ` `` and `\` exist only when the player is built with the default `debug-hud` feature.
 
 Gamepad controllers are also supported when connected. Bindings for gamepad buttons and axes can be configured in input config TOML files.
 
@@ -91,6 +208,15 @@ Built-in panels:
 | Day / Time | `time_of_day` | Clock readout, 0–24 h scrub slider, preset hours, natural-advance toggle, day counter, day length (with the effective ramped length), sun path tilt |
 | Camera | `camera_tuning` | Vertical FOV |
 | Grass Debug | `grass` | Density, height, wind, LOD distances |
+| Weather | `weather` | Read-only state/wind/sea, `forced_state` override, one-shot snap / lightning-strike buttons |
+| Reality | `reality` | Read-only active render-mode tear and mix, trigger-mode and end-now buttons, mix pin |
+| Visitor | `raft_visitor` | Read-only phase/day plus a trigger-visit button |
+| Dead Calm | `dead_calm` | Read-only phase/calm plus trigger and end-now buttons |
+| Rendering & Effects | (always, when a renderer is active) | Post chain, SSAO, depth of field, fog, bloom, grade/grain/FXAA, Kuwahara, render mode, dither/volumetric, shadows and resolution, lighting levers, camera FOV, debug shading mode. Owned by **F4**, not F3 |
+| Music Guide | `music_session` | Upcoming pulse/press/flick windows with countdown, per-channel targets beside the live stick and trigger state (`` ` ``) |
+| Manifest Map | `music_session` | Full-width bottom strip: sections, bar ruler, tempo/meter changes, re-entry points, playhead and this run's judged pulses and seams (`\`) |
+
+The full roster and the `DebugPanel` trait are described in [Debug Panels](../guides/debug-panels.md).
 
 Edits apply live through the world's components. **Commit to File** writes the
 current values back into the scene TOML, so a tuning session ends as a diff
@@ -145,6 +271,7 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--output <path>` / `-o` | `render.png` | Output file path |
 | `--width <px>` | `1920` | Image width |
 | `--height <px>` | `1080` | Image height |
+| `--gpu <name>` | (high-perf) | GPU adapter to use (substring match); `--list-gpus` prints the names |
 | `--distance <f32>` | (auto) | Camera distance from target |
 | `--yaw <deg>` | (auto) | Horizontal camera angle |
 | `--pitch <deg>` | (auto) | Vertical camera angle |
@@ -156,27 +283,55 @@ flint render scene.toml -o shot.png --distance 20 --pitch 30 --yaw 45 --target 0
 | `--show-normals` | `false` | Normal direction arrows |
 | `--no-tonemapping` | `false` | Raw linear output |
 | `--no-shadows` | `false` | Disable shadow mapping |
-| `--shadow-resolution <px>` | `1024` | Shadow map resolution per cascade |
+| `--shadow-resolution <px>` | `2048` | Shadow map resolution per cascade. A real control since the per-resolution texel upload (ADR 0049); earlier builds silently filtered as if 2048 |
+| `--msaa <n>` | `1` | MSAA sample count for the scene passes: `1` (off) or `4`. Default 1 keeps headless pixel-diff gates single-sample (ADR 0058) |
 | `--no-postprocess` | `false` | Disable post-processing |
 | `--bloom-intensity <f32>` | `0.04` | Bloom strength |
 | `--bloom-threshold <f32>` | `1.0` | Bloom brightness threshold |
 | `--exposure <f32>` | `1.0` | Exposure multiplier |
 | `--ssao-radius <f32>` | `0.5` | SSAO sample radius |
 | `--ssao-intensity <f32>` | `1.0` | SSAO intensity (0 = disabled) |
+| `--ssao-samples <n>` | `64` | SSAO hemisphere samples per pixel, 1–64; the kernel is strided so lower counts keep full radius coverage. `16` is ~4x cheaper |
 | `--fog-density <f32>` | `0.02` | Fog density (0 = disabled) |
 | `--fog-color <r,g,b>` | `0.7,0.75,0.82` | Fog color |
-| `--fog-height-falloff <f32>` | `0.1` | Fog height falloff |
+| `--fog-height-falloff <f32>` | `0.1` | Fog height falloff (enables height fog) |
+| `--dither-intensity <f32>` | `0.03` | Ordered dither strength (enables dither; 0 = disabled) |
+| `--volumetric-density <f32>` | `1.0` | Volumetric light density (enables god rays) |
+| `--volumetric-samples <n>` | `32` | Volumetric ray-march sample count |
+| `--desaturate <f32>` | `0` | Drain colour toward ash-grey (0 = full colour, 1 = fully drained) |
+| `--dof <f32>` | `0` | Depth-of-field strength (0 = sharp, 1 = full defocus) |
+| `--dof-focus <f32>` | `10.0` | Focus plane distance in world units |
+| `--dof-range <f32>` | `5.0` | Focus half-width in world units |
+| `--kuwahara-radius <n>` | `4` | Kuwahara filter radius in pixels (enables Kuwahara) |
+| `--kuwahara-sharpness <f32>` | `8.0` | Kuwahara sector sharpness |
+| `--kuwahara-hardness <f32>` | `8.0` | Kuwahara sector hardness |
+| `--kuwahara-anisotropy <f32>` | `1.0` | Kuwahara anisotropy (0 = isotropic, 1 = full) |
+| `--film-grain <f32>` | `0` | Animated film grain (0 = off; 0.02–0.05 is subtle) |
+| `--grain-time <s>` | `0.0` | Post time for grain and render-mode animation. Deterministic: two renders at the same value are identical |
+| `--particle-time <s>` | (none) | Simulate particle emitters and effects for this long at a fixed 1/60 s step before capturing. Deterministic; without it no particles are drawn |
+| `--grade-lift <r,g,b>` | `0,0,0` | Colour-grade lift (per-channel add after ACES) |
+| `--grade-gamma <r,g,b>` | `1,1,1` | Colour-grade gamma (per-channel curve) |
+| `--grade-gain <r,g,b>` | `1,1,1` | Colour-grade gain (per-channel multiply) |
+| `--fxaa` | `false` | Enable the FXAA anti-aliasing pass |
+| `--oren-nayar <f32>` | `0` | Oren-Nayar diffuse blend (0 = Lambert, 1 = full); see [Lighting](../concepts/lighting.md) |
+| `--sheen-strength <f32>` | `0` | Charlie-sheen rim strength (keep at or below about 0.3) |
+| `--sheen-color <r,g,b>` | `1,1,1` | Charlie-sheen rim tint |
 | `--render-mode <n>` | `0` | Stylized render mode: 1 Matrix, 2 blood, 3 drunk, 4 Tron, 5 underwater |
 | `--mode-mix <f32>` | `0.0` | Render mode blend strength, 0--1 |
 | `--mode-params <x,y,z,w>` | `0,0,0,0` | Per-mode parameters (see [Render Modes](../concepts/post-processing.md#render-modes)) |
 | `--schemas <path>` | `schemas` | Schemas directory (repeatable) |
+
+When no camera flags are given, the render starts from the scene's `[camera]` block if it has one. The camera and post flags override the scene's authored `[camera]` and `[post_process]` values.
 
 > **`flint render` runs no scripts.** Anything your game drives from a script —
 > a render mode, a time of day, a floating hull, an animated character — will
 > not happen. The render-mode flags exist precisely so a stylized frame can be
 > captured without one. For script-driven world state, bake a fixture scene
 > with the values you want; for animation, note that skinned meshes render at
-> **bind pose** headlessly.
+> **bind pose** headlessly. To capture a posed frame of a rigged model, use the
+> model previewer instead: `flint edit model.glb --render out.png --anim-time 1.5`
+> (optionally with `--clip`, `--layer` or `--sequence`). Particles are the
+> exception: `--particle-time 2` steps every emitter before the capture.
 
 ## The `edit` Command
 
@@ -190,6 +345,7 @@ flint edit models/character.glb --watch        # Model previewer with file watch
 flint edit specs/oak_tree.procgen.toml         # Procgen previewer (mesh/texture)
 flint edit specs/stone_wall.procgen.toml       # Texture pipeline editor (if pipeline pattern)
 flint edit terrain.terrain.toml                # Terrain editor
+flint edit fx/fire.particles.toml              # Particle effect editor (created from --preset if missing)
 ```
 
 ### File Type Detection
@@ -200,9 +356,33 @@ flint edit terrain.terrain.toml                # Terrain editor
 | `.procgen.toml` (pipeline pattern) | Texture pipeline editor | Node graph for texture specs |
 | `.procgen.toml` (other) | Procgen previewer | Live preview of generated mesh/texture |
 | `.terrain.toml` | Terrain editor | Heightmap terrain editing |
+| `.particles.toml` | Particle effect editor | Emitters, curves, forces, bursts; scrub timeline; headless `--render` |
 | `.glb`, `.gltf` | Model previewer | Orbit camera, animation playback |
 
-### Common Flags
+### GPU Selection
+
+Both windowed (`play`, `flint-player`, editors) and headless (`render`)
+contexts choose their wgpu adapter through the same chain, first match wins:
+
+1. `--gpu <name>` on `play`, `render`, or `flint-player`
+2. `WGPU_ADAPTER_NAME=<name>` environment variable
+3. `WGPU_POWER_PREF=high|low|none` environment variable
+4. Default: high-performance adapter
+
+The name is a case-insensitive substring of the adapter name; if nothing
+matches, the engine warns with the available names and falls back to the
+power preference. `--list-gpus` prints every adapter with its type and backend.
+Run with `RUST_LOG=info` to see which adapter was picked:
+
+```
+INFO flint_render::gpu_select: GPU adapter: NVIDIA GeForce RTX 5070 Laptop GPU (DiscreteGpu, Vulkan, ...)
+```
+
+The default matters on dual-GPU laptops: before this, `PowerPreference::None`
+let the backend hand back whichever adapter enumerated first, usually the
+integrated GPU.
+
+## Common Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -213,7 +393,8 @@ flint edit terrain.terrain.toml                # Terrain editor
 | `--watch` | `false` | Watch for file changes |
 | `--seed <u64>` | (auto) | Override seed (procgen) |
 | `--no-inspector` | `false` | Hide egui inspector (scene) |
-| `--auto-orbit` | `false` | Auto-orbit camera (model/procgen) |
+| `--spline` | `false` | Open the spline/track editor instead of the viewer (scene) |
+| `--auto-orbit` | `false` | Start with the turntable auto-orbit on (scene/model/procgen); toggle with **O**, speed with `[` / `]` |
 
 ### Model Previewer Flags
 
@@ -227,7 +408,33 @@ flint edit terrain.terrain.toml                # Terrain editor
 | `--no-animate` | `false` | Disable animation playback |
 | `--clip <name>` | (none) | Start with a specific animation clip |
 | `--anim-speed <f32>` | `1.0` | Animation playback speed multiplier |
+| `--layer <clip[:weight[:mask[:mode]]]>` | (none) | Add an animation layer; repeatable. `mode` is `additive` or `override`, `mask` a root joint name |
+| `--sequence <file.sequence.toml>` | (none) | Play a sequence of timestamped animator events |
+| `--sequence-loop` | `false` | Loop the sequence regardless of its `loop` setting |
+| `--anim-time <s>` | (none) | With `--render`: sample the animation (or replay the sequence) at this time |
 | `--render <path>` | (none) | Render to PNG instead of opening a window |
+
+### Particle Editor Flags
+
+The camera flags above (`--distance`, `--yaw`, `--pitch`, `--target`, `--fov`), `--render` and `--anim-time` apply to `.particles.toml` files too. In addition:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--preset <name>` | `sparks` | Preset written when the file does not exist yet: `fire`, `smoke`, `sparks`, `rain` |
+| `--anim-time <s>` | `1.0` | With `--render`: simulation time of the snapshot (fixed 1/120 s steps; deterministic) |
+
+### Particle Editor Controls
+
+| Input | Action |
+|-------|--------|
+| Space / R | Play-pause / restart |
+| Home / End, ← / → | Seek start / end, step (Shift: 0.1 s) |
+| L, `[` / `]` | Loop, halve / double speed |
+| O, G, X, B, H | Auto-orbit, grid, shape gizmos, backdrop, hide UI |
+| Ctrl+S, Ctrl+Z / Ctrl+Y, Ctrl+D, Delete, Ctrl+R | Save, undo / redo, duplicate emitter, delete emitter, reload |
+| Curve widgets | Drag keys; double-click adds; right-click removes; Shift-drag locks t |
+
+See the [Particle Editor guide](../guides/particle-editor.md).
 
 ### Scene Viewer Controls
 
@@ -237,14 +444,21 @@ flint edit terrain.terrain.toml                # Terrain editor
 | Left-drag | Orbit camera (or drag gizmo if axis selected) |
 | Right-drag | Pan camera |
 | Scroll | Zoom |
+| W / A / S / D | Orbit camera (when no entity is selected) |
+| Q / E | Zoom out / in (when no entity is selected) |
+| W / E / R | Switch gizmo mode: translate / rotate / scale (while an entity is selected) |
+| Space | Return to the scene's authored `[camera]` framing (viewer default if the scene has none) |
+| O | Toggle auto-orbit |
+| `[` / `]` | Slow down / speed up auto-orbit |
 | Ctrl+S | Save scene to disk |
 | Ctrl+Z | Undo position change |
 | Ctrl+Shift+Z | Redo position change |
-| Escape | Cancel gizmo drag |
-| F1 | Cycle debug mode |
-| F2 | Toggle wireframe overlay |
+| Escape | Cancel gizmo drag / exit |
+| F2 | Toggle the render stats overlay |
 | F3 | Toggle normal arrows |
-| F4 | Toggle shadows |
+| F4 | Toggle the **Rendering & Effects** menu (all render and post toggles and parameters, debug shading mode, shadows, an authored-vs-viewer-default post switch, DoF follow, and the live Particles controls) |
+
+The viewer applies the scene's `[post_process]` block on load; the F4 menu's "authored" switch flips between those values and the viewer defaults. The earlier F1 (debug mode), F2 (wireframe overlay) and F4 (shadows) keys were folded into the F4 menu.
 
 When an entity is selected, a **translate gizmo** appears with colored axis arrows (red = X, green = Y, blue = Z) and plane handles. Click and drag an axis or plane to move the entity. Position changes can be undone/redone and saved back to the scene file.
 
@@ -264,7 +478,7 @@ When an entity is selected, a **translate gizmo** appears with colored axis arro
 | Ctrl+S | Save spline to disk |
 | Ctrl+Z | Undo |
 
-> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work but route through `flint edit`.
+> **Legacy aliases:** `flint serve`, `flint preview`, `flint gen-preview`, `flint tex-edit`, `flint terrain-edit`, and `flint spline-edit` still work. They are hidden subcommands that open the same tools `flint edit` dispatches to; they are omitted from `flint --help`.
 
 ## The `asset generate` Command
 

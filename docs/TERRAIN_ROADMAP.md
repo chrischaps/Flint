@@ -37,8 +37,9 @@ The terrain system provides heightmap-based outdoor environments with full autho
 - **PBR shader** — Cook-Torrance BRDF, cascaded shadow maps, point/spot/directional lights, hemisphere ambient
 - **Splat blending** — splat sampled at global UV (0..1 across terrain), layer textures tiled at world position
 - **Tonemapping** — optional ACES tonemapping in shader
-- **Per-chunk draw calls** — one vertex/index buffer pair per chunk
+- **Per-chunk draw calls** — one vertex/index buffer pair per chunk, frustum-culled by AABB
 - **Headless support** — works in both `flint play` and `flint render` (snapshot)
+- **Grass layer** — GPU-instanced blades placed by a compute shader from splat-map density (`grass.*` keys on the `terrain` component), with wind sway, bend-on-contact around entities, distance fade, shadow casting into the two nearest cascades, MSAA support, and a live `Grass Debug` panel (F3) that commits values back to the scene file
 
 ### Runtime Integration
 
@@ -69,7 +70,6 @@ texture_tile = 16.0
 ### Known Limitations
 
 - **One terrain per scene** — only the first terrain entity is loaded; additional terrain entities are ignored
-- **No frustum culling** — all chunks submitted to GPU every frame (AABB computed but unused)
 - **No LOD** — all chunks render at full resolution regardless of camera distance
 - **No normal maps** — all splat layers share the same geometric normal
 - **No triplanar mapping** — UV stretching visible on steep slopes
@@ -78,11 +78,9 @@ texture_tile = 16.0
 
 ## Future Features — Prioritized by Impact
 
-### Priority 1: Frustum Culling
+### ~~Priority 1: Frustum Culling~~ Done
 
-**Impact: High | Effort: Low**
-
-Skip chunks outside the camera frustum using AABB tests. The bounding box data is already computed per chunk — this only requires a frustum-plane intersection test before submitting each draw call. On a 4x4 chunk grid with a typical camera view, this eliminates 50-75% of draw calls for free.
+Chunks are tested against the camera frustum by AABB before submission (`flint-render/src/frustum.rs`); off-screen chunks cost nothing.
 
 ### Priority 2: Distance-Based LOD
 
@@ -117,7 +115,6 @@ Remove the single-terrain limitation. Support multiple terrain entities per scen
 ### Later: World Features
 
 - **Water planes** — flat or animated water surface with reflection/refraction, foam at terrain intersection
-- **Foliage/grass scattering** — instanced vegetation placed by splat map density + noise
 - **Terrain holes** — alpha mask regions for cave entrances, tunnels, mine shafts
 - **Decals** — projected textures (paths, scorch marks, tire tracks) on terrain surface
 - **Streaming/paging** — load chunks on demand for worlds larger than memory

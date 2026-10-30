@@ -1,6 +1,22 @@
 //! Render pipeline setup
 
 use crate::primitives::Vertex;
+
+/// Depth bias for the line-list overlays (wireframe, skeleton), pulling
+/// them in front of the surface they trace. WebGPU forbids any depth bias
+/// on line topologies and rejects the pipeline, so the web draws them
+/// unbiased.
+pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
+    if cfg!(target_arch = "wasm32") {
+        wgpu::DepthBiasState::default()
+    } else {
+        wgpu::DepthBiasState {
+            constant: -2,
+            slope_scale: -1.0,
+            clamp: 0.0,
+        }
+    }
+}
 use bytemuck::{Pod, Zeroable};
 
 /// Blend mode for transparent materials
@@ -66,6 +82,28 @@ pub struct MaterialUniforms {
     pub opacity: f32,
     pub alpha_cutoff: f32,
     pub texture_scale: f32,
+    /// Emission (ADR 0076). `rgb` is the material's own light, linear and
+    /// already times its strength. `w` scales per-vertex emission, where a
+    /// vertex's alpha says how much of it is surface (see
+    /// `ImportedMaterial::vertex_emission`).
+    pub emissive: [f32; 4],
+    /// 1 when the material has an emissive map (glTF `emissiveTexture`),
+    /// bound at 7 and 8. Its rgb multiplies `emissive.rgb`.
+    pub has_emissive_tex: u32,
+    /// 1 when vertex alpha is the surface share, not opacity (ADR 0090).
+    /// Separate from `emissive.w` so a strength of 0 leaves the light parts
+    /// dark rather than turning them back into lit, see-through surface.
+    pub vertex_emission: u32,
+    /// How much of each per-vertex light part is also lit surface, 0..1
+    /// (ADR 0096: the entity's `material.glow_surface`). Its light is
+    /// unchanged, so with `emissive_scale` a light part's surface and light
+    /// are set apart. 0 is the mesh as uploaded.
+    pub glow_surface: f32,
+    pub _pad_emissive: u32,
+    /// Multiplies every vertex colour, `rgb` only, as surface and as
+    /// per-vertex light (ADR 0102: the entity's `material.vertex_tint_*`).
+    /// White is the mesh as uploaded. Unused without `use_vertex_color`.
+    pub vertex_tint: [f32; 4],
 }
 
 impl MaterialUniforms {
@@ -85,6 +123,12 @@ impl MaterialUniforms {
             opacity: 1.0,
             alpha_cutoff: 0.5,
             texture_scale: 1.0,
+            emissive: [0.0; 4],
+            has_emissive_tex: 0,
+            vertex_emission: 0,
+            glow_surface: 0.0,
+            _pad_emissive: 0,
+            vertex_tint: [1.0; 4],
         }
     }
 
@@ -104,6 +148,32 @@ impl MaterialUniforms {
             opacity: 1.0,
             alpha_cutoff: 0.5,
             texture_scale: 1.0,
+            emissive: [0.0; 4],
+            has_emissive_tex: 0,
+            vertex_emission: 0,
+            glow_surface: 0.0,
+            _pad_emissive: 0,
+            vertex_tint: [1.0; 4],
+        }
+    }
+
+    /// Sets the emission from an imported material.
+    pub fn set_emission(&mut self, material: &flint_import::ImportedMaterial) {
+        let [r, g, b] = material.emissive;
+        let s = material.emissive_strength;
+        let per_vertex = material.vertex_emission && material.use_vertex_color;
+        self.emissive = [r * s, g * s, b * s, if per_vertex { s } else { 0.0 }];
+        self.vertex_emission = per_vertex as u32;
+    }
+
+    /// Multiplies all of the emission, the material's own and per-vertex,
+    /// by `scale` (ADR 0090: the entity's `material.emissive_scale`). The
+    /// surface share of each vertex is unchanged, so 0 leaves pure-light
+    /// vertices black and lit-surface vertices lit.
+    pub fn scale_emission(&mut self, scale: f32) {
+        let scale = scale.max(0.0);
+        for c in &mut self.emissive {
+            *c *= scale;
         }
     }
 }
@@ -293,11 +363,17 @@ pub struct RenderPipeline {
     pub outline_pipeline: wgpu::RenderPipeline,
     pub depth_prepass_pipeline: wgpu::RenderPipeline,
     pub transparent_alpha_pipeline: wgpu::RenderPipeline,
+    /// Back-face pass of the alpha pipeline (drawn first).
+    pub transparent_alpha_back_pipeline: wgpu::RenderPipeline,
     pub transparent_additive_pipeline: wgpu::RenderPipeline,
     pub transparent_multiply_pipeline: wgpu::RenderPipeline,
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     pub light_bind_group_layout: wgpu::BindGroupLayout,
+    /// The sampler every PBR material's textures share, bound in the light
+    /// group (binding 4) rather than in each material's: linear, with linear
+    /// mips, repeating, as `TextureCache` made every texture's own.
+    pub material_sampler: wgpu::Sampler,
 }
 
 impl RenderPipeline {
@@ -323,7 +399,13 @@ impl RenderPipeline {
                 label: Some("Transform Bind Group Layout"),
             });
 
-        // Bind group 1: Material uniforms + textures (fragment only)
+        // Bind group 1: Material uniforms + textures (fragment only). No
+        // samplers: they sample with the light group's `material_sampler`,
+        // so a material bind group spends no sampler descriptors. wgpu 23's
+        // DX12 backend copies every bind group's samplers into a 2048-slot
+        // shader-visible heap with no sharing, and four a material capped a
+        // scene at about 512 distinct looks (Capitol #525, #577). Bindings
+        // keep their numbers (textures at 1, 3, 5, 7).
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -349,13 +431,6 @@ impl RenderPipeline {
                         },
                         count: None,
                     },
-                    // binding 2: base_color_sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
                     // binding 3: normal_map_texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
@@ -365,13 +440,6 @@ impl RenderPipeline {
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
-                        count: None,
-                    },
-                    // binding 4: normal_map_sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                     // binding 5: metallic_roughness_texture
@@ -385,11 +453,15 @@ impl RenderPipeline {
                         },
                         count: None,
                     },
-                    // binding 6: metallic_roughness_sampler
+                    // binding 7: emissive_texture
                     wgpu::BindGroupLayoutEntry {
-                        binding: 6,
+                        binding: 7,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -440,9 +512,27 @@ impl RenderPipeline {
                         },
                         count: None,
                     },
+                    // binding 4: material_sampler, the one sampler every
+                    // material's textures share (see bind group 1)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
                 label: Some("Light Bind Group Layout"),
             });
+
+        let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Material Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PBR Pipeline Layout"),
@@ -576,11 +666,7 @@ impl RenderPipeline {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: -2,
-                        slope_scale: -1.0,
-                        clamp: 0.0,
-                    },
+                    bias: line_depth_bias(),
                 }),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
@@ -625,11 +711,7 @@ impl RenderPipeline {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::Always,
                     stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: -2,
-                        slope_scale: -1.0,
-                        clamp: 0.0,
-                    },
+                    bias: line_depth_bias(),
                 }),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
@@ -734,10 +816,14 @@ impl RenderPipeline {
                 cache: None,
             });
 
-        // Transparent alpha pipeline: standard alpha blending, no depth write, no backface cull
-        let transparent_alpha_pipeline =
+        // Alpha-blended meshes draw in two passes, back faces first (cull front) then
+        // front faces (cull back). Depth write stays off, but with no sort inside one
+        // mesh a single double-sided pass blends its own back faces over its front
+        // faces in index order, which shows as triangular patches on a translucent
+        // sphere. Two passes make every convex translucent object order-independent.
+        let make_transparent_alpha = |label: &str, cull_mode: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Transparent Alpha Pipeline"),
+                label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -759,7 +845,7 @@ impl RenderPipeline {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
+                    cull_mode,
                     polygon_mode: wgpu::PolygonMode::Fill,
                     unclipped_depth: false,
                     conservative: false,
@@ -777,7 +863,12 @@ impl RenderPipeline {
                 },
                 multiview: None,
                 cache: None,
-            });
+            })
+        };
+        let transparent_alpha_back_pipeline =
+            make_transparent_alpha("Transparent Alpha Pipeline (back faces)", Some(wgpu::Face::Front));
+        let transparent_alpha_pipeline =
+            make_transparent_alpha("Transparent Alpha Pipeline (front faces)", Some(wgpu::Face::Back));
 
         // Transparent additive pipeline: src*SrcAlpha + dst*One
         let transparent_additive_pipeline =
@@ -899,11 +990,13 @@ impl RenderPipeline {
             outline_pipeline,
             depth_prepass_pipeline,
             transparent_alpha_pipeline,
+            transparent_alpha_back_pipeline,
             transparent_additive_pipeline,
             transparent_multiply_pipeline,
             transform_bind_group_layout,
             material_bind_group_layout,
             light_bind_group_layout,
+            material_sampler,
         }
     }
 }

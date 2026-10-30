@@ -120,7 +120,7 @@ impl ViewGizmo {
 
         // Background circle with subtle border
         painter.circle_filled(center, bg_radius, BG_FILL);
-        painter.circle_stroke(center, bg_radius, egui::Stroke::new(1.0, BG_STROKE_COLOR));
+        painter.circle_stroke(center, bg_radius, egui::Stroke::new(1.0f32, BG_STROKE_COLOR));
 
         // Define all six axis endpoints
         let axes = [
@@ -195,7 +195,7 @@ impl ViewGizmo {
 
             // Axis line
             let line_color = axis.color.gamma_multiply(0.7 * alpha);
-            painter.line_segment([center, end], egui::Stroke::new(2.0, line_color));
+            painter.line_segment([center, end], egui::Stroke::new(2.0f32, line_color));
 
             // Hit test
             let is_hovered = pointer_pos
@@ -228,7 +228,7 @@ impl ViewGizmo {
                 painter.circle_stroke(
                     end,
                     cap_r + 1.0,
-                    egui::Stroke::new(1.5, egui::Color32::WHITE),
+                    egui::Stroke::new(1.5f32, egui::Color32::WHITE),
                 );
             }
 

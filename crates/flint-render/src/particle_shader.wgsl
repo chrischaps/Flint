@@ -9,11 +9,12 @@ struct ParticleUniforms {
     _pad1: f32,
 };
 
+// Must match flint_particles::ParticleInstance (64 bytes, ADR 0068).
 struct ParticleInstance {
-    pos_size: vec4<f32>,    // xyz = world position, w = size
+    pos_size: vec4<f32>,    // xyz = world position, w = width (size.x)
     color: vec4<f32>,       // rgba tint
     rotation_frame: vec4<f32>, // x = rotation radians, y = frame index, z/w = frames_x/y
-    vel_stretch: vec4<f32>, // xyz = velocity * stretch, w > 0 = stretch enabled
+    vel_stretch: vec4<f32>, // xyz = velocity * stretch (zero = no stretch), w = height (size.y)
 };
 
 @group(0) @binding(0)
@@ -26,11 +27,6 @@ var<storage, read> instances: array<ParticleInstance>;
 var particle_texture: texture_2d<f32>;
 @group(2) @binding(1)
 var particle_sampler: sampler;
-
-// Sprite sheet dimensions passed as push constant would be ideal,
-// but for simplicity we store frames_x and frames_y in the unused z/w of rotation_frame
-// Actually, we'll just use frames_x = rotation_frame.z, frames_y = rotation_frame.w
-// (Redefine: rotation_frame = { rotation, frame_index, frames_x, frames_y })
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -45,7 +41,8 @@ fn vs_particle(
 ) -> VertexOutput {
     let inst = instances[instance_index];
     let world_pos = inst.pos_size.xyz;
-    let size = inst.pos_size.w;
+    let size_x = inst.pos_size.w;
+    let size_y = inst.vel_stretch.w;
     let rotation = inst.rotation_frame.x;
     let frame = inst.rotation_frame.y;
     let frames_x = inst.rotation_frame.z;
@@ -102,7 +99,7 @@ fn vs_particle(
     // falling rain reads as streaks from any camera pitch. Replaces the
     // rotation path (the alignment IS the rotation).
     var stretch_len = 0.0;
-    if (inst.vel_stretch.w > 0.5) {
+    if (dot(inst.vel_stretch.xyz, inst.vel_stretch.xyz) > 1e-12) {
         let v_screen = vec2<f32>(
             dot(inst.vel_stretch.xyz, uniforms.camera_right),
             dot(inst.vel_stretch.xyz, uniforms.camera_up));
@@ -110,7 +107,7 @@ fn vs_particle(
         if (stretch_len > 1e-4) {
             let axis = v_screen / stretch_len;             // long axis (screen)
             let perp = vec2<f32>(-axis.y, axis.x);         // short axis
-            let along = local_y * (1.0 + stretch_len / max(size, 1e-4));
+            let along = local_y * (1.0 + stretch_len / max(size_y, 1e-4));
             rotated_x = perp.x * local_x + axis.x * along;
             rotated_y = perp.y * local_x + axis.y * along;
         }
@@ -129,8 +126,8 @@ fn vs_particle(
 
     // Billboard in world space
     let world = world_pos
-        + uniforms.camera_right * rotated_x * size
-        + uniforms.camera_up * rotated_y * size;
+        + uniforms.camera_right * rotated_x * size_x
+        + uniforms.camera_up * rotated_y * size_y;
 
     var out: VertexOutput;
     out.clip_position = uniforms.view_proj * vec4<f32>(world, 1.0);

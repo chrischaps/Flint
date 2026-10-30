@@ -1,7 +1,7 @@
 //! TOML-based animation clip loading
 
 use crate::clip::AnimationClip;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use std::path::Path;
 
 /// Load an animation clip from a `.anim.toml` file.
@@ -23,7 +23,7 @@ use std::path::Path;
 /// # ...more keyframes
 /// ```
 pub fn load_clip_from_file(path: &Path) -> Result<AnimationClip> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
+    let content = vfs::read_to_string(path).map_err(|e| {
         FlintError::AnimationError(format!("Failed to read {}: {}", path.display(), e))
     })?;
     load_clip_from_str(&content, path)

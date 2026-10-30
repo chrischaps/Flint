@@ -5,31 +5,12 @@
 //! (`ocean_height`) both pick them up on the next frame — one source of
 //! truth, three consumers.
 
+use crate::widgets::drag_f32;
 use crate::DebugPanel;
 use flint_core::ocean::OceanParams;
 use flint_core::toml_util::{toml_color, toml_f32};
 use flint_scene::SceneDocument;
 use std::path::PathBuf;
-
-fn drag_f32(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut f32,
-    speed: f64,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let before = *value;
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::DragValue::new(value)
-                .speed(speed)
-                .range(range)
-                .max_decimals(3),
-        );
-    });
-    *value != before
-}
 
 fn drag_i64(
     ui: &mut egui::Ui,
@@ -99,6 +80,12 @@ pub struct OceanPanelConfig {
     pub splash_noise_scale: f32,
     pub splash_baseline: f32,
     pub splash_response: f32,
+    // Shoreline foam (from the grab pass's depth)
+    pub shore_foam_width: f32,
+    pub shore_foam_strength: f32,
+    pub shore_foam_speed: f32,
+    pub shore_foam_color: [f32; 4],
+    pub shore_foam_reach: f32,
     // Refraction
     pub turbidity: f32,
     pub refraction_strength: f32,
@@ -149,6 +136,11 @@ impl OceanPanelConfig {
             splash_noise_scale: f("splash_noise_scale", 1.8),
             splash_baseline: f("splash_baseline", 0.15),
             splash_response: f("splash_response", 1.0),
+            shore_foam_width: f("shore_foam_width", 0.0),
+            shore_foam_strength: f("shore_foam_strength", 1.0),
+            shore_foam_speed: f("shore_foam_speed", 1.0),
+            shore_foam_color: c("shore_foam_color", [0.96, 0.99, 1.0, 1.0]),
+            shore_foam_reach: f("shore_foam_reach", 0.0),
             turbidity: f("turbidity", 0.8),
             refraction_strength: f("refraction_strength", 0.6),
             sky_reflection_strength: f("sky_reflection_strength", 0.8),
@@ -201,6 +193,11 @@ impl OceanPanelConfig {
             ("splash_noise_scale", f(self.splash_noise_scale)),
             ("splash_baseline", f(self.splash_baseline)),
             ("splash_response", f(self.splash_response)),
+            ("shore_foam_width", f(self.shore_foam_width)),
+            ("shore_foam_strength", f(self.shore_foam_strength)),
+            ("shore_foam_speed", f(self.shore_foam_speed)),
+            ("shore_foam_color", c(self.shore_foam_color)),
+            ("shore_foam_reach", f(self.shore_foam_reach)),
             ("turbidity", f(self.turbidity)),
             ("refraction_strength", f(self.refraction_strength)),
             ("sky_reflection_strength", f(self.sky_reflection_strength)),
@@ -454,6 +451,40 @@ impl DebugPanel for OceanDebugPanel {
                     0.01,
                     0.0..=8.0,
                 );
+            });
+
+        egui::CollapsingHeader::new("Shoreline Foam")
+            .default_open(true)
+            .show(ui, |ui| {
+                changed |= drag_f32(
+                    ui,
+                    "Shore Width (m)",
+                    &mut self.config.shore_foam_width,
+                    0.005,
+                    0.0..=10.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Shore Strength",
+                    &mut self.config.shore_foam_strength,
+                    0.01,
+                    0.0..=2.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Lap Speed",
+                    &mut self.config.shore_foam_speed,
+                    0.01,
+                    0.0..=10.0,
+                );
+                changed |= drag_f32(
+                    ui,
+                    "Shore Reach (m)",
+                    &mut self.config.shore_foam_reach,
+                    0.01,
+                    0.0..=10.0,
+                );
+                changed |= color_rgba(ui, "Shore Color", &mut self.config.shore_foam_color);
             });
 
         egui::CollapsingHeader::new("Water Clarity")

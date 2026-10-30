@@ -13,13 +13,29 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
+# The player in a browser (#99): `trunk serve` in this directory.
+[[bin]]
+name = "flint-web"
+path = "src/bin/flint_web.rs"
+
+# The web shim check (#100): `trunk serve shims.html`.
+[[bin]]
+name = "flint-web-shims"
+path = "src/bin/flint_web_shims.rs"
+
 [features]
 default = ["debug-hud"]
 # Summonable debug overlay (Phase 4 F8, ADR 0035). Feature-off builds carry
 # zero debug surface and must still compile.
 debug-hud = ["dep:flint-debug-ui"]
+# The frame profiler (ADR 0109): the frame loop's and the renderer's scopes
+# (and wgpu's own) go to Tracy, and each frame is marked. Off, the scopes
+# compile to nothing. The client listens on loopback only (no firewall
+# prompt) and keeps nothing until a viewer connects.
+profile = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
+web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-asset = { workspace = true }
 flint-schema = { workspace = true }
@@ -37,6 +53,9 @@ flint-animation = { workspace = true }
 flint-particles = { workspace = true }
 flint-terrain = { workspace = true }
 flint-script = { workspace = true }
+rhai = { workspace = true }
+profiling = { workspace = true }
+tracy-client = { workspace = true, optional = true, features = ["only-localhost", "ondemand"] }
 flint-procgen = { workspace = true }
 flint-debug-ui = { workspace = true, optional = true }
 bytemuck = { workspace = true }
@@ -48,9 +67,38 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
-egui-winit = { workspace = true }
 image = { workspace = true }
-dirs = { workspace = true }
 gilrs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# ahash (egui, hecs, rhai) pulls getrandom 0.3; on the web it needs the JS
+# backend, plus the matching cfg in .cargo/config.toml.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+# egui-winit's default `clipboard` feature pulls arboard, which has no web
+# backend. Pinned here rather than inherited so its defaults can go.
+egui-winit = { version = "0.30.0", default-features = false }
+# Async startup (player_app/web_startup.rs), the flint-web entry
+# (src/bin/flint_web.rs, index.html), the shim page and its Begin gate for
+# sound (flint_web_shims.rs, shims.html; #101), and localStorage for user
+# files (player_app/user_files.rs).
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+# Game bundles stream in chunk by chunk for the progress bar (#98).
+js-sys = "0.3"
+kira = { workspace = true }
+web-sys = { version = "0.3", features = [
+    "console", "Document", "DomTokenList", "Element", "HtmlButtonElement",
+    "HtmlCanvasElement", "HtmlElement", "Location", "Navigator", "Performance",
+    "ReadableStream", "ReadableStreamDefaultReader", "Request", "Response",
+    "Storage", "Url", "UrlSearchParams", "Window",
+] }
+console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit = { workspace = true }
+# User input overrides live under the OS config directory; on the web they go
+# to localStorage instead (player_app/user_files.rs).
+dirs = { workspace = true }

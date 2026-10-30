@@ -6,11 +6,13 @@ license.workspace = true
 description = "Rhai scripting system for Flint engine"
 
 [dependencies]
+web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 flint-physics = { workspace = true }
 flint-animation = { workspace = true }
+flint-terrain = { workspace = true }
 rhai = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

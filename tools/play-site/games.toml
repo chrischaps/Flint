@@ -1,0 +1,29 @@
+# The games play.chaps.dev serves (#103, epic #94).
+#
+# The deploy (.github/workflows/play.yml, through build.py) fetches each repo
+# at its pinned commit, packs it with `flint bundle --name <id>` into
+# games/<id>/, and writes games.json, which the page reads for its chooser
+# and its no-WebGPU fallback. `?game=<id>` plays one.
+#
+# A commit, not a branch: the site changes only when this file does, and a
+# game's push can't break play.chaps.dev between Flint deploys.
+#
+#   id      the bundle name and the ?game= value: lowercase, digits, - and _
+#   title   shown on the chooser and over the fallback film
+#   line    one sentence under the title
+#   page    the game's page on chaps.dev
+#   video   a film of the game for browsers without WebGPU (any https URL)
+#   poster  that film's first frame, also the chooser's picture
+#   film    a line under the film, saying what it shows
+
+[[game]]
+id = "float"
+title = "SET + DRIFT"
+line = "Sit at the edge of a raft at sea, from sunrise to stars. There is nothing to win."
+repo = "chrischaps/Float"
+# engine-catchup: the engine subtree at Flint main and bundle.toml (#102)
+ref = "c06e1c937de3f05f6e43d378e9506a136f0ae8a7"
+page = "https://chaps.dev/projects/float/"
+video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
+poster = "https://chaps.dev/projects/float/poster-day.jpg"
+film = "Meanwhile, one whole day at sea, filmed in the game."

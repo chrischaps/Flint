@@ -1,0 +1,134 @@
+[scene]
+name = "Shoreline Foam"
+version = "1.0"
+description = "The ocean's shoreline foam (shore_foam_width) round a quay wall, a slipway shelving into the sea and a row of piers. Tune it live with F3."
+
+# Looking across the water at the quay, so its face, the piers' faces and
+# the slipway are all on the side the camera sees.
+[camera]
+position = [0.0, 4.5, 14.0]
+target = [0.0, 0.0, 0.0]
+fov = 55.0
+
+[environment]
+ambient_sky = [0.35, 0.40, 0.50]
+ambient_ground = [0.12, 0.11, 0.10]
+
+[entities.sky.sky]
+zenith_color = [0.18, 0.32, 0.62, 1.0]
+horizon_color = [0.70, 0.62, 0.58, 1.0]
+haze_color = [0.95, 0.70, 0.50, 0.35]
+cloud_coverage = 0.3
+
+# A late-afternoon sun from behind the camera's left shoulder.
+[entities.sun.light]
+type = "directional"
+direction = [-0.5, 0.45, 0.75]
+color = [1.0, 0.85, 0.65]
+intensity = 2.6
+
+# The foam needs the grab pass, and the grab pass needs post-processing.
+[post_process]
+exposure = 1.0
+bloom_enabled = true
+bloom_threshold = 2.0
+bloom_intensity = 0.1
+
+# Small harbour waves, so the band laps visibly against the stone.
+[entities.ocean.ocean]
+seed = 3
+amplitude = 0.18
+wavelength_min = 0.8
+wavelength_max = 9.0
+choppiness = 0.5
+wind_speed = 4.0
+fetch_km = 1.0
+turbidity = 0.9
+foam_noise_scale = 1.2
+splash_strength = 0.0
+shore_foam_width = 0.35
+shore_foam_strength = 0.95
+shore_foam_speed = 1.0
+shore_foam_color = [0.97, 0.94, 0.88, 1.0]
+# Measure the band across the water to the stone (ADR 0091). The quay's top
+# is 1 m up and the piers' 1.6 m, so anything up to 1.8 m above is shore.
+shore_foam_reach = 1.8
+
+# ------------------------------------------------------------
+#  The harbour: a sea bed, the quay, a slipway and the piers
+# ------------------------------------------------------------
+
+# Three metres down, so the open water stays clear of the band.
+[entities.sea_bed]
+archetype = "furniture"
+[entities.sea_bed.transform]
+position = [0, 0, 0]
+[entities.sea_bed.bounds]
+min = [-30, -3.2, -12]
+max = [30, -3.0, 20]
+[entities.sea_bed.material]
+texture = "textures/floor_tiles.png"
+texture_scale = 0.25
+roughness = 0.95
+
+# The quay: a stone wall from the bed to a metre above the water.
+[entities.quay]
+archetype = "furniture"
+[entities.quay.transform]
+position = [0, 0, 0]
+[entities.quay.bounds]
+min = [-30, -3.0, -12]
+max = [2, 1.0, -4]
+[entities.quay.material]
+texture = "textures/stone_wall.png"
+texture_scale = 0.5
+roughness = 0.9
+
+# A slipway shelving down into the sea at about 9°: here the band is the
+# width of the shallows, not a line.
+[entities.slipway]
+archetype = "furniture"
+[entities.slipway.transform]
+position = [8, -1.0, -4]
+rotation = [-9, 0, 0]
+[entities.slipway.bounds]
+min = [-3, -0.3, -2]
+max = [3, 0.0, 14]
+[entities.slipway.material]
+texture = "textures/Poliigon_ConcreteWorn_8690_BaseColor.jpg"
+texture_scale = 0.5
+roughness = 0.9
+
+# Piers standing out of the water in a row toward the camera.
+[entities.pier_a]
+archetype = "furniture"
+[entities.pier_a.transform]
+position = [-6, 0, 0]
+[entities.pier_a.bounds]
+min = [-0.4, -3.0, -0.4]
+max = [0.4, 1.6, 0.4]
+[entities.pier_a.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.85
+
+[entities.pier_b]
+archetype = "furniture"
+[entities.pier_b.transform]
+position = [-3, 0, 2.5]
+[entities.pier_b.bounds]
+min = [-0.4, -3.0, -0.4]
+max = [0.4, 1.6, 0.4]
+[entities.pier_b.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.85
+
+[entities.pier_c]
+archetype = "furniture"
+[entities.pier_c.transform]
+position = [0, 0, 5]
+[entities.pier_c.bounds]
+min = [-0.4, -3.0, -0.4]
+max = [0.4, 1.6, 0.4]
+[entities.pier_c.material]
+texture = "textures/wood_planks_old.png"
+roughness = 0.85

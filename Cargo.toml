@@ -87,6 +87,10 @@ pest_derive = "2.7"
 wgpu = "23.0"
 winit = "0.30"
 pollster = "0.4"
+# Frame profiler scopes: nothing at all without a backend feature (ADR 0109)
+profiling = "1.0"
+# profiling's Tracy backend uses this version; named here for its features
+tracy-client = { version = "0.18", default-features = false }
 bytemuck = { version = "1.19", features = ["derive"] }
 
 # File watching
@@ -107,15 +111,22 @@ glam = { version = "0.30", features = ["mint"] }
 # Scripting
 rhai = { version = "1", features = ["sync"] }
 
-# Game loop
-instant = "0.1"
+# Game loop. std's Instant panics on wasm32 ("time not implemented on this
+# platform"); web-time re-exports std's types on native and wraps
+# performance.now() / Date.now() on the web.
+web-time = "1.1"
 # default-features off: gilrs's default Windows backend (WGI) only delivers
 # input to the process owning the foreground window — console apps (play-chart,
 # the input spike) get nothing. XInput polls regardless of focus. See ADR 0011.
+# The backend is picked by target, not feature, everywhere else: evdev on
+# Linux, IOKit on macOS, the browser Gamepad API on wasm32. `xinput` is a
+# no-op there (rusty-xinput is a Windows-only dep) but must stay on: gilrs-core
+# 0.6.7's "needs xinput or wgi" compile_error is not gated to Windows.
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 # Direct motor access for the haptics rumble path: gilrs's high-level ff
 # server quantizes commands to a 50 ms tick; gilrs-core's FfDevice is a
-# synchronous XInputSetState. Same crate gilrs already depends on.
+# synchronous XInputSetState. Same crate gilrs already depends on. Native
+# only (flint-input-capture's rumble path); a browser can't drive motors this way.
 gilrs-core = { version = "0.6", default-features = false, features = ["xinput"] }
 
 # Android
@@ -142,7 +153,7 @@ rand_chacha = "0.9"
 symphonia = { version = "0.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm", "flac"] }
 
 # glTF
-gltf = "1.4"
+gltf = { version = "1.4", features = ["KHR_materials_emissive_strength"] }
 
 # File dialogs
 rfd = "0.15"

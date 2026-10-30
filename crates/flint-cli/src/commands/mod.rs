@@ -1,6 +1,7 @@
 //! CLI command implementations
 
 pub mod asset;
+pub mod bundle;
 pub mod calibrate;
 pub mod common_args;
 pub mod edit_router;
@@ -9,6 +10,7 @@ pub mod gen;
 pub mod gen_preview;
 pub mod gen_preview_common;
 pub mod init;
+pub mod particle_edit;
 pub mod play;
 pub mod play_chart;
 pub mod play_chart_window;

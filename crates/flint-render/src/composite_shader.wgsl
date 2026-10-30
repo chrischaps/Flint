@@ -58,6 +58,30 @@ struct PostProcessUniforms {
     _pad3: f32,
     grade_gain: vec3<f32>,
     _pad4: f32,
+    // Aerial tint and height fog density (ADR 0101), two appended rows.
+    // fog_tint_strength 0 = no tint; fog_tint_end is kept > fog_tint_start
+    // on the CPU so smoothstep is defined.
+    fog_tint_color: vec3<f32>,
+    fog_tint_strength: f32,
+    fog_tint_start: f32,
+    fog_tint_end: f32,
+    fog_height_density: f32,
+    _pad5: f32,
+    // Ground fog (ADR 0106), four appended rows: fog on the floors of
+    // ground_fog_map, marched through the box from ground_fog_floor_base
+    // to ground_fog_ceiling over origin..origin + size in X and Z.
+    ground_fog_color: vec3<f32>,
+    ground_fog_density: f32,
+    ground_fog_origin: vec2<f32>,
+    ground_fog_size: vec2<f32>,
+    ground_fog_floor_base: f32,
+    ground_fog_ceiling: f32,
+    ground_fog_falloff: f32,
+    ground_fog_steps: f32,
+    ground_fog_texel: f32,
+    ground_fog_max_lod: f32,
+    ground_fog_enabled: f32,
+    _pad6: f32,
 };
 
 @group(0) @binding(0)
@@ -87,6 +111,10 @@ var depth_sampler_nn: sampler;
 var volumetric_texture: texture_2d<f32>;
 @group(3) @binding(5)
 var volumetric_sampler: sampler;
+// The ground fog's map (ADR 0106): r = floor over ground_fog_floor_base,
+// g = amount. Read through volumetric_sampler (linear, clamped, mipped).
+@group(3) @binding(6)
+var ground_fog_map: texture_2d<f32>;
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -136,26 +164,173 @@ fn linear_depth(depth: f32) -> f32 {
     return params.near * params.far / (params.far - depth * (params.far - params.near));
 }
 
+// Sky test shared by every depth-reading path below. The sky and skybox
+// never write depth, and every pass clears it to exactly 1.0, so a pixel is
+// sky iff its depth is 1.0. Anything drawn inside the far plane is < 1.0
+// (Depth32Float keeps ~6e-8 of precision there), so geometry is fogged,
+// shaded and focused at any distance; a "near 1.0" cut would leave distant
+// ground unfogged (ADR 0078).
+fn is_sky_depth(depth: f32) -> bool {
+    return depth >= 1.0;
+}
+
 // Circle-of-confusion at a UV: 0 = in focus, 1 = fully defocused.
-// Sky (depth at/near the far plane) is treated as at the far plane so it
+// Sky (depth at the far plane) is treated as at the far plane so it
 // defocuses naturally when the focus plane is near. textureSampleLevel —
 // this is called from non-uniform control flow inside the DoF gather loop.
 fn coc_at(uv: vec2<f32>) -> f32 {
     let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
     var z = params.far;
-    if (depth < 0.9999) {
+    if (!is_sky_depth(depth)) {
         z = linear_depth(depth);
     }
     return clamp(abs(z - params.dof_focus_distance) / params.dof_focus_range, 0.0, 1.0)
         * params.dof_strength;
 }
 
-// Compute fog factor from depth buffer
-fn compute_fog(uv: vec2<f32>) -> f32 {
-    let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
-    // Skip skybox (depth at or near far plane)
-    if (depth >= 0.9999) {
+// Height fog's optical depth along the view ray to `world_pos`, `dist`
+// away (ADR 0101). The density is fog_height_density at
+// fog_height_origin and falls by e every 1/fog_height_falloff metres
+// above it (rising below it), integrated exactly along the ray:
+//   density_at_eye * dist * (1 - e^-x) / x,  x = falloff * (p.y - eye.y)
+// Unlike the distance fog it isn't held off by fog_start: it's a layer of
+// air, and lies round the camera too. The exponents are clamped so a
+// camera or a ray deep under the origin stays finite (it's fully fogged
+// there anyway).
+fn height_fog_depth(world_pos: vec3<f32>, dist: f32) -> f32 {
+    let k = max(params.fog_height_falloff, 1e-5);
+    let eye = min(-k * (params.camera_pos.y - params.fog_height_origin), 30.0);
+    let at_eye = params.fog_height_density * exp(eye);
+    let x = max(k * (world_pos.y - params.camera_pos.y), -30.0);
+    // The share of the eye's density the ray averages; 1 - x/2 near level.
+    var share = 1.0 - 0.5 * x;
+    if (abs(x) > 1e-3) {
+        share = (1.0 - exp(-x)) / x;
+    }
+    return at_eye * dist * share;
+}
+
+// The optical depth a step of length `len` gathers through ground fog of
+// `density` at its floor, falling by e every 1/k above it, from `ya` to `yb`
+// over the floor; under the floor it holds at the floor's (ADR 0106).
+// ground_fog::fog_step in Rust is this, line for line.
+fn fog_step(density: f32, k: f32, ya: f32, yb: f32, len: f32) -> f32 {
+    let lo0 = min(ya, yb);
+    let hi = max(ya, yb);
+    let span = hi - lo0;
+    if (span < 1e-4) {
+        return density * len * exp(-k * max(lo0, 0.0));
+    }
+    let under = clamp((0.0 - lo0) / span, 0.0, 1.0);
+    let lo = max(lo0, 0.0);
+    let x = k * (hi - lo);
+    var share = 1.0 - 0.5 * x;
+    if (x > 1e-3) {
+        share = (1.0 - exp(-x)) / x;
+    }
+    return density * len * (under + (1.0 - under) * exp(-k * lo) * share);
+}
+
+// Where step i of n starts on a march from t0 to t1 along the ray: each
+// step longer than the last in proportion to its distance from the eye
+// (counted from a metre behind it), so the steps are as fine near the eye
+// as far off they need not be, wherever the march begins.
+// ground_fog::step_at in Rust is this.
+fn fog_step_at(i: f32, n: f32, t0: f32, t1: f32) -> f32 {
+    return (t0 + 1.0) * pow((t1 + 1.0) / (t0 + 1.0), i / n) - 1.0;
+}
+
+// The ground fog's map at world `p`: x = the floor (world Y), y = the
+// amount. Read at the mip level whose texels span `spacing` metres of
+// ground, so a long step sees the fog averaged over what it crosses.
+fn ground_fog_at(p: vec3<f32>, spacing: f32) -> vec2<f32> {
+    let map_uv = (p.xz - params.ground_fog_origin) / params.ground_fog_size;
+    let lod = clamp(log2(max(spacing / params.ground_fog_texel, 1.0)), 0.0, params.ground_fog_max_lod);
+    let texel = textureSampleLevel(ground_fog_map, volumetric_sampler, map_uv, lod).rg;
+    return vec2<f32>(params.ground_fog_floor_base + texel.x, texel.y);
+}
+
+// Ground fog's optical depth along the view ray through `uv` (ADR 0106).
+// The ray is clipped to the box the fog can lie in, and to what the depth
+// buffer says it meets (the sky: nothing), then marched in steps that
+// lengthen with distance. The map is read at each step's ends, so each
+// read serves two steps, and along a step the height over the floor runs
+// straight from one end's to the other's: on a slope the floor follows
+// the ground, and the falloff's integral stays exact. The ends are moved
+// along the ray by a hash of the pixel, so what's left of the steps reads
+// as fine grain, not bands.
+fn ground_fog_depth(uv: vec2<f32>, depth: f32, pixel: vec2<f32>) -> f32 {
+    let eye = params.camera_pos;
+    var dir: vec3<f32>;
+    var reach = 1e9;
+    if (is_sky_depth(depth)) {
+        dir = normalize(world_pos_from_depth(uv, 1.0) - eye);
+    } else {
+        let to = world_pos_from_depth(uv, depth) - eye;
+        reach = length(to);
+        dir = to / max(reach, 1e-6);
+    }
+    let lo = vec3<f32>(params.ground_fog_origin.x, params.ground_fog_floor_base, params.ground_fog_origin.y);
+    let hi = vec3<f32>(lo.x + params.ground_fog_size.x, params.ground_fog_ceiling, lo.z + params.ground_fog_size.y);
+    // A zero component goes to a huge slope of the same sign
+    let safe = select(dir, vec3<f32>(1e-8), abs(dir) < vec3<f32>(1e-8));
+    let a = (lo - eye) / safe;
+    let b = (hi - eye) / safe;
+    let enter = min(a, b);
+    let leave = max(a, b);
+    let t0 = max(max(max(enter.x, enter.y), enter.z), 0.0);
+    let t1 = min(min(min(leave.x, leave.y), leave.z), reach);
+    if (t1 <= t0) {
         return 0.0;
+    }
+    let n = params.ground_fog_steps;
+    let k = params.ground_fog_falloff;
+    // The ground a step at distance t runs over: (t + 1) ln r of ray, r
+    // the ratio of one step's distance to the last's
+    let per_metre = length(dir.xz) * log((t1 + 1.0) / (t0 + 1.0)) / n;
+    let q = vec2<u32>(pixel);
+    var h = q.x * 1664525u + q.y * 22695477u;
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    h = h ^ (h >> 16u);
+    let jitter = f32(h >> 8u) / 16777216.0;
+    var ta = t0;
+    var fa = ground_fog_at(eye + dir * ta, (ta + 1.0) * per_metre);
+    var optical = 0.0;
+    // n + 1 steps: t0, then the n ends moved by the jitter, then t1
+    for (var i = 0.0; i <= n; i = i + 1.0) {
+        var tb = t1;
+        if (i < n) {
+            tb = fog_step_at(i + jitter, n, t0, t1);
+        }
+        let fb = ground_fog_at(eye + dir * tb, (tb + 1.0) * per_metre);
+        let amount = 0.5 * (fa.y + fb.y);
+        if (amount > 0.0) {
+            optical = optical + fog_step(
+                params.ground_fog_density * amount,
+                k,
+                eye.y + dir.y * ta - fa.x,
+                eye.y + dir.y * tb - fb.x,
+                tb - ta,
+            );
+        }
+        // Past e^-12 nothing behind shows
+        if (optical > 12.0) {
+            break;
+        }
+        ta = tb;
+        fa = fb;
+    }
+    return optical;
+}
+
+// Fog at a UV from the depth buffer: x = the fog's share (0..1), y = the
+// aerial tint's share (0..fog_tint_strength), both 0 for the sky.
+fn compute_fog(uv: vec2<f32>) -> vec2<f32> {
+    let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
+    // Skip the sky; everything drawn is fogged, however far
+    if (is_sky_depth(depth)) {
+        return vec2<f32>(0.0, 0.0);
     }
 
     let world_pos = world_pos_from_depth(uv, depth);
@@ -163,18 +338,22 @@ fn compute_fog(uv: vec2<f32>) -> f32 {
 
     // Exponential distance fog with start offset
     let dist_factor = max(dist - params.fog_start, 0.0);
-    let dist_fog = 1.0 - exp(-params.fog_density * dist_factor);
+    var fog = 1.0 - exp(-params.fog_density * dist_factor);
 
-    // Height fog (exponential falloff above fog_height_origin)
-    var height_fog = 0.0;
+    // Height fog adds its optical depth to the distance fog's (ADR 0101)
     if (params.fog_height_enabled > 0.5) {
-        let height_above = max(world_pos.y - params.fog_height_origin, 0.0);
-        height_fog = exp(-params.fog_height_falloff * height_above);
-        // Modulate by distance so nearby objects aren't fully fogged
-        height_fog = height_fog * dist_fog;
+        let optical = params.fog_density * dist_factor + height_fog_depth(world_pos, dist);
+        fog = 1.0 - exp(-min(optical, 80.0));
     }
 
-    return clamp(max(dist_fog, height_fog), 0.0, 1.0);
+    // Aerial tint: far things take fog_tint_color over a distance ramp
+    var tint = 0.0;
+    if (params.fog_tint_strength > 0.0) {
+        tint = params.fog_tint_strength
+            * smoothstep(params.fog_tint_start, params.fog_tint_end, dist);
+    }
+
+    return vec2<f32>(clamp(fog, 0.0, 1.0), tint);
 }
 
 // 8x8 Bayer ordered dither matrix — returns value in [0, 1)
@@ -337,7 +516,7 @@ fn tron_view(mapped: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let depth_c = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
     var out_col = mapped * 0.08;
 
-    if (depth_c >= 0.9999) {
+    if (is_sky_depth(depth_c)) {
         // Sky: keep only the dim ghost.
         return mapped * 0.05;
     }
@@ -406,7 +585,7 @@ fn underwater_view(mapped: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     // ocean grid's far fade, so treat it as a full column of water.
     let depth = textureSampleLevel(depth_texture, depth_sampler_nn, uv, 0.0).r;
     var dist = 60.0;
-    if (depth < 0.9999) {
+    if (!is_sky_depth(depth)) {
         dist = length(world_pos_from_depth(uv, depth) - params.camera_pos);
     }
 
@@ -558,10 +737,23 @@ fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
     let bloom = textureSample(bloom_texture, bloom_sampler, uv).rgb;
     color = color + bloom * params.bloom_intensity;
 
+    // ── Ground fog (ADR 0106): a mist on floors of its own, under the
+    // aerial tint and the fog, which take it with what lies behind it ──
+    if (params.ground_fog_enabled > 0.5) {
+        let depth = textureSample(depth_texture, depth_sampler_nn, uv).r;
+        let optical = ground_fog_depth(uv, depth, in.position.xy);
+        color = mix(color, params.ground_fog_color, 1.0 - exp(-optical));
+    }
+
     // ── Fog (applied in linear HDR space, before tonemapping) ──
+    // The aerial tint lies under the fog, so the farthest things still run
+    // into fog_color, and with it the sky's horizon (ADR 0101).
     if (params.fog_enabled > 0.5) {
-        let fog_factor = compute_fog(uv);
-        color = mix(color, params.fog_color, fog_factor);
+        let fog = compute_fog(uv);
+        if (fog.y > 0.0) {
+            color = mix(color, params.fog_tint_color, fog.y);
+        }
+        color = mix(color, params.fog_color, fog.x);
     }
 
     // ── Exposure → Tonemapping ──

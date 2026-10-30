@@ -7,7 +7,7 @@
 //! fails the parse.
 
 use crate::config_toml::{self, VersionPolicy};
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -62,7 +62,7 @@ pub struct SuiteManifest {
 
 impl SuiteManifest {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = vfs::read_to_string(path)?;
         Self::parse(&text)
     }
 
