@@ -30,9 +30,8 @@ fn material(name: &str, rgb: [f32; 3], roughness: f32) -> MaterialData {
 /// Grow a preset, scaled to `HEIGHT`.
 fn grow(p: &Preset, seed: u64) -> Vec<BranchSegment> {
     let config = TurtleConfig {
-        radius: 0.05,
-        radius_decay: 0.72,
-        tropism_strength: if p.name == "bush" { 0.0 } else { 0.06 },
+        radius: 0.024,
+        radius_decay: 0.62,
         ..TurtleConfig::default().with_angle(p.angle)
     };
     let mut segments = p
