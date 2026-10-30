@@ -513,8 +513,15 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::RedrawRequested => {
+                // A refresh the frame-rate pacer skips (#140) does nothing.
+                #[cfg(target_arch = "wasm32")]
+                if !self.web_frame_begin() {
+                    return;
+                }
                 self.tick();
                 self.render();
+                #[cfg(target_arch = "wasm32")]
+                self.web_frame_end();
                 // The frame's end, for the profiler (ADR 0109).
                 profiling::finish_frame!();
                 if self.music_exit_requested || self.exit_requested {
@@ -595,6 +602,8 @@ impl PlayerApp {
             }
             self.input
                 .set_screen_size(new_size.width as f64, new_size.height as f64);
+            #[cfg(target_arch = "wasm32")]
+            self.measure_touch_scale(new_size);
             if self.cursor_captured {
                 self.centre_the_cursor();
             }
@@ -604,6 +613,10 @@ impl PlayerApp {
     /// (#406 in The Capitol). On start, and again when the window moves, since
     /// another monitor can have another refresh. `FLINT_PACING=0` turns it off.
     pub(super) fn update_vsync_pacing(&mut self) {
+        // On the web the frame-rate pacer sets the period (#140).
+        if self.frame_pacer.is_some() {
+            return;
+        }
         let on_vblank = self
             .render_context
             .as_ref()
@@ -1035,6 +1048,8 @@ impl PlayerApp {
             let id = touch.id;
             let x = touch.location.x;
             let y = touch.location.y;
+            #[cfg(target_arch = "wasm32")]
+            let (x, y) = self.touch_to_surface(x, y);
             match touch.phase {
                 winit::event::TouchPhase::Started => {
                     self.input.process_touch_start(id, x, y);

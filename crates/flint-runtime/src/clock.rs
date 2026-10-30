@@ -250,6 +250,18 @@ mod tests {
         (0..n).map(|i| if i % 4 == 3 { 4.0 * HZ60 - 0.018 } else { 0.006 })
     }
 
+    /// A page drawing one 120 Hz refresh in four (#140) steps 33.3 ms,
+    /// and a frame that ran to five refreshes steps 41.7, not 33 or 67.
+    #[test]
+    fn paced_to_the_refresh_frames_step_the_refreshes_they_took() {
+        let hz120 = 1.0 / 120.0;
+        let mut clock = paced(Some(hz120));
+        let dts = run(&mut clock, [4.0 * hz120, 5.0 * hz120, 6.0 * hz120, 4.0 * hz120]);
+        for (dt, n) in dts.iter().zip([4.0, 5.0, 6.0, 4.0]) {
+            assert!((dt - n * hz120).abs() < 1e-9, "{dts:?}");
+        }
+    }
+
     #[test]
     fn unpaced_steps_by_the_raw_time() {
         let mut clock = paced(None);

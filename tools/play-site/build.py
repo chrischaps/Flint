@@ -35,7 +35,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ID = re.compile(r"^[a-z0-9_-]+$")
 # What the page shows; repo and ref go in built-from.txt.
-PUBLIC = ("id", "title", "line", "controls", "page", "video", "poster", "film")
+PUBLIC = ("id", "title", "line", "controls", "touch", "page", "video", "poster", "film")
 
 
 def load_games(path):

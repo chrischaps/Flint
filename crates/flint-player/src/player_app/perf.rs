@@ -289,6 +289,8 @@ pub(crate) struct PerfContext {
     pub audio: Option<(u64, u64, f64)>,
     /// What the GPU lines are.
     pub gpu: GpuSource,
+    /// The frame-rate pacing (#140), when the web player paces.
+    pub pacing: Option<String>,
 }
 
 /// Where the GPU's own times come from, said on the readout.
@@ -329,13 +331,16 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
     };
     let f = &s.frames;
     line(format!(
-        "frame  {:5.1} p50  {:5.1} p99  {:5.1} max ms",
-        f.p50, f.p99, f.max
+        "frame  {:5.1} p50  {:5.1} p90  {:5.1} p99  {:5.1} max ms",
+        f.p50, f.p90, f.p99, f.max
     ));
     line(format!(
         "       {} frames in {:.0} s, {} over 1.5x p50",
         f.frames, s.secs, f.lumps
     ));
+    if let Some(pacing) = &c.pacing {
+        line(format!("pace   {pacing}"));
+    }
     line(format!(
         "worst  {:.1} ms, {:.1} of it the player's",
         s.worst_frame, s.worst_frame_cpu
@@ -414,8 +419,8 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
             trim(c.scale as f64)
         ),
         format!(
-            "frame p50 {:.1} p99 {:.1} max {:.1} ms ({} frames/{:.0}s)",
-            f.p50, f.p99, f.max, f.frames, s.secs
+            "frame p50 {:.1} p90 {:.1} p99 {:.1} max {:.1} ms ({} frames/{:.0}s)",
+            f.p50, f.p90, f.p99, f.max, f.frames, s.secs
         ),
         format!(
             "cpu {:.2} ms: {}",
@@ -428,6 +433,9 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
                 .join(", ")
         ),
     ];
+    if let Some(pacing) = &c.pacing {
+        parts.insert(5, format!("pace {pacing}"));
+    }
     if !s.scripts.is_empty() {
         parts.push(format!(
             "worst scripts: {}",
@@ -541,6 +549,7 @@ impl super::PlayerApp {
                     .buffer_stats()
                     .map(|b| (b.late, b.buffers, b.buffer_ms)),
                 gpu,
+                pacing: self.frame_rate_line(),
             },
         ))
     }
@@ -598,6 +607,66 @@ pub(crate) fn browser_name(user_agent: &str) -> String {
     match (user_agent.contains("Safari/"), version("Version/")) {
         (true, Some(v)) => format!("Safari {v}"),
         _ => "a browser".to_string(),
+    }
+}
+
+/// The fingers the page has seen (#132), for the readout: where the ones
+/// down now are, in `InputState`'s 0-1 screen space, how many were ever
+/// down at once and how many have touched in all. Fed once a frame.
+#[derive(Default)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) struct TouchSeen {
+    /// The fingers down at the last look, by id.
+    down: Vec<(u64, (f64, f64))>,
+    /// The last fingers that were down, kept after they lift.
+    last: Vec<(f64, f64)>,
+    peak: usize,
+    started: usize,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl TouchSeen {
+    /// Take the fingers down this frame.
+    pub(crate) fn observe(&mut self, touches: impl IntoIterator<Item = (u64, (f64, f64))>) {
+        let mut now: Vec<(u64, (f64, f64))> = touches.into_iter().collect();
+        now.sort_by_key(|(id, _)| *id);
+        self.started += now
+            .iter()
+            .filter(|(id, _)| !self.down.iter().any(|(d, _)| d == id))
+            .count();
+        self.peak = self.peak.max(now.len());
+        if !now.is_empty() {
+            self.last = now.iter().map(|(_, p)| *p).collect();
+        }
+        self.down = now;
+    }
+
+    /// The readout's row, once a finger has touched.
+    pub(crate) fn line(&self) -> Option<String> {
+        if self.started == 0 {
+            return None;
+        }
+        let at = |ps: &[(f64, f64)]| {
+            ps.iter()
+                .map(|(x, y)| format!("({x:.2} {y:.2})"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let now = if self.down.is_empty() {
+            format!("none down, last {}", at(&self.last))
+        } else {
+            let ps: Vec<_> = self.down.iter().map(|(_, p)| *p).collect();
+            format!("{} down {}", self.down.len(), at(&ps))
+        };
+        Some(format!(
+            "touch  {now}\n       most {} at once, {} in all",
+            self.peak, self.started
+        ))
+    }
+
+    /// The copyable line's part.
+    pub(crate) fn part(&self) -> Option<String> {
+        (self.started > 0).then(|| format!("touch most {} of {}", self.peak, self.started))
     }
 }
 
@@ -697,6 +766,7 @@ mod tests {
                 passes: vec![("Scene", 3.1), ("SSAO", 0.8)],
                 frame_ms: 3.9,
             },
+            pacing: Some("30 fps, 1 in 4 of 120 Hz (auto)".into()),
         };
         (rec.summary().unwrap(), c)
     }
@@ -713,6 +783,8 @@ mod tests {
             "2560x1440 DPR 2",
             "scene 1920x1080 scale 0.75",
             "p50 16.7",
+            "p90 16.7",
+            "pace 30 fps, 1 in 4 of 120 Hz (auto)",
             "scripts 2.00/2.0",
             "Scene 3.10",
             "212 draws 1.2M tris",
@@ -783,5 +855,28 @@ mod tests {
         assert!(readout(&s, &c).contains("?perf=cpu"));
         c.dpr = 1.5;
         assert!(readout(&s, &c).contains("DPR 1.5"));
+    }
+
+    #[test]
+    fn touches_count_fingers_once_and_keep_the_last_after_they_lift() {
+        let mut t = TouchSeen::default();
+        assert_eq!(t.line(), None);
+        t.observe([(7, (0.25, 0.5))]);
+        t.observe([(7, (0.3, 0.5)), (9, (0.75, 0.4))]);
+        t.observe([(9, (0.75, 0.4)), (7, (0.3, 0.5)), (11, (0.5, 0.9))]);
+        assert_eq!(
+            t.line().unwrap(),
+            "touch  3 down (0.30 0.50) (0.75 0.40) (0.50 0.90)
+       most 3 at once, 3 in all"
+        );
+        t.observe([]);
+        t.observe([(12, (0.1, 0.2))]);
+        t.observe([]);
+        assert_eq!(
+            t.line().unwrap(),
+            "touch  none down, last (0.10 0.20)
+       most 3 at once, 4 in all"
+        );
+        assert_eq!(t.part().unwrap(), "touch most 3 of 4");
     }
 }
