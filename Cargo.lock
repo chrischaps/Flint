@@ -1729,6 +1729,7 @@ dependencies = [
  "flint-asset",
  "flint-core",
  "gltf",
+ "image",
  "serde",
  "thiserror 2.0.18",
  "toml",

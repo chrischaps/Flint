@@ -27,7 +27,7 @@ use crate::gradient::GradientOffsets;
 use crate::mixer::{BusMixer, LPF_OPEN_HZ};
 use crate::MOTIF_BUSES;
 use flint_core::toml_util::toml_f64;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use kira::Tween;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -251,7 +251,7 @@ impl Default for LadderConfig {
 
 impl LadderConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = vfs::read_to_string(path)?;
         Self::parse(&text)
     }
 

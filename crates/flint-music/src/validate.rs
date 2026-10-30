@@ -7,6 +7,7 @@
 use crate::manifest::SuiteManifest;
 use crate::probe::probe_audio;
 use crate::{Chart, TempoMap, BUSES, CHANNELS, INTERPS, MOTIF_BUSES, PULSE_KINDS, SCHEMA_VERSION};
+use flint_core::vfs;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
@@ -417,7 +418,7 @@ pub fn validate_manifest_assets(m: &SuiteManifest, base_dir: &Path) -> Vec<Issue
     for (bus, decl) in &m.buses {
         let Some(file) = &decl.file else { continue };
         let path = base_dir.join(file);
-        if !path.exists() {
+        if !vfs::exists(&path) {
             issues.push(Issue::new(
                 "MissingStemFile",
                 format!(
