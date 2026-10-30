@@ -2,11 +2,12 @@
 //! shows the numbers `perf.rs` keeps in the page's `#perf` panel, twice a
 //! second, with a button that copies them as one line.
 //!
-//! The frame times are the browser's own: a `requestAnimationFrame` loop
-//! of the page's, timed by the timestamps rAF hands it, which fall on the
-//! display's frames. The player's callbacks start a little earlier or
-//! later from frame to frame, so timing those would show jitter that no
-//! one sees.
+//! The frame times are the browser's own: the timestamps rAF hands the
+//! page's frame clock (`web_pacing.rs`), which fall on the display's
+//! frames, taken at each frame the player draws. With pacing (#140) a
+//! skipped refresh isn't a frame. The player's callbacks start a little
+//! earlier or later from frame to frame, so timing those would show
+//! jitter that no one sees.
 //!
 //! wgpu can't say which adapter it got on the web (its `AdapterInfo` is
 //! empty there), so the page asks the browser itself, once, with the same
@@ -27,38 +28,20 @@ thread_local! {
     /// The adapter as the browser describes it, once its answer is in.
     static ADAPTER: RefCell<Option<String>> = const { RefCell::new(None) };
     static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// rAF timestamps of the last ten seconds, ms.
+    /// rAF timestamps of the frames drawn in the last ten seconds, ms.
     static RAF: RefCell<VecDeque<f64>> = const { RefCell::new(VecDeque::new()) };
-    static RAF_STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Start the page's rAF loop, once: each frame's timestamp goes in `RAF`.
-fn start_raf() {
-    use std::rc::Rc;
-    use wasm_bindgen::closure::Closure;
-    if RAF_STARTED.with(|s| s.replace(true)) {
-        return;
-    }
-    type Tick = Closure<dyn FnMut(f64)>;
-    let tick: Rc<RefCell<Option<Tick>>> = Rc::new(RefCell::new(None));
-    let again = tick.clone();
-    *tick.borrow_mut() = Some(Closure::new(move |t: f64| {
-        RAF.with(|r| {
-            let mut r = r.borrow_mut();
-            r.push_back(t);
-            while r.front().is_some_and(|&f| f < t - WINDOW_SECS * 1000.0) {
-                r.pop_front();
-            }
-        });
-        if let (Some(window), Some(f)) = (web_sys::window(), again.borrow().as_ref()) {
-            let _ = window.request_animation_frame(f.as_ref().unchecked_ref());
+/// A drawn frame at rAF timestamp `t` (`web_pacing.rs`): its interval
+/// from the last drawn one is a frame on the readout.
+pub(super) fn record_frame(t: f64) {
+    RAF.with(|r| {
+        let mut r = r.borrow_mut();
+        r.push_back(t);
+        while r.front().is_some_and(|&f| f < t - WINDOW_SECS * 1000.0) {
+            r.pop_front();
         }
-    }));
-    // The loop holds itself (`again`) for as long as the page lives.
-    let first = tick.borrow();
-    if let (Some(window), Some(f)) = (web_sys::window(), first.as_ref()) {
-        let _ = window.request_animation_frame(f.as_ref().unchecked_ref());
-    }
+    });
 }
 
 /// The rAF intervals in the window, and the seconds they cover.
@@ -149,7 +132,6 @@ fn adapter() -> String {
 impl PlayerApp {
     /// Draw the readout into the page's `#perf` panel when it's due.
     pub(super) fn show_perf(&mut self) {
-        start_raf();
         if !self.perf_due(EVERY) {
             return;
         }

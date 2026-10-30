@@ -3,7 +3,7 @@
 Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
 (#100), sound (#101), game bundles (#98), first light (#102),
 [play.chaps.dev](#playchapsdev-103) (#103), [Flint Kart](#flint-kart-104)
-(#104) and Firefox's frame rate ([#121](#firefoxs-cadence-121)) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
+(#104), Firefox's frame rate ([#121](#firefoxs-cadence-121)) and phone frame pacing ([#140](#frame-rate-on-phones-140)) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
 with a progress bar, serves every read from it through the vfs, opens the
 WebGPU device without blocking and draws to a page canvas that follows the
 window's size. A Begin gate starts the sound and locks the pointer with one
@@ -53,6 +53,7 @@ the query string instead of clap:
 | `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
 | `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |
 | `perf=1\|cpu` | `--perf` | the perf readout in a corner (#120): frame times, each phase's CPU time, the slowest scripts and each pass's GPU time ([The perf readout](#the-perf-readout-120)) |
+| `fps=30\|60\|auto\|native` | | which refreshes are drawn ([Frame rate on phones](#frame-rate-on-phones-140)). A rate is a whole number of refreshes (30 is every other at 60 Hz, every fourth at 120); `auto` draws every refresh while the frames hold it and drops to a rate they hold when they don't; `native` is every refresh, unpaced. Default `auto` where the primary pointer is a finger (`pointer: coarse`), `native` elsewhere |
 | `loop=poll` | | winit's flat-out `ControlFlow::Poll`, as before #121, to compare against the default of one frame per `requestAnimationFrame` ([Firefox's cadence](#firefoxs-cadence-121)) |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
@@ -700,6 +701,89 @@ arrives, and the mesh's buffers are shared through `Arc`.
 because its steps share one uniform buffer (`PostProcessPipeline::run_bloom`);
 it makes 24 of the 36 bind groups left. Firefox no longer shows the cost,
 but it's the next to go. Safari wasn't run.
+
+## Frame rate on phones (#140)
+
+On the Pixel 8 Pro, Float's frames came 25, 33 and 42 ms apart: three,
+four and five refreshes of its 120 Hz display, in no order. Uneven frames
+read as choppy even when the mean is fine. So a page can draw on only some
+refreshes, chosen so the drawn ones fall a whole number of refreshes apart.
+
+- **`frame_rate.rs`** decides. Every rAF call asks `FramePacer::due`, and
+  a call that isn't due returns before `tick`, so a skipped refresh costs
+  a timestamp and a comparison. A rate is a target period drawn as whole
+  refreshes: 30 fps is two at 60 Hz and four at 120. It isn't half the
+  refresh, which would be 60 fps on a 120 Hz phone and wouldn't hold.
+- **`?fps=auto`**, the default where the primary pointer is a finger
+  (`pointer: coarse`), starts at every refresh. It judges the last 10 s of
+  drawn frames: if their p90 is over 1.2 times the period, it goes straight
+  to the fastest of 60 or 30 that those frames would hold. It climbs one
+  rate at a time once the player's own work, p90, would fit in half the
+  faster period. A climb that falls back within two windows doubles the
+  wait before the next one (up to 160 s).
+- **`?fps=30|60`** fixes a rate, and **`native`** draws every refresh,
+  unpaced, which is the desktop's default and the loop as it was before.
+- **The refresh** isn't something a page can ask for. It's the slowest of
+  60, 75, 90, 100, 120, 144, 165 and 240 Hz whose whole multiples explain
+  nine in ten of the last 120 rAF intervals. At 25, 33 and 42 ms only
+  120 Hz does. Frames that always overrun can hide it: four of 120 Hz
+  look like two of 60. That paces the same, and the first skipped refresh
+  shows the truth.
+- **The timestamps** are rAF's own, which fall on the display's frames.
+  winit doesn't pass them on, so `web_pacing.rs` keeps a rAF loop of the
+  page's. It requests its next frame during its callback, before winit's
+  `about_to_wait` does, so from the second frame on it runs first and the
+  player reads this frame's time. A stale one falls back to
+  `performance.now()`.
+- **The clock** is paced to the refresh (`set_vsync_period`, as on the
+  desktop), not to the target period. A frame held to four of 120 Hz steps
+  33.3 ms of game time, and one that ran to five steps 41.7. Paced to
+  33.3 itself, frames that miss it would step 33, 67, 33.
+  `?scale=auto` judges frames against the paced period instead.
+- **`?perf=1`** counts drawn frames only (a skipped refresh isn't a
+  frame), adds p90 to the frame line, and says the pacing:
+  `pace 30 fps, 1 in 4 of 120 Hz (auto)`.
+
+**Measured.** All runs are Float with `?perf=1` in Chrome 156, played
+through Begin, with the readout's line read every 10 s over CDP. The
+desktop ran at 60 Hz on an RTX 40-series GPU. Desktop CPU throttling
+(`Emulation.setCPUThrottlingRate`) recreates the phone's uneven frames
+under a load that stays the same from run to run:
+
+| run | p50 ms | p90 ms | p99 ms | frames / 10 s |
+|---|---|---|---|---|
+| desktop, default (`native`) | 16.7 | 16.7 | 16.8 | 599 |
+| desktop, `fps=30` | 33.3 | 33.4 | 33.5 | 299 |
+| desktop 3x throttled, `native` (70 s) | 16.7–33.3 | 33.3–33.5 | 33.4–50.1 | 358–566 |
+| desktop 3x throttled, `auto` (80 s) | 33.1–33.3 | **33.4** in every window | 50–83 | 280–297 |
+
+Throttled, auto dropped to 30 at its first judgement and held p90 33.4
+for the rest of the run, against frames that had swung between one, two
+and three refreshes.
+
+**The phone today doesn't reach 33 ms.** These runs were made with
+nothing else profiling the phone (the shared `.pixel-lock`). It was warm,
+though: thermal status 1, skin 41 °C, with `logd` and another app taking
+two cores in the background. The player's own CPU was 21 to 26 ms a frame
+(scripts 7.5, render 10.6, anim/fx 4.5, sync 2.8). The audio mix runs on
+the same thread, and with it frames are 41.7 or 50 ms whatever the
+pacing:
+
+| Pixel 8 Pro, 120 Hz, DPR 2.25, scene scale 0.67 | p50 ms | p90 ms | audio late |
+|---|---|---|---|
+| `fps=native`, 70 s | 16.8 → 50.0 as it warmed | 33.4 → 58.3 | 333 of 1,515 |
+| default (`auto`), 90 s, right after | 41.7 | 50.0–50.1 | 500 of 2,010 |
+
+Auto read the display as 120 Hz and went to one refresh in four. But a
+33.3 ms period needs a frame's work and its share of the mix to fit in
+33 ms, and here they took 42 to 50. The even 30 will come with
+#136 to #139: the mix off the main thread, the hot code built for speed,
+a cheaper mix, and less render CPU. The pacing is ready for it.
+
+**Found on the way.** Before Begin, Chrome on Android stopped giving an
+untouched page animation frames after about 30 s. A CDP screenshot woke
+it, with one frame of 55.8 s. That happens with or without pacing, so
+pre-Begin windows longer than that can't be trusted.
 
 ## Async startup (#99)
 

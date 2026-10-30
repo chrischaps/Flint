@@ -289,6 +289,8 @@ pub(crate) struct PerfContext {
     pub audio: Option<(u64, u64, f64)>,
     /// What the GPU lines are.
     pub gpu: GpuSource,
+    /// The frame-rate pacing (#140), when the web player paces.
+    pub pacing: Option<String>,
 }
 
 /// Where the GPU's own times come from, said on the readout.
@@ -329,13 +331,16 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
     };
     let f = &s.frames;
     line(format!(
-        "frame  {:5.1} p50  {:5.1} p99  {:5.1} max ms",
-        f.p50, f.p99, f.max
+        "frame  {:5.1} p50  {:5.1} p90  {:5.1} p99  {:5.1} max ms",
+        f.p50, f.p90, f.p99, f.max
     ));
     line(format!(
         "       {} frames in {:.0} s, {} over 1.5x p50",
         f.frames, s.secs, f.lumps
     ));
+    if let Some(pacing) = &c.pacing {
+        line(format!("pace   {pacing}"));
+    }
     line(format!(
         "worst  {:.1} ms, {:.1} of it the player's",
         s.worst_frame, s.worst_frame_cpu
@@ -414,8 +419,8 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
             trim(c.scale as f64)
         ),
         format!(
-            "frame p50 {:.1} p99 {:.1} max {:.1} ms ({} frames/{:.0}s)",
-            f.p50, f.p99, f.max, f.frames, s.secs
+            "frame p50 {:.1} p90 {:.1} p99 {:.1} max {:.1} ms ({} frames/{:.0}s)",
+            f.p50, f.p90, f.p99, f.max, f.frames, s.secs
         ),
         format!(
             "cpu {:.2} ms: {}",
@@ -428,6 +433,9 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
                 .join(", ")
         ),
     ];
+    if let Some(pacing) = &c.pacing {
+        parts.insert(5, format!("pace {pacing}"));
+    }
     if !s.scripts.is_empty() {
         parts.push(format!(
             "worst scripts: {}",
@@ -541,6 +549,7 @@ impl super::PlayerApp {
                     .buffer_stats()
                     .map(|b| (b.late, b.buffers, b.buffer_ms)),
                 gpu,
+                pacing: self.frame_rate_line(),
             },
         ))
     }
@@ -697,6 +706,7 @@ mod tests {
                 passes: vec![("Scene", 3.1), ("SSAO", 0.8)],
                 frame_ms: 3.9,
             },
+            pacing: Some("30 fps, 1 in 4 of 120 Hz (auto)".into()),
         };
         (rec.summary().unwrap(), c)
     }
@@ -713,6 +723,8 @@ mod tests {
             "2560x1440 DPR 2",
             "scene 1920x1080 scale 0.75",
             "p50 16.7",
+            "p90 16.7",
+            "pace 30 fps, 1 in 4 of 120 Hz (auto)",
             "scripts 2.00/2.0",
             "Scene 3.10",
             "212 draws 1.2M tris",
