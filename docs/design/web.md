@@ -53,6 +53,7 @@ the query string instead of clap:
 | `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
 | `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |
 | `perf=1\|cpu` | `--perf` | the perf readout in a corner (#120): frame times, each phase's CPU time, the slowest scripts and each pass's GPU time ([The perf readout](#the-perf-readout-120)) |
+| `mix=old` | | the mix as before #138, to compare: placed sounds on kira spatial tracks, and every sound mixed whether anyone can hear it or not ([A cheaper mix](#a-cheaper-mix-138)) |
 | `loop=poll` | | winit's flat-out `ControlFlow::Poll`, as before #121, to compare against the default of one frame per `requestAnimationFrame` ([Firefox's cadence](#firefoxs-cadence-121)) |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
@@ -135,12 +136,12 @@ bundle on (job tooling `arrive.mjs`, the `?perf=1` readout):
 
 | | before (play.chaps.dev, main) | after |
 |---|---|---|
-| sea heard | with everything, after a 900–983 ms frame (+5.7 s and +27 s after Begin in two runs) | decoded and started +0.81 to +0.85 s after Begin (four runs, one unthrottled) |
-| worst frame while the audio lands and decodes | 900 and 983 ms (1017/1600/800 ms unthrottled) | 16.8–16.9 ms (three runs). A first cut, 4 ms a frame and a `Vec` copied into the `Arc` at the end, still had 50–67 ms frames as each song finished |
-| late audio buffers | 35–41 | 9–15, all in the first second's startup frames, which both builds share |
-| decoding cost | one frame | 49 sounds in 0.7–0.8 s of frame time, spread over about 6 s; each song over 64–71 frames, longest step 2.6 ms |
+| sea heard | with everything, after a 900â€“983 ms frame (+5.7 s and +27 s after Begin in two runs) | decoded and started +0.81 to +0.85 s after Begin (four runs, one unthrottled) |
+| worst frame while the audio lands and decodes | 900 and 983 ms (1017/1600/800 ms unthrottled) | 16.8â€“16.9 ms (three runs). A first cut, 4 ms a frame and a `Vec` copied into the `Arc` at the end, still had 50â€“67 ms frames as each song finished |
+| late audio buffers | 35â€“41 | 9â€“15, all in the first second's startup frames, which both builds share |
+| decoding cost | one frame | 49 sounds in 0.7â€“0.8 s of frame time, spread over about 6 s; each song over 64â€“71 frames, longest step 2.6 ms |
 
-The first second after Begin still has 250–930 ms frames in both builds:
+The first second after Begin still has 250â€“930 ms frames in both builds:
 startup, not sound.
 
 **Checked before it's written.** A missing file should fail in the packer,
@@ -507,8 +508,12 @@ the page's `#perf` panel):
   browser's, not ours.
 - canvas pixels and DPR, the adapter as the browser names it (wgpu 23's
   WebGPU backend leaves `AdapterInfo` empty, so the page asks
-  `navigator.gpu` itself), draw calls and triangles, and late audio buffers
-  (`AudioEngine::buffer_stats`).
+  `navigator.gpu` itself), draw calls and triangles, late audio buffers and
+  the mean time to mix one (`AudioEngine::buffer_stats`).
+- **voices**: the sounds and spatial tracks kira holds, and how many of
+  each it really mixes; the rest are paused because nobody can hear them
+  (`AudioSystem::mix_counts`, #138). One-shots skipped out of earshot and
+  stolen over the per-sound cap are counted beneath.
 - **cpu ms**, mean and max per phase of the frame: input, scripts,
   physics, script ui, anim/fx, sync (procgen, renderer sync, late audio),
   render (draw lists, encoding, submission), hud, present.
@@ -573,6 +578,54 @@ skinned draws were rebuilt every frame, and sync is now ~0.3 ms.
 80 ms every few seconds, once 1.5 s, and the readout named `[hot reload]`,
 the check of each script's modified time every frame. Windows file stats
 stall now and then. The web has no disk to check, so it never pays it.
+
+## A cheaper mix (#138)
+
+On the Pixel 8 Pro, kira mixed Float for 15 to 17 ms of every 46 ms
+buffer, on the main thread. `?perf=1` now counts what it mixes: a
+`voices` line with the sounds and spatial tracks kira holds, how many it
+really mixes, and the one-shots it skipped or stole; the `audio` line
+gains the mean time to mix one buffer.
+
+**Where the time goes.** `examples/mix_bench.rs` builds Float's mixer on
+kira's mock backend and times one 2048-frame buffer natively. Pausing the
+six loops Float keeps at volume 0 (four songs, rain, storm) saved only
+7%: a paused-or-not plain voice costs about 0.013 ms. A kira **spatial
+track** costs about 0.18 ms, 14 times as much, because it works out the
+falloff and each ear's share for every sample, with a `powf` and a
+quaternion per frame. Float's five wash and foam loops were 80% of its mix.
+
+**What changed** (all in `flint-audio`):
+
+- Placed sounds are plain voices, panned. `pan.rs` works out the gains
+  kira's spatial track would (its `-60Â·r^rolloff` dB falloff, each ear's
+  `0.25 + 0.75Â·(cos + 1)/2` with the ears turned Ï€/8 forward) once a frame,
+  and hands them to the voice as a volume and a constant-power pan
+  (`AudioSync::pan_sources`, `AudioEngine::pan_oneshots`), tweened over a
+  frame. A test renders both through kira and matches them to 1e-4 at five
+  places around the listener. A stereo file keeps its stereo instead of
+  being folded to mono; Float's are all mono.
+- Loops nobody can hear are paused, and resumed with a 100 ms fade where
+  they stopped: any loop at volume 0, and a placed loop past 1.1x its
+  `max_distance` (back inside 1.05x) (`AudioSync::cull_inaudible`).
+- A placed one-shot out of earshot isn't started, and a fifth one of the
+  same sound fades out its oldest over 50 ms (`MAX_ONESHOTS_PER_SOUND`).
+- `?mix=old` brings the old mix back, to compare by ear or by number.
+
+**Natively** (median of 9 runs of 300 buffers, interleaved, RTX 4070
+laptop, Float's loops on a calm day):
+
+| | ms per buffer | loops mixed |
+|---|---|---|
+| old | 1.13 to 1.21 | 13 of 13 |
+| lean | 0.29 to 0.31 (73 to 76% less) | 7 of 13 |
+| lean, the sea still (wash at 0) | 0.11 to 0.14 (88 to 91% less) | 2 of 13 |
+
+**On the phone** the readout showed 4 to 11 voices and 5 to 9 spatial
+tracks over Float's first two and a half minutes (old mix). The phone
+A/B of the lean mix against `?mix=old` is still to run: four sessions
+were profiling the phone at once, and they now share it through
+`C:/Users/chris/dev/.pixel-lock`.
 
 ## Render scale (#122)
 
