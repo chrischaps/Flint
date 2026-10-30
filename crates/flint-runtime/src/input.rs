@@ -273,7 +273,7 @@ impl InputConfig {
 
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| {
+        let content = flint_core::vfs::read_to_string(path).map_err(|e| {
             FlintError::RuntimeError(format!(
                 "failed to read input config '{}': {e}",
                 path.display()

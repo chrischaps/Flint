@@ -29,6 +29,7 @@ use tokens::TokenSet;
 
 /// Modification fingerprint of one source file: (mtime, length). `None`
 /// when the file is missing so that appearing/disappearing counts as a change.
+/// Hot reload watches the disk, so this stays on `std::fs`.
 type FileStamp = Option<(SystemTime, u64)>;
 
 fn stamp(path: &Path) -> FileStamp {

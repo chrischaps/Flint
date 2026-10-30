@@ -34,9 +34,10 @@ use crate::skinned_pipeline::SkinnedPipeline;
 use crate::skybox_pipeline::{SkyboxPipeline, SkyboxUniforms};
 use crate::sprite2d_pipeline::{Sprite2dInstanceGpu, Sprite2dPipeline};
 use crate::terrain_pipeline::{TerrainDrawCall, TerrainPipeline, TerrainUniforms};
-use crate::texture_cache::TextureCache;
+use crate::texture_cache::{open_image, TextureCache};
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
+use flint_core::vfs;
 use flint_core::{Transform, Vec3};
 use flint_ecs::FlintWorld;
 use flint_import::ImportResult;
@@ -928,7 +929,7 @@ impl SceneRenderer {
         // Load splat map
         if !splat_path.is_empty() {
             let path = scene_dir.join(splat_path);
-            if path.exists() {
+            if vfs::exists(&path) {
                 let _ = tc.load_file(device, queue, "terrain_splat", &path);
             }
         }
@@ -937,7 +938,7 @@ impl SceneRenderer {
         for (i, layer_path) in layer_paths.iter().enumerate() {
             if !layer_path.is_empty() {
                 let path = scene_dir.join(layer_path);
-                if path.exists() {
+                if vfs::exists(&path) {
                     let name = format!("terrain_layer{}", i);
                     let _ = tc.load_file(device, queue, &name, &path);
                 }
@@ -1237,7 +1238,7 @@ impl SceneRenderer {
                 let name = format!("terrain_layer{}", i);
                 tc.remove_texture(&name);
                 let path = spec_dir.join(layer_path);
-                if path.exists() {
+                if vfs::exists(&path) {
                     let _ = tc.load_file(device, queue, &name, &path);
                 }
             }
@@ -2678,7 +2679,7 @@ impl SceneRenderer {
         };
 
         // Load panorama image
-        let img = match image::open(path) {
+        let img = match open_image(path) {
             Ok(img) => img.to_rgba8(),
             Err(e) => {
                 tracing::warn!("Failed to load skybox '{}': {:?}", path.display(), e);

@@ -16,6 +16,7 @@
 //! shared file (one level of indirection).
 
 use super::element::StyleValue;
+use flint_core::vfs;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -65,7 +66,7 @@ impl TokenSet {
 
         if let Some(rel) = shared_rel.as_deref() {
             let candidates = [root_dir.join(rel), style_dir.join(rel)];
-            let path = candidates.iter().find(|p| p.is_file()).cloned();
+            let path = candidates.iter().find(|p| vfs::is_file(p)).cloned();
             match path {
                 Some(p) => {
                     set.shared_path = Some(p.clone());
@@ -173,7 +174,7 @@ impl TokenSet {
 
 /// Parse a shared token file into its sections, preserving file order.
 fn load_shared(path: &Path) -> Result<Sections, String> {
-    let content = std::fs::read_to_string(path)
+    let content = vfs::read_to_string(path)
         .map_err(|e| format!("Failed to read token file {}: {}", path.display(), e))?;
     let doc: toml::Value = content
         .parse()
