@@ -13,6 +13,8 @@
 #   line    one sentence under the title
 #   controls  the gate's small line on how it's played (default: sound on ·
 #           mouse to look · Esc frees the pointer)
+#   touch   that line on a phone or tablet (default: sound on · a paired pad
+#           plays it all · touch controls are coming; #132)
 #   page    the game's page on chaps.dev
 #   video   a film of the game for browsers without WebGPU: any https URL,
 #           or a path in the game's repo, copied beside its bundle

@@ -15,8 +15,19 @@
 //! The page's Begin button (`flint_web.rs`) calls [`begin`] from its click:
 //! it locks the pointer then and there, inside the gesture, and leaves word
 //! for the player to start its sound on the next frame.
+//!
+//! A phone has no pointer to lock (#132): on a page whose main pointer is a
+//! finger, or while the last input came from one, no lock is asked for. The
+//! fingers reach the game as winit's `WindowEvent::Touch`, which its web
+//! backend makes from `pointerType == "touch"` pointer events. winit scales
+//! a finger's CSS position by `devicePixelRatio`, but sizes the canvas from
+//! its device-pixel box; the two agree on a phone and need not elsewhere
+//! (Chrome's device emulation on a 150% desktop gives a 3x page a 1.5x
+//! canvas), so [`PlayerApp::touch_to_surface`] puts each finger in the
+//! canvas's own pixels, the ones `InputState` divides by.
 
 use super::PlayerApp;
+use flint_runtime::InputDevice;
 use std::cell::Cell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -28,6 +39,9 @@ const RETRY_MS: f64 = 1000.0;
 
 thread_local! {
     static BEGIN_REQUESTED: Cell<bool> = const { Cell::new(false) };
+    static TOUCH_FIRST: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
+    /// Canvas pixels per winit touch pixel, measured at each resize.
+    static TOUCH_SCALE: Cell<(f64, f64)> = const { Cell::new((1.0, 1.0)) };
 }
 
 /// What the player knows about the browser's pointer lock.
@@ -43,7 +57,9 @@ pub(super) struct PointerLock {
 /// while the click's activation is live, and have the player start its
 /// sound next frame (`PlayerApp::start_audio`). Call it from the click.
 pub fn begin() {
-    request_lock();
+    if !touch_first() {
+        request_lock();
+    }
     BEGIN_REQUESTED.with(|b| b.set(true));
 }
 
@@ -60,6 +76,19 @@ fn now_ms() -> f64 {
 /// Whether the pointer is locked to the page's canvas.
 fn lock_held() -> bool {
     document().is_some_and(|d| d.pointer_lock_element().is_some())
+}
+
+/// Whether the page's main pointer is a finger (`pointer: coarse`): a
+/// phone or a tablet, not a laptop that also has a touchscreen. Asked once:
+/// the lock check runs every frame, and each ask is a JS object.
+pub fn touch_first() -> bool {
+    TOUCH_FIRST.with(|t| {
+        *t.get_or_init(|| {
+            web_sys::window()
+                .and_then(|w| w.match_media("(pointer: coarse)").ok().flatten())
+                .is_some_and(|q| q.matches())
+        })
+    })
 }
 
 /// Whether the page holds a gesture's transient activation, so a lock
@@ -104,6 +133,32 @@ fn request_lock() {
 }
 
 impl PlayerApp {
+    /// At a resize: how the canvas's pixels compare with the CSS pixels
+    /// times `devicePixelRatio` that winit puts touches in.
+    pub(super) fn measure_touch_scale(&self, size: winit::dpi::PhysicalSize<u32>) {
+        let dpr = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+        let css = document()
+            .and_then(|d| d.get_element_by_id(super::web_startup::WEB_CANVAS_ID))
+            .map(|c| (c.client_width() as f64, c.client_height() as f64));
+        let ratio = |px: u32, css: f64| {
+            if css > 0.0 && px > 0 {
+                px as f64 / (css * dpr)
+            } else {
+                1.0
+            }
+        };
+        let scale = css.map_or((1.0, 1.0), |(w, h)| {
+            (ratio(size.width, w), ratio(size.height, h))
+        });
+        TOUCH_SCALE.with(|s| s.set(scale));
+    }
+
+    /// A finger's winit position in the canvas's pixels.
+    pub(super) fn touch_to_surface(&self, x: f64, y: f64) -> (f64, f64) {
+        let (sx, sy) = TOUCH_SCALE.with(|s| s.get());
+        (x * sx, y * sy)
+    }
+
     /// Once a frame: follow the browser's pointer lock. Ask for it while a
     /// script wants the cursor and the page has a gesture to ask with;
     /// release the cursor when the browser has let go of a lock it held.
@@ -131,11 +186,14 @@ impl PlayerApp {
             self.release_cursor();
             return;
         }
+        // A finger can't look with a locked pointer, and a phone would only
+        // refuse the lock (or take it and hide nothing but a cursor).
+        let touching = touch_first() || self.input.last_device() == InputDevice::Touch;
         let due = self
             .pointer_lock
             .requested_at
             .is_none_or(|t| now_ms() - t > RETRY_MS);
-        if due && has_activation() {
+        if due && !touching && has_activation() {
             self.pointer_lock.requested_at = Some(now_ms());
             request_lock();
         }

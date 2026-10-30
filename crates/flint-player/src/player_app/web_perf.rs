@@ -14,7 +14,7 @@
 //! high-performance preference wgpu asks with.
 
 use super::pacing::Spread;
-use super::perf::{browser_name, readout, summary_line, WINDOW_SECS};
+use super::perf::{browser_name, readout, summary_line, TouchSeen, WINDOW_SECS};
 use super::PlayerApp;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -30,6 +30,9 @@ thread_local! {
     static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// rAF timestamps of the frames drawn in the last ten seconds, ms.
     static RAF: RefCell<VecDeque<f64>> = const { RefCell::new(VecDeque::new()) };
+    /// The fingers seen so far (#132), looked at every frame so a quick
+    /// tap between two redraws of the panel still counts.
+    static TOUCHES: RefCell<TouchSeen> = RefCell::new(TouchSeen::default());
 }
 
 /// A drawn frame at rAF timestamp `t` (`web_pacing.rs`): its interval
@@ -132,6 +135,14 @@ fn adapter() -> String {
 impl PlayerApp {
     /// Draw the readout into the page's `#perf` panel when it's due.
     pub(super) fn show_perf(&mut self) {
+        TOUCHES.with(|t| {
+            t.borrow_mut().observe(
+                self.input
+                    .active_touches()
+                    .values()
+                    .map(|p| (p.id, p.position)),
+            )
+        });
         if !self.perf_due(EVERY) {
             return;
         }
@@ -150,10 +161,24 @@ impl PlayerApp {
             summary.secs = secs;
         }
         let _ = panel.remove_attribute("hidden");
+        let (touch_rows, touch_part) = TOUCHES.with(|t| {
+            let t = t.borrow();
+            (t.line(), t.part())
+        });
         if let Some(text) = element("perf-text") {
-            text.set_text_content(Some(&readout(&summary, &context)));
+            let mut rows = readout(&summary, &context);
+            if let Some(touch) = touch_rows {
+                rows.push('\n');
+                rows.push_str(&touch);
+            }
+            text.set_text_content(Some(&rows));
         }
         // The copy button reads it (index.html).
-        let _ = panel.set_attribute("data-line", &summary_line(&summary, &context));
+        let mut line = summary_line(&summary, &context);
+        if let Some(part) = touch_part {
+            line.push_str(" · ");
+            line.push_str(&part);
+        }
+        let _ = panel.set_attribute("data-line", &line);
     }
 }

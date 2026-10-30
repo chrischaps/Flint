@@ -4,22 +4,46 @@
      ?game=<id> plays a game the site packed, ?bundle=<game.flintpack> one
      packed by `flint bundle` (#98), and ?scene=<url>&msaa=4&width=&height=
      steer it (src/bin/flint_web.rs). ?embed=1 is the iframe view: the world
-     and its Begin button. ?perf=1 shows the perf readout (#120). See
-     docs/design/web.md. -->
+     and its Begin button. ?perf=1 shows the perf readout (#120), and the
+     fingers down once one has touched (#132). See docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Flint</title>
     <link rel="icon" href="data:," />
+    <!-- Added to a home screen (#135), the page opens without the browser
+         around it. The manifest has no start_url, so the game in the
+         address (?game=) is the one the icon opens. iPhone Safari has no
+         Fullscreen API for a page, so this is its only way to the whole
+         screen. -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/flint-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0d1229" />
     <link data-trunk rel="rust" data-bin="flint-web" data-wasm-opt="z" data-integrity="none" />
     <link data-trunk rel="copy-dir" href="web/scenes" />
+    <link data-trunk rel="copy-dir" href="web/icons" />
+    <link data-trunk rel="copy-file" href="web/manifest.webmanifest" />
     <style>
-      html, body { margin: 0; height: 100%; background: #0d1229; overflow: hidden; }
+      html, body {
+        margin: 0; height: 100%; background: #0d1229; overflow: hidden;
+        overscroll-behavior: none;
+      }
       body { display: grid; place-items: center; }
-      canvas#flint { display: block; width: 100vw; height: 100vh; outline: none; }
+      /* Touch (#132): every finger on the world is the game's. No scroll,
+         pull-to-refresh, pinch or double-tap zoom, no callout or text
+         selection on a long press. dvh follows a phone's address bar. */
+      html:not([data-door]), html:not([data-door]) body {
+        touch-action: none; -webkit-user-select: none; user-select: none;
+        -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+      }
+      canvas#flint { display: block; width: 100vw; height: 100vh; height: 100dvh; outline: none; }
       .mark {
-        position: fixed; left: 24px; bottom: 20px;
+        position: fixed;
+        left: max(24px, env(safe-area-inset-left)); bottom: max(20px, env(safe-area-inset-bottom));
         font: 500 13px/1.4 ui-sans-serif, system-ui, sans-serif;
         letter-spacing: 0.18em; text-transform: uppercase;
         color: rgba(255, 255, 255, 0.78); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
@@ -48,7 +72,9 @@
          until Begin. One click opens both. */
       .gate {
         position: fixed; inset: 0; display: grid; place-items: center;
-        padding: 16px; text-align: center; color: #fff;
+        padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+          max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+        text-align: center; color: #fff;
         background: radial-gradient(ellipse at 50% 62%, rgba(13, 18, 41, 0.18), rgba(13, 18, 41, 0.66));
         backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
         font: 400 15px/1.5 ui-sans-serif, system-ui, sans-serif;
@@ -74,7 +100,7 @@
       .gate small { display: block; margin-top: 18px; font-size: 12px; letter-spacing: 0.04em; opacity: 0.58; }
       /* After Escape frees the pointer: how to take it back. */
       #relook {
-        position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+        position: fixed; left: 50%; bottom: max(22px, env(safe-area-inset-bottom)); transform: translateX(-50%);
         font: 500 12px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.14em;
         text-transform: uppercase; color: rgba(255, 255, 255, 0.82);
         text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45); pointer-events: none;
@@ -82,11 +108,61 @@
       }
       #relook[data-on] { opacity: 1; transition-delay: 0.4s; }
 
+      /* Full screen (#135). Where the browser has the Fullscreen API, the
+         gate offers it with Begin, and a corner button goes in and out at
+         any time. iPhone Safari has none for a page: there the gate says
+         how to put the game on the home screen instead. */
+      .gate .wide {
+        display: flex; width: fit-content; align-items: center; gap: 9px; margin: 18px auto 0;
+        font-size: 12px; letter-spacing: 0.08em; cursor: pointer; user-select: none;
+        opacity: 0.74; transition: opacity 0.2s ease;
+      }
+      .gate .wide:hover, .gate .wide:has(:focus-visible) { opacity: 1; }
+      .gate .wide input {
+        appearance: none; -webkit-appearance: none; margin: 0; flex: none;
+        width: 26px; height: 15px; border-radius: 999px; cursor: pointer;
+        background: rgba(255, 255, 255, 0.2);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+        position: relative; transition: background 0.2s ease;
+      }
+      .gate .wide input::after {
+        content: ""; position: absolute; top: 2px; left: 2px;
+        width: 11px; height: 11px; border-radius: 50%; background: #fff;
+        transition: transform 0.2s ease;
+      }
+      .gate .wide input:checked { background: rgba(255, 236, 214, 0.85); }
+      .gate .wide input:checked::after { transform: translateX(11px); background: #0d1229; }
+      .gate .wide input:focus-visible { outline: 1.5px solid rgba(255, 255, 255, 0.6); outline-offset: 3px; }
+      .gate .wide[hidden], .gate .home[hidden] { display: none; }
+      .gate .home { margin: 14px auto 0; max-width: 26em; font-size: 12px; line-height: 1.5; opacity: 0.66; }
+      .gate .home b { font-weight: 500; }
+      .gate .home svg { width: 12px; height: 14px; vertical-align: -2px; margin: 0 1px; }
+      #fullscreen {
+        position: fixed; z-index: 4; width: 38px; height: 38px; padding: 0;
+        right: calc(16px + env(safe-area-inset-right, 0px));
+        bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+        display: grid; place-items: center; border: 0; border-radius: 50%; cursor: pointer;
+        color: rgba(255, 255, 255, 0.86); background: rgba(9, 13, 32, 0.34);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        opacity: 0.55; transition: opacity 0.25s ease, background 0.25s ease;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #fullscreen:hover, #fullscreen:focus-visible { opacity: 1; background: rgba(9, 13, 32, 0.6); outline: none; }
+      #fullscreen[hidden] { display: none; }
+      #fullscreen svg { width: 18px; height: 18px; }
+      #fullscreen .out, html[data-fullscreen] #fullscreen .in { display: none; }
+      html[data-fullscreen] #fullscreen .out { display: block; }
+      /* Locked to the game, nothing in the corner but the world. */
+      html[data-looking] #fullscreen { opacity: 0; pointer-events: none; }
+      html[data-door] #fullscreen { display: none; }
+
       /* The perf readout (?perf=1, #120): the player fills it twice a
          second. It sits over the gate so it reads from the first frame,
          and Copy takes the whole of it as one line for an issue. */
       #perf {
-        position: fixed; top: 12px; right: 12px; z-index: 5;
+        position: fixed; z-index: 5;
+        top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right));
         max-width: calc(100vw - 24px); box-sizing: border-box;
         padding: 10px 12px; border-radius: 8px;
         color: rgba(236, 242, 255, 0.92); background: rgba(9, 13, 32, 0.72);
@@ -96,6 +172,11 @@
         font-variant-numeric: tabular-nums;
       }
       #perf[hidden] { display: none; }
+      /* On a phone the whole readout would cover Begin: smaller, shorter,
+         and scrolled with a finger. */
+      @media (max-width: 600px), (max-height: 500px) {
+        #perf { font-size: 9px; max-height: 36dvh; overflow: auto; touch-action: pan-y; }
+      }
       #perf pre { margin: 0; font: inherit; white-space: pre; overflow-x: auto; }
       #perf button {
         margin-top: 8px; padding: 5px 12px; border: 0; border-radius: 999px; cursor: pointer;
@@ -110,7 +191,8 @@
          first visit still sees the game arriving. */
       html[data-embed] .mark { left: 50%; transform: translateX(-50%); font-size: 0; }
       html[data-embed] .mark small { display: none; }
-      html[data-embed] .gate h1, html[data-embed] .gate p, html[data-embed] .gate small { display: none; }
+      html[data-embed] .gate h1, html[data-embed] .gate p, html[data-embed] .gate small,
+      html[data-embed] .gate .wide, html[data-embed] .gate .home { display: none; }
       html[data-embed] .gate button { padding: 13px 30px; }
 
       /* The doorway (#103): before any wasm is fetched, the page decides
@@ -192,10 +274,18 @@
         <h1 id="gate-title"></h1>
         <p id="gate-line"></p>
         <button id="begin">Begin</button>
+        <label class="wide" id="gate-wide" hidden><input type="checkbox" id="gate-fullscreen" />full screen</label>
         <small id="gate-controls">sound on · mouse to look · Esc frees the pointer</small>
+        <p class="home" id="gate-home" hidden>For the whole screen, tap <b>Share</b>
+          <svg viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M6 1v8M3 3.5 6 1l3 2.5M3.5 6H1.5v7h9V6h-2"/></svg>
+          then <b>Add to Home Screen</b>, and play from there.</p>
       </div>
     </div>
     <div id="relook">click to look around</div>
+    <button id="fullscreen" type="button" aria-label="Full screen" title="Full screen" hidden>
+      <svg class="in" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 6.5V2h4.5M11.5 2H16v4.5M16 11.5V16h-4.5M6.5 16H2v-4.5"/></svg>
+      <svg class="out" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M6.5 2v4.5H2M16 6.5h-4.5V2M11.5 16v-4.5H16M2 11.5h4.5V16"/></svg>
+    </button>
     <div class="mark">Flint<small id="status">starting</small><div id="progress"><i></i></div></div>
     <section class="door" id="door" hidden></section>
     <aside id="perf" hidden>
@@ -225,6 +315,113 @@
       });
     </script>
 
+    <!-- Full screen (#135). The gate's switch rides on the Begin click; the
+         corner button goes in and out at any time. Both take the whole
+         page, so the gate, the hint and the perf readout come along. -->
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const $ = (id) => document.getElementById(id);
+        const query = new URLSearchParams(location.search);
+        const embed = query.has("embed") && query.get("embed") !== "0";
+        const enter = root.requestFullscreen || root.webkitRequestFullscreen;
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        const current = () => document.fullscreenElement || document.webkitFullscreenElement;
+        const touch = matchMedia("(pointer: coarse)").matches;
+        const installed =
+          navigator.standalone === true || matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+
+        // False in an iframe without allowfullscreen, and on iPhone Safari,
+        // which can't take a page full screen at all. Only iOS Safari has
+        // navigator.standalone: there the home screen is the way.
+        if (!enter || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+          if (!embed && !installed && "standalone" in navigator) $("gate-home").hidden = false;
+          return;
+        }
+
+        const button = $("fullscreen");
+        const choice = $("gate-fullscreen");
+        button.hidden = false;
+        if (!embed && !installed) {
+          // Offered on every screen; already on where the browser's bars
+          // take the most of it (a phone), or where it was on last time.
+          // ?fullscreen=0 (#132) starts it off, for checking a phone in its
+          // browser's own frame.
+          let kept = null;
+          try {
+            kept = localStorage.getItem("flint.fullscreen");
+          } catch {}
+          if (query.get("fullscreen") === "0") kept = "0";
+          choice.checked = kept === null ? touch : kept === "1";
+          choice.addEventListener("change", () => {
+            try {
+              localStorage.setItem("flint.fullscreen", choice.checked ? "1" : "0");
+            } catch {}
+          });
+          $("gate-wide").hidden = false;
+        }
+
+        function go() {
+          let asked;
+          try {
+            asked = enter.call(root, { navigationUI: "hide" });
+          } catch (e) {
+            asked = Promise.reject(e);
+          }
+          Promise.resolve(asked).then(
+            () => {
+              // A phone game wants its long side across; where a browser
+              // allows the lock (Chrome on Android, in full screen) it holds.
+              if (touch) screen.orientation?.lock?.("landscape")?.catch(() => {});
+            },
+            (e) => console.warn("[fullscreen]", e && e.message),
+          );
+        }
+
+        // The Begin click. Its own handler (flint_web.rs) asks for the
+        // pointer lock first: a document listener hears the click after the
+        // button's. That order matters in Chrome, where entering full screen
+        // spends the click's activation and a lock asked for afterwards is
+        // refused, while a lock taken first survives the change.
+        let begun = false;
+        document.addEventListener("click", (e) => {
+          if (begun || !(e.target instanceof Element) || !e.target.closest("#begin")) return;
+          begun = true;
+          if (choice.checked && !current()) go();
+        });
+
+        button.addEventListener("click", () => {
+          if (current()) {
+            Promise.resolve(exit.call(document)).catch(() => {});
+          } else {
+            // Escape freed a pointer the game wants (the hint says so): take
+            // it back in this same click, before full screen spends it.
+            if ($("relook").hasAttribute("data-on")) {
+              $("flint").requestPointerLock?.()?.catch?.(() => {});
+            }
+            go();
+          }
+          // Keys go to the canvas, not to this button.
+          if ($("gate").hasAttribute("data-gone")) $("flint").focus({ preventScroll: true });
+        });
+
+        const follow = () => {
+          const on = !!current();
+          if (on) root.dataset.fullscreen = "";
+          else delete root.dataset.fullscreen;
+          const label = on ? "Leave full screen" : "Full screen";
+          button.setAttribute("aria-label", label);
+          button.title = label;
+        };
+        document.addEventListener("fullscreenchange", follow);
+        document.addEventListener("webkitfullscreenchange", follow);
+        document.addEventListener("pointerlockchange", () => {
+          if (document.pointerLockElement) root.dataset.looking = "";
+          else delete root.dataset.looking;
+        });
+      })();
+    </script>
+
     <!-- The doorway (#103). Trunk's loader (Trunk.toml) waits on
          window.flintDoorway before it fetches the wasm. It opens when there is
          a game to play and WebGPU to play it on. Otherwise it stays shut and
@@ -239,6 +436,21 @@
         const root = document.documentElement;
         const embed = query.has("embed") && query.get("embed") !== "0";
         if (embed) root.dataset.embed = "";
+        // A phone or a tablet (#132): its main pointer is a finger. The
+        // player asks for no pointer lock there (web_page.rs), so the gate
+        // says nothing about a mouse or Esc.
+        const touchFirst = matchMedia("(pointer: coarse)").matches;
+        const TOUCH_CONTROLS = "sound on · a paired pad plays it all · touch controls are coming";
+        if (touchFirst) {
+          root.dataset.touch = "";
+          document.getElementById("gate-controls").textContent = TOUCH_CONTROLS;
+          // Safari's pinch is a gesture event that touch-action doesn't stop.
+          document.addEventListener("gesturestart", (e) => {
+            if (!("door" in root.dataset)) e.preventDefault();
+          });
+          // Begin also asks for fullscreen here: the gate's full screen
+          // switch (#135, above) starts on for a finger.
+        }
         let open;
         window.flintDoorway = new Promise((resolve) => (open = resolve));
 
@@ -264,8 +476,10 @@
             document.title = `${entry.title} · Flint`;
             document.getElementById("gate-title").textContent = entry.title;
             document.getElementById("gate-line").textContent = entry.line || "";
-            // How it's played, when the game says (a kart has no mouse look).
-            if (entry.controls) document.getElementById("gate-controls").textContent = entry.controls;
+            // How it's played, when the game says (a kart has no mouse look),
+            // and on a touch device how it's played there.
+            const controls = touchFirst ? entry.touch : entry.controls;
+            if (controls) document.getElementById("gate-controls").textContent = controls;
           }
           open();
         }

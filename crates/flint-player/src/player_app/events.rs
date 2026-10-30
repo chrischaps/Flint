@@ -602,6 +602,8 @@ impl PlayerApp {
             }
             self.input
                 .set_screen_size(new_size.width as f64, new_size.height as f64);
+            #[cfg(target_arch = "wasm32")]
+            self.measure_touch_scale(new_size);
             if self.cursor_captured {
                 self.centre_the_cursor();
             }
@@ -1046,6 +1048,8 @@ impl PlayerApp {
             let id = touch.id;
             let x = touch.location.x;
             let y = touch.location.y;
+            #[cfg(target_arch = "wasm32")]
+            let (x, y) = self.touch_to_surface(x, y);
             match touch.phase {
                 winit::event::TouchPhase::Started => {
                     self.input.process_touch_start(id, x, y);
