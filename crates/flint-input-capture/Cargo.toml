@@ -6,8 +6,13 @@ license.workspace = true
 description = "High-rate gamepad capture producing audio-clock-timestamped verb-space input events"
 
 [dependencies]
+web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-music = { workspace = true }
 gilrs = { workspace = true }
-gilrs-core = { workspace = true }
 tracing = { workspace = true }
+
+# The capture thread and its rumble engine are native only: a browser has no
+# threads to spawn and no direct motor writes (ADR 0025).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gilrs-core = { workspace = true }

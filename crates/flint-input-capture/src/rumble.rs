@@ -24,7 +24,8 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 // ---------------------------------------------------------------------------
 // H2: the capture-thread rumble service (ADR 0026)
@@ -316,6 +317,7 @@ pub fn haptic_sink(
 /// Acquire an ff device for the capture loop: first connected ff-capable
 /// pad, or a loud warning and `None` (commands become no-ops — rumble must
 /// never take the input path down with it).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn ff_device_or_warn() -> Option<gilrs_core::FfDevice> {
     match open_ff_device() {
         Ok((pad, dev)) => {
@@ -334,6 +336,7 @@ pub(crate) fn ff_device_or_warn() -> Option<gilrs_core::FfDevice> {
 // ---------------------------------------------------------------------------
 
 /// Call-duration statistics in microseconds.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct CallStats {
     pub n: u64,
@@ -343,6 +346,7 @@ pub struct CallStats {
     pub max_us: f64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn call_stats(samples: &[f64]) -> CallStats {
     let mut v: Vec<f64> = samples.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -370,6 +374,7 @@ fn call_stats(samples: &[f64]) -> CallStats {
 /// The H1 spike's answer: whether ff works on this backend at all, what the
 /// three weight-axis prototypes feel like, and what each command path costs
 /// at the call site.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct RumbleSpikeReport {
     pub pad: String,
@@ -383,6 +388,7 @@ pub struct RumbleSpikeReport {
     pub feel_patterns: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RumbleSpikeReport {
     /// Serialize as the TOML committed to `logs/latency/`.
     pub fn to_toml(&self) -> String {
@@ -415,6 +421,7 @@ impl RumbleSpikeReport {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn fmt(v: f64) -> String {
     if v.is_finite() {
         format!("{v:.1}")
@@ -424,6 +431,7 @@ fn fmt(v: f64) -> String {
 }
 
 /// Acquire the first connected ff-capable pad's device via gilrs-core.
+#[cfg(not(target_arch = "wasm32"))]
 fn open_ff_device() -> flint_core::Result<(String, gilrs_core::FfDevice)> {
     let gilrs = gilrs_core::Gilrs::new().map_err(|e| {
         flint_core::FlintError::InputError(format!("gamepad backend unavailable: {e}"))
@@ -452,15 +460,19 @@ fn open_ff_device() -> flint_core::Result<(String, gilrs_core::FfDevice)> {
 }
 
 /// Motor magnitudes for the three weight-axis prototypes (u16 full scale).
+#[cfg(not(target_arch = "wasm32"))]
 const TICK_WEAK: u16 = 22_000;
+#[cfg(not(target_arch = "wasm32"))]
 const THUMP_STRONG: u16 = 45_000;
+#[cfg(not(target_arch = "wasm32"))]
 const THUMP_WEAK: u16 = 25_000;
+#[cfg(not(target_arch = "wasm32"))]
 const GRIND_STRONG: u16 = 14_000;
 
 /// Run the H1 spike: prove ff fires, let the operator feel the three
 /// weight-axis prototypes, and time both command paths. Blocking; prints
 /// progress. `feel = false` skips the operator-felt patterns (timing only).
-#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
     let (pad, mut dev) = open_ff_device()?;
     println!("rumble spike on: {pad}");
@@ -524,7 +536,7 @@ pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
     })
 }
 
-#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
+#[cfg(not(target_arch = "wasm32"))]
 fn time_effect_play() -> flint_core::Result<CallStats> {
     use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
     let mut gilrs = gilrs::Gilrs::new().map_err(|e| {

@@ -25,6 +25,13 @@
 //! timestamps are only as fine as the poll cadence, which is exactly why
 //! this thread exists and why [`measure_granularity`] reports the real
 //! numbers instead of trusting the driver.
+//!
+//! On wasm32 the thread, its loop and the motor path compile out (a browser
+//! has no threads to spawn), and [`spawn_with_rumble`] reports capture as
+//! unavailable. The verb maps, deadzone and rumble scheduling still build, so
+//! the loop's helpers go unused there.
+
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
 pub mod rumble;
 
@@ -37,7 +44,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
+use web_time::{Instant, SystemTime};
 
 /// Which physical→verb mapping the capture thread speaks (ADR 0030).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -164,6 +172,24 @@ pub fn spawn(
 /// ~1 ms resolution, directly via XInput (ADR 0025 — the gilrs ff server's
 /// 50 ms tick is bypassed). With no ff-capable pad the channel accepts
 /// commands and warns once; input capture is unaffected.
+///
+/// On wasm32 there is no thread to spawn, so this is always `Err` and a
+/// session plays without high-rate capture (see [`attach_session_input`]).
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_with_rumble(
+    _bridge: ClockBridge,
+    _cfg: CaptureConfig,
+) -> flint_core::Result<(
+    CaptureHandle,
+    mpsc::Receiver<InputEvent>,
+    mpsc::Sender<rumble::RumbleCommand>,
+)> {
+    Err(flint_core::FlintError::InputError(
+        "the 1 kHz capture thread is native only; a browser has no threads to spawn".into(),
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_with_rumble(
     bridge: ClockBridge,
     cfg: CaptureConfig,
@@ -278,7 +304,7 @@ pub fn connected_gamepads() -> flint_core::Result<Vec<String>> {
         .collect())
 }
 
-#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
+#[cfg(not(target_arch = "wasm32"))]
 fn capture_loop(
     bridge: ClockBridge,
     cfg: CaptureConfig,
@@ -553,7 +579,7 @@ const BUCKET_EDGES_MS: [f64; 8] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 33.0, f64::INF
 /// Poll gilrs at `poll_hz` for `duration`, recording inter-event intervals
 /// while the operator wiggles the stick. Blocking; run on a spare thread or
 /// a dedicated CLI mode.
-#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
+#[cfg(not(target_arch = "wasm32"))]
 pub fn measure_granularity(
     duration: Duration,
     poll_hz: u32,

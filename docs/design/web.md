@@ -1,11 +1,11 @@
 # Flint on the Web
 
-Status: game bundles done (#98, epic #94). The browser entry runs the real
-`PlayerApp`: it fetches a game bundle with a progress bar, serves every read
-from it through the vfs (#97), opens the WebGPU device without blocking
-(#99) and draws to a page canvas that follows the window's size. A bare page
-with no bundle still plays the First Light scene, made of the engine's own
-geometry.
+Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
+(#100) and game bundles (#98) done, epic #94. The browser entry runs the
+real `PlayerApp`: it fetches a game bundle with a progress bar, serves every
+read from it through the vfs, opens the WebGPU device without blocking and
+draws to a page canvas that follows the window's size. A bare page with no
+bundle still plays the First Light scene, made of the engine's own geometry.
 
 ## Try it
 
@@ -13,7 +13,8 @@ geometry.
 rustup target add wasm32-unknown-unknown
 cargo check --target wasm32-unknown-unknown -p flint-player   # the whole player
 cd crates/flint-player
-trunk serve                 # http://127.0.0.1:8080, the First Light scene
+trunk serve                 # http://127.0.0.1:8080, the player on the First Light scene
+trunk serve shims.html      # the shim check (#100): sky clear, time, pad, rebinds
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
 ```
 
@@ -22,9 +23,9 @@ CI keeps this compiling (#96). The `wasm32 check` job in
 clippy pass over `flint-player` and the workspace crates it links, with every
 lint off but `disallowed_methods`, configured in
 `scripts/wasm-clippy/clippy.toml` to deny `Instant::now`, `SystemTime::now`
-and their `elapsed()`. Those are the calls that compile but panic. The 32
-sites that predate the check are marked with an allow naming #100, so
-`grep -rn disallowed_methods crates` is that ticket's list.
+and their `elapsed()`. Those are the calls that compile but panic. #100
+moved the 32 sites that predated the check to `web-time` and removed
+their allows, so a std time call in a runtime crate now fails the check.
 
 The page is `crates/flint-player/index.html` and builds the `flint-web` bin
 (`src/bin/flint_web.rs`), the web twin of `main.rs`. Its arguments come from
@@ -127,9 +128,9 @@ engine subtree's schemas):
 counted `float.flintpack 0.3 / 3.7 MB` up to 3.7 over 2.3 s. The scene loaded
 from the bundle (44 entities) and drew Float's raft, body and ocean while
 `audio 0.2 / 7.1 MB` filled over the next 4.8 s, and the bar faded on
-`late bundle audio: 49 files`. The frame then stops: a `std::time` call
-panics right after startup ("time not implemented on this platform"), the
-sites #100 moves to `web-time`. With every engine read now live, the release
+`late bundle audio: 49 files`. The frame then stopped on a `std::time`
+panic right after startup ("time not implemented on this platform"): this
+was measured before #100 moved those sites to `web-time`. With every engine read now live, the release
 wasm is 14.2 MB after `wasm-opt -Oz`, 5.1 MB gzipped (it was 9.4 / 3.5 MB
 while the vfs left file-reading code dead).
 
@@ -196,7 +197,7 @@ Five errors in all, against the seven crates the issue was worried about:
 | `rhai` | builds. `module_resolvers::FileModuleResolver` is not there | `ScriptEngine::set_module_base` skipped the resolver on wasm. Since #97 it installs `VfsModuleResolver` (flint-script) on every target, so `import` resolves through the vfs |
 | `wgpu` 23 | builds (WebGPU backend by default, no naga or wgpu-core). `Instance::enumerate_adapters` is not there | `gpu_select` treats the adapter list as empty on wasm. `--gpu` / `WGPU_ADAPTER_NAME` fall back to `request_adapter` |
 | `rapier3d` / `parry3d` | builds clean | none |
-| `gilrs` (xinput-only features, ADR 0011) | builds clean. gilrs-core picks its web Gamepad backend by target | none needed to compile. M2 still owes per-target features |
+| `gilrs` (xinput-only features, ADR 0011) | builds clean. gilrs-core picks its web Gamepad backend by target | none needed to compile. See "Shims landed (#100)" for features |
 | `gltf`, `image`, `toml`, `hecs`, `winit` 0.30 | build clean | none |
 
 `cargo tree` lists 390 distinct crates in the wasm graph.
@@ -211,17 +212,44 @@ tickets). Counts are for the runtime crates the player links:
   `flint-player` bin comes out at 2.4 MB with 4 imports because `load_scene`
   always fails and the whole engine after it is dead code. Any size number
   taken from the stock bin is wrong until the vfs lands.
-- **`Instant::now`** panics ("time not implemented on this platform"). 25
-  calls in 11 files. #99 moved the ones on the player's frame path
-  (`GameClock`, `InputState`, the persist debounce, frame pacing) to
-  `web_time::Instant`, which is std's on native. Music, input capture,
-  procgen's cache and asset-gen remain for #100.
 - **`pollster::block_on`**: done in #99, see Async startup above.
-- **`std::thread`**: `flint-input-capture` spawns its 1 kHz capture thread
-  and the rumble path sleeps. Both panic on wasm. Gate them, or use the
-  gamepad API's polling on the main thread.
-- **`dirs::config_dir`** returns `None`, so user input overrides go to
-  `localStorage` instead.
+
+### Shims landed (#100)
+
+- **Time.** `std::time::Instant::now` and `SystemTime::now` panic ("time not
+  implemented on this platform"). Every runtime use now goes through
+  `web-time` (already in the graph through egui and rhai): `GameClock`,
+  input timestamps, the save debounce, frame pacing, the music clock bridge
+  and session, procgen's cache, queue and random seed, input capture, and
+  rhai's `random`. On native `web_time` re-exports std's types, so the
+  signatures callers see are the same. The unused `instant` workspace dep is
+  gone. Tests and native-only tools (flint-cli, the viewer) keep std.
+- **Gamepads.** gilrs-core picks its backend by target: XInput on Windows
+  through the `xinput` feature (ADR 0011, unchanged), the browser Gamepad API
+  on wasm32. The feature has to stay on for every target, because
+  gilrs-core 0.6.7's "needs xinput or wgi" `compile_error!` isn't gated to
+  Windows. It does nothing elsewhere, since rusty-xinput is a Windows-only
+  dep. The direct `gilrs-core` dependency (the rumble motor path, ADR 0025)
+  is native only.
+- **Threads.** `flint-input-capture`'s 1 kHz capture loop, `measure_granularity`
+  and the rumble spike compile out on wasm. `spawn_with_rumble` returns `Err`
+  there, which `attach_session_input` already treats as "play without
+  input". A music session on the web has no high-rate capture yet. The
+  player's ordinary once-a-frame gilrs poll still drives `InputState`.
+- **Settings.** `flint_player::user_files` holds the files the player writes
+  for the person playing: ordinary files under `dirs::config_dir()` on the
+  desktop, and `localStorage` keys on the web (`flint:/config/flint/input_<game_id>.toml`).
+  The input override's resolve, read and write go through it, so a rebind
+  survives a reload. `dirs` is a native-only dependency now.
+- **Desktop-only tools.** `notify`, `rfd` and `ureq` aren't in the wasm
+  graph at all: `cargo tree --target wasm32-unknown-unknown -p flint-player
+  -i <crate>` finds none of them. Only flint-cli and the viewer use them.
+  The remaining `std::process::id` calls in player crates are all in tests.
+
+The shim page (`shims.html`, bin `flint-web-shims`) exercises all of these: the day runs on
+`web_time::Instant`, the left stick scrubs it, `pause_day` (Space or the
+pad's South button) holds it through `InputState`, and R followed by a key
+or pad button rebinds `pause_day` and saves the rebind through `user_files`.
 - **Audio:** `AudioManager::new()` already sits behind an `Option`, so the
   null cpal host degrades to silence. Real sound needs cpal's
   `wasm-bindgen` feature and a click to start the `AudioContext`.
@@ -234,8 +262,10 @@ gzip -9:
 | Build | wasm-bindgen output | after `wasm-opt -Oz` | gzip -9 |
 |---|---|---|---|
 | `flint-web` spike (wgpu + winit only) | 792 KB | 408 KB | 164 KB |
+| `flint-web-shims`, the #100 shim check (+ `InputState`, toml, gilrs) | | 857 KB | 329 KB |
 | Whole engine (size probe, below) | 14.9 MB | 10.7 MB | 4.1 MB |
-| `flint-web` running PlayerApp (#99; fs-backed code still dead) | | 9.4 MB | 3.5 MB |
+| `flint-web` running PlayerApp (#99, measured before the vfs merge; file-reading code was still dead) | | 9.4 MB | 3.5 MB |
+| `flint-web` reading game bundles (#98; every engine read live) | | 14.2 MB | 5.1 MB |
 
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to

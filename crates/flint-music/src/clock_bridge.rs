@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use web_time::Instant;
 
 /// Ring capacity. With [`MIN_PAIR_SPACING`] the ring always spans ~2 s no
 /// matter how fast the session loop calls `observe`.
@@ -83,7 +83,6 @@ fn lock_or_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl ClockBridge {
-    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn new(sample_rate: u32) -> Self {
         Self {
             inner: Arc::new(Mutex::new(BridgeInner {

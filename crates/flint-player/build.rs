@@ -5,13 +5,12 @@
 //! of text). A game bundle's own schemas (#98) load over them. Writes
 //! `$OUT_DIR/engine_schemas.rs`; the desktop player never includes it.
 
-// A build script runs on the host, where std::fs is the right call; the
-// wasm check's vfs rule (#97) is for code that runs in the browser.
-#![allow(clippy::disallowed_methods)]
-
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+// A build script runs on the host at compile time, never in the browser, so
+// the wasm check's ban on file reads (scripts/wasm-clippy) doesn't apply.
+#[allow(clippy::disallowed_methods)]
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
     let mut out = String::new();

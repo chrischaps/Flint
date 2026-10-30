@@ -117,7 +117,6 @@ impl PlayerApp {
     /// or `force` is set (transition / exit). A script's `persist_save()`
     /// also forces.
     pub(super) fn flush_persistent_store(&mut self, force: bool, reason: &str) {
-        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let now = Instant::now();
         if self.persistent_store.is_dirty() {
             self.persist_debounce.note_dirty(now);

@@ -9,6 +9,14 @@
 //! 2. **Rules** — closures that rewrite symbols; first match wins
 //! 3. **Expansion** — iterative string rewriting up to `max_depth` iterations
 //! 4. **Turtle** — walks the expanded symbol string, emitting `BranchSegment`s
+//!
+//! The same engine also reads grammars written as text, the way they appear
+//! in *The Algorithmic Beauty of Plants*: an axiom like `"X"` and rules like
+//! `"X -> F[+X][-X]FX"`. See [`grammar`] for that notation.
+
+pub mod grammar;
+
+pub use grammar::{interpret, Grammar, ProductionRule, TurtleConfig};
 
 use crate::rng::SeededRng;
 use crate::types::BranchSegment;
@@ -172,14 +180,18 @@ impl LSystem {
 
 // ─── C. Turtle Interpreter ───────────────────────────────────────────────────
 
-/// Internal turtle state for walking the symbol string.
+/// Turtle state for walking a symbol string: a position and an orthonormal
+/// frame (heading, up, right), plus the bracket nesting depth.
+///
+/// Shared by [`interpret_turtle`] and the text-grammar interpreter in
+/// [`grammar`].
 #[derive(Debug, Clone)]
-struct TurtleState {
-    position: Vec3,
-    heading: Vec3,
-    up: Vec3,
-    right: Vec3,
-    depth: u32,
+pub(crate) struct TurtleState {
+    pub(crate) position: Vec3,
+    pub(crate) heading: Vec3,
+    pub(crate) up: Vec3,
+    pub(crate) right: Vec3,
+    pub(crate) depth: u32,
 }
 
 impl Default for TurtleState {
@@ -194,6 +206,34 @@ impl Default for TurtleState {
     }
 }
 
+impl TurtleState {
+    /// The point `length` along the heading.
+    pub(crate) fn ahead(&self, length: f32) -> Vec3 {
+        self.position + self.heading * length
+    }
+
+    /// Rotate around the up axis; positive turns left.
+    pub(crate) fn yaw(&mut self, degrees: f32) {
+        let rad = degrees.to_radians();
+        self.heading = rotate_around_axis(self.heading, self.up, rad);
+        self.right = rotate_around_axis(self.right, self.up, rad);
+    }
+
+    /// Rotate around the right axis; positive pitches the nose up.
+    pub(crate) fn pitch(&mut self, degrees: f32) {
+        let rad = degrees.to_radians();
+        self.heading = rotate_around_axis(self.heading, self.right, rad);
+        self.up = rotate_around_axis(self.up, self.right, rad);
+    }
+
+    /// Rotate around the heading axis; positive rolls clockwise.
+    pub(crate) fn roll(&mut self, degrees: f32) {
+        let rad = degrees.to_radians();
+        self.up = rotate_around_axis(self.up, self.heading, rad);
+        self.right = rotate_around_axis(self.right, self.heading, rad);
+    }
+}
+
 /// Interpret expanded symbols with a 3D turtle, emitting `BranchSegment`s.
 fn interpret_turtle(symbols: &[Symbol], params: &LSystemParams) -> Result<Vec<BranchSegment>> {
     let mut segments = Vec::new();
@@ -203,11 +243,7 @@ fn interpret_turtle(symbols: &[Symbol], params: &LSystemParams) -> Result<Vec<Br
     for sym in symbols {
         match *sym {
             Symbol::Forward { length, radius } => {
-                let end = Vec3::new(
-                    state.position.x + state.heading.x * length,
-                    state.position.y + state.heading.y * length,
-                    state.position.z + state.heading.z * length,
-                );
+                let end = state.ahead(length);
                 let radius_end = radius * params.radius_decay;
                 segments.push(BranchSegment {
                     start: state.position,
@@ -225,43 +261,13 @@ fn interpret_turtle(symbols: &[Symbol], params: &LSystemParams) -> Result<Vec<Br
                 }
                 state.position = end;
             }
-            Symbol::Move { length } => {
-                state.position = Vec3::new(
-                    state.position.x + state.heading.x * length,
-                    state.position.y + state.heading.y * length,
-                    state.position.z + state.heading.z * length,
-                );
-            }
-            Symbol::YawLeft { angle } => {
-                let rad = angle.to_radians();
-                state.heading = rotate_around_axis(state.heading, state.up, rad);
-                state.right = rotate_around_axis(state.right, state.up, rad);
-            }
-            Symbol::YawRight { angle } => {
-                let rad = -angle.to_radians();
-                state.heading = rotate_around_axis(state.heading, state.up, rad);
-                state.right = rotate_around_axis(state.right, state.up, rad);
-            }
-            Symbol::PitchUp { angle } => {
-                let rad = angle.to_radians();
-                state.heading = rotate_around_axis(state.heading, state.right, rad);
-                state.up = rotate_around_axis(state.up, state.right, rad);
-            }
-            Symbol::PitchDown { angle } => {
-                let rad = -angle.to_radians();
-                state.heading = rotate_around_axis(state.heading, state.right, rad);
-                state.up = rotate_around_axis(state.up, state.right, rad);
-            }
-            Symbol::RollCw { angle } => {
-                let rad = angle.to_radians();
-                state.up = rotate_around_axis(state.up, state.heading, rad);
-                state.right = rotate_around_axis(state.right, state.heading, rad);
-            }
-            Symbol::RollCcw { angle } => {
-                let rad = -angle.to_radians();
-                state.up = rotate_around_axis(state.up, state.heading, rad);
-                state.right = rotate_around_axis(state.right, state.heading, rad);
-            }
+            Symbol::Move { length } => state.position = state.ahead(length),
+            Symbol::YawLeft { angle } => state.yaw(angle),
+            Symbol::YawRight { angle } => state.yaw(-angle),
+            Symbol::PitchUp { angle } => state.pitch(angle),
+            Symbol::PitchDown { angle } => state.pitch(-angle),
+            Symbol::RollCw { angle } => state.roll(angle),
+            Symbol::RollCcw { angle } => state.roll(-angle),
             Symbol::Push => {
                 stack.push(state.clone());
                 state.depth += 1;
@@ -622,9 +628,6 @@ mod tests {
 
     #[test]
     fn yaw_left_90_rotates_heading() {
-        // Starting heading is +Y. Yaw left 90° around up (-Z) should
-        // rotate +Y heading toward -X (since we rotate positively around -Z).
-        // Actually let's just verify the heading changes correctly.
         let params = default_params(1);
         let sys = LSystemBuilder::new(
             vec![
@@ -646,18 +649,12 @@ mod tests {
         let start = segments[0].start;
         let end = segments[0].end;
 
-        // Start should be at origin
+        // Yaw turns around the up axis (-Z), and a positive turn carries the
+        // heading from +Y to +X.
         assert!(vec3_approx_eq(start, Vec3::ZERO));
-        // End should be 5 units away from origin (not along +Y)
-        let len = segments[0].length();
         assert!(
-            (len - 5.0).abs() < 1e-4,
-            "segment length should be 5.0, got {len}"
-        );
-        // Should NOT be along +Y anymore
-        assert!(
-            (end.y - 0.0).abs() < 0.1 || (end.x.abs() > 0.1 || end.z.abs() > 0.1),
-            "heading should have rotated away from pure +Y"
+            vec3_approx_eq(end, Vec3::new(5.0, 0.0, 0.0)),
+            "yaw left 90 should head along +X, got {end:?}"
         );
     }
 

@@ -27,8 +27,9 @@
 //! the directory path the caller passed joined with the entry's name, the way
 //! `std::fs::read_dir(..).path()` does.
 //!
-//! **Writes are out of scope.** Scene saving, input-config overrides, save
+//! **Writes are out of scope.** Scene saving, save
 //! games and replay recordings still write with `std::fs`, natively only.
+//! Input-config overrides go through `flint_player::user_files` (#100).
 //! Hot reload also stays on the disk: it polls `std::fs::metadata` for
 //! modification times, which a memory source has none of, so on the web it
 //! simply never fires.

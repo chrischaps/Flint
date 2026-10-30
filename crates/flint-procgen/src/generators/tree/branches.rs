@@ -1,7 +1,7 @@
 //! Branch generation — wires L-system and space colonization algorithms
 //! to produce branch geometry attached to a trunk tip.
 
-use crate::algorithms::lsystem::{stochastic_tree_lsystem, LSystemParams};
+use crate::algorithms::lsystem::{stochastic_tree_lsystem, Grammar, LSystemParams, TurtleConfig};
 use crate::algorithms::mesh_builder::extrude::{
     build_spine_from_positions, extrude_along_curve, ExtrudeParams,
 };
@@ -79,6 +79,17 @@ fn generate_lsystem_branches(
     trunk_radius_top: f32,
     rng: &mut SeededRng,
 ) -> Result<Vec<BranchSegment>> {
+    if let Some(grammar) = &params.lsystem_grammar {
+        return generate_grammar_branches(
+            params,
+            grammar,
+            trunk_tip,
+            trunk_dir,
+            trunk_radius_top,
+            rng,
+        );
+    }
+
     let base_angle = (params.branch_angle_min + params.branch_angle_max) / 2.0;
     let variation = (params.branch_angle_max - params.branch_angle_min) / 2.0;
     let angle_variation = variation + params.lsystem_angle_variation;
@@ -135,6 +146,59 @@ fn generate_lsystem_branches(
     // to world space (trunk_dir heading at trunk_tip)
     transform_segments(&mut segments, trunk_tip, trunk_dir);
 
+    Ok(segments)
+}
+
+/// Grow the crown from a text grammar.
+///
+/// Unlike the built-in rule, every segment is kept: the grammar's depth-0
+/// segments carry the trunk on from its tip, at the trunk's top radius.
+/// Without `lsystem_step` the crown is drawn with unit steps and then scaled
+/// so its farthest point is `lsystem_size` from the trunk tip; radii are
+/// left alone, so a bigger crown doesn't get fatter branches.
+fn generate_grammar_branches(
+    params: &BranchParams,
+    grammar: &Grammar,
+    trunk_tip: Vec3,
+    trunk_dir: Vec3,
+    trunk_radius_top: f32,
+    rng: &mut SeededRng,
+) -> Result<Vec<BranchSegment>> {
+    let angle = params
+        .lsystem_angle
+        .unwrap_or((params.branch_angle_min + params.branch_angle_max) / 2.0);
+    let config = TurtleConfig {
+        step_length: params.lsystem_step.unwrap_or(1.0),
+        radius: trunk_radius_top,
+        length_decay: params.branch_length_falloff,
+        radius_decay: params.branch_radius_falloff,
+        tropism_strength: params.lsystem_tropism,
+        max_segments: params.max_segments,
+        ..TurtleConfig::default().with_angle(angle)
+    };
+
+    let mut grammar_rng = rng.fork("lsystem");
+    let mut segments = grammar.generate(
+        params.lsystem_iterations as usize,
+        &config,
+        &mut grammar_rng,
+    )?;
+
+    if params.lsystem_step.is_none() {
+        let reach = segments
+            .iter()
+            .map(|seg| seg.end.length())
+            .fold(0.0f32, f32::max);
+        if reach > 1e-6 {
+            let scale = params.lsystem_size / reach;
+            for seg in segments.iter_mut() {
+                seg.start = seg.start * scale;
+                seg.end = seg.end * scale;
+            }
+        }
+    }
+
+    transform_segments(&mut segments, trunk_tip, trunk_dir);
     Ok(segments)
 }
 
@@ -389,6 +453,83 @@ mod tests {
         }
         .into();
         assert!(BranchParams::from_toml(&toml_val).is_err());
+    }
+
+    // ── Text Grammar Tests ──────────────────────────────────────────────
+
+    #[test]
+    fn branch_params_lsystem_preset() {
+        let toml_val: toml::Value = toml::toml! {
+            lsystem_preset = "fractal_plant"
+        }
+        .into();
+        let p = BranchParams::from_toml(&toml_val).unwrap();
+        assert!(p.lsystem_grammar.is_some());
+        // The preset's own iterations and angle apply unless overridden.
+        assert_eq!(p.lsystem_iterations, 5);
+        assert_eq!(p.lsystem_angle, Some(22.5));
+
+        let toml_val: toml::Value = toml::toml! {
+            lsystem_preset = "fractal_plant"
+            lsystem_iterations = 2
+        }
+        .into();
+        assert_eq!(BranchParams::from_toml(&toml_val).unwrap().lsystem_iterations, 2);
+
+        let toml_val: toml::Value = toml::toml! {
+            lsystem_preset = "baobab"
+        }
+        .into();
+        let err = BranchParams::from_toml(&toml_val).unwrap_err().to_string();
+        assert!(err.contains("fractal_plant"), "should list presets: {err}");
+    }
+
+    #[test]
+    fn branch_params_lsystem_rules() {
+        let toml_val: toml::Value = toml::toml! {
+            lsystem_axiom = "X"
+            lsystem_rules = ["X -> F[+X][-X]FX", "F -> FF"]
+            lsystem_tropism = 0.2
+        }
+        .into();
+        let p = BranchParams::from_toml(&toml_val).unwrap();
+        assert_eq!(p.lsystem_grammar.unwrap().rules.len(), 2);
+        assert!((p.lsystem_tropism - 0.2).abs() < 1e-6);
+
+        // An axiom with no rules, or a broken rule, is an error.
+        let toml_val: toml::Value = toml::toml! { lsystem_axiom = "X" }.into();
+        assert!(BranchParams::from_toml(&toml_val).is_err());
+        let toml_val: toml::Value = toml::toml! {
+            lsystem_axiom = "X"
+            lsystem_rules = ["X -> F[+X"]
+        }
+        .into();
+        assert!(BranchParams::from_toml(&toml_val).is_err());
+    }
+
+    #[test]
+    fn grammar_crown_starts_at_tip_and_fits_its_size() {
+        let toml_val: toml::Value = toml::toml! {
+            lsystem_preset = "weed"
+            lsystem_iterations = 4
+            lsystem_size = 3.0
+        }
+        .into();
+        let params = BranchParams::from_toml(&toml_val).unwrap();
+        let trunk_tip = Vec3::new(0.0, 5.0, 0.0);
+        let mut rng = SeededRng::new(42);
+        let output = generate_branches(&params, trunk_tip, Vec3::UP, 0.1, &mut rng).unwrap();
+
+        assert!(output.segment_count > 50);
+        assert!((output.segments[0].start - trunk_tip).length() < 1e-4);
+        assert_eq!(output.segments[0].radius_start, 0.1);
+        let reach = output
+            .segments
+            .iter()
+            .map(|s| (s.end - trunk_tip).length())
+            .fold(0.0f32, f32::max);
+        assert!((reach - 3.0).abs() < 1e-3, "reach {reach}");
+        assert!(!output.tip_positions.is_empty());
     }
 
     // ── L-System Path Tests ─────────────────────────────────────────────
