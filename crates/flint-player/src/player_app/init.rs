@@ -115,6 +115,7 @@ impl PlayerApp {
             music_pp_base: None,
             music_pp_restore: None,
             scene_preload_audio: true,
+            audio_vfs_generation: flint_core::vfs::generation(),
             window_size: (1280, 720),
             capture: CaptureConfig::default(),
             exit_requested: false,
@@ -451,14 +452,21 @@ impl PlayerApp {
         // Initialize gamepad backend (best-effort).
         self.gilrs = Gilrs::new().ok();
 
-        // Initialize egui for HUD overlay
+        // Initialize egui for HUD overlay. egui assumes textures of at most
+        // 2048 px a side until told otherwise, and panics on a wider one
+        // (Float's 2713 px title). Give it the device's limit, both for the
+        // passes egui-winit feeds it and now, since UI sprites load before
+        // the first pass.
+        let max_texture_side = render_context.device.limits().max_texture_dimension_2d as usize;
+        self.egui_ctx
+            .input_mut(|i| i.max_texture_side = max_texture_side);
         let egui_winit = egui_winit::State::new(
             self.egui_ctx.clone(),
             egui::ViewportId::ROOT,
             window,
             Some(window.scale_factor() as f32),
             None,
-            None,
+            Some(max_texture_side),
         );
         let egui_renderer = egui_wgpu::Renderer::new(
             &render_context.device,

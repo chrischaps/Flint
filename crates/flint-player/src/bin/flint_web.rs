@@ -1,21 +1,25 @@
-//! Flint in a browser (#94; async startup #99, docs/design/web.md).
+//! Flint in a browser (#94; async startup #99, bundles #98, docs/design/web.md).
 //!
 //! The web twin of `main.rs`. Arguments come from the page's query string
-//! instead of clap, the scene arrives by `fetch`, and the player starts with
-//! winit's `spawn_app` instead of the blocking `run_app`. `PlayerApp` then
-//! asks for its GPU device without blocking (`player_app/web_startup.rs`)
-//! and finishes starting up when it lands.
+//! instead of clap, and the player starts with winit's `spawn_app` instead of
+//! the blocking `run_app`. `PlayerApp` then asks for its GPU device without
+//! blocking (`player_app/web_startup.rs`) and finishes starting up when it
+//! lands.
+//!
+//! A game arrives as a bundle (`flint bundle`, `flint_core::bundle`): the
+//! page fetches it with a progress bar, installs its files as the vfs, and
+//! loads the scene the manifest names, exactly as the desktop reads a game
+//! folder. Its late bundles (audio) are fetched once the player is handed to
+//! the browser; when one lands the vfs grows and the player loads the sounds
+//! it couldn't find at start.
 //!
 //! Query string (all optional):
-//!   scene=<url>     scene TOML, relative to the page (default: the demo scene)
+//!   bundle=<url>    a .flintpack, relative to the page
+//!   scene=<path>    with bundle: a scene inside it instead of the manifest's;
+//!                   without: a scene TOML fetched from <url> (default: the
+//!                   first-light demo, which needs no other files)
 //!   msaa=1|4        scene-pass MSAA (ADR 0058)
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
-//!
-//! The engine schemas are compiled in (`build.rs`). Files the scene points
-//! at (models, textures, scripts, audio) are read through `flint_core::vfs`
-//! (#97), which has nothing in it on the web until game bundles (#98) fill
-//! it. Until then the web player draws scenes made of the engine's own
-//! geometry.
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -33,8 +37,13 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
+    use flint_core::bundle::{self, Bundle, LateBundle};
+    use flint_core::vfs::{self, MemorySource};
+    use flint_ecs::FlintWorld;
     use flint_player::{PlayerApp, WEB_CANVAS_ID};
+    use flint_scene::SceneFile;
     use flint_schema::SchemaRegistry;
+    use std::sync::Arc;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
     use winit::event_loop::{ControlFlow, EventLoop};
@@ -49,7 +58,8 @@ mod web {
 
     /// What `main.rs` takes from clap, read from the query string.
     struct WebArgs {
-        scene: String,
+        bundle: Option<String>,
+        scene: Option<String>,
         msaa: u32,
         size: Option<(u32, u32)>,
     }
@@ -62,7 +72,8 @@ mod web {
             let get = |key: &str| params.as_ref().and_then(|p| p.get(key));
             let num = |key: &str| get(key).and_then(|v| v.parse::<u32>().ok());
             Self {
-                scene: get("scene").unwrap_or_else(|| DEFAULT_SCENE.to_string()),
+                bundle: get("bundle").filter(|b| !b.is_empty()),
+                scene: get("scene").filter(|s| !s.is_empty()),
                 msaa: num("msaa").filter(|&m| m == 1 || m == 4).unwrap_or(1),
                 size: num("width").zip(num("height")),
             }
@@ -84,39 +95,179 @@ mod web {
         });
     }
 
+    /// A scene ready to play: the world, its file, its path and the schema
+    /// directories transitions reload from.
+    struct Loaded {
+        world: FlintWorld,
+        scene_file: SceneFile,
+        scene_path: String,
+        schemas: Vec<String>,
+    }
+
     async fn start() -> Result<(), String> {
         let args = WebArgs::from_query();
         if let Some((w, h)) = args.size {
             fix_canvas_size(w, h);
         }
 
-        let registry = engine_registry()?;
-        status(&format!("loading {}", args.scene));
-        let text = fetch_text(&args.scene).await?;
-        let (world, scene_file) = flint_scene::load_scene_string(&text, &registry)
-            .map_err(|e| format!("{}: {e}", args.scene))?;
+        let mut late = Vec::new();
+        let loaded = match &args.bundle {
+            Some(url) => {
+                let (loaded, source, parts) = load_bundle(url, args.scene.as_deref()).await?;
+                late.push((source, parts, absolute_url(url)?));
+                loaded
+            }
+            None => load_scene_url(args.scene.as_deref().unwrap_or(DEFAULT_SCENE)).await?,
+        };
         tracing::info!(
             "[flint-web] scene {:?}: {} entities",
-            scene_file.scene.name,
-            world.entity_count()
+            loaded.scene_file.scene.name,
+            loaded.world.entity_count()
         );
-        status(&scene_file.scene.name);
+        let title = loaded.scene_file.scene.name.clone();
+        status(&title);
 
         let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
         event_loop.set_control_flow(ControlFlow::Poll);
         let mut app = PlayerApp::new(
-            world,
-            args.scene,
+            loaded.world,
+            loaded.scene_path,
             false,
             None,
-            scene_file.scene.input_config.clone(),
+            loaded.scene_file.scene.input_config.clone(),
         );
         app.msaa_sample_count = args.msaa;
-        app.apply_scene_settings(&scene_file);
+        app.apply_scene_settings(&loaded.scene_file);
+        app.set_schema_paths(loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());
         // Returns at once: the browser drives the loop from here on.
         event_loop.spawn_app(app);
+
+        for (source, parts, base) in late {
+            fetch_late_bundles(source, parts, base, title.clone());
+        }
         Ok(())
+    }
+
+    /// Fetch the main bundle, make it the file system, and load its scene.
+    /// Returns the scene, the installed files (late bundles add to them) and
+    /// the late bundles still to fetch.
+    async fn load_bundle(
+        url: &str,
+        scene_override: Option<&str>,
+    ) -> Result<(Loaded, MemorySource, Vec<LateBundle>), String> {
+        let bytes = fetch_bytes(url, |got, total| {
+            progress(url_name(url), got, total);
+        })
+        .await?;
+        let bundle = Bundle::parse(bytes).map_err(|e| format!("{url}: {e}"))?;
+        let manifest = bundle.manifest.clone();
+        tracing::info!(
+            "[flint-web] bundle {}: {} files, {:.2} MB",
+            manifest.name,
+            manifest.files.len(),
+            bundle.len() as f64 / 1e6
+        );
+        let source = bundle.to_memory_source();
+        drop(bundle);
+        vfs::install(Arc::new(source.clone()));
+
+        let scene_path = scene_override
+            .map(str::to_string)
+            .or(manifest.scene.clone())
+            .ok_or_else(|| format!("{url} names no scene; add ?scene="))?;
+
+        // The engine's schemas are compiled in; the bundle's own (its engine
+        // subtree's, then the game's) load over them, as `--schemas` does.
+        let mut registry = engine_registry()?;
+        let mut schemas = manifest.schemas.clone();
+        for dir in flint_schema::discover_schema_dirs(&scene_path) {
+            let dir = vfs::normalize(&dir);
+            if !schemas.contains(&dir) {
+                schemas.push(dir);
+            }
+        }
+        for dir in &schemas {
+            if vfs::is_dir(dir) {
+                registry
+                    .load_directory(dir)
+                    .map_err(|e| format!("schemas {dir}: {e}"))?;
+            }
+        }
+
+        status(&format!("loading {scene_path}"));
+        let (world, scene_file) = flint_scene::load_scene(&scene_path, &registry)
+            .map_err(|e| format!("{scene_path}: {e}"))?;
+        Ok((
+            Loaded {
+                world,
+                scene_file,
+                scene_path,
+                schemas,
+            },
+            source,
+            manifest.late,
+        ))
+    }
+
+    /// No bundle: one scene TOML by URL, made of the engine's own geometry.
+    async fn load_scene_url(url: &str) -> Result<Loaded, String> {
+        let registry = engine_registry()?;
+        status(&format!("loading {url}"));
+        let text = fetch_text(url).await?;
+        let (world, scene_file) =
+            flint_scene::load_scene_string(&text, &registry).map_err(|e| format!("{url}: {e}"))?;
+        Ok(Loaded {
+            world,
+            scene_file,
+            scene_path: url.to_string(),
+            schemas: Vec::new(),
+        })
+    }
+
+    /// Fetch the late bundles one after another, each growing the vfs when
+    /// it lands. The player notices (`vfs::generation`) and loads the audio.
+    fn fetch_late_bundles(
+        mut source: MemorySource,
+        parts: Vec<LateBundle>,
+        base: String,
+        title: String,
+    ) {
+        if parts.is_empty() {
+            hide_progress();
+            return;
+        }
+        wasm_bindgen_futures::spawn_local(async move {
+            for part in parts {
+                let url = match web_sys::Url::new_with_base(&part.url, &base) {
+                    Ok(u) => u.href(),
+                    Err(_) => part.url.clone(),
+                };
+                let label = part.part.clone();
+                let result = fetch_bytes(&url, |got, total| {
+                    progress(&label, got, total.or(Some(part.size as usize)));
+                })
+                .await
+                .and_then(|bytes| Bundle::parse(bytes).map_err(|e| e.to_string()));
+                match result {
+                    Ok(bundle) => {
+                        tracing::info!(
+                            "[flint-web] late bundle {}: {} files, {:.2} MB",
+                            bundle.manifest.part,
+                            bundle.manifest.files.len(),
+                            bundle.len() as f64 / 1e6
+                        );
+                        bundle.insert_into(&mut source);
+                        vfs::install(Arc::new(source.clone()));
+                    }
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[flint-web] {url}: {e}").into());
+                    }
+                }
+            }
+            status(&title);
+            hide_progress();
+        });
     }
 
     fn engine_registry() -> Result<SchemaRegistry, String> {
@@ -134,7 +285,7 @@ mod web {
         Ok(registry)
     }
 
-    async fn fetch_text(url: &str) -> Result<String, String> {
+    async fn fetch_response(url: &str) -> Result<web_sys::Response, String> {
         let js = |e: wasm_bindgen::JsValue| format!("{url}: {e:?}");
         let window = web_sys::window().ok_or("no window")?;
         let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
@@ -145,6 +296,12 @@ mod web {
         if !response.ok() {
             return Err(format!("{url}: HTTP {}", response.status()));
         }
+        Ok(response)
+    }
+
+    async fn fetch_text(url: &str) -> Result<String, String> {
+        let js = |e: wasm_bindgen::JsValue| format!("{url}: {e:?}");
+        let response = fetch_response(url).await?;
         JsFuture::from(response.text().map_err(js)?)
             .await
             .map_err(js)?
@@ -152,11 +309,65 @@ mod web {
             .ok_or_else(|| format!("{url}: not text"))
     }
 
+    /// Fetch a bundle chunk by chunk, reporting `(bytes so far, whole size)`.
+    /// The size comes from the bundle's own header once it has arrived, not
+    /// Content-Length, which is the compressed size when the host gzips.
+    async fn fetch_bytes(
+        url: &str,
+        mut report: impl FnMut(usize, Option<usize>),
+    ) -> Result<Vec<u8>, String> {
+        let js = |e: wasm_bindgen::JsValue| format!("{url}: {e:?}");
+        let response = fetch_response(url).await?;
+        let body = response.body().ok_or_else(|| format!("{url}: no body"))?;
+        let reader: web_sys::ReadableStreamDefaultReader = body.get_reader().unchecked_into();
+        let mut bytes = Vec::new();
+        let mut total = None;
+        report(0, None);
+        loop {
+            let chunk = JsFuture::from(reader.read()).await.map_err(js)?;
+            let done = js_sys::Reflect::get(&chunk, &"done".into())
+                .map(|v| v.is_truthy())
+                .unwrap_or(true);
+            if done {
+                break;
+            }
+            let value: js_sys::Uint8Array = js_sys::Reflect::get(&chunk, &"value".into())
+                .map_err(js)?
+                .unchecked_into();
+            let start = bytes.len();
+            bytes.resize(start + value.length() as usize, 0);
+            value.copy_to(&mut bytes[start..]);
+            if total.is_none() {
+                total = bundle::total_len(&bytes).map_err(|e| format!("{url}: {e}"))?;
+                if let Some(t) = total {
+                    bytes.reserve(t.saturating_sub(bytes.len()));
+                }
+            }
+            report(bytes.len(), total);
+        }
+        Ok(bytes)
+    }
+
+    /// The bundle's URL made absolute, so late bundles resolve beside it.
+    fn absolute_url(url: &str) -> Result<String, String> {
+        let page = web_sys::window()
+            .and_then(|w| w.location().href().ok())
+            .ok_or("no page URL")?;
+        web_sys::Url::new_with_base(url, &page)
+            .map(|u| u.href())
+            .map_err(|e| format!("{url}: {e:?}"))
+    }
+
+    fn url_name(url: &str) -> &str {
+        url.rsplit('/').next().unwrap_or(url)
+    }
+
+    fn element(id: &str) -> Option<web_sys::Element> {
+        web_sys::window()?.document()?.get_element_by_id(id)
+    }
+
     fn fix_canvas_size(width: u32, height: u32) {
-        let canvas = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.get_element_by_id(WEB_CANVAS_ID));
-        if let Some(canvas) = canvas {
+        if let Some(canvas) = element(WEB_CANVAS_ID) {
             let style = format!("width: {width}px !important; height: {height}px !important;");
             let _ = canvas.set_attribute("style", &style);
         }
@@ -164,11 +375,29 @@ mod web {
 
     /// The small line under the wordmark: what's loading, or what failed.
     fn status(text: &str) {
-        let el = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.get_element_by_id("status"));
-        if let Some(el) = el {
+        if let Some(el) = element("status") {
             el.set_text_content(Some(text));
+        }
+    }
+
+    /// The bar under the wordmark and its line: "float.flintpack 1.8 / 3.7 MB".
+    fn progress(label: &str, got: usize, total: Option<usize>) {
+        let mb = |b: usize| b as f64 / 1e6;
+        let text = match total {
+            Some(t) => format!("{label}  {:.1} / {:.1} MB", mb(got), mb(t)),
+            None => format!("{label}  {:.1} MB", mb(got)),
+        };
+        status(&text);
+        if let Some(bar) = element("progress") {
+            let _ = bar.set_attribute("data-active", "");
+            let fraction = total.map(|t| got as f64 / t.max(1) as f64).unwrap_or(0.0);
+            let _ = bar.set_attribute("style", &format!("--p: {:.4}", fraction.min(1.0)));
+        }
+    }
+
+    fn hide_progress() {
+        if let Some(bar) = element("progress") {
+            let _ = bar.remove_attribute("data-active");
         }
     }
 }

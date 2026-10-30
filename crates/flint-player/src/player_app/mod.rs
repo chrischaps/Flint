@@ -292,6 +292,10 @@ pub struct PlayerApp {
     /// (silent scenes start instantly); audio_source + session stems
     /// unaffected. Set from the scene file before startup, like msaa.
     pub scene_preload_audio: bool,
+    /// `vfs::generation()` when the scene's audio was last loaded. A late
+    /// bundle (#98) installs a grown file source mid-game; when the count
+    /// moves, the audio that couldn't be found before is loaded.
+    pub(super) audio_vfs_generation: u64,
 
     /// Initial window size in physical pixels (`--width`/`--height`).
     /// Ignored on Android, where the surface is the screen.

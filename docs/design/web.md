@@ -1,16 +1,15 @@
 # Flint on the Web
 
-Status: M0 spike (#95), M2 platform shims (#100) and async startup (#99)
-done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a
-scene, opens the WebGPU device without blocking, and draws the scene to a
-page canvas that follows the window's size. Files the scene points at
-(models, textures, scripts, audio) go through the vfs (#97), which stays
-empty on the web until game bundles (#98) fill it, so the web draws scenes
-made of the engine's own geometry: boxes, the procedural sky, the Gerstner
-ocean.
+Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
+(#100), sound (#101) and game bundles (#98) done, epic #94. The browser
+entry runs the real `PlayerApp`: it fetches a game bundle with a progress
+bar, serves every read from it through the vfs, opens the WebGPU device
+without blocking and draws to a page canvas that follows the window's size.
+A bare page with no bundle still plays the First Light scene, made of the
+engine's own geometry.
 Sound (#101) plays behind a Begin gate on the shim page; the player is
 silent on the web until its page calls `start_audio()` from a gesture
-([Sound](#sound)).
+([Sound](#sound)). The bundle page has no gate yet, so it plays silent.
 
 ## Try it
 
@@ -39,12 +38,106 @@ the query string instead of clap:
 
 | Query | Desktop flag | Meaning |
 |---|---|---|
-| `scene=<url>` | `<scene>` | scene TOML, fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
+| `bundle=<url>` | `--bundle` | a `.flintpack` from `flint bundle`, relative to the page. Its manifest names the scene and schemas; its late bundles are fetched beside it |
+| `scene=<url>` | `<scene>` | with `bundle`: a scene inside it instead of the manifest's. Without: a scene TOML fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
 | `msaa=1\|4` | `--msaa` | scene-pass MSAA |
 | `width=&height=` | `--width --height` | fix the canvas to that many CSS pixels; otherwise it fills the page |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
-and `schemas/archetypes`), since a browser can't list a directory.
+and `schemas/archetypes`), since a browser can't list a directory. A
+bundle's own schema directories load over them.
+
+## Game bundles (#98)
+
+A browser has no files, so a game ships as one or two fetched blobs. `flint
+bundle <game>` packs the game folder; `flint_core::bundle` is the format.
+
+```bash
+flint bundle ../Float                     # dist/float.flintpack, dist/float.audio.flintpack
+flint bundle ../Float --list --dry-run    # every file, its size and its bundle; writes nothing
+flint-player --bundle dist/float.flintpack   # play it on the desktop, every read from the bundle
+# web: put both files next to index.html and open ?bundle=float.flintpack
+```
+
+**Format.** `FLINTPAK`, a `u32` format version, a `u32` manifest length, the
+manifest as TOML, then every file's bytes back to back, uncompressed. The
+manifest names the game, the start scene, the schema directories in load
+order, the late bundles and each file's path, offset and size. Most of a
+game is PNG, GLB and Ogg, compressed already; a host can still gzip the
+whole file on the wire. `bundle::total_len` reads the real size from the
+first bytes, so the progress bar is right even when Content-Length is the
+gzipped size.
+
+**What goes in.** Everything under the game root but the default excludes:
+dot-folders, `target/`, `dist/`, `docs/`, `screenshots/`, `snapshots/`,
+`renders/`, `reference/`, `scratch/`, `tmp/`, `logs/`, `tools/`, `src/`,
+`engine/` (except `engine/schemas/`), Markdown, shell and Python scripts,
+source art (`.blend`, `.psd`, `.kra`, `.xcf`) and Cargo files. A
+`bundle.toml` in the game root adds to them:
+
+```toml
+name = "float"
+scene = "scenes/float.scene.toml"
+schemas = ["engine/schemas", "schemas"]   # the default
+exclude = ["scenes/mixamo_spike.scene.toml", "scenes/snap_*.scene.toml"]
+include = []          # wins over any exclude
+[late]                # replaces the default
+audio = ["**/*.ogg", "**/*.wav", "**/*.mp3", "**/*.flac"]
+```
+
+**Audio comes late.** By default every audio file goes to a second bundle the
+player fetches once it is running. A browser won't start sound before the
+first click anyway (#101), so nothing is lost by playing the first frames
+silent. When a late bundle lands the web entry installs the grown source
+(`vfs::install`), `vfs::generation()` moves, and the player runs
+`load_audio_from_world` again: sounds already loaded are skipped. An
+autoplay `audio_source` whose sound isn't loaded yet now waits unsynced
+(`flint-audio/src/sync.rs`) instead of being marked done, so the ocean loop
+starts when its file arrives. One-shot sounds a script fires before then are
+lost, the same as with a missing file. `flint-player --bundle` adds the late
+bundles three seconds in, so the desktop takes the same path.
+
+**Checked before it's written.** A missing file should fail in the packer,
+not as a pink texture deep in play. Before writing, the packer:
+
+- loads every packed scene from the packed files, with the bundled schemas,
+  expanding prefabs through the vfs, and fails on an archetype no schema
+  defines;
+- reads every string in scenes, prefabs, particle effects and chunks that
+  looks like a file (a known extension after a stem), plus each
+  `model.asset`, and fails if none of the places the runtime looks (beside
+  the file, one level up, and their `models/`, `scripts/`, `audio/`,
+  `textures/`, `sprites/` ... folders) holds it. A model may also be a
+  `<name>.procgen.toml` the player builds;
+- does the same for string literals in Rhai scripts. A name a script builds
+  at run time (`"splash_" + n + ".ogg"`) can't be checked; the literal
+  `".ogg"` has no stem and is skipped.
+
+Packing Float on the first try failed this way: `scenes/mixamo_spike.scene.toml`
+names `mixamo_body.glb`, which isn't in the repo. Float's `bundle.toml`
+leaves that spike scene out, with the `snap_` scenes kept for reference
+renders.
+
+**Float**, packed with the `bundle.toml` above (Float at `7b37e1e`, its
+engine subtree's schemas):
+
+| Bundle | Files | Size | gzip -9 |
+|---|---|---|---|
+| `float.flintpack` (scenes, schemas, scripts, models, textures, sprites) | 92 | 3.66 MB | 1.59 MB |
+| `float.audio.flintpack` (49 Ogg files, 5.3 MB of it the four music beds) | 49 | 7.11 MB | 6.96 MB |
+
+`models/body.glb` is 2.45 MB of the main bundle on its own.
+
+**In Chrome** (release build, `?bundle=float.flintpack`, network throttled to
+1.5 MB/s over CDP): the 14.2 MB wasm took about 10 s, then the status line
+counted `float.flintpack 0.3 / 3.7 MB` up to 3.7 over 2.3 s. The scene loaded
+from the bundle (44 entities) and drew Float's raft, body and ocean while
+`audio 0.2 / 7.1 MB` filled over the next 4.8 s, and the bar faded on
+`late bundle audio: 49 files`. The frame then stopped on a `std::time`
+panic right after startup ("time not implemented on this platform"): this
+was measured before #100 moved those sites to `web-time`. With every engine read now live, the release
+wasm is 14.2 MB after `wasm-opt -Oz`, 5.1 MB gzipped (it was 9.4 / 3.5 MB
+while the vfs left file-reading code dead).
 
 ## Async startup (#99)
 
@@ -253,6 +346,7 @@ gzip -9:
 | `flint-web-shims`, the #100 shim check (+ `InputState`, toml, gilrs) | | 857 KB | 329 KB |
 | Whole engine (size probe, below) | 14.9 MB | 10.7 MB | 4.1 MB |
 | `flint-web` running PlayerApp (#99, measured before the vfs merge; file-reading code was still dead) | | 9.4 MB | 3.5 MB |
+| `flint-web` reading game bundles (#98; every engine read live) | | 14.2 MB | 5.1 MB |
 
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to

@@ -48,6 +48,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 /// What a path names, if anything.
@@ -246,6 +247,16 @@ thread_local! {
 /// installed before).
 pub fn install(source: Arc<dyn FileSource>) {
     *global().write().unwrap_or_else(|e| e.into_inner()) = source;
+    GENERATION.fetch_add(1, Ordering::Release);
+}
+
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// How many times [`install`] has run. It changes whenever the process-wide
+/// files may have: the web player installs a grown source when a late bundle
+/// (audio) arrives, and the player then loads what it couldn't find before.
+pub fn generation() -> u64 {
+    GENERATION.load(Ordering::Acquire)
 }
 
 /// Run `f` with `source` as this thread's source, then restore the previous

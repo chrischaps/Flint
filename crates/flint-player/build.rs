@@ -1,8 +1,8 @@
 //! Embeds the engine's schema TOML for the web entry (`src/bin/flint_web.rs`).
 //!
-//! A browser can't list a directory over HTTP, so until game bundles land
-//! (#98) the web player carries `schemas/components` and
-//! `schemas/archetypes` in the binary (about 130 KB of text). Writes
+//! A browser can't list a directory over HTTP, so the web player carries
+//! `schemas/components` and `schemas/archetypes` in the binary (about 130 KB
+//! of text). A game bundle's own schemas (#98) load over them. Writes
 //! `$OUT_DIR/engine_schemas.rs`; the desktop player never includes it.
 
 use std::fmt::Write as _;
