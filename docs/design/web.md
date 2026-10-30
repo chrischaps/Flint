@@ -132,6 +132,7 @@ gzip -9:
 |---|---|---|---|
 | `flint-web` spike (wgpu + winit only) | 792 KB | 408 KB | 164 KB |
 | Whole engine (size probe, below) | 14.9 MB | 10.7 MB | 4.1 MB |
+| `flint-web` running PlayerApp (#99; fs-backed code still dead) | | 9.4 MB | 3.5 MB |
 
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to
