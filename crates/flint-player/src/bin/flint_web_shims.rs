@@ -1,5 +1,5 @@
-//! Flint on the web: the M0 spike (#95) and the M2 shim check (#100).
-//! See docs/design/web.md.
+//! Flint on the web: the M0 spike (#95), the M2 shim check (#100) and sound
+//! (#101). See docs/design/web.md.
 //!
 //! winit makes a canvas, wgpu opens a device on the WebGPU backend, and every
 //! frame clears it to the sky, which drifts through dawn, noon, dusk and
@@ -13,6 +13,19 @@
 //! - **Settings**: R and then any key or pad button rebinds `pause_day`. The
 //!   rebind is saved through `flint_player::user_files`, which is
 //!   localStorage here, so it is still there after a reload.
+//!
+//! Sound: the page fetches Float's sea and one of its songs and decodes them
+//! while the sky runs silent behind a Begin gate. The click opens kira's
+//! WebAudio stream (a browser allows sound only from a gesture), the sea and
+//! music swell in, and the corner counts late buffers. Query parameters:
+//!   ?music=day|dusk|night|deep   which of Float's songs (default day)
+//!   ?buffer=4096                 frames per WebAudio buffer (default 2048)
+//!   ?audio=<url>/                where the .ogg files are (default Float's
+//!                                repo on GitHub)
+//!   ?begin=auto                  begin without a click, for headless runs
+//!                                with --autoplay-policy=no-user-gesture-required
+//!   ?stall=60                    hold the main thread 60 ms every 2 s, a
+//!                                heavy frame on purpose
 //!
 //! No scene, scripts or assets: it is the shims' own test page. The real
 //! player is `flint-web` (index.html, #99). Build and serve from
@@ -314,6 +327,7 @@ mod web {
 
     pub fn run() {
         console_error_panic_hook::set_once();
+        super::sound::install();
         let event_loop = EventLoop::new().expect("event loop");
         event_loop.spawn_app(App::default());
     }
@@ -561,6 +575,274 @@ mod web {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+/// The Begin gate (#101): Float's sea and music are fetched and decoded
+/// while the page is silent, and the click opens the audio stream.
+#[cfg(target_arch = "wasm32")]
+mod sound {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use flint_audio::engine::{amplitude_to_db, AudioEngine};
+    use flint_audio::Bus;
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    /// Float's sound, straight from its public repo (raw.githubusercontent
+    /// serves CORS headers).
+    const FLOAT_AUDIO: &str = "https://raw.githubusercontent.com/chrischaps/Float/master/audio/";
+    /// The sea and the song swell in over this long.
+    const FADE_IN: Duration = Duration::from_secs(5);
+
+    struct Track {
+        file: String,
+        bus: Bus,
+        volume: f64,
+    }
+
+    struct Sound {
+        engine: AudioEngine,
+        /// Decoded and waiting for Begin.
+        ready: Vec<Track>,
+        begun: bool,
+    }
+
+    fn log(msg: &str) {
+        web_sys::console::log_1(&msg.into());
+    }
+
+    fn now_ms() -> f64 {
+        web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or(0.0, |p| p.now())
+    }
+
+    fn element(id: &str) -> Option<web_sys::HtmlElement> {
+        web_sys::window()?
+            .document()?
+            .get_element_by_id(id)?
+            .dyn_into()
+            .ok()
+    }
+
+    fn set_text(id: &str, text: &str) {
+        if let Some(e) = element(id) {
+            e.set_inner_text(text);
+        }
+    }
+
+    async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+        let window = web_sys::window().ok_or("no window")?;
+        let resp: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
+            .await
+            .map_err(|e| format!("{e:?}"))?
+            .dyn_into()
+            .map_err(|_| "not a Response")?;
+        if !resp.ok() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        let buf = JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(js_sys::Uint8Array::new(&buf).to_vec())
+    }
+
+    pub fn install() {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let params = window
+            .location()
+            .search()
+            .ok()
+            .and_then(|s| web_sys::UrlSearchParams::new_with_str(&s).ok());
+        let param = |k: &str| params.as_ref().and_then(|p| p.get(k));
+        let base = param("audio").unwrap_or_else(|| FLOAT_AUDIO.to_string());
+        let music = param("music").unwrap_or_else(|| "day".to_string());
+        let auto = param("begin").as_deref() == Some("auto");
+
+        let mut engine = AudioEngine::silent();
+        if let Some(frames) = param("buffer").and_then(|b| b.parse().ok()) {
+            engine.set_buffer_frames(frames);
+        }
+        let sound = Rc::new(RefCell::new(Sound {
+            engine,
+            ready: Vec::new(),
+            begun: false,
+        }));
+
+        // Begin: a click (or Enter/Space on the focused button) is the
+        // gesture the browser needs, so the stream opens inside it.
+        if let Some(button) = element("begin") {
+            let s = sound.clone();
+            let on_click = Closure::<dyn FnMut()>::new(move || begin(&s));
+            button.set_onclick(Some(on_click.as_ref().unchecked_ref()));
+            on_click.forget();
+        }
+
+        let tracks = vec![
+            Track {
+                file: "ocean_loop.ogg".into(),
+                bus: Bus::Sfx,
+                volume: 0.9,
+            },
+            Track {
+                file: format!("music_{music}.ogg"),
+                bus: Bus::Music,
+                volume: 0.55,
+            },
+        ];
+        let s = sound.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let total = tracks.len();
+            let mut failed = Vec::new();
+            for (i, track) in tracks.into_iter().enumerate() {
+                set_text(
+                    "gate-note",
+                    &format!("listening for the sea… {} of {total}", i + 1),
+                );
+                let bytes = match fetch_bytes(&format!("{base}{}", track.file)).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        web_sys::console::warn_1(
+                            &format!("[flint-web] {}: {e}", track.file).into(),
+                        );
+                        failed.push(track.file);
+                        continue;
+                    }
+                };
+                let kb = bytes.len() / 1024;
+                let t0 = now_ms();
+                let mut sound = s.borrow_mut();
+                match sound.engine.load_sound_from_bytes(&track.file, bytes) {
+                    Ok(()) => {
+                        log(&format!(
+                            "[flint-web] decoded {} ({kb} KB) in {:.0} ms",
+                            track.file,
+                            now_ms() - t0
+                        ));
+                        sound.ready.push(track);
+                    }
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[flint-web] {e:?}").into());
+                        failed.push(track.file);
+                    }
+                }
+            }
+            set_text(
+                "gate-note",
+                &if failed.is_empty() {
+                    "sound on · headphones are kind".to_string()
+                } else {
+                    format!("couldn't reach {}; the rest will play", failed.join(", "))
+                },
+            );
+            if let Some(b) = element("begin") {
+                b.remove_attribute("disabled").ok();
+                b.focus().ok();
+            }
+            if auto {
+                begin(&s);
+            }
+        });
+
+        // A heavy frame, on purpose: hold the main thread this long every
+        // 2 s, to see where buffers start arriving late.
+        if let Some(stall) = param("stall").and_then(|s| s.parse::<f64>().ok()) {
+            log(&format!("[flint-web] stalling the main thread {stall:.0} ms every 2 s"));
+            let hold = Closure::<dyn FnMut()>::new(move || {
+                let until = now_ms() + stall;
+                while now_ms() < until {}
+            });
+            window
+                .set_interval_with_callback_and_timeout_and_arguments_0(
+                    hold.as_ref().unchecked_ref(),
+                    2000,
+                )
+                .ok();
+            hold.forget();
+        }
+
+        // The corner readout: how steadily the stream has been fed.
+        let s = sound;
+        let tick = Closure::<dyn FnMut()>::new(move || {
+            let Some(stats) = s.borrow().engine.buffer_stats() else {
+                return;
+            };
+            let secs = (stats.buffers as f64 * stats.buffer_ms / 1000.0) as u64;
+            set_text(
+                "meter",
+                &format!(
+                    "WebAudio · {:.0} ms buffers · {} late of {} · {}:{:02}",
+                    stats.buffer_ms,
+                    stats.late,
+                    stats.buffers,
+                    secs / 60,
+                    secs % 60
+                ),
+            );
+            if stats.late > 0 {
+                if let Some(m) = element("meter") {
+                    m.class_list().add_1("late").ok();
+                }
+            }
+        });
+        window
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                tick.as_ref().unchecked_ref(),
+                1000,
+            )
+            .ok();
+        tick.forget();
+    }
+
+    fn begin(sound: &Rc<RefCell<Sound>>) {
+        let Ok(mut sound) = sound.try_borrow_mut() else {
+            return;
+        };
+        if sound.begun {
+            return;
+        }
+        sound.begun = true;
+        let Sound { engine, ready, .. } = &mut *sound;
+        if !engine.start() {
+            set_text("gate-note", "this browser gave no sound");
+            sound.begun = false;
+            return;
+        }
+        for track in ready.iter() {
+            // In at silence, then swell to the track's level.
+            match engine.play_non_spatial(&track.file, 0.0, 1.0, true, track.bus) {
+                Ok(mut handle) => handle.set_volume(
+                    amplitude_to_db(track.volume),
+                    kira::Tween {
+                        duration: FADE_IN,
+                        ..Default::default()
+                    },
+                ),
+                Err(e) => web_sys::console::warn_1(&format!("[flint-web] {e:?}").into()),
+            }
+        }
+        log(&format!("[flint-web] begun: {} tracks", ready.len()));
+        if let Some(g) = element("gate") {
+            g.class_list().add_1("gone").ok();
+        }
+        // Hand the keys to the canvas, where winit listens for them, so
+        // `pause_day` and R work without a second click on the sky.
+        if let Some(canvas) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.query_selector("canvas").ok().flatten())
+            .and_then(|c| c.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            canvas.focus().ok();
+        }
+        if let Some(m) = element("meter") {
+            m.class_list().add_1("on").ok();
         }
     }
 }

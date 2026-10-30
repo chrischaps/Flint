@@ -1,7 +1,8 @@
 <!doctype html>
-<!-- The web shim check (#100): time, gamepads, settings over a sky clear.
-     `trunk serve shims.html` from crates/flint-player. The real player is
-     index.html (#99). See docs/design/web.md. -->
+<!-- The web shim check (#100): time, gamepads, settings over a sky clear,
+     and sound behind a Begin gate (#101). `trunk serve shims.html` from
+     crates/flint-player. The real player is index.html (#99). See
+     docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -11,17 +12,59 @@
     <style>
       html, body { margin: 0; height: 100%; background: #0d1229; overflow: hidden; }
       canvas { display: block; width: 100vw !important; height: 100vh !important; outline: none; }
-      .mark {
-        position: fixed; left: 24px; bottom: 20px;
+      .mark, .meter {
+        position: fixed; bottom: 20px;
         font: 500 13px/1.4 ui-sans-serif, system-ui, sans-serif;
-        letter-spacing: 0.18em; text-transform: uppercase;
         color: rgba(255, 255, 255, 0.78); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
         pointer-events: none;
       }
+      .mark { left: 24px; letter-spacing: 0.18em; text-transform: uppercase; }
       .mark small { display: block; letter-spacing: 0.06em; text-transform: none; opacity: 0.7; }
+      .meter {
+        right: 24px; text-align: right; font-variant-numeric: tabular-nums;
+        letter-spacing: 0.04em; opacity: 0; transition: opacity 2s ease 1s;
+      }
+      .meter.on { opacity: 0.7; }
+      .meter.late { color: #ffd7b0; }
+
+      /* The gate: a browser gives no sound before a gesture, so the sky runs
+         silent behind a veil until Begin is pressed. */
+      .gate {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        background: radial-gradient(ellipse at 50% 60%, rgba(13, 18, 41, 0.35), rgba(13, 18, 41, 0.72));
+        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+        transition: opacity 1.6s ease, backdrop-filter 1.6s ease;
+        font: 400 15px/1.5 ui-sans-serif, system-ui, sans-serif; color: #fff;
+        text-align: center;
+      }
+      .gate.gone { opacity: 0; backdrop-filter: blur(0); pointer-events: none; }
+      .gate h1 {
+        margin: 0 0 4px; font: 300 44px/1.1 ui-serif, Georgia, serif; letter-spacing: 0.04em;
+      }
+      .gate p { margin: 0 0 28px; opacity: 0.72; }
+      .gate button {
+        font: 500 14px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.24em;
+        text-transform: uppercase; color: #0d1229; background: rgba(255, 255, 255, 0.9);
+        border: 0; border-radius: 999px; padding: 15px 34px; cursor: pointer;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); transition: transform 0.2s ease, opacity 0.4s ease;
+      }
+      .gate button:hover:enabled { transform: translateY(-1px); }
+      .gate button:focus { outline: none; }
+      .gate button:focus-visible { outline: 1.5px solid rgba(255, 255, 255, 0.55); outline-offset: 4px; }
+      .gate button:disabled { opacity: 0.45; cursor: default; }
+      .gate small { display: block; margin-top: 16px; min-height: 1.5em; opacity: 0.6; font-size: 12px; letter-spacing: 0.04em; }
     </style>
   </head>
   <body>
-    <div class="mark">Flint<small>wasm32 · WebGPU · first light</small><small id="status"></small></div>
+    <div class="gate" id="gate">
+      <div>
+        <h1>Float</h1>
+        <p>the sea, and its music</p>
+        <button id="begin" disabled>Begin</button>
+        <small id="gate-note">listening for the sea…</small>
+      </div>
+    </div>
+    <div class="mark">Flint<small>wasm32 · WebGPU · WebAudio</small><small id="status"></small></div>
+    <div class="meter" id="meter"></div>
   </body>
 </html>

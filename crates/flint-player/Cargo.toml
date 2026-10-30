@@ -80,13 +80,17 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # backend. Pinned here rather than inherited so its defaults can go.
 egui-winit = { version = "0.30.0", default-features = false }
 # Async startup (player_app/web_startup.rs), the flint-web entry
-# (src/bin/flint_web.rs, index.html), the shim page (flint_web_shims.rs,
-# shims.html), and localStorage for user files (player_app/user_files.rs).
+# (src/bin/flint_web.rs, index.html), the shim page and its Begin gate for
+# sound (flint_web_shims.rs, shims.html; #101), and localStorage for user
+# files (player_app/user_files.rs).
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+kira = { workspace = true }
 web-sys = { version = "0.3", features = [
-    "console", "Document", "Element", "HtmlCanvasElement", "Location",
-    "Performance", "Request", "Response", "Storage", "UrlSearchParams", "Window",
+    "console", "Document", "DomTokenList", "Element", "HtmlButtonElement",
+    "HtmlCanvasElement", "HtmlElement", "Location", "Performance", "Request",
+    "Response", "Storage", "UrlSearchParams", "Window",
 ] }
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"

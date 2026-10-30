@@ -8,6 +8,9 @@ page canvas that follows the window's size. Files the scene points at
 empty on the web until game bundles (#98) fill it, so the web draws scenes
 made of the engine's own geometry: boxes, the procedural sky, the Gerstner
 ocean.
+Sound (#101) plays behind a Begin gate on the shim page; the player is
+silent on the web until its page calls `start_audio()` from a gesture
+([Sound](#sound)).
 
 ## Try it
 
@@ -16,7 +19,8 @@ rustup target add wasm32-unknown-unknown
 cargo check --target wasm32-unknown-unknown -p flint-player   # the whole player
 cd crates/flint-player
 trunk serve                 # http://127.0.0.1:8080, the player on the First Light scene
-trunk serve shims.html      # the shim check (#100): sky clear, time, pad, rebinds
+trunk serve shims.html      # the shim check (#100): sky clear, time, pad, rebinds;
+                            #   sound behind a Begin click (#101)
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
 ```
 
@@ -101,7 +105,7 @@ Five errors in all, against the seven crates the issue was worried about:
 |---|---|---|
 | `getrandom` 0.3 (via ahash: egui, hecs, rhai) | refuses to build: "wasm32-unknown-unknown targets are not supported by default" | `wasm_js` feature on a wasm-only dep in `flint-player`, plus `--cfg getrandom_backend="wasm_js"` in `.cargo/config.toml` |
 | `egui-winit` → `arboard` | no web clipboard backend (8 errors) | `egui-winit` with `default-features = false` on wasm only. This also drops `links`/`webbrowser` |
-| `kira` / `cpal` | builds. `StaticSoundData::from_file` is not there on wasm (flint-audio once, flint-music twice) | `static_sound_from_file` helper: `from_file` on native, `std::fs::read` + `from_cursor` on web. Since #97 both targets read through the vfs and decode with `from_cursor`. cpal builds without its `wasm-bindgen` feature, so it gets the null host and there is no sound yet |
+| `kira` / `cpal` | builds. `StaticSoundData::from_file` is not there on wasm (flint-audio once, flint-music twice) | `static_sound_from_file` helper: `from_file` on native, `std::fs::read` + `from_cursor` on web. Since #97 both targets read through the vfs and decode with `from_cursor`. (The spike thought cpal had the null host here. It didn't: kira turns on cpal's `wasm-bindgen` feature for wasm32 itself. See [Sound](#sound).) |
 | `rhai` | builds. `module_resolvers::FileModuleResolver` is not there | `ScriptEngine::set_module_base` skipped the resolver on wasm. Since #97 it installs `VfsModuleResolver` (flint-script) on every target, so `import` resolves through the vfs |
 | `wgpu` 23 | builds (WebGPU backend by default, no naga or wgpu-core). `Instance::enumerate_adapters` is not there | `gpu_select` treats the adapter list as empty on wasm. `--gpu` / `WGPU_ADAPTER_NAME` fall back to `request_adapter` |
 | `rapier3d` / `parry3d` | builds clean | none |
@@ -121,6 +125,7 @@ tickets). Counts are for the runtime crates the player links:
   always fails and the whole engine after it is dead code. Any size number
   taken from the stock bin is wrong until the vfs lands.
 - **`pollster::block_on`**: done in #99, see Async startup above.
+- **Audio:** done in #101, see [Sound](#sound).
 
 ### Shims landed (#100)
 
@@ -158,9 +163,84 @@ The shim page (`shims.html`, bin `flint-web-shims`) exercises all of these: the 
 `web_time::Instant`, the left stick scrubs it, `pause_day` (Space or the
 pad's South button) holds it through `InputState`, and R followed by a key
 or pad button rebinds `pause_day` and saves the rebind through `user_files`.
-- **Audio:** `AudioManager::new()` already sits behind an `Option`, so the
-  null cpal host degrades to silence. Real sound needs cpal's
-  `wasm-bindgen` feature and a click to start the `AudioContext`.
+
+Over its sky sits the Begin gate (#101). Float's sea and one of its songs
+are fetched from its GitHub repo and decoded, and the click opens the sound
+(query parameters are listed at the top of `flint_web_shims.rs`: `?music=`,
+`?buffer=`, `?audio=`, `?begin=auto`, `?stall=`). The corner counts late
+buffers, and the console prints a steadiness line every 10 s.
+
+## Sound
+
+#101. A browser gives no sound before a user gesture: an `AudioContext`
+made earlier is kept suspended, and Chrome warns about it. So on wasm32
+`AudioEngine::new()` stays silent, and the shim page's **Begin** gate opens the
+stream from inside the click handler:
+
+- `AudioEngine::silent()` / `start()`. On the desktop `new()` is `silent()`
+  then `start()`, as before. In the browser, `start()` is called from the
+  gesture. A silent engine still loads and caches sounds, so decoding
+  happens behind the gate. The filter cutoff and bus volumes set while
+  silent are applied when it starts. If the device fails, the engine stays
+  silent and `start()` can be called again (the `Option` gotcha still
+  holds).
+- `AudioSystem::start(world)` picks up what `initialize` skipped while
+  silent: the listener, the trigger rules and every `audio_source` already
+  in the world. Looping sources therefore begin from the click.
+  `PlayerApp::start_audio()` also starts a scene's `music_session` that was
+  skipped for want of a device. The web player entry (#98) should call it
+  from its gate.
+- `flint_audio::web::WebAudioBackend` replaces kira's `CpalBackend` on
+  wasm32 (`engine::AudioBackend` picks the backend by target). It is the same
+  cpal WebAudio stream, but it keeps cpal's timestamps. Each buffer's
+  **slack** is how far ahead of the audio clock it was scheduled.
+  `flint_audio::meter::BufferMeter` logs every late buffer (negative slack,
+  heard as a gap), plus a summary every 10 s: buffers, late, slack min/mean,
+  mix time and the longest wait between requests. It also logs the
+  `AudioContext`'s state changes and device errors. `AudioEngine::buffer_stats()`
+  returns the totals, which the page shows in its corner.
+
+cpal's WebAudio host renders on the **main thread**: each buffer's
+`onended` mixes the next one, with two in flight. So a frame that holds the
+thread longer than about one buffer (2048 frames, 46 ms at 44.1 kHz) makes
+sound drop. `?buffer=4096` doubles that headroom, at the cost of latency.
+
+Measured in headless Chrome 156 on this laptop, with Float's `ocean_loop.ogg`
+and `music_day.ogg` fetched from its repo. The `?stall=N` knob holds the main
+thread for N ms every 2 s:
+
+| Run | Buffer | Buffers | Late | Worst slack |
+|---|---|---|---|---|
+| no stall, **10 min** (`music_dusk`) | 46 ms | 12962 | 0 | +19.2 ms |
+| no stall, 70 s | 46 ms | 1514 | 0 | +36.6 ms |
+| 30 ms stall, 150 s | 46 ms | 3241 | 0 | +19.2 ms |
+| 60 ms stall | 46 ms | 646 | 5 | −21.4 ms |
+| 100 ms stall | 46 ms | 1080 | 45 | −62.1 ms |
+| 100 ms stall | 93 ms | 326 | 1 | −4.0 ms |
+| 200 ms stall | 93 ms | 324 | 19 | −102.7 ms |
+
+Counts are as of each run's last 10 s summary. At 46 ms buffers, a 100 ms
+stall loses about one buffer per stall. A stall is covered while it ends
+before the playing buffer does, so the edge sits near one buffer length,
+where the model puts it.
+
+Mixing Float's sea and one song costs about 0.27 ms a buffer, so the mix
+isn't the hazard. Heavy frames are. Decoding happens before Begin:
+`ocean_loop.ogg` (156 KB) took 28 ms, `music_day.ogg` (1.26 MB) 241 ms, and
+`music_dusk.ogg` (1.43 MB) 100 ms in another run.
+A song decoded mid-game would stall that long, so Float should decode its
+four songs up front, or behind a scene change. If heavy frames drop sound
+once Float's ocean renders, follow Soba's threaded AudioWorklet build. It
+needs cross-origin isolation headers.
+
+**Firefox 147**, headless, with autoplay allowed by profile prefs: 865
+buffers in 40 s, 0 late, worst slack +25.0 ms. Firefox's headless mode
+offers no WebGPU, so the sky failed to create its surface while the sound
+played on. Sound doesn't depend on the canvas.
+
+What the headless runs can't show: whether it *sounds* clean on speakers,
+and Safari (no way to run it from Windows). Those need a person at a browser
+(the issue's ten-minute listen).
 
 ## Size
 
