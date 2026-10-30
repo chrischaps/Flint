@@ -278,6 +278,10 @@ impl PlayerApp {
     /// buttons and wheel reach the game but not egui. Without a window
     /// (headless tests) only the state changes.
     pub(super) fn capture_cursor(&mut self) {
+        // Fingers on the on-screen controls need the cursor free (#133).
+        if self.input.touch_controls_visible() {
+            return;
+        }
         if let Some(window) = &self.window {
             // A browser locks the pointer only from a gesture: the lock is
             // asked for once a frame while one is live (`sync_pointer_lock`).
@@ -513,8 +517,15 @@ impl ApplicationHandler for PlayerApp {
             }
 
             WindowEvent::RedrawRequested => {
+                // A refresh the frame-rate pacer skips (#140) does nothing.
+                #[cfg(target_arch = "wasm32")]
+                if !self.web_frame_begin() {
+                    return;
+                }
                 self.tick();
                 self.render();
+                #[cfg(target_arch = "wasm32")]
+                self.web_frame_end();
                 // The frame's end, for the profiler (ADR 0109).
                 profiling::finish_frame!();
                 if self.music_exit_requested || self.exit_requested {
@@ -595,6 +606,8 @@ impl PlayerApp {
             }
             self.input
                 .set_screen_size(new_size.width as f64, new_size.height as f64);
+            #[cfg(target_arch = "wasm32")]
+            self.measure_touch_scale(new_size);
             if self.cursor_captured {
                 self.centre_the_cursor();
             }
@@ -604,6 +617,10 @@ impl PlayerApp {
     /// (#406 in The Capitol). On start, and again when the window moves, since
     /// another monitor can have another refresh. `FLINT_PACING=0` turns it off.
     pub(super) fn update_vsync_pacing(&mut self) {
+        // On the web the frame-rate pacer sets the period (#140).
+        if self.frame_pacer.is_some() {
+            return;
+        }
         let on_vblank = self
             .render_context
             .as_ref()
@@ -828,6 +845,18 @@ impl PlayerApp {
         if self.cursor_captured && matches!(event, WindowEvent::CursorMoved { .. }) {
             return true;
         }
+        // The on-screen touch controls sit above egui and the extensions:
+        // a finger on a stick or button goes straight to them (#133). Any
+        // finger landing brings them up first, even one egui then takes,
+        // or the first touch on a page with an extension would show none.
+        if let WindowEvent::Touch(touch) = event {
+            if touch.phase == winit::event::TouchPhase::Started {
+                self.input.touch_controls_mut().note_touch();
+            }
+            if self.touch_controls_take(touch) {
+                return false;
+            }
+        }
         // Input egui wants stops here (see egui_input for the rules). A
         // captured cursor's buttons and wheel skip egui, but for the release
         // of a press egui took before the capture (ADR 0110).
@@ -874,6 +903,20 @@ impl PlayerApp {
             }
             // Raw motion takes a real mouse's gate (ADR 0110), but for the
             // window's focus: captures run unfocused.
+            // A finger takes a real one's path, but is already in surface
+            // pixels (no web rescale, no Android joystick guess).
+            ScriptEvent::Touch(id, phase, x, y) => {
+                let event = WindowEvent::Touch(winit::event::Touch {
+                    device_id: winit::event::DeviceId::dummy(),
+                    phase,
+                    location: winit::dpi::PhysicalPosition::new(x, y),
+                    force: None,
+                    id,
+                });
+                if !self.taken_before_the_game(&event) {
+                    self.touch_on_surface(id, phase, x, y);
+                }
+            }
             ScriptEvent::Look(dx, dy) => {
                 if self.cursor_captured && !self.text_has_focus() {
                     self.input.process_mouse_raw_delta(dx, dy);
@@ -1030,12 +1073,23 @@ impl PlayerApp {
             }
 
             // Normal touch processing
-            self.input.disable_touch_emulation();
-
-            let id = touch.id;
             let x = touch.location.x;
             let y = touch.location.y;
-            match touch.phase {
+            #[cfg(target_arch = "wasm32")]
+            let (x, y) = self.touch_to_surface(x, y);
+            self.touch_on_surface(touch.id, touch.phase, x, y);
+    }
+
+    /// A finger at (x, y) in surface pixels, real or scripted.
+    pub(super) fn touch_on_surface(
+        &mut self,
+        id: u64,
+        phase: winit::event::TouchPhase,
+        x: f64,
+        y: f64,
+    ) {
+            self.input.disable_touch_emulation();
+            match phase {
                 winit::event::TouchPhase::Started => {
                     self.input.process_touch_start(id, x, y);
                 }

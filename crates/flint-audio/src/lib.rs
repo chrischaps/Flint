@@ -5,15 +5,23 @@
 //! - `AudioSync` — bridges TOML `audio_source` components to Kira spatial tracks
 //! - `AudioTrigger` — maps GameEvents to sound playback (collision, interaction)
 //! - `AudioSystem` — implements `RuntimeSystem` for game loop integration
+//!
+//! In the browser the mix runs in an `AudioWorklet`, off the main thread
+//! (#136): `remote` writes the engine's calls for it, `worklet` opens it,
+//! and `web` is the main-thread stream it falls back to.
 
 pub mod decode;
 pub mod engine;
+pub mod handle;
 pub mod meter;
 pub mod pan;
+pub mod remote;
 pub mod sync;
 pub mod trigger;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
+#[cfg(target_arch = "wasm32")]
+pub mod worklet;
 
 use engine::AudioEngine;
 pub use engine::{Bus, MixCounts};
@@ -88,7 +96,8 @@ impl AudioSystem {
     /// device.
     pub fn mix_counts(&self) -> Option<MixCounts> {
         let mut counts = self.engine.mix_counts()?;
-        self.sync.add_mix_counts(&mut counts);
+        self.sync
+            .add_mix_counts(&mut counts, self.engine.is_remote());
         Some(counts)
     }
 
@@ -172,6 +181,17 @@ impl RuntimeSystem for AudioSystem {
     fn update(&mut self, world: &mut FlintWorld, _dt: f64) -> Result<()> {
         if !self.engine.is_available() {
             return Ok(());
+        }
+
+        // The browser's worklet failed after it started and the main thread
+        // took over (#136): what played there is gone, so start it again.
+        self.engine.poll();
+        if self.engine.take_restarted() {
+            tracing::warn!("Audio mix restarted on the main thread; replaying sources");
+            self.sync.clear();
+            if let Err(e) = self.engine.create_listener(Vec3::new(0.0, 1.0, 0.0)) {
+                tracing::warn!("{e:?}");
+            }
         }
 
         // Sync any new audio source entities

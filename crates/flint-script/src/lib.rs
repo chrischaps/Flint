@@ -134,6 +134,7 @@ impl ScriptSystem {
             any_just_pressed: input.any_just_pressed(),
             last_device: input.last_device().as_str().to_string(),
             gamepad_connected: input.gamepad_connected(),
+            touch_controls_visible: input.touch_controls_visible(),
             mouse_delta: input.raw_mouse_delta(),
             mouse_wheel: {
                 let (x, y) = input.mouse_wheel_delta();

@@ -169,16 +169,18 @@ fn on_draw_ui() {
 
 ## Design Philosophy
 
-The touch system is intentionally minimal. Rather than providing virtual joysticks, gesture recognizers, or complex multi-touch state machines, it gives you:
+The touch system gives you:
 
 1. **Zone-based action bindings** --- works with the existing input config system
 2. **Raw touch state** --- positions, phases, and tap detection exposed to scripts
 3. **Mouse emulation** --- desktop testing without hardware
+4. **On-screen controls** --- a virtual stick, buttons, a menu button and look drag, declared in the input config and drawn by the engine ([On-Screen Touch Controls](touch-controls.md))
 
-Game-specific touch UI (virtual D-pads, on-screen buttons, swipe gestures) belongs in scripts, not the engine. The engine provides the primitives; scripts compose them into the interaction model that fits each game.
+The on-screen controls are the one piece of touch UI the engine draws, because they are input devices: they must take a finger before egui does and drive key-bound actions within the frame. Anything game-specific beyond them (gesture menus, drag-to-aim, a custom D-pad) still belongs in scripts, built from the primitives above.
 
 ## Further Reading
 
+- [On-Screen Touch Controls](touch-controls.md) --- virtual sticks and buttons for key-bound actions
 - [2D Sprites](sprites-2d.md) --- the rendering system for 2D games
 - [Scripting](scripting.md) --- full scripting API reference
 - [Physics and Runtime](physics-and-runtime.md) --- the input system and game loop

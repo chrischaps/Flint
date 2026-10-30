@@ -16,6 +16,7 @@ members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-audio-worklet",
     "crates/flint-music",
     "crates/flint-input-capture",
     "crates/flint-animation",
@@ -47,6 +48,7 @@ default-members = [
     "crates/flint-physics",
     "crates/flint-player",
     "crates/flint-audio",
+    "crates/flint-audio-worklet",
     "crates/flint-music",
     "crates/flint-input-capture",
     "crates/flint-animation",
@@ -181,6 +183,7 @@ flint-viewer = { path = "crates/flint-viewer" }
 flint-runtime = { path = "crates/flint-runtime" }
 flint-physics = { path = "crates/flint-physics" }
 flint-audio = { path = "crates/flint-audio" }
+flint-audio-worklet = { path = "crates/flint-audio-worklet" }
 flint-music = { path = "crates/flint-music" }
 flint-input-capture = { path = "crates/flint-input-capture" }
 flint-animation = { path = "crates/flint-animation" }
@@ -203,6 +206,16 @@ flint-android = { path = "crates/flint-android" }
 [profile.web-release]
 inherits = "release"
 opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# The AudioWorklet's mixer (#136, crates/flint-audio-worklet): its own small
+# wasm, run on the audio thread against a deadline, so it is built for speed,
+# not bytes, in every build of the page (Trunk.toml's pre_build hook).
+[profile.worklet]
+inherits = "release"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"

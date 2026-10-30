@@ -61,6 +61,8 @@ pub struct InputSnapshot {
     pub last_device: String,
     /// True while the host reports at least one gamepad attached.
     pub gamepad_connected: bool,
+    /// True while the on-screen touch controls are drawn (#133).
+    pub touch_controls_visible: bool,
     pub mouse_delta: (f64, f64),
     /// Wheel lines (notches) this frame, (x, y); up and right are positive.
     pub mouse_wheel: (f64, f64),

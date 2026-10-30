@@ -13,6 +13,7 @@ mod input;
 pub mod persist;
 pub mod state;
 mod system;
+pub mod touch_controls;
 
 pub use clock::GameClock;
 pub use event::GameEvent;
@@ -25,3 +26,6 @@ pub use input::parse_key_code;
 pub use persist::{PersistentStore, SaveDebounce};
 pub use state::{GameState, GameStateMachine, StateConfig, SystemPolicy};
 pub use system::RuntimeSystem;
+pub use touch_controls::{
+    TouchControls, TouchControlsConfig, TouchControlsMode, TouchWidget,
+};

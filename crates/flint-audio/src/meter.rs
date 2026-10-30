@@ -1,9 +1,17 @@
-//! How steadily a main-thread audio stream is fed (#101).
+//! How steadily a browser audio stream is fed (#101, #136).
 //!
-//! The browser's stream asks for each buffer from the main thread and
+//! The main-thread stream asks for each buffer from the main thread and
 //! schedules it to start where the one before it ends. A buffer's *slack* is
 //! how far ahead of the audio clock it was scheduled; negative slack means
 //! its start had already passed, which leaves a gap you hear as a click.
+//!
+//! The worklet ([`BufferMeter::worklet`]) is called by the audio thread
+//! itself, so there is nothing to schedule. What it can lose is time: when
+//! it misses its deadline, the audio clock falls behind the wall clock for
+//! good. Its slack is a buffer's length minus how far the clock has fallen
+//! behind its steadiest, so negative slack means more than a buffer of
+//! sound went missing.
+//!
 //! [`BufferMeter`] keeps that per buffer and turns it into console lines. It
 //! has no platform code, so its arithmetic is tested on the desktop.
 
@@ -31,6 +39,9 @@ pub struct BufferStats {
     pub mix_max_ms: f64,
     /// Longest wall time between two buffer requests, ms.
     pub wait_max_ms: f64,
+    /// The loudest sample sent out (linear, 1.0 is full scale), when the
+    /// stream measures it: 0.0 is silence.
+    pub peak: f64,
 }
 
 /// What one buffer has to say. `warn` lines are about lost sound.
@@ -51,6 +62,7 @@ struct Sums {
     mix_sum: f64,
     mix_max: f64,
     wait_max: f64,
+    peak: Option<f64>,
 }
 
 impl Sums {
@@ -83,6 +95,8 @@ impl Sums {
 #[derive(Debug, Default)]
 pub struct BufferMeter {
     buffer_ms: f64,
+    /// Measured in the worklet, which words its lines differently.
+    worklet: bool,
     window_start: Option<f64>,
     window: Sums,
     total: Sums,
@@ -94,6 +108,19 @@ impl BufferMeter {
             buffer_ms,
             ..Default::default()
         }
+    }
+
+    /// A meter for the worklet's stream (#136), over buffers of `buffer_ms`.
+    pub fn worklet(buffer_ms: f64) -> Self {
+        Self {
+            buffer_ms,
+            worklet: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn is_worklet(&self) -> bool {
+        self.worklet
     }
 
     pub fn buffer_ms(&self) -> f64 {
@@ -111,6 +138,15 @@ impl BufferMeter {
             mix_mean_ms: Sums::mean(t.mix_sum, t.buffers),
             mix_max_ms: t.mix_max,
             wait_max_ms: t.wait_max,
+            peak: t.peak.unwrap_or_default(),
+        }
+    }
+
+    /// The loudest sample of the buffer about to be [`record`](Self::record)ed
+    /// (linear), so the summaries say whether sound is coming out at all.
+    pub fn peak(&mut self, peak: f64) {
+        for s in [&mut self.window, &mut self.total] {
+            s.peak = Some(s.peak.unwrap_or_default().max(peak));
         }
     }
 
@@ -123,18 +159,31 @@ impl BufferMeter {
         self.total.add(slack, mix, wait);
         let mut lines = MeterLines::default();
         if slack < 0.0 && self.window.late <= LATE_LINES_PER_WINDOW {
-            lines.late = Some(format!(
-                "[flint-audio] late buffer #{}: started {:.1} ms after its slot \
-                 (the main thread went {:.0} ms between buffers; one buffer is {:.0} ms)",
-                self.total.buffers, -slack, wait, self.buffer_ms
-            ));
+            lines.late = Some(if self.worklet {
+                format!(
+                    "[flint-audio] worklet: late buffer #{}: the audio clock fell {:.1} ms \
+                     behind (the audio thread went {:.0} ms between buffers; one buffer is \
+                     {:.0} ms)",
+                    self.total.buffers,
+                    self.buffer_ms - slack,
+                    wait,
+                    self.buffer_ms
+                )
+            } else {
+                format!(
+                    "[flint-audio] late buffer #{}: started {:.1} ms after its slot \
+                     (the main thread went {:.0} ms between buffers; one buffer is {:.0} ms)",
+                    self.total.buffers, -slack, wait, self.buffer_ms
+                )
+            });
         }
         let elapsed = now - start;
         if elapsed >= REPORT_SECONDS * 1000.0 {
             let w = self.window;
             lines.summary = Some(format!(
-                "[flint-audio] {:.0} s: {} buffers, {} late · slack min {:.1} ms, mean {:.1} ms · \
+                "[flint-audio] {}{:.0} s: {} buffers, {} late · slack min {:.1} ms, mean {:.1} ms · \
                  mix mean {:.2} ms, max {:.2} ms · longest wait {:.0} ms · run: {} late of {}",
+                if self.worklet { "worklet " } else { "" },
                 elapsed / 1000.0,
                 w.buffers,
                 w.late,
@@ -146,6 +195,10 @@ impl BufferMeter {
                 self.total.late,
                 self.total.buffers,
             ));
+            if let Some(p) = w.peak {
+                let db = if p > 0.0 { 20.0 * p.log10() } else { -120.0 };
+                lines.summary = lines.summary.map(|s| format!("{s} · peak {db:.0} dBFS"));
+            }
             lines.summary_warns = w.late > 0;
             self.window = Sums::default();
             self.window_start = Some(now);
@@ -199,6 +252,23 @@ mod tests {
         // The next window starts clean.
         let lines = m.record(40.0, 0.4, 21_000.0, 46.4);
         assert!(!lines.summary_warns && lines.summary.unwrap().contains(" 0 late"));
+    }
+
+    #[test]
+    fn the_worklet_says_how_far_its_clock_fell_behind() {
+        let mut m = BufferMeter::worklet(42.7);
+        assert!(m.is_worklet());
+        m.record(42.7, 0.3, 0.0, 0.0);
+        let late = m.record(-7.3, 0.3, 50.0, 50.0).late.unwrap();
+        assert!(
+            late.contains("worklet") && late.contains("fell 50.0 ms"),
+            "{late}"
+        );
+        m.peak(0.5);
+        let s = m.record(42.7, 0.3, 10_000.0, 42.7).summary.unwrap();
+        assert!(s.starts_with("[flint-audio] worklet 10 s"), "{s}");
+        assert!(s.ends_with("peak -6 dBFS"), "{s}");
+        assert_eq!(m.stats().peak, 0.5);
     }
 
     #[test]

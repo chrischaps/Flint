@@ -4,14 +4,12 @@
 //! starts their sounds, and steers placed ones to the listener each frame.
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
-use crate::engine::{amplitude_to_db, AudioEngine, Bus, FRAME_TWEEN};
+use crate::engine::{amplitude_to_db, AudioEngine, Bus, SoundHandle, SpatialTrack, FRAME_TWEEN};
 use crate::pan::{volume_and_pan, Ears, Falloff};
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
-use kira::sound::static_sound::StaticSoundHandle;
-use kira::track::SpatialTrackHandle;
 use kira::Tween;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -21,8 +19,8 @@ use std::time::Duration;
 struct SpatialEntry {
     /// Its own kira spatial track (`?mix=old`). Without one, its sounds are
     /// panned voices on the bus that [`AudioSync::pan_sources`] steers.
-    track: Option<SpatialTrackHandle>,
-    handles: Vec<StaticSoundHandle>,
+    track: Option<SpatialTrack>,
+    handles: Vec<SoundHandle>,
     last_volume: f64,
     last_pitch: f64,
     looping: bool,
@@ -37,7 +35,7 @@ struct SpatialEntry {
 
 /// Non-spatial entry: sound handles + cached parameters
 struct NonSpatialEntry {
-    handles: Vec<StaticSoundHandle>,
+    handles: Vec<SoundHandle>,
     last_volume: f64,
     last_pitch: f64,
     looping: bool,
@@ -121,12 +119,12 @@ impl AudioSync {
         };
         for entry in self.spatial_map.values_mut() {
             for handle in &mut entry.handles {
-                let _ = handle.stop(stop_tween);
+                handle.stop(stop_tween);
             }
         }
         for entry in self.non_spatial_map.values_mut() {
             for handle in &mut entry.handles {
-                let _ = handle.stop(stop_tween);
+                handle.stop(stop_tween);
             }
         }
         self.spatial_map.clear();
@@ -360,17 +358,11 @@ impl AudioSync {
                 listener.is_some_and(|l| (l - entry.position).length() > entry.falloff.max * reach);
             let cull = !self.old_mix && (far || entry.last_volume <= SILENT_VOLUME);
             if cull != entry.culled {
-                match &mut entry.track {
-                    Some(track) if cull => track.pause(CULL_TWEEN),
-                    Some(track) => track.resume(CULL_TWEEN),
-                    None => {
-                        for handle in &mut entry.handles {
-                            if cull {
-                                handle.pause(CULL_TWEEN);
-                            } else {
-                                handle.resume(CULL_TWEEN);
-                            }
-                        }
+                for handle in &mut entry.handles {
+                    if cull {
+                        handle.pause(CULL_TWEEN);
+                    } else {
+                        handle.resume(CULL_TWEEN);
                     }
                 }
                 entry.culled = cull;
@@ -395,20 +387,29 @@ impl AudioSync {
     }
 
     /// Add the `audio_source`s' share to `counts`, which
-    /// [`AudioEngine::mix_counts`] filled from the buses: the voices on
-    /// their own spatial tracks (`?mix=old`), which a bus doesn't count as
-    /// its sounds, and which tracks and voices are paused.
-    pub fn add_mix_counts(&self, counts: &mut crate::engine::MixCounts) {
+    /// [`AudioEngine::mix_counts`] filled: the voices on their own spatial
+    /// tracks (`?mix=old`), which a bus doesn't count as its sounds, and
+    /// which voices are paused. A `remote` mixer (the browser's worklet)
+    /// says nothing back, so there every voice held here is counted.
+    pub fn add_mix_counts(&self, counts: &mut crate::engine::MixCounts, remote: bool) {
         for entry in self.spatial_map.values() {
-            let on_track = entry.track.as_ref().map_or(0, |t| t.num_sounds());
-            counts.voices += on_track;
+            if remote || entry.track.is_some() {
+                counts.voices += entry.handles.len();
+            }
+            if remote {
+                counts.tracks += usize::from(entry.track.is_some());
+            }
             if entry.culled {
                 counts.paused_voices += entry.handles.len();
-                counts.paused_tracks += usize::from(entry.track.is_some());
             }
         }
-        for entry in self.non_spatial_map.values().filter(|e| e.culled) {
-            counts.paused_voices += entry.handles.len();
+        for entry in self.non_spatial_map.values() {
+            if remote {
+                counts.voices += entry.handles.len();
+            }
+            if entry.culled {
+                counts.paused_voices += entry.handles.len();
+            }
         }
     }
 
@@ -635,7 +636,7 @@ mod tests {
         assert!(culled(&sync, far) && culled(&sync, quiet) && !culled(&sync, near));
         assert_eq!(sync.culled_count(), 3);
         let mut counts = engine.mix_counts().unwrap();
-        sync.add_mix_counts(&mut counts);
+        sync.add_mix_counts(&mut counts, false);
         // Placed sources are panned voices now, not tracks.
         assert_eq!((counts.tracks, counts.paused_tracks), (0, 0));
         assert_eq!((counts.voices, counts.paused_voices), (4, 3));
@@ -680,7 +681,7 @@ mod tests {
         sync.cull_inaudible(engine.listener_position());
         assert_eq!(sync.culled_count(), 0);
         let mut counts = engine.mix_counts().unwrap();
-        sync.add_mix_counts(&mut counts);
+        sync.add_mix_counts(&mut counts, false);
         assert_eq!(
             (counts.tracks, counts.voices, counts.paused_voices),
             (3, 4, 0)
