@@ -4,7 +4,8 @@
 //! is reached. Uses f64 internally for numerical stability with large meshes.
 
 use crate::types::{BoundingBox, MeshData, Vertex};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use flint_core::Vec3;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 /// Simplify a mesh to approximately `target_triangles` using quadric error metrics.
 ///
@@ -223,10 +224,10 @@ struct SimplifyState {
     active_tris: usize,       // how many of tri_active are set
     vertex_active: Vec<bool>,
     quadrics: Vec<Quadric>,
-    generation: Vec<u32>,            // per-vertex generation counter
-    vertex_tris: Vec<Vec<usize>>,    // triangles adjacent to each vertex
-    remap: Vec<u32>,                 // vertex remap (v -> canonical vertex)
-    boundary_vertices: HashSet<u32>, // vertices on boundary edges
+    generation: Vec<u32>,             // per-vertex generation counter
+    vertex_tris: Vec<Vec<usize>>,     // triangles adjacent to each vertex
+    remap: Vec<u32>,                  // vertex remap (v -> canonical vertex)
+    boundary_vertices: BTreeSet<u32>, // vertices on boundary edges
 }
 
 impl SimplifyState {
@@ -285,7 +286,7 @@ impl SimplifyState {
         let remap: Vec<u32> = (0..n as u32).collect();
 
         // Detect boundary edges (edges that appear in only one triangle)
-        let mut edge_count: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut edge_count: BTreeMap<(u32, u32), u32> = BTreeMap::new();
         for tri in &triangles {
             for k in 0..3 {
                 let a = tri[k].min(tri[(k + 1) % 3]);
@@ -293,7 +294,7 @@ impl SimplifyState {
                 *edge_count.entry((a, b)).or_insert(0) += 1;
             }
         }
-        let mut boundary_vertices = HashSet::new();
+        let mut boundary_vertices = BTreeSet::new();
         for (&(a, b), &count) in &edge_count {
             if count == 1 {
                 boundary_vertices.insert(a);
@@ -416,7 +417,7 @@ impl SimplifyState {
     }
 
     fn build_edge_queue(&self) -> BinaryHeap<EdgeCollapse> {
-        let mut edges_seen = HashSet::new();
+        let mut edges_seen = BTreeSet::new();
         let mut heap = BinaryHeap::new();
 
         for (ti, tri) in self.triangles.iter().enumerate() {
@@ -549,7 +550,7 @@ impl SimplifyState {
         }
 
         // Collect affected vertices for re-evaluation
-        let mut affected = HashSet::new();
+        let mut affected = BTreeSet::new();
         for &ti in &self.vertex_tris[v1 as usize] {
             if !self.tri_active[ti] {
                 continue;
@@ -619,8 +620,15 @@ impl SimplifyState {
             let i1 = new_index[resolved[tri[1] as usize] as usize];
             let i2 = new_index[resolved[tri[2] as usize] as usize];
 
-            // Skip degenerate
+            // Skip degenerate: repeated corners, or distinct corners that
+            // collapses have left on one line (a UV seam's twin vertices
+            // share a position, so a triangle across the seam can flatten)
             if i0 == i1 || i1 == i2 || i0 == i2 {
+                continue;
+            }
+            let corner = |i: u32| Vec3::from_array(vertices[i as usize].position);
+            let (p0, p1, p2) = (corner(i0), corner(i1), corner(i2));
+            if 0.5 * (p1 - p0).cross(&(p2 - p0)).length() <= 1e-10 {
                 continue;
             }
             indices.push(i0);

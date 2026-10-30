@@ -1,7 +1,8 @@
 //! Tree generator — produces procedural tree meshes with bark materials.
 //!
-//! Tasks 3.1 (trunk) and 3.2 (branches) are complete. Task 3.3
-//! (leaves/LOD) will extend this module into a full `TreeGenerator`.
+//! The trunk (`trunk`), the limbs along it (`branches`), leaf cards in
+//! season-tinted shades (`leaves`) and levels of detail that simplify the
+//! bark and thin the leaves apart (`lod`) make up [`TreeGenerator`].
 
 mod bark;
 pub mod branches;
@@ -12,7 +13,7 @@ mod trunk;
 pub use bark::generate_bark_normal_map;
 pub use branches::{generate_branches, TrunkSpine};
 pub use leaves::generate_leaves;
-pub use lod::generate_lods;
+pub use lod::{generate_lods, join_bark_and_leaves, thin_cards, tree_lod};
 pub use trunk::{generate_trunk, TrunkOutput};
 
 use crate::algorithms::lsystem::grammar::{self, Grammar};
@@ -509,7 +510,8 @@ impl BranchParams {
 /// How leaf geometry is constructed at branch tips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeafStyle {
-    /// Camera-facing quads clustered at branch tips.
+    /// Flat quads clustered at branch tips, each facing along its branch
+    /// with a random spin, drawn from both sides.
     BillboardCluster,
     /// Small diamond/rhombus meshes oriented along branch direction.
     MeshCluster,
@@ -526,8 +528,16 @@ pub struct LeafParams {
     pub density: f32,
     /// Base leaf color as linear RGBA.
     pub color_base: [f32; 4],
-    /// Per-leaf color perturbation magnitude.
+    /// Lightness spread between leaf shades (HSL, ±).
     pub color_variation: f32,
+    /// Where the leaves are in the year: 0 = the base colour, 0.4 yellow,
+    /// 0.7 orange, 1.0 red.
+    pub season: f32,
+    /// How far each shade's season strays from `season` (±), so an autumn
+    /// tree turns unevenly.
+    pub season_variation: f32,
+    /// Number of leaf shades. Each is its own material; every leaf wears one.
+    pub shades: u32,
     /// Base size of a single leaf quad/mesh in meters.
     pub leaf_size: f32,
     /// Random scale variation range (e.g. 0.3 means ±30%).
@@ -550,6 +560,9 @@ impl Default for LeafParams {
             density: 0.8,
             color_base: [0.15, 0.35, 0.05, 1.0], // forest green (linear)
             color_variation: 0.08,
+            season: 0.0,
+            season_variation: 0.06,
+            shades: 4,
             leaf_size: 0.15,
             leaf_size_variation: 0.3,
             leaves_per_tip: 5,
@@ -617,6 +630,37 @@ impl LeafParams {
                 return Err(ProcGenError::InvalidParameter {
                     name: "leaf_color_variation".into(),
                     reason: "must be non-negative".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_season") {
+            p.season = toml_f32(v, "leaf_season")?;
+            if !(0.0..=1.0).contains(&p.season) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_season".into(),
+                    reason: "must be in [0.0, 1.0] (0 base colour, 0.4 yellow, 0.7 orange, 1 red)"
+                        .into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_season_variation") {
+            p.season_variation = toml_f32(v, "leaf_season_variation")?;
+            if !(0.0..=1.0).contains(&p.season_variation) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_season_variation".into(),
+                    reason: "must be in [0.0, 1.0]".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("leaf_shades") {
+            p.shades = toml_u32(v, "leaf_shades")?;
+            if !(1..=8).contains(&p.shades) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "leaf_shades".into(),
+                    reason: "must be in 1..=8; each shade is a material and a draw".into(),
                 });
             }
         }
@@ -791,33 +835,36 @@ impl Generator for TreeGenerator {
             &mut rng.fork("leaves"),
         )?;
 
-        // 4. Merge tree + leaves (with submesh tracking for multi-material)
-        let mut builder = MeshBuilder::new();
-        builder.merge_as_submesh(&tree.mesh, 0);
-        if leaf_mesh.vertex_count() > 0 {
-            builder.merge_as_submesh(&leaf_mesh, 1);
-        }
-        builder.compute_normals();
-        builder.compute_tangents();
-        let mut full_mesh = builder.build();
-
-        // Merge materials from bark + leaf
-        let mut materials = tree.mesh.materials.clone();
-        if leaf_mesh.vertex_count() > 0 {
-            materials.extend(leaf_mesh.materials.iter().cloned());
-        }
-        full_mesh.materials = materials;
-
-        // 5. Generate LODs if specified
-        if let Some(ref lod_levels) = spec.lod {
-            if !lod_levels.is_empty() {
-                let targets: Vec<u32> = lod_levels.iter().map(|l| l.target_triangles).collect();
-                let lods = generate_lods(&full_mesh, &targets);
-                return Ok(GeneratorOutput::MeshWithLods(lods));
+        // 4. LODs: output index = `[[lod]] level`. Each entry caps its
+        //    level (LOD 0 included) and is reduced from the full tree. LOD 0
+        //    without an entry is the full tree; a skipped level repeats the
+        //    one before it.
+        let card_indices = leaves::card_index_count(leaf_params.style);
+        if let Some(lod_levels) = spec.lod.as_ref().filter(|l| !l.is_empty()) {
+            let deepest = lod_levels.iter().map(|l| l.level).max().unwrap_or(0);
+            let mut lods: Vec<MeshData> = Vec::with_capacity(deepest as usize + 1);
+            for level in 0..=deepest {
+                let lod = match lod_levels.iter().find(|l| l.level == level) {
+                    Some(l) => tree_lod(
+                        &tree.mesh,
+                        &leaf_mesh,
+                        card_indices,
+                        l.target_triangles as usize,
+                    ),
+                    None => match lods.last() {
+                        Some(previous) => previous.clone(),
+                        None => join_bark_and_leaves(&tree.mesh, &leaf_mesh),
+                    },
+                };
+                lods.push(lod);
             }
+            return Ok(GeneratorOutput::MeshWithLods(lods));
         }
 
-        Ok(GeneratorOutput::Mesh(full_mesh))
+        // 5. Otherwise the whole tree: bark, then a submesh per leaf shade
+        Ok(GeneratorOutput::Mesh(join_bark_and_leaves(
+            &tree.mesh, &leaf_mesh,
+        )))
     }
 
     fn param_schema(&self) -> serde_json::Value {
@@ -862,6 +909,9 @@ impl Generator for TreeGenerator {
                 "leaf_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8 },
                 "leaf_color_base": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#2D8C0D" },
                 "leaf_color_variation": { "type": "number", "minimum": 0.0, "default": 0.08 },
+                "leaf_season": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                "leaf_season_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06 },
+                "leaf_shades": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4 },
                 "leaf_size": { "type": "number", "minimum": 0.01, "default": 0.15 },
                 "leaf_size_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 },
                 "leaves_per_tip": { "type": "integer", "minimum": 1, "default": 5 },
@@ -1147,6 +1197,110 @@ target_triangles = 200
         assert!(lods[0].triangle_count() >= lods[1].triangle_count());
         for lod in lods {
             assert!(lod.validate().is_ok());
+        }
+    }
+
+    /// Area of a mesh's triangles that use a material named `leaf_*`, front
+    /// faces only (each card's first half).
+    fn leaf_area(mesh: &MeshData) -> f32 {
+        let pos = |i: u32| Vec3::from_array(mesh.vertices[i as usize].position);
+        mesh.submeshes
+            .iter()
+            .filter(|s| mesh.materials[s.material_index].name.starts_with("leaf_"))
+            .flat_map(|s| {
+                mesh.indices[s.index_start as usize..(s.index_start + s.index_count) as usize]
+                    .chunks(3)
+            })
+            .map(|t| {
+                0.5 * (pos(t[1]) - pos(t[0]))
+                    .cross(&(pos(t[2]) - pos(t[0])))
+                    .length()
+            })
+            .sum::<f32>()
+            / 2.0
+    }
+
+    #[test]
+    fn oak_spec_lods_hit_targets_and_keep_the_trunk() {
+        // The shipped example spec, end to end.
+        let spec =
+            ProcGenSpec::parse(include_str!("../../../../../specs/oak_tree.procgen.toml")).unwrap();
+        let targets: Vec<usize> = spec
+            .lod
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|l| l.target_triangles as usize)
+            .collect();
+        let output = TreeGenerator
+            .generate(&spec, &mut SeededRng::new(spec.seed.value.unwrap_or(42)))
+            .unwrap();
+        let lods = output.as_mesh_lods().unwrap();
+        assert_eq!(lods.len(), targets.len());
+
+        // Same spec, same seed, same LODs. The simplifier once summed its
+        // boundary quadrics in hash-map order, so every run differed.
+        let again = TreeGenerator
+            .generate(&spec, &mut SeededRng::new(spec.seed.value.unwrap_or(42)))
+            .unwrap();
+        assert!(again == output, "the oak's LODs changed between two runs");
+
+        let report = crate::validate::validate_output(
+            &output,
+            &spec,
+            &crate::validate::ValidationConstraints::default(),
+        );
+        for c in report
+            .checks
+            .iter()
+            .filter(|c| c.name.contains("degenerate"))
+        {
+            assert_eq!(
+                c.status,
+                crate::validate::CheckStatus::Pass,
+                "{}: {}",
+                c.name,
+                c.detail
+            );
+        }
+
+        let full = TreeGenerator
+            .generate(
+                &ProcGenSpec {
+                    lod: None,
+                    ..spec.clone()
+                },
+                &mut SeededRng::new(spec.seed.value.unwrap_or(42)),
+            )
+            .unwrap();
+        let full_leaf_area = leaf_area(full.as_mesh().unwrap());
+        for (i, (lod, &target)) in lods.iter().zip(&targets).enumerate() {
+            assert!(lod.validate().is_ok());
+            let tris = lod.triangle_count();
+            assert!(
+                tris <= target && tris as f32 >= target as f32 * 0.9,
+                "LOD {i}: {tris} triangles for a target of {target}"
+            );
+            if i > 0 {
+                assert!(tris < lods[i - 1].triangle_count());
+            }
+
+            // The bark is submesh 0, and the trunk's foot is still in it.
+            let bark = &lod.submeshes[0];
+            assert_eq!(lod.materials[bark.material_index].name, "bark");
+            let foot = lod.indices
+                [bark.index_start as usize..(bark.index_start + bark.index_count) as usize]
+                .iter()
+                .any(|&v| lod.vertices[v as usize].position[1] < 0.3);
+            assert!(foot, "LOD {i} lost the foot of the trunk");
+
+            // Leaves keep their shades and roughly their coverage.
+            assert!(lod.submeshes.len() >= 2, "LOD {i} lost its leaf shades");
+            let area = leaf_area(lod);
+            assert!(
+                (area / full_leaf_area - 1.0).abs() < 0.25,
+                "LOD {i}: leaf area {area:.2} m² against {full_leaf_area:.2}"
+            );
         }
     }
 
