@@ -1,6 +1,7 @@
 //! Terrain spec format — `.terrain.toml` parsing and serialization
 
 use crate::grass_config::GrassConfig;
+use flint_core::vfs;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -294,7 +295,7 @@ fn default_4f32() -> f32 {
 impl TerrainSpec {
     /// Load a terrain spec from a `.terrain.toml` file.
     pub fn from_file(path: &Path) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
+        let content = vfs::read_to_string(path)
             .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
         toml::from_str(&content).map_err(|e| format!("Failed to parse '{}': {}", path.display(), e))
     }

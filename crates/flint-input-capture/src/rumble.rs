@@ -460,6 +460,7 @@ const GRIND_STRONG: u16 = 14_000;
 /// Run the H1 spike: prove ff fires, let the operator feel the three
 /// weight-axis prototypes, and time both command paths. Blocking; prints
 /// progress. `feel = false` skips the operator-felt patterns (timing only).
+#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
 pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
     let (pad, mut dev) = open_ff_device()?;
     println!("rumble spike on: {pad}");
@@ -523,6 +524,7 @@ pub fn spike_rumble(feel: bool) -> flint_core::Result<RumbleSpikeReport> {
     })
 }
 
+#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
 fn time_effect_play() -> flint_core::Result<CallStats> {
     use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
     let mut gilrs = gilrs::Gilrs::new().map_err(|e| {

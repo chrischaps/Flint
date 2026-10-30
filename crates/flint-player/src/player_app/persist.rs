@@ -11,6 +11,7 @@
 //! (one write per burst of changes), on every scene transition, on exit, and
 //! immediately when a script calls `persist_save()`.
 
+use flint_core::vfs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -75,7 +76,7 @@ impl PlayerApp {
     /// corrupt save never blocks the game from starting.
     pub(super) fn load_persistent_store(&mut self) {
         let path = persist_path(&self.scene_path);
-        if !path.is_file() {
+        if !vfs::is_file(&path) {
             tracing::info!("persist: no save file at {} (fresh store)", path.display());
             return;
         }
@@ -116,6 +117,7 @@ impl PlayerApp {
     /// or `force` is set (transition / exit). A script's `persist_save()`
     /// also forces.
     pub(super) fn flush_persistent_store(&mut self, force: bool, reason: &str) {
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let now = Instant::now();
         if self.persistent_store.is_dirty() {
             self.persist_debounce.note_dirty(now);

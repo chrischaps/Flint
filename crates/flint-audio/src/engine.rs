@@ -3,7 +3,7 @@
 //! Handles sound loading, listener management, and spatial track creation.
 //! Degrades gracefully when no audio device is available.
 
-use flint_core::{Result, Vec3};
+use flint_core::{vfs, Result, Vec3};
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::track::{
@@ -15,21 +15,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// `StaticSoundData::from_file`, which kira leaves out of wasm32 builds. The
-/// web reads the bytes and decodes them from memory instead; `std::fs` fails
-/// there at run time until the vfs lands (docs/design/web.md).
+/// `StaticSoundData::from_file`, read through the vfs: the bytes come from
+/// the active file source (the disk, or the web's bundle) and kira decodes
+/// them from memory, which is all its `from_file` does after opening the
+/// file. kira leaves `from_file` out of wasm32 builds anyway.
 fn static_sound_from_file(
     path: impl AsRef<Path>,
 ) -> std::result::Result<StaticSoundData, kira::sound::FromFileError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        StaticSoundData::from_file(path)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let bytes = std::fs::read(path)?;
-        StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
-    }
+    let bytes = vfs::read(path)?;
+    StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
 }
 
 /// The kira backend sound goes through: cpal's default device on the

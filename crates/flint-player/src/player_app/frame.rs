@@ -581,6 +581,7 @@ impl PlayerApp {
         }
 
         output.present();
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let presented = std::time::Instant::now();
 
         if let Some(exit_after) = self.capture.exit_after {

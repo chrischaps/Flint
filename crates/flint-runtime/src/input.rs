@@ -273,7 +273,7 @@ impl InputConfig {
 
     pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| {
+        let content = flint_core::vfs::read_to_string(path).map_err(|e| {
             FlintError::RuntimeError(format!(
                 "failed to read input config '{}': {e}",
                 path.display()
@@ -608,6 +608,7 @@ impl InputState {
         (x / self.screen_size.0, y / self.screen_size.1)
     }
 
+    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn process_touch_start(&mut self, id: u64, x: f64, y: f64) {
         self.last_device = InputDevice::Touch;
         let norm = self.normalize_touch(x, y);
@@ -634,6 +635,7 @@ impl InputState {
 
     pub fn process_touch_end(&mut self, id: u64) {
         if let Some(touch) = self.touches.remove(&id) {
+            #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
             let elapsed = touch.start_time.elapsed().as_millis();
             let dx = (touch.position.0 - touch.start_position.0) * self.screen_size.0;
             let dy = (touch.position.1 - touch.start_position.1) * self.screen_size.1;

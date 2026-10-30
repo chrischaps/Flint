@@ -11,6 +11,7 @@
 //! run_0  = [0, 64, 64, 64]
 //! ```
 
+use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -60,7 +61,7 @@ impl TextureAtlas {
     /// Load an atlas from a `.atlas.toml` file.
     pub fn load(path: &Path) -> Result<Self, String> {
         let content =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read atlas: {e}"))?;
+            vfs::read_to_string(path).map_err(|e| format!("Failed to read atlas: {e}"))?;
         Self::from_toml(&content)
     }
 }
@@ -94,13 +95,11 @@ impl AtlasRegistry {
     /// Load all `.atlas.toml` files from a directory.
     pub fn load_from_directory(&mut self, dir: &Path) -> Result<usize, String> {
         let mut count = 0;
-        if !dir.exists() {
+        if !vfs::exists(dir) {
             return Ok(0);
         }
-        let entries =
-            std::fs::read_dir(dir).map_err(|e| format!("Failed to read atlas dir: {e}"))?;
-        for entry in entries.flatten() {
-            let path = entry.path();
+        let entries = vfs::read_dir(dir).map_err(|e| format!("Failed to read atlas dir: {e}"))?;
+        for path in entries {
             if path
                 .file_name()
                 .and_then(|n| n.to_str())

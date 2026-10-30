@@ -1,5 +1,6 @@
 //! Heightmap loading and sampling
 
+use flint_core::vfs;
 use std::path::Path;
 
 use crate::terrain::TerrainConfig;
@@ -18,8 +19,18 @@ impl Heightmap {
     /// Load a heightmap from a grayscale PNG file.
     /// Values are normalized to [0..1] regardless of bit depth.
     pub fn from_png(path: &Path) -> Result<Self, String> {
-        let img = image::open(path)
-            .map_err(|e| format!("Failed to load heightmap '{}': {}", path.display(), e))?;
+        let fail = |e: &dyn std::fmt::Display| {
+            format!("Failed to load heightmap '{}': {}", path.display(), e)
+        };
+        let bytes = vfs::read(path).map_err(|e| fail(&e))?;
+        // Decode from memory, trusting the extension the way `image::open`
+        // does and sniffing the bytes only when it names no format.
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+        match image::ImageFormat::from_path(path) {
+            Ok(format) => reader.set_format(format),
+            Err(_) => reader = reader.with_guessed_format().map_err(|e| fail(&e))?,
+        }
+        let img = reader.decode().map_err(|e| fail(&e))?;
 
         let gray = img.into_luma16();
         let width = gray.width();

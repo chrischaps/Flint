@@ -84,6 +84,7 @@ impl ProcGenCache {
     ///
     /// Updates the LRU timestamp on hit. Returns `None` on miss or if the
     /// cache is disabled.
+    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn get(&mut self, spec_hash: ContentHash, seed: &Seed) -> Option<&GeneratorOutput> {
         if !self.config.enabled {
             self.misses += 1;
@@ -104,6 +105,7 @@ impl ProcGenCache {
     ///
     /// Evicts LRU entries if the memory budget would be exceeded. Silently
     /// skips entries that are individually larger than the budget.
+    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn insert(&mut self, spec_hash: ContentHash, seed: &Seed, output: GeneratorOutput) {
         if !self.config.enabled {
             return;

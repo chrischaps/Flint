@@ -278,6 +278,7 @@ pub fn connected_gamepads() -> flint_core::Result<Vec<String>> {
         .collect())
 }
 
+#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
 fn capture_loop(
     bridge: ClockBridge,
     cfg: CaptureConfig,
@@ -552,6 +553,7 @@ const BUCKET_EDGES_MS: [f64; 8] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 33.0, f64::INF
 /// Poll gilrs at `poll_hz` for `duration`, recording inter-event intervals
 /// while the operator wiggles the stick. Blocking; run on a spare thread or
 /// a dedicated CLI mode.
+#[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
 pub fn measure_granularity(
     duration: Duration,
     poll_hz: u32,

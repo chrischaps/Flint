@@ -38,7 +38,7 @@ impl ContentHash {
 
     /// Compute a hash from a file's contents
     pub fn from_file<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let data = std::fs::read(path)?;
+        let data = crate::vfs::read(path)?;
         Ok(Self::from_bytes(&data))
     }
 
