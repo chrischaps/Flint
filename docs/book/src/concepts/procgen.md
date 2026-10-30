@@ -58,6 +58,22 @@ Every generator publishes a JSON Schema for its `params` table, which is what th
 
 Trunk, branches, leaves and bark in one pass. The trunk is a noise-displaced tapered tube (`trunk_height`, `trunk_radius_base`, `trunk_radius_top`, `trunk_segments`, `radial_segments`, `trunk_curve_noise`). Branches come from one of two methods: `branch_method = "lsystem"` with `lsystem_iterations` and `lsystem_angle_variation`, or `"space_colonization"`, which grows toward attractor points filling a crown of `crown_shape` (`sphere`, `ellipsoid`, `hemisphere`), `crown_radius` and `crown_height_ratio`. `branch_levels`, `branch_angle_min/max`, `branch_length_falloff`, `branch_radius_falloff` and `branch_radial_segments` shape the hierarchy. Leaves are `leaf_style = "billboard"` quads placed `leaves_per_tip` at each branch tip plus `leaf_along_branch_density` along branches deeper than `leaf_along_branch_min_depth`, with `leaf_size`, `leaf_size_variation`, `leaf_spread_radius`, `leaf_color_base` and `leaf_color_variation`. Bark gets a generated normal map (`bark_color_base`, `bark_roughness`, `bark_normal_strength`, `bark_normal_resolution`). With `[[lod]]` levels the output is a mesh chain, exported to one GLB.
 
+#### L-system grammars
+
+With `branch_method = "lsystem"`, the crown can also be written as a grammar in the notation of *The Algorithmic Beauty of Plants*. Name a built-in one with `lsystem_preset` (`fractal_plant`, `weed`, `stochastic_plant`, `bush`), or write your own with `lsystem_axiom` and `lsystem_rules`:
+
+```toml
+branch_method = "lsystem"
+lsystem_axiom = "X"
+lsystem_rules = ["X -> F[+X][-X]FX", "F (0.7) -> FF", "F (0.3) -> F"]
+lsystem_iterations = 5
+lsystem_angle = 25.0
+lsystem_size = 4.0      # crown reach from the trunk tip, metres
+lsystem_tropism = 0.2   # bend toward the ground per step; negative bends up
+```
+
+Rules sharing a predecessor are picked per occurrence by weight, from the spec's seed. The turtle reads `F`/`G` (draw), `f` (move), `+ -` (yaw), `^ &` (pitch), `/ \` (roll), `|` (turn around), `[ ]` (branch) and `!` (thin); any other symbol only steers rewriting. Symbols take arguments, as in `F(2, 0.1)` or `+(137.5)`. Each `[` scales the step by `branch_length_falloff` and the radius by `branch_radius_falloff`, starting from `trunk_radius_top`. `lsystem_step` fixes the step length instead of scaling the crown to `lsystem_size`. `specs/weeping_willow.procgen.toml` is a worked example, and `cargo run -p flint-procgen --example lsystem_gallery` grows the presets.
+
 ### `texture_v1`
 
 Produces an image set, by default albedo, normal and roughness (`output_maps`), at `width` by `height`, optionally `seamless`. Two routes:
