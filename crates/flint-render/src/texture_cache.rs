@@ -1,9 +1,24 @@
 //! GPU texture cache — uploads imported textures and provides default fallbacks
 
+use flint_core::vfs;
 use flint_import::ImportedTexture;
 use std::collections::HashMap;
 use std::path::Path;
 use wgpu::util::DeviceExt;
+
+/// Open and decode an image file through the file layer: `image::open`, but
+/// the bytes come from [`vfs::read`] so a memory source works too. The format
+/// comes from the path's extension, as `image::open` does, falling back to
+/// sniffing the bytes when the extension names none.
+pub fn open_image(path: &Path) -> image::ImageResult<image::DynamicImage> {
+    let bytes = vfs::read(path).map_err(image::ImageError::IoError)?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    match image::ImageFormat::from_path(path) {
+        Ok(format) => reader.set_format(format),
+        Err(_) => reader = reader.with_guessed_format()?,
+    }
+    reader.decode()
+}
 
 /// A GPU-resident texture with its view and sampler
 pub struct GpuTexture {
@@ -185,7 +200,7 @@ impl TextureCache {
             return Ok(false);
         }
 
-        let img = image::open(path)
+        let img = open_image(path)
             .map_err(|e| format!("Failed to open image '{}': {}", path.display(), e))?;
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();

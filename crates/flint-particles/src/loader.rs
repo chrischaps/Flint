@@ -1,4 +1,4 @@
-//! Loading `*.particles.toml` effect assets from disk.
+//! Loading `*.particles.toml` effect assets through the vfs.
 //!
 //! Effects live in `<scene_dir>/particles/` (falling back to
 //! `<scene_dir>/../particles/` for projects that keep scenes in a
@@ -7,6 +7,7 @@
 
 use crate::effect::ParticleEffect;
 use crate::ParticleSystem;
+use flint_core::vfs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ pub fn load_effect_from_str(text: &str, origin: &str) -> Result<ParticleEffect, 
 /// Load one effect file. An empty `name` falls back to the file stem
 /// (`fire.particles.toml` → `fire`).
 pub fn load_effect_from_file(path: &Path) -> Result<ParticleEffect, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = vfs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let origin = path.display().to_string();
     // Allow the name to be omitted: patch it in before strict parsing.
     let mut effect = match load_effect_from_str(&text, &origin) {
@@ -49,12 +50,11 @@ pub fn effect_stem(path: &Path) -> Option<String> {
 /// each path with its result so callers can report failures individually.
 pub fn load_effects_from_dir(dir: &Path) -> Vec<(PathBuf, Result<ParticleEffect, String>)> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = vfs::read_dir(dir) else {
         return out;
     };
     let mut paths: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
+        .into_iter()
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
@@ -75,11 +75,11 @@ pub fn resolve_particles_dir(scene_path: &str) -> Option<PathBuf> {
         .parent()
         .unwrap_or_else(|| Path::new("."));
     let local = scene_dir.join("particles");
-    if local.is_dir() {
+    if vfs::is_dir(&local) {
         return Some(local);
     }
     let up = scene_dir.parent()?.join("particles");
-    up.is_dir().then_some(up)
+    vfs::is_dir(&up).then_some(up)
 }
 
 /// Directories in which particle textures are searched, most specific

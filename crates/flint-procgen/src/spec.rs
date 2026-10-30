@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use flint_core::vfs;
 use flint_core::ContentHash;
 use serde::{Deserialize, Serialize};
 
@@ -124,7 +125,7 @@ impl ProcGenSpec {
 
     /// Load a spec from a TOML file.
     pub fn from_file(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)?;
+        let content = vfs::read_to_string(path)?;
         Self::parse(&content)
     }
 
@@ -153,7 +154,7 @@ impl ProcGenSpec {
 /// skipped (callers should use more targeted loading for error reporting).
 pub fn discover_specs(dir: &Path) -> Result<Vec<ProcGenSpec>> {
     let mut specs = Vec::new();
-    if !dir.is_dir() {
+    if !vfs::is_dir(dir) {
         return Ok(specs);
     }
     visit_dir(dir, &mut specs)?;
@@ -161,10 +162,8 @@ pub fn discover_specs(dir: &Path) -> Result<Vec<ProcGenSpec>> {
 }
 
 fn visit_dir(dir: &Path, specs: &mut Vec<ProcGenSpec>) -> Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
+    for path in vfs::read_dir(dir)? {
+        if vfs::is_dir(&path) {
             visit_dir(&path, specs)?;
         } else if path
             .file_name()

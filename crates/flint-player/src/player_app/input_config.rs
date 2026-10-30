@@ -2,6 +2,7 @@
 
 use crate::user_files;
 use anyhow::Result;
+use flint_core::vfs;
 use flint_core::FlintError;
 use flint_runtime::InputConfig;
 use std::path::{Path, PathBuf};
@@ -30,7 +31,7 @@ pub(super) fn resolve_input_paths(
     let game_default = scene_input_config
         .map(|name| {
             let p = scene_dir.join(name);
-            if p.exists() {
+            if vfs::exists(&p) {
                 p
             } else if let Some(parent) = scene_dir.parent() {
                 parent.join(name)
@@ -40,13 +41,13 @@ pub(super) fn resolve_input_paths(
         })
         .or_else(|| {
             let candidate = scene_dir.join("config").join("input.toml");
-            if candidate.exists() {
+            if vfs::exists(&candidate) {
                 Some(candidate)
             } else {
                 scene_dir
                     .parent()
                     .map(|p| p.join("config").join("input.toml"))
-                    .filter(|p| p.exists())
+                    .filter(|p| vfs::exists(p))
             }
         });
 
@@ -76,26 +77,39 @@ fn resolve_user_override_in(
     config_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let local = project_local_override(scene_path);
-    if user_files::exists(&local) {
+    if override_exists(&local) {
         return Some(local);
     }
     let config_dir = config_dir?;
     let game = user_override_in(config_dir, game_id);
-    if user_files::exists(&game) {
+    if override_exists(&game) {
         return Some(game);
     }
     Some(user_override_in(config_dir, ""))
-        .filter(|shared| *shared != game && user_files::exists(shared))
+        .filter(|shared| *shared != game && override_exists(shared))
+}
+
+// An override can be one the player wrote ([`user_files`]: the OS config
+// directory, or localStorage on the web) or one the game ships beside its
+// scenes (the read-only [`vfs`], a fetched bundle on the web). The player's
+// copy wins, so a rebind saved over a shipped file is the one read back.
+fn override_exists(path: &Path) -> bool {
+    user_files::exists(path) || vfs::exists(path)
 }
 
 /// The user override at `path`, or `None` when there is no such file.
 pub(super) fn read_user_override_file(path: &Path) -> Result<Option<InputConfig>> {
-    let text = user_files::read(path).map_err(|e| {
+    let failed = |e: std::io::Error| {
         FlintError::RuntimeError(format!(
             "failed to read input config '{}': {e}",
             path.display()
         ))
-    })?;
+    };
+    let text = match user_files::read(path).map_err(failed)? {
+        Some(text) => Some(text),
+        None if vfs::exists(path) => Some(vfs::read_to_string(path).map_err(failed)?),
+        None => None,
+    };
     Ok(text
         .map(|text| InputConfig::from_toml_str(&text))
         .transpose()?)
@@ -323,5 +337,29 @@ mod tests {
             user_override_save_path_in(&scene, "flint", Some(&shared), Some(&config_dir)),
             shared
         );
+    }
+
+    #[test]
+    fn an_override_the_game_ships_is_read_from_the_vfs() {
+        let tmp = TempDir::new("bundled");
+        let scene = tmp.0.join("scenes").join("main.scene.toml");
+        let config_dir = tmp.0.join("config");
+        let local = project_local_override(&scene);
+        let mut user = game_config("capitol");
+        user.actions.get_mut("interact").unwrap().bindings = vec![key("KeyJ")];
+        let mut bundle = flint_core::vfs::MemorySource::new();
+        bundle.insert(&local, toml::to_string_pretty(&user).unwrap());
+
+        flint_core::vfs::scoped(std::sync::Arc::new(bundle), || {
+            let (input, loaded) = start(&scene, &config_dir, "capitol");
+            assert_eq!(loaded.as_deref(), Some(local.as_path()));
+            assert_eq!(interact_bindings(&input), vec![key("KeyJ")]);
+
+            // A rebind saved over it is the copy read back.
+            user.actions.get_mut("interact").unwrap().bindings = vec![key("KeyK")];
+            write_user_override_file(&local, &user).unwrap();
+            let (input, _) = start(&scene, &config_dir, "capitol");
+            assert_eq!(interact_bindings(&input), vec![key("KeyK")]);
+        });
     }
 }

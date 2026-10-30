@@ -6,14 +6,14 @@ use crate::types::{
     ImportedSkeleton, ImportedTexture, JointProperty,
 };
 use flint_asset::{AssetMeta, AssetType};
-use flint_core::{ContentHash, FlintError, Result};
+use flint_core::{vfs, ContentHash, FlintError, Result};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Import a glTF or GLB file
 pub fn import_gltf<P: AsRef<Path>>(path: P) -> Result<ImportResult> {
     let path = path.as_ref();
-    let (document, buffers, images) = gltf::import(path)
+    let (document, buffers, images) = import_via_vfs(path)
         .map_err(|e| FlintError::ImportError(format!("Failed to import glTF: {}", e)))?;
 
     let hash = ContentHash::from_file(path)
@@ -704,6 +704,147 @@ fn build_keyframes(
         .collect()
 }
 
+/// `gltf::import`, read through the vfs. gltf's importer opens the file and
+/// everything it references with `std::fs`, so this does the same steps over
+/// the active file source (the disk, or the web's bundle): the document, its
+/// buffers (GLB blob, `data:` URI or a file next to it) and its images.
+/// `data:` URIs and buffer views never touch a file, so gltf decodes those.
+fn import_via_vfs(
+    path: &Path,
+) -> gltf::Result<(
+    gltf::Document,
+    Vec<gltf::buffer::Data>,
+    Vec<gltf::image::Data>,
+)> {
+    let base = path.parent().unwrap_or_else(|| Path::new("./"));
+    let bytes = vfs::read(path).map_err(gltf::Error::Io)?;
+    let gltf::Gltf { document, mut blob } = gltf::Gltf::from_slice(&bytes)?;
+
+    // As `gltf::import_buffers`: padded to 4 bytes, and no shorter than the
+    // length the document declares.
+    let mut buffers = Vec::new();
+    for buffer in document.buffers() {
+        let mut data = match buffer.source() {
+            gltf::buffer::Source::Bin => blob.take().ok_or(gltf::Error::MissingBlob)?,
+            gltf::buffer::Source::Uri(uri) if uri.starts_with("data:") => {
+                gltf::buffer::Data::from_source(buffer.source(), None)?.0
+            }
+            gltf::buffer::Source::Uri(uri) => read_uri(base, uri)?,
+        };
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        if data.len() < buffer.length() {
+            return Err(gltf::Error::BufferLength {
+                buffer: buffer.index(),
+                expected: buffer.length(),
+                actual: data.len(),
+            });
+        }
+        buffers.push(gltf::buffer::Data(data));
+    }
+
+    let mut images = Vec::new();
+    for img in document.images() {
+        let data = match img.source() {
+            gltf::image::Source::Uri { uri, mime_type } if !uri.starts_with("data:") => {
+                let encoded = read_uri(base, uri)?;
+                // The format the way gltf picks it: the MIME type, else the
+                // URI's extension. (gltf's byte sniffing is a feature Flint
+                // does not enable.)
+                let format = match mime_type {
+                    Some("image/png") => image::ImageFormat::Png,
+                    Some("image/jpeg") => image::ImageFormat::Jpeg,
+                    Some(_) => return Err(gltf::Error::UnsupportedImageEncoding),
+                    None => match uri.rsplit('.').next() {
+                        Some("png") => image::ImageFormat::Png,
+                        Some("jpg") | Some("jpeg") => image::ImageFormat::Jpeg,
+                        _ => return Err(gltf::Error::UnsupportedImageEncoding),
+                    },
+                };
+                let decoded = image::load_from_memory_with_format(&encoded, format)
+                    .map_err(gltf::Error::Image)?;
+                image_data(decoded)?
+            }
+            // A buffer view or a `data:` URI. gltf only resolves URIs when
+            // given a base; this one is never used.
+            source => gltf::image::Data::from_source(source, Some(Path::new("")), &buffers)?,
+        };
+        images.push(data);
+    }
+
+    Ok((document, buffers, images))
+}
+
+/// An external buffer or image URI, read through the vfs relative to the
+/// file's directory: `file:` paths as written, relative ones percent-decoded,
+/// any other scheme refused (gltf's rules).
+fn read_uri(base: &Path, uri: &str) -> gltf::Result<Vec<u8>> {
+    let path = if let Some(rest) = uri
+        .strip_prefix("file://")
+        .or_else(|| uri.strip_prefix("file:"))
+    {
+        PathBuf::from(rest)
+    } else if uri.contains(':') {
+        return Err(gltf::Error::UnsupportedScheme);
+    } else {
+        base.join(percent_decode(uri))
+    };
+    vfs::read(path).map_err(gltf::Error::Io)
+}
+
+/// `%XX` escapes decoded (`tire%20tread.png` -> `tire tread.png`), as gltf
+/// does to a relative URI before opening it. A `%` not followed by two hex
+/// digits stays as it is.
+fn percent_decode(uri: &str) -> String {
+    let bytes = uri.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escape = bytes
+            .get(i + 1..i + 3)
+            .filter(|h| h.iter().all(u8::is_ascii_hexdigit));
+        match (bytes[i], escape) {
+            (b'%', Some(hex)) => {
+                let hex = std::str::from_utf8(hex).unwrap_or("00");
+                out.push(u8::from_str_radix(hex, 16).unwrap_or(0));
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A decoded image as gltf hands it over (its own constructor is private):
+/// the pixel layout named by the variant, the raw bytes.
+fn image_data(decoded: image::DynamicImage) -> gltf::Result<gltf::image::Data> {
+    use gltf::image::Format;
+    let format = match decoded {
+        image::DynamicImage::ImageLuma8(_) => Format::R8,
+        image::DynamicImage::ImageLumaA8(_) => Format::R8G8,
+        image::DynamicImage::ImageRgb8(_) => Format::R8G8B8,
+        image::DynamicImage::ImageRgba8(_) => Format::R8G8B8A8,
+        image::DynamicImage::ImageLuma16(_) => Format::R16,
+        image::DynamicImage::ImageLumaA16(_) => Format::R16G16,
+        image::DynamicImage::ImageRgb16(_) => Format::R16G16B16,
+        image::DynamicImage::ImageRgba16(_) => Format::R16G16B16A16,
+        image::DynamicImage::ImageRgb32F(_) => Format::R32G32B32FLOAT,
+        image::DynamicImage::ImageRgba32F(_) => Format::R32G32B32A32FLOAT,
+        other => return Err(gltf::Error::UnsupportedImageFormat(other)),
+    };
+    let (width, height) = (decoded.width(), decoded.height());
+    Ok(gltf::image::Data {
+        pixels: decoded.into_bytes(),
+        format,
+        width,
+        height,
+    })
+}
+
 /// A texture's name for the cache: the glTF texture name, else its source
 /// image's name (Blender names images but not textures — e.g. `tire_normal`,
 /// which the texture cache also reads to pick a linear format for normal
@@ -749,5 +890,57 @@ mod tests {
         assert_eq!(material.emissive_texture.as_deref(), Some("windows"));
         assert_eq!(result.textures[0].name, "windows");
         assert_eq!(material.base_color_texture, None);
+    }
+
+    /// A `.gltf` whose buffer and texture are separate files imports from a
+    /// memory bundle, with the URIs resolved next to the model and
+    /// percent-decoded, exactly as it would from disk.
+    #[test]
+    fn a_gltf_with_external_files_imports_from_a_memory_source() {
+        use flint_core::vfs::MemorySource;
+        use std::sync::Arc;
+
+        // One triangle: three f32 positions, 36 bytes.
+        let positions: [[f32; 3]; 3] = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let bin: Vec<u8> = positions
+            .iter()
+            .flatten()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 128, 0, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let gltf = r#"{
+            "asset": { "version": "2.0" },
+            "scene": 0,
+            "scenes": [{ "nodes": [0] }],
+            "nodes": [{ "name": "tri", "mesh": 0 }],
+            "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 } }] }],
+            "buffers": [{ "uri": "tri%20data.bin", "byteLength": 36 }],
+            "bufferViews": [{ "buffer": 0, "byteLength": 36 }],
+            "accessors": [{
+                "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0]
+            }],
+            "images": [{ "uri": "paint.png", "name": "paint" }],
+            "textures": [{ "source": 0 }]
+        }"#;
+
+        let mut bundle = MemorySource::new();
+        bundle.insert("models/tri.gltf", gltf);
+        bundle.insert("models/tri data.bin", bin);
+        bundle.insert("models/paint.png", png);
+        let result = vfs::scoped(Arc::new(bundle), || import_gltf("models/tri.gltf"));
+        let result = result.unwrap();
+
+        assert_eq!(result.meshes.len(), 1);
+        assert_eq!(result.meshes[0].positions, positions.to_vec());
+        assert_eq!(result.textures[0].name, "paint");
+        assert_eq!(
+            (result.textures[0].width, result.textures[0].height),
+            (2, 1)
+        );
+        assert_eq!(percent_decode("a%2fb%zz%"), "a/b%zz%");
     }
 }

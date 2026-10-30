@@ -30,6 +30,7 @@
 //! build their layout jobs through [`text_layout_job`] so measurement and
 //! drawing can never disagree.
 
+use flint_core::vfs;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -149,23 +150,22 @@ pub fn find_fonts_dir(scene_path: &str) -> Option<PathBuf> {
     if let Some(parent) = scene_dir.parent() {
         candidates.push(parent.join("fonts"));
     }
-    candidates.into_iter().find(|p| p.is_dir())
+    candidates.into_iter().find(|p| vfs::is_dir(p))
 }
 
 /// Scan a `fonts/` directory: read every `.ttf`/`.otf` (non-recursive) and
 /// the optional manifest. Returns `(stem → bytes, aliases, egui defaults)`.
 fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, EguiDefaults) {
     let mut data = BTreeMap::new();
-    let entries = match std::fs::read_dir(dir) {
+    let entries = match vfs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("fonts: cannot read {}: {e}", dir.display());
             return (data, Vec::new(), EguiDefaults::default());
         }
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
+    for path in entries {
+        if !vfs::is_file(&path) {
             continue;
         }
         let ext = path
@@ -178,7 +178,7 @@ fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, Egu
         let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
             continue;
         };
-        match std::fs::read(&path) {
+        match vfs::read(&path) {
             Ok(bytes) => {
                 data.insert(stem, bytes);
             }
@@ -186,7 +186,7 @@ fn scan_fonts_dir(dir: &Path) -> (BTreeMap<String, Vec<u8>>, Vec<FontAlias>, Egu
         }
     }
     let manifest = dir.join("fonts.toml");
-    match std::fs::read_to_string(&manifest) {
+    match vfs::read_to_string(&manifest) {
         Ok(text) => (data, parse_manifest(&text), parse_egui_defaults(&text)),
         Err(_) => (data, Vec::new(), EguiDefaults::default()),
     }

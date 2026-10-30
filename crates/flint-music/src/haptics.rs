@@ -25,7 +25,7 @@ use crate::conductor::{Conductor, Grid};
 use crate::config_toml::{self, VersionPolicy};
 use crate::reintegration::{ReintegrationEvent, SeqPhase};
 use crate::tempo::ms_to_samples;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use std::path::Path;
 
 /// Which grid the pre-beat tick rides.
@@ -113,7 +113,7 @@ impl Default for HapticsConfig {
 
 impl HapticsConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = vfs::read_to_string(path)?;
         Self::parse(&text)
     }
 

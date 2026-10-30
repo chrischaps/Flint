@@ -15,6 +15,7 @@ use flint_ecs::FlintWorld;
 use flint_import::ImportedMaterial;
 use flint_physics::PhysicsSystem;
 use flint_render::{SceneRenderer, Vertex};
+use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -28,7 +29,7 @@ struct SplineDef {
 }
 
 fn parse_spline_file(path: &Path) -> Option<SplineDef> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = vfs::read_to_string(path).ok()?;
     let value: toml::Value = toml::from_str(&content).ok()?;
 
     let spline_section = value.get("spline")?;
@@ -653,7 +654,7 @@ pub fn load_splines(
             // Resolve path: scene dir, then parent
             let spline_path = {
                 let p = scene_dir.join(&file_rel);
-                if p.exists() {
+                if vfs::exists(&p) {
                     p
                 } else if let Some(parent) = scene_dir.parent() {
                     parent.join(&file_rel)

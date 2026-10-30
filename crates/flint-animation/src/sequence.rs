@@ -34,7 +34,7 @@
 
 use crate::layer_edit;
 use flint_core::components as comp;
-use flint_core::{EntityId, FlintError, Result};
+use flint_core::{vfs, EntityId, FlintError, Result};
 use flint_ecs::FlintWorld;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -193,7 +193,7 @@ impl AnimSequence {
 
 /// Load a `*.sequence.toml`
 pub fn load_sequence_from_file(path: &Path) -> Result<AnimSequence> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
+    let content = vfs::read_to_string(path).map_err(|e| {
         FlintError::AnimationError(format!("Failed to read {}: {}", path.display(), e))
     })?;
     load_sequence_from_str(&content, &path.display().to_string())
