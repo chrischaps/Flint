@@ -92,17 +92,23 @@ struct Mix {
 }
 
 fn build(mode: Mode) -> Mix {
-    let mut settings = AudioManagerSettings::<MockBackend>::default();
-    settings.backend_settings = MockBackendSettings { sample_rate: RATE };
-    settings
-        .main_track_builder
-        .add_effect(FilterBuilder::new().mode(FilterMode::LowPass).cutoff(20_000.0));
+    let mut settings = AudioManagerSettings::<MockBackend> {
+        backend_settings: MockBackendSettings { sample_rate: RATE },
+        ..Default::default()
+    };
+    settings.main_track_builder.add_effect(
+        FilterBuilder::new()
+            .mode(FilterMode::LowPass)
+            .cutoff(20_000.0),
+    );
     let mut manager = AudioManager::<MockBackend>::new(settings).unwrap();
     let ears = Ears {
         position: glam::Vec3::new(0.3, 1.1, 0.2),
         orientation: glam::Quat::from_rotation_y(0.7),
     };
-    let listener = manager.add_listener(ears.position, ears.orientation).unwrap();
+    let listener = manager
+        .add_listener(ears.position, ears.orientation)
+        .unwrap();
     let mut music = manager.add_sub_track(TrackBuilder::new()).unwrap();
     let mut sfx = manager.add_sub_track(TrackBuilder::new()).unwrap();
     let (mut tracks, mut sounds, mut live) = (Vec::new(), Vec::new(), 0);
@@ -111,7 +117,11 @@ fn build(mode: Mode) -> Mix {
         ..Default::default()
     };
     for (i, &(_, volume, at, is_music)) in LOOPS.iter().enumerate() {
-        let volume = if mode == Mode::LeanCalm && at.is_some() { 0.0 } else { volume };
+        let volume = if mode == Mode::LeanCalm && at.is_some() {
+            0.0
+        } else {
+            volume
+        };
         // Songs are minutes long; the rest are short loops.
         let data = loop_data(if is_music { 60.0 } else { 8.0 }, i as u32 + 1).loop_region(..);
         let bus = if is_music { &mut music } else { &mut sfx };

@@ -165,8 +165,10 @@ mod tests {
         use kira::backend::mock::{MockBackend, MockBackendSettings};
         use kira::sound::static_sound::StaticSoundData;
         let out = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut settings = kira::AudioManagerSettings::<MockBackend>::default();
-        settings.backend_settings = MockBackendSettings { sample_rate: 1000 };
+        let mut settings = kira::AudioManagerSettings::<MockBackend> {
+            backend_settings: MockBackendSettings { sample_rate: 1000 },
+            ..Default::default()
+        };
         settings.main_track_builder.add_effect(Capture(out.clone()));
         let mut manager = kira::AudioManager::<MockBackend>::new(settings).unwrap();
         let listener = manager
