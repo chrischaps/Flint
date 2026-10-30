@@ -21,6 +21,12 @@
 //!                   without: a scene TOML fetched from <url> (default: the
 //!                   first-light demo, which needs no other files)
 //!   msaa=1|4        scene-pass MSAA (ADR 0058)
+//!   scale=<f>|auto  the 3D scene's render scale (#122). By default it is
+//!                   drawn at no more than DPR 1.5 (`WEB_DPR_CAP`) and the
+//!                   HUD at the full DPR; a number from 0.25 to 1 draws at
+//!                   that scale instead, whatever the DPR (`scale=1` is
+//!                   native); `auto` keeps the cap and steps under it when
+//!                   frames run over budget for seconds
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
 //!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
 //!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
@@ -70,6 +76,7 @@ mod web {
         bundle: Option<String>,
         scene: Option<String>,
         msaa: u32,
+        render_scale: flint_player::RenderScaleSetting,
         size: Option<(u32, u32)>,
         frame_step: Option<f64>,
         hold_at: Option<f64>,
@@ -95,6 +102,9 @@ mod web {
                     .or_else(|| get("game").as_deref().and_then(game_bundle)),
                 scene: get("scene").filter(|s| !s.is_empty()),
                 msaa: num("msaa").filter(|&m| m == 1 || m == 4).unwrap_or(1),
+                render_scale: get("scale")
+                    .and_then(|v| flint_player::RenderScaleSetting::web().parse(&v))
+                    .unwrap_or_else(flint_player::RenderScaleSetting::web),
                 size: num("width").zip(num("height")),
                 frame_step: secs("frame_step").filter(|s| *s > 0.0),
                 hold_at: secs("hold_at"),
@@ -178,6 +188,7 @@ mod web {
             loaded.scene_file.scene.input_config.clone(),
         );
         app.msaa_sample_count = args.msaa;
+        app.render_scale = args.render_scale;
         app.clock.frame_step = args.frame_step;
         app.hold_at = args.hold_at;
         if let Some(gpu) = args.perf {

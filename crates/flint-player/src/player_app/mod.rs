@@ -27,6 +27,7 @@ mod music_session;
 mod pacing;
 mod perf;
 mod persist;
+pub mod render_scale;
 pub(crate) mod scene_loading;
 mod script_commands;
 #[cfg(feature = "debug-hud")]
@@ -251,6 +252,11 @@ pub struct PlayerApp {
     /// MSAA sample count for the scene renderer (1 = off, 4 = on; ADR 0058).
     /// Set from the --msaa CLI flag before the window/renderer exist.
     pub msaa_sample_count: u32,
+    /// The scene's render scale: a ceiling (fixed, and capped by pixel
+    /// ratio) and whether to step under it to hold the frame rate (#122).
+    /// The desktop's default draws at the surface; a page's caps DPR 1.5.
+    pub render_scale: render_scale::RenderScaleSetting,
+    dynamic_scale: render_scale::DynamicScale,
     /// Game time, in seconds, at which the clock stops (it steps by zero
     /// from then on, and scripts keep running on a still world). With
     /// `clock.frame_step` it holds a page on an exact moment for a

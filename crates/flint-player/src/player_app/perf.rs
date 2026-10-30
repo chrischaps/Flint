@@ -277,6 +277,9 @@ pub(crate) struct PerfContext {
     /// The surface in device pixels, and the page's pixel ratio.
     pub surface: [u32; 2],
     pub dpr: f64,
+    /// The size the 3D scene is drawn at, and its render scale (#122).
+    pub scene: [u32; 2],
+    pub scale: f32,
     pub draw_calls: u32,
     pub triangles: u32,
     /// Game time, seconds.
@@ -301,6 +304,15 @@ pub(crate) enum GpuSource {
         passes: Vec<(&'static str, f32)>,
         frame_ms: f32,
     },
+}
+
+/// The scene's pixels as a share of the canvas's.
+fn pixel_share(c: &PerfContext) -> f64 {
+    let canvas = c.surface[0] as f64 * c.surface[1] as f64;
+    if canvas == 0.0 {
+        return 1.0;
+    }
+    c.scene[0] as f64 * c.scene[1] as f64 / canvas
 }
 
 fn count(n: u32) -> String {
@@ -333,6 +345,13 @@ pub(crate) fn readout(s: &PerfSummary, c: &PerfContext) -> String {
         c.surface[0],
         c.surface[1],
         trim(c.dpr)
+    ));
+    line(format!(
+        "scene  {}x{} px, scale {} ({:.0}% of the pixels)",
+        c.scene[0],
+        c.scene[1],
+        trim(c.scale as f64),
+        pixel_share(c) * 100.0
     ));
     line(format!("gpu    {}", c.adapter));
     line(format!(
@@ -388,6 +407,12 @@ pub(crate) fn summary_line(s: &PerfSummary, c: &PerfContext) -> String {
         format!("flint perf · {} · t={:.0}s", c.game, c.game_time),
         format!("{} · {}", c.browser, c.adapter),
         format!("{}x{} DPR {}", c.surface[0], c.surface[1], trim(c.dpr)),
+        format!(
+            "scene {}x{} scale {}",
+            c.scene[0],
+            c.scene[1],
+            trim(c.scale as f64)
+        ),
         format!(
             "frame p50 {:.1} p99 {:.1} max {:.1} ms ({} frames/{:.0}s)",
             f.p50, f.p99, f.max, f.frames, s.secs
@@ -505,6 +530,8 @@ impl super::PlayerApp {
                 adapter,
                 surface: [context.config.width, context.config.height],
                 dpr: self.window.as_ref().map_or(1.0, |w| w.scale_factor()),
+                scene: renderer.scene_size().into(),
+                scale: renderer.render_scale(),
                 draw_calls: stats.draw_calls,
                 triangles: stats.triangles,
                 game_time: self.clock.total_time,
@@ -660,6 +687,8 @@ mod tests {
             adapter: "nvidia ampere".into(),
             surface: [2560, 1440],
             dpr: 2.0,
+            scene: [1920, 1080],
+            scale: 0.75,
             draw_calls: 212,
             triangles: 1_234_567,
             game_time: 812.4,
@@ -682,6 +711,7 @@ mod tests {
             "t=812s",
             "Chrome 156",
             "2560x1440 DPR 2",
+            "scene 1920x1080 scale 0.75",
             "p50 16.7",
             "scripts 2.00/2.0",
             "Scene 3.10",
@@ -692,6 +722,16 @@ mod tests {
         }
         // A phase that never ran isn't listed.
         assert!(!line.contains("physics"), "{line}");
+    }
+
+    #[test]
+    fn the_readout_says_what_share_of_the_pixels_the_scene_draws() {
+        let (s, c) = sample();
+        let text = readout(&s, &c);
+        assert!(
+            text.contains("scene  1920x1080 px, scale 0.75 (56% of the pixels)"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -436,6 +436,15 @@ pub struct SceneRenderer {
     postprocess_pipeline: Option<PostProcessPipeline>,
     postprocess_resources: Option<PostProcessResources>,
     postprocess_config: PostProcessConfig,
+    /// Render scale (#122): the HDR chain is this fraction of the surface on
+    /// each side, 1 = the surface. `surface_size` is what the last resize
+    /// gave; the chain's own size is `postprocess_resources`'.
+    render_scale: f32,
+    surface_size: (u32, u32),
+    /// Below scale 1, the scene's depth at the chain's size, and the pass
+    /// that copies it into the caller's surface-sized depth view.
+    scaled_depth: Option<std::sync::Arc<crate::render_scale::ScaledDepth>>,
+    depth_upscale: Option<crate::render_scale::DepthUpscale>,
     /// The ground fog's map, set by the game (ADR 0106).
     ground_fog: Option<crate::ground_fog::GroundFogGpu>,
     #[allow(dead_code)]
@@ -673,6 +682,10 @@ impl SceneRenderer {
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
+            render_scale: 1.0,
+            surface_size: (context.config.width, context.config.height),
+            scaled_depth: None,
+            depth_upscale: None,
             ground_fog: None,
             surface_format,
             camera_offset: [0.0, 0.0],
@@ -2142,6 +2155,10 @@ impl SceneRenderer {
             postprocess_pipeline: Some(postprocess_pipeline),
             postprocess_resources: Some(postprocess_resources),
             postprocess_config,
+            render_scale: 1.0,
+            surface_size: (width, height),
+            scaled_depth: None,
+            depth_upscale: None,
             ground_fog: None,
             surface_format,
             camera_offset: [0.0, 0.0],
@@ -2420,6 +2437,7 @@ impl SceneRenderer {
     ///
     /// Timing (`fps`, `frame_time_ms`) and `resolution` are left at zero —
     /// the caller fills these from their own timing and context.
+    /// `scene_resolution` is the renderer's own.
     pub fn collect_stats(&self) -> crate::render_stats::RenderStats {
         use crate::grass_pipeline::BLADE_INDEX_COUNT;
 
@@ -2523,6 +2541,7 @@ impl SceneRenderer {
                 .gpu_timer
                 .as_ref()
                 .map_or(0.0, |t| t.timings().frame_ms),
+            scene_resolution: self.scene_size().into(),
             ..Default::default()
         }
     }
@@ -3933,19 +3952,67 @@ impl SceneRenderer {
     }
 
     /// Resize post-processing resources (call on window resize).
+    /// `width` x `height` is the surface's size; the HDR chain is that at the
+    /// render scale.
     pub fn resize_postprocess(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
+        self.surface_size = (width, height);
+        let (w, h) = crate::render_scale::scaled_size(width, height, self.render_scale);
         self.postprocess_resources = Some(PostProcessResources::new(
             device,
-            width,
-            height,
+            w,
+            h,
             self.postprocess_config.kuwahara_enabled,
         ));
+        // Below the surface's size the scene keeps a depth buffer of its own
+        // (#122); at scale 1 it draws into the caller's, as it always has.
+        if (w, h) == (width, height) {
+            self.scaled_depth = None;
+            self.depth_upscale = None;
+        } else {
+            let depth = crate::render_scale::ScaledDepth::new(device, w, h);
+            self.depth_upscale = Some(crate::render_scale::DepthUpscale::new(device, &depth));
+            self.scaled_depth = Some(std::sync::Arc::new(depth));
+        }
         // The recreated resources drop the FXAA intermediate; re-allocate it
         // at the new size when the pass is active (ADR 0050).
         self.ensure_fxaa_resources(device);
+    }
+
+    /// Draw the scene at `scale` of the surface's size on each side, and
+    /// upscale it in the composite pass (#122). What's drawn over the
+    /// finished frame (world lines, world text, the HUD) stays at the
+    /// surface's size. Clamped to [`MIN_RENDER_SCALE`]`..=1`; 1, the
+    /// default, draws the scene exactly as before. Rebuilds the HDR chain
+    /// when the size it gives changes.
+    ///
+    /// [`MIN_RENDER_SCALE`]: crate::MIN_RENDER_SCALE
+    pub fn set_render_scale(&mut self, device: &wgpu::Device, scale: f32) {
+        let scale = crate::render_scale::clamp_render_scale(scale);
+        if scale == self.render_scale {
+            return;
+        }
+        let (width, height) = self.surface_size;
+        let before = crate::render_scale::scaled_size(width, height, self.render_scale);
+        self.render_scale = scale;
+        if crate::render_scale::scaled_size(width, height, scale) != before {
+            self.resize_postprocess(device, width, height);
+        }
+    }
+
+    /// The render scale [`set_render_scale`](Self::set_render_scale) set.
+    pub fn render_scale(&self) -> f32 {
+        self.render_scale
+    }
+
+    /// The size the scene is drawn at: the HDR chain's, which is the
+    /// surface's at scale 1.
+    pub fn scene_size(&self) -> (u32, u32) {
+        self.postprocess_resources
+            .as_ref()
+            .map_or(self.surface_size, |r| (r.width, r.height))
     }
 
     /// Ensure FXAA GPU resources exist (call after enabling FXAA at runtime
@@ -4205,6 +4272,12 @@ impl SceneRenderer {
         // Taken for the frame, so the phases can be scoped while self is
         // borrowed; put back at the end (ADR 0108).
         let mut gpu_timer = self.gpu_timer.take();
+        // Below render scale 1 the scene draws against a depth buffer of
+        // its own size, copied into the caller's once the frame is drawn
+        // (#122). Every scene pass and effect below sees that one.
+        let surface_depth_view = depth_view;
+        let scaled_depth = self.scaled_depth.clone();
+        let depth_view = scaled_depth.as_ref().map_or(depth_view, |d| &d.view);
         let clear_color = wgpu::Color {
             r: self.clear_color[0] as f64,
             g: self.clear_color[1] as f64,
@@ -4546,6 +4619,16 @@ impl SceneRenderer {
             );
         }
 
+        // The scaled scene's depth, into the surface-sized view the overlays
+        // below and the caller's own (world text, gizmos) test against.
+        if let (Some(_), Some(upscale)) = (&scaled_depth, &self.depth_upscale) {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Depth Upscale Encoder"),
+            });
+            upscale.record(&mut encoder, surface_depth_view);
+            queue.submit(std::iter::once(encoder.finish()));
+        }
+
         // World lines (ADR 0083) go over the finished image, tested against
         // the frame's single-sample depth. Without the HDR chain an MSAA depth
         // is never resolved, so they're skipped there.
@@ -4553,7 +4636,7 @@ impl SceneRenderer {
             let scope = gpu_timer
                 .as_mut()
                 .map(|t| t.begin_submit(device, queue, "World lines"));
-            self.render_world_lines(device, queue, depth_view, target_view, camera);
+            self.render_world_lines(device, queue, surface_depth_view, target_view, camera);
             if let (Some(timer), Some(scope)) = (gpu_timer.as_mut(), scope) {
                 timer.end_submit(device, queue, scope);
             }
@@ -4569,13 +4652,11 @@ impl SceneRenderer {
         target_view: &wgpu::TextureView,
         camera: &Camera,
     ) {
-        let Some(viewport) = self
-            .postprocess_resources
-            .as_ref()
-            .map(|r| [r.width as f32, r.height as f32])
-        else {
+        if self.postprocess_resources.is_none() {
             return;
-        };
+        }
+        // Drawn into the surface, whatever the scene's render scale
+        let viewport = [self.surface_size.0 as f32, self.surface_size.1 as f32];
         let format = self.surface_format;
         let pipeline = self.world_line_pipeline.get_or_insert_with(|| {
             crate::world_line_pipeline::WorldLinePipeline::new(device, format)

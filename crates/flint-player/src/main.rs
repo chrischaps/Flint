@@ -63,6 +63,12 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     msaa: u32,
 
+    /// Draw the 3D scene at this fraction of the window's pixels on each
+    /// side (0.25-1), upscaled under a full-resolution HUD; `auto` steps
+    /// down to hold 60 fps and back up when it can (#122)
+    #[arg(long, value_name = "SCALE|auto")]
+    render_scale: Option<String>,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -204,6 +210,11 @@ fn main() -> Result<()> {
     );
 
     app.msaa_sample_count = args.msaa;
+    if let Some(value) = &args.render_scale {
+        app.render_scale = flint_player::RenderScaleSetting::default()
+            .parse(value)
+            .ok_or_else(|| anyhow::anyhow!("--render-scale {value}: a number or auto"))?;
+    }
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
     app.window_size = (args.width, args.height);
