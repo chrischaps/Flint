@@ -43,7 +43,8 @@ the query string instead of clap:
 | Query | Desktop flag | Meaning |
 |---|---|---|
 | `game=<id>` | | a game play.chaps.dev packed: the bundle at `games/<id>/<id>.flintpack` ([play.chaps.dev](#playchapsdev-103)). `bundle` wins over it |
-| `embed=1` | | the iframe view: the world and its Begin button, no wordmark, title or hints |
+| `embed=1` | | the iframe view: the world and its Begin button, no wordmark, title or hints; the full-screen button only where the iframe allows it ([Full screen](#full-screen-135)) |
+| `fullscreen=0` | | start the gate's full screen switch off, which is otherwise on for a touch screen ([Full screen](#full-screen-135)) |
 | `webgpu=0` | | show the no-WebGPU film in any browser, to check it |
 | `bundle=<url>` | `--bundle` | a `.flintpack` from `flint bundle`, relative to the page. Its manifest names the scene and schemas; its late bundles are fetched beside it |
 | `scene=<url>` | `<scene>` | with `bundle`: a scene inside it instead of the manifest's. Without: a scene TOML fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
@@ -668,9 +669,10 @@ was 1920x1080, 1.5 of the 1280x720 page, not 2.
   its pinch.
 - On a `(pointer: coarse)` page, the gate's line is the game's `touch`
   entry in `games.toml`, or "sound on · a paired pad plays it all · touch
-  controls are coming". The Begin tap also asks for fullscreen
-  (`?fullscreen=0` skips it). Android's Chrome grants it, and an iPhone
-  has no element fullscreen.
+  controls are coming". The Begin tap also asks for fullscreen, through
+  the gate's full screen switch, which starts on there
+  ([Full screen](#full-screen-135)); `?fullscreen=0` starts it off.
+  Android's Chrome grants it, and an iPhone has no element fullscreen.
 - Below 600 px wide (or 500 px tall), `?perf=1`'s panel is 9 px type and
   36dvh tall, scrolled with a finger. At full size it covered Begin.
 
@@ -767,6 +769,75 @@ arrives, and the mesh's buffers are shared through `Arc`.
 because its steps share one uniform buffer (`PostProcessPipeline::run_bloom`);
 it makes 24 of the 36 bind groups left. Firefox no longer shows the cost,
 but it's the next to go. Safari wasn't run.
+
+## Full screen (#135)
+
+On a phone the address bar and toolbars take a large slice of the screen,
+and on a desktop the page can't reach the edges without F11. The page now
+asks the browser for the whole screen, and where the browser can't give it
+(iPhone Safari), it says how to get it from the home screen.
+
+- **A switch under Begin.** "full screen" goes in with the same click that
+  starts the sound and locks the pointer. It starts on where the pointer is
+  coarse (a phone or tablet) and off everywhere else, so a desktop player
+  who just clicks Begin sees no change. The choice is kept in
+  `localStorage` (`flint.fullscreen`); `?fullscreen=0` starts it off.
+  Full screen takes the document element, so the gate, the hints and the perf readout come along.
+- **A corner button**, bottom right (`#fullscreen`), enters and leaves at
+  any time and follows `fullscreenchange`. It hides while the pointer is
+  locked, since a locked pointer can't click it. If Escape has freed a
+  pointer the game wants (the "click to look around" hint is showing), the
+  same click takes the lock back first.
+- **On a touch screen**, once full screen is granted, the page asks
+  `screen.orientation.lock("landscape")`. Chrome on Android honours it in
+  full screen; elsewhere the refusal is ignored.
+- **Where there is no Fullscreen API.** `document.fullscreenEnabled` is
+  false on iPhone Safari, and in an iframe without `allowfullscreen`. In
+  both cases the button and the switch stay hidden. On iPhone Safari
+  (`"standalone" in navigator`), the gate says: tap Share, then Add to Home
+  Screen. The page carries `apple-mobile-web-app-capable`, a black
+  translucent status bar, `icons/flint-180.png` as its touch icon, and
+  `manifest.webmanifest` (`display: fullscreen`, no `start_url`, so the icon
+  opens the `?game=` it was added from). Opened from the home screen, the
+  page has no address bar, and the hint and switch stay hidden.
+- **Embed.** `?embed=1` keeps its look and shows the switch nowhere. The
+  corner button appears only when the iframe may go full screen: a
+  cross-origin frame needs `allow="fullscreen"` or `allowfullscreen`, which
+  the snippet above has. (A same-origin frame may always: the policy's
+  default is `self`.)
+- **Canvas height** is `100dvh` (after a `100vh` fallback), the height
+  actually visible on a phone as its bar comes and goes.
+
+**Order matters in Chrome.** `requestFullscreen` uses up the click's
+transient activation, and a pointer lock requested after it is refused
+("A user gesture is required"). A lock taken first survives entering full
+screen. The Begin button's own handler (`flint_web.rs`) asks for the lock,
+and the page's full-screen handler listens on `document`, so it runs after
+the button's handler in the bubble phase. Leaving full screen drops the
+lock in Chrome; `sync_pointer_lock` then releases the cursor just as it
+does for Escape, and the game's click-to-look takes it back. Nothing in the
+player changed.
+
+**Checked** (the page built with `trunk build --release`, served by
+`python -m http.server`, driven over CDP):
+
+| Visit | Browser | Result |
+|---|---|---|
+| a lock-then-fullscreen spike page | headed Chrome 156, Windows | lock first: both granted; fullscreen first: fullscreen granted, the lock refused; the lock requested on `fullscreenchange`: refused. `exitFullscreen` dropped the lock |
+| `/`, Begin with the switch off | headed Chrome | the pointer locked, no full screen, canvas 2079x1125 at DPR 1.5 (as before) |
+| `/?perf=1`, Begin with the switch on | headed Chrome | full screen and the lock together; the canvas went to 3840x2076 (2560x1384 CSS px at DPR 1.5), the scene too at scale 1, p99 16.9 ms after the resize |
+| then `exitPointerLock`, the corner button twice | headed Chrome | the button showed with the hint; one click left full screen (2079x1125 again), the next entered it and took the lock back in the same click |
+| `?embed=1` in two cross-origin iframes | headed Chrome | the button only in the frame with `allow="fullscreen" allowfullscreen`; no switch in either |
+| `/`, emulated phone (412x915, DPR 2.625, touch) | headed Chrome | the switch on by default; a tap on Begin entered full screen; orientation reported `landscape-primary` |
+| `/`, the same with Element fullscreen and `document.fullscreenEnabled` removed, and `navigator.standalone = false` | headed Chrome | no button and no switch; the Add to Home Screen line under Begin |
+
+**Not done here.** Firefox on Windows refused both the lock and full screen
+because its window wasn't focused while the desktop was in use ("The
+document is not focused"), so Firefox's ordering is unconfirmed. No real
+phone was tried: Chrome on Android, iPhone Safari and the installed
+home-screen page are still to be checked on devices. These runs predate
+#132, which since stopped a touch page asking for the pointer lock and
+shrank the perf readout on a phone.
 
 ## Async startup (#99)
 
