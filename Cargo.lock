@@ -1616,13 +1616,17 @@ dependencies = [
 name = "flint-audio"
 version = "0.1.0"
 dependencies = [
+ "cpal",
  "flint-core",
  "flint-ecs",
  "flint-runtime",
  "glam",
  "kira",
+ "send_wrapper",
  "toml",
  "tracing",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1821,6 +1825,7 @@ dependencies = [
  "gilrs",
  "image",
  "js-sys",
+ "kira",
  "pollster",
  "profiling",
  "rhai",

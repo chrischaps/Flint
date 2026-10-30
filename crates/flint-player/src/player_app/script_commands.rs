@@ -182,6 +182,23 @@ impl PlayerApp {
         }
     }
 
+    /// Begin sound, from the user gesture that begins the game (#101). A
+    /// browser gives no sound before one, so the web player runs silent
+    /// until this is called from its Begin click; on the desktop the device
+    /// opened at start and this does nothing new. Loops already in the
+    /// scene start, and so does the scene's music session if it was skipped
+    /// for want of a device. Says whether there is sound.
+    pub fn start_audio(&mut self) -> bool {
+        let had_sound = self.audio.engine.is_available();
+        if !self.audio.start(&self.world) {
+            return false;
+        }
+        if !had_sound && self.music_session.is_none() {
+            self.start_music_session();
+        }
+        true
+    }
+
     /// Start the scene-declared music session, if any (F3, ADR 0019): find
     /// the first `music_session` component, resolve its repo-root-relative
     /// paths against the scene's base dir (scene file's parent's parent —
