@@ -234,6 +234,14 @@ fn generate_colonization_branches(
             center: trunk_tip, // hemisphere grows upward from trunk tip
             radius: params.crown_radius,
         },
+        CrownShape::Box => {
+            let r = params.crown_radius;
+            let height = r * params.crown_height_ratio;
+            CrownVolume::Box {
+                min: trunk_tip + Vec3::new(-r, 0.0, -r),
+                max: trunk_tip + Vec3::new(r, height, r),
+            }
+        }
     };
 
     let sc_params = SpaceColonizationParams {
@@ -248,6 +256,7 @@ fn generate_colonization_branches(
         max_nodes: params.max_segments,
         base_radius: trunk_radius_top,
         tip_radius: trunk_radius_top * 0.05,
+        pipe_exponent: params.pipe_exponent,
     };
 
     let gen = SpaceColonization::new(sc_params)?;
@@ -474,7 +483,12 @@ mod tests {
             lsystem_iterations = 2
         }
         .into();
-        assert_eq!(BranchParams::from_toml(&toml_val).unwrap().lsystem_iterations, 2);
+        assert_eq!(
+            BranchParams::from_toml(&toml_val)
+                .unwrap()
+                .lsystem_iterations,
+            2
+        );
 
         let toml_val: toml::Value = toml::toml! {
             lsystem_preset = "baobab"

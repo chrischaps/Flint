@@ -5,6 +5,9 @@
 //! material descriptions, and error handling. Higher-level constructs
 //! (generator traits, registry, specs) build on these primitives.
 
+// The tree generator's parameter schema is one large `json!` literal.
+#![recursion_limit = "256"]
+
 pub mod algorithms;
 mod cache;
 mod error;
