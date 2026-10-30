@@ -49,23 +49,15 @@ var<uniform> material: MaterialUniforms;
 
 @group(1) @binding(1)
 var base_color_texture: texture_2d<f32>;
-@group(1) @binding(2)
-var base_color_sampler: sampler;
 
 @group(1) @binding(3)
 var normal_map_texture: texture_2d<f32>;
-@group(1) @binding(4)
-var normal_map_sampler: sampler;
 
 @group(1) @binding(5)
 var metallic_roughness_texture: texture_2d<f32>;
-@group(1) @binding(6)
-var metallic_roughness_sampler: sampler;
 
 @group(1) @binding(7)
 var emissive_texture: texture_2d<f32>;
-@group(1) @binding(8)
-var emissive_sampler: sampler;
 
 struct DirectionalLight {
     direction: vec3<f32>,
@@ -138,6 +130,12 @@ struct ShadowUniforms {
 
 @group(2) @binding(3)
 var<uniform> shadow: ShadowUniforms;
+
+// Every material's textures share this one sampler (linear, repeating). It
+// lives here, bound once a frame, not in each material's group, so a material
+// bind group spends no DX12 sampler descriptors (Capitol #577).
+@group(2) @binding(4)
+var material_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -537,7 +535,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // `vertex_tint` (ADR 0102) colours its light as it does the surface.
     var emission = material.emissive.rgb;
     if (material.has_emissive_tex == 1u) {
-        emission *= textureSample(emissive_texture, emissive_sampler, scaled_uv).rgb;
+        emission *= textureSample(emissive_texture, material_sampler, scaled_uv).rgb;
     }
     if (material.use_vertex_color == 1u && material.vertex_emission == 1u) {
         let glow = clamp(1.0 - in.color.a, 0.0, 1.0);
@@ -548,7 +546,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Sample base color texture if available
     if (material.has_base_color_tex == 1u) {
-        let tex_color = textureSample(base_color_texture, base_color_sampler, scaled_uv);
+        let tex_color = textureSample(base_color_texture, material_sampler, scaled_uv);
         albedo = tex_color.rgb * albedo;
         alpha = tex_color.a * alpha;
     }
@@ -557,7 +555,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var metallic = material.metallic;
     var roughness = material.roughness;
     if (material.has_metallic_roughness_tex == 1u) {
-        let mr = textureSample(metallic_roughness_texture, metallic_roughness_sampler, scaled_uv);
+        let mr = textureSample(metallic_roughness_texture, material_sampler, scaled_uv);
         // glTF packing: green = roughness, blue = metallic
         roughness = mr.g * material.roughness;
         metallic = mr.b * material.metallic;
@@ -567,7 +565,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal from interpolated vertex normal, optionally perturbed by normal map
     var N = normalize(in.normal);
     if (material.has_normal_map == 1u) {
-        let map_sample = textureSample(normal_map_texture, normal_map_sampler, scaled_uv);
+        let map_sample = textureSample(normal_map_texture, material_sampler, scaled_uv);
         let map_normal = map_sample.rgb * 2.0 - 1.0;
         N = perturb_normal(N, in.world_pos, scaled_uv, map_normal);
     }

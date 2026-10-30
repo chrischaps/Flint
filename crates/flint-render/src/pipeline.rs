@@ -354,6 +354,10 @@ pub struct RenderPipeline {
     pub transform_bind_group_layout: wgpu::BindGroupLayout,
     pub material_bind_group_layout: wgpu::BindGroupLayout,
     pub light_bind_group_layout: wgpu::BindGroupLayout,
+    /// The sampler every PBR material's textures share, bound in the light
+    /// group (binding 4) rather than in each material's: linear, with linear
+    /// mips, repeating, as `TextureCache` made every texture's own.
+    pub material_sampler: wgpu::Sampler,
 }
 
 impl RenderPipeline {
@@ -379,7 +383,13 @@ impl RenderPipeline {
                 label: Some("Transform Bind Group Layout"),
             });
 
-        // Bind group 1: Material uniforms + textures (fragment only)
+        // Bind group 1: Material uniforms + textures (fragment only). No
+        // samplers: they sample with the light group's `material_sampler`,
+        // so a material bind group spends no sampler descriptors. wgpu 23's
+        // DX12 backend copies every bind group's samplers into a 2048-slot
+        // shader-visible heap with no sharing, and four a material capped a
+        // scene at about 512 distinct looks (Capitol #525, #577). Bindings
+        // keep their numbers (textures at 1, 3, 5, 7).
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -405,13 +415,6 @@ impl RenderPipeline {
                         },
                         count: None,
                     },
-                    // binding 2: base_color_sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
                     // binding 3: normal_map_texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 3,
@@ -421,13 +424,6 @@ impl RenderPipeline {
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
-                        count: None,
-                    },
-                    // binding 4: normal_map_sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                     // binding 5: metallic_roughness_texture
@@ -441,13 +437,6 @@ impl RenderPipeline {
                         },
                         count: None,
                     },
-                    // binding 6: metallic_roughness_sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
                     // binding 7: emissive_texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 7,
@@ -457,13 +446,6 @@ impl RenderPipeline {
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
-                        count: None,
-                    },
-                    // binding 8: emissive_sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 8,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
                 ],
@@ -514,9 +496,27 @@ impl RenderPipeline {
                         },
                         count: None,
                     },
+                    // binding 4: material_sampler, the one sampler every
+                    // material's textures share (see bind group 1)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
                 ],
                 label: Some("Light Bind Group Layout"),
             });
+
+        let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Material Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PBR Pipeline Layout"),
@@ -988,6 +988,7 @@ impl RenderPipeline {
             transform_bind_group_layout,
             material_bind_group_layout,
             light_bind_group_layout,
+            material_sampler,
         }
     }
 }

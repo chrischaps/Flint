@@ -181,22 +181,22 @@ impl SceneRenderer {
                 _pad: 0.0,
             };
 
-            let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+            let (bc_view, _, has_bc) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.base_color_texture.as_deref(),
                 &tex_cache.default_white,
             );
-            let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+            let (nm_view, _, has_nm) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.normal_texture.as_deref(),
                 &tex_cache.default_normal,
             );
-            let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+            let (mr_view, _, has_mr) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.metallic_roughness_texture.as_deref(),
                 &tex_cache.default_metallic_roughness,
             );
-            let (em_view, em_sampler, has_em) = Self::resolve_texture(
+            let (em_view, _, has_em) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.emissive_texture.as_deref(),
                 &tex_cache.default_white,
@@ -238,13 +238,9 @@ impl SceneRenderer {
                 &self.pipeline,
                 &material_uniforms,
                 bc_view,
-                bc_sampler,
                 nm_view,
-                nm_sampler,
                 mr_view,
-                mr_sampler,
                 em_view,
-                em_sampler,
             );
 
             let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -372,22 +368,22 @@ impl SceneRenderer {
             };
 
             // Resolve textures for this material
-            let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+            let (bc_view, _, has_bc) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.base_color_texture.as_deref(),
                 &tex_cache.default_white,
             );
-            let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+            let (nm_view, _, has_nm) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.normal_texture.as_deref(),
                 &tex_cache.default_normal,
             );
-            let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+            let (mr_view, _, has_mr) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.metallic_roughness_texture.as_deref(),
                 &tex_cache.default_metallic_roughness,
             );
-            let (em_view, em_sampler, has_em) = Self::resolve_texture(
+            let (em_view, _, has_em) = Self::resolve_texture(
                 tex_cache,
                 gpu_mesh.material.emissive_texture.as_deref(),
                 &tex_cache.default_white,
@@ -489,10 +485,10 @@ impl SceneRenderer {
                 &transform_uniforms,
                 &material_uniforms,
                 material_key,
-                (bc_view, bc_sampler),
-                (nm_view, nm_sampler),
-                (mr_view, mr_sampler),
-                (em_view, em_sampler),
+                bc_view,
+                nm_view,
+                mr_view,
+                em_view,
             );
             let mut draw = Self::draw_from_cache(
                 &gpu_mesh.vertex_buffer,
@@ -1149,7 +1145,7 @@ impl SceneRenderer {
 
         if !visual.wireframe {
             if let Some(tex_name) = &material_texture {
-                let (bc_view, bc_sampler, has_bc) = Self::resolve_texture(
+                let (bc_view, _, has_bc) = Self::resolve_texture(
                     tex_cache,
                     Some(tex_name.as_str()),
                     &tex_cache.default_white,
@@ -1170,12 +1166,12 @@ impl SceneRenderer {
                     // Try companion PBR maps (e.g. tavern_brick_normal, tavern_brick_roughness)
                     let normal_name = format!("{}_normal", tex_name);
                     let roughness_name = format!("{}_roughness", tex_name);
-                    let (nm_view, nm_sampler, has_nm) = Self::resolve_texture(
+                    let (nm_view, _, has_nm) = Self::resolve_texture(
                         tex_cache,
                         Some(normal_name.as_str()),
                         &tex_cache.default_normal,
                     );
-                    let (mr_view, mr_sampler, has_mr) = Self::resolve_texture(
+                    let (mr_view, _, has_mr) = Self::resolve_texture(
                         tex_cache,
                         Some(roughness_name.as_str()),
                         &tex_cache.default_metallic_roughness,
@@ -1203,13 +1199,10 @@ impl SceneRenderer {
                         &transform_uniforms,
                         &material_uniforms,
                         material_key,
-                        (bc_view, bc_sampler),
-                        (nm_view, nm_sampler),
-                        (mr_view, mr_sampler),
-                        (
-                            &tex_cache.default_white.view,
-                            &tex_cache.default_white.sampler,
-                        ),
+                        bc_view,
+                        nm_view,
+                        mr_view,
+                        &tex_cache.default_white.view,
                     );
                     let mut draw = Self::draw_from_cache(
                         &box_vb,
@@ -1241,22 +1234,10 @@ impl SceneRenderer {
                         &transform_uniforms,
                         &material_uniforms,
                         material_key,
-                        (
-                            &tex_cache.default_white.view,
-                            &tex_cache.default_white.sampler,
-                        ),
-                        (
-                            &tex_cache.default_normal.view,
-                            &tex_cache.default_normal.sampler,
-                        ),
-                        (
-                            &tex_cache.default_metallic_roughness.view,
-                            &tex_cache.default_metallic_roughness.sampler,
-                        ),
-                        (
-                            &tex_cache.default_white.view,
-                            &tex_cache.default_white.sampler,
-                        ),
+                        &tex_cache.default_white.view,
+                        &tex_cache.default_normal.view,
+                        &tex_cache.default_metallic_roughness.view,
+                        &tex_cache.default_white.view,
                     );
                     let mut draw = Self::draw_from_cache(
                         &box_vb,
@@ -1307,22 +1288,10 @@ impl SceneRenderer {
                     &transform_uniforms,
                     &mat_uniforms,
                     material_key,
-                    (
-                        &tex_cache.default_white.view,
-                        &tex_cache.default_white.sampler,
-                    ),
-                    (
-                        &tex_cache.default_normal.view,
-                        &tex_cache.default_normal.sampler,
-                    ),
-                    (
-                        &tex_cache.default_metallic_roughness.view,
-                        &tex_cache.default_metallic_roughness.sampler,
-                    ),
-                    (
-                        &tex_cache.default_white.view,
-                        &tex_cache.default_white.sampler,
-                    ),
+                    &tex_cache.default_white.view,
+                    &tex_cache.default_normal.view,
+                    &tex_cache.default_metallic_roughness.view,
+                    &tex_cache.default_white.view,
                 );
                 let mut draw = Self::draw_from_cache(
                     &box_vb,
@@ -1354,22 +1323,10 @@ impl SceneRenderer {
                 &transform_uniforms,
                 &material_uniforms,
                 material_key,
-                (
-                    &tex_cache.default_white.view,
-                    &tex_cache.default_white.sampler,
-                ),
-                (
-                    &tex_cache.default_normal.view,
-                    &tex_cache.default_normal.sampler,
-                ),
-                (
-                    &tex_cache.default_metallic_roughness.view,
-                    &tex_cache.default_metallic_roughness.sampler,
-                ),
-                (
-                    &tex_cache.default_white.view,
-                    &tex_cache.default_white.sampler,
-                ),
+                &tex_cache.default_white.view,
+                &tex_cache.default_normal.view,
+                &tex_cache.default_metallic_roughness.view,
+                &tex_cache.default_white.view,
             );
             let draw = Self::draw_from_cache(
                 &box_vb,

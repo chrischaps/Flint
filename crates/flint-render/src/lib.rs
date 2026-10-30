@@ -102,6 +102,32 @@ mod tests {
         .expect("shader.wgsl failed validation");
     }
 
+    /// The material group (1) holds no samplers in either PBR shader: they
+    /// share the light group's one `material_sampler`. wgpu 23's DX12 backend
+    /// copies every bind group's samplers into a 2048-slot heap, so samplers
+    /// in the material group cap a scene's distinct looks (Capitol #577).
+    #[test]
+    fn material_group_holds_no_samplers() {
+        for (name, source) in [
+            ("shader.wgsl", include_str!("shader.wgsl")),
+            ("skinned_shader.wgsl", include_str!("skinned_shader.wgsl")),
+        ] {
+            let module = naga::front::wgsl::parse_str(source).expect(name);
+            let mut material_sampler = None;
+            for (_, var) in module.global_variables.iter() {
+                let Some(binding) = &var.binding else { continue };
+                if !matches!(module.types[var.ty].inner, naga::TypeInner::Sampler { .. }) {
+                    continue;
+                }
+                assert_ne!(binding.group, 1, "{name}: a sampler in the material group");
+                if var.name.as_deref() == Some("material_sampler") {
+                    material_sampler = Some((binding.group, binding.binding));
+                }
+            }
+            assert_eq!(material_sampler, Some((2, 4)), "{name}: material_sampler at group 2, binding 4");
+        }
+    }
+
     #[test]
     fn shadow_shader_wgsl_parses() {
         let source = include_str!("shadow_shader.wgsl");

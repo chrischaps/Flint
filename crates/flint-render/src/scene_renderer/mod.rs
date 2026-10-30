@@ -113,12 +113,14 @@ pub(super) struct CachedDrawBinds {
 
 /// One material's uniform buffer and bind group, shared by every draw whose
 /// `material_key` matches. A city is thousands of entities but only a few
-/// hundred looks, and each material bind group spends four samplers: wgpu
-/// 23's DX12 backend has a shader-visible sampler heap of 2048, so one bind
-/// group per entity ran it dry at about 512 entities and panicked (Capitol
-/// #525). The buffer's per-frame fields (debug mode, tonemapping) are the
-/// same for every draw, so sharing it is safe. More than about 512 distinct
-/// looks would still run it dry; wgpu 25 dedups DX12 samplers (Capitol #577).
+/// hundred looks. Sharing began as the fix for wgpu 23's DX12 sampler heap
+/// (2048 slots, every bind group's samplers copied in), which one bind group
+/// per entity ran dry at about 512 entities (Capitol #525). Since #577 a
+/// material bind group holds no samplers at all (they share the light
+/// group's `material_sampler`), so the number of looks has no DX12 cap;
+/// sharing still saves a buffer and a bind group per entity. The buffer's
+/// per-frame fields (debug mode, tonemapping) are the same for every draw,
+/// so sharing it is safe.
 pub(super) struct SharedMaterial {
     pub buffer: Arc<wgpu::Buffer>,
     pub bind_group: Arc<wgpu::BindGroup>,
@@ -3067,24 +3069,20 @@ impl SceneRenderer {
         transform_uniforms: &TransformUniforms,
         material_uniforms: &MaterialUniforms,
         material_key: u64,
-        base_color: (&wgpu::TextureView, &wgpu::Sampler),
-        normal: (&wgpu::TextureView, &wgpu::Sampler),
-        metallic_roughness: (&wgpu::TextureView, &wgpu::Sampler),
-        emissive: (&wgpu::TextureView, &wgpu::Sampler),
+        base_color: &wgpu::TextureView,
+        normal: &wgpu::TextureView,
+        metallic_roughness: &wgpu::TextureView,
+        emissive: &wgpu::TextureView,
     ) -> &'a CachedDrawBinds {
         let shared = cache.materials.entry(material_key).or_insert_with(|| {
             let (b, bg) = Self::create_material_bind_with_textures(
                 device,
                 pipeline,
                 material_uniforms,
-                base_color.0,
-                base_color.1,
-                normal.0,
-                normal.1,
-                metallic_roughness.0,
-                metallic_roughness.1,
-                emissive.0,
-                emissive.1,
+                base_color,
+                normal,
+                metallic_roughness,
+                emissive,
             );
             SharedMaterial {
                 buffer: Arc::new(b),
@@ -3272,13 +3270,9 @@ impl SceneRenderer {
             pipeline,
             uniforms,
             &texture_cache.default_white.view,
-            &texture_cache.default_white.sampler,
             &texture_cache.default_normal.view,
-            &texture_cache.default_normal.sampler,
             &texture_cache.default_metallic_roughness.view,
-            &texture_cache.default_metallic_roughness.sampler,
             &texture_cache.default_white.view,
-            &texture_cache.default_white.sampler,
         )
     }
 
@@ -3287,13 +3281,9 @@ impl SceneRenderer {
         pipeline: &RenderPipeline,
         uniforms: &MaterialUniforms,
         base_color_view: &wgpu::TextureView,
-        base_color_sampler: &wgpu::Sampler,
         normal_view: &wgpu::TextureView,
-        normal_sampler: &wgpu::Sampler,
         mr_view: &wgpu::TextureView,
-        mr_sampler: &wgpu::Sampler,
         emissive_view: &wgpu::TextureView,
-        emissive_sampler: &wgpu::Sampler,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Material Uniform Buffer"),
@@ -3313,32 +3303,16 @@ impl SceneRenderer {
                     resource: wgpu::BindingResource::TextureView(base_color_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(base_color_sampler),
-                },
-                wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(normal_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(normal_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(mr_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Sampler(mr_sampler),
-                },
-                wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(emissive_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: wgpu::BindingResource::Sampler(emissive_sampler),
                 },
             ],
             label: Some("Material Bind Group"),
@@ -3391,6 +3365,10 @@ impl SceneRenderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: shadow_pass.shadow_uniforms_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&pipeline.material_sampler),
                 },
             ],
             label: Some("Light Bind Group"),
