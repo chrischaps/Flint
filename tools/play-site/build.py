@@ -9,6 +9,8 @@
    tarball (no git needed; the repos are public) and packs it with
    `flint bundle <game> --name <id> --out-dir site/games/<id>`, so
    `?game=<id>` finds games/<id>/<id>.flintpack (flint_web.rs).
+   A `video` or `poster` given as a path in the game's repo is copied
+   there too (copy_media).
 3. Writes games.json (what the page's chooser and fallback read) and
    built-from.txt (the Flint commit and each game's). The domain is a Pages
    setting, not a CNAME file: Actions deploys ignore one.
@@ -33,7 +35,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ID = re.compile(r"^[a-z0-9_-]+$")
 # What the page shows; repo and ref go in built-from.txt.
-PUBLIC = ("id", "title", "line", "page", "video", "poster", "film")
+PUBLIC = ("id", "title", "line", "controls", "page", "video", "poster", "film")
 
 
 def load_games(path):
@@ -83,6 +85,21 @@ def pack(flint, game, src, out):
     return sorted(p.name for p in out.iterdir())
 
 
+def copy_media(game, src, out):
+    """A `video` or `poster` that is a path in the game's repo, not a URL,
+    is copied next to its bundle, and games.json names it there. A game
+    with no film on chaps.dev can ship one in its own repo (FlintKart, #104)."""
+    for key in ("video", "poster"):
+        value = game.get(key)
+        if not value or re.match(r"^https?://", value):
+            continue
+        path = (src / value).resolve()
+        if not path.is_file() or src.resolve() not in path.parents:
+            sys.exit(f"{game['id']}: {key} {value!r} is not a file in the game's repo")
+        shutil.copy2(path, out / path.name)
+        game[key] = f"games/{game['id']}/{path.name}"
+
+
 def flint_commit():
     sha = os.environ.get("GITHUB_SHA")
     if sha:
@@ -125,6 +142,7 @@ def main():
             src = work / game["id"]
             fetch(game, src)
         files = pack(flint, game, src, args.out / "games" / game["id"])
+        copy_media(game, src, args.out / "games" / game["id"])
         print(f"{game['id']}: {', '.join(files)}", flush=True)
         source.append(f"{game['id']} {game['repo']}@{game['ref']}")
     if not args.games_src and work.exists():

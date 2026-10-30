@@ -25,6 +25,8 @@
 //!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
 //!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
 //!                   exact moment (with frame_step; `PlayerApp::hold_at`)
+//!   perf=<s>        log where each frame's CPU time went (scripts, physics,
+//!                   render ...) to the console every s game seconds (#104)
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -69,6 +71,7 @@ mod web {
         size: Option<(u32, u32)>,
         frame_step: Option<f64>,
         hold_at: Option<f64>,
+        perf: Option<f64>,
     }
 
     impl WebArgs {
@@ -92,6 +95,7 @@ mod web {
                 size: num("width").zip(num("height")),
                 frame_step: secs("frame_step").filter(|s| *s > 0.0),
                 hold_at: secs("hold_at"),
+                perf: secs("perf").filter(|s| *s > 0.0),
             }
         }
     }
@@ -169,6 +173,7 @@ mod web {
         app.msaa_sample_count = args.msaa;
         app.clock.frame_step = args.frame_step;
         app.hold_at = args.hold_at;
+        app.capture.perf_every = args.perf;
         app.apply_scene_settings(&loaded.scene_file);
         app.set_schema_paths(loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());

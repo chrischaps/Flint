@@ -91,15 +91,30 @@ impl PersistentStore {
         self.data.keys().map(|k| k.as_str()).collect()
     }
 
-    /// Save the store to a TOML file.
-    pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
-        // Build a TOML table from the data
+    /// The store as TOML text, the form it is saved in.
+    pub fn to_toml_string(&self) -> Result<String, String> {
         let mut table = toml::map::Map::new();
         for (k, v) in &self.data {
             table.insert(k.clone(), v.clone());
         }
-        let content =
-            toml::to_string_pretty(&table).map_err(|e| format!("serialize error: {e}"))?;
+        toml::to_string_pretty(&table).map_err(|e| format!("serialize error: {e}"))
+    }
+
+    /// Replace all current data with the store saved as `content`.
+    pub fn load_from_str(&mut self, content: &str) -> Result<(), String> {
+        let table: toml::map::Map<String, toml::Value> =
+            toml::from_str(content).map_err(|e| format!("parse error: {e}"))?;
+        self.data.clear();
+        for (k, v) in table {
+            self.data.insert(k, v);
+        }
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Save the store to a TOML file.
+    pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
+        let content = self.to_toml_string()?;
         std::fs::write(path, content).map_err(|e| format!("write error: {e}"))
     }
 
@@ -107,14 +122,7 @@ impl PersistentStore {
     pub fn load_from_file(&mut self, path: &Path) -> Result<(), String> {
         let content =
             flint_core::vfs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
-        let table: toml::map::Map<String, toml::Value> =
-            toml::from_str(&content).map_err(|e| format!("parse error: {e}"))?;
-        self.data.clear();
-        for (k, v) in table {
-            self.data.insert(k, v);
-        }
-        self.dirty = false;
-        Ok(())
+        self.load_from_str(&content)
     }
 }
 
@@ -181,6 +189,28 @@ mod tests {
         let mut store = PersistentStore::new();
         store.set("score", toml::Value::Integer(42));
         assert_eq!(store.get("score"), Some(&toml::Value::Integer(42)));
+    }
+
+    #[test]
+    fn toml_string_round_trip() {
+        let mut store = PersistentStore::new();
+        store.set(
+            "selected_track",
+            toml::Value::String("scenes/oval_plus.scene.toml".into()),
+        );
+        store.set("best", toml::Value::Float(69.29));
+        let text = store.to_toml_string().unwrap();
+
+        let mut back = PersistentStore::new();
+        back.set("stale", toml::Value::Boolean(true));
+        back.load_from_str(&text).unwrap();
+        assert!(!back.has("stale"));
+        assert!(!back.is_dirty());
+        assert_eq!(back.get("best"), Some(&toml::Value::Float(69.29)));
+        assert_eq!(
+            back.get("selected_track"),
+            Some(&toml::Value::String("scenes/oval_plus.scene.toml".into()))
+        );
     }
 
     #[test]

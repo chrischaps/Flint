@@ -1,13 +1,16 @@
 # Flint on the Web
 
 Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
-(#100), sound (#101), game bundles (#98), first light (#102) and
-[play.chaps.dev](#playchapsdev-103) (#103) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
+(#100), sound (#101), game bundles (#98), first light (#102),
+[play.chaps.dev](#playchapsdev-103) (#103) and [Flint Kart](#flint-kart-104)
+(#104) done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
 with a progress bar, serves every read from it through the vfs, opens the
 WebGPU device without blocking and draws to a page canvas that follows the
 window's size. A Begin gate starts the sound and locks the pointer with one
 click. SET + DRIFT (Float) plays whole in Chrome
-([First light: Float](#first-light-float-102)).
+([First light: Float](#first-light-float-102)), and so does a whole Flint
+Kart race against five AI racers, with keys or a pad
+([Flint Kart](#flint-kart-104)).
 A bare page with no bundle still plays the First Light scene, made of the
 engine's own geometry.
 
@@ -47,6 +50,7 @@ the query string instead of clap:
 | `width=&height=` | `--width --height` | fix the canvas to that many CSS pixels; otherwise it fills the page |
 | `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
 | `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |
+| `perf=<s>` | (`--exit-after`'s `[perf] phases`) | log where each frame's CPU time went, phase by phase, to the console every s game seconds ([Flint Kart](#flint-kart-104)) |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
 and `schemas/archetypes`), since a browser can't list a directory. A
@@ -240,6 +244,122 @@ stood in for by Firefox on Windows with WebGPU turned off, which takes the
 same path. The threaded AudioWorklet build would need cross-origin isolation
 headers, which GitHub Pages can't set (the issue's second risk). Nothing
 needs them yet: #101 renders sound on the main thread.
+
+## Flint Kart (#104)
+
+Flint Kart (chrischaps/FlintKart) is the second game on the site, and the
+first with a race loop: a gamepad-first menu, a countdown, six karts with
+items and drift boosts, five of them Rhai AI racers, laps, standings and a
+results screen. `play.chaps.dev/?game=kart`.
+
+**The engine catch-up.** The newest game was on `feature/trike-backports`
+(2026-09-03, FlintKart PR #1, which carries items-and-powerups too), with
+its subtree at Flint `81e54fc`. Unlike Float's, its last squash's split is
+still in Flint, so one `subtree pull --prefix=engine engine main --squash`
+brought 166 commits in with no conflicts, and `HEAD:engine` is
+byte-identical to Flint `main`'s tree. FlintKart's `engine-catchup` branch
+is that pull plus `bundle.toml` and `web/`. Every scene ran natively on the
+new engine with no warning from the content, and the bundle checker passed
+on the first pack. Nothing in the game needed changing.
+
+**The bundle.** It starts on `scenes/main_menu.scene.toml` and leaves out
+the render captures and `logo.png` at the repo root (the menu draws
+`sprites/logo.png`), the personal `mountain_switchback_chris` scene and the
+2.2 MB `Panorama_Lush` skybox only that scene names, the source music,
+`tracks/` (the input to `build_branching_track.py`) and `web/`:
+
+| Bundle | Files | Size |
+|---|---|---|
+| `kart.flintpack` | 108 | 3.31 MB |
+| `kart.audio.flintpack` (24 Ogg files) | 24 | 1.20 MB |
+
+The first pack, without those excludes, was 6.61 MB.
+
+**A film of its own.** chaps.dev has no film of Flint Kart, so the game
+ships one: `web/kart-race.mp4` (36 s, 5.2 MB) and `web/kart-poster.jpg`. A
+`video` or `poster` in `games.toml` may now be a path in the game's repo,
+not only a URL, and `build.py` copies it beside the bundle
+(`games/kart/kart-race.mp4`). A game with a poster and no video gets the
+poster as a still on the film door. A game can also give the gate its own
+`controls` line, since "mouse to look" is Float's and a kart has no mouse.
+
+**Persist on the web.** The menu remembers the chosen track with
+`persist_set`. The player saved the store to `<project>/save/persist.toml`
+with `std::fs`, which on wasm failed and warned once a second for the rest
+of the session. On wasm the store is now a `user_files` entry named for
+the input config's `game_id`, `flint:/config/flint/save_flint_kart.toml`
+in `localStorage`, so every game on the one origin keeps its own. A
+failed write marks the store clean instead of retrying every second.
+
+**Racing it in Chrome.** A person can't be scripted, so the test gives one
+a coach. A test-only copy of the game adds `coach_brain`, the game's own
+`ai_driver.rhai` aimed at `player_kart` but writing to its own `ai_input`,
+and a reporter that logs the coach's throttle, steering, brake, drift and
+item once a frame. A CDP driver reads those lines and plays them the way a
+person would. With **keys** it holds W and S, pulses A and D (sigma-delta,
+so the share of time a key is down follows the analog steer) and presses
+Shift and E. With a **pad** (`navigator.getGamepads` faked with a standard
+mapping) it moves the left stick and pulls RT and LT, with LB to drift and
+X for items. The menu is driven the same way: Enter or A twice. The kart
+only ever sees the keyboard or the gamepad.
+
+| Run (release, 1280x720, DPR 1) | Player | Mean frame | p99 | Late audio buffers |
+|---|---|---|---|---|
+| keys, headless Chrome 156 | 4th, 1:24.12 | 16.79 ms | 16.8 ms | 5 of 2,161 |
+| pad, headed Chrome 156 | 2nd, 1:17.12 | 16.73 ms | 16.8 ms | 5 of 1,946 |
+| pad, headless Chrome 156 | 3rd, 1:20.45 | 19.65 ms | 33.3 ms | |
+| native, Vulkan, Fifo (a coach-driven copy) | 3rd, 1:20.41 | 17.62 / 19.21 ms (two runs) | | |
+
+Every late buffer came while the track scene loaded. In the headless pad
+run, `requestAnimationFrame` stopped for 13 s in three gaps of 3, 3 and
+7 s while the audio clock kept mixing on time, so the main thread was
+idle. That is headless Chrome not producing frames. The same race headed
+had no gap after loading. Native vsync on this machine paces unevenly
+(present-to-present p99 44 to 148 ms, with stalls to 1 to 2 s). Virtual
+Desktop and Meta virtual monitors are attached, the Fifo case CLAUDE.md
+describes. So the mean frame time in Chrome is **0.87 to 0.95x** native's,
+not 1.5x.
+
+**Where the time goes.** `PlayerApp` now sums each phase of a frame
+(`player_app/phases.rs`, one clock read per phase). `--exit-after` prints
+the sums as `[perf] phases`, and the web page logs them every `?perf=<s>`
+seconds. Mean ms per frame over the race, release builds, same machine
+(native uncapped with `FLINT_VSYNC=0`):
+
+| Phase | Native | Chrome, headed | Chrome, headless |
+|---|---|---|---|
+| scripts (`on_update`: 6 karts, 5 AI brains, the coach, race manager) | 3.15 | 2.41 | 3.21 |
+| physics (rapier, ~1.06 fixed steps a frame) | 0.01 | 0.02 | 0.03 |
+| ...per fixed step | 0.017 | 0.024 | 0.024 |
+| script ui (`on_draw_ui`: the HUD) | 1.86 | 1.76 | 2.41 |
+| audio/anim/fx | 0.48 | 0.58 | 0.85 |
+| sync | 1.17 | 1.31 | 1.99 |
+| render (encode and submit) | 2.49 | 1.80 | 2.90 |
+| **CPU per frame** | **9.18** | **7.96** | **11.45** |
+
+**rapier3d is not the hazard the issue feared.** FlintKart's kart physics
+live in `kart_controller.rhai` (the karts ride the track spline), and the
+scene declares no colliders, so rapier steps a near-empty world: about
+0.02 ms a step on both targets. It is 1.4x slower in
+the browser, which matters for a game that leans on rapier, and is noise
+here. The AI racers are Rhai, and the scripts cost about the same in wasm
+as natively. Chrome's `performance.now()` is coarsened, so one frame's
+phases are noise. These are sums over 4,800 to 5,100 frames.
+
+The cost the desktop doesn't pay is **sound on the main thread**. Six
+karts' engine, tyre and wind loops take a mean 4.9 ms to mix per 46 ms
+buffer, about 1.8 ms of every 16.7 ms frame, on top of the frame's own
+work. In headless Chrome that leaves about 3.5 ms of headroom at 60 Hz. A
+slower machine would drop frames or sound first. Soba's threaded
+AudioWorklet build (it needs cross-origin isolation headers) is the
+answer if it does.
+
+**Not run:** Safari, Firefox (#102's open performance problem applies),
+and a person with a real pad. The pad here is `navigator.getGamepads`
+faked with the standard mapping, which gilrs' web backend reads like a
+real one. Flint Kart's own quirk, seen in the race: when a shield ends,
+`kart_visuals.rhai` restores the player's kart to white (`racer_info`'s
+default), not its red body.
 
 ## First light: Float (#102)
 

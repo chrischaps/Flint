@@ -122,7 +122,7 @@
 
       /* No WebGPU: the game's film fills the frame, the reason sits low. */
       .door.film { place-items: end start; min-height: 100vh; }
-      .door.film video {
+      .door.film video, .door.film > img {
         position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
         background: #0d1229;
       }
@@ -168,7 +168,7 @@
         <h1 id="gate-title"></h1>
         <p id="gate-line"></p>
         <button id="begin">Begin</button>
-        <small>sound on · mouse to look · Esc frees the pointer</small>
+        <small id="gate-controls">sound on · mouse to look · Esc frees the pointer</small>
       </div>
     </div>
     <div id="relook">click to look around</div>
@@ -214,6 +214,8 @@
             document.title = `${entry.title} · Flint`;
             document.getElementById("gate-title").textContent = entry.title;
             document.getElementById("gate-line").textContent = entry.line || "";
+            // How it's played, when the game says (a kart has no mouse look).
+            if (entry.controls) document.getElementById("gate-controls").textContent = entry.controls;
           }
           open();
         }
@@ -280,6 +282,8 @@
             video.setAttribute("aria-label", `A film of ${title}`);
             parts.push(video);
             if (entry.film) words.append(el("p", { className: "caption", textContent: entry.film }));
+          } else if (entry && entry.poster) {
+            parts.push(el("img", { src: entry.poster, alt: `${title}, in the game` }));
           }
           if (entry && entry.page) {
             words.append(el("a", { className: "more", href: entry.page, target: "_blank", rel: "noopener", textContent: `About ${title}` }));
