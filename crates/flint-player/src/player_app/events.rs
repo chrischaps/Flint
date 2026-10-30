@@ -396,7 +396,9 @@ const STICKS: [gilrs::Axis; 8] = [
 
 impl ApplicationHandler for PlayerApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.render_context.is_none() {
+        // No window yet means first launch. (On the web the window exists
+        // while the device is still on its way; don't start twice.)
+        if self.window.is_none() && self.render_context.is_none() {
             // First launch — full initialization
             if let Err(e) = self.initialize(event_loop) {
                 tracing::error!("Failed to initialize player: {e:#}");
@@ -450,6 +452,16 @@ impl ApplicationHandler for PlayerApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Not ready: the device is still on its way (web startup, #99), so
+        // there is nothing to tick, draw or steer. Each event is a chance to
+        // pick it up.
+        if self.render_context.is_none() {
+            #[cfg(target_arch = "wasm32")]
+            self.take_ready_render_context(event_loop);
+            if self.render_context.is_none() {
+                return;
+            }
+        }
         if let WindowEvent::Focused(focused) = event {
             self.window_focus_changed(focused);
         }
@@ -510,6 +522,12 @@ impl ApplicationHandler for PlayerApp {
         }
     }
 
+    /// The web's device request landed (`set_event_proxy`).
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        #[cfg(target_arch = "wasm32")]
+        self.take_ready_render_context(_event_loop);
+    }
+
     fn device_event(
         &mut self,
         _event_loop: &ActiveEventLoop,
@@ -551,7 +569,7 @@ impl ApplicationHandler for PlayerApp {
 // handler ends that event's handling exactly as it did in the arm — nothing
 // follows the match in window_event.
 impl PlayerApp {
-    fn handle_resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub(super) fn handle_resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
             if let Some(context) = &mut self.render_context {
                 context.resize(new_size);
                 self.camera.aspect = context.aspect_ratio();

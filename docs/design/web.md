@@ -1,9 +1,13 @@
 # Flint on the Web
 
-Status: M0 spike done (#95, epic #94), M2 platform shims done (#100).
-`flint-player` and all its dependencies compile for `wasm32-unknown-unknown`,
-and a trunk page clears a WebGPU canvas in Chrome with no console errors.
-Nothing here runs a scene yet.
+Status: M0 spike (#95), M2 platform shims (#100) and async startup (#99)
+done, epic #94. The browser entry runs the real `PlayerApp`: it fetches a
+scene, opens the WebGPU device without blocking, and draws the scene to a
+page canvas that follows the window's size. Files the scene points at
+(models, textures, scripts, audio) go through the vfs (#97), which stays
+empty on the web until game bundles (#98) fill it, so the web draws scenes
+made of the engine's own geometry: boxes, the procedural sky, the Gerstner
+ocean.
 
 ## Try it
 
@@ -11,7 +15,8 @@ Nothing here runs a scene yet.
 rustup target add wasm32-unknown-unknown
 cargo check --target wasm32-unknown-unknown -p flint-player   # the whole player
 cd crates/flint-player
-trunk serve                 # http://127.0.0.1:8080, the sky-clear spike + shim check
+trunk serve                 # http://127.0.0.1:8080, the player on the First Light scene
+trunk serve shims.html      # the shim check (#100): sky clear, time, pad, rebinds
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
 ```
 
@@ -25,11 +30,68 @@ moved the 32 sites that predated the check to `web-time` and removed
 their allows, so a std time call in a runtime crate now fails the check.
 
 The page is `crates/flint-player/index.html` and builds the `flint-web` bin
-(`src/bin/flint_web.rs`). That bin makes a canvas through winit, opens a wgpu
-device on `Backends::BROWSER_WEBGPU` and clears it every frame. The colour
-eases through a 60-second day (night, dawn, morning, noon, afternoon, dusk).
-Chrome hands it a `Bgra8Unorm` surface, which is not sRGB, so the sRGB sky
-stops are cleared as they are.
+(`src/bin/flint_web.rs`), the web twin of `main.rs`. Its arguments come from
+the query string instead of clap:
+
+| Query | Desktop flag | Meaning |
+|---|---|---|
+| `scene=<url>` | `<scene>` | scene TOML, fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
+| `msaa=1\|4` | `--msaa` | scene-pass MSAA |
+| `width=&height=` | `--width --height` | fix the canvas to that many CSS pixels; otherwise it fills the page |
+
+The engine schemas are compiled in (`build.rs` embeds `schemas/components`
+and `schemas/archetypes`), since a browser can't list a directory.
+
+## Async startup (#99)
+
+A desktop makes the window and then blocks on `RenderContext::new`. A
+browser can't block its main thread, so on wasm32:
+
+1. `flint_web.rs` fetches and parses the scene, builds `PlayerApp`, gives it
+   an `EventLoopProxy` (`set_event_proxy`) and starts winit with `spawn_app`,
+   which returns at once.
+2. `resumed` → `initialize` makes the window on the page's `<canvas id="flint">`
+   (`web_startup::canvas_attributes`; a page without one gets a canvas
+   appended) and starts `RenderContext::new` with `spawn_local`.
+3. The future parks the context in a shared slot and wakes the loop with a
+   user event, or a redraw if no proxy was given.
+4. `user_event` → `take_ready_render_context` runs `finish_initialize`, the
+   same code a desktop runs after `block_on`, then sizes the surface to the
+   canvas as it is now.
+
+Until step 4 the player is *not ready*: `render_context` is `None`, and
+`window_event` drops every event, so nothing ticks, draws or reads input
+against a missing device. `resumed` starts only when there is no window yet,
+so a second `resumed` while the device is in flight doesn't start twice.
+Desktop and Android keep `pollster::block_on` and `run_app`.
+
+The canvas's CSS size decides the surface size: winit's `ResizeObserver`
+sends `Resized` with the CSS size times `devicePixelRatio`, and the player
+reconfigures the surface. Measured in Chrome at DPR 1.5: a 1266x650 page
+gave a 1899x975 surface, 886x470 gave 1329x705, 1386x710 gave 2079x1065,
+with no WebGPU errors.
+
+## WGSL that only the browser rejects
+
+naga, which compiles WGSL on the desktop, does not check WGSL's uniformity
+rules. Chrome's Tint does, and an invalid pipeline invalidates the whole
+frame's command buffer, so one bad shader leaves the canvas black. Fixed in
+#99:
+
+- `ocean_shader.wgsl`: `fwidth` inside the rain-ring cell loop. The
+  derivative is taken once before the branch.
+- `ssao_shader.wgsl`: `textureSample` inside the kernel loop. The pass reads
+  unmipped targets, so it uses `textureSampleLevel(.., 0.0)`.
+- `grass_render.wgsl`: `textureSampleCompare` inside the shadow-bounds
+  branch, now `textureSampleCompareLevel`.
+- WebGPU forbids depth bias on line topologies. The overlay, skeleton and
+  skinned-wireframe line pipelines draw unbiased on the web
+  (`pipeline::line_depth_bias`).
+
+Chrome gives a `Bgra8Unorm` surface, which is not sRGB, and the renderer
+picks the first format when no sRGB one is offered. The web frame comes out
+darker and more saturated than the desktop's. That still needs fixing,
+either with an sRGB view format or an encode in the composite pass.
 
 ## What failed to compile, crate by crate
 
@@ -58,9 +120,7 @@ tickets). Counts are for the runtime crates the player links:
   `flint-player` bin comes out at 2.4 MB with 4 imports because `load_scene`
   always fails and the whole engine after it is dead code. Any size number
   taken from the stock bin is wrong until the vfs lands.
-- **`pollster::block_on`** at `player_app/init.rs:309` (the render context).
-  A browser can't block on a promise, so it needs `spawn_local` and winit's `spawn_app`, as the spike
-  does.
+- **`pollster::block_on`**: done in #99, see Async startup above.
 
 ### Shims landed (#100)
 
@@ -94,7 +154,7 @@ tickets). Counts are for the runtime crates the player links:
   -i <crate>` finds none of them. Only flint-cli and the viewer use them.
   The remaining `std::process::id` calls in player crates are all in tests.
 
-The spike page exercises all of these (see "Try it"): the day runs on
+The shim page (`shims.html`, bin `flint-web-shims`) exercises all of these: the day runs on
 `web_time::Instant`, the left stick scrubs it, `pause_day` (Space or the
 pad's South button) holds it through `InputState`, and R followed by a key
 or pad button rebinds `pause_day` and saves the rebind through `user_files`.
@@ -110,8 +170,9 @@ gzip -9:
 | Build | wasm-bindgen output | after `wasm-opt -Oz` | gzip -9 |
 |---|---|---|---|
 | `flint-web` spike (wgpu + winit only) | 792 KB | 408 KB | 164 KB |
-| `flint-web` with the #100 shim check (+ `InputState`, toml, gilrs) | | 857 KB | 329 KB |
+| `flint-web-shims`, the #100 shim check (+ `InputState`, toml, gilrs) | | 857 KB | 329 KB |
 | Whole engine (size probe, below) | 14.9 MB | 10.7 MB | 4.1 MB |
+| `flint-web` running PlayerApp (#99, measured before the vfs merge; file-reading code was still dead) | | 9.4 MB | 3.5 MB |
 
 The **size probe** is a throwaway bin, not committed. It builds a
 `PlayerApp` from a `black_box` world and passes opaque bytes to
