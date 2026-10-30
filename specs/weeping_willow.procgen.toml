@@ -1,0 +1,54 @@
+generator = "tree_v1"
+
+[meta]
+name = "weeping_willow"
+description = "A willow whose crown is written as an L-system grammar, drooping under tropism"
+version = "1.0.0"
+tags = ["tree", "vegetation", "willow", "lsystem"]
+
+[seed]
+mode = "fixed"
+value = 7
+
+[params]
+trunk_height = 2.6
+trunk_radius_base = 0.32
+trunk_radius_top = 0.16
+trunk_segments = 10
+radial_segments = 8
+trunk_curve_noise = 0.1
+bark_color_base = "#4A3B2A"
+bark_roughness = 0.9
+
+branch_method = "lsystem"
+branch_length_falloff = 0.75
+branch_radius_falloff = 0.4
+branch_max_segments = 12000
+
+# Four or five limbs rolled apart by the golden angle. Each limb (B) keeps
+# setting out whips (W) as it grows; a whip lengthens every pass and now
+# and then forks. Tropism pulls every step toward the ground, so the limbs
+# arch and the whips hang.
+lsystem_axiom = "A"
+lsystem_rules = [
+    "A (0.5) -> F[&(30)B]/(137.5)[&(40)B]/(137.5)[&(25)B]/(137.5)[&(45)B]",
+    "A (0.5) -> F[&(30)B]/(137.5)[&(45)B]/(137.5)[&(25)B]/(137.5)[&(40)B]/(137.5)[&(35)B]",
+    "B -> F[+(55)W][-(55)W]/(90)F[&(60)W]B",
+    "W (0.7) -> FW",
+    "W (0.3) -> F[+(10)W]W",
+]
+lsystem_iterations = 10
+lsystem_angle = 24.0
+lsystem_size = 4.5
+lsystem_tropism = 0.3
+
+leaf_style = "billboard"
+leaf_density = 1.0
+leaf_color_base = "#7FA33A"
+leaf_color_variation = 0.1
+leaf_size = 0.09
+leaf_size_variation = 0.3
+leaves_per_tip = 6
+leaf_spread_radius = 0.25
+leaf_along_branch_density = 1.0
+leaf_along_branch_min_depth = 2

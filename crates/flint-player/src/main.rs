@@ -178,7 +178,8 @@ fn main() -> Result<()> {
     );
 
     app.msaa_sample_count = args.msaa;
-    app.scene_preload_audio = scene_file.scene.preload_audio;
+    // Skybox, ambient, shading levers, camera and post from the scene file
+    app.apply_scene_settings(&scene_file);
     app.window_size = (args.width, args.height);
     app.capture = flint_player::CaptureConfig::new(
         args.screenshot.map(std::path::PathBuf::from),
@@ -197,30 +198,6 @@ fn main() -> Result<()> {
         .set_bus_volume(flint_audio::Bus::Music, args.music_volume);
     app.audio
         .set_bus_volume(flint_audio::Bus::Sfx, args.sfx_volume);
-
-    // Pass skybox path + ambient from scene environment settings
-    if let Some(env) = &scene_file.environment {
-        app.skybox_path = env.skybox.clone();
-        if env.ambient_sky.is_some() || env.ambient_ground.is_some() {
-            app.scene_ambient = Some((
-                env.ambient_sky
-                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_SKY),
-                env.ambient_ground
-                    .unwrap_or(flint_render::LightUniforms::DEFAULT_AMBIENT_GROUND),
-            ));
-        }
-        app.scene_diffuse_wrap = env.diffuse_wrap;
-        app.scene_oren_nayar = env.oren_nayar;
-        app.scene_sheen = env
-            .sheen_strength
-            .map(|s| (env.sheen_color.unwrap_or([1.0; 3]), s));
-    }
-
-    // Pass camera settings from scene
-    app.scene_camera = scene_file.camera.clone();
-
-    // Pass post-processing settings from scene
-    app.scene_post_process = scene_file.post_process.clone();
 
     // Preserve schema paths for scene transitions (includes auto-discovered)
     app.set_schema_paths(all_schemas);

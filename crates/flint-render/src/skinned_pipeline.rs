@@ -409,11 +409,7 @@ impl SkinnedPipeline {
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: -2,
-                    slope_scale: -1.0,
-                    clamp: 0.0,
-                },
+                bias: crate::pipeline::line_depth_bias(),
             }),
             multisample: wgpu::MultisampleState {
                 count: sample_count,

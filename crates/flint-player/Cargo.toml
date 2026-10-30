@@ -13,10 +13,15 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
-# Browser entry for the web spike (#95): `trunk serve` in this directory.
+# The player in a browser (#99): `trunk serve` in this directory.
 [[bin]]
 name = "flint-web"
 path = "src/bin/flint_web.rs"
+
+# The web shim check (#100): `trunk serve shims.html`.
+[[bin]]
+name = "flint-web-shims"
+path = "src/bin/flint_web_shims.rs"
 
 [features]
 default = ["debug-hud"]
@@ -74,19 +79,21 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # egui-winit's default `clipboard` feature pulls arboard, which has no web
 # backend. Pinned here rather than inherited so its defaults can go.
 egui-winit = { version = "0.30.0", default-features = false }
-# The flint-web spike entry (src/bin/flint_web.rs, index.html), its Begin
-# gate for sound (#101), and localStorage for user files
-# (player_app/user_files.rs).
+# Async startup (player_app/web_startup.rs), the flint-web entry
+# (src/bin/flint_web.rs, index.html), the shim page and its Begin gate for
+# sound (flint_web_shims.rs, shims.html; #101), and localStorage for user
+# files (player_app/user_files.rs).
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 kira = { workspace = true }
 web-sys = { version = "0.3", features = [
-    "console", "Performance", "Window", "Document", "Element", "HtmlElement",
-    "HtmlButtonElement", "Location", "UrlSearchParams", "Response", "DomTokenList",
-    "Storage",
+    "console", "Document", "DomTokenList", "Element", "HtmlButtonElement",
+    "HtmlCanvasElement", "HtmlElement", "Location", "Performance", "Request",
+    "Response", "Storage", "UrlSearchParams", "Window",
 ] }
 console_error_panic_hook = "0.1"
+tracing-wasm = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit = { workspace = true }

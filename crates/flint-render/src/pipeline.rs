@@ -1,6 +1,22 @@
 //! Render pipeline setup
 
 use crate::primitives::Vertex;
+
+/// Depth bias for the line-list overlays (wireframe, skeleton), pulling
+/// them in front of the surface they trace. WebGPU forbids any depth bias
+/// on line topologies and rejects the pipeline, so the web draws them
+/// unbiased.
+pub(crate) fn line_depth_bias() -> wgpu::DepthBiasState {
+    if cfg!(target_arch = "wasm32") {
+        wgpu::DepthBiasState::default()
+    } else {
+        wgpu::DepthBiasState {
+            constant: -2,
+            slope_scale: -1.0,
+            clamp: 0.0,
+        }
+    }
+}
 use bytemuck::{Pod, Zeroable};
 
 /// Blend mode for transparent materials
@@ -650,11 +666,7 @@ impl RenderPipeline {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::LessEqual,
                     stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: -2,
-                        slope_scale: -1.0,
-                        clamp: 0.0,
-                    },
+                    bias: line_depth_bias(),
                 }),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
@@ -699,11 +711,7 @@ impl RenderPipeline {
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::Always,
                     stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState {
-                        constant: -2,
-                        slope_scale: -1.0,
-                        clamp: 0.0,
-                    },
+                    bias: line_depth_bias(),
                 }),
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
