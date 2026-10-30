@@ -92,6 +92,7 @@ impl PlayerApp {
             msaa_sample_count: 1,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
+            frame_pacer: None,
             hold_at: None,
             scene_diffuse_wrap: None,
             scene_oren_nayar: None,
