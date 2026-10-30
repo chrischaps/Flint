@@ -2,8 +2,17 @@
 //!
 //! Handles sound loading, listener management, and spatial track creation.
 //! Degrades gracefully when no audio device is available.
+//!
+//! The mix runs in one of two places (#136). On the desktop, and in the
+//! browser's fallback, kira runs here on its own backend ([`Mixer::Local`]).
+//! In the browser it normally runs in an `AudioWorklet`, off the main
+//! thread: every call below then becomes a command to that mixer, and each
+//! sound crosses to it once, as samples ([`Mixer::Remote`],
+//! `crate::remote`). Handles ([`SoundHandle`], [`SpatialTrack`]) hide which.
 
 use crate::decode::{DecodeQueue, Need};
+pub use crate::handle::{SoundHandle, SpatialTrack};
+use crate::remote::{Command, Link, RemoteTrack, RemoteVoice, SoundLoad, Target};
 use flint_core::{vfs, Result, Vec3};
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
@@ -27,9 +36,9 @@ fn static_sound_from_file(
     StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
 }
 
-/// The kira backend sound goes through: cpal's default device on the
-/// desktop, and in the browser a WebAudio stream that measures its own
-/// steadiness (`crate::web`).
+/// The kira backend a local mix goes through: cpal's default device on the
+/// desktop, and in the browser (when the worklet can't run) a WebAudio
+/// stream on the main thread that measures its own steadiness (`crate::web`).
 #[cfg(not(target_arch = "wasm32"))]
 pub type AudioBackend = kira::DefaultBackend;
 #[cfg(target_arch = "wasm32")]
@@ -69,39 +78,138 @@ impl Bus {
             _ => Bus::Sfx,
         }
     }
+
+    fn code(self) -> u8 {
+        match self {
+            Bus::Sfx => crate::remote::protocol::BUS_SFX,
+            Bus::Music => crate::remote::protocol::BUS_MUSIC,
+        }
+    }
 }
 
-/// Wraps Kira's AudioManager with sound caching and listener management
-pub struct AudioEngine {
-    manager: Option<AudioManager<AudioBackend>>,
-    listener: Option<kira::listener::ListenerHandle>,
-    sound_cache: HashMap<String, StaticSoundData>,
-    /// Sounds waiting to be decoded a frame's budget at a time (#124).
-    decodes: DecodeQueue,
-    master_volume: f64,
-    filter_handle: Option<FilterHandle>,
-    /// The cutoff and bus volumes last asked for, so a manager started
-    /// later (the web's click) opens where the game already is.
-    filter_cutoff: f64,
-    bus_volumes: [f64; 2],
-    /// The WebAudio stream's steadiness, shared with its backend.
-    #[cfg(target_arch = "wasm32")]
-    meter: std::sync::Arc<std::sync::Mutex<crate::meter::BufferMeter>>,
-    /// Frames per WebAudio buffer (see `web::WebAudioSettings`).
-    #[cfg(target_arch = "wasm32")]
-    buffer_frames: u32,
+/// Where the browser mixes (#136). The worklet is the default; the main
+/// thread is the fallback when it can't start, and `?mixer=main` asks for it.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WebMixer {
+    #[default]
+    Worklet,
+    MainThread,
+}
+
+/// kira, here: its manager, the master filter and the two buses.
+struct Local {
+    manager: AudioManager<AudioBackend>,
+    filter: FilterHandle,
     /// Music mixer bus (sub-track of main)
     music_bus: Option<TrackHandle>,
     /// SFX mixer bus (sub-track of main); all spatial tracks hang off this
     /// or the music bus rather than the main track directly
     sfx_bus: Option<TrackHandle>,
+    listener: Option<kira::listener::ListenerHandle>,
     /// Keeps spatial track + sound handles alive until one-shot sounds finish
     oneshot_tracks: Vec<(SpatialTrackHandle, StaticSoundHandle)>,
+}
+
+impl Local {
+    fn bus(&mut self, bus: Bus) -> Result<&mut TrackHandle> {
+        match bus {
+            Bus::Music => &mut self.music_bus,
+            Bus::Sfx => &mut self.sfx_bus,
+        }
+        .as_mut()
+        .ok_or_else(|| flint_core::FlintError::AudioError(format!("Bus {bus:?} unavailable")))
+    }
+}
+
+/// kira, somewhere else (the browser's audio thread), reached through a
+/// [`Link`].
+struct Remote {
+    link: Link,
+    /// Every sound sent, by name.
+    sounds: HashMap<String, u32>,
+    listener: bool,
+    /// The worklet behind the link, while it starts and once it runs.
+    #[cfg(target_arch = "wasm32")]
+    stream: Option<crate::worklet::WorkletStream>,
+}
+
+impl Remote {
+    /// Send a sound, under the id it already has if it was sent before.
+    fn send_sound(&mut self, name: &str, data: &StaticSoundData) {
+        let id = match self.sounds.get(name) {
+            Some(&id) => id,
+            None => {
+                let id = self.link.id();
+                self.sounds.insert(name.to_string(), id);
+                id
+            }
+        };
+        self.link
+            .load(SoundLoad::new(id, data.sample_rate, &data.frames));
+    }
+
+    fn sound(&self, name: &str) -> Result<u32> {
+        self.sounds
+            .get(name)
+            .copied()
+            .ok_or_else(|| flint_core::FlintError::AudioError(format!("Sound not cached: {name}")))
+    }
+
+    /// Whether sounds still need a copy here: until the worklet is known to
+    /// run, the main-thread fallback may need them.
+    fn keeps_cache(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(s) = &self.stream {
+            return !s.running();
+        }
+        false
+    }
+}
+
+enum Mixer {
+    Silent,
+    Local(Box<Local>),
+    Remote(Remote),
+}
+
+/// Wraps Kira's AudioManager with sound caching and listener management
+pub struct AudioEngine {
+    mixer: Mixer,
+    /// Decoded sounds. A remote mix gets each one as it is cached, and this
+    /// copy is let go once the mixer is known to be running.
+    sound_cache: HashMap<String, StaticSoundData>,
+    /// Sounds waiting to be decoded a frame's budget at a time (#124).
+    decodes: DecodeQueue,
+    master_volume: f64,
+    /// The cutoff and bus volumes last asked for, so a mixer started
+    /// later (the web's click) opens where the game already is.
+    filter_cutoff: f64,
+    bus_volumes: [f64; 2],
+    /// The mix moved after it started (the worklet failed and the main
+    /// thread took over), so everything that was playing is gone.
+    restarted: bool,
+    /// The browser stream's steadiness, shared with whatever mixes.
+    #[cfg(target_arch = "wasm32")]
+    meter: std::sync::Arc<std::sync::Mutex<crate::meter::BufferMeter>>,
+    /// Frames per WebAudio buffer (see `web::WebAudioSettings`), and per
+    /// metered buffer in the worklet.
+    #[cfg(target_arch = "wasm32")]
+    buffer_frames: u32,
+    #[cfg(target_arch = "wasm32")]
+    web_mixer: WebMixer,
 }
 
 impl Default for AudioEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn tween_ms(ms: u64) -> Tween {
+    Tween {
+        duration: Duration::from_millis(ms),
+        ..Default::default()
     }
 }
 
@@ -121,33 +229,54 @@ impl AudioEngine {
     /// An engine that loads and caches sounds but plays none until
     /// [`start`](Self::start).
     pub fn silent() -> Self {
+        // The worklet's wasm is fetched now, so Begin doesn't wait for it.
+        #[cfg(target_arch = "wasm32")]
+        crate::worklet::preload();
         Self {
-            manager: None,
-            listener: None,
+            mixer: Mixer::Silent,
             sound_cache: HashMap::new(),
             decodes: DecodeQueue::default(),
             master_volume: 1.0,
-            filter_handle: None,
             filter_cutoff: 20000.0,
             bus_volumes: [1.0, 1.0],
+            restarted: false,
             #[cfg(target_arch = "wasm32")]
             meter: Default::default(),
             #[cfg(target_arch = "wasm32")]
             buffer_frames: crate::web::WebAudioSettings::default().buffer_frames,
-            music_bus: None,
-            sfx_bus: None,
-            oneshot_tracks: Vec::new(),
+            #[cfg(target_arch = "wasm32")]
+            web_mixer: crate::worklet::requested(),
         }
     }
 
     /// Open the audio device, if it isn't open, and say whether there is
     /// sound. In the browser, call it from the click (or key) handler that
-    /// begins the game. Failing leaves the engine silent, as before, and a
-    /// later call tries again.
+    /// begins the game: it opens the worklet's `AudioContext` inside the
+    /// gesture, and the worklet's mixer starts a moment later, with the
+    /// calls made meanwhile waiting for it. Failing leaves the engine
+    /// silent, as before, and a later call tries again.
     pub fn start(&mut self) -> bool {
-        if self.manager.is_some() {
+        if !matches!(self.mixer, Mixer::Silent) {
             return true;
         }
+        #[cfg(target_arch = "wasm32")]
+        if self.web_mixer == WebMixer::Worklet {
+            if let Some((stream, link)) =
+                crate::worklet::WorkletStream::open(self.meter.clone(), self.buffer_frames)
+            {
+                self.start_remote(link);
+                if let Mixer::Remote(r) = &mut self.mixer {
+                    r.stream = Some(stream);
+                }
+                return true;
+            }
+            tracing::warn!("[flint-audio] no AudioWorklet here: mixing on the main thread");
+        }
+        self.start_local()
+    }
+
+    /// Mix with kira here, on [`AudioBackend`].
+    fn start_local(&mut self) -> bool {
         // Main track with a low-pass filter, at the cutoff last asked for
         // (fully open at 20 kHz by default)
         #[allow(unused_mut)]
@@ -157,7 +286,7 @@ impl AudioEngine {
             settings.backend_settings.meter = self.meter.clone();
             settings.backend_settings.buffer_frames = self.buffer_frames;
         }
-        let filter_handle = settings.main_track_builder.add_effect(
+        let filter = settings.main_track_builder.add_effect(
             FilterBuilder::new()
                 .mode(FilterMode::LowPass)
                 .cutoff(self.filter_cutoff),
@@ -172,16 +301,52 @@ impl AudioEngine {
         };
 
         // Create the music and SFX buses as children of the main track
-        self.music_bus = manager
+        let music_bus = manager
             .add_sub_track(TrackBuilder::new())
             .map_err(|e| tracing::warn!("Failed to create music bus: {e}"))
             .ok();
-        self.sfx_bus = manager
+        let sfx_bus = manager
             .add_sub_track(TrackBuilder::new())
             .map_err(|e| tracing::warn!("Failed to create sfx bus: {e}"))
             .ok();
-        self.manager = Some(manager);
-        self.filter_handle = Some(filter_handle);
+        self.mixer = Mixer::Local(Box::new(Local {
+            manager,
+            filter,
+            music_bus,
+            sfx_bus,
+            listener: None,
+            oneshot_tracks: Vec::new(),
+        }));
+        self.apply_bus_volumes();
+        true
+    }
+
+    /// Mix somewhere else: every call from now on is written to `link`, and
+    /// the sounds cached so far are sent along it. The browser's worklet is
+    /// one end; a test can take the outbox itself.
+    pub fn start_remote(&mut self, link: Link) {
+        let mut remote = Remote {
+            link,
+            sounds: HashMap::new(),
+            listener: false,
+            #[cfg(target_arch = "wasm32")]
+            stream: None,
+        };
+        let mut names: Vec<&String> = self.sound_cache.keys().collect();
+        names.sort();
+        for name in names {
+            remote.send_sound(name, &self.sound_cache[name]);
+        }
+        remote.link.send(Command::FilterCutoff {
+            hz: self.filter_cutoff as f32,
+            tween: 0.0,
+        });
+        self.mixer = Mixer::Remote(remote);
+        self.apply_bus_volumes();
+        self.let_go_of_sent_sounds();
+    }
+
+    fn apply_bus_volumes(&mut self) {
         let [sfx, music] = self.bus_volumes;
         if music != 1.0 {
             self.set_bus_volume(Bus::Music, music);
@@ -189,15 +354,71 @@ impl AudioEngine {
         if sfx != 1.0 {
             self.set_bus_volume(Bus::Sfx, sfx);
         }
-        true
+    }
+
+    /// Drop the main thread's copy of sounds the remote mixer holds.
+    fn let_go_of_sent_sounds(&mut self) {
+        if let Mixer::Remote(r) = &self.mixer {
+            if !r.keeps_cache() && !self.sound_cache.is_empty() {
+                self.sound_cache.clear();
+            }
+        }
+    }
+
+    /// Once a frame: follow the mixer. In the browser this notices the
+    /// worklet running (and lets go of the main thread's copies of the
+    /// sounds it holds) or failing, in which case the main thread takes
+    /// over and [`take_restarted`](Self::take_restarted) says so.
+    pub fn poll(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let failed = match &self.mixer {
+                Mixer::Remote(Remote {
+                    stream: Some(s), ..
+                }) => s.failed(),
+                _ => false,
+            };
+            if failed {
+                self.mixer = Mixer::Silent;
+                self.web_mixer = WebMixer::MainThread;
+                if self.start_local() {
+                    self.restarted = true;
+                }
+                return;
+            }
+        }
+        self.let_go_of_sent_sounds();
+    }
+
+    /// Whether the mix moved since the last call, losing everything that
+    /// was playing: the caller starts its sounds again.
+    pub fn take_restarted(&mut self) -> bool {
+        std::mem::take(&mut self.restarted)
     }
 
     /// Frames per WebAudio buffer for the next [`start`](Self::start).
     /// Two buffers are in flight, so one buffer is how long a frame may
     /// hold the main thread before sound drops (2048 at 44.1 kHz is 46 ms).
+    /// The worklet meters its steadiness over buffers this long too.
     #[cfg(target_arch = "wasm32")]
     pub fn set_buffer_frames(&mut self, frames: u32) {
         self.buffer_frames = frames;
+    }
+
+    /// Where the browser mixes, for the next [`start`](Self::start).
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_web_mixer(&mut self, mixer: WebMixer) {
+        self.web_mixer = mixer;
+    }
+
+    /// Where the sound is mixed: "worklet" (starting or running),
+    /// "main thread", or "silent".
+    pub fn mixer_name(&self) -> &'static str {
+        match &self.mixer {
+            Mixer::Silent => "silent",
+            Mixer::Local(_) => "main thread",
+            Mixer::Remote(_) => "worklet",
+        }
     }
 
     /// How steadily the browser's audio stream has been fed since it
@@ -206,7 +427,7 @@ impl AudioEngine {
     pub fn buffer_stats(&self) -> Option<crate::meter::BufferStats> {
         #[cfg(target_arch = "wasm32")]
         {
-            if self.manager.is_some() {
+            if !matches!(self.mixer, Mixer::Silent) {
                 return self.meter.lock().ok().map(|m| m.stats());
             }
         }
@@ -218,34 +439,41 @@ impl AudioEngine {
     /// fades keep working underneath.
     pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
         self.bus_volumes[bus as usize] = volume;
-        let handle = match bus {
-            Bus::Music => &mut self.music_bus,
-            Bus::Sfx => &mut self.sfx_bus,
-        };
-        if let Some(handle) = handle {
-            let tween = Tween {
-                duration: Duration::from_millis(16),
-                ..Default::default()
-            };
-            handle.set_volume(amplitude_to_db(volume), tween);
+        let db = amplitude_to_db(volume);
+        match &mut self.mixer {
+            Mixer::Silent => {}
+            Mixer::Local(l) => {
+                if let Ok(handle) = l.bus(bus) {
+                    handle.set_volume(db, tween_ms(16));
+                }
+            }
+            Mixer::Remote(r) => r.link.send(Command::BusVolume {
+                bus: bus.code(),
+                db: db.0,
+                tween: 0.016,
+            }),
         }
     }
 
     /// Whether audio is actually available
     pub fn is_available(&self) -> bool {
-        self.manager.is_some()
+        !matches!(self.mixer, Mixer::Silent)
     }
 
     /// Mutable access to the underlying kira manager, for hosts that start
     /// additional clocked content (the music suite) on the same device stream.
-    /// Handles created on it must drop before this engine (ADR 0017).
+    /// Handles created on it must drop before this engine (ADR 0017). `None`
+    /// while silent, and when the mix runs in the browser's worklet.
     pub fn manager_mut(&mut self) -> Option<&mut AudioManager<AudioBackend>> {
-        self.manager.as_mut()
+        match &mut self.mixer {
+            Mixer::Local(l) => Some(&mut l.manager),
+            _ => None,
+        }
     }
 
     /// Load a sound file into the cache
     pub fn load_sound(&mut self, name: &str, path: &Path) -> Result<()> {
-        if self.sound_cache.contains_key(name) {
+        if self.has_sound(name) {
             return Ok(());
         }
 
@@ -257,8 +485,19 @@ impl AudioEngine {
             ))
         })?;
 
-        self.sound_cache.insert(name.to_string(), sound_data);
+        self.cache_sound(name, sound_data);
         Ok(())
+    }
+
+    /// Keep a decoded sound: in the cache, and with the remote mixer.
+    fn cache_sound(&mut self, name: &str, data: StaticSoundData) {
+        if let Mixer::Remote(r) = &mut self.mixer {
+            r.send_sound(name, &data);
+            if !r.keeps_cache() {
+                return;
+            }
+        }
+        self.sound_cache.insert(name.to_string(), data);
     }
 
     /// Queue a sound file to be decoded over the next frames by
@@ -267,7 +506,7 @@ impl AudioEngine {
     /// already cached is left alone, and one already queued keeps its place
     /// unless `need` is sooner.
     pub fn queue_sound(&mut self, name: &str, path: &Path, need: Need) -> Result<()> {
-        if self.sound_cache.contains_key(name) {
+        if self.has_sound(name) {
             return Ok(());
         }
         if self.decodes.contains(name) {
@@ -322,7 +561,7 @@ impl AudioEngine {
                     decoded.runs,
                     decoded.longest.as_secs_f64() * 1000.0
                 );
-                self.sound_cache.insert(name, data);
+                self.cache_sound(&name, data);
             }
             Err(e) => tracing::warn!("Failed to decode '{name}': {e}"),
         }
@@ -331,7 +570,7 @@ impl AudioEngine {
     /// Make sure a sound about to play is decoded: a small queued one is
     /// decoded now, a big one jumps the queue and this play is skipped.
     fn ensure_decoded(&mut self, name: &str) -> Result<()> {
-        if self.sound_cache.contains_key(name) {
+        if self.has_sound(name) {
             return Ok(());
         }
         match self.decodes.size_of(name) {
@@ -360,7 +599,7 @@ impl AudioEngine {
         let data = StaticSoundData::from_cursor(std::io::Cursor::new(bytes)).map_err(|e| {
             flint_core::FlintError::AudioError(format!("Failed to decode '{name}': {e}"))
         })?;
-        self.sound_cache.insert(name.to_string(), data);
+        self.cache_sound(name, data);
         Ok(())
     }
 
@@ -393,8 +632,8 @@ impl AudioEngine {
                 "'{name}': sample rate 0"
             )));
         }
-        self.sound_cache.insert(
-            name.to_string(),
+        self.cache_sound(
+            name,
             StaticSoundData {
                 sample_rate,
                 frames,
@@ -407,43 +646,53 @@ impl AudioEngine {
 
     /// Create the listener at the given position (typically the player/camera)
     pub fn create_listener(&mut self, position: Vec3) -> Result<()> {
-        let manager = match &mut self.manager {
-            Some(m) => m,
-            None => return Ok(()),
-        };
-
         let pos = to_glam_vec3(position);
         let orientation = glam::Quat::IDENTITY;
-
-        let handle = manager.add_listener(pos, orientation).map_err(|e| {
-            flint_core::FlintError::AudioError(format!("Failed to create listener: {e}"))
-        })?;
-
-        self.listener = Some(handle);
+        match &mut self.mixer {
+            Mixer::Silent => {}
+            Mixer::Local(l) => {
+                let handle = l.manager.add_listener(pos, orientation).map_err(|e| {
+                    flint_core::FlintError::AudioError(format!("Failed to create listener: {e}"))
+                })?;
+                l.listener = Some(handle);
+            }
+            Mixer::Remote(r) => {
+                r.link.send(Command::Listener {
+                    pos: pos.to_array(),
+                    quat: orientation.to_array(),
+                });
+                r.listener = true;
+            }
+        }
         Ok(())
     }
 
     /// Whether the listener has been created
     pub fn has_listener(&self) -> bool {
-        self.listener.is_some()
+        match &self.mixer {
+            Mixer::Silent => false,
+            Mixer::Local(l) => l.listener.is_some(),
+            Mixer::Remote(r) => r.listener,
+        }
     }
 
     /// Update listener position and orientation from yaw/pitch angles
     pub fn update_listener(&mut self, position: Vec3, yaw: f32, pitch: f32) {
-        let Some(listener) = &mut self.listener else {
-            return;
-        };
-
         let pos = to_glam_vec3(position);
         let orientation = glam::Quat::from_euler(glam::EulerRot::YXZ, -yaw, -pitch, 0.0);
-
-        let tween = Tween {
-            duration: Duration::ZERO,
-            ..Default::default()
-        };
-
-        listener.set_position(pos, tween);
-        listener.set_orientation(orientation, tween);
+        match &mut self.mixer {
+            Mixer::Local(l) => {
+                if let Some(listener) = &mut l.listener {
+                    listener.set_position(pos, tween_ms(0));
+                    listener.set_orientation(orientation, tween_ms(0));
+                }
+            }
+            Mixer::Remote(r) if r.listener => r.link.send(Command::Listener {
+                pos: pos.to_array(),
+                quat: orientation.to_array(),
+            }),
+            _ => {}
+        }
     }
 
     /// Create a spatial track for an entity's audio source on the given bus
@@ -453,7 +702,7 @@ impl AudioEngine {
         min_distance: f32,
         max_distance: f32,
         bus: Bus,
-    ) -> Result<SpatialTrackHandle> {
+    ) -> Result<SpatialTrack> {
         self.create_spatial_track_with(position, (min_distance, max_distance), DEFAULT_ROLLOFF, bus)
     }
 
@@ -465,76 +714,123 @@ impl AudioEngine {
         (min_distance, max_distance): (f32, f32),
         rolloff: f32,
         bus: Bus,
-    ) -> Result<SpatialTrackHandle> {
-        if self.manager.is_none() {
-            return Err(flint_core::FlintError::AudioError("No audio device".into()));
-        }
-
-        let listener_id = match &self.listener {
-            Some(l) => l.id(),
-            None => {
-                return Err(flint_core::FlintError::AudioError(
-                    "No listener created".into(),
-                ));
-            }
-        };
-
+    ) -> Result<SpatialTrack> {
+        let no_listener = || flint_core::FlintError::AudioError("No listener created".into());
         let pos = to_glam_vec3(position);
+        match &mut self.mixer {
+            Mixer::Silent => Err(flint_core::FlintError::AudioError("No audio device".into())),
+            Mixer::Local(l) => {
+                let listener_id = l.listener.as_ref().ok_or_else(no_listener)?.id();
+                let builder = SpatialTrackBuilder::new()
+                    .distances(SpatialTrackDistances {
+                        min_distance,
+                        max_distance,
+                    })
+                    .attenuation_function(Some(Easing::OutPowf(rolloff.max(0.01) as f64)));
+                let handle = l
+                    .bus(bus)?
+                    .add_spatial_sub_track(listener_id, pos, builder)
+                    .map_err(|e| {
+                        flint_core::FlintError::AudioError(format!(
+                            "Failed to create spatial track: {e}"
+                        ))
+                    })?;
+                Ok(SpatialTrack::Local(Box::new(handle)))
+            }
+            Mixer::Remote(r) => {
+                if !r.listener {
+                    return Err(no_listener());
+                }
+                let id = r.link.id();
+                r.link.send(Command::TrackNew {
+                    track: id,
+                    pos: pos.to_array(),
+                    min: min_distance,
+                    max: max_distance,
+                    rolloff,
+                    bus: bus.code(),
+                });
+                Ok(SpatialTrack::Remote(RemoteTrack {
+                    id,
+                    link: r.link.clone(),
+                }))
+            }
+        }
+    }
 
-        let builder = SpatialTrackBuilder::new()
-            .distances(SpatialTrackDistances {
-                min_distance,
-                max_distance,
-            })
-            .attenuation_function(Some(Easing::OutPowf(rolloff.max(0.01) as f64)));
+    /// A cached sound with its volume, rate and loop set for one play.
+    fn sound_data(
+        &self,
+        sound_name: &str,
+        volume: f64,
+        pitch: f64,
+        looping: bool,
+    ) -> Result<StaticSoundData> {
+        let mut data = self
+            .sound_cache
+            .get(sound_name)
+            .ok_or_else(|| {
+                flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}"))
+            })?
+            .volume(amplitude_to_db(volume * self.master_volume))
+            .playback_rate(kira::PlaybackRate(pitch));
+        if looping {
+            data = data.loop_region(..);
+        }
+        Ok(data)
+    }
 
-        let bus_handle = match bus {
-            Bus::Music => &mut self.music_bus,
-            Bus::Sfx => &mut self.sfx_bus,
+    /// Start a voice in the remote mixer.
+    fn play_remote(
+        &self,
+        sound_name: &str,
+        target: Target,
+        volume: f64,
+        pitch: f64,
+        looping: bool,
+    ) -> Result<SoundHandle> {
+        let Mixer::Remote(r) = &self.mixer else {
+            return Err(flint_core::FlintError::AudioError(
+                "the mix moved; this track is gone".into(),
+            ));
         };
-        let bus_handle = bus_handle.as_mut().ok_or_else(|| {
-            flint_core::FlintError::AudioError(format!("Bus {bus:?} unavailable"))
-        })?;
-
-        let handle = bus_handle
-            .add_spatial_sub_track(listener_id, pos, builder)
-            .map_err(|e| {
-                flint_core::FlintError::AudioError(format!("Failed to create spatial track: {e}"))
-            })?;
-
-        Ok(handle)
+        let sound = r.sound(sound_name)?;
+        let voice = r.link.id();
+        r.link.send(Command::Play {
+            voice,
+            sound,
+            target,
+            db: amplitude_to_db(volume * self.master_volume).0,
+            rate: pitch as f32,
+            looping,
+        });
+        Ok(SoundHandle::Remote(RemoteVoice {
+            id: voice,
+            link: r.link.clone(),
+        }))
     }
 
     /// Play a cached sound on a spatial track (looping or one-shot)
     pub fn play_on_spatial_track(
         &mut self,
         sound_name: &str,
-        track: &mut SpatialTrackHandle,
+        track: &mut SpatialTrack,
         volume: f64,
         pitch: f64,
         looping: bool,
-    ) -> Result<StaticSoundHandle> {
-        let sound_data = self
-            .sound_cache
-            .get(sound_name)
-            .ok_or_else(|| {
-                flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}"))
-            })?
-            .clone();
-
-        let mut data = sound_data
-            .volume(amplitude_to_db(volume * self.master_volume))
-            .playback_rate(kira::PlaybackRate(pitch));
-
-        if looping {
-            data = data.loop_region(..);
-        }
-
-        let handle = track.play(data).map_err(|e| {
+    ) -> Result<SoundHandle> {
+        let play_error = |e: kira::PlaySoundError<()>| {
             flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
-        })?;
-
-        Ok(handle)
+        };
+        match track {
+            SpatialTrack::Local(handle) => {
+                let data = self.sound_data(sound_name, volume, pitch, looping)?;
+                Ok(SoundHandle::Local(handle.play(data).map_err(play_error)?))
+            }
+            SpatialTrack::Remote(t) => {
+                self.play_remote(sound_name, Target::Track(t.id), volume, pitch, looping)
+            }
+        }
     }
 
     /// Play a cached sound on a mixer bus (non-spatial, e.g. ambient/music)
@@ -545,41 +841,22 @@ impl AudioEngine {
         pitch: f64,
         looping: bool,
         bus: Bus,
-    ) -> Result<StaticSoundHandle> {
-        if self.manager.is_none() {
+    ) -> Result<SoundHandle> {
+        if !self.is_available() {
             return Err(flint_core::FlintError::AudioError("No audio device".into()));
         }
         self.ensure_decoded(sound_name)?;
-
-        let sound_data = self
-            .sound_cache
-            .get(sound_name)
-            .ok_or_else(|| {
-                flint_core::FlintError::AudioError(format!("Sound not cached: {sound_name}"))
-            })?
-            .clone();
-
-        let mut data = sound_data
-            .volume(amplitude_to_db(volume * self.master_volume))
-            .playback_rate(kira::PlaybackRate(pitch));
-
-        if looping {
-            data = data.loop_region(..);
+        if matches!(self.mixer, Mixer::Remote(_)) {
+            return self.play_remote(sound_name, Target::Bus(bus.code()), volume, pitch, looping);
         }
-
-        let bus_handle = match bus {
-            Bus::Music => &mut self.music_bus,
-            Bus::Sfx => &mut self.sfx_bus,
+        let data = self.sound_data(sound_name, volume, pitch, looping)?;
+        let Mixer::Local(l) = &mut self.mixer else {
+            unreachable!("checked available and not remote");
         };
-        let bus_handle = bus_handle.as_mut().ok_or_else(|| {
-            flint_core::FlintError::AudioError(format!("Bus {bus:?} unavailable"))
-        })?;
-
-        let handle = bus_handle.play(data).map_err(|e| {
+        let handle = l.bus(bus)?.play(data).map_err(|e| {
             flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
         })?;
-
-        Ok(handle)
+        Ok(SoundHandle::Local(handle))
     }
 
     /// Play a one-shot sound at a 3D position (creates a temporary spatial track).
@@ -618,37 +895,72 @@ impl AudioEngine {
         bus: Bus,
     ) -> Result<()> {
         self.ensure_decoded(sound_name)?;
-        let mut track = self.create_spatial_track_with(position, distances, rolloff, bus)?;
-        let handle = self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
-        self.oneshot_tracks.push((track, handle));
+        if let Mixer::Remote(r) = &self.mixer {
+            // The worklet keeps the track until the sound ends.
+            if !r.listener {
+                return Err(flint_core::FlintError::AudioError(
+                    "No listener created".into(),
+                ));
+            }
+            r.link.send(Command::OneShot {
+                sound: r.sound(sound_name)?,
+                pos: to_glam_vec3(position).to_array(),
+                db: amplitude_to_db(volume * self.master_volume).0,
+                rate: pitch as f32,
+                min: distances.0,
+                max: distances.1,
+                rolloff,
+                bus: bus.code(),
+            });
+            return Ok(());
+        }
+        let SpatialTrack::Local(track) =
+            self.create_spatial_track_with(position, distances, rolloff, bus)?
+        else {
+            unreachable!("a local mixer makes local tracks");
+        };
+        let mut track = *track;
+        let data = self.sound_data(sound_name, volume, pitch, false)?;
+        let handle = track.play(data).map_err(|e| {
+            flint_core::FlintError::AudioError(format!("Failed to play '{sound_name}': {e}"))
+        })?;
+        if let Mixer::Local(l) = &mut self.mixer {
+            l.oneshot_tracks.push((track, handle));
+        }
         Ok(())
     }
 
-    /// Remove finished one-shot spatial sounds. Call once per frame.
+    /// Remove finished one-shot spatial sounds. Call once per frame. (A
+    /// remote mixer sweeps its own.)
     pub fn cleanup_finished_oneshots(&mut self) {
-        self.oneshot_tracks
-            .retain(|(_track, sound)| sound.state() != kira::sound::PlaybackState::Stopped);
+        if let Mixer::Local(l) = &mut self.mixer {
+            l.oneshot_tracks
+                .retain(|(_track, sound)| sound.state() != kira::sound::PlaybackState::Stopped);
+        }
     }
 
     /// Drop all one-shot spatial handles (for scene transitions).
     pub fn clear_oneshots(&mut self) {
-        self.oneshot_tracks.clear();
+        match &mut self.mixer {
+            Mixer::Silent => {}
+            Mixer::Local(l) => l.oneshot_tracks.clear(),
+            Mixer::Remote(r) => r.link.send(Command::ClearOneShots),
+        }
     }
 
     /// Check if a sound is already loaded
     pub fn has_sound(&self, name: &str) -> bool {
         self.sound_cache.contains_key(name)
+            || matches!(&self.mixer, Mixer::Remote(r) if r.sounds.contains_key(name))
     }
 
     /// Set the low-pass filter cutoff frequency (Hz). 20000 = fully open, lower = more muffled.
     pub fn set_filter_cutoff(&mut self, hz: f32) {
         self.filter_cutoff = hz as f64;
-        if let Some(handle) = &mut self.filter_handle {
-            let tween = Tween {
-                duration: Duration::from_millis(16),
-                ..Default::default()
-            };
-            handle.set_cutoff(hz as f64, tween);
+        match &mut self.mixer {
+            Mixer::Silent => {}
+            Mixer::Local(l) => l.filter.set_cutoff(hz as f64, tween_ms(16)),
+            Mixer::Remote(r) => r.link.send(Command::FilterCutoff { hz, tween: 0.016 }),
         }
     }
 }
@@ -801,6 +1113,105 @@ mod tests {
             .is_err());
         assert!(engine
             .play_non_spatial("nope", 1.0, 1.0, false, Bus::Music)
+            .is_err());
+    }
+
+    /// The engine driven remotely, against the worklet's own mixer: what it
+    /// writes is what the browser's audio thread would apply.
+    #[test]
+    fn a_remote_engine_drives_the_worklet_mixer() {
+        use flint_audio_worklet::Mixer;
+
+        fn deliver(link: &Link, mixer: &mut Mixer) {
+            let out = link.take();
+            for l in &out.loads {
+                mixer.load_sound(l.id, l.sample_rate, l.channels, &l.samples);
+            }
+            mixer.apply(&out.batch);
+        }
+        fn loudness(mixer: &mut Mixer) -> (f32, f32) {
+            let (mut l, mut r) = (0.0f32, 0.0f32);
+            for _ in 0..40 {
+                let out = mixer.render(128);
+                l = l.max(out[..128].iter().fold(0.0, |a, s| a.max(s.abs())));
+                r = r.max(out[128..].iter().fold(0.0, |a, s| a.max(s.abs())));
+            }
+            (l, r)
+        }
+
+        let tone: Vec<f32> = (0..44_100)
+            .map(|i| (i as f32 * 0.0627).sin() * 0.5)
+            .collect();
+        let mut engine = AudioEngine::silent();
+        // Cached while silent (behind the web's gate), sent at start.
+        engine
+            .load_sound_from_samples("sea", 44_100, &[&tone])
+            .unwrap();
+        engine.set_bus_volume(Bus::Music, 0.5);
+        let link = Link::default();
+        engine.start_remote(link.clone());
+        assert!(engine.is_available() && engine.manager_mut().is_none());
+        assert_eq!(engine.mixer_name(), "worklet");
+        assert!(engine.has_sound("sea"), "known by name once sent");
+        assert!(
+            engine.sound_cache.is_empty(),
+            "the main thread let go of it"
+        );
+
+        let mut mixer = Mixer::new(48_000).unwrap();
+        engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).unwrap();
+        let mut music = engine
+            .play_non_spatial("sea", 1.0, 1.0, true, Bus::Music)
+            .unwrap();
+        deliver(&link, &mut mixer);
+        loudness(&mut mixer); // past the bus's 16 ms tween
+        let (l, r) = loudness(&mut mixer);
+        assert!(
+            (l - 0.25).abs() < 0.02 && (l - r).abs() < 1e-3,
+            "half volume: {l} {r}"
+        );
+        music.stop(Tween::default());
+        drop(music);
+
+        // A placed source to the right, then moved to the left.
+        let mut track = engine
+            .create_spatial_track(Vec3::new(3.0, 0.0, 0.0), 1.0, 25.0, Bus::Sfx)
+            .unwrap();
+        let _voice = engine
+            .play_on_spatial_track("sea", &mut track, 1.0, 1.0, true)
+            .unwrap();
+        deliver(&link, &mut mixer);
+        loudness(&mut mixer);
+        let (l, r) = loudness(&mut mixer);
+        assert!(r > l * 1.5, "on the right: {l} {r}");
+        track.set_position(glam::Vec3::new(-3.0, 0.0, 0.0), Tween::default());
+        deliver(&link, &mut mixer);
+        loudness(&mut mixer);
+        let (l, r) = loudness(&mut mixer);
+        assert!(l > r * 1.5, "on the left: {l} {r}");
+
+        // Dropping the track removes it, and a one-shot needs no handle.
+        drop(track);
+        engine
+            .play_oneshot_at(
+                "sea",
+                Vec3::new(0.0, 0.0, -2.0),
+                1.0,
+                1.0,
+                (1.0, 25.0),
+                2.0,
+                Bus::Sfx,
+            )
+            .unwrap();
+        deliver(&link, &mut mixer);
+        assert_eq!(
+            mixer.counts(),
+            (1, 0, 1),
+            "the voice handle lives; the track went"
+        );
+        assert_eq!(mixer.errors, 0);
+        assert!(engine
+            .play_non_spatial("nope", 1.0, 1.0, false, Bus::Sfx)
             .is_err());
     }
 }

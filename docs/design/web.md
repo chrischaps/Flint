@@ -137,12 +137,12 @@ bundle on (job tooling `arrive.mjs`, the `?perf=1` readout):
 
 | | before (play.chaps.dev, main) | after |
 |---|---|---|
-| sea heard | with everything, after a 900�983 ms frame (+5.7 s and +27 s after Begin in two runs) | decoded and started +0.81 to +0.85 s after Begin (four runs, one unthrottled) |
-| worst frame while the audio lands and decodes | 900 and 983 ms (1017/1600/800 ms unthrottled) | 16.8�16.9 ms (three runs). A first cut, 4 ms a frame and a `Vec` copied into the `Arc` at the end, still had 50�67 ms frames as each song finished |
-| late audio buffers | 35�41 | 9�15, all in the first second's startup frames, which both builds share |
-| decoding cost | one frame | 49 sounds in 0.7�0.8 s of frame time, spread over about 6 s; each song over 64�71 frames, longest step 2.6 ms |
+| sea heard | with everything, after a 900–983 ms frame (+5.7 s and +27 s after Begin in two runs) | decoded and started +0.81 to +0.85 s after Begin (four runs, one unthrottled) |
+| worst frame while the audio lands and decodes | 900 and 983 ms (1017/1600/800 ms unthrottled) | 16.8–16.9 ms (three runs). A first cut, 4 ms a frame and a `Vec` copied into the `Arc` at the end, still had 50–67 ms frames as each song finished |
+| late audio buffers | 35–41 | 9–15, all in the first second's startup frames, which both builds share |
+| decoding cost | one frame | 49 sounds in 0.7–0.8 s of frame time, spread over about 6 s; each song over 64–71 frames, longest step 2.6 ms |
 
-The first second after Begin still has 250�930 ms frames in both builds:
+The first second after Begin still has 250–930 ms frames in both builds:
 startup, not sound.
 
 **Checked before it's written.** A missing file should fail in the packer,
@@ -280,9 +280,9 @@ through to a cross-origin frame.
 
 **Not done here.** Safari can't be run from Windows. Firefox on macOS was
 stood in for by Firefox on Windows with WebGPU turned off, which takes the
-same path. The threaded AudioWorklet build would need cross-origin isolation
-headers, which GitHub Pages can't set (the issue's second risk). Nothing
-needs them yet: #101 renders sound on the main thread.
+same path. A threaded AudioWorklet build would need cross-origin isolation
+headers, which GitHub Pages can't set (the issue's second risk). #136 mixes
+in an AudioWorklet without them, in a second wasm (see Sound).
 
 ## Flint Kart (#104)
 
@@ -391,9 +391,8 @@ The cost the desktop doesn't pay is **sound on the main thread**. Six
 karts' engine, tyre and wind loops take a mean 4.9 ms to mix per 46 ms
 buffer, about 1.8 ms of every 16.7 ms frame, on top of the frame's own
 work. In headless Chrome that leaves about 3.5 ms of headroom at 60 Hz. A
-slower machine would drop frames or sound first. Soba's threaded
-AudioWorklet build (it needs cross-origin isolation headers) is the
-answer if it does.
+slower machine would drop frames or sound first. Since #136
+that mix runs in an AudioWorklet, off the main thread (see Sound).
 
 **Not run:** Safari, Firefox (#102's open performance problem applies),
 and a person with a real pad. The pad here is `navigator.getGamepads`
@@ -1111,9 +1110,10 @@ isn't the hazard. Heavy frames are. Decoding happens before Begin:
 `music_dusk.ogg` (1.43 MB) 100 ms in another run.
 A song decoded in one go mid-game stalls that long. Since #124 it doesn't
 happen that way: sounds decode a packet at a time, 2 ms a frame (see "Audio
-comes late" above). If heavy frames drop sound
-once Float's ocean renders, follow Soba's threaded AudioWorklet build. It
-needs cross-origin isolation headers.
+comes late" above). Heavy frames did drop sound once Float ran on a phone,
+so #136 moved the mix off the main thread, into an AudioWorklet that needs
+no cross-origin isolation (below). The table above is the main-thread
+stream, which is now the fallback.
 
 **Firefox 147**, headless, with autoplay allowed by profile prefs: 865
 buffers in 40 s, 0 late, worst slack +25.0 ms. Firefox's headless mode
@@ -1123,6 +1123,143 @@ played on. Sound doesn't depend on the canvas.
 What the headless runs can't show: whether it *sounds* clean on speakers,
 and Safari (no way to run it from Windows). Those need a person at a browser
 (the issue's ten-minute listen).
+
+### Mixing in an AudioWorklet (#136)
+
+On a Pixel 8 Pro the main-thread stream was the problem: mixing took 15–17 ms
+of every 46 ms buffer, about a third of the main thread, inside cpal's
+`onended`, and a fresh load had 495 of 501 buffers late in its first 30 s.
+So the browser now mixes on its **audio thread**, in an `AudioWorklet`.
+
+The page and a worklet share no memory unless the page is cross-origin
+isolated, and GitHub Pages can't send the COOP/COEP headers that takes. So
+the worklet runs **a second wasm** with its own copy of kira, and the main
+thread talks to it by `postMessage`:
+
+- `crates/flint-audio-worklet` is that wasm: kira with no features (no cpal,
+  no decoders), a `Mixer` set up as `AudioEngine` sets kira up on the
+  desktop, and a C ABI with **no imports**, so the processor instantiates it
+  with `{}` and needs no wasm-bindgen glue (a worklet has no `TextDecoder`
+  for it anyway). It is built with the workspace's `worklet` profile
+  (opt-level 3: it runs against the audio thread's deadline), by a trunk
+  `pre_build` hook into `target/worklet`, and `index.html` / `shims.html`
+  copy it next to the page.
+- `flint_audio::remote` is the engine's side. Each call (`play_non_spatial`,
+  `create_spatial_track`, `set_position`, `set_bus_volume`, …) becomes a
+  `remote::Command`, encoded into one byte batch; the ids are made on the
+  main thread, so a call returns its handle at once. The protocol lives in
+  the worklet crate (`src/protocol.rs`) and `flint-audio` includes the same
+  file with `#[path]`, so both ends are built from one encoding.
+- Handles are now `engine::SoundHandle` and `engine::SpatialTrack`, which wrap
+  kira's handles or a remote id. Dropping them does what dropping kira's
+  does: a sound plays on, a track goes with its sounds. One-shots placed in
+  the worklet are swept there when they end.
+- **Once per frame.** The first command of a frame queues a microtask
+  (`queueMicrotask`), which posts that frame's batch when the frame's task is
+  done. So the engine needs no flush call, and a frame's calls arrive
+  together, about one frame after they are made.
+- **Sounds cross once.** When a sound is decoded (#124's queue, or any
+  `load_sound*`), its samples are copied into a `Float32Array` and
+  *transferred* to the worklet: one channel when both sides are equal (every
+  Float sound is mono), else two. The main thread lets go of its copy once
+  the worklet is running.
+- **The meter moved with the mix.** The processor times each 128-frame render
+  with `Date.now()` (a worklet has no `performance`, Chrome 156 included;
+  whole milliseconds summed over a 2048-frame buffer, so a light mix of a few
+  microseconds a render reads as about 0 ms), notes its loudest sample (the
+  summaries now end `peak -7 dBFS`, which says sound is coming out) and posts
+  per-buffer numbers to the page. They land in the same `BufferMeter`, so the
+  console's lines and `AudioEngine::buffer_stats()` read as before, now
+  prefixed `worklet`. The worklet is never "scheduled late": what it can lose
+  is time, when the audio thread misses its deadline and the audio clock
+  falls behind the wall clock for good. So its slack is a buffer's length
+  minus how far `currentTime` has fallen behind `Date.now()` since its
+  steadiest, with the baseline creeping to follow the two clocks' drift. A
+  late buffer is a step of more than a buffer.
+- **Fallback.** `AudioEngine::start` opens the worklet only when the browser
+  has `AudioWorkletNode`. If the processor then fails (no wasm, a compile
+  error, no `ready` within 4 s), `AudioEngine::poll` notices, starts the old
+  main-thread stream, and `AudioSystem` replays its sources. `?mixer=main`
+  asks for the main thread outright, for comparisons. A scene with a
+  `music_session` also stays on the main thread: the suite clocks itself on
+  kira's manager (`manager_mut`), which only exists there.
+- The worklet's `AudioContext` asks for `latencyHint: "balanced"` and runs at
+  the device's own rate (48 kHz on most phones), so the browser no longer
+  resamples kira's 44.1 kHz output.
+
+**Against the shared-memory route.** Soba (#375) runs its DSP in a threaded
+AudioWorklet: one wasm with shared memory, made cross-origin isolated on
+GitHub Pages by `coi-serviceworker`, a service worker that adds the headers to
+its own responses. For Flint that would have meant building the whole player
+with `+atomics`, `--shared-memory` and `--import-memory` (so a second build
+of the 3 MB player for browsers without isolation), a reload on the first
+visit while the service worker installs, every cross-origin fetch needing
+CORP headers (`?bundle=` from raw.githubusercontent would break), and no
+`Mutex::lock()` on the main thread (it traps; Soba spins on `try_lock`). In
+return kira's manager and renderer could have stayed as they are, with no
+protocol. The second wasm costs a copy of each sound on its way over and a
+command protocol to keep in step with the engine's API; it needs no headers,
+no service worker and no second player build.
+
+**Measured** in headless Chrome 156 on this laptop with the shim page
+(`shims.html`, Float's `ocean_loop.ogg` and `music_day.ogg`, built
+`web-release`), 60 s each. `?stall=N` holds the main thread N ms every 2 s;
+`?mixer=main` is the old stream:
+
+| Main thread held | Worklet | Main-thread stream |
+|---|---|---|
+| 100 ms every 2 s | **0 late of 1411** | 41 late of 1298, worst −50 ms |
+| 200 ms every 2 s | **0 late of 1414** | 178 late of 1303, worst −149 ms |
+
+The worklet's zeros are trusted because its meter catches a real dropout.
+`?audiostall=N` makes the *processor* miss its deadline by N ms every 2 s
+(a test knob, read by `worklet.js`): 30 ms fits in the context's headroom
+(0 late of 699), 60 ms gives 5 late of 703, each line saying the audio clock
+fell 48–53 ms behind, and 120 ms gives 14 late of 703 at 81–91 ms.
+
+The mixer itself, timed in Node 25 on this laptop (`flint_audio_worklet.wasm`
+rendering 128 frames at a time at 48 kHz, one looping bed plus spatial
+voices around the listener): 0.36 ms per 2048 frames with 2 voices, 2.5 ms
+with 8 and 5.2 ms with 24. That is 1–11% of the buffer's 43 ms, now spent on
+the audio thread instead of the frame.
+
+**Size.** `flint_audio_worklet.wasm` is 200 KB, 70 KB gzipped (#123's
+budget counts the page's gzipped bytes; this adds about 2%, fetched before
+Begin in parallel with the game). The player's wasm doesn't shrink: kira
+stays in it for the fallback and `music_session`.
+
+**Float in Chrome desktop** (headless, `index.html?game=float`, packed from
+the Float checkout, 90 s): the sea, wind, both wash loops (spatial), the
+song and the scripts' one-shots all played through the worklet, 0 late of
+2116, and the mixer refused 0 commands. A 10 s CPU profile of the main thread
+with `?mixer=main` had 5.2% under one call path (`wasm-function[1387]`, via a
+no-argument closure: cpal's `onended`); with the worklet that path is gone,
+and the frame's once-a-frame flush is 0.2%.
+
+**Pixel 8 Pro** (Chrome 156, Float over `adb reverse` so `localhost` is a
+secure context, a fresh load, 62 s after Begin, thermal status 1 throughout;
+the worklet ran second, on the warmer phone):
+
+| | Main-thread stream | Worklet |
+|---|---|---|
+| Main thread under the mix path (10 s profile, 20–30 s after Begin) | 26.9% | 0% |
+| Late buffers | 46 of 1356 (3.4%) | 7 of 1475 (0.47%) |
+| Frame p50 / p99 | 41.7 / 58.4 ms | 25.1 / 41.8 ms |
+| Frames per 10 s | 243 | 345 |
+
+The issue's measure, late buffers in the first 60 s after Begin, is under 1%.
+The main-thread run here was already better than the 495 of 501 that opened
+the issue, because #121 and #124 landed since. The frames the mix gave back
+went to rendering: the main thread is still busy (89% under the frame), but
+it now draws 42% more frames.
+
+What is left is on the audio thread. On the phone Float's mix costs 12–17 ms
+of every 43 ms buffer there too (kira's spatial tracks; opt-level 3 bought
+little over the main thread's `z`), and the 7 late buffers came when the
+audio thread went 80–140 ms between buffers, starved while the phone ran hot
+with a 99%-busy main thread beside it. A cheaper mix (#138) helps here
+directly. `?audiostall=N` is the knob for testing the meter, and `?mixer=main`
+is the one for comparisons.
 
 ## Size
 

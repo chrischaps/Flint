@@ -10,3 +10,16 @@
 # starts at once.
 pattern_script = "<script type=\"module\">import init from '{base}{js}';await window.flintDoorway;await init({ module_or_path: '{base}{wasm}' });</script>"
 pattern_preload = "<link rel=\"modulepreload\" href=\"{base}{js}\" crossorigin=\"anonymous\">"
+
+# The AudioWorklet's mixer (#136): its own small wasm, kira and nothing else,
+# built for speed (the workspace's `worklet` profile) before every build of
+# these pages, into its own target dir so the path is fixed. index.html and
+# shims.html copy it next to the page, where flint-audio's worklet::WASM_URL
+# looks for it.
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = [
+    "build", "-p", "flint-audio-worklet", "--target", "wasm32-unknown-unknown",
+    "--profile", "worklet", "--target-dir", "../../target/worklet",
+]

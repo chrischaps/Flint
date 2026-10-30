@@ -1,0 +1,18 @@
+[package]
+name = "flint-audio-worklet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Flint's kira mixer for the browser's AudioWorklet (#136)"
+
+# A cdylib for the worklet's own wasm (built with --profile worklet), and an
+# rlib so its mixer is tested natively.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Only the mixer: no cpal (the worklet is the device) and no decoders (the
+# main thread decodes and sends samples). Not the workspace's kira, whose
+# features would pull both in.
+kira = { version = "0.11", default-features = false }
+glam = { workspace = true }
