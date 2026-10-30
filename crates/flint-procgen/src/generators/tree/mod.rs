@@ -191,6 +191,8 @@ pub enum CrownShape {
     Sphere,
     Ellipsoid,
     Hemisphere,
+    /// A box `2 * crown_radius` wide and deep, `crown_radius * crown_height_ratio` tall.
+    Box,
 }
 
 // ─── BranchParams ───────────────────────────────────────────────────────────
@@ -230,6 +232,8 @@ pub struct BranchParams {
     pub influence_distance: f32,
     /// Growth step size per iteration.
     pub step_size: f32,
+    /// Pipe model exponent for branch radii (2 = da Vinci's rule).
+    pub pipe_exponent: f32,
 
     // ── L-system specific ──
     /// Number of L-system rewriting iterations.
@@ -270,6 +274,7 @@ impl Default for BranchParams {
             kill_distance: 0.5,
             influence_distance: 4.0,
             step_size: 0.3,
+            pipe_exponent: 2.0,
 
             lsystem_iterations: 3,
             lsystem_angle_variation: 10.0,
@@ -369,11 +374,12 @@ impl BranchParams {
                 "sphere" | "Sphere" => CrownShape::Sphere,
                 "ellipsoid" | "Ellipsoid" => CrownShape::Ellipsoid,
                 "hemisphere" | "Hemisphere" => CrownShape::Hemisphere,
+                "box" | "Box" => CrownShape::Box,
                 other => {
                     return Err(ProcGenError::InvalidParameter {
                         name: "crown_shape".into(),
                         reason: format!(
-                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", or \"hemisphere\""
+                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", \"hemisphere\" or \"box\""
                         ),
                     });
                 }
@@ -409,6 +415,15 @@ impl BranchParams {
         }
         if let Some(v) = table.get("step_size") {
             p.step_size = toml_f32(v, "step_size")?;
+        }
+        if let Some(v) = table.get("branch_pipe_exponent") {
+            p.pipe_exponent = toml_f32(v, "branch_pipe_exponent")?;
+            if p.pipe_exponent < 1.0 {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_pipe_exponent".into(),
+                    reason: "must be at least 1".into(),
+                });
+            }
         }
 
         // L-system params
@@ -809,6 +824,14 @@ impl Generator for TreeGenerator {
                 "branch_angle_max": { "type": "number", "default": 40.0 },
                 "branch_length_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7 },
                 "branch_radius_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6 },
+                "crown_shape": { "type": "string", "enum": ["sphere", "ellipsoid", "hemisphere", "box"], "default": "sphere" },
+                "crown_radius": { "type": "number", "exclusiveMinimum": 0.0, "default": 3.0 },
+                "crown_height_ratio": { "type": "number", "exclusiveMinimum": 0.0, "default": 1.5 },
+                "num_attraction_points": { "type": "integer", "minimum": 0, "default": 500 },
+                "kill_distance": { "type": "number", "exclusiveMinimum": 0.0, "default": 0.5 },
+                "influence_distance": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 },
+                "step_size": { "type": "number", "exclusiveMinimum": 0.0, "default": 0.3 },
+                "branch_pipe_exponent": { "type": "number", "minimum": 1.0, "default": 2.0 },
                 "lsystem_iterations": { "type": "integer", "minimum": 1, "default": 3 },
                 "lsystem_angle_variation": { "type": "number", "minimum": 0.0, "default": 10.0 },
                 "lsystem_preset": { "type": "string", "enum": ["fractal_plant", "weed", "stochastic_plant", "bush"] },
