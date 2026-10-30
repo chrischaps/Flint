@@ -10,7 +10,7 @@ pub mod lod;
 mod trunk;
 
 pub use bark::generate_bark_normal_map;
-pub use branches::generate_branches;
+pub use branches::{generate_branches, TrunkSpine};
 pub use leaves::generate_leaves;
 pub use lod::generate_lods;
 pub use trunk::{generate_trunk, TrunkOutput};
@@ -216,11 +216,17 @@ pub struct BranchParams {
     pub max_segments: u32,
     /// Base radial segments for branch cross-sections.
     pub radial_segments: u32,
+    /// How far up the trunk (0 = root, 1 = tip) the lowest limb leaves it.
+    /// The built-in L-system spreads its scaffold limbs from here to the tip,
+    /// and space colonization may sprout from any of that stretch. A text
+    /// grammar ignores it and grows from the tip.
+    pub branch_start: f32,
 
-    // ── Space colonization specific ──
-    /// Crown volume shape.
+    // ── Crown ──
+    /// Crown volume shape (space colonization).
     pub crown_shape: CrownShape,
-    /// Crown radius.
+    /// Crown radius: the attraction volume's size for space colonization,
+    /// and how far the built-in L-system's limbs reach.
     pub crown_radius: f32,
     /// Crown height as a ratio of crown radius (for ellipsoid).
     pub crown_height_ratio: f32,
@@ -266,6 +272,7 @@ impl Default for BranchParams {
             branch_radius_falloff: 0.6,
             max_segments: 5000,
             radial_segments: 6,
+            branch_start: 0.6,
 
             crown_shape: CrownShape::Sphere,
             crown_radius: 3.0,
@@ -363,6 +370,16 @@ impl BranchParams {
                 return Err(ProcGenError::InvalidParameter {
                     name: "branch_radial_segments".into(),
                     reason: "must be at least 3".into(),
+                });
+            }
+        }
+
+        if let Some(v) = table.get("branch_start") {
+            p.branch_start = toml_f32(v, "branch_start")?;
+            if !(0.0..=1.0).contains(&p.branch_start) {
+                return Err(ProcGenError::InvalidParameter {
+                    name: "branch_start".into(),
+                    reason: "must be in [0.0, 1.0], a fraction of the trunk's height".into(),
                 });
             }
         }
@@ -699,7 +716,7 @@ pub struct TreeOutput {
 /// Generate a complete tree (trunk + branches) from parameters and RNG.
 ///
 /// 1. Generates the trunk via [`generate_trunk`]
-/// 2. Generates branches via [`generate_branches`] attached to the trunk tip
+/// 2. Generates branches via [`generate_branches`] attached along the trunk
 /// 3. Merges both meshes and returns the combined result
 pub fn generate_tree(
     trunk_params: &TrunkParams,
@@ -710,13 +727,12 @@ pub fn generate_tree(
     let trunk = generate_trunk(trunk_params, &mut trunk_rng)?;
 
     let mut branch_rng = rng.fork("branches");
-    let branch_output = generate_branches(
-        branch_params,
-        trunk.tip_position,
-        trunk.tip_direction,
-        trunk_params.radius_top,
-        &mut branch_rng,
-    )?;
+    let trunk_spine = TrunkSpine {
+        points: trunk.spine.clone(),
+        radius_base: trunk_params.radius_base,
+        radius_top: trunk_params.radius_top,
+    };
+    let branch_output = generate_branches(branch_params, &trunk_spine, &mut branch_rng)?;
 
     // Merge trunk + branch meshes
     let mut builder = MeshBuilder::new();
@@ -824,6 +840,7 @@ impl Generator for TreeGenerator {
                 "branch_angle_max": { "type": "number", "default": 40.0 },
                 "branch_length_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7 },
                 "branch_radius_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6 },
+                "branch_start": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.6 },
                 "crown_shape": { "type": "string", "enum": ["sphere", "ellipsoid", "hemisphere", "box"], "default": "sphere" },
                 "crown_radius": { "type": "number", "exclusiveMinimum": 0.0, "default": 3.0 },
                 "crown_height_ratio": { "type": "number", "exclusiveMinimum": 0.0, "default": 1.5 },

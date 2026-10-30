@@ -255,15 +255,32 @@ impl SpaceColonization {
     /// [`ProcGenError::BudgetExceeded`] past `max_nodes`.
     pub fn colonize(&self, attractors: &[Vec3]) -> Result<Colonization> {
         let p = &self.params;
+        let trunk: Vec<Vec3> = (0..=p.trunk_steps)
+            .map(|i| p.root_position + Vec3::new(0.0, p.step_size * i as f32, 0.0))
+            .collect();
+        self.colonize_from(&trunk, attractors)
+    }
+
+    /// Grow toward the attraction points from a given chain of nodes, which
+    /// become nodes `0..chain.len()`, each the parent of the next.
+    ///
+    /// Any node of the chain can sprout, so a tree's real trunk, passed as
+    /// the chain, grows branches all the way up rather than only from its
+    /// tip. `root_position` and `trunk_steps` are ignored.
+    pub fn colonize_from(&self, chain: &[Vec3], attractors: &[Vec3]) -> Result<Colonization> {
+        let p = &self.params;
         let kill_sq = p.kill_distance * p.kill_distance;
         let influence_sq = p.influence_distance * p.influence_distance;
+        if chain.is_empty() {
+            return Err(ProcGenError::InvalidParameter {
+                name: "chain".into(),
+                reason: "colonization needs at least a root node".into(),
+            });
+        }
 
         let mut graph = Graph::default();
-        graph.push(p.root_position, None);
-        for _ in 0..p.trunk_steps {
-            let top = graph.positions.len() - 1;
-            let pos = graph.positions[top] + Vec3::new(0.0, p.step_size, 0.0);
-            graph.push(pos, Some(top));
+        for (i, &pos) in chain.iter().enumerate() {
+            graph.push(pos, i.checked_sub(1));
         }
         graph.check_budget(p.max_nodes)?;
 

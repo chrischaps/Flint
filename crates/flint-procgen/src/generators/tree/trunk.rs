@@ -25,6 +25,9 @@ pub struct TrunkOutput {
     pub tip_position: Vec3,
     /// Forward direction at the trunk tip.
     pub tip_direction: Vec3,
+    /// The trunk's centreline from root to tip, the rings' centres (for
+    /// attaching branches along it).
+    pub spine: Vec<Vec3>,
 }
 
 /// Generate a trunk mesh from the given parameters and RNG.
@@ -92,6 +95,7 @@ pub fn generate_trunk(params: &TrunkParams, rng: &mut SeededRng) -> Result<Trunk
         normal_map,
         tip_position,
         tip_direction,
+        spine: positions,
     })
 }
 
