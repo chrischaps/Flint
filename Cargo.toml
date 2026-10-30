@@ -97,8 +97,11 @@ bytemuck = { version = "1.19", features = ["derive"] }
 notify = "7.0"
 notify-debouncer-mini = "0.5"
 
-# Image encoding
-image = "0.25"
+# Image decoding and encoding: the formats a game ships, PNG and JPEG
+# (glTF's two) and Radiance HDR (skybox panoramas). The web player stops
+# here, leaving out exr, tiff, webp, avif and the rest (#123); flint-render
+# puts image's defaults back for every native build.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr"] }
 
 # Physics
 rapier3d = { version = "0.22", features = ["default"] }
@@ -190,3 +193,16 @@ flint-procgen-ai = { path = "crates/flint-procgen-ai" }
 flint-debug-ui = { path = "crates/flint-debug-ui" }
 flint-player = { path = "crates/flint-player" }
 flint-android = { path = "crates/flint-android" }
+
+# The web player's build (#123): `trunk build --release --cargo-profile
+# web-release` in crates/flint-player, as .github/workflows/play.yml does.
+# Every first visit downloads the wasm before the world appears, so it
+# trades build time and some speed for bytes. docs/design/web.md (Size) has
+# what each line saved. `panic = "abort"` keeps the panic message: the
+# console_error_panic_hook flint-web installs runs before the abort.
+[profile.web-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"

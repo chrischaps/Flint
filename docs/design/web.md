@@ -21,6 +21,7 @@ trunk serve                 # http://127.0.0.1:8080, the player on the First Lig
 trunk serve shims.html      # the shim check (#100): sky clear, time, pad, rebinds;
                             #   sound behind a Begin click (#101)
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
+trunk build --release --cargo-profile web-release   # what the site ships (#123, Size)
 ```
 
 CI keeps this compiling (#96). The `wasm32 check` job in
@@ -148,7 +149,7 @@ while the vfs left file-reading code dead).
 
 **One address for every game.** `play.chaps.dev/?game=float` plays SET +
 DRIFT, and the next game is one more `?game=`. A subdomain per game was the
-other choice. One site wins because the player is the same 14 MB of wasm for
+other choice. One site wins because the player is the same 7 MB of wasm for
 every game, so a visitor who has played one has the engine cached for the
 next. It also needs one DNS record and one Pages site, and a new game is a
 few lines in `tools/play-site/games.toml`, not a new repo.
@@ -156,8 +157,8 @@ few lines in `tools/play-site/games.toml`, not a new repo.
 **What the site is.** `.github/workflows/play.yml` builds it on every push
 to `main` that touches the player, and on a manual run:
 
-1. `trunk build --release --public-url ./` in `crates/flint-player`, the
-   player page;
+1. `trunk build --release --cargo-profile web-release` in
+   `crates/flint-player`, the player page (the profile is under Size);
 2. `cargo build -p flint-cli`, for `flint bundle`;
 3. `python tools/play-site/build.py`, which fetches each game in
    `games.toml` at its pinned commit (a GitHub tarball; nothing to clone),
@@ -196,7 +197,7 @@ means changing its `ref`. Float is pinned to its `engine-catchup` branch
 `window.flintDoorway`, a promise the doorway resolves only when the game
 can play. Its `pattern_preload` preloads only the 90 KB JS glue. Trunk's
 default loader also preloads the wasm, so even a browser that can't play
-would have downloaded 14 MB. Under `trunk serve` there is no `games.json`
+would have downloaded the whole wasm (7 MB). Under `trunk serve` there is no `games.json`
 and the page plays what the query names, as before. `shims.html` has no
 doorway, so it awaits `undefined` and starts at once.
 
@@ -565,17 +566,68 @@ glue is credited to the first crate in its type arguments):
 | flint_render | 0.35 | | image | 0.15 |
 | rapier3d | 0.29 | | image_webp + tiff | 0.23 |
 
-Trims worth trying before a size budget is promised:
+### The trims (#123)
 
-1. **`image` formats.** exr, tiff, webp and zune-jpeg come to about 0.6 MB of
-   code. Games ship PNG (and maybe JPEG), so set `default-features = false`
-   with `png`/`jpeg`.
-2. **rhai** is a fifth of the code. Its `no_optimize`, `no_custom_syntax` and
-   `only_i64` features, or a leaner `sync`, are the levers. Measure each one.
-3. **flint_procgen** (0.45 MB) is linked for runtime spline/mesh gen. Check
-   whether the web player needs all of it.
-4. `opt-level = "z"`, `lto = "fat"`, `codegen-units = 1` and `panic = "abort"`
-   in a `web-release` profile. Not tried here.
+Each row adds one lever to the row above it. `flint-web` as
+play.yml builds it (trunk 0.21.14, its `wasm-opt -Oz`), gzip -9 of the
+`.wasm`:
 
-4.1 MB gzipped is in the range of other WebGPU game demos. Float's 10 MB of
-data, most of it music, will cost more than the engine does.
+| Build | `.wasm` | gzip -9 | Saved (gzip) |
+|---|---|---|---|
+| `--release` (the site before #123) | 14.23 MB | 5.09 MB | |
+| `web-release`: `opt-level = "s"`, fat LTO, 1 codegen unit, abort | 9.76 MB | 3.83 MB | 1.26 MB |
+| `web-release` with `opt-level = "z"` instead | 8.25 MB | 3.43 MB | 1.66 MB |
+| + `image` with PNG, JPEG and HDR only | 7.45 MB | 3.15 MB | 0.28 MB |
+| + rhai `no_optimize` | 7.40 MB | 3.14 MB | 0.02 MB |
+| + rhai `no_custom_syntax` | 7.39 MB | 3.13 MB | 0.00 MB |
+| + rhai `only_i64` (**what the site ships**) | 7.28 MB | 3.11 MB | 0.02 MB |
+
+**3.11 MB gzipped, 39% under the 5.09 MB the site served.** The profile does
+most of it: fat LTO and one codegen unit let the linker drop what the
+per-crate builds kept. Where it lives:
+
+- **`[profile.web-release]`** in the workspace `Cargo.toml`. play.yml builds
+  with `trunk build --release --cargo-profile web-release`. Desktop
+  `--release` is untouched. The build is slower: about 5 minutes from cold
+  on a desktop, against under 3.
+- **`panic = "abort"` still shows the panic.** `console_error_panic_hook`
+  runs before the abort. A forged bundle that panics in `Bundle::slice` logs
+  `panicked at crates\flint-core\src\bundle.rs:292:20: range start index …`,
+  then `RuntimeError: unreachable`.
+- **`image`** is `default-features = false` with `png`, `jpeg` and `hdr` in
+  the workspace (HDR because skybox panoramas can be `.hdr`).
+  `flint-render` adds image's `default` back under
+  `cfg(not(target_arch = "wasm32"))`, so every desktop binary decodes what it
+  did before. The web drops exr, tiff, webp, avif (ravif/rav1e), gif, qoi and
+  the rest. JPEG stays because glTF textures can be JPEG.
+- **rhai's three features** are a wasm-only dependency of `flint-script`.
+  None of them changes what a Flint script means. Flint registers no custom
+  syntax, never sets an optimization level, and passes scripts `i64` and
+  `f64` only. flint-script's 111 tests pass with all three on, and Float
+  played a whole day with them. Together they save 0.15 MB of `.wasm` but
+  only 0.04 MB gzipped, so drop one if a game ever needs it.
+
+**What `z` costs at run time.** In headless Chrome, Float played a 14-minute
+day on the shipped build at 16.67 ms a frame every minute (p99 16.8 ms), with
+no console errors, the same as `--release`. The one CPU cost that shows is
+kira's mix: 3.67 ms per 46 ms buffer on `--release`, 3.94 to 4.01 ms on
+`web-release`, with no late buffers in any run. The first `web-release` day
+fell to 37 to 65 ms a frame from minute 9 on. Two later runs (a full day, and
+one to minute 10 with a CPU profile) held 60 fps throughout. The profile
+showed no Rust function above 2.5% of the main thread, and that day's audio
+was never late either. So it looks like load from elsewhere on the machine,
+but #120's perf overlay is the place to watch for it. If decoding or mixing
+ever needs the speed back, `[profile.web-release.package.<crate>]
+opt-level = 3` raises one crate without giving back the rest.
+
+Not trimmed:
+
+- **flint_procgen is reachable on the web.** Scene loading resolves
+  `procgen` components through `ProcGenResolver`
+  (`player_app/scene_loading.rs`) into meshes and textures, so it stays.
+  Float uses none, so a `procgen` cargo feature could drop it for games like
+  Float. That needs a measurement first.
+- **exr** was reachable only through image's default formats. It's gone now.
+
+3.1 MB gzipped is in the range of other WebGPU game demos. Float's 10 MB of
+data, most of it music, now costs three times what the engine does.

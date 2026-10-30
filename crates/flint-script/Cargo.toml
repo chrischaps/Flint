@@ -17,6 +17,13 @@ rhai = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 
+# The web player trims rhai (#123): no AST optimizer, no custom syntax and
+# i64 as the only integer type. Flint registers no syntax, sets no
+# optimization level and hands scripts i64 and f64 only, so scripts mean the
+# same; desktop keeps rhai's defaults. docs/design/web.md (Size).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rhai = { workspace = true, features = ["no_optimize", "no_custom_syntax", "only_i64"] }
+
 [dev-dependencies]
 flint-core = { workspace = true }
 flint-ecs = { workspace = true }

@@ -66,9 +66,11 @@ jobs:
           curl -sSL https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv trunk /usr/local/bin/
 
+      # web-release (the workspace Cargo.toml, #123) is release tuned for
+      # bytes: opt-level z, fat LTO, one codegen unit, panic = abort.
       - name: Build the web player
         working-directory: crates/flint-player
-        run: trunk build --release --dist "$GITHUB_WORKSPACE/play-dist"
+        run: trunk build --release --cargo-profile web-release --dist "$GITHUB_WORKSPACE/play-dist"
 
       - name: Build the flint CLI
         run: cargo build -p flint-cli --bin flint
