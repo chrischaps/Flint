@@ -107,8 +107,43 @@ impl Quadric {
     }
 
     /// Find the optimal position that minimizes the quadric error.
-    /// Falls back to the midpoint of the two vertices if the matrix is singular.
+    /// Falls back to the best of the midpoint and the two vertices if the
+    /// matrix is singular, or if the optimum lies farther from the edge's
+    /// midpoint than the edge is long. A tube's quadric is nearly flat along
+    /// its axis, so a solvable but ill-conditioned system can put the
+    /// optimum metres down the limb, and the collapse stretches a triangle
+    /// across the whole tree.
     fn optimal_position(&self, v1: [f64; 3], v2: [f64; 3]) -> [f64; 3] {
+        let mid = [
+            (v1[0] + v2[0]) * 0.5,
+            (v1[1] + v2[1]) * 0.5,
+            (v1[2] + v2[2]) * 0.5,
+        ];
+        let dist_sq = |a: [f64; 3], b: [f64; 3]| {
+            (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
+        };
+        if let Some(opt) = self.solve() {
+            if dist_sq(opt, mid) <= dist_sq(v1, v2) {
+                return opt;
+            }
+        }
+        // Singular or runaway: pick the lowest-error of midpoint, v1, v2
+        let e_mid = self.evaluate(mid[0], mid[1], mid[2]);
+        let e_v1 = self.evaluate(v1[0], v1[1], v1[2]);
+        let e_v2 = self.evaluate(v2[0], v2[1], v2[2]);
+
+        if e_mid <= e_v1 && e_mid <= e_v2 {
+            mid
+        } else if e_v1 <= e_v2 {
+            v1
+        } else {
+            v2
+        }
+    }
+
+    /// The point where the quadric's gradient vanishes, if the system is
+    /// not singular.
+    fn solve(&self) -> Option<[f64; 3]> {
         // Try to solve the linear system from the derivative of v^T*Q*v = 0
         // The 3x3 upper-left submatrix and the 3x1 right-hand side:
         // [a2, ab, ac] [x]   [-ad]
@@ -136,26 +171,9 @@ impl Quadric {
                     + self.bd * (self.a2 * self.bc - self.ab * self.ac)
                     - self.cd * (self.a2 * self.b2 - self.ab * self.ab));
 
-            [x, y, z]
+            Some([x, y, z])
         } else {
-            // Singular: try midpoint, v1, v2 — pick the lowest-error one
-            let mid = [
-                (v1[0] + v2[0]) * 0.5,
-                (v1[1] + v2[1]) * 0.5,
-                (v1[2] + v2[2]) * 0.5,
-            ];
-
-            let e_mid = self.evaluate(mid[0], mid[1], mid[2]);
-            let e_v1 = self.evaluate(v1[0], v1[1], v1[2]);
-            let e_v2 = self.evaluate(v2[0], v2[1], v2[2]);
-
-            if e_mid <= e_v1 && e_mid <= e_v2 {
-                mid
-            } else if e_v1 <= e_v2 {
-                v1
-            } else {
-                v2
-            }
+            None
         }
     }
 }
@@ -202,6 +220,7 @@ struct SimplifyState {
     tangents: Vec<[f64; 4]>,
     triangles: Vec<[u32; 3]>, // active triangles
     tri_active: Vec<bool>,    // per-triangle active flag
+    active_tris: usize,       // how many of tri_active are set
     vertex_active: Vec<bool>,
     quadrics: Vec<Quadric>,
     generation: Vec<u32>,            // per-vertex generation counter
@@ -379,6 +398,7 @@ impl SimplifyState {
             uvs,
             tangents,
             triangles,
+            active_tris: tri_active.len(),
             tri_active,
             vertex_active,
             quadrics,
@@ -389,8 +409,10 @@ impl SimplifyState {
         }
     }
 
+    /// Kept as a running count: counting the flags every collapse made
+    /// simplification quadratic (seconds for a 12k-triangle tree).
     fn active_triangle_count(&self) -> usize {
-        self.tri_active.iter().filter(|&&a| a).count()
+        self.active_tris
     }
 
     fn build_edge_queue(&self) -> BinaryHeap<EdgeCollapse> {
@@ -517,6 +539,7 @@ impl SimplifyState {
             // Check for degenerate (two or more identical vertices)
             if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] {
                 self.tri_active[ti] = false;
+                self.active_tris -= 1;
             } else {
                 // Add triangle to v1's adjacency if not already there
                 if !self.vertex_tris[v1 as usize].contains(&ti) {
