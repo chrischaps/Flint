@@ -1748,6 +1748,7 @@ dependencies = [
  "gilrs",
  "gilrs-core",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1761,6 +1762,7 @@ dependencies = [
  "symphonia",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1835,6 +1837,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
  "wgpu",
  "winit",
 ]
@@ -1852,6 +1855,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "web-time",
 ]
 
 [[package]]
@@ -1911,6 +1915,7 @@ dependencies = [
  "flint-ecs",
  "serde",
  "toml",
+ "web-time",
  "winit",
 ]
 
@@ -1954,6 +1959,7 @@ dependencies = [
  "rhai",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]

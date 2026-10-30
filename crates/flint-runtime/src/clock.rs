@@ -1,6 +1,6 @@
 //! Game clock with fixed-timestep accumulator
 
-use std::time::Instant;
+use web_time::Instant;
 
 /// The longest step a frame takes, in seconds.
 const MAX_DELTA: f64 = 0.25;
@@ -41,7 +41,6 @@ pub struct GameClock {
 }
 
 impl Default for GameClock {
-    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     fn default() -> Self {
         Self {
             total_time: 0.0,
@@ -75,7 +74,6 @@ impl GameClock {
 
     /// Advance the clock. Call once per frame.
     pub fn tick(&mut self) {
-        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let now = Instant::now();
 
         if self.first_tick {

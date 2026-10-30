@@ -39,7 +39,7 @@ use flint_core::{vfs, FlintError, Result};
 use kira::backend::Backend;
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use web_time::Instant;
 
 // --- timing-offset files ----------------------------------------------------
 // Reading the committed logs in `<base_dir>/logs/latency/`: output-latency
@@ -1376,9 +1376,8 @@ impl ChartSession {
         });
         let haptics = crate::haptics::HapticsDriver::new(haptics_cfg);
 
-        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
-        let epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let epoch = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let log_path = cfg
@@ -1536,7 +1535,6 @@ impl ChartSession {
         // monotonic RAW clock; a seam's backwards jump would poison the fit.
         // Events therefore arrive stamped in raw samples and are re-mapped to
         // suite time at ingest.
-        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         self.bridge
             .observe(Instant::now(), self.session.raw_clock_sample());
 

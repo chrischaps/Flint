@@ -30,6 +30,7 @@ debug-hud = ["dep:flint-debug-ui"]
 profile = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
+web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-asset = { workspace = true }
 flint-schema = { workspace = true }
@@ -62,7 +63,6 @@ pollster = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 image = { workspace = true }
-dirs = { workspace = true }
 gilrs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -74,8 +74,9 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # egui-winit's default `clipboard` feature pulls arboard, which has no web
 # backend. Pinned here rather than inherited so its defaults can go.
 egui-winit = { version = "0.30.0", default-features = false }
-# The flint-web spike entry (src/bin/flint_web.rs, index.html), and its
-# Begin gate for sound (#101).
+# The flint-web spike entry (src/bin/flint_web.rs, index.html), its Begin
+# gate for sound (#101), and localStorage for user files
+# (player_app/user_files.rs).
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
@@ -83,8 +84,12 @@ kira = { workspace = true }
 web-sys = { version = "0.3", features = [
     "console", "Performance", "Window", "Document", "Element", "HtmlElement",
     "HtmlButtonElement", "Location", "UrlSearchParams", "Response", "DomTokenList",
+    "Storage",
 ] }
 console_error_panic_hook = "0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit = { workspace = true }
+# User input overrides live under the OS config directory; on the web they go
+# to localStorage instead (player_app/user_files.rs).
+dirs = { workspace = true }

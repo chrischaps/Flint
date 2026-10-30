@@ -22,7 +22,7 @@ use flint_music::{InputEvent, Tick, VisualFrame};
 use flint_runtime::InputState;
 use flint_core::vfs;
 use std::path::Path;
-use std::time::Instant;
+use web_time::Instant;
 
 /// Component name in scene TOML (schema: `schemas/components/music_session.toml`).
 pub const MUSIC_SESSION: &str = "music_session";
@@ -179,7 +179,6 @@ impl DebugKeyInput {
         if !lean_dirty && !pulse {
             return;
         }
-        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let Some(clock_sample) = self.bridge.sample_at(Instant::now()) else {
             return; // bridge not fed yet (session preroll warm-up)
         };
@@ -217,7 +216,6 @@ impl MusicSession {
     /// Parse the component, start the suite on the player's shared manager,
     /// and spawn capture. `Ok(None)` when no audio device exists (headless —
     /// no session, everything else runs).
-    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn start(
         base_dir: &Path,
         comp: &toml::Value,
@@ -424,7 +422,6 @@ impl MusicSession {
         // Once per second: stem-skew evidence with the ADR 0017 re-read
         // discriminator (an exactly-one-buffer transient collapses on
         // re-read; real de-sync persists and grows).
-        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         if self.last_skew_check.elapsed().as_secs_f64() >= 1.0 {
             self.last_skew_check = Instant::now();
             let mut skew_ms = self.session.max_stem_skew() * 1000.0;
