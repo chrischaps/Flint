@@ -24,8 +24,9 @@ id = "float"
 title = "SET + DRIFT"
 line = "Sit at the edge of a raft at sea, from sunrise to stars. There is nothing to win."
 repo = "chrischaps/Float"
-# engine-catchup: the engine subtree at Flint main and bundle.toml (#102)
-ref = "c06e1c937de3f05f6e43d378e9506a136f0ae8a7"
+# engine-catchup: the engine subtree at Flint main, bundle.toml (#102) and
+# the sea and wind in an early ambience bundle (#124)
+ref = "73cb26b52134632c2bcfd406e5300fed82eaa626"
 page = "https://chaps.dev/projects/float/"
 video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
 poster = "https://chaps.dev/projects/float/poster-day.jpg"
