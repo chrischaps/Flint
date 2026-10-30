@@ -3,6 +3,7 @@
 use anyhow::Result;
 use flint_core::FlintError;
 use flint_runtime::InputConfig;
+use flint_core::vfs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ pub(super) fn resolve_input_paths(
     let game_default = scene_input_config
         .map(|name| {
             let p = scene_dir.join(name);
-            if p.exists() {
+            if vfs::exists(&p) {
                 p
             } else if let Some(parent) = scene_dir.parent() {
                 parent.join(name)
@@ -39,13 +40,13 @@ pub(super) fn resolve_input_paths(
         })
         .or_else(|| {
             let candidate = scene_dir.join("config").join("input.toml");
-            if candidate.exists() {
+            if vfs::exists(&candidate) {
                 Some(candidate)
             } else {
                 scene_dir
                     .parent()
                     .map(|p| p.join("config").join("input.toml"))
-                    .filter(|p| p.exists())
+                    .filter(|p| vfs::exists(p))
             }
         });
 
@@ -74,15 +75,15 @@ fn resolve_user_override_in(
     config_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let local = project_local_override(scene_path);
-    if local.exists() {
+    if vfs::exists(&local) {
         return Some(local);
     }
     let config_dir = config_dir?;
     let game = user_override_in(config_dir, game_id);
-    if game.exists() {
+    if vfs::exists(&game) {
         return Some(game);
     }
-    Some(user_override_in(config_dir, "")).filter(|shared| *shared != game && shared.exists())
+    Some(user_override_in(config_dir, "")).filter(|shared| *shared != game && vfs::exists(shared))
 }
 
 /// Where a rebind is saved: back to the project-local file when that's the

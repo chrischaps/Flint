@@ -38,8 +38,8 @@ Five errors in all, against the seven crates the issue was worried about:
 |---|---|---|
 | `getrandom` 0.3 (via ahash: egui, hecs, rhai) | refuses to build: "wasm32-unknown-unknown targets are not supported by default" | `wasm_js` feature on a wasm-only dep in `flint-player`, plus `--cfg getrandom_backend="wasm_js"` in `.cargo/config.toml` |
 | `egui-winit` → `arboard` | no web clipboard backend (8 errors) | `egui-winit` with `default-features = false` on wasm only. This also drops `links`/`webbrowser` |
-| `kira` / `cpal` | builds. `StaticSoundData::from_file` is not there on wasm (flint-audio once, flint-music twice) | `static_sound_from_file` helper: `from_file` on native, `std::fs::read` + `from_cursor` on web. cpal builds without its `wasm-bindgen` feature, so it gets the null host and there is no sound yet |
-| `rhai` | builds. `module_resolvers::FileModuleResolver` is not there | `ScriptEngine::set_module_base` skips installing the resolver on wasm, so `import` is unresolved there |
+| `kira` / `cpal` | builds. `StaticSoundData::from_file` is not there on wasm (flint-audio once, flint-music twice) | `static_sound_from_file` helper: `from_file` on native, `std::fs::read` + `from_cursor` on web. Since #97 both targets read through the vfs and decode with `from_cursor`. cpal builds without its `wasm-bindgen` feature, so it gets the null host and there is no sound yet |
+| `rhai` | builds. `module_resolvers::FileModuleResolver` is not there | `ScriptEngine::set_module_base` skipped the resolver on wasm. Since #97 it installs `VfsModuleResolver` (flint-script) on every target, so `import` resolves through the vfs |
 | `wgpu` 23 | builds (WebGPU backend by default, no naga or wgpu-core). `Instance::enumerate_adapters` is not there | `gpu_select` treats the adapter list as empty on wasm. `--gpu` / `WGPU_ADAPTER_NAME` fall back to `request_adapter` |
 | `rapier3d` / `parry3d` | builds clean | none |
 | `gilrs` (xinput-only features, ADR 0011) | builds clean. gilrs-core picks its web Gamepad backend by target | none needed to compile. M2 still owes per-target features |
@@ -52,7 +52,7 @@ Five errors in all, against the seven crates the issue was worried about:
 These are what M1 and M2 owe (`#97` vfs, `#98` async startup, the shim
 tickets). Counts are for the runtime crates the player links:
 
-- **`std::fs`** returns `Unsupported` on wasm32-unknown-unknown. LLVM can
+- **`std::fs`** (done in #97: every runtime read now goes through `flint_core::vfs`; the web player installs a `MemorySource` filled from its bundle, which #98 fetches) returns `Unsupported` on wasm32-unknown-unknown. LLVM can
   *prove* that, so it deletes everything behind a file read. The real
   `flint-player` bin comes out at 2.4 MB with 4 imports because `load_scene`
   always fails and the whole engine after it is dead code. Any size number
