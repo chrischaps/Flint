@@ -69,6 +69,12 @@ struct Args {
     #[arg(long, value_name = "SCALE|auto")]
     render_scale: Option<String>,
 
+    /// On-screen touch controls from the input config's `[touch_controls]`
+    /// block (#133): `auto` shows them once a finger touches, `always`
+    /// shows them and lets the mouse's left button drive them, `never`
+    #[arg(long, value_name = "auto|always|never", default_value = "auto")]
+    touch_controls: String,
+
     /// GPU adapter to use (case-insensitive substring of the adapter name,
     /// e.g. "NVIDIA"). Overrides WGPU_ADAPTER_NAME; default prefers the
     /// high-performance adapter. Use --list-gpus to see names.
@@ -215,6 +221,9 @@ fn main() -> Result<()> {
             .parse(value)
             .ok_or_else(|| anyhow::anyhow!("--render-scale {value}: a number or auto"))?;
     }
+    let touch_mode = flint_runtime::TouchControlsMode::parse(&args.touch_controls)
+        .ok_or_else(|| anyhow::anyhow!("--touch-controls: auto, always or never"))?;
+    app.input.touch_controls_mut().set_mode(touch_mode);
     // Skybox, ambient, shading levers, camera and post from the scene file
     app.apply_scene_settings(&scene_file);
     app.window_size = (args.width, args.height);

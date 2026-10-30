@@ -160,6 +160,7 @@ mod web {
                     },
                 )]
                 .into(),
+                touch_controls: None,
             };
             input.load_bindings(game).expect("pause_day config");
 
@@ -171,6 +172,7 @@ mod web {
                 version: 1,
                 game_id: GAME_ID.into(),
                 actions: Default::default(),
+                touch_controls: None,
             };
             if let Some(path) = &user_path {
                 match user_files::read(path).map(|t| t.map(|t| InputConfig::from_toml_str(&t))) {

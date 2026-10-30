@@ -42,6 +42,37 @@ thread_local! {
     static TOUCH_FIRST: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
     /// Canvas pixels per winit touch pixel, measured at each resize.
     static TOUCH_SCALE: Cell<(f64, f64)> = const { Cell::new((1.0, 1.0)) };
+    /// The page's safe-area insets in CSS pixels (left, top, right,
+    /// bottom), measured at each resize.
+    static SAFE_AREA: Cell<[f32; 4]> = const { Cell::new([0.0; 4]) };
+}
+
+/// The id of the page's safe-area probe: a hidden element padded by
+/// `env(safe-area-inset-*)`, whose computed padding is the insets in px.
+const SAFE_AREA_PROBE_ID: &str = "flint-safe-area";
+
+/// The page's safe-area insets in CSS pixels, which are egui's points
+/// (left, top, right, bottom): a notch or home bar the touch controls
+/// keep clear of (#133). Zero on a page without the probe.
+pub(super) fn safe_area_insets() -> [f32; 4] {
+    SAFE_AREA.with(|s| s.get())
+}
+
+/// Read the probe's padding into [`safe_area_insets`].
+fn measure_safe_area() {
+    let Some(window) = web_sys::window() else { return };
+    let style = document()
+        .and_then(|d| d.get_element_by_id(SAFE_AREA_PROBE_ID))
+        .and_then(|probe| window.get_computed_style(&probe).ok().flatten());
+    let Some(style) = style else { return };
+    let px = |side: &str| {
+        style
+            .get_property_value(&format!("padding-{side}"))
+            .ok()
+            .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
+            .unwrap_or(0.0)
+    };
+    SAFE_AREA.with(|s| s.set([px("left"), px("top"), px("right"), px("bottom")]));
 }
 
 /// What the player knows about the browser's pointer lock.
@@ -136,6 +167,8 @@ impl PlayerApp {
     /// At a resize: how the canvas's pixels compare with the CSS pixels
     /// times `devicePixelRatio` that winit puts touches in.
     pub(super) fn measure_touch_scale(&self, size: winit::dpi::PhysicalSize<u32>) {
+        // A rotation moves the notch: the insets are measured here too.
+        measure_safe_area();
         let dpr = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
         let css = document()
             .and_then(|d| d.get_element_by_id(super::web_startup::WEB_CANVAS_ID))

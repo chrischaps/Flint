@@ -1264,6 +1264,18 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         });
     }
 
+    // touch_controls_visible() -> bool
+    // True while the engine draws the on-screen sticks and buttons of the
+    // input config's [touch_controls] block (#133): after a finger touched,
+    // until a key or pad takes over. A HUD can make room for them.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("touch_controls_visible", move || -> bool {
+            let c = crate::lock_or_recover(&ctx);
+            c.input.touch_controls_visible
+        });
+    }
+
     // mouse_delta_x() -> f64
     {
         let ctx = ctx.clone();

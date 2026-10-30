@@ -757,6 +757,9 @@ impl PlayerApp {
         // they're polled.
         self.gate_gamepads();
 
+        // The touch controls' layout follows the window and page (#133).
+        self.sync_touch_controls();
+
         // Music session drain + guide/timeline panel feed (F3, ADR 0018).
         self.tick_music_session();
 
@@ -1495,6 +1498,9 @@ impl PlayerApp {
         });
         let mut laid_text = Vec::new();
 
+        let touch_widgets = self.input.touch_controls().widgets();
+        let touch_opacity = self.input.touch_controls().opacity();
+
         let show_stats = self.show_stats;
         let stats_data = if show_stats {
             self.scene_renderer.as_ref().map(|r| {
@@ -1544,6 +1550,9 @@ impl PlayerApp {
             for ext in extensions.iter_mut() {
                 ext.ui(ctx);
             }
+
+            // On-screen touch controls (#133), over the game's UI.
+            super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
 
             #[cfg(feature = "debug-hud")]
             let debug_width =

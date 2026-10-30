@@ -8,6 +8,8 @@ mod events;
 #[cfg(test)]
 mod capture_gate_tests;
 #[cfg(test)]
+mod touch_controls_tests;
+#[cfg(test)]
 mod debug_key_tests;
 #[cfg(test)]
 mod extension_tests;
@@ -28,6 +30,7 @@ mod pacing;
 mod perf;
 mod persist;
 pub mod render_scale;
+mod touch_overlay;
 pub(crate) mod scene_loading;
 mod script_commands;
 #[cfg(feature = "debug-hud")]

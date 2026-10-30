@@ -274,6 +274,7 @@ mod tests {
             version: 1,
             game_id: input.config().game_id.clone(),
             actions: Default::default(),
+            touch_controls: None,
         };
         user.actions
             .insert("interact".into(), input.action_config("interact").unwrap());

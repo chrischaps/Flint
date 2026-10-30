@@ -27,7 +27,16 @@
 //! 8.0   type   200 planks         # text into the focused egui field
 //! 9.0   look   40 -10             # raw mouse motion, as mouse-look reads
 //! 9.5   look   300 0 1.5          #   it; spread over 1.5 s
+//! 10.0  touch  1 200 600          # finger 1 down at window pixels
+//! 10.1  drag   1 200 480 0.4      # finger 1 slides there over 0.4 s
+//! 10.2  touch  2 1150 620         # a second finger, at the same time
+//! 11.0  lift   2                  # finger 2 up
 //! ```
+//!
+//! Fingers (`touch`, `drag`, `lift`) arrive as winit's `WindowEvent::Touch`
+//! and take a real finger's path: the on-screen touch controls first
+//! (#133), then egui, then `InputState`. Each finger glides on its own, so
+//! a thumb on a stick and another on a button can move at once.
 //!
 //! `pull` is an analog button's travel, as a real pad's trigger sends it
 //! (gilrs' `ButtonChanged`): a binding to that button reads the value, not
@@ -108,6 +117,8 @@ pub enum ScriptEvent {
     Text(String),
     /// Raw mouse motion (`look`), in the units of a real mouse's.
     Look(f64, f64),
+    /// A finger (`touch`, `drag`, `lift`): id, phase and window pixels.
+    Touch(u64, TouchPhase, f64, f64),
 }
 
 /// What one frame of the script did, beyond writing `InputState`.
@@ -180,6 +191,10 @@ enum Action {
     Text(String),
     /// Raw motion (dx, dy), at once or spread over the seconds given.
     Look(f64, f64, f64),
+    FingerDown(u64, f64, f64),
+    /// Finger to (x, y), at once or gliding over the seconds given.
+    FingerMove(u64, f64, f64, f64),
+    FingerUp(u64),
 }
 
 /// Raw motion spread over a span of game time.
@@ -235,6 +250,8 @@ pub struct InputScript {
     modifier_keys: Vec<KeyCode>,
     /// `look`s still spreading their motion over frames.
     sweeps: Vec<Sweep>,
+    /// Fingers down, where the script last put each, and any glide.
+    fingers: std::collections::BTreeMap<u64, ((f64, f64), Option<Glide>)>,
 }
 
 fn parse_mouse_button(name: &str) -> Option<MouseButton> {
@@ -361,6 +378,27 @@ impl InputScript {
                     }
                     events.push((t, Action::Look(dx, dy, over)));
                 }
+                "touch" | "drag" | "lift" => {
+                    let id: u64 = f[2].parse().map_err(|_| bad("bad finger id"))?;
+                    if f[1] == "lift" {
+                        events.push((t, Action::FingerUp(id)));
+                        continue;
+                    }
+                    let x = number(3, "a finger needs x and y")?;
+                    let y = number(4, "a finger needs x and y")?;
+                    if f[1] == "touch" {
+                        events.push((t, Action::FingerDown(id, x, y)));
+                        continue;
+                    }
+                    let over = match f.get(5) {
+                        Some(_) => number(5, "bad drag seconds")?,
+                        None => 0.0,
+                    };
+                    if over < 0.0 {
+                        return Err(bad("bad drag seconds"));
+                    }
+                    events.push((t, Action::FingerMove(id, x, y, over)));
+                }
                 _ => return Err(bad("unknown verb")),
             }
         }
@@ -393,6 +431,7 @@ impl InputScript {
         let mut pressed_keys: Vec<KeyCode> = Vec::new();
         let mut pressed_buttons: Vec<String> = Vec::new();
         let mut pressed_mouse: Vec<MouseButton> = Vec::new();
+        let mut fingers_down: Vec<u64> = Vec::new();
         let mut jumped = false;
         while let Some((t, action)) = self.events.get(self.next) {
             if *t > now {
@@ -487,6 +526,39 @@ impl InputScript {
                         out.events.push(ScriptEvent::Look(*dx, *dy));
                     }
                 }
+                Action::FingerDown(id, x, y) => {
+                    self.fingers.insert(*id, ((*x, *y), None));
+                    out.events
+                        .push(ScriptEvent::Touch(*id, TouchPhase::Started, *x, *y));
+                    fingers_down.push(*id);
+                }
+                Action::FingerMove(id, x, y, over) => {
+                    if let Some((at, glide)) = self.fingers.get_mut(id) {
+                        if *over > 0.0 {
+                            *glide = Some(Glide {
+                                from: *at,
+                                to: (*x, *y),
+                                start: *t,
+                                seconds: *over,
+                            });
+                        } else {
+                            *glide = None;
+                            *at = (*x, *y);
+                            out.events
+                                .push(ScriptEvent::Touch(*id, TouchPhase::Moved, *x, *y));
+                        }
+                    }
+                }
+                Action::FingerUp(id) => {
+                    // As a key: a finger down this frame lifts next frame.
+                    if fingers_down.contains(id) {
+                        break;
+                    }
+                    if let Some((at, _)) = self.fingers.remove(id) {
+                        out.events
+                            .push(ScriptEvent::Touch(*id, TouchPhase::Ended, at.0, at.1));
+                    }
+                }
             }
             self.next += 1;
         }
@@ -500,6 +572,19 @@ impl InputScript {
             }
             if arrived {
                 self.glide = None;
+            }
+        }
+        // Each gliding finger moves every frame until it arrives.
+        for (id, (at, glide)) in self.fingers.iter_mut() {
+            let Some(g) = *glide else { continue };
+            let (now_at, arrived) = g.at(now);
+            if now_at != *at {
+                *at = now_at;
+                out.events
+                    .push(ScriptEvent::Touch(*id, TouchPhase::Moved, now_at.0, now_at.1));
+            }
+            if arrived {
+                *glide = None;
             }
         }
         // A spread `look` feeds its share of the motion every frame.
@@ -532,6 +617,55 @@ mod tests {
         .unwrap();
         let times: Vec<f64> = s.events.iter().map(|e| e.0).collect();
         assert_eq!(times, vec![0.5, 0.7, 1.0, 2.0]);
+    }
+
+    /// The finger events of one frame.
+    fn touches(applied: &Applied) -> Vec<(u64, TouchPhase, f64, f64)> {
+        applied
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                ScriptEvent::Touch(id, phase, x, y) => Some((*id, *phase, *x, *y)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_fingers_glide_and_lift_apart() {
+        let mut input = InputState::new();
+        let mut s = InputScript::parse(
+            "1.0 touch 1 100 600\n1.0 drag 1 100 400 1.0\n1.0 touch 2 900 600\n\
+             1.0 lift 2\n2.5 lift 1\n",
+        )
+        .unwrap();
+        // Both land; the lift of a finger that landed this frame waits.
+        assert_eq!(
+            touches(&s.apply(1.0, &mut input)),
+            vec![
+                (1, TouchPhase::Started, 100.0, 600.0),
+                (2, TouchPhase::Started, 900.0, 600.0),
+            ]
+        );
+        // Next frame finger 2 lifts while finger 1 is half-way.
+        assert_eq!(
+            touches(&s.apply(1.5, &mut input)),
+            vec![
+                (2, TouchPhase::Ended, 900.0, 600.0),
+                (1, TouchPhase::Moved, 100.0, 500.0),
+            ]
+        );
+        assert_eq!(
+            touches(&s.apply(2.0, &mut input)),
+            vec![(1, TouchPhase::Moved, 100.0, 400.0)]
+        );
+        assert!(touches(&s.apply(2.2, &mut input)).is_empty(), "arrived");
+        assert_eq!(
+            touches(&s.apply(2.5, &mut input)),
+            vec![(1, TouchPhase::Ended, 100.0, 400.0)]
+        );
+        assert!(InputScript::parse("1 drag 1 2\n").is_err());
+        assert!(InputScript::parse("1 touch x 2 3\n").is_err());
     }
 
     #[test]
