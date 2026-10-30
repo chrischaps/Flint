@@ -1375,6 +1375,7 @@ impl ChartSession {
         });
         let haptics = crate::haptics::HapticsDriver::new(haptics_cfg);
 
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -1534,6 +1535,7 @@ impl ChartSession {
         // monotonic RAW clock; a seam's backwards jump would poison the fit.
         // Events therefore arrive stamped in raw samples and are re-mapped to
         // suite time at ingest.
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         self.bridge
             .observe(Instant::now(), self.session.raw_clock_sample());
 

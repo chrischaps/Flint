@@ -83,6 +83,7 @@ fn lock_or_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl ClockBridge {
+    #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
     pub fn new(sample_rate: u32) -> Self {
         Self {
             inner: Arc::new(Mutex::new(BridgeInner {

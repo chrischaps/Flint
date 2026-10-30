@@ -14,6 +14,15 @@ trunk serve                 # http://127.0.0.1:8080, the sky-clear spike
 trunk build --release       # dist/, with wasm-opt -Oz (trunk fetches binaryen)
 ```
 
+CI keeps this compiling (#96). The `wasm32 check` job in
+`.github/workflows/ci.yml` runs `scripts/wasm-check.sh` on every PR: a wasm32
+clippy pass over `flint-player` and the workspace crates it links, with every
+lint off but `disallowed_methods`, configured in
+`scripts/wasm-clippy/clippy.toml` to deny `Instant::now`, `SystemTime::now`
+and their `elapsed()`. Those are the calls that compile but panic. The 32
+sites that predate the check are marked with an allow naming #100, so
+`grep -rn disallowed_methods crates` is that ticket's list.
+
 The page is `crates/flint-player/index.html` and builds the `flint-web` bin
 (`src/bin/flint_web.rs`). That bin makes a canvas through winit, opens a wgpu
 device on `Backends::BROWSER_WEBGPU` and clears it every frame. The colour

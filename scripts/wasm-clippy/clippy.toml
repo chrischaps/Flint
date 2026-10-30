@@ -1,0 +1,11 @@
+# Calls that compile for wasm32-unknown-unknown but panic there at run time
+# ("time not implemented on this platform"). CI's wasm job denies them in
+# every crate flint-player links (.github/workflows/ci.yml). The sites that
+# predate the check carry an allow until #100 moves them to web-time:
+# `grep -rn disallowed_methods crates` lists them.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "panics on wasm32; use web_time::Instant (#100)" },
+    { path = "std::time::Instant::elapsed", reason = "calls Instant::now, which panics on wasm32; use web_time::Instant (#100)" },
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32; use web_time::SystemTime (#100)" },
+    { path = "std::time::SystemTime::elapsed", reason = "calls SystemTime::now, which panics on wasm32; use web_time::SystemTime (#100)" },
+]
