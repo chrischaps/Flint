@@ -8,6 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Flint</title>
+    <link rel="icon" href="data:," />
     <link data-trunk rel="rust" data-bin="flint-web" data-wasm-opt="z" data-integrity="none" />
     <link data-trunk rel="copy-dir" href="web/scenes" />
     <style>
@@ -38,10 +39,58 @@
         transform-origin: left; transform: scaleX(var(--p, 0));
         transition: transform 0.15s linear;
       }
+
+      /* The gate (#102): a browser gives sound and a locked pointer only
+         from a gesture, so the world runs silent and softened behind it
+         until Begin. One click opens both. */
+      .gate {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        padding: 16px; text-align: center; color: #fff;
+        background: radial-gradient(ellipse at 50% 62%, rgba(13, 18, 41, 0.18), rgba(13, 18, 41, 0.66));
+        backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+        font: 400 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+        opacity: 0; pointer-events: none;
+        transition: opacity 1.6s ease, backdrop-filter 1.6s ease;
+      }
+      .gate[data-ready] { opacity: 1; pointer-events: auto; }
+      .gate[data-gone] { opacity: 0; backdrop-filter: blur(0); pointer-events: none; }
+      .gate h1 {
+        margin: 0 0 6px; font: 300 clamp(30px, 6vw, 46px)/1.1 ui-serif, Georgia, serif;
+        letter-spacing: 0.05em; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.3);
+      }
+      .gate p { margin: 0 auto 30px; max-width: 34em; opacity: 0.74; }
+      .gate button {
+        font: 500 13px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.26em;
+        text-transform: uppercase; color: #0d1229; background: rgba(255, 250, 242, 0.92);
+        border: 0; border-radius: 999px; padding: 15px 36px; cursor: pointer;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); transition: transform 0.2s ease;
+      }
+      .gate button:hover { transform: translateY(-1px); }
+      .gate button:focus { outline: none; }
+      .gate button:focus-visible { outline: 1.5px solid rgba(255, 255, 255, 0.6); outline-offset: 4px; }
+      .gate small { display: block; margin-top: 18px; font-size: 12px; letter-spacing: 0.04em; opacity: 0.58; }
+      /* After Escape frees the pointer: how to take it back. */
+      #relook {
+        position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+        font: 500 12px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.14em;
+        text-transform: uppercase; color: rgba(255, 255, 255, 0.82);
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45); pointer-events: none;
+        opacity: 0; transition: opacity 0.6s ease;
+      }
+      #relook[data-on] { opacity: 1; transition-delay: 0.4s; }
     </style>
   </head>
   <body>
     <canvas id="flint" tabindex="0"></canvas>
+    <div class="gate" id="gate">
+      <div>
+        <h1 id="gate-title"></h1>
+        <p id="gate-line"></p>
+        <button id="begin">Begin</button>
+        <small>sound on · mouse to look · Esc frees the pointer</small>
+      </div>
+    </div>
+    <div id="relook">click to look around</div>
     <div class="mark">Flint<small id="status">starting</small><div id="progress"><i></i></div></div>
   </body>
 </html>

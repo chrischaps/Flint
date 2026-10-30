@@ -20,6 +20,9 @@
 //!                   first-light demo, which needs no other files)
 //!   msaa=1|4        scene-pass MSAA (ADR 0058)
 //!   width=, height= fix the canvas to this many CSS pixels instead of the page
+//!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
+//!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
+//!                   exact moment (with frame_step; `PlayerApp::hold_at`)
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -62,6 +65,8 @@ mod web {
         scene: Option<String>,
         msaa: u32,
         size: Option<(u32, u32)>,
+        frame_step: Option<f64>,
+        hold_at: Option<f64>,
     }
 
     impl WebArgs {
@@ -71,11 +76,18 @@ mod web {
                 .and_then(|q| web_sys::UrlSearchParams::new_with_str(&q).ok());
             let get = |key: &str| params.as_ref().and_then(|p| p.get(key));
             let num = |key: &str| get(key).and_then(|v| v.parse::<u32>().ok());
+            let secs = |key: &str| {
+                get(key)
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .filter(|s| s.is_finite() && *s >= 0.0)
+            };
             Self {
                 bundle: get("bundle").filter(|b| !b.is_empty()),
                 scene: get("scene").filter(|s| !s.is_empty()),
                 msaa: num("msaa").filter(|&m| m == 1 || m == 4).unwrap_or(1),
                 size: num("width").zip(num("height")),
+                frame_step: secs("frame_step").filter(|s| *s > 0.0),
+                hold_at: secs("hold_at"),
             }
         }
     }
@@ -125,6 +137,7 @@ mod web {
             loaded.world.entity_count()
         );
         let title = loaded.scene_file.scene.name.clone();
+        let line = loaded.scene_file.scene.description.clone();
         status(&title);
 
         let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
@@ -137,11 +150,14 @@ mod web {
             loaded.scene_file.scene.input_config.clone(),
         );
         app.msaa_sample_count = args.msaa;
+        app.clock.frame_step = args.frame_step;
+        app.hold_at = args.hold_at;
         app.apply_scene_settings(&loaded.scene_file);
         app.set_schema_paths(loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());
         // Returns at once: the browser drives the loop from here on.
         event_loop.spawn_app(app);
+        open_gate(&title, line.as_deref().unwrap_or(""));
 
         for (source, parts, base) in late {
             fetch_late_bundles(source, parts, base, title.clone());
@@ -393,6 +409,73 @@ mod web {
             let fraction = total.map(|t| got as f64 / t.max(1) as f64).unwrap_or(0.0);
             let _ = bar.set_attribute("style", &format!("--p: {:.4}", fraction.min(1.0)));
         }
+    }
+
+    /// The Begin gate (#102). The world is already running behind it,
+    /// silent. Its click is the gesture a browser asks for: it locks the
+    /// pointer and starts the sound (`flint_player::web_begin`), and the
+    /// veil lifts. Afterwards a line under the world says how to take the
+    /// pointer back whenever Escape has freed it.
+    fn open_gate(title: &str, line: &str) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use wasm_bindgen::closure::Closure;
+
+        let (Some(gate), Some(button)) = (element("gate"), element("begin")) else {
+            flint_player::web_begin();
+            return;
+        };
+        if let Some(el) = element("gate-title") {
+            el.set_text_content(Some(title));
+        }
+        if let Some(el) = element("gate-line") {
+            el.set_text_content(Some(line));
+        }
+        let _ = gate.set_attribute("data-ready", "");
+        if let Ok(button) = button.clone().dyn_into::<web_sys::HtmlElement>() {
+            let _ = button.focus();
+        }
+
+        let begun = Rc::new(Cell::new(false));
+        let on_begin = {
+            let begun = begun.clone();
+            Closure::<dyn FnMut()>::new(move || {
+                if begun.replace(true) {
+                    return;
+                }
+                flint_player::web_begin();
+                let _ = gate.set_attribute("data-gone", "");
+                if let Some(canvas) = element(flint_player::WEB_CANVAS_ID)
+                    .and_then(|c| c.dyn_into::<web_sys::HtmlElement>().ok())
+                {
+                    let _ = canvas.focus();
+                }
+            })
+        };
+        let _ = button.add_event_listener_with_callback("click", on_begin.as_ref().unchecked_ref());
+        on_begin.forget();
+
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+            return;
+        };
+        let on_lock = {
+            let document = document.clone();
+            Closure::<dyn FnMut()>::new(move || {
+                let Some(hint) = element("relook") else {
+                    return;
+                };
+                if document.pointer_lock_element().is_some() || !begun.get() {
+                    let _ = hint.remove_attribute("data-on");
+                } else {
+                    let _ = hint.set_attribute("data-on", "");
+                }
+            })
+        };
+        let _ = document.add_event_listener_with_callback(
+            "pointerlockchange",
+            on_lock.as_ref().unchecked_ref(),
+        );
+        on_lock.forget();
     }
 
     fn hide_progress() {

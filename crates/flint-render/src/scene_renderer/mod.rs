@@ -460,7 +460,7 @@ pub struct SceneRenderer {
 
 impl SceneRenderer {
     pub fn new(context: &RenderContext, config: RendererConfig) -> Self {
-        let surface_format = context.config.format;
+        let surface_format = context.view_format;
         // Scene geometry renders to HDR; the composite pass tonemaps to the surface.
         let scene_format = HDR_FORMAT;
         let sample_count = Self::resolve_sample_count(config.sample_count);

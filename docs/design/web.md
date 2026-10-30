@@ -1,15 +1,15 @@
 # Flint on the Web
 
 Status: M0 spike (#95), async startup (#99), the vfs (#97), platform shims
-(#100), sound (#101) and game bundles (#98) done, epic #94. The browser
-entry runs the real `PlayerApp`: it fetches a game bundle with a progress
-bar, serves every read from it through the vfs, opens the WebGPU device
-without blocking and draws to a page canvas that follows the window's size.
+(#100), sound (#101), game bundles (#98) and first light (#102) done, epic
+#94. The browser entry runs the real `PlayerApp`: it fetches a game bundle
+with a progress bar, serves every read from it through the vfs, opens the
+WebGPU device without blocking and draws to a page canvas that follows the
+window's size. A Begin gate starts the sound and locks the pointer with one
+click. SET + DRIFT (Float) plays whole in Chrome
+([First light: Float](#first-light-float-102)).
 A bare page with no bundle still plays the First Light scene, made of the
 engine's own geometry.
-Sound (#101) plays behind a Begin gate on the shim page; the player is
-silent on the web until its page calls `start_audio()` from a gesture
-([Sound](#sound)). The bundle page has no gate yet, so it plays silent.
 
 ## Try it
 
@@ -42,6 +42,8 @@ the query string instead of clap:
 | `scene=<url>` | `<scene>` | with `bundle`: a scene inside it instead of the manifest's. Without: a scene TOML fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
 | `msaa=1\|4` | `--msaa` | scene-pass MSAA |
 | `width=&height=` | `--width --height` | fix the canvas to that many CSS pixels; otherwise it fills the page |
+| `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
+| `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |
 
 The engine schemas are compiled in (`build.rs` embeds `schemas/components`
 and `schemas/archetypes`), since a browser can't list a directory. A
@@ -139,6 +141,96 @@ was measured before #100 moved those sites to `web-time`. With every engine read
 wasm is 14.2 MB after `wasm-opt -Oz`, 5.1 MB gzipped (it was 9.4 / 3.5 MB
 while the vfs left file-reading code dead).
 
+## First light: Float (#102)
+
+SET + DRIFT (chrischaps/Float) is the first whole game on the web: the
+ocean pipeline, the sky and its day, weather and rain, the birds, the
+whale, reality tears, music and sea, look and scoot.
+
+**The engine catch-up.** Float's `engine/` subtree was byte-identical to
+Flint `1595dfa` (2026-07-28), but its squash recorded a split commit
+(`6ce46b9`) that Flint no longer has, so `git subtree pull` failed. Float's
+`engine-catchup` branch drops the subtree and re-adds it at Flint `main`
+with `--squash`, so later pulls work again. Two pieces of content broke
+or had always been broken, and are fixed there:
+
+- `time_of_day.day_length_ramp` is `type = "array"` with no `element`,
+  which Flint now reads as strings (it warned on load). It says
+  `element = "float"` now.
+- `water_ambience.rhai` played `dunk_in_N`, `dunk_out_N` and `drip_N` by
+  bare name. The cache holds `audio/<name>.ogg`, so the eye going under
+  was silent on every platform. The web day run's console caught it.
+
+Float's `bundle.toml` is committed there too.
+
+**The page.** One click does what a browser allows only from a gesture.
+`index.html`'s Begin gate shows the scene's `name` and `description` over
+the running, blurred world. Its click calls `flint_player::web_begin()`,
+which locks the pointer to the canvas there and then and asks the player
+to `start_audio()` next frame (`player_app/web_page.rs`).
+
+**Pointer lock.** A script's `set_cursor_captured(true)` is a wish on the
+web. Each frame `sync_pointer_lock` reads `document.pointerLockElement`:
+
+- while a script wants the cursor and the page holds a gesture's
+  activation (`navigator.userActivation.isActive`), it asks for the lock,
+  at most once a second, and catches the refusal so it never reaches the
+  console;
+- mouse motion turns the view only while the lock is held, so a pointer
+  crossing the page before Begin turns nothing;
+- when the browser lets go (Escape is the browser's, and winit never hears
+  of it), the player releases the cursor as Escape does on a desktop. Float's
+  click-to-recapture then asks again, and the page shows "click to look
+  around" until it holds.
+
+Escape with the cursor free no longer exits on the web: a page has
+nowhere to exit to.
+
+**Comparing at a fixed time.** `?frame_step=&hold_at=` stops game time at
+an exact second (`PlayerApp::hold_at`). Float's title day runs 24 h in
+60 s from 10:30, so 06:00 is game time 48.75 s:
+
+```bash
+flint-player scenes/float.scene.toml --schemas engine/schemas --schemas schemas \
+  --width 1280 --height 720 --frame-step 0.0166666667 \
+  --screenshot native.png --screenshot-at 48.75 --exit-after 49
+# web: ?bundle=float.flintpack&width=1280&height=720&frame_step=0.0166666667&hold_at=48.75
+```
+
+Chrome 156's frame against the desktop's (Vulkan, RTX 4070), 1280x720:
+mean absolute difference 1.1/255; the sky band matches to 0.01/255. The
+2.9% of pixels more than 16/255 apart sit on the edges of cloud shadows
+and halftone dots, a sub-pixel shift of the same pattern.
+
+**A day in Chrome** (headless Chrome 156, `--enable-unsafe-webgpu`, DPR 1,
+1280x720 canvas, release build, Begin clicked and the title dismissed, 14
+minutes: days 1, 2 and 3 whole, into day 4): mean frame time **16.72 ms**
+from the page's own `requestAnimationFrame` (50,557 frames). p99 was
+16.8 ms through minute 12 and 33.3 ms in minutes 13 and 14, at night. No
+console errors. 18,145 audio buffers, **7 late**, all after 12:50, when
+the main thread went 84 to 128 ms between buffers. Night is the heaviest
+stretch; what costs it is still to find.
+Keyboard scoot, a gamepad's left stick (scoot) and right stick (look)
+all moved the seat, with the pad faked through `navigator.getGamepads`.
+
+**Pointer lock in Chrome** (headed: headless Chrome never grants the
+lock): Begin locked the canvas; `exitPointerLock` showed the hint; a click
+locked it again and hid the hint. The window must have focus.
+
+**A day in Firefox 159** (headed, driven over WebDriver BiDi, DPR 1.5,
+same canvas and steps, 14 minutes): it draws everything Chrome does, from
+the same bundle, with no console errors. But it is slow, and that is the
+open problem. Mean frame time **103.8 ms** (8,190 frames). p50 sits at
+83.3 ms, five 60 Hz refreshes, and a stall of 1.2 to 2.9 s comes every few
+seconds. The game clock clamps those stalls to 250 ms, so game time fell
+behind wall time: day 3 began at 507 s, not 395 s. Sound breaks up: 9,842
+of 18,442 buffers were late. The flat 83 ms cadence looks like
+presentation, not work. Firefox doesn't show a WebGPU canvas the way
+Chrome does. Profiling it is follow-up work, not part of this change.
+
+**Not run:** Safari (no way to run it from Windows), and a person
+listening on speakers and looking with a real mouse and pad.
+
 ## Async startup (#99)
 
 A desktop makes the window and then blocks on `RenderContext::new`. A
@@ -185,10 +277,14 @@ frame's command buffer, so one bad shader leaves the canvas black. Fixed in
   skinned-wireframe line pipelines draw unbiased on the web
   (`pipeline::line_depth_bias`).
 
-Chrome gives a `Bgra8Unorm` surface, which is not sRGB, and the renderer
-picks the first format when no sRGB one is offered. The web frame comes out
-darker and more saturated than the desktop's. That still needs fixing,
-either with an sRGB view format or an encode in the composite pass.
+A WebGPU canvas offers only `Bgra8Unorm`/`Rgba8Unorm`, never an sRGB
+format, so until #102 the web frame came out darker and more saturated than
+the desktop's. Now `RenderContext` configures the plain format with its
+sRGB twin as a view format, and the scene's last pass draws through that
+view (`RenderContext::view_format`, `frame_view`), so the encode happens on
+write as it does on the desktop. egui's HUD pass still draws through the
+plain view (`hud_format`). Float's sunrise in Chrome now matches the
+desktop's to a mean of 1.1/255 ([First light: Float](#first-light-float-102)).
 
 ## What failed to compile, crate by crate
 
@@ -281,8 +377,8 @@ stream from inside the click handler:
   silent: the listener, the trigger rules and every `audio_source` already
   in the world. Looping sources therefore begin from the click.
   `PlayerApp::start_audio()` also starts a scene's `music_session` that was
-  skipped for want of a device. The web player entry (#98) should call it
-  from its gate.
+  skipped for want of a device. The bundle page's Begin gate calls it
+  (#102, `flint_player::web_begin`).
 - `flint_audio::web::WebAudioBackend` replaces kira's `CpalBackend` on
   wasm32 (`engine::AudioBackend` picks the backend by target). It is the same
   cpal WebAudio stream, but it keeps cpal's timestamps. Each buffer's

@@ -90,6 +90,7 @@ impl PlayerApp {
             skybox_path: None,
             scene_ambient: None,
             msaa_sample_count: 1,
+            hold_at: None,
             scene_diffuse_wrap: None,
             scene_oren_nayar: None,
             scene_sheen: None,
@@ -153,6 +154,8 @@ impl PlayerApp {
             pending_render: Default::default(),
             #[cfg(target_arch = "wasm32")]
             event_proxy: None,
+            #[cfg(target_arch = "wasm32")]
+            pointer_lock: Default::default(),
         }
     }
 

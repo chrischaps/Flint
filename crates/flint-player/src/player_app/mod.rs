@@ -12,6 +12,8 @@ mod debug_key_tests;
 #[cfg(test)]
 mod extension_tests;
 #[cfg(test)]
+mod hold_tests;
+#[cfg(test)]
 mod vfs_tests;
 pub mod fonts;
 mod frame;
@@ -29,6 +31,8 @@ mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
 mod transition;
+#[cfg(target_arch = "wasm32")]
+pub mod web_page;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
 mod world_text;
@@ -244,6 +248,12 @@ pub struct PlayerApp {
     /// MSAA sample count for the scene renderer (1 = off, 4 = on; ADR 0058).
     /// Set from the --msaa CLI flag before the window/renderer exist.
     pub msaa_sample_count: u32,
+    /// Game time, in seconds, at which the clock stops (it steps by zero
+    /// from then on, and scripts keep running on a still world). With
+    /// `clock.frame_step` it holds a page on an exact moment for a
+    /// screenshot (#102, the web's `?hold_at=`); `--screenshot-at` is the
+    /// desktop's way.
+    pub hold_at: Option<f64>,
     /// Scene-authored diffuse terminator wrap; None = 0 = legacy shading
     pub scene_diffuse_wrap: Option<f32>,
     pub scene_oren_nayar: Option<f32>,
@@ -372,6 +382,9 @@ pub struct PlayerApp {
     /// Wakes the event loop when the device arrives (`set_event_proxy`).
     #[cfg(target_arch = "wasm32")]
     event_proxy: Option<winit::event_loop::EventLoopProxy<()>>,
+    /// The browser's pointer lock, followed each frame (#102).
+    #[cfg(target_arch = "wasm32")]
+    pointer_lock: web_page::PointerLock,
 }
 
 use input_config::{InputConfigPaths, PendingRebind};

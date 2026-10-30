@@ -279,7 +279,11 @@ impl PlayerApp {
     /// (headless tests) only the state changes.
     pub(super) fn capture_cursor(&mut self) {
         if let Some(window) = &self.window {
-            #[cfg(not(target_os = "android"))]
+            // A browser locks the pointer only from a gesture: the lock is
+            // asked for once a frame while one is live (`sync_pointer_lock`).
+            #[cfg(target_arch = "wasm32")]
+            window.set_cursor_visible(false);
+            #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
             {
                 // Try confined first, then locked
                 let _ = window
@@ -545,6 +549,13 @@ impl ApplicationHandler for PlayerApp {
             return;
         }
 
+        // On the web the pointer moves the view only once the browser has
+        // locked it; before the first click it is just crossing the page.
+        #[cfg(target_arch = "wasm32")]
+        if !self.pointer_lock.held {
+            return;
+        }
+
         if let DeviceEvent::MouseMotion { delta } = event {
             self.input.process_mouse_raw_delta(delta.0, delta.1);
         }
@@ -620,6 +631,8 @@ impl PlayerApp {
     ) {
             // Suppress unused variable warning on non-Android platforms
             let _ = &device_id;
+            #[cfg(target_arch = "wasm32")]
+            let _ = &event_loop;
 
             if let PhysicalKey::Code(key_code) = event.physical_key {
                 match event.state {
@@ -629,7 +642,8 @@ impl PlayerApp {
                             if self.cursor_captured {
                                 self.release_cursor();
                             } else {
-                                #[cfg(not(target_os = "android"))]
+                                // A page has nowhere to exit to.
+                                #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
                                 event_loop.exit();
                             }
                             return;
