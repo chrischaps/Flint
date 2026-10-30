@@ -1186,6 +1186,20 @@ impl PlayerApp {
         config: &StateConfig,
         game_events: &Vec<flint_runtime::GameEvent>,
     ) {
+        // A late bundle (audio, #98) landed: load what wasn't there at start.
+        // Already-loaded sounds are skipped, and an autoplay source that was
+        // waiting for its file starts on the update below.
+        let generation = flint_core::vfs::generation();
+        if generation != self.audio_vfs_generation {
+            self.audio_vfs_generation = generation;
+            super::scene_loading::load_audio_from_world(
+                &self.world,
+                &mut self.audio,
+                &self.scene_path,
+                self.scene_preload_audio,
+            );
+        }
+
         // Audio triggers from game events (skip when paused)
         if config.audio == SystemPolicy::Run {
             self.audio.process_events(&game_events, &self.world);

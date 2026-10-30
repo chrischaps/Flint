@@ -6,7 +6,9 @@
 //! - `Transform`, `Vec3` - Spatial types
 //! - Error types and Result alias
 //! - `vfs` - The read-only file layer every runtime read goes through
+//! - `bundle` - Game bundles: a game's files in one fetchable blob for the vfs
 
+pub mod bundle;
 pub mod callbacks;
 pub mod components;
 mod error;

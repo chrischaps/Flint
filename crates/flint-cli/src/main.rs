@@ -5,7 +5,7 @@ mod commands;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use commands::{
-    asset, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
+    asset, bundle, calibrate, edit_router, entity, gen, gen_preview, init, play, play_chart, play_suite,
     prefab, preview, query, render, render_suite, replay_chart, scene, schema, spike_rumble,
     spline_edit, terrain_edit, tex_edit, validate, validate_suite,
 };
@@ -88,6 +88,9 @@ enum Commands {
     /// Validate a scene against constraints
     Validate(validate::ValidateArgs),
 
+    /// Pack a game folder into .flintpack bundles for the web player
+    Bundle(bundle::BundleArgs),
+
     /// Validate a musical suite manifest (and optional beatmap chart)
     ValidateSuite(validate_suite::ValidateSuiteArgs),
 
@@ -168,6 +171,7 @@ fn main() -> Result<()> {
             &schemas.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         ),
         Commands::Validate(args) => validate::run(args),
+        Commands::Bundle(args) => bundle::run(args),
         Commands::ValidateSuite(args) => validate_suite::run(args),
         Commands::PlaySuite(args) => play_suite::run(args),
         Commands::Calibrate(args) => calibrate::run(args),

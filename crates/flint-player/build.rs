@@ -1,9 +1,13 @@
 //! Embeds the engine's schema TOML for the web entry (`src/bin/flint_web.rs`).
 //!
-//! A browser can't list a directory over HTTP, so until game bundles land
-//! (#98) the web player carries `schemas/components` and
-//! `schemas/archetypes` in the binary (about 130 KB of text). Writes
+//! A browser can't list a directory over HTTP, so the web player carries
+//! `schemas/components` and `schemas/archetypes` in the binary (about 130 KB
+//! of text). A game bundle's own schemas (#98) load over them. Writes
 //! `$OUT_DIR/engine_schemas.rs`; the desktop player never includes it.
+
+// A build script runs on the host, where std::fs is the right call; the
+// wasm check's vfs rule (#97) is for code that runs in the browser.
+#![allow(clippy::disallowed_methods)]
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

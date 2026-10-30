@@ -8,6 +8,7 @@
 //!                [--screenshot <out.png>] [--screenshot-at <secs>]
 //!                [--screenshot-every <secs>] [--exit-after <secs>]
 //!                [--frame-step <secs>] [--input-script <file>]
+//!   flint-player --bundle <game.flintpack> [scene.toml]
 //!
 //! Screenshots capture the presented frame — the 3D scene *and* the egui
 //! HUD — right before `present()`, so they show exactly what a player sees.
@@ -19,16 +20,24 @@ use clap::Parser;
 use flint_player::PlayerApp;
 use flint_scene::load_scene;
 use flint_schema::SchemaRegistry;
+use flint_core::bundle::Bundle;
 use flint_core::vfs;
+use std::sync::Arc;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 #[derive(Parser)]
 #[command(name = "flint-player")]
 #[command(about = "Flint game player - run scenes with physics and first-person controls")]
 struct Args {
-    /// Path to scene file
-    #[arg(required_unless_present = "list_gpus", default_value = "")]
+    /// Path to scene file (with --bundle: optional, a path inside the bundle)
+    #[arg(required_unless_present_any = ["list_gpus", "bundle"], default_value = "")]
     scene: String,
+
+    /// Play a game bundle made by `flint bundle` (#98) instead of the disk.
+    /// Every read goes to its files; its late bundles (audio) beside it are
+    /// added a second after start, the way the web player adds them
+    #[arg(long, value_name = "FILE")]
+    bundle: Option<std::path::PathBuf>,
 
     /// Paths to schemas directories (can specify multiple)
     #[arg(long, default_value = "schemas", action = clap::ArgAction::Append)]
@@ -126,6 +135,12 @@ fn main() -> Result<()> {
     }
     flint_render::set_gpu_override(args.gpu.clone());
 
+    let mut args = args;
+    let late_bundles = match args.bundle.clone() {
+        Some(path) => Some(open_bundle(&path, &mut args)?),
+        None => None,
+    };
+
     // Merge explicit schemas with auto-discovered dirs from scene path
     let mut all_schemas = args.schemas.clone();
     for dir in flint_schema::discover_schema_dirs(&args.scene) {
@@ -169,6 +184,12 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
+    if let Some((source, late)) = late_bundles {
+        if !late.is_empty() {
+            add_late_bundles_soon(source, late);
+        }
+    }
+
     let mut app = PlayerApp::new(
         world,
         args.scene,
@@ -205,4 +226,68 @@ fn main() -> Result<()> {
     event_loop.run_app(&mut app)?;
 
     Ok(())
+}
+
+/// Serve every read from a bundle, its start scene and schemas filling in
+/// what the command line left out. Returns its files and its late bundles'
+/// paths.
+fn open_bundle(
+    path: &std::path::Path,
+    args: &mut Args,
+) -> Result<(vfs::MemorySource, Vec<std::path::PathBuf>)> {
+    #[allow(clippy::disallowed_methods)] // the bundle itself is on the disk
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let bundle = Bundle::parse(bytes).with_context(|| path.display().to_string())?;
+    let manifest = &bundle.manifest;
+    println!(
+        "Bundle {}: {} files, {:.2} MB",
+        manifest.name,
+        manifest.files.len(),
+        bundle.len() as f64 / 1e6
+    );
+    if args.scene.is_empty() {
+        args.scene = manifest
+            .scene
+            .clone()
+            .context("the bundle names no scene; pass one")?;
+    }
+    let mut schemas = manifest.schemas.clone();
+    schemas.extend(
+        args.schemas
+            .drain(..)
+            .filter(|s| !manifest.schemas.contains(s)),
+    );
+    args.schemas = schemas;
+
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let late = manifest.late.iter().map(|l| dir.join(&l.url)).collect();
+    let source = bundle.to_memory_source();
+    vfs::install(Arc::new(source.clone()));
+    Ok((source, late))
+}
+
+/// Add the late bundles a few seconds in, the way the web player adds them
+/// once it is running, so the desktop takes the same path: the vfs grows and
+/// the player loads the audio that just arrived.
+fn add_late_bundles_soon(mut source: vfs::MemorySource, paths: Vec<std::path::PathBuf>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        for path in paths {
+            #[allow(clippy::disallowed_methods)] // the bundle itself is on the disk
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string());
+            match bytes.and_then(|b| Bundle::parse(b).map_err(|e| e.to_string())) {
+                Ok(bundle) => {
+                    println!(
+                        "Late bundle {}: {} files, {:.2} MB",
+                        bundle.manifest.part,
+                        bundle.manifest.files.len(),
+                        bundle.len() as f64 / 1e6
+                    );
+                    bundle.insert_into(&mut source);
+                }
+                Err(e) => eprintln!("Late bundle {}: {e}", path.display()),
+            }
+        }
+        vfs::install(Arc::new(source));
+    });
 }

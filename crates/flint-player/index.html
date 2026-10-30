@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- Flint in the browser (#94). `trunk serve` from crates/flint-player.
-     The player draws into #flint; ?scene=<url>&msaa=4&width=&height= steer
-     it (src/bin/flint_web.rs). See docs/design/web.md. -->
+     The player draws into #flint; ?bundle=<game.flintpack> plays a game
+     packed by `flint bundle` (#98), and ?scene=<url>&msaa=4&width=&height=
+     steer it (src/bin/flint_web.rs). See docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -20,11 +21,27 @@
         color: rgba(255, 255, 255, 0.78); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
         pointer-events: none;
       }
-      .mark small { display: block; letter-spacing: 0.06em; text-transform: none; opacity: 0.7; }
+      .mark small {
+        display: block; letter-spacing: 0.06em; text-transform: none; opacity: 0.7;
+        font-variant-numeric: tabular-nums;
+      }
+      /* Bundle progress (#98): a hairline that fills as the game arrives,
+         then fades once the late bundles (audio) are in. */
+      #progress {
+        width: 220px; height: 2px; margin-top: 8px; border-radius: 1px;
+        background: rgba(255, 255, 255, 0.14); overflow: hidden;
+        opacity: 0; transition: opacity 0.8s ease 0.4s;
+      }
+      #progress[data-active] { opacity: 1; transition-delay: 0s; }
+      #progress i {
+        display: block; height: 100%; background: rgba(255, 236, 214, 0.9);
+        transform-origin: left; transform: scaleX(var(--p, 0));
+        transition: transform 0.15s linear;
+      }
     </style>
   </head>
   <body>
     <canvas id="flint" tabindex="0"></canvas>
-    <div class="mark">Flint<small id="status">starting</small></div>
+    <div class="mark">Flint<small id="status">starting</small><div id="progress"><i></i></div></div>
   </body>
 </html>

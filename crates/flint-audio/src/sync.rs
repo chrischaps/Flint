@@ -137,6 +137,13 @@ impl AudioSync {
                 continue;
             }
 
+            // An autoplay source whose sound isn't loaded yet waits, unsynced,
+            // and starts once it is: on the web the audio arrives in a late
+            // bundle after the first frame (#98).
+            if autoplay && !engine.has_sound(file) {
+                continue;
+            }
+
             if spatial {
                 let transform = world.get_transform(entity_id).unwrap_or_default();
 
