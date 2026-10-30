@@ -7,27 +7,28 @@ Two tools say where a frame's time goes. **GPU timing** shows how long the GPU s
 Open the F2 stats overlay and, on a device that can time, it gains a GPU section:
 
 ```
-GPU: 2.57ms
-  Grass          0.02
-  Shadows        1.10
-  Scene          0.26
-  Post-process   0.43
-  Composite      0.12
-  World lines    0.04
-  UI             0.01
+GPU: 1.46ms
+  Shadows        0.58
+  Scene          0.23
+  SSAO           0.45
+  Bloom          0.16
+  Composite      0.03
+  UI             0.00
 ```
+
+(SET + DRIFT at 1280x720 on an RTX 4070, Vulkan.)
 
 Each line is a **scope**, a stretch of the frame between two timestamps the GPU writes as it reaches them (ADR 0108). The renderer scopes its own phases:
 - `Grass`: the compute that scatters blades, when grass is on.
 - `Shadows`: every cascade.
 - `Scene`: the sky, the opaque and transparent draws, and the water.
-- `Post-process`: the chain up to its last pass.
+- `Kuwahara`, `SSAO`, `Volumetric` and `Bloom`: the post-process chain, one scope per effect that is on, so a slow frame names its pass.
 - `Composite`: that last pass, or `FXAA` when FXAA is on, since then FXAA is what writes the window.
 - `World lines`.
 
 The player adds `UI`, the HUD pass. The top line is the scopes' total, the GPU's busy time in the frame. The figures are smoothed over recent frames and come back a frame or two late, because the player never waits for them.
 
-A scope covers the GPU's time on the work inside it, plus any time the GPU sat idle inside it waiting for the CPU's next submission. `Shadows` and `Post-process` are several submissions each, so on a CPU-bound frame they read a little high. Under vsync the GPU also waits for the window's next image before the first pass that draws into it. That pass is timed inside its own submission, so the wait falls between scopes and is in none of them: with vsync on or off, the figures are the GPU's own.
+A scope covers the GPU's time on the work inside it, plus any time the GPU sat idle inside it waiting for the CPU's next submission. `Shadows` and each post-process effect are several submissions, so on a CPU-bound frame they read a little high. Under vsync the GPU also waits for the window's next image before the first pass that draws into it. That pass is timed inside its own submission, so the wait falls between scopes and is in none of them: with vsync on or off, the figures are the GPU's own.
 
 Timing needs `wgpu::Features::TIMESTAMP_QUERY`. Flint's window and headless contexts ask for it wherever the adapter has it, as most desktop GPUs do. Without it the GPU section just doesn't appear.
 
@@ -35,6 +36,14 @@ With `--exit-after` and `--stats`, the player prints the average GPU frame time 
 
 ```
 [perf] avg GPU 2.10 ms/frame over 412 timed frames
+```
+
+### The perf line
+
+`flint-player --perf` prints one line every ten seconds: frame p50, p99 and max, the CPU time of each phase of the frame (input, scripts, physics, script ui, anim/fx, sync, render, hud, present; mean and worst), the four scripts with the worst single `on_update` (and the script system's own steps, such as `[hot reload]`), the GPU time of each scope above, draws and triangles. In a browser, `?perf=1` shows the same numbers in a corner of the page and copies them as the same line ([web.md](https://github.com/chrischaps/Flint/blob/main/docs/design/web.md#the-perf-readout-120)).
+
+```
+flint perf · float · t=24s | native · NVIDIA GeForce RTX 4070 (Vulkan) | 1280x720 DPR 1.5 | frame p50 6.4 p99 11.1 max 25.8 ms (1459 frames/10s) | cpu 6.70 ms: input 0.02/0.2, scripts 1.65/7.0, … | gpu 1.46 ms: Shadows 0.58, Scene 0.23, SSAO 0.45, Bloom 0.16, Composite 0.03, UI 0.00 | 72 draws 50.6K tris
 ```
 
 ### From a game

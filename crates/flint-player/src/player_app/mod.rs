@@ -25,6 +25,7 @@ pub mod input_script;
 mod music_guide_panel;
 mod music_session;
 mod pacing;
+mod perf;
 mod persist;
 pub(crate) mod scene_loading;
 mod script_commands;
@@ -33,6 +34,8 @@ mod timeline_panel;
 mod transition;
 #[cfg(target_arch = "wasm32")]
 pub mod web_page;
+#[cfg(target_arch = "wasm32")]
+mod web_perf;
 #[cfg(target_arch = "wasm32")]
 pub mod web_startup;
 mod world_text;
@@ -355,6 +358,9 @@ pub struct PlayerApp {
     /// The player turned the renderer's GPU timing on for the overlay
     /// (ADR 0108), so it turns it off again when the overlay closes
     stats_gpu_timing: bool,
+    /// The perf readout's recorder (`?perf=1` on the web, #120): frame and
+    /// phase times for the last ten seconds. `None` costs nothing.
+    perf: Option<perf::PerfRecorder>,
 
     // Procedural generation resolver for runtime asset resolution
     procgen_resolver: flint_procgen::ProcGenResolver,

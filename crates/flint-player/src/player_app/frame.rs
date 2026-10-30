@@ -545,9 +545,10 @@ impl PlayerApp {
             }
         }
 
-        // F2's stats show the GPU's time too (ADR 0108): time the frame
-        // while they're up. Timing the game turned on stays on after.
-        if self.show_stats {
+        // F2's stats show the GPU's time too (ADR 0108), as does the perf
+        // readout unless it was asked not to (#120): time the frame while
+        // either is up. Timing the game turned on stays on after.
+        if self.show_stats || self.perf.as_ref().is_some_and(|p| p.gpu_wanted) {
             if !renderer.gpu_timing() {
                 self.stats_gpu_timing =
                     renderer.set_gpu_timing(&context.device, &context.queue, true);
@@ -559,6 +560,10 @@ impl PlayerApp {
 
         if let Err(e) = renderer.render(context, &self.camera, &view) {
             tracing::warn!("Render error: {:?}", e);
+        }
+        // A field borrow, not `perf_mark`: `context` is still held.
+        if let Some(perf) = &mut self.perf {
+            perf.mark(super::perf::Phase::Render);
         }
 
         // Render egui HUD overlay on top of the 3D scene
@@ -572,6 +577,7 @@ impl PlayerApp {
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
             renderer.finish_gpu_timings(&context.device, &context.queue);
         }
+        self.perf_mark(super::perf::Phase::Hud);
 
         // Capture the composited frame (scene + HUD) before it is presented.
         if let Some(path) = self.capture_path_due() {
@@ -580,6 +586,11 @@ impl PlayerApp {
 
         output.present();
         let presented = web_time::Instant::now();
+        self.perf_mark(super::perf::Phase::Present);
+        #[cfg(target_arch = "wasm32")]
+        self.show_perf();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.print_perf();
 
         if let Some(exit_after) = self.capture.exit_after {
             if self.clock.total_time >= super::PERF_SKIP_SECS {
@@ -725,6 +736,12 @@ impl PlayerApp {
 
     #[profiling::function]
     pub(super) fn tick(&mut self) {
+        // A frame begins: the perf readout's clock (#120).
+        if let Some(perf) = &mut self.perf {
+            perf.begin_frame();
+        }
+        use super::perf::Phase;
+
         // The page's Begin click and the browser's pointer lock (#102).
         #[cfg(target_arch = "wasm32")]
         self.sync_pointer_lock();
@@ -776,6 +793,7 @@ impl PlayerApp {
         // the scripts run, so a collision reaches scripts one frame after the
         // step that produced it.
         let game_events = self.collect_game_events();
+        self.perf_mark(Phase::Input);
 
         // on_update runs BEFORE the fixed physics loop. Scripts pose kinematic
         // bodies with this frame's delta_time, and PhysicsSystem::begin_frame
@@ -805,10 +823,15 @@ impl PlayerApp {
             // on_update.
             self.run_scripts(&config, &game_events);
         }
+        self.perf_mark(Phase::Scripts);
+        if let Some(perf) = &mut self.perf {
+            perf.record_scripts(self.script.update_times());
+        }
 
         // Fixed-timestep physics + FPS camera/listener follow, against the
         // poses and joint targets the scripts just wrote
         self.tick_fixed_physics(&config, has_fps_player);
+        self.perf_mark(Phase::Physics);
 
         // Script pointers again for every remaining script call this frame —
         // including the sprite-anim-end callbacks inside tick_av_systems —
@@ -832,10 +855,12 @@ impl PlayerApp {
 
         // on_draw_ui (always runs), script commands, draw-command collection
         self.drive_script_ui();
+        self.perf_mark(Phase::ScriptUi);
 
         // Audio triggers, animations + sprite-end callbacks, bone matrices,
         // bone probes, particles
         self.tick_av_systems(&config, &game_events);
+        self.perf_mark(Phase::AnimFx);
 
         // Frame-budgeted procgen queue
         self.tick_procgen();
@@ -848,6 +873,7 @@ impl PlayerApp {
 
         // Script audio/cursor frame overrides, then per-frame input clear
         self.finish_frame();
+        self.perf_mark(Phase::Sync);
     }
 
     #[profiling::function]

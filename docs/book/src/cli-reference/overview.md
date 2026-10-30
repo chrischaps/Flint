@@ -92,6 +92,7 @@ window can't change the shot. Only the input script drives it (see
 | `--frame-step <secs>` | Advance the clock exactly this much per frame, whatever the wall time |
 | `--input-script <file>` | Play timed keys, typed text, axes, gamepad buttons, the wheel and the mouse, one event per line (below). Scripted keys reach egui and the debug keys too, so `2.0 tap F2` opens the stats overlay |
 | `--stats` | Open the F2 rendering stats overlay from the first frame. F2 still closes it |
+| `--perf` | Print a perf line every 10 s: frame p50/p99/max, each phase's CPU time (mean/max), each pass's GPU time where the adapter can time, draws and triangles. The same line the web page's `?perf=1` copies, so a desktop and a browser can be set side by side |
 
 An input script plays its events at set game times. `#` starts a comment:
 
