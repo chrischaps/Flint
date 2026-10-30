@@ -102,7 +102,8 @@ fn a_renderer_times_its_phases_once_asked() {
     let labels: Vec<&str> = stats.gpu_passes.iter().map(|p| p.label).collect();
     assert_eq!(
         labels,
-        ["Shadows", "Scene", "Post-process", "Composite", "UI"]
+        // The post chain is a scope per effect that is on (#120).
+        ["Shadows", "Scene", "SSAO", "Bloom", "Composite", "UI"]
     );
     assert!(stats
         .gpu_passes
@@ -129,7 +130,7 @@ fn a_renderer_times_its_phases_once_asked() {
         .iter()
         .map(|p| p.label)
         .collect();
-    assert_eq!(labels, ["Shadows", "Scene", "Post-process", "FXAA", "UI"]);
+    assert_eq!(labels, ["Shadows", "Scene", "SSAO", "Bloom", "FXAA", "UI"]);
 
     // Off again: the times go with the timer.
     assert!(!renderer.set_gpu_timing(&device, &queue, false));

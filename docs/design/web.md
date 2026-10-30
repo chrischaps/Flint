@@ -308,8 +308,8 @@ minutes: days 1, 2 and 3 whole, into day 4): mean frame time **16.72 ms**
 from the page's own `requestAnimationFrame` (50,557 frames). p99 was
 16.8 ms through minute 12 and 33.3 ms in minutes 13 and 14, at night. No
 console errors. 18,145 audio buffers, **7 late**, all after 12:50, when
-the main thread went 84 to 128 ms between buffers. Night is the heaviest
-stretch; what costs it is still to find.
+the main thread went 84 to 128 ms between buffers. That this was night
+turned out to be chance: night costs nothing (#120, [below](#the-perf-readout-120)).
 Keyboard scoot, a gamepad's left stick (scoot) and right stick (look)
 all moved the seat, with the pad faked through `navigator.getGamepads`.
 
@@ -330,6 +330,87 @@ Chrome does. Profiling it is follow-up work, not part of this change.
 
 **Not run:** Safari (no way to run it from Windows), and a person
 listening on speakers and looking with a real mouse and pad.
+
+## The perf readout (#120)
+
+`?perf=1` puts the numbers in a corner, twice a second
+(`player_app/perf.rs` keeps them, `player_app/web_perf.rs` draws them into
+the page's `#perf` panel):
+
+- **frame**: p50, p99 and max over the last 10 s, from a
+  `requestAnimationFrame` loop of the page's own, timed by rAF's
+  timestamps. Timing the player's callbacks instead showed jitter that no
+  one sees (p99 23 ms where rAF said 16.8).
+- **worst**: the longest gap between the player's frames, and how much of
+  it was the player's own work. A long frame with little work in it is the
+  browser's, not ours.
+- canvas pixels and DPR, the adapter as the browser names it (wgpu 23's
+  WebGPU backend leaves `AdapterInfo` empty, so the page asks
+  `navigator.gpu` itself), draw calls and triangles, and late audio buffers
+  (`AudioEngine::buffer_stats`).
+- **cpu ms**, mean and max per phase of the frame: input, scripts,
+  physics, script ui, anim/fx, sync (procgen, renderer sync, late audio),
+  render (draw lists, encoding, submission), hud, present.
+- **scripts**: the four with the worst single frame, by file, and the
+  script system's own steps in brackets (`[hot reload]`, `[load, on_init]`,
+  `[events]`); `ScriptSystem::set_update_timing`.
+- **gpu ms** per pass from `timestamp-query` (ADR 0108), where the adapter
+  has it. The post chain is now a scope per effect (`SSAO`, `Bloom`,
+  `Volumetric`, `Kuwahara`), not one `Post-process`. Without timestamps the
+  panel says so and the CPU phases are all it has. `?perf=cpu` leaves GPU
+  timing off; on Chrome it made no difference to the frame times.
+
+**Copy line** puts the whole readout on one line for an issue:
+
+```
+flint perf · float · t=34s | Chrome 156 · nvidia lovelace | 1280x720 DPR 1 | frame p50 16.7 p99 16.8 max 16.8 ms (600 frames/10s) | cpu 9.07 ms: … | gpu 2.71 ms: Shadows 1.40, Scene 0.29, SSAO 0.69, Bloom 0.30, … | 71 draws 50.4K tris | audio 0/948 late
+```
+
+`flint-player --perf` prints the same line every 10 s, so a desktop can
+be set beside a browser.
+
+### What night costs: nothing
+
+All in headless Chrome 156 on the RTX 4070 laptop, DPR 1, 1280x720 canvas,
+release build, the bundle play.chaps.dev serves (Float `c06e1c9`).
+
+**Held at one moment.** `?frame_step=&hold_at=` stops Float's title day at
+noon (3.75 s) or midnight (33.75 s), stars and all. 60 s each, alternated:
+
+| | rAF p99 | CPU ms/frame | GPU ms/frame | Shadows | Scene | SSAO | Bloom |
+|---|---|---|---|---|---|---|---|
+| noon (two runs) | 16.8 | 9.0 to 9.6 | 2.6 to 3.6 | 1.1 to 1.8 | 0.2 to 0.4 | 0.7 to 1.3 | 0.2 to 0.5 |
+| midnight (two runs) | 16.8 | 8.8 to 9.6 | 2.4 to 3.2 | 1.1 to 1.6 | 0.2 to 0.6 | 0.5 to 1.2 | 0.2 to 0.5 |
+| noon, `perf=cpu` | 16.8 | 8.9 to 10.0 | off | | | | |
+| midnight, `perf=cpu` | 16.8 | 8.7 to 9.1 | off | | | | |
+
+The stars, the night sky and the night sea cost nothing measurable, on
+the CPU or the GPU.
+
+**Fifteen minutes from the title** (into day 3's night), a perf line
+every 10 s: the player's work never moved. CPU 9.6 to 11.3 ms a frame,
+GPU 2.3 to 4.9 ms, sound 0 late of 19,656 buffers, the main thread never
+more than 80 ms between audio buffers. But from 250 s to 670 s the frames
+came unevenly: rAF p50 33 ms in some windows, p99 up to 133 ms, single
+gaps of 780 to 987 ms. Those windows were day as often as night (the sky
+was at full daylight at 240, 300, 540 and 600 s), and the darkest stretch,
+780 to 900 s, ran at p99 16.8 ms. The worst frames held 9 to 18 ms of the
+player's work against 250 to 987 ms of wall time, and audio kept being
+fed through them, so the main thread wasn't blocked: the browser held
+frames back. Nothing in the player's phases or passes explains them; this
+laptop was shared with other work while it ran, and #102's 33 ms minutes
+falling at night were the same thing.
+
+**Where the web's CPU goes** (not night, but the largest number on the
+panel): of ~9.5 ms a frame, **sync** is ~5.9 ms (renderer sync with the
+world, procgen, post overrides), render ~2.0 and scripts ~1.4. On the
+desktop sync is ~1.8 ms of ~5.3. It is the first place to look when a
+phone or a slow laptop falls behind (#121, #122).
+
+**On the desktop** (`--perf`, Vulkan): the scripts phase spiked to 30 to
+80 ms every few seconds, once 1.5 s, and the readout named `[hot reload]`,
+the check of each script's modified time every frame. Windows file stats
+stall now and then. The web has no disk to check, so it never pays it.
 
 ## Async startup (#99)
 

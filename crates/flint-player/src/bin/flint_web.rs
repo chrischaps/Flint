@@ -25,6 +25,10 @@
 //!   frame_step=<s>  step game time exactly s per frame (`--frame-step`)
 //!   hold_at=<s>     stop game time at s seconds, for a screenshot of an
 //!                   exact moment (with frame_step; `PlayerApp::hold_at`)
+//!   perf=1|cpu      the perf readout in a corner (#120): frame times over
+//!                   the last 10 s, each phase's CPU time, each pass's GPU
+//!                   time where the adapter has timestamp-query (`cpu`
+//!                   leaves GPU timing off), and a line to copy
 //!
 //! Build and serve from `crates/flint-player`:
 //!   trunk serve            # http://127.0.0.1:8080
@@ -69,6 +73,8 @@ mod web {
         size: Option<(u32, u32)>,
         frame_step: Option<f64>,
         hold_at: Option<f64>,
+        /// `Some(gpu)`: show the perf readout, timing the GPU too when true.
+        perf: Option<bool>,
     }
 
     impl WebArgs {
@@ -92,6 +98,11 @@ mod web {
                 size: num("width").zip(num("height")),
                 frame_step: secs("frame_step").filter(|s| *s > 0.0),
                 hold_at: secs("hold_at"),
+                perf: get("perf").and_then(|v| match v.as_str() {
+                    "cpu" => Some(false),
+                    "0" => None,
+                    _ => Some(true),
+                }),
             }
         }
     }
@@ -169,6 +180,9 @@ mod web {
         app.msaa_sample_count = args.msaa;
         app.clock.frame_step = args.frame_step;
         app.hold_at = args.hold_at;
+        if let Some(gpu) = args.perf {
+            app.enable_perf(gpu);
+        }
         app.apply_scene_settings(&loaded.scene_file);
         app.set_schema_paths(loaded.schemas);
         app.set_event_proxy(event_loop.create_proxy());

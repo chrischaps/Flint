@@ -1309,47 +1309,60 @@ impl SceneRenderer {
             None => return,
         };
 
-        // GPU timing (ADR 0108): the chain is one scope, and the pass that
-        // writes the target another, timed inside its own submission. Under
-        // vsync the GPU waits for the swapchain image before that submission
-        // runs, and a scope across it would count the wait.
-        let chain = timer
-            .as_deref_mut()
-            .map(|t| t.begin_submit(device, queue, "Post-process"));
+        // GPU timing (ADR 0108): each effect is a scope of its own (#120,
+        // so a slow frame names its pass), and the pass that writes the
+        // target another, timed inside its own submission. Under vsync the
+        // GPU waits for the swapchain image before that submission runs,
+        // and a scope across it would count the wait.
+        let mut scoped = |label: &'static str, run: &mut dyn FnMut()| {
+            let scope = timer
+                .as_deref_mut()
+                .map(|t| t.begin_submit(device, queue, label));
+            run();
+            if let (Some(t), Some(scope)) = (timer.as_deref_mut(), scope) {
+                t.end_submit(device, queue, scope);
+            }
+        };
 
         // Run Kuwahara filter if enabled
         if self.postprocess_config.enabled && self.postprocess_config.kuwahara_enabled {
-            pp.run_kuwahara(device, queue, resources, &self.postprocess_config);
+            scoped("Kuwahara", &mut || {
+                pp.run_kuwahara(device, queue, resources, &self.postprocess_config)
+            });
         }
 
         // Run SSAO if enabled
         if self.postprocess_config.enabled && self.postprocess_config.ssao_enabled {
-            pp.run_ssao(
-                device,
-                queue,
-                resources,
-                &self.postprocess_config,
-                depth_view,
-                camera,
-            );
+            scoped("SSAO", &mut || {
+                pp.run_ssao(
+                    device,
+                    queue,
+                    resources,
+                    &self.postprocess_config,
+                    depth_view,
+                    camera,
+                )
+            });
         }
 
         // Run volumetric (god rays) if enabled and shadows are available
         if self.postprocess_config.enabled && self.postprocess_config.volumetric_enabled {
             if let Some(shadow_pass) = &self.shadow_pass {
                 if shadow_pass.enabled {
-                    pp.run_volumetric(
-                        device,
-                        queue,
-                        resources,
-                        &self.postprocess_config,
-                        depth_view,
-                        camera,
-                        &shadow_pass.shadow_view,
-                        &shadow_pass.shadow_sampler,
-                        &shadow_pass.shadow_uniforms_buffer,
-                        &self.light_buffer,
-                    );
+                    scoped("Volumetric", &mut || {
+                        pp.run_volumetric(
+                            device,
+                            queue,
+                            resources,
+                            &self.postprocess_config,
+                            depth_view,
+                            camera,
+                            &shadow_pass.shadow_view,
+                            &shadow_pass.shadow_sampler,
+                            &shadow_pass.shadow_uniforms_buffer,
+                            &self.light_buffer,
+                        )
+                    });
                 }
             }
         }
@@ -1359,7 +1372,9 @@ impl SceneRenderer {
             && self.postprocess_config.bloom_enabled
             && resources.bloom_mip_count > 0
         {
-            pp.run_bloom(device, queue, resources, &self.postprocess_config);
+            scoped("Bloom", &mut || {
+                pp.run_bloom(device, queue, resources, &self.postprocess_config)
+            });
         }
 
         // FXAA (ADR 0050): when active, composite renders into the lazily
@@ -1375,15 +1390,6 @@ impl SceneRenderer {
         } else {
             target_view
         };
-        let end_chain = |timer: Option<&mut crate::gpu_timer::GpuTimer>| {
-            if let (Some(timer), Some(chain)) = (timer, chain) {
-                timer.end_submit(device, queue, chain);
-            }
-        };
-        if !fxaa_active {
-            end_chain(timer.as_deref_mut());
-        }
-
         // Composite: HDR + bloom + SSAO + volumetric + fog → tonemapped sRGB surface
         // (always runs — this is what converts Rgba16Float → surface format)
         pp.composite(
@@ -1406,7 +1412,6 @@ impl SceneRenderer {
         );
 
         if fxaa_active {
-            end_chain(timer.as_deref_mut());
             pp.run_fxaa(device, queue, resources, target_view, timer);
         }
     }
