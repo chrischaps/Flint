@@ -1,8 +1,7 @@
 # Calls that compile for wasm32-unknown-unknown but panic there at run time
 # ("time not implemented on this platform"). CI's wasm job denies them in
-# every crate flint-player links (.github/workflows/ci.yml). The sites that
-# predate the check carry an allow until #100 moves them to web-time:
-# `grep -rn disallowed_methods crates` lists them.
+# every crate flint-player links (.github/workflows/ci.yml). #100 moved the
+# sites that predated the check to web-time, so there are no time allows.
 #
 # File reads are denied too: `std::fs` fails on wasm32, so every runtime read
 # goes through `flint_core::vfs` (#97), which the web player backs with its

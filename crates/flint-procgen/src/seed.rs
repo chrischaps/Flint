@@ -34,9 +34,8 @@ impl Seed {
         match self {
             Seed::Fixed(n) => *n,
             Seed::Random => {
-                #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
-                let duration = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+                let duration = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
                     .unwrap_or_default();
                 // Combine seconds and nanos for sub-second uniqueness
                 duration.as_secs()
