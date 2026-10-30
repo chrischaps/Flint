@@ -375,6 +375,7 @@ fn parse_materials(
                 base_color,
                 metallic,
                 roughness,
+                normal_map: None,
             },
         );
     }

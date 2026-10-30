@@ -306,6 +306,7 @@ pub fn segments_to_mesh(segments: &[BranchSegment], base_radial_segments: u32) -
         base_color: [0.34, 0.2, 0.1, 1.0],
         metallic: 0.0,
         roughness: 0.9,
+        normal_map: None,
     }];
 
     Ok(mesh)
