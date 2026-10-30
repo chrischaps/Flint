@@ -1,6 +1,6 @@
 //! Audio file probing for the asset validation pass: sample rate + frame count.
 
-use std::fs::File;
+use flint_core::vfs;
 use std::path::Path;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::formats::FormatOptions;
@@ -24,8 +24,9 @@ pub struct AudioInfo {
 /// full decode-and-count when the container doesn't report a frame total
 /// (some OGG streams).
 pub fn probe_audio(path: &Path) -> Result<AudioInfo, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let bytes = vfs::read(path).map_err(|e| e.to_string())?;
+    let source = std::io::Cursor::new(bytes);
+    let mss = MediaSourceStream::new(Box::new(source), Default::default());
 
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {

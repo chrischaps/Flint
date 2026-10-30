@@ -4,7 +4,7 @@ use crate::archetype::{ArchetypeSchema, ArchetypeSchemaFile};
 use crate::component::{ComponentSchema, ComponentSchemaFile};
 use flint_core::{FlintError, Result};
 use std::collections::HashMap;
-use std::fs;
+use flint_core::vfs;
 use std::path::{Path, PathBuf};
 
 /// Auto-discover `schemas/` directories by walking up from a scene file path.
@@ -18,7 +18,7 @@ pub fn discover_schema_dirs(scene_path: &str) -> Vec<PathBuf> {
     for dir in [Some(scene_dir), scene_dir.parent()] {
         if let Some(d) = dir {
             let schemas = d.join("schemas");
-            if schemas.is_dir() {
+            if vfs::is_dir(&schemas) {
                 dirs.push(schemas);
             }
         }
@@ -60,10 +60,8 @@ impl SchemaRegistry {
 
         // Load components
         let components_path = path.join("components");
-        if components_path.exists() {
-            for entry in fs::read_dir(&components_path)? {
-                let entry = entry?;
-                let file_path = entry.path();
+        if vfs::exists(&components_path) {
+            for file_path in vfs::read_dir(&components_path)? {
                 if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
                     registry.load_component_file(&file_path)?;
                 }
@@ -72,10 +70,8 @@ impl SchemaRegistry {
 
         // Load archetypes
         let archetypes_path = path.join("archetypes");
-        if archetypes_path.exists() {
-            for entry in fs::read_dir(&archetypes_path)? {
-                let entry = entry?;
-                let file_path = entry.path();
+        if vfs::exists(&archetypes_path) {
+            for file_path in vfs::read_dir(&archetypes_path)? {
                 if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
                     registry.load_archetype_file(&file_path)?;
                 }
@@ -91,10 +87,8 @@ impl SchemaRegistry {
 
         // Load components
         let components_path = path.join("components");
-        if components_path.exists() {
-            for entry in fs::read_dir(&components_path)? {
-                let entry = entry?;
-                let file_path = entry.path();
+        if vfs::exists(&components_path) {
+            for file_path in vfs::read_dir(&components_path)? {
                 if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
                     self.load_component_file(&file_path)?;
                 }
@@ -103,10 +97,8 @@ impl SchemaRegistry {
 
         // Load archetypes
         let archetypes_path = path.join("archetypes");
-        if archetypes_path.exists() {
-            for entry in fs::read_dir(&archetypes_path)? {
-                let entry = entry?;
-                let file_path = entry.path();
+        if vfs::exists(&archetypes_path) {
+            for file_path in vfs::read_dir(&archetypes_path)? {
                 if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
                     self.load_archetype_file(&file_path)?;
                 }
@@ -119,7 +111,7 @@ impl SchemaRegistry {
     /// Load a component schema from a TOML file
     pub fn load_component_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)?;
+        let content = vfs::read_to_string(path)?;
         let file: ComponentSchemaFile = toml::from_str(&content)?;
         self.insert_components(file, &path.display().to_string());
         Ok(())
@@ -148,7 +140,7 @@ impl SchemaRegistry {
 
     /// Load an archetype schema from a TOML file
     pub fn load_archetype_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let content = fs::read_to_string(path)?;
+        let content = vfs::read_to_string(path)?;
         let file: ArchetypeSchemaFile = toml::from_str(&content)?;
 
         for (name, def) in file.archetype {
@@ -228,6 +220,7 @@ impl SchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     /// Every field in the engine's own schemas names a type the parser knows,
     /// so none silently validates as a string (H8: `"integer"` did).

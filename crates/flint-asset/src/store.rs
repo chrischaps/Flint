@@ -1,5 +1,6 @@
 //! Content-addressed asset storage
 
+use flint_core::vfs;
 use flint_core::{ContentHash, FlintError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +20,9 @@ impl ContentStore {
         }
     }
 
-    /// Store a file and return its content hash
+    /// Store a file and return its content hash. A write to the local disk,
+    /// so it checks the disk for an existing copy, not the vfs.
+    #[allow(clippy::disallowed_methods)] // writes stay native (#97)
     pub fn store<P: AsRef<Path>>(&self, source_path: P) -> Result<ContentHash> {
         let source = source_path.as_ref();
         let hash = ContentHash::from_file(source)
@@ -44,17 +47,16 @@ impl ContentStore {
         let prefix = &hex[..2];
         let dir = self.root.join(prefix);
 
-        if !dir.exists() {
+        if !vfs::exists(&dir) {
             return None;
         }
 
         // Look for any file matching the hash
-        if let Ok(entries) = fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
+        if let Ok(entries) = vfs::read_dir(&dir) {
+            for path in entries {
+                let name_str = path.file_name().unwrap_or_default().to_string_lossy();
                 if name_str.starts_with(&hex) {
-                    return Some(entry.path());
+                    return Some(path);
                 }
             }
         }
@@ -71,17 +73,14 @@ impl ContentStore {
     pub fn list(&self) -> Result<Vec<ContentHash>> {
         let mut hashes = Vec::new();
 
-        if !self.root.exists() {
+        if !vfs::exists(&self.root) {
             return Ok(hashes);
         }
 
-        for entry in fs::read_dir(&self.root)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                for file_entry in fs::read_dir(entry.path())? {
-                    let file_entry = file_entry?;
-                    let name = file_entry.file_name();
-                    let name_str = name.to_string_lossy();
+        for dir in vfs::read_dir(&self.root)? {
+            if vfs::is_dir(&dir) {
+                for file in vfs::read_dir(&dir)? {
+                    let name_str = file.file_name().unwrap_or_default().to_string_lossy();
                     // Extract hash from filename (before the extension)
                     if let Some(hash_hex) = name_str.split('.').next() {
                         if let Some(hash) =

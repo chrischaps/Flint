@@ -3,7 +3,7 @@
 
 use crate::config_toml::{self, VersionPolicy};
 use flint_core::toml_util::toml_f64;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -48,7 +48,7 @@ pub struct Chart {
 
 impl Chart {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = vfs::read_to_string(path)?;
         Self::parse(&text)
     }
 

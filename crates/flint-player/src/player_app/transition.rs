@@ -15,6 +15,7 @@ use flint_core::components as comp;
 use flint_ecs::FlintWorld;
 use flint_render::model_loader;
 use flint_runtime::RuntimeSystem;
+use flint_core::vfs;
 use std::path::Path;
 
 /// Scene transition lifecycle phase
@@ -82,7 +83,7 @@ impl PlayerApp {
         let chunk_path = scene_dir.join(path);
 
         // Parse chunk as a scene file
-        let content = match std::fs::read_to_string(&chunk_path) {
+        let content = match vfs::read_to_string(&chunk_path) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("Failed to read chunk '{}': {}", chunk_path.display(), e);
@@ -106,7 +107,7 @@ impl PlayerApp {
                 .schema_paths
                 .iter()
                 .map(|s| s.as_str())
-                .filter(|p| Path::new(p).exists())
+                .filter(|p| vfs::exists(p))
                 .collect();
             if existing.is_empty() {
                 flint_schema::SchemaRegistry::new()
@@ -199,12 +200,12 @@ impl PlayerApp {
                             .parent()
                             .unwrap_or_else(|| Path::new("."))
                             .join("scripts");
-                        let script_path = if chunk_scripts_dir.join(source).exists() {
+                        let script_path = if vfs::exists(chunk_scripts_dir.join(source)) {
                             chunk_scripts_dir.join(source)
                         } else {
                             scene_scripts_dir.join(source)
                         };
-                        if script_path.exists() {
+                        if vfs::exists(&script_path) {
                             self.script.load_script_for_entity(id, &script_path);
                         }
                     }
@@ -331,7 +332,7 @@ impl PlayerApp {
                 .schema_paths
                 .iter()
                 .map(|s| s.as_str())
-                .filter(|p| Path::new(p).exists())
+                .filter(|p| vfs::exists(p))
                 .collect();
             if existing.is_empty() {
                 flint_schema::SchemaRegistry::new()
@@ -418,7 +419,7 @@ impl PlayerApp {
                 spec_dirs.push(scene_dir.join("models"));
                 let dir_refs: Vec<&Path> = spec_dirs
                     .iter()
-                    .filter(|d| d.is_dir())
+                    .filter(|d| vfs::is_dir(d))
                     .map(|d| d.as_path())
                     .collect();
                 self.procgen_resolver.discover_and_index(&dir_refs);
@@ -479,7 +480,7 @@ impl PlayerApp {
                     .unwrap_or_else(|| Path::new("."));
                 let skybox_path = {
                     let p = scene_dir.join(skybox_rel);
-                    if p.exists() {
+                    if vfs::exists(&p) {
                         p
                     } else if let Some(parent) = scene_dir.parent() {
                         parent.join(skybox_rel)
@@ -487,7 +488,7 @@ impl PlayerApp {
                         p
                     }
                 };
-                if skybox_path.exists() {
+                if vfs::exists(&skybox_path) {
                     renderer.load_skybox(&context.device, &context.queue, &skybox_path);
                 }
             }

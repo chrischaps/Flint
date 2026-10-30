@@ -12,6 +12,7 @@ pub mod api;
 pub mod context;
 pub mod draw2d;
 pub mod engine;
+pub mod module_resolver;
 pub mod projector;
 pub mod sync;
 pub mod ui;

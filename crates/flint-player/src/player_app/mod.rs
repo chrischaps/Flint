@@ -11,6 +11,8 @@ mod capture_gate_tests;
 mod debug_key_tests;
 #[cfg(test)]
 mod extension_tests;
+#[cfg(test)]
+mod vfs_tests;
 pub mod fonts;
 mod frame;
 mod hud_render;

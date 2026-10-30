@@ -16,7 +16,7 @@
 
 use crate::config_toml::{self, VersionPolicy};
 use crate::judgment::JudgmentRecord;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -82,7 +82,7 @@ impl Default for CoherenceConfig {
 
 impl CoherenceConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = vfs::read_to_string(path)?;
         Self::parse(&text)
     }
 

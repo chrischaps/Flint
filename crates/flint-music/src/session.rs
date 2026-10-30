@@ -13,28 +13,22 @@ use crate::manifest::{BusDecl, SuiteManifest};
 use crate::mixer::BusMixer;
 use crate::scheduler::{FiredEvent, Scheduler};
 use crate::tempo::ms_to_samples;
-use flint_core::{FlintError, Result};
+use flint_core::{vfs, FlintError, Result};
 use kira::backend::Backend;
 use kira::clock::{ClockHandle, ClockSpeed, ClockTime};
 use kira::sound::static_sound::StaticSoundData;
 use kira::{AudioManager, AudioManagerSettings, DefaultBackend, StartTime};
 use std::path::{Path, PathBuf};
 
-/// `StaticSoundData::from_file`, which kira leaves out of wasm32 builds. The
-/// web reads the bytes and decodes them from memory instead; `std::fs` fails
-/// there at run time until the vfs lands (docs/design/web.md).
+/// `StaticSoundData::from_file`, read through the vfs: the bytes come from
+/// the active file source (the disk, or the web's bundle) and kira decodes
+/// them from memory, which is all its `from_file` does after opening the
+/// file. kira leaves `from_file` out of wasm32 builds anyway.
 fn static_sound_from_file(
     path: impl AsRef<Path>,
 ) -> std::result::Result<StaticSoundData, kira::sound::FromFileError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        StaticSoundData::from_file(path)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let bytes = std::fs::read(path)?;
-        StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
-    }
+    let bytes = vfs::read(path)?;
+    StaticSoundData::from_cursor(std::io::Cursor::new(bytes))
 }
 
 /// Beats of silence before sample 0 (at the first anchor's tempo), giving

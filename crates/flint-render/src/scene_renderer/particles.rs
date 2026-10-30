@@ -238,7 +238,7 @@ pub fn load_particle_textures(
         let mut found = false;
         for dir in search_dirs {
             let path = dir.join(&tex_name);
-            if path.exists() {
+            if flint_core::vfs::exists(&path) {
                 match renderer.load_texture_file(device, queue, &tex_name, &path) {
                     Ok(true) => {
                         println!("Loaded particle texture: {tex_name}");

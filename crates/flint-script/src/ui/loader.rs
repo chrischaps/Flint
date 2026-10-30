@@ -3,12 +3,13 @@
 use super::element::{Anchor, ElementType, UiElement};
 use super::style::StyleClass;
 use super::tokens::{toml_to_style_value, TokenSet};
+use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Parse a .ui.toml layout file into elements + style path
 pub fn load_layout(path: &Path) -> Result<(Vec<UiElement>, String), String> {
-    let content = std::fs::read_to_string(path)
+    let content = vfs::read_to_string(path)
         .map_err(|e| format!("Failed to read layout {}: {}", path.display(), e))?;
 
     let doc: toml::Value = content
@@ -108,7 +109,7 @@ pub struct StyleSheet {
 /// local `[tokens]` table and the shared file; unknown tokens warn once and
 /// leave the property unset.
 pub fn load_styles(path: &Path, root_dir: &Path) -> Result<StyleSheet, String> {
-    let content = std::fs::read_to_string(path)
+    let content = vfs::read_to_string(path)
         .map_err(|e| format!("Failed to read style {}: {}", path.display(), e))?;
 
     let doc: toml::Value = content

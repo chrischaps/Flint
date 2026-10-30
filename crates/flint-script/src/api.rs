@@ -7,6 +7,7 @@ use crate::context::{DrawCommand, LogLevel, ScriptCallContext, ScriptCommand};
 use crate::projector::{clip_to_screen, project_clip, View};
 use flint_core::components as comp;
 use flint_core::events::TRANSITION_COMPLETE;
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_core::{euler_deg_to_quat, quat_mul, quat_normalize};
 use rhai::{Array, Dynamic, Engine, ImmutableString, Map};
@@ -4103,7 +4104,7 @@ fn load_data_impl(c: &mut ScriptCallContext, path: &str, reload: bool) -> Dynami
     if let Some(v) = c.data_cache.get(&key) {
         return toml_to_dynamic(v.clone());
     }
-    let parsed = std::fs::read_to_string(&full)
+    let parsed = vfs::read_to_string(&full)
         .map_err(|e| e.to_string())
         .and_then(|text| text.parse::<toml::Value>().map_err(|e| e.to_string()));
     match parsed {
