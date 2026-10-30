@@ -151,8 +151,10 @@ mod web {
             loaded.scene_file.scene.name,
             loaded.world.entity_count()
         );
-        let title = loaded.scene_file.scene.name.clone();
-        let line = loaded.scene_file.scene.description.clone();
+        // The page may have named the game already (play.chaps.dev's
+        // doorway, from games.json); the scene's own name is the fallback.
+        let title = page_text("gate-title").unwrap_or_else(|| loaded.scene_file.scene.name.clone());
+        let line = page_text("gate-line").or_else(|| loaded.scene_file.scene.description.clone());
         status(&title);
 
         let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
@@ -397,6 +399,11 @@ mod web {
         web_sys::window()?.document()?.get_element_by_id(id)
     }
 
+    /// An element's text, if the page has filled it in.
+    fn page_text(id: &str) -> Option<String> {
+        element(id)?.text_content().filter(|t| !t.trim().is_empty())
+    }
+
     fn fix_canvas_size(width: u32, height: u32) {
         if let Some(canvas) = element(WEB_CANVAS_ID) {
             let style = format!("width: {width}px !important; height: {height}px !important;");
@@ -440,14 +447,11 @@ mod web {
             flint_player::web_begin();
             return;
         };
-        // The page may have named the game already (play.chaps.dev's
-        // doorway, from games.json); the scene's own name is the fallback.
-        for (id, text) in [("gate-title", title), ("gate-line", line)] {
-            if let Some(el) = element(id) {
-                if el.text_content().is_none_or(|t| t.is_empty()) {
-                    el.set_text_content(Some(text));
-                }
-            }
+        if let Some(el) = element("gate-title") {
+            el.set_text_content(Some(title));
+        }
+        if let Some(el) = element("gate-line") {
+            el.set_text_content(Some(line));
         }
         let _ = gate.set_attribute("data-ready", "");
         if let Ok(button) = button.clone().dyn_into::<web_sys::HtmlElement>() {
