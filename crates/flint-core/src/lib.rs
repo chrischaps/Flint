@@ -5,6 +5,7 @@
 //! - `ContentHash` - SHA-256 based content hashing
 //! - `Transform`, `Vec3` - Spatial types
 //! - Error types and Result alias
+//! - `vfs` - The read-only file layer every runtime read goes through
 
 pub mod callbacks;
 pub mod components;
@@ -20,6 +21,7 @@ pub mod ray_mesh;
 pub mod spline;
 pub mod toml_util;
 mod types;
+pub mod vfs;
 pub mod world_line;
 pub mod world_text;
 
