@@ -11,9 +11,15 @@
 //! wgpu can't say which adapter it got on the web (its `AdapterInfo` is
 //! empty there), so the page asks the browser itself, once, with the same
 //! high-performance preference wgpu asks with.
+//!
+//! The WebGPU calls are counted by the page, which wraps `submit`,
+//! `writeBuffer`, `createBindGroup`, `createBuffer` and `beginRenderPass`
+//! under `?perf` and keeps running totals in `window.flintGpuCalls`
+//! (#139). Each readout divides what they moved by the frames since the
+//! last.
 
 use super::pacing::Spread;
-use super::perf::{browser_name, readout, summary_line, WINDOW_SECS};
+use super::perf::{browser_name, readout, summary_line, WebGpuCalls, WINDOW_SECS};
 use super::PlayerApp;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -30,6 +36,36 @@ thread_local! {
     /// rAF timestamps of the last ten seconds, ms.
     static RAF: RefCell<VecDeque<f64>> = const { RefCell::new(VecDeque::new()) };
     static RAF_STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The page's WebGPU call totals at the last readout, and the frames
+    /// begun by then.
+    static CALLS_THEN: RefCell<Option<(WebGpuCalls, u64)>> = const { RefCell::new(None) };
+}
+
+/// The page's running totals of WebGPU calls, when it counts them.
+fn call_totals() -> Option<WebGpuCalls> {
+    let calls = get(&web_sys::window()?.into(), "flintGpuCalls")?;
+    let n = |k: &str| get(&calls, k).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    Some(WebGpuCalls {
+        submits: n("submit"),
+        writes: n("writeBuffer"),
+        write_bytes: n("writeBytes"),
+        bind_groups: n("createBindGroup"),
+        buffers: n("createBuffer"),
+        passes: n("beginRenderPass"),
+    })
+}
+
+/// The calls a frame made since the last readout.
+fn calls_per_frame(frames_begun: u64) -> Option<WebGpuCalls> {
+    let now = call_totals()?;
+    CALLS_THEN.with(|then| {
+        let mut then = then.borrow_mut();
+        let per_frame = then.as_ref().and_then(|(calls, frames)| {
+            WebGpuCalls::per_frame(&now, calls, frames_begun.saturating_sub(*frames))
+        });
+        *then = Some((now, frames_begun));
+        per_frame
+    })
 }
 
 /// Start the page's rAF loop, once: each frame's timestamp goes in `RAF`.
@@ -159,10 +195,13 @@ impl PlayerApp {
         let user_agent = web_sys::window()
             .and_then(|w| w.navigator().user_agent().ok())
             .unwrap_or_default();
-        let Some((mut summary, context)) = self.perf_snapshot(browser_name(&user_agent), adapter())
+        let Some((mut summary, mut context)) =
+            self.perf_snapshot(browser_name(&user_agent), adapter())
         else {
             return;
         };
+        let frames_begun = self.perf.as_ref().map_or(0, |p| p.frames_begun);
+        context.webgpu = calls_per_frame(frames_begun);
         if let Some((frames, secs)) = raf_frames() {
             summary.frames = frames;
             summary.secs = secs;
