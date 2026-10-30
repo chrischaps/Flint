@@ -39,6 +39,9 @@ pub struct RenderStats {
     pub gpu_frame_ms: f32,
     // Screen info (set by caller)
     pub resolution: [u32; 2],
+    /// The size the 3D scene is drawn at: `resolution` at render scale 1
+    /// (#122). Set by the renderer.
+    pub scene_resolution: [u32; 2],
 }
 
 /// Format a count for display: 1234 → "1.2K", 1234567 → "1.2M", 42 → "42"

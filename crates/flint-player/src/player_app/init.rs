@@ -90,6 +90,8 @@ impl PlayerApp {
             skybox_path: None,
             scene_ambient: None,
             msaa_sample_count: 1,
+            render_scale: Default::default(),
+            dynamic_scale: Default::default(),
             hold_at: None,
             scene_diffuse_wrap: None,
             scene_oren_nayar: None,

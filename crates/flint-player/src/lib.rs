@@ -27,4 +27,5 @@ pub use player_app::scene_loading::{load_scene_grass_ground, post_process_config
 pub use player_app::web_page::begin as web_begin;
 #[cfg(target_arch = "wasm32")]
 pub use player_app::web_startup::WEB_CANVAS_ID;
+pub use player_app::render_scale::{RenderScaleSetting, WEB_DPR_CAP};
 pub use player_app::{CaptureConfig, PlayerApp};

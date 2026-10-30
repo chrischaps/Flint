@@ -25,6 +25,7 @@ pub mod particle_pipeline;
 mod pipeline;
 pub mod postprocess;
 mod primitives;
+pub mod render_scale;
 pub mod render_stats;
 mod scene_renderer;
 pub mod shadow;
@@ -73,6 +74,7 @@ pub use primitives::{
     generate_skeleton_lines_colored, srgb_to_linear, triangles_to_wireframe_indices, Mesh,
     SkinnedMesh, SkinnedVertex, Vertex,
 };
+pub use render_scale::{clamp_render_scale, scaled_size, MIN_RENDER_SCALE};
 pub use render_stats::{format_count, RenderStats};
 pub use scene_renderer::{
     load_particle_textures, ArchetypeVisual, LightingLevers, RendererConfig, SceneRenderer,

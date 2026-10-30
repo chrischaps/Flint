@@ -44,6 +44,7 @@ the query string instead of clap:
 | `bundle=<url>` | `--bundle` | a `.flintpack` from `flint bundle`, relative to the page. Its manifest names the scene and schemas; its late bundles are fetched beside it |
 | `scene=<url>` | `<scene>` | with `bundle`: a scene inside it instead of the manifest's. Without: a scene TOML fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
 | `msaa=1\|4` | `--msaa` | scene-pass MSAA |
+| `scale=<f>\|auto` | `--render-scale` | the 3D scene's render scale ([Render scale](#render-scale-122)). By default a page draws the scene at no more than DPR 1.5 and the HUD at the full DPR; a number from 0.25 to 1 draws at that scale whatever the DPR (`scale=1` is native); `auto` keeps the cap and steps under it to hold 60 fps |
 | `width=&height=` | `--width --height` | fix the canvas to that many CSS pixels; otherwise it fills the page |
 | `frame_step=<s>` | `--frame-step` | step game time exactly s seconds a frame |
 | `hold_at=<s>` | (`--screenshot-at`) | stop game time at s seconds (`PlayerApp::hold_at`), so a page holds an exact moment for a screenshot |

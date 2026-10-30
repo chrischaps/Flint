@@ -33,6 +33,7 @@ impl PlayerApp {
         if self.window.is_none() {
             return;
         }
+        self.update_render_scale();
         let Some(context) = &self.render_context else {
             return;
         };
@@ -1757,11 +1758,17 @@ fn render_stats_overlay(ctx: &egui::Context, stats: &flint_render::RenderStats, 
                         ui.separator();
                     }
 
-                    // Resolution
-                    ui.colored_label(
-                        egui::Color32::from_gray(102),
-                        format!("{}x{}", stats.resolution[0], stats.resolution[1]),
-                    );
+                    // Resolution, and the scene's below render scale 1 (#122)
+                    let scene = stats.scene_resolution;
+                    let resolution = if scene == stats.resolution || scene == [0, 0] {
+                        format!("{}x{}", stats.resolution[0], stats.resolution[1])
+                    } else {
+                        format!(
+                            "{}x{}, scene {}x{}",
+                            stats.resolution[0], stats.resolution[1], scene[0], scene[1]
+                        )
+                    };
+                    ui.colored_label(egui::Color32::from_gray(102), resolution);
                 });
         });
 }
