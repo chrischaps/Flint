@@ -1,0 +1,12 @@
+{
+  "name": "Flint",
+  "short_name": "Flint",
+  "description": "Games made with Flint, playing in the browser.",
+  "display": "fullscreen",
+  "background_color": "#0d1229",
+  "theme_color": "#0d1229",
+  "icons": [
+    { "src": "icons/flint-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/flint-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
