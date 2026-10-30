@@ -1,0 +1,12 @@
+# trunk's settings for the pages here (index.html, shims.html).
+
+[build]
+# The wasm loads only once the page says so (#103). index.html's doorway
+# resolves window.flintDoorway when there is a game to play and WebGPU to
+# play it on, and leaves it pending when it shows the game's film instead.
+# Trunk's default loader also preloads the wasm, which would cost a browser
+# that can't play 14 MB it never runs, so only the small JS glue is
+# preloaded. A page without a doorway (shims.html) awaits undefined and
+# starts at once.
+pattern_script = "<script type=\"module\">import init from '{base}{js}';await window.flintDoorway;await init({ module_or_path: '{base}{wasm}' });</script>"
+pattern_preload = "<link rel=\"modulepreload\" href=\"{base}{js}\" crossorigin=\"anonymous\">"

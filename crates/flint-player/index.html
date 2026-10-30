@@ -1,8 +1,10 @@
 <!doctype html>
-<!-- Flint in the browser (#94). `trunk serve` from crates/flint-player.
-     The player draws into #flint; ?bundle=<game.flintpack> plays a game
+<!-- Flint in the browser (#94), and play.chaps.dev (#103). `trunk serve`
+     from crates/flint-player. The player draws into #flint;
+     ?game=<id> plays a game the site packed, ?bundle=<game.flintpack> one
      packed by `flint bundle` (#98), and ?scene=<url>&msaa=4&width=&height=
-     steer it (src/bin/flint_web.rs). See docs/design/web.md. -->
+     steer it (src/bin/flint_web.rs). ?embed=1 is the iframe view: the world
+     and its Begin button. See docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -78,6 +80,85 @@
         opacity: 0; transition: opacity 0.6s ease;
       }
       #relook[data-on] { opacity: 1; transition-delay: 0.4s; }
+
+      /* Embed mode (?embed=1, #103): an iframe gets the world and its
+         Begin button, nothing else. The hairline stays, centred low, so a
+         first visit still sees the game arriving. */
+      html[data-embed] .mark { left: 50%; transform: translateX(-50%); font-size: 0; }
+      html[data-embed] .mark small { display: none; }
+      html[data-embed] .gate h1, html[data-embed] .gate p, html[data-embed] .gate small { display: none; }
+      html[data-embed] .gate button { padding: 13px 30px; }
+
+      /* The doorway (#103): before any wasm is fetched, the page decides
+         whether there is a game to play and a GPU to play it on. If not,
+         it shows the games there are, or the game's film and why. */
+      html[data-door] canvas#flint, html[data-door] .gate,
+      html[data-door] #relook, html[data-door] .mark { display: none; }
+      html[data-door], html[data-door] body { overflow: auto; }
+      html[data-door] body { display: block; }
+      .door {
+        position: relative; min-height: 100%; box-sizing: border-box;
+        display: grid; color: #fff;
+        font: 400 15px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+      .door[hidden] { display: none; }
+      .door a { color: inherit; }
+      .door .kicker {
+        margin: 0 0 14px; font-size: 12px; font-weight: 500;
+        letter-spacing: 0.22em; text-transform: uppercase; opacity: 0.62;
+      }
+      .door h1 {
+        margin: 0 0 10px; font: 300 clamp(30px, 6vw, 48px)/1.1 ui-serif, Georgia, serif;
+        letter-spacing: 0.04em; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.3);
+      }
+      .door .why { margin: 0 0 10px; max-width: 36em; opacity: 0.86; }
+      .door .where { margin: 0 0 18px; max-width: 36em; opacity: 0.66; font-size: 14px; }
+      .door .more {
+        display: inline-block; font-size: 12px; font-weight: 500; letter-spacing: 0.16em;
+        text-transform: uppercase; text-decoration: none; opacity: 0.82;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.35); padding-bottom: 3px;
+      }
+      .door .more:hover { opacity: 1; border-color: rgba(255, 255, 255, 0.8); }
+
+      /* No WebGPU: the game's film fills the frame, the reason sits low. */
+      .door.film { place-items: end start; min-height: 100vh; }
+      .door.film video {
+        position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
+        background: #0d1229;
+      }
+      .door.film::before {
+        content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
+        background: linear-gradient(to top, rgba(13, 18, 41, 0.86), rgba(13, 18, 41, 0.38) 46%, rgba(13, 18, 41, 0) 72%);
+      }
+      .door.film .words { position: relative; z-index: 2; padding: 0 clamp(16px, 5vw, 56px) clamp(22px, 6vh, 56px); }
+      .door.film .caption { margin: 0 0 18px; font-size: 13px; font-style: italic; opacity: 0.6; }
+      html[data-embed] .door.film h1 { font-size: clamp(22px, 5vw, 32px); }
+      html[data-embed] .door.film .where, html[data-embed] .door.film .caption { display: none; }
+
+      /* No game named: the games there are. */
+      .door.list { place-items: center; padding: clamp(28px, 8vh, 80px) 16px; }
+      .door.list .words { width: min(100%, 980px); }
+      .games {
+        list-style: none; margin: 28px 0 0; padding: 0;
+        display: grid; gap: 22px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+      }
+      .games a {
+        display: block; text-decoration: none; border-radius: 10px; overflow: hidden;
+        background: rgba(255, 255, 255, 0.04); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+        transition: transform 0.25s ease, box-shadow 0.25s ease;
+      }
+      .games a:hover, .games a:focus-visible {
+        transform: translateY(-2px); outline: none;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 14px 40px rgba(0, 0, 0, 0.35);
+      }
+      .games img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #18204a; }
+      .games .text { display: block; padding: 16px 18px 18px; }
+      .games strong { display: block; font: 300 22px/1.2 ui-serif, Georgia, serif; letter-spacing: 0.04em; }
+      .games .line { display: block; margin-top: 6px; font-size: 14px; opacity: 0.7; }
+      .games .go {
+        display: inline-block; margin-top: 14px; font-size: 11px; font-weight: 500;
+        letter-spacing: 0.24em; text-transform: uppercase; opacity: 0.8;
+      }
     </style>
   </head>
   <body>
@@ -92,5 +173,157 @@
     </div>
     <div id="relook">click to look around</div>
     <div class="mark">Flint<small id="status">starting</small><div id="progress"><i></i></div></div>
+    <section class="door" id="door" hidden></section>
+
+    <!-- The doorway (#103). Trunk's loader (Trunk.toml) waits on
+         window.flintDoorway before it fetches the wasm. It opens when there is
+         a game to play and WebGPU to play it on. Otherwise it stays shut and
+         the page shows the games there are (no ?game=), or the game's film
+         with the reason it can't play here. games.json is written by the
+         play.chaps.dev deploy (tools/play-site); without it, as under `trunk
+         serve`, the page plays what the query names, as it always has.
+         ?webgpu=0 shows the film in any browser, to check it. -->
+    <script>
+      (() => {
+        const query = new URLSearchParams(location.search);
+        const root = document.documentElement;
+        const embed = query.has("embed") && query.get("embed") !== "0";
+        if (embed) root.dataset.embed = "";
+        let open;
+        window.flintDoorway = new Promise((resolve) => (open = resolve));
+
+        const BROWSERS =
+          "It plays in Chrome and Edge 113 or later, in Safari 26 or later, and in Firefox on Windows.";
+
+        decide().catch((e) => {
+          console.warn("[doorway]", e);
+          open();
+        });
+
+        async function decide() {
+          const game = query.get("game");
+          const named = game || query.has("bundle") || query.has("scene");
+          const games = await listing();
+          const entry = games && games.find((g) => g.id === game);
+          if (games && games.length && !named) return list(games);
+          if (games && game && !entry) return list(games, game);
+          const missing = await webgpuMissing();
+          if (missing) return film(entry, missing);
+          if (entry) {
+            // The gate names the game as chaps.dev does, not as its scene file does.
+            document.title = `${entry.title} · Flint`;
+            document.getElementById("gate-title").textContent = entry.title;
+            document.getElementById("gate-line").textContent = entry.line || "";
+          }
+          open();
+        }
+
+        async function listing() {
+          try {
+            const r = await fetch("games.json", { cache: "no-cache" });
+            return r.ok ? (await r.json()).games : null;
+          } catch {
+            return null;
+          }
+        }
+
+        // "none": no WebGPU at all. "adapter": WebGPU, but no adapter to run it.
+        async function webgpuMissing() {
+          if (query.get("webgpu") === "0" || !navigator.gpu) return "none";
+          try {
+            return (await navigator.gpu.requestAdapter()) ? null : "adapter";
+          } catch {
+            return "adapter";
+          }
+        }
+
+        function el(tag, props = {}, ...children) {
+          const node = Object.assign(document.createElement(tag), props);
+          node.append(...children);
+          return node;
+        }
+
+        function door(kind, ...children) {
+          const section = document.getElementById("door");
+          section.className = `door ${kind}`;
+          section.replaceChildren(...children);
+          section.hidden = false;
+          root.dataset.door = kind;
+        }
+
+        function film(entry, missing) {
+          const title = entry ? entry.title : "Flint";
+          document.title = `${title} · Flint`;
+          const why =
+            missing === "adapter"
+              ? "This browser has WebGPU, but it offered no graphics adapter to run it. Hardware acceleration may be turned off, or this graphics card may be blocked for WebGPU."
+              : `${entry ? title : "This game"} plays in the browser through WebGPU, and this browser doesn't offer it.`;
+          const words = el(
+            "div",
+            { className: "words" },
+            el("h1", { textContent: title }),
+            el("p", { className: "why", textContent: why }),
+            el("p", { className: "where", textContent: BROWSERS }),
+          );
+          const parts = [];
+          if (entry && entry.video) {
+            const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+            const video = el("video", {
+              src: entry.video,
+              poster: entry.poster || "",
+              muted: true,
+              loop: true,
+              playsInline: true,
+              autoplay: !still,
+              controls: still,
+            });
+            video.setAttribute("aria-label", `A film of ${title}`);
+            parts.push(video);
+            if (entry.film) words.append(el("p", { className: "caption", textContent: entry.film }));
+          }
+          if (entry && entry.page) {
+            words.append(el("a", { className: "more", href: entry.page, target: "_blank", rel: "noopener", textContent: `About ${title}` }));
+          }
+          door("film", ...parts, words);
+        }
+
+        function list(games, unknown) {
+          document.title = "Play · Flint";
+          const keep = embed ? "&embed=1" : "";
+          const cards = games.map((g) =>
+            el(
+              "li",
+              {},
+              el(
+                "a",
+                { href: `?game=${encodeURIComponent(g.id)}${keep}` },
+                g.poster ? el("img", { src: g.poster, alt: "", loading: "lazy" }) : "",
+                el(
+                  "span",
+                  { className: "text" },
+                  el("strong", { textContent: g.title }),
+                  g.line ? el("span", { className: "line", textContent: g.line }) : "",
+                  el("span", { className: "go", textContent: "Play" }),
+                ),
+              ),
+            ),
+          );
+          const lead = unknown
+            ? `There's no game called “${unknown}” here. These are the ones there are.`
+            : "Games made with Flint, a game engine written in Rust, playing in your browser.";
+          door(
+            "list",
+            el(
+              "div",
+              { className: "words" },
+              el("p", { className: "kicker", textContent: "Flint" }),
+              el("h1", { textContent: "Play" }),
+              el("p", { className: "why", textContent: lead }),
+              el("ul", { className: "games" }, ...cards),
+            ),
+          );
+        }
+      })();
+    </script>
   </body>
 </html>
