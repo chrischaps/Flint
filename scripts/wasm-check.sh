@@ -10,9 +10,8 @@
 #
 #   scripts/wasm-check.sh        what CI's wasm job runs (.github/workflows/ci.yml)
 #
-# A site that predates the check carries
-#   #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
-# until #100 moves it to web-time. New code uses web_time instead.
+# Runtime time calls use web_time (#100 ported the sites that predated
+# this check); a std::time call there fails it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

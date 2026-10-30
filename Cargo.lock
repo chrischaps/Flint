@@ -1744,6 +1744,7 @@ dependencies = [
  "gilrs",
  "gilrs-core",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1757,6 +1758,7 @@ dependencies = [
  "symphonia",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1848,6 +1850,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "web-time",
 ]
 
 [[package]]
@@ -1951,6 +1954,7 @@ dependencies = [
  "rhai",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]

@@ -6,6 +6,7 @@
 pub mod extension;
 mod player_app;
 pub mod spline_gen;
+pub mod user_files;
 
 pub use extension::{
     ExtensionAudio, ExtensionCtx, ExtensionGpu, KeyInput, MeshOptions, PlayerExtension,

@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- The web shim check (#100): time, gamepads, settings over a sky clear.
+     `trunk serve shims.html` from crates/flint-player. The real player is
+     index.html (#99). See docs/design/web.md. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flint</title>
+    <link data-trunk rel="rust" data-bin="flint-web-shims" data-wasm-opt="z" data-integrity="none" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #0d1229; overflow: hidden; }
+      canvas { display: block; width: 100vw !important; height: 100vh !important; outline: none; }
+      .mark {
+        position: fixed; left: 24px; bottom: 20px;
+        font: 500 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.18em; text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
+        pointer-events: none;
+      }
+      .mark small { display: block; letter-spacing: 0.06em; text-transform: none; opacity: 0.7; }
+    </style>
+  </head>
+  <body>
+    <div class="mark">Flint<small>wasm32 · WebGPU · first light</small><small id="status"></small></div>
+  </body>
+</html>

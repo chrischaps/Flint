@@ -13,10 +13,15 @@ path = "src/lib.rs"
 name = "flint-player"
 path = "src/main.rs"
 
-# Browser entry for the web spike (#95): `trunk serve` in this directory.
+# The player in a browser (#99): `trunk serve` in this directory.
 [[bin]]
 name = "flint-web"
 path = "src/bin/flint_web.rs"
+
+# The web shim check (#100): `trunk serve shims.html`.
+[[bin]]
+name = "flint-web-shims"
+path = "src/bin/flint_web_shims.rs"
 
 [features]
 default = ["debug-hud"]
@@ -30,6 +35,7 @@ debug-hud = ["dep:flint-debug-ui"]
 profile = ["profiling/profile-with-tracy", "dep:tracy-client"]
 
 [dependencies]
+web-time = { workspace = true }
 flint-core = { workspace = true }
 flint-asset = { workspace = true }
 flint-schema = { workspace = true }
@@ -59,11 +65,9 @@ toml = { workspace = true }
 winit = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
-web-time = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 image = { workspace = true }
-dirs = { workspace = true }
 gilrs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -75,16 +79,20 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # egui-winit's default `clipboard` feature pulls arboard, which has no web
 # backend. Pinned here rather than inherited so its defaults can go.
 egui-winit = { version = "0.30.0", default-features = false }
-# Async startup (player_app/web_startup.rs) and the flint-web entry
-# (src/bin/flint_web.rs, index.html).
+# Async startup (player_app/web_startup.rs), the flint-web entry
+# (src/bin/flint_web.rs, index.html), the shim page (flint_web_shims.rs,
+# shims.html), and localStorage for user files (player_app/user_files.rs).
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "console", "Document", "Element", "HtmlCanvasElement", "Location",
-    "Performance", "Request", "Response", "UrlSearchParams", "Window",
+    "Performance", "Request", "Response", "Storage", "UrlSearchParams", "Window",
 ] }
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-winit = { workspace = true }
+# User input overrides live under the OS config directory; on the web they go
+# to localStorage instead (player_app/user_files.rs).
+dirs = { workspace = true }
