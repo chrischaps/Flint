@@ -4,7 +4,9 @@
 //! appropriate draw-list on `SceneRenderer`.
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
-use super::{hash_parts, transform_aabb, SceneRenderer, SkinnedDrawCall};
+use super::{
+    hash_parts, transform_aabb, CachedBoneBind, SceneRenderer, SkinnedDrawCall, SKINNED_DRAW_KEY,
+};
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
 use crate::pipeline::{BlendMode, MaterialUniforms, TransformUniforms};
@@ -19,6 +21,7 @@ use flint_core::toml_util::{toml_color as extract_color, toml_f32, toml_vec4};
 use flint_core::EntityId;
 use flint_ecs::DynamicComponents;
 use flint_ecs::FlintWorld;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 impl SceneRenderer {
@@ -172,7 +175,7 @@ impl SceneRenderer {
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
 
-        for gpu_mesh in skinned_meshes {
+        for (mesh_index, gpu_mesh) in skinned_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
                 view_proj: [[0.0; 4]; 4],
                 model: model_matrix,
@@ -231,34 +234,84 @@ impl SceneRenderer {
             material_uniforms.vertex_tint = Self::ecs_vertex_tint(world, entity_id);
             material_uniforms.has_emissive_tex = if has_em { 1 } else { 0 };
 
-            let (transform_buffer, transform_bind_group) =
-                Self::create_transform_bind(device, &self.pipeline, &transform_uniforms);
-            let (material_buffer, material_bind_group) = Self::create_material_bind_with_textures(
+            // Cached like a static model's binds (`cached_binds`), keyed
+            // the same way: uniforms plus texture identity.
+            let material_key = hash_parts(&[
+                bytemuck::bytes_of(&material_uniforms),
+                gpu_mesh
+                    .material
+                    .base_color_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .normal_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .metallic_roughness_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+                gpu_mesh
+                    .material
+                    .emissive_texture
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+            ]);
+            let key = (entity_id, SKINNED_DRAW_KEY | mesh_index as u32);
+            let binds = Self::cached_binds(
+                &mut self.draw_bind_cache,
+                self.extract_frame,
                 device,
                 &self.pipeline,
+                key,
+                &transform_uniforms,
                 &material_uniforms,
+                material_key,
                 bc_view,
                 nm_view,
                 mr_view,
                 em_view,
             );
+            let transform_buffer = binds.transform_buffer.clone();
+            let transform_bind_group = binds.transform_bind_group.clone();
+            let material_buffer = binds.material_buffer.clone();
+            let material_bind_group = binds.material_bind_group.clone();
 
-            let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &self
-                    .skinned_pipeline
-                    .as_ref()
-                    .unwrap()
-                    .bone_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self
-                        .entity_bone_buffers
-                        .get(&entity_id)
-                        .unwrap_or(&gpu_mesh.bone_buffer)
-                        .as_entire_binding(),
-                }],
-                label: Some("Skinned Draw Bone Bind Group"),
-            });
+            let entity_bones = self.entity_bone_buffers.get(&entity_id);
+            let from_entity = entity_bones.is_some();
+            let bone_layout = &self
+                .skinned_pipeline
+                .as_ref()
+                .unwrap()
+                .bone_bind_group_layout;
+            let stale = self
+                .skinned_bone_binds
+                .get(&key)
+                .is_none_or(|b| b.from_entity != from_entity);
+            if stale {
+                let bind_group = Self::create_bone_bind(
+                    device,
+                    bone_layout,
+                    entity_bones.unwrap_or(&gpu_mesh.bone_buffer),
+                );
+                self.skinned_bone_binds.insert(
+                    key,
+                    CachedBoneBind {
+                        from_entity,
+                        bind_group: Arc::new(bind_group),
+                        touched: 0,
+                    },
+                );
+            }
+            let bone = self.skinned_bone_binds.get_mut(&key).unwrap();
+            bone.touched = self.extract_frame;
+            let bone_bind_group = bone.bind_group.clone();
 
             // Check transparency from glTF material and ECS material component
             let gltf_alpha = gpu_mesh.material.base_color[3];
@@ -309,8 +362,8 @@ impl SceneRenderer {
             };
 
             let skinned_draw = SkinnedDrawCall {
-                vertex_buffer: gpu_mesh.create_vertex_buffer_copy(device),
-                index_buffer: gpu_mesh.create_index_buffer_copy(device),
+                vertex_buffer: gpu_mesh.vertex_buffer.clone(),
+                index_buffer: gpu_mesh.index_buffer.clone(),
                 index_count: gpu_mesh.index_count,
                 transform_buffer,
                 transform_bind_group,

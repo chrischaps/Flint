@@ -244,7 +244,7 @@ impl SceneRenderer {
 
                 for draw in self.skinned_entity_draws.iter().filter(|d| d.casts_shadow) {
                     bind_next(&mut pass, &mut next_slot);
-                    pass.set_bind_group(1, &draw.bone_bind_group, &[]);
+                    pass.set_bind_group(1, &*draw.bone_bind_group, &[]);
                     pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..draw.index_count, 0, 0..1);
@@ -837,8 +837,8 @@ impl SceneRenderer {
             let Some(wire_ib) = &draw.wire_index_buffer else {
                 continue;
             };
-            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-            render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+            render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+            render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
             render_pass.set_index_buffer(wire_ib.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..draw.wire_index_count, 0, 0..1);
@@ -873,8 +873,8 @@ impl SceneRenderer {
                     .chain(self.transparent_skinned_draws.iter())
                 {
                     if draw.entity_id == Some(sel_id) {
-                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                        render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
                         render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
                             draw.index_buffer.slice(..),
@@ -909,8 +909,8 @@ impl SceneRenderer {
                     .chain(self.transparent_skinned_draws.iter())
                 {
                     if draw.entity_id == Some(sel_id) {
-                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                        render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
                         render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
                             draw.index_buffer.slice(..),
@@ -1100,8 +1100,8 @@ impl SceneRenderer {
                         .chain(self.transparent_skinned_draws.iter())
                     {
                         if draw.entity_id == Some(sel_id) {
-                            render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                            render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                            render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                            render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
                             render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                             render_pass.set_index_buffer(
                                 draw.index_buffer.slice(..),
@@ -1118,10 +1118,10 @@ impl SceneRenderer {
                 if !self.skinned_entity_draws.is_empty() {
                     render_pass.set_pipeline(&sp.pipeline);
                     for draw in &self.skinned_entity_draws {
-                        render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                        render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                        render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                         // Light bind group 2 is already set
-                        render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
                         render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(
                             draw.index_buffer.slice(..),
@@ -1229,10 +1229,10 @@ impl SceneRenderer {
                         crate::pipeline::BlendMode::Additive => &sp.transparent_additive_pipeline,
                         crate::pipeline::BlendMode::Multiply => &sp.transparent_multiply_pipeline,
                     };
-                    render_pass.set_bind_group(0, &draw.transform_bind_group, &[]);
-                    render_pass.set_bind_group(1, &draw.material_bind_group, &[]);
+                    render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                    render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &self.light_bind_group, &[]);
-                    render_pass.set_bind_group(3, &draw.bone_bind_group, &[]);
+                    render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
                     render_pass
                         .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
