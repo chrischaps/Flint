@@ -195,6 +195,7 @@ impl ScriptSync {
 /// Snapshot every `.rhai` file under `lib` (recursively) with its mtime.
 /// Empty when the folder does not exist. Hot reload watches the disk, so
 /// this stays on `std::fs`.
+#[allow(clippy::disallowed_methods)] // hot reload polls the disk; native only (#97)
 fn scan_lib(lib: &Path) -> HashMap<PathBuf, SystemTime> {
     fn walk(dir: &Path, out: &mut HashMap<PathBuf, SystemTime>) {
         let Ok(entries) = std::fs::read_dir(dir) else {

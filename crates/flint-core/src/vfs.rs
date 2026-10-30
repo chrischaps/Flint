@@ -72,6 +72,8 @@ pub trait FileSource: Send + Sync {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DiskSource;
 
+// The one place the runtime may touch `std::fs` for reading.
+#[allow(clippy::disallowed_methods)]
 impl FileSource for DiskSource {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         std::fs::read(path)

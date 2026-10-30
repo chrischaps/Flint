@@ -4,7 +4,8 @@
 # Builds flint-player and every workspace crate it links for
 # wasm32-unknown-unknown, the way cargo check does, and denies the std calls
 # that compile there but panic at run time (scripts/wasm-clippy/clippy.toml:
-# Instant::now, SystemTime::now and their elapsed()). Every other clippy lint
+# Instant::now, SystemTime::now and their elapsed(), and the std::fs reads that
+# must go through flint_core::vfs, #97). Every other clippy lint
 # is off here; the native `cargo clippy` is untouched.
 #
 #   scripts/wasm-check.sh        what CI's wasm job runs (.github/workflows/ci.yml)

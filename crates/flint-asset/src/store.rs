@@ -20,7 +20,9 @@ impl ContentStore {
         }
     }
 
-    /// Store a file and return its content hash
+    /// Store a file and return its content hash. A write to the local disk,
+    /// so it checks the disk for an existing copy, not the vfs.
+    #[allow(clippy::disallowed_methods)] // writes stay native (#97)
     pub fn store<P: AsRef<Path>>(&self, source_path: P) -> Result<ContentHash> {
         let source = source_path.as_ref();
         let hash = ContentHash::from_file(source)
