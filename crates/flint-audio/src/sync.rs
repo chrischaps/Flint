@@ -1,10 +1,11 @@
-//! Synchronization between FlintWorld audio_source components and Kira spatial tracks
+//! Synchronization between FlintWorld audio_source components and Kira sounds
 //!
 //! Follows the same pattern as PhysicsSync: discovers entities with audio components,
-//! creates Kira tracks, and updates positions each frame.
+//! starts their sounds, and steers placed ones to the listener each frame.
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
-use crate::engine::{amplitude_to_db, AudioEngine, Bus};
+use crate::engine::{amplitude_to_db, AudioEngine, Bus, FRAME_TWEEN};
+use crate::pan::{volume_and_pan, Ears, Falloff};
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
@@ -15,16 +16,21 @@ use kira::Tween;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-/// Per-entity audio state: spatial track handle + active sound handles + cached parameters
+/// Per-entity audio state for a placed sound: its sound handles, cached
+/// parameters and where it is
 struct SpatialEntry {
-    track: SpatialTrackHandle,
+    /// Its own kira spatial track (`?mix=old`). Without one, its sounds are
+    /// panned voices on the bus that [`AudioSync::pan_sources`] steers.
+    track: Option<SpatialTrackHandle>,
     handles: Vec<StaticSoundHandle>,
     last_volume: f64,
     last_pitch: f64,
     looping: bool,
-    /// Where the track was last put, and the distance it falls silent at
+    /// Where it was last put, and how it falls off with distance
     position: Vec3,
-    max_distance: f32,
+    falloff: Falloff,
+    /// The amplitude and pan last sent to a panned voice
+    sent: (f32, f32),
     /// Paused because nobody can hear it (#138)
     culled: bool,
 }
@@ -45,7 +51,7 @@ pub const SILENT_VOLUME: f64 = 0.001;
 
 /// A spatial loop pauses once the listener is this share past its
 /// `max_distance`, and resumes inside [`RESUME_REACH`] of it, so walking
-/// along the edge doesn't flutter it on and off. At `max` it's -60 dB, so it
+/// along the edge doesn't flutter it on and off. At `max` it's silent, so it
 /// is back before it can be heard.
 pub const CULL_REACH: f32 = 1.1;
 pub const RESUME_REACH: f32 = 1.05;
@@ -60,7 +66,10 @@ const CULL_TWEEN: Tween = Tween {
     start_time: kira::StartTime::Immediate,
 };
 
-/// Tracks which entities have been synced to Kira and holds their spatial track handles
+/// A panned voice's amplitude or pan has to move this much to be sent again.
+const PAN_EPSILON: f32 = 1e-3;
+
+/// Tracks which entities have been synced to Kira and holds their sound handles
 #[derive(Default)]
 pub struct AudioSync {
     /// EntityId → spatial audio entry for 3D-positioned sounds
@@ -72,6 +81,9 @@ pub struct AudioSync {
     /// Autoplay sources that found their sound not yet loaded (a late
     /// bundle, a decode queue) and are waiting for it.
     waiting: HashSet<EntityId>,
+    /// Mix as before #138 (the web's `?mix=old`): every loop on, heard or
+    /// not, and new placed sources on kira spatial tracks
+    old_mix: bool,
 }
 
 /// Smooth tween duration for parameter changes (avoids clicks)
@@ -88,7 +100,15 @@ impl AudioSync {
             non_spatial_map: HashMap::new(),
             synced_entities: HashSet::new(),
             waiting: HashSet::new(),
+            old_mix: false,
         }
+    }
+
+    /// Mix as before #138, for comparing: [`cull_inaudible`](Self::cull_inaudible)
+    /// resumes what it paused and pauses nothing more, and sources synced
+    /// from now on get kira spatial tracks.
+    pub fn set_old_mix(&mut self, old: bool) {
+        self.old_mix = old;
     }
 
     /// Clear all sync state for a scene transition.
@@ -115,7 +135,7 @@ impl AudioSync {
         self.waiting.clear();
     }
 
-    /// Discover entities with `audio_source` components and create Kira tracks
+    /// Discover entities with `audio_source` components and start their sounds
     pub fn sync_new_sources(&mut self, world: &FlintWorld, engine: &mut AudioEngine) {
         if !engine.is_available() {
             return;
@@ -184,7 +204,9 @@ impl AudioSync {
             }
 
             if spatial {
-                let transform = world.get_transform(entity_id).unwrap_or_default();
+                let position = world
+                    .get_world_position(entity_id)
+                    .unwrap_or_else(|| world.get_transform(entity_id).unwrap_or_default().position);
 
                 let min_distance = audio_data
                     .get("min_distance")
@@ -196,40 +218,53 @@ impl AudioSync {
                     .and_then(toml_f32)
                     .unwrap_or(25.0);
 
-                match engine.create_spatial_track(
-                    transform.position,
-                    min_distance,
-                    max_distance,
-                    bus,
-                ) {
-                    Ok(mut track) => {
-                        let mut handles = Vec::new();
-                        if autoplay && engine.has_sound(file) {
-                            match engine
-                                .play_on_spatial_track(file, &mut track, volume, pitch, looping)
-                            {
-                                Ok(handle) => handles.push(handle),
-                                Err(e) => tracing::warn!("Failed to play '{}': {:?}", file, e),
+                let falloff = Falloff {
+                    min: min_distance,
+                    max: max_distance,
+                    rolloff: crate::engine::DEFAULT_ROLLOFF,
+                };
+                let mut entry = SpatialEntry {
+                    track: None,
+                    handles: Vec::new(),
+                    last_volume: volume,
+                    last_pitch: pitch,
+                    looping,
+                    position,
+                    falloff,
+                    sent: (0.0, 0.0),
+                    culled: false,
+                };
+                if self.old_mix {
+                    match engine.create_spatial_track(position, min_distance, max_distance, bus) {
+                        Ok(mut track) => {
+                            if autoplay {
+                                match engine
+                                    .play_on_spatial_track(file, &mut track, volume, pitch, looping)
+                                {
+                                    Ok(handle) => entry.handles.push(handle),
+                                    Err(e) => tracing::warn!("Failed to play '{}': {:?}", file, e),
+                                }
                             }
+                            entry.track = Some(track);
                         }
-                        self.spatial_map.insert(
-                            entity_id,
-                            SpatialEntry {
-                                track,
-                                handles,
-                                last_volume: volume,
-                                last_pitch: pitch,
-                                looping,
-                                position: transform.position,
-                                max_distance,
-                                culled: false,
-                            },
-                        );
+                        Err(e) => {
+                            tracing::warn!("Failed to create spatial track: {:?}", e);
+                            continue;
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to create spatial track: {:?}", e);
+                } else if autoplay {
+                    let (gain, pan) =
+                        volume_and_pan(engine.ears().gains(to_glam_vec3(position), &falloff));
+                    let amplitude = volume as f32 * gain;
+                    match engine.play_panned(file, amplitude as f64, pan, pitch, looping, bus) {
+                        Ok(handle) => {
+                            entry.handles.push(handle);
+                            entry.sent = (amplitude, pan);
+                        }
+                        Err(e) => tracing::warn!("Failed to play '{}': {:?}", file, e),
                     }
                 }
+                self.spatial_map.insert(entity_id, entry);
             } else {
                 // Non-spatial: play directly on the main track
                 let mut handles = Vec::new();
@@ -257,7 +292,7 @@ impl AudioSync {
         }
     }
 
-    /// Update spatial track positions for entities that have moved
+    /// Update spatial positions for entities that have moved
     pub fn update_positions(&mut self, world: &FlintWorld) {
         let tween = Tween {
             duration: Duration::ZERO,
@@ -272,8 +307,35 @@ impl AudioSync {
             };
 
             entry.position = position;
-            let pos = to_glam_vec3(position);
-            entry.track.set_position(pos, tween);
+            if let Some(track) = &mut entry.track {
+                track.set_position(to_glam_vec3(position), tween);
+            }
+        }
+    }
+
+    /// Steer placed sources' panned voices to the listener: each one's
+    /// volume and pan from its distance and side, as kira's spatial track
+    /// would work them out per sample (#138, [`crate::pan`]). Call after
+    /// [`update_parameters`](Self::update_parameters) and
+    /// [`cull_inaudible`](Self::cull_inaudible).
+    pub fn pan_sources(&mut self, ears: &Ears) {
+        for entry in self.spatial_map.values_mut() {
+            if entry.track.is_some() || entry.culled || entry.handles.is_empty() {
+                continue;
+            }
+            let (gain, pan) =
+                volume_and_pan(ears.gains(to_glam_vec3(entry.position), &entry.falloff));
+            let amplitude = entry.last_volume as f32 * gain;
+            if (amplitude - entry.sent.0).abs() < PAN_EPSILON
+                && (pan - entry.sent.1).abs() < PAN_EPSILON
+            {
+                continue;
+            }
+            for handle in &mut entry.handles {
+                handle.set_volume(amplitude_to_db(amplitude as f64), FRAME_TWEEN);
+                handle.set_panning(kira::Panning(pan), FRAME_TWEEN);
+            }
+            entry.sent = (amplitude, pan);
         }
     }
 
@@ -281,7 +343,7 @@ impl AudioSync {
     /// can (#138): a spatial loop past its `max_distance` from `listener`,
     /// and any loop at volume 0 (Float starts its songs, weather beds and
     /// wash loops that way and only ever fades them). kira skips a paused
-    /// track's sounds and spatialisation, and a paused sound's resampling.
+    /// sound's resampling, and a paused track's sounds and spatialisation.
     /// Call after [`update_positions`](Self::update_positions) and
     /// [`update_parameters`](Self::update_parameters).
     pub fn cull_inaudible(&mut self, listener: Option<Vec3>) {
@@ -294,14 +356,22 @@ impl AudioSync {
             } else {
                 CULL_REACH
             };
-            let far = listener
-                .is_some_and(|l| (l - entry.position).length() > entry.max_distance * reach);
-            let cull = far || entry.last_volume <= SILENT_VOLUME;
+            let far =
+                listener.is_some_and(|l| (l - entry.position).length() > entry.falloff.max * reach);
+            let cull = !self.old_mix && (far || entry.last_volume <= SILENT_VOLUME);
             if cull != entry.culled {
-                if cull {
-                    entry.track.pause(CULL_TWEEN);
-                } else {
-                    entry.track.resume(CULL_TWEEN);
+                match &mut entry.track {
+                    Some(track) if cull => track.pause(CULL_TWEEN),
+                    Some(track) => track.resume(CULL_TWEEN),
+                    None => {
+                        for handle in &mut entry.handles {
+                            if cull {
+                                handle.pause(CULL_TWEEN);
+                            } else {
+                                handle.resume(CULL_TWEEN);
+                            }
+                        }
+                    }
                 }
                 entry.culled = cull;
             }
@@ -310,7 +380,7 @@ impl AudioSync {
             if !entry.looping || entry.handles.is_empty() {
                 continue;
             }
-            let cull = entry.last_volume <= SILENT_VOLUME;
+            let cull = !self.old_mix && entry.last_volume <= SILENT_VOLUME;
             if cull != entry.culled {
                 for handle in &mut entry.handles {
                     if cull {
@@ -324,12 +394,18 @@ impl AudioSync {
         }
     }
 
-    /// Mark the `audio_source`s' paused tracks and voices in `counts`,
-    /// which [`AudioEngine::mix_counts`] filled with everything kira holds.
+    /// Add the `audio_source`s' share to `counts`, which
+    /// [`AudioEngine::mix_counts`] filled from the buses: the voices on
+    /// their own spatial tracks (`?mix=old`), which a bus doesn't count as
+    /// its sounds, and which tracks and voices are paused.
     pub fn add_mix_counts(&self, counts: &mut crate::engine::MixCounts) {
-        for entry in self.spatial_map.values().filter(|e| e.culled) {
-            counts.paused_tracks += 1;
-            counts.paused_voices += entry.track.num_sounds();
+        for entry in self.spatial_map.values() {
+            let on_track = entry.track.as_ref().map_or(0, |t| t.num_sounds());
+            counts.voices += on_track;
+            if entry.culled {
+                counts.paused_voices += entry.handles.len();
+                counts.paused_tracks += usize::from(entry.track.is_some());
+            }
         }
         for entry in self.non_spatial_map.values().filter(|e| e.culled) {
             counts.paused_voices += entry.handles.len();
@@ -342,13 +418,15 @@ impl AudioSync {
             + self.non_spatial_map.values().filter(|e| e.culled).count()
     }
 
-    /// Read audio_source pitch/volume from ECS and push changes to Kira sound handles
+    /// Read audio_source pitch/volume from ECS and push changes to Kira sound
+    /// handles. A panned source's volume goes out with its pan, from
+    /// [`pan_sources`](Self::pan_sources).
     pub fn update_parameters(&mut self, world: &FlintWorld) {
         // Update spatial entries
         for (entity_id, entry) in &mut self.spatial_map {
             let (volume, pitch) = read_audio_params(world, *entity_id);
 
-            let vol_changed = (volume - entry.last_volume).abs() > 0.001;
+            let vol_changed = entry.track.is_some() && (volume - entry.last_volume).abs() > 0.001;
             let pitch_changed = (pitch - entry.last_pitch).abs() > 0.001;
 
             if vol_changed || pitch_changed {
@@ -360,9 +438,9 @@ impl AudioSync {
                         handle.set_playback_rate(kira::PlaybackRate(pitch), PARAM_TWEEN);
                     }
                 }
-                entry.last_volume = volume;
-                entry.last_pitch = pitch;
             }
+            entry.last_volume = volume;
+            entry.last_pitch = pitch;
         }
 
         // Update non-spatial entries
@@ -392,7 +470,7 @@ impl AudioSync {
         self.synced_entities.contains(&entity_id)
     }
 
-    /// Number of spatial tracks currently active
+    /// Number of placed (spatial) sources synced
     pub fn spatial_track_count(&self) -> usize {
         self.spatial_map.len()
     }
@@ -495,8 +573,8 @@ mod tests {
 
     /// A world with a far spatial loop, a near one at volume 0, a near
     /// audible one and a silent non-spatial bed, synced on a real device.
-    /// `None` where there's no audio device (CI).
-    fn culling_scene() -> Option<(FlintWorld, AudioSync, AudioEngine, [EntityId; 4])> {
+    /// `None` where there's no audio device (CI). `old` mixes as before #138.
+    fn culling_scene(old: bool) -> Option<(FlintWorld, AudioSync, AudioEngine, [EntityId; 4])> {
         let mut engine = AudioEngine::new();
         if !engine.is_available() {
             eprintln!("no audio device: culling test skipped");
@@ -531,6 +609,8 @@ mod tests {
         let near = spawn("near", [3.0, 0.0, 0.0], 0.8, true);
         let bed = spawn("bed", [0.0, 0.0, 0.0], 0.0, false);
         let mut sync = AudioSync::new();
+        engine.set_old_mix(old);
+        sync.set_old_mix(old);
         sync.sync_new_sources(&world, &mut engine);
         sync.update_positions(&world);
         Some((world, sync, engine, [far, quiet, near, bed]))
@@ -538,7 +618,8 @@ mod tests {
 
     #[test]
     fn loops_nobody_can_hear_pause_and_come_back() {
-        let Some((mut world, mut sync, engine, [far, quiet, near, _bed])) = culling_scene() else {
+        let Some((mut world, mut sync, engine, [far, quiet, near, _bed])) = culling_scene(false)
+        else {
             return;
         };
         let culled = |s: &AudioSync, id| {
@@ -555,7 +636,14 @@ mod tests {
         assert_eq!(sync.culled_count(), 3);
         let mut counts = engine.mix_counts().unwrap();
         sync.add_mix_counts(&mut counts);
-        assert_eq!((counts.paused_tracks, counts.paused_voices), (2, 3));
+        // Placed sources are panned voices now, not tracks.
+        assert_eq!((counts.tracks, counts.paused_tracks), (0, 0));
+        assert_eq!((counts.voices, counts.paused_voices), (4, 3));
+
+        // The near one, 3 m to the listener's right, is steered right.
+        sync.pan_sources(&engine.ears());
+        let (amplitude, pan) = sync.spatial_map[&near].sent;
+        assert!(amplitude > 0.3 && pan > 0.5, "{amplitude} {pan}");
 
         // Fading the quiet one up brings it back...
         world
@@ -582,6 +670,21 @@ mod tests {
         );
         sync.cull_inaudible(listener(40.0 - 12.0 * 1.2));
         assert!(culled(&sync, far));
+    }
+
+    #[test]
+    fn the_old_mix_puts_placed_sources_on_tracks_and_pauses_nothing() {
+        let Some((_world, mut sync, engine, _)) = culling_scene(true) else {
+            return;
+        };
+        sync.cull_inaudible(engine.listener_position());
+        assert_eq!(sync.culled_count(), 0);
+        let mut counts = engine.mix_counts().unwrap();
+        sync.add_mix_counts(&mut counts);
+        assert_eq!(
+            (counts.tracks, counts.voices, counts.paused_voices),
+            (3, 4, 0)
+        );
     }
 
     #[test]

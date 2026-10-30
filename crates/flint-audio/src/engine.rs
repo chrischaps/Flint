@@ -4,6 +4,7 @@
 //! Degrades gracefully when no audio device is available.
 
 use crate::decode::{DecodeQueue, Need};
+use crate::pan::{volume_and_pan, Ears, Falloff};
 use flint_core::{vfs, Result, Vec3};
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
@@ -59,6 +60,13 @@ pub const MAX_ONESHOTS_PER_SOUND: usize = 4;
 
 /// The fade a stolen one-shot stops with.
 pub const STEAL_FADE: Duration = Duration::from_millis(50);
+
+/// A placed sound's gains change over a frame, so a step is never heard.
+pub(crate) const FRAME_TWEEN: Tween = Tween {
+    duration: Duration::from_millis(16),
+    easing: Easing::Linear,
+    start_time: kira::StartTime::Immediate,
+};
 
 /// What the mixer is doing, for the perf readout (#138): the sounds and
 /// spatial tracks kira holds, and how many of each are paused because
@@ -137,20 +145,28 @@ pub struct AudioEngine {
     /// SFX mixer bus (sub-track of main); all spatial tracks hang off this
     /// or the music bus rather than the main track directly
     sfx_bus: Option<TrackHandle>,
-    /// Keeps spatial track + sound handles alive until one-shot sounds
-    /// finish, oldest first
-    oneshot_tracks: Vec<OneShot>,
-    /// Where the listener was last put, to skip one-shots out of earshot
+    /// Placed one-shots that are playing, oldest first
+    oneshots: Vec<OneShot>,
+    /// Where the listener was last put and which way it faces
     listener_position: Option<Vec3>,
+    listener_orientation: glam::Quat,
     skipped_oneshots: u64,
     stolen_oneshots: u64,
+    /// Mix as before #138 (the web's `?mix=old`): every one-shot on a kira
+    /// spatial track, none skipped or stolen
+    old_mix: bool,
 }
 
 /// A placed one-shot that is playing, and the sound it plays.
 struct OneShot {
     sound: String,
-    track: SpatialTrackHandle,
     handle: StaticSoundHandle,
+    /// Its own kira spatial track (`?mix=old`); without one it's a panned
+    /// voice on its bus that [`AudioEngine::pan_oneshots`] steers
+    track: Option<SpatialTrackHandle>,
+    position: Vec3,
+    falloff: Falloff,
+    volume: f64,
     /// Stopped to make room. The handle says `Playing` until the audio
     /// thread reads the stop, which may be a buffer away.
     stolen: bool,
@@ -201,10 +217,12 @@ impl AudioEngine {
             buffer_frames: crate::web::WebAudioSettings::default().buffer_frames,
             music_bus: None,
             sfx_bus: None,
-            oneshot_tracks: Vec::new(),
+            oneshots: Vec::new(),
             listener_position: None,
+            listener_orientation: glam::Quat::IDENTITY,
             skipped_oneshots: 0,
             stolen_oneshots: 0,
+            old_mix: false,
         }
     }
 
@@ -497,6 +515,17 @@ impl AudioEngine {
         self.listener_position
     }
 
+    /// The listener's ears, for working out a placed sound's gains
+    /// ([`crate::pan`]). Before there is a listener, where `AudioSystem`
+    /// first puts it.
+    pub fn ears(&self) -> Ears {
+        let p = self.listener_position.unwrap_or(Vec3::new(0.0, 1.0, 0.0));
+        Ears {
+            position: to_glam_vec3(p),
+            orientation: self.listener_orientation,
+        }
+    }
+
     /// Whether the listener has been created
     pub fn has_listener(&self) -> bool {
         self.listener.is_some()
@@ -508,9 +537,10 @@ impl AudioEngine {
             return;
         };
 
-        self.listener_position = Some(position);
         let pos = to_glam_vec3(position);
         let orientation = glam::Quat::from_euler(glam::EulerRot::YXZ, -yaw, -pitch, 0.0);
+        self.listener_position = Some(position);
+        self.listener_orientation = orientation;
 
         let tween = Tween {
             duration: Duration::ZERO,
@@ -621,6 +651,21 @@ impl AudioEngine {
         looping: bool,
         bus: Bus,
     ) -> Result<StaticSoundHandle> {
+        self.play_panned(sound_name, volume, 0.0, pitch, looping, bus)
+    }
+
+    /// Play a cached sound on a mixer bus, panned (kira's `Panning`: -1
+    /// left, 1 right, at constant power). A placed sound plays this way
+    /// with its gains from [`crate::pan`], steered every frame.
+    pub fn play_panned(
+        &mut self,
+        sound_name: &str,
+        volume: f64,
+        pan: f32,
+        pitch: f64,
+        looping: bool,
+        bus: Bus,
+    ) -> Result<StaticSoundHandle> {
         if self.manager.is_none() {
             return Err(flint_core::FlintError::AudioError("No audio device".into()));
         }
@@ -636,7 +681,8 @@ impl AudioEngine {
 
         let mut data = sound_data
             .volume(amplitude_to_db(volume * self.master_volume))
-            .playback_rate(kira::PlaybackRate(pitch));
+            .playback_rate(kira::PlaybackRate(pitch))
+            .panning(kira::Panning(pan));
 
         if looping {
             data = data.loop_region(..);
@@ -657,8 +703,8 @@ impl AudioEngine {
         Ok(handle)
     }
 
-    /// Play a one-shot sound at a 3D position (creates a temporary spatial track).
-    /// The track and sound handles are kept alive until the sound finishes playing.
+    /// Play a one-shot sound at a 3D position. Its handle is kept until the
+    /// sound finishes playing.
     pub fn play_at_position(
         &mut self,
         sound_name: &str,
@@ -693,22 +739,66 @@ impl AudioEngine {
         bus: Bus,
     ) -> Result<()> {
         self.ensure_decoded(sound_name)?;
-        // Past `max` the track would mix it at -60 dB: as good as silence,
-        // at the full price of a voice and a spatial track.
-        if self.is_out_of_earshot(position, distances.1) {
-            self.skipped_oneshots += 1;
-            return Ok(());
-        }
-        let mut track = self.create_spatial_track_with(position, distances, rolloff, bus)?;
-        let handle = self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
-        self.steal_beyond_cap(sound_name);
-        self.oneshot_tracks.push(OneShot {
+        let falloff = Falloff {
+            min: distances.0,
+            max: distances.1,
+            rolloff,
+        };
+        let (track, handle) = if self.old_mix {
+            let mut track = self.create_spatial_track_with(position, distances, rolloff, bus)?;
+            let handle =
+                self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
+            (Some(track), handle)
+        } else {
+            // Past `max` it would be mixed in silence, at the full price
+            // of a voice.
+            if self.is_out_of_earshot(position, distances.1) {
+                self.skipped_oneshots += 1;
+                return Ok(());
+            }
+            if self.manager.is_none() {
+                return Err(flint_core::FlintError::AudioError("No audio device".into()));
+            }
+            let (gain, pan) = volume_and_pan(self.ears().gains(to_glam_vec3(position), &falloff));
+            let handle =
+                self.play_panned(sound_name, volume * gain as f64, pan, pitch, false, bus)?;
+            self.steal_beyond_cap(sound_name);
+            (None, handle)
+        };
+        self.oneshots.push(OneShot {
             sound: sound_name.to_string(),
-            track,
             handle,
+            track,
+            position,
+            falloff,
+            volume,
             stolen: false,
         });
         Ok(())
+    }
+
+    /// Steer placed one-shots to where the listener is now. Call once a
+    /// frame, after [`update_listener`](Self::update_listener).
+    pub fn pan_oneshots(&mut self) {
+        let ears = self.ears();
+        for o in self.oneshots.iter_mut().filter(|o| o.track.is_none()) {
+            let (gain, pan) = volume_and_pan(ears.gains(to_glam_vec3(o.position), &o.falloff));
+            o.handle
+                .set_volume(amplitude_to_db(o.volume * gain as f64), FRAME_TWEEN);
+            o.handle.set_panning(kira::Panning(pan), FRAME_TWEEN);
+        }
+    }
+
+    /// Mix as before #138, for comparing (the web's `?mix=old`): placed
+    /// one-shots on kira spatial tracks, none skipped or stolen. Sounds
+    /// already playing keep the way they started.
+    pub fn set_old_mix(&mut self, old: bool) {
+        self.old_mix = old;
+    }
+
+    /// Whether [`set_old_mix`](Self::set_old_mix) is on.
+    pub fn old_mix(&self) -> bool {
+        self.old_mix
     }
 
     /// Whether a sound at `position` that falls silent at `max_distance`
@@ -722,7 +812,7 @@ impl AudioEngine {
     /// [`MAX_ONESHOTS_PER_SOUND`]. Ones already stopping don't count.
     fn steal_beyond_cap(&mut self, sound: &str) {
         let mut playing: Vec<&mut OneShot> = self
-            .oneshot_tracks
+            .oneshots
             .iter_mut()
             .filter(|o| o.sound == sound && o.is_sounding())
             .collect();
@@ -739,7 +829,7 @@ impl AudioEngine {
 
     /// Remove finished one-shot spatial sounds. Call once per frame.
     pub fn cleanup_finished_oneshots(&mut self) {
-        self.oneshot_tracks
+        self.oneshots
             .retain(|o| o.handle.state() != kira::sound::PlaybackState::Stopped);
     }
 
@@ -759,16 +849,21 @@ impl AudioEngine {
             counts.tracks += bus.num_sub_tracks();
         }
         counts.voices += self
-            .oneshot_tracks
+            .oneshots
             .iter()
-            .map(|o| o.track.num_sounds())
+            .filter_map(|o| o.track.as_ref())
+            .map(|t| t.num_sounds())
             .sum::<usize>();
         Some(counts)
     }
 
-    /// Drop all one-shot spatial handles (for scene transitions).
+    /// Stop and drop every placed one-shot (for scene transitions). One on
+    /// its own track stopped with it; a panned one needs telling.
     pub fn clear_oneshots(&mut self) {
-        self.oneshot_tracks.clear();
+        for o in &mut self.oneshots {
+            o.handle.stop(FRAME_TWEEN);
+        }
+        self.oneshots.clear();
     }
 
     /// Check if a sound is already loaded
@@ -957,13 +1052,13 @@ mod tests {
         };
 
         play(&mut engine, "creak", 30.0);
-        assert_eq!(engine.oneshot_tracks.len(), 0, "past max: never started");
+        assert_eq!(engine.oneshots.len(), 0, "past max: never started");
         for _ in 0..6 {
             play(&mut engine, "creak", 2.0);
         }
         play(&mut engine, "drip", 2.0);
         let sounding = |e: &AudioEngine, name: &str| {
-            e.oneshot_tracks
+            e.oneshots
                 .iter()
                 .filter(|o| o.sound == name && o.is_sounding())
                 .count()
@@ -973,7 +1068,7 @@ mod tests {
         let counts = engine.mix_counts().unwrap();
         assert_eq!((counts.skipped_oneshots, counts.stolen_oneshots), (1, 2));
         // The two stolen creaks still hold their tracks while they fade.
-        assert_eq!(engine.oneshot_tracks.len(), 7);
+        assert_eq!(engine.oneshots.len(), 7);
     }
 
     #[test]

@@ -9,6 +9,7 @@
 pub mod decode;
 pub mod engine;
 pub mod meter;
+pub mod pan;
 pub mod sync;
 pub mod trigger;
 #[cfg(target_arch = "wasm32")]
@@ -89,6 +90,17 @@ impl AudioSystem {
         let mut counts = self.engine.mix_counts()?;
         self.sync.add_mix_counts(&mut counts);
         Some(counts)
+    }
+
+    /// Mix as before #138, to compare against (the web's `?mix=old`):
+    /// placed sounds on kira spatial tracks, and every sound mixed whether
+    /// anyone can hear it or not. Off by default, which is the lean mix:
+    /// placed sounds as panned voices, loops out of earshot or at volume 0
+    /// paused, one-shots out of earshot skipped and a sound's fifth
+    /// one-shot stealing its oldest. Set it before the scene's sounds start.
+    pub fn set_old_mix(&mut self, old: bool) {
+        self.engine.set_old_mix(old);
+        self.sync.set_old_mix(old);
     }
 
     /// Set a mixer bus volume (linear amplitude; 0.0 mutes the bus)
@@ -173,6 +185,11 @@ impl RuntimeSystem for AudioSystem {
 
         // Pause loops nobody can hear: out of earshot, or at volume 0
         self.sync.cull_inaudible(self.engine.listener_position());
+
+        // Steer placed sounds to the listener, once a frame (#138)
+        let ears = self.engine.ears();
+        self.sync.pan_sources(&ears);
+        self.engine.pan_oneshots();
 
         // Reload trigger rules for any new entities
         self.triggers.load_rules(world);
