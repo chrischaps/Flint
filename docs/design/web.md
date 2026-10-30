@@ -44,6 +44,7 @@ the query string instead of clap:
 |---|---|---|
 | `game=<id>` | | a game play.chaps.dev packed: the bundle at `games/<id>/<id>.flintpack` ([play.chaps.dev](#playchapsdev-103)). `bundle` wins over it |
 | `embed=1` | | the iframe view: the world and its Begin button, no wordmark, title or hints; the full-screen button only where the iframe allows it ([Full screen](#full-screen-135)) |
+| `fullscreen=0` | | start the gate's full screen switch off, which is otherwise on for a touch screen ([Full screen](#full-screen-135)) |
 | `webgpu=0` | | show the no-WebGPU film in any browser, to check it |
 | `bundle=<url>` | `--bundle` | a `.flintpack` from `flint bundle`, relative to the page. Its manifest names the scene and schemas; its late bundles are fetched beside it |
 | `scene=<url>` | `<scene>` | with `bundle`: a scene inside it instead of the manifest's. Without: a scene TOML fetched relative to the page. Default `scenes/web_first_light.scene.toml`, copied from `web/scenes/` by trunk |
@@ -634,6 +635,74 @@ same pixels give or take the scene showing through behind it. Float's
 halftone dots are a world-space grid, so they stay where they are; their
 antialiased edges are a scene pixel wide, so they're a little softer.
 
+## Touch (#132)
+
+A phone gets past Begin, and its fingers arrive as the engine's touches.
+
+**What winit gives.** winit 0.30's web backend turns every pointer event
+whose `pointerType` is `"touch"` into `WindowEvent::Touch`, never into a
+mouse event (`platform_impl/web/web_sys/pointer.rs`). `id` is the
+`pointerId`, so each finger keeps its own. `location` is the event's CSS
+offset times `devicePixelRatio`. It also `preventDefault`s `touchstart`
+on the canvas. `handle_touch` (`player_app/events.rs`) was already the
+consumer, and the first real touch turns off mouse-as-touch emulation.
+
+**The coordinate catch.** winit sizes the canvas from its
+`devicePixelContentBoxSize`, but it scales touches by `devicePixelRatio`.
+On a phone the two agree. Under Chrome's device emulation they don't: on
+this 150% desktop, an emulated DPR 3 page gets a 1.5x canvas (618x1373
+for 412x915 CSS), and fingers landed at twice their place, a tap at the
+middle reading (0.97 1.09). `PlayerApp::touch_to_surface` (`web_page.rs`)
+measures canvas pixels per winit pixel at each resize and puts every
+finger in the canvas's own pixels, the ones `InputState` divides by. The
+same artifact touches #122's table above: its "DPR 2 emulated" canvas
+was 1920x1080, 1.5 of the 1280x720 page, not 2.
+
+**The page** (`index.html`):
+- `touch-action: none`, `overscroll-behavior: none` and no selection or
+  callout on `html`/`body` while a game plays. The doorway's list and film
+  keep scrolling.
+- `viewport-fit=cover` with safe-area insets on the gate, the mark, the
+  relook line and the perf panel. The canvas is `100dvh`, so it follows a
+  phone's address bar.
+- Safari's `gesturestart` is cancelled, since `touch-action` doesn't stop
+  its pinch.
+- On a `(pointer: coarse)` page, the gate's line is the game's `touch`
+  entry in `games.toml`, or "sound on · a paired pad plays it all · touch
+  controls are coming". The Begin tap also asks for fullscreen, through
+  the gate's full screen switch, which starts on there
+  ([Full screen](#full-screen-135)); `?fullscreen=0` starts it off.
+  Android's Chrome grants it, and an iPhone has no element fullscreen.
+- Below 600 px wide (or 500 px tall), `?perf=1`'s panel is 9 px type and
+  36dvh tall, scrolled with a finger. At full size it covered Begin.
+
+**Pointer lock.** `web_page::touch_first()` is `(pointer: coarse)`, asked
+once. On such a page, Begin asks for no lock, and neither does
+`sync_pointer_lock` while the last input came from a finger. A laptop
+with a touchscreen has a fine main pointer, so it keeps mouse look.
+
+**Seeing it.** `?perf=1` adds `touch  3 down (0.24 0.25) (0.83 0.49)
+(0.53 0.86)` and `most 3 at once, 7 in all` once a finger has touched,
+and the copied line ends `touch most 3 of 7`.
+
+**Verified** (Chrome 156 over CDP with touch emulation, Float's bundle,
+release build; `Input.dispatchTouchEvent` fingers):
+
+| | DPR 3, 412x915 | DPR 1.5, 412x915 | desktop 1280x720 |
+|---|---|---|---|
+| Begin | tap lifts the gate, fullscreen granted | same | click; gate line unchanged |
+| pointer lock requests | 0 | 0 | 1, held |
+| one, two, three fingers | (0.24 0.25) (0.83 0.49) (0.53 0.86), as placed | same | |
+| swipe up, pinch 2.5x | scrollY 0, `visualViewport.scale` 1, no `pointercancel` | same | |
+
+Before the scale fix, the DPR 3 run read each finger at twice its place.
+
+**Not verified:** a real Android phone and an iPhone. Emulation can't
+show Safari's 100vh, its gesture events, or a real 3x canvas. Those runs
+need Chris and a phone (`?perf=1`, three fingers on the glass). Float's
+title still says "PRESS ANY KEY", and nothing in a game answers a finger
+yet: that is #133.
+
 ## Firefox's cadence (#121)
 
 Firefox 159 on Windows drew Float at p50 83.3 ms, five refreshes, with a
@@ -712,8 +781,8 @@ asks the browser for the whole screen, and where the browser can't give it
   starts the sound and locks the pointer. It starts on where the pointer is
   coarse (a phone or tablet) and off everywhere else, so a desktop player
   who just clicks Begin sees no change. The choice is kept in
-  `localStorage` (`flint.fullscreen`). Full screen takes the document
-  element, so the gate, the hints and the perf readout come along.
+  `localStorage` (`flint.fullscreen`); `?fullscreen=0` starts it off.
+  Full screen takes the document element, so the gate, the hints and the perf readout come along.
 - **A corner button**, bottom right (`#fullscreen`), enters and leaves at
   any time and follows `fullscreenchange`. It hides while the pointer is
   locked, since a locked pointer can't click it. If Escape has freed a
@@ -766,9 +835,9 @@ player changed.
 because its window wasn't focused while the desktop was in use ("The
 document is not focused"), so Firefox's ordering is unconfirmed. No real
 phone was tried: Chrome on Android, iPhone Safari and the installed
-home-screen page are still to be checked on devices. The emulated phone
-also takes the pointer lock on Begin; skipping the lock on touch is #132's.
-With `?perf=1` on a narrow phone, the readout covers Begin.
+home-screen page are still to be checked on devices. These runs predate
+#132, which since stopped a touch page asking for the pointer lock and
+shrank the perf readout on a phone.
 
 ## Async startup (#99)
 
