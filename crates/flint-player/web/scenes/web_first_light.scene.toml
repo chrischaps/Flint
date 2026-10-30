@@ -1,0 +1,191 @@
+# The scene a bare web page plays (#99). Everything here is the engine's
+# own geometry: a procedural sky, a Gerstner sea and boxes. It needs no
+# file beyond itself, so it draws before the vfs (#97) and game bundles
+# (#98) can bring models, textures and scripts to the browser.
+#
+# A small light on a rock at the hour the sun touches the water: the first
+# light Flint shows in a browser.
+
+[scene]
+name = "First Light"
+version = "1.0"
+description = "A lighthouse on a rock at golden hour, all procedural: the web player's default scene"
+
+[camera]
+position = [-15.0, 3.6, 21.0]
+target = [0.0, 3.4, 0.0]
+fov = 50.0
+
+[post_process]
+bloom_enabled = true
+bloom_intensity = 0.08
+bloom_threshold = 1.1
+exposure = 1.15
+vignette_enabled = true
+vignette_intensity = 0.32
+
+[environment]
+ambient_sky = [0.42, 0.40, 0.48]
+ambient_ground = [0.16, 0.12, 0.10]
+
+# --- Sky and sun: low in the west, warm ---
+
+[entities.sky]
+[entities.sky.sky]
+zenith_color = [0.14, 0.22, 0.46, 1.0]
+horizon_color = [0.98, 0.66, 0.42, 1.0]
+haze_color = [1.0, 0.74, 0.52, 0.75]
+cloud_tint = [1.0, 0.78, 0.66, 0.85]
+cloud_coverage = 0.38
+cloud_density = 0.3
+sun_disc_size = 0.04
+sun_glow = 1.8
+
+[entities.sun]
+[entities.sun.transform]
+position = [0, 30, 0]
+[entities.sun.directional_light]
+direction = [0.55, -0.16, -0.82]
+color = [1.0, 0.76, 0.52]
+intensity = 2.6
+
+[entities.fill]
+[entities.fill.transform]
+position = [0, 30, 0]
+[entities.fill.directional_light]
+direction = [-0.3, -0.8, 0.5]
+color = [0.48, 0.56, 0.82]
+intensity = 0.3
+
+# --- The sea ---
+
+[entities.sea]
+[entities.sea.transform]
+position = [0, 0, 0]
+[entities.sea.ocean]
+seed = 11
+amplitude = 0.55
+choppiness = 0.6
+wind_speed = 6.0
+direction_deg = 200.0
+deep_color = [0.05, 0.12, 0.30, 1.0]
+shallow_color = [0.30, 0.42, 0.62, 1.0]
+sss_color = [0.95, 0.55, 0.35, 1.0]
+specular_strength = 1.6
+
+# --- The rock ---
+
+[entities.rock_main]
+archetype = "furniture"
+[entities.rock_main.transform]
+position = [0, -1.0, 0]
+rotation = [0, 18, 0]
+[entities.rock_main.bounds]
+min = [-3.2, 0, -2.6]
+max = [3.0, 2.0, 2.8]
+[entities.rock_main.material]
+color = [0.16, 0.14, 0.13, 1.0]
+roughness = 0.95
+
+[entities.rock_low]
+archetype = "furniture"
+[entities.rock_low.transform]
+position = [3.6, -1.0, 1.4]
+rotation = [8, -24, 4]
+[entities.rock_low.bounds]
+min = [-1.6, 0, -1.2]
+max = [1.6, 1.3, 1.2]
+[entities.rock_low.material]
+color = [0.14, 0.12, 0.11, 1.0]
+roughness = 0.95
+
+[entities.rock_stone]
+archetype = "furniture"
+[entities.rock_stone.transform]
+position = [-3.4, -1.0, 2.2]
+rotation = [-6, 40, 10]
+[entities.rock_stone.bounds]
+min = [-0.9, 0, -0.8]
+max = [0.9, 1.1, 0.8]
+[entities.rock_stone.material]
+color = [0.15, 0.13, 0.12, 1.0]
+roughness = 0.95
+
+# --- The lighthouse: white tower, red band, a lamp that glows ---
+
+[entities.tower_base]
+archetype = "furniture"
+[entities.tower_base.transform]
+position = [0, 1.0, 0]
+[entities.tower_base.bounds]
+min = [-1.1, 0, -1.1]
+max = [1.1, 3.2, 1.1]
+[entities.tower_base.material]
+color = [0.92, 0.89, 0.84, 1.0]
+roughness = 0.7
+
+[entities.tower_band]
+archetype = "furniture"
+[entities.tower_band.transform]
+position = [0, 4.2, 0]
+[entities.tower_band.bounds]
+min = [-0.95, 0, -0.95]
+max = [0.95, 1.4, 0.95]
+[entities.tower_band.material]
+color = [0.72, 0.16, 0.12, 1.0]
+roughness = 0.6
+
+[entities.tower_top]
+archetype = "furniture"
+[entities.tower_top.transform]
+position = [0, 5.6, 0]
+[entities.tower_top.bounds]
+min = [-0.85, 0, -0.85]
+max = [0.85, 1.6, 0.85]
+[entities.tower_top.material]
+color = [0.92, 0.89, 0.84, 1.0]
+roughness = 0.7
+
+[entities.gallery]
+archetype = "furniture"
+[entities.gallery.transform]
+position = [0, 7.2, 0]
+[entities.gallery.bounds]
+min = [-1.15, 0, -1.15]
+max = [1.15, 0.18, 1.15]
+[entities.gallery.material]
+color = [0.10, 0.10, 0.11, 1.0]
+roughness = 0.5
+metallic = 0.6
+
+[entities.lamp]
+archetype = "furniture"
+[entities.lamp.transform]
+position = [0, 7.38, 0]
+[entities.lamp.bounds]
+min = [-0.55, 0, -0.55]
+max = [0.55, 0.9, 0.55]
+[entities.lamp.material]
+color = [1.0, 0.86, 0.55, 1.0]
+emissive_scale = 6.0
+roughness = 0.3
+
+[entities.cap]
+archetype = "furniture"
+[entities.cap.transform]
+position = [0, 8.28, 0]
+[entities.cap.bounds]
+min = [-0.75, 0, -0.75]
+max = [0.75, 0.35, 0.75]
+[entities.cap.material]
+color = [0.10, 0.10, 0.11, 1.0]
+roughness = 0.5
+metallic = 0.6
+
+[entities.lamp_light]
+[entities.lamp_light.transform]
+position = [0, 7.8, 0]
+[entities.lamp_light.point_light]
+color = [1.0, 0.82, 0.5]
+intensity = 6.0
+radius = 14.0

@@ -581,7 +581,7 @@ impl PlayerApp {
         }
 
         output.present();
-        let presented = std::time::Instant::now();
+        let presented = web_time::Instant::now();
 
         if let Some(exit_after) = self.capture.exit_after {
             if self.clock.total_time >= super::PERF_SKIP_SECS {

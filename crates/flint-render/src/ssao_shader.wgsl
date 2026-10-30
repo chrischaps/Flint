@@ -63,7 +63,7 @@ fn fs_ssao(in: VsOut) -> @location(0) f32 {
     let dims = vec2<f32>(textureDimensions(depth_texture));
     let texel = vec2<f32>(1.0 / dims.x, 1.0 / dims.y);
 
-    let depth = textureSample(depth_texture, depth_sampler, uv).r;
+    let depth = textureSampleLevel(depth_texture, depth_sampler, uv, 0.0).r;
 
     // Skip sky pixels: only the clear value, 1.0 (sky never writes depth)
     if (depth >= 1.0) {
@@ -73,10 +73,10 @@ fn fs_ssao(in: VsOut) -> @location(0) f32 {
     let frag_pos = view_pos_from_depth(uv, depth);
 
     // Reconstruct normal from depth via finite differences
-    let depth_r = textureSample(depth_texture, depth_sampler, uv + vec2<f32>(texel.x, 0.0)).r;
-    let depth_l = textureSample(depth_texture, depth_sampler, uv - vec2<f32>(texel.x, 0.0)).r;
-    let depth_t = textureSample(depth_texture, depth_sampler, uv + vec2<f32>(0.0, texel.y)).r;
-    let depth_b = textureSample(depth_texture, depth_sampler, uv - vec2<f32>(0.0, texel.y)).r;
+    let depth_r = textureSampleLevel(depth_texture, depth_sampler, uv + vec2<f32>(texel.x, 0.0), 0.0).r;
+    let depth_l = textureSampleLevel(depth_texture, depth_sampler, uv - vec2<f32>(texel.x, 0.0), 0.0).r;
+    let depth_t = textureSampleLevel(depth_texture, depth_sampler, uv + vec2<f32>(0.0, texel.y), 0.0).r;
+    let depth_b = textureSampleLevel(depth_texture, depth_sampler, uv - vec2<f32>(0.0, texel.y), 0.0).r;
 
     let pos_r = view_pos_from_depth(uv + vec2<f32>(texel.x, 0.0), depth_r);
     let pos_l = view_pos_from_depth(uv - vec2<f32>(texel.x, 0.0), depth_l);
@@ -102,7 +102,7 @@ fn fs_ssao(in: VsOut) -> @location(0) f32 {
 
     // Random rotation vector from noise texture (tiled)
     let noise_uv = uv * params.noise_scale;
-    let random_vec = textureSample(noise_texture, noise_sampler, noise_uv).xyz * 2.0 - 1.0;
+    let random_vec = textureSampleLevel(noise_texture, noise_sampler, noise_uv, 0.0).xyz * 2.0 - 1.0;
 
     // Build TBN matrix via Gram-Schmidt
     let tangent = normalize(random_vec - normal * dot(random_vec, normal));
@@ -130,7 +130,7 @@ fn fs_ssao(in: VsOut) -> @location(0) f32 {
         let sample_uv = vec2<f32>(offset_ndc.x * 0.5 + 0.5, 1.0 - (offset_ndc.y * 0.5 + 0.5));
 
         // Sample depth at projected position
-        let sample_depth = textureSample(depth_texture, depth_sampler, sample_uv).r;
+        let sample_depth = textureSampleLevel(depth_texture, depth_sampler, sample_uv, 0.0).r;
         let sample_z = view_pos_from_depth(sample_uv, sample_depth).z;
 
         // Range check: only occlude if within radius

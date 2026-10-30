@@ -761,6 +761,9 @@ fn fs_main(in: VertexOutput,
     // thin expanding band that dies as it grows. World-anchored (param_xz),
     // camera-independent, a handful of hashes per fragment — and it fades
     // out by ~30 m where individual rings stop being readable anyway.
+    // Taken here, in uniform control flow: WGSL forbids derivatives inside
+    // the per-cell branches below, and browsers enforce it.
+    let ring_px = fwidth(in.param_xz);
     var rain_rings = 0.0;
     if (ocean.rain_ripple > 0.001) {
         let ring_fade = 1.0 - smoothstep(14.0, 30.0, view_depth);
@@ -791,7 +794,7 @@ fn fs_main(in: VertexOutput,
                     let center = (cell + 0.5 + j * 0.8) * cell_size;
                     let r = length(in.param_xz - center);
                     let radius = ph * 0.045;
-                    let band_w = 0.005 + 0.007 * ph + clamp(fwidth(r) * 1.5, 0.0, 0.04);
+                    let band_w = 0.005 + 0.007 * ph + clamp(max(ring_px.x, ring_px.y) * 1.5, 0.0, 0.04);
                     let ring = (1.0 - smoothstep(0.0, band_w, abs(r - radius)))
                         * (1.0 - ph) * (1.0 - ph);
                     rain_rings = max(rain_rings, ring);

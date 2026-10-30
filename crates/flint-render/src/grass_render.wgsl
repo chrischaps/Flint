@@ -229,7 +229,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let shadow_uv = shadow_ndc.xy * vec2<f32>(0.5, -0.5) + 0.5;
         var shadow = 1.0;
         if shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 {
-            shadow = textureSampleCompare(shadow_depth, shadow_sampler, shadow_uv, 0, shadow_ndc.z - 0.002);
+            shadow = textureSampleCompareLevel(shadow_depth, shadow_sampler, shadow_uv, 0, shadow_ndc.z - 0.002);
         }
 
         let diffuse = n_dot_l * lights.directional_lights[0].intensity * shadow;

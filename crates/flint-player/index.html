@@ -1,26 +1,30 @@
 <!doctype html>
-<!-- Flint on the web, M0 spike (#95). `trunk serve` from crates/flint-player.
-     See docs/design/web.md. -->
+<!-- Flint in the browser (#94). `trunk serve` from crates/flint-player.
+     The player draws into #flint; ?scene=<url>&msaa=4&width=&height= steer
+     it (src/bin/flint_web.rs). See docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Flint</title>
     <link data-trunk rel="rust" data-bin="flint-web" data-wasm-opt="z" data-integrity="none" />
+    <link data-trunk rel="copy-dir" href="web/scenes" />
     <style>
       html, body { margin: 0; height: 100%; background: #0d1229; overflow: hidden; }
-      canvas { display: block; width: 100vw !important; height: 100vh !important; outline: none; }
+      body { display: grid; place-items: center; }
+      canvas#flint { display: block; width: 100vw; height: 100vh; outline: none; }
       .mark {
         position: fixed; left: 24px; bottom: 20px;
         font: 500 13px/1.4 ui-sans-serif, system-ui, sans-serif;
         letter-spacing: 0.18em; text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.78); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
+        color: rgba(255, 255, 255, 0.78); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
         pointer-events: none;
       }
       .mark small { display: block; letter-spacing: 0.06em; text-transform: none; opacity: 0.7; }
     </style>
   </head>
   <body>
-    <div class="mark">Flint<small>wasm32 · WebGPU · first light</small></div>
+    <canvas id="flint" tabindex="0"></canvas>
+    <div class="mark">Flint<small id="status">starting</small></div>
   </body>
 </html>

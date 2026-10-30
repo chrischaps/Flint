@@ -27,6 +27,8 @@ mod script_commands;
 #[cfg(feature = "debug-hud")]
 mod timeline_panel;
 mod transition;
+#[cfg(target_arch = "wasm32")]
+pub mod web_startup;
 mod world_text;
 
 #[cfg(target_os = "android")]
@@ -356,6 +358,14 @@ pub struct PlayerApp {
     extensions: Vec<Box<dyn crate::extension::PlayerExtension>>,
     /// Which held keys and buttons belong to egui (game egui layer, ADR 0073).
     egui_input: egui_input::EguiInputGate,
+
+    /// The device request in flight on the web (#99): `RenderContext::new`
+    /// resolves into it, and startup finishes on the loop.
+    #[cfg(target_arch = "wasm32")]
+    pending_render: web_startup::RenderSlot,
+    /// Wakes the event loop when the device arrives (`set_event_proxy`).
+    #[cfg(target_arch = "wasm32")]
+    event_proxy: Option<winit::event_loop::EventLoopProxy<()>>,
 }
 
 use input_config::{InputConfigPaths, PendingRebind};
