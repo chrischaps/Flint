@@ -57,6 +57,7 @@
 - [AI Agent Workflow](guides/ai-agent-workflow.md)
 - [Building a Game Project](guides/building-a-game-project.md)
 - [Deploying to Android](guides/android.md)
+- [Playing on Mobile](guides/playing-on-mobile.md)
 - [Player Extensions](guides/player-extensions.md)
 - [Debug Panels](guides/debug-panels.md)
 - [Profiling](guides/profiling.md)

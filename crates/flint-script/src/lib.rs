@@ -396,6 +396,14 @@ impl ScriptSystem {
         c.audio_lowpass_cutoff_override.take()
     }
 
+    /// Take the `set_touch_controls` request set by scripts this frame
+    /// (clears it)
+    pub fn take_touch_controls_override(&mut self) -> Option<bool> {
+        crate::lock_or_recover(&self.engine.ctx)
+            .touch_controls_override
+            .take()
+    }
+
     /// Take the cursor capture request set by scripts this frame (clears it)
     pub fn take_cursor_capture_override(&mut self) -> Option<bool> {
         let mut c = self.engine.ctx.lock().unwrap();

@@ -893,12 +893,14 @@ impl InputState {
         self.keys_just_pressed.contains(&key)
     }
 
-    /// True if ANY keyboard key, mouse button, or gamepad button was pressed
-    /// this frame, regardless of action bindings ("press any key" screens).
+    /// True if ANY keyboard key, mouse button, or gamepad button was pressed,
+    /// or a finger landed, this frame, regardless of action bindings ("press
+    /// any key" screens, which a phone must be able to lift: #134).
     pub fn any_just_pressed(&self) -> bool {
         !self.keys_just_pressed.is_empty()
             || !self.mouse_buttons_just_pressed.is_empty()
             || !self.gamepad_buttons_just_pressed.is_empty()
+            || !self.touches_just_started.is_empty()
     }
 
     pub fn is_action_pressed(&self, action: &str) -> bool {
@@ -1838,9 +1840,14 @@ scale = 2.0
         let mut input = InputState::new();
         input.set_screen_size(1000.0, 1000.0);
 
+        assert!(!input.any_just_pressed());
         input.process_touch_start(1, 500.0, 500.0);
         assert!(input.touch_active(1));
         assert!(input.touch_just_started(1));
+        assert!(
+            input.any_just_pressed(),
+            "a finger lifts a press-any-key screen"
+        );
         assert_eq!(input.touch_count(), 1);
 
         let pos = input.touch_position(1).unwrap();

@@ -933,6 +933,11 @@ impl PlayerApp {
             self.audio.set_filter_cutoff(cutoff);
         }
 
+        // A menu put the touch controls away, or play brought them back.
+        if let Some(enabled) = self.script.take_touch_controls_override() {
+            self.input.touch_controls_mut().set_enabled(enabled);
+        }
+
         // Apply cursor capture request from scripts (skipped while a debug
         // panel is open — the panel needs the mouse).
         if let Some(capture) = self.script.take_cursor_capture_override() {

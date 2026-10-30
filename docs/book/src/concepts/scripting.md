@@ -228,7 +228,7 @@ A handful of probes per frame is cheap. Thousands are not.
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `any_input_just_pressed()` | `bool` | True on the frame any key, mouse button, or gamepad button was pressed |
+| `any_input_just_pressed()` | `bool` | True on the frame any key, mouse button, or gamepad button was pressed, or a finger landed |
 | `last_input_device()` | `String` | `"keyboard"`, `"mouse"`, `"gamepad"` or `"touch"`: the device of the most recent deliberate input |
 | `gamepad_connected()` | `bool` | True while at least one gamepad is attached |
 | `set_cursor_captured(captured)` | | Capture (hide + lock) or release the mouse cursor, at the end of this frame |
