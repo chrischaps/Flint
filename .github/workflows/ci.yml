@@ -1,0 +1,36 @@
+# Flint's CI. No GPU here, and AudioManager::new() / Gilrs::new() can fail
+# headless, so the native test suite stays local for now (`cargo test`).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The web player (docs/design/web.md, epic #94). A target nobody builds
+  # rots within a few PRs: this keeps flint-player compiling for wasm32 and
+  # denies the std time calls that compile there but panic at run time.
+  # Run it locally with `bash scripts/wasm-check.sh`.
+  wasm:
+    name: wasm32 check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+
+      - name: cargo clippy --target wasm32-unknown-unknown -p flint-player
+        run: bash scripts/wasm-check.sh

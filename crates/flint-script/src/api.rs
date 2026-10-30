@@ -2128,6 +2128,7 @@ fn register_math_api(engine: &mut Engine) {
 
     engine.register_fn("random", || -> f64 {
         // Simple pseudo-random based on time — no external crate needed
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let t = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -2138,6 +2139,7 @@ fn register_math_api(engine: &mut Engine) {
     });
 
     engine.register_fn("random_range", |min: f64, max: f64| -> f64 {
+        #[allow(clippy::disallowed_methods)] // std time panics on wasm32; #100
         let t = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
