@@ -39,6 +39,9 @@ pub struct AudioSync {
     non_spatial_map: HashMap<EntityId, NonSpatialEntry>,
     /// Entities that have already been discovered and synced
     synced_entities: HashSet<EntityId>,
+    /// Autoplay sources that found their sound not yet loaded (a late
+    /// bundle, a decode queue) and are waiting for it.
+    waiting: HashSet<EntityId>,
 }
 
 /// Smooth tween duration for parameter changes (avoids clicks)
@@ -54,6 +57,7 @@ impl AudioSync {
             spatial_map: HashMap::new(),
             non_spatial_map: HashMap::new(),
             synced_entities: HashSet::new(),
+            waiting: HashSet::new(),
         }
     }
 
@@ -78,6 +82,7 @@ impl AudioSync {
         self.spatial_map.clear();
         self.non_spatial_map.clear();
         self.synced_entities.clear();
+        self.waiting.clear();
     }
 
     /// Discover entities with `audio_source` components and create Kira tracks
@@ -141,7 +146,11 @@ impl AudioSync {
             // and starts once it is: on the web the audio arrives in a late
             // bundle after the first frame (#98).
             if autoplay && !engine.has_sound(file) {
+                self.waiting.insert(entity_id);
                 continue;
+            }
+            if self.waiting.remove(&entity_id) {
+                tracing::info!("audio_source {file} starts: its sound has loaded");
             }
 
             if spatial {

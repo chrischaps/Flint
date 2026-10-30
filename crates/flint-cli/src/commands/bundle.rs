@@ -25,8 +25,13 @@
 //! exclude = ["scenes/snap_*.scene.toml"]   # added to the defaults
 //! include = []                             # wins over any exclude
 //! [late]                                   # replaces the default { audio = [...] }
+//! ambience = ["audio/ocean_loop.ogg"]     # fetched first: the sea at Begin
 //! audio = ["audio/**"]
 //! ```
+//!
+//! Late parts are fetched one after another in the order `[late]` lists
+//! them, and a file goes to the first part whose patterns match it. Put
+//! what is heard first in a small part of its own (#124).
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
@@ -144,6 +149,21 @@ struct BundleConfig {
     #[serde(default)]
     include: Vec<String>,
     late: Option<BTreeMap<String, Vec<String>>>,
+    /// `[late]`'s keys in the order the file lists them (a `BTreeMap`
+    /// forgets it).
+    #[serde(skip)]
+    late_order: Vec<String>,
+}
+
+impl BundleConfig {
+    fn parse(text: &str) -> Result<Self> {
+        let mut config: Self = toml::from_str(text)?;
+        let doc: toml_edit::DocumentMut = text.parse()?;
+        if let Some(late) = doc.get("late").and_then(|l| l.as_table_like()) {
+            config.late_order = late.iter().map(|(k, _)| k.to_string()).collect();
+        }
+        Ok(config)
+    }
 }
 
 /// Which files go where.
@@ -163,7 +183,12 @@ impl Rules {
         let mut include = owned(DEFAULT_INCLUDE);
         include.extend(config.include.iter().cloned());
         let late = match &config.late {
-            Some(parts) => parts.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            Some(parts) => {
+                let mut parts: Vec<_> = parts.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let rank = |k: &str| config.late_order.iter().position(|o| o == k);
+                parts.sort_by_key(|(k, _)| rank(k));
+                parts
+            }
             None => vec![("audio".to_string(), owned(DEFAULT_LATE_AUDIO))],
         };
         Self {
@@ -471,7 +496,7 @@ pub fn run(args: BundleArgs) -> Result<()> {
     let config_path = root.join("bundle.toml");
     let config: BundleConfig = if config_path.is_file() {
         let text = std::fs::read_to_string(&config_path)?;
-        toml::from_str(&text).with_context(|| format!("reading {}", config_path.display()))?
+        BundleConfig::parse(&text).with_context(|| format!("reading {}", config_path.display()))?
     } else {
         BundleConfig::default()
     };
@@ -564,7 +589,12 @@ pub fn run(args: BundleArgs) -> Result<()> {
 
     let mut late = Vec::new();
     let mut written = Vec::new();
-    for (part, list) in parts.iter().filter(|(p, l)| p.is_some() && !l.is_empty()) {
+    // In `[late]`'s order: the player fetches them in this order.
+    let late_parts = rules.late.iter().filter_map(|(part, _)| {
+        let part = Some(part.clone());
+        parts.get_key_value(&part).filter(|(_, l)| !l.is_empty())
+    });
+    for (part, list) in late_parts {
         let manifest = BundleManifest {
             name: name.clone(),
             part: part.clone().unwrap(),
@@ -652,6 +682,24 @@ mod tests {
         assert!(rules.packs("models/raft.glb"));
         assert_eq!(rules.part_of("audio/music_day.ogg"), Some("audio"));
         assert_eq!(rules.part_of("models/raft.glb"), None);
+    }
+
+    #[test]
+    fn late_parts_keep_the_order_bundle_toml_gives_them() {
+        let config = BundleConfig::parse(
+            r#"
+            [late]
+            sea = ["audio/ocean_loop.ogg", "audio/wind_*.ogg"]
+            audio = ["**/*.ogg"]
+            "#,
+        )
+        .unwrap();
+        let rules = Rules::from_config(&config);
+        let names: Vec<_> = rules.late.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["sea", "audio"], "file order, not alphabetical");
+        assert_eq!(rules.part_of("audio/ocean_loop.ogg"), Some("sea"));
+        assert_eq!(rules.part_of("audio/wind_light.ogg"), Some("sea"));
+        assert_eq!(rules.part_of("audio/music_day.ogg"), Some("audio"));
     }
 
     #[test]

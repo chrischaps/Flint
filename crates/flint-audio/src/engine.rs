@@ -3,6 +3,7 @@
 //! Handles sound loading, listener management, and spatial track creation.
 //! Degrades gracefully when no audio device is available.
 
+use crate::decode::{DecodeQueue, Need};
 use flint_core::{vfs, Result, Vec3};
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
@@ -46,6 +47,11 @@ pub const DEFAULT_DISTANCES: (f32, f32) = (1.0, 25.0);
 /// of `(32/d)^1.2` out to 300 m).
 pub const DEFAULT_ROLLOFF: f32 = 2.0;
 
+/// A queued sound asked for before its turn is decoded on the spot when its
+/// file is this small (a one-shot: about 12 ms in the browser at most), and
+/// skipped while it moves to the front of the queue when it's bigger.
+pub const DECODE_NOW_BYTES: usize = 64 * 1024;
+
 /// Mixer bus a sound routes through. Both buses are children of the main
 /// track, so the master low-pass filter still applies to everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -70,6 +76,8 @@ pub struct AudioEngine {
     manager: Option<AudioManager<AudioBackend>>,
     listener: Option<kira::listener::ListenerHandle>,
     sound_cache: HashMap<String, StaticSoundData>,
+    /// Sounds waiting to be decoded a frame's budget at a time (#124).
+    decodes: DecodeQueue,
     master_volume: f64,
     filter_handle: Option<FilterHandle>,
     /// The cutoff and bus volumes last asked for, so a manager started
@@ -117,6 +125,7 @@ impl AudioEngine {
             manager: None,
             listener: None,
             sound_cache: HashMap::new(),
+            decodes: DecodeQueue::default(),
             master_volume: 1.0,
             filter_handle: None,
             filter_cutoff: 20000.0,
@@ -252,6 +261,98 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Queue a sound file to be decoded over the next frames by
+    /// [`decode_queued`](Self::decode_queued), instead of now: a song takes
+    /// 100 to 241 ms to decode in the browser. The file is read now. A sound
+    /// already cached is left alone, and one already queued keeps its place
+    /// unless `need` is sooner.
+    pub fn queue_sound(&mut self, name: &str, path: &Path, need: Need) -> Result<()> {
+        if self.sound_cache.contains_key(name) {
+            return Ok(());
+        }
+        if self.decodes.contains(name) {
+            self.decodes.promote(name, need);
+            return Ok(());
+        }
+        let bytes = vfs::read(path).map_err(|e| {
+            flint_core::FlintError::AudioError(format!("Failed to read '{}': {e}", path.display()))
+        })?;
+        self.decodes.push(name, bytes, need);
+        Ok(())
+    }
+
+    /// Decode queued sounds for up to `budget`, soonest needed first, and
+    /// cache the ones that finish. Call once a frame; it costs nothing when
+    /// the queue is empty. Returns how many are still queued.
+    pub fn decode_queued(&mut self, budget: Duration) -> usize {
+        if self.decodes.is_empty() {
+            return 0;
+        }
+        for decoded in self.decodes.run(budget) {
+            self.finish_decode(decoded);
+        }
+        if self.decodes.is_empty() {
+            tracing::info!(
+                "Decoded {} queued sounds in {:.0} ms of frame time",
+                self.decodes.decoded,
+                self.decodes.spent.as_secs_f64() * 1000.0
+            );
+        }
+        self.decodes.len()
+    }
+
+    /// Whether a sound is waiting in the decode queue.
+    pub fn is_queued(&self, name: &str) -> bool {
+        self.decodes.contains(name)
+    }
+
+    /// How many sounds are waiting in the decode queue.
+    pub fn queued_count(&self) -> usize {
+        self.decodes.len()
+    }
+
+    fn finish_decode(&mut self, decoded: crate::decode::Decoded) {
+        let name = decoded.name;
+        match decoded.result {
+            Ok(data) => {
+                tracing::info!(
+                    "Decoded {name} ({} KB) in {:.1} ms over {} frame(s), longest step {:.1} ms",
+                    decoded.size / 1024,
+                    decoded.spent.as_secs_f64() * 1000.0,
+                    decoded.runs,
+                    decoded.longest.as_secs_f64() * 1000.0
+                );
+                self.sound_cache.insert(name, data);
+            }
+            Err(e) => tracing::warn!("Failed to decode '{name}': {e}"),
+        }
+    }
+
+    /// Make sure a sound about to play is decoded: a small queued one is
+    /// decoded now, a big one jumps the queue and this play is skipped.
+    fn ensure_decoded(&mut self, name: &str) -> Result<()> {
+        if self.sound_cache.contains_key(name) {
+            return Ok(());
+        }
+        match self.decodes.size_of(name) {
+            Some(size) if size <= DECODE_NOW_BYTES => {
+                if let Some(decoded) = self.decodes.decode_now(name) {
+                    self.finish_decode(decoded);
+                }
+                Ok(())
+            }
+            Some(_) => {
+                self.decodes.promote(name, Need::Asked);
+                Err(flint_core::FlintError::AudioError(format!(
+                    "'{name}' skipped: still decoding, moved to the front of the queue"
+                )))
+            }
+            None => Err(flint_core::FlintError::AudioError(format!(
+                "Sound not cached: {name}"
+            ))),
+        }
+    }
+
     /// Cache an encoded sound held in memory (WAV, OGG, FLAC or MP3 bytes,
     /// e.g. from `include_bytes!`) under `name`. Replaces any sound already
     /// cached under that name; sounds already playing keep the old data.
@@ -353,12 +454,7 @@ impl AudioEngine {
         max_distance: f32,
         bus: Bus,
     ) -> Result<SpatialTrackHandle> {
-        self.create_spatial_track_with(
-            position,
-            (min_distance, max_distance),
-            DEFAULT_ROLLOFF,
-            bus,
-        )
+        self.create_spatial_track_with(position, (min_distance, max_distance), DEFAULT_ROLLOFF, bus)
     }
 
     /// Create a spatial track with its own falloff curve (see
@@ -453,6 +549,7 @@ impl AudioEngine {
         if self.manager.is_none() {
             return Err(flint_core::FlintError::AudioError("No audio device".into()));
         }
+        self.ensure_decoded(sound_name)?;
 
         let sound_data = self
             .sound_cache
@@ -520,11 +617,7 @@ impl AudioEngine {
         rolloff: f32,
         bus: Bus,
     ) -> Result<()> {
-        if !self.sound_cache.contains_key(sound_name) {
-            return Err(flint_core::FlintError::AudioError(format!(
-                "Sound not cached: {sound_name}"
-            )));
-        }
+        self.ensure_decoded(sound_name)?;
         let mut track = self.create_spatial_track_with(position, distances, rolloff, bus)?;
         let handle = self.play_on_spatial_track(sound_name, &mut track, volume, pitch, false)?;
         self.oneshot_tracks.push((track, handle));
@@ -648,6 +741,55 @@ mod tests {
         assert!(engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).is_ok());
         assert!(!engine.has_listener(), "no listener without a device");
         assert!(engine.buffer_stats().is_none());
+    }
+
+    #[test]
+    fn queued_sounds_decode_over_frames_and_a_small_one_asked_for_decodes_now() {
+        use crate::decode::tests::wav;
+        let mut files = vfs::MemorySource::new();
+        files.insert("audio/sea.wav", wav(200_000));
+        files.insert("audio/song.wav", wav(400_000));
+        files.insert("audio/click.wav", wav(1_000));
+        vfs::scoped(Arc::new(files), || {
+            let mut engine = AudioEngine::silent();
+            for (name, need) in [
+                ("audio/song.wav", Need::Later),
+                ("audio/click.wav", Need::Later),
+                ("audio/sea.wav", Need::Audible),
+            ] {
+                engine.queue_sound(name, Path::new(name), need).unwrap();
+            }
+            assert!(engine
+                .queue_sound("x", Path::new("audio/none.wav"), Need::Later)
+                .is_err());
+            assert_eq!(engine.queued_count(), 3);
+            assert!(!engine.has_sound("audio/sea.wav"));
+
+            // Asked for before its turn: a small sound decodes on the spot
+            // (the play itself fails here only for want of a device)...
+            let at = Vec3::new(0.0, 0.0, 0.0);
+            let play = |e: &mut AudioEngine, name| {
+                e.play_oneshot_at(name, at, 1.0, 1.0, DEFAULT_DISTANCES, 1.0, Bus::Sfx)
+                    .unwrap_err()
+                    .to_string()
+            };
+            assert!(play(&mut engine, "audio/click.wav").contains("No audio device"));
+            assert!(engine.has_sound("audio/click.wav"));
+            // ...and a big one is skipped, saying why.
+            assert!(play(&mut engine, "audio/song.wav").contains("still decoding"));
+            assert!(engine.is_queued("audio/song.wav"));
+
+            // The song was asked for, so it now goes before the sea.
+            let mut frames = 0;
+            while !engine.has_sound("audio/song.wav") {
+                engine.decode_queued(Duration::from_micros(500));
+                frames += 1;
+            }
+            assert!(engine.is_queued("audio/sea.wav") && frames > 1);
+            while engine.decode_queued(Duration::from_millis(1)) > 0 {}
+            assert!(engine.has_sound("audio/sea.wav"));
+            assert_eq!(engine.sound_cache["audio/sea.wav"].frames.len(), 200_000);
+        });
     }
 
     #[test]

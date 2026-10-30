@@ -26,6 +26,12 @@ use flint_render::GrassEntityPosition;
 use flint_runtime::{RuntimeSystem, StateConfig, SystemPolicy};
 use std::collections::HashSet;
 
+/// Frame time given to decoding sounds while a late audio bundle settles in
+/// (#124). A song is 85 to 190 ms of decoding in Chrome; at 2 ms a frame it
+/// spreads over a second or two, and Float's 10 ms frames stay inside one
+/// 16.7 ms vsync (at 4 ms they slipped to 33 ms now and then).
+const AUDIO_DECODE_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
+
 impl PlayerApp {
     #[profiling::function]
     pub(super) fn render(&mut self) {
@@ -1221,9 +1227,10 @@ impl PlayerApp {
         config: &StateConfig,
         game_events: &Vec<flint_runtime::GameEvent>,
     ) {
-        // A late bundle (audio, #98) landed: load what wasn't there at start.
-        // Already-loaded sounds are skipped, and an autoplay source that was
-        // waiting for its file starts on the update below.
+        // A late bundle (audio, #98) landed: queue what wasn't there at
+        // start. Already-loaded sounds are skipped, and an autoplay source
+        // that was waiting for its file starts on the update after its
+        // sound is decoded.
         let generation = flint_core::vfs::generation();
         if generation != self.audio_vfs_generation {
             self.audio_vfs_generation = generation;
@@ -1232,8 +1239,11 @@ impl PlayerApp {
                 &mut self.audio,
                 &self.scene_path,
                 self.scene_preload_audio,
+                true,
             );
         }
+        // ...and decode it a few milliseconds a frame (#124).
+        self.audio.engine.decode_queued(AUDIO_DECODE_BUDGET);
 
         // Audio triggers from game events (skip when paused)
         if config.audio == SystemPolicy::Run {

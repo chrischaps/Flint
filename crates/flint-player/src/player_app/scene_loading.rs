@@ -6,9 +6,11 @@ use flint_animation::skeletal_clip::SkeletalClip;
 use flint_animation::skeleton::Skeleton;
 use flint_animation::AnimationSystem;
 use flint_asset::{AssetCatalog, ContentStore};
+use flint_audio::decode::Need;
 use flint_audio::AudioSystem;
 use flint_core::components as comp;
-use flint_core::toml_util::{toml_f32, toml_vec3};
+use flint_core::toml_util::{toml_f32, toml_f64, toml_vec3};
+use flint_core::vfs;
 use flint_core::EntityId;
 use flint_core::Vec3 as FlintVec3;
 use flint_ecs::FlintWorld;
@@ -16,7 +18,6 @@ use flint_physics::PhysicsSystem;
 use flint_render::model_loader::{self, ModelLoadConfig};
 use flint_render::SceneRenderer;
 use flint_script::ScriptSystem;
-use flint_core::vfs;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -504,12 +505,35 @@ pub(super) fn register_node_animation_data(
 /// Load audio files referenced by audio_source components and (unless the
 /// scene opts out via `[scene] preload_audio = false`) preload every audio
 /// file from audio/ for script-triggered sounds.
+///
+/// With `queue`, nothing is decoded here: each sound joins the engine's
+/// decode queue, which `tick_av_systems` works through a few milliseconds a
+/// frame, sources that are heard at once (autoplay, above silence) first,
+/// then the rest smallest first. That is how a late audio bundle arrives
+/// mid-game without a stall (#124). Without it, everything is decoded now,
+/// as a scene load can afford.
 pub(super) fn load_audio_from_world(
     world: &FlintWorld,
     audio: &mut AudioSystem,
     scene_path: &str,
     preload_all: bool,
+    queue: bool,
 ) {
+    let mut load = |name: &str, path: &Path, need: Need| {
+        if audio.engine.has_sound(name) {
+            return;
+        }
+        let result = if queue {
+            audio.engine.queue_sound(name, path, need)
+        } else {
+            audio.engine.load_sound(name, path)
+        };
+        match result {
+            Err(e) => tracing::warn!("Failed to load audio '{}': {:?}", name, e),
+            Ok(()) if !queue => println!("Loaded audio: {}", name),
+            Ok(()) => {}
+        }
+    };
     let scene_dir = Path::new(scene_path)
         .parent()
         .unwrap_or_else(|| Path::new("."));
@@ -522,39 +546,34 @@ pub(super) fn load_audio_from_world(
 
     // Load audio files referenced by audio_source components
     for entity in world.all_entities() {
-        let audio_file = world
+        let Some(source) = world
             .get_components(entity.id)
             .and_then(|components| components.get(comp::AUDIO_SOURCE).cloned())
-            .and_then(|audio_src| {
-                audio_src
-                    .get("file")
-                    .and_then(|v| v.as_str().map(String::from))
-            });
+        else {
+            continue;
+        };
+        let Some(file_name) = source.get("file").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        // Heard the moment it loads: an autoplay source above silence.
+        let audible = source
+            .get("autoplay")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+            && source.get("volume").and_then(toml_f64).unwrap_or(1.0) > 0.0;
+        let need = if audible { Need::Audible } else { Need::Later };
 
-        if let Some(file_name) = audio_file {
-            if audio.engine.has_sound(&file_name) {
-                continue;
+        let mut found = false;
+        for dir in &search_dirs {
+            let audio_path = dir.join(file_name);
+            if vfs::exists(&audio_path) {
+                load(file_name, &audio_path, need);
+                found = true;
+                break;
             }
-
-            let mut loaded = false;
-            for dir in &search_dirs {
-                let audio_path = dir.join(&file_name);
-                if vfs::exists(&audio_path) {
-                    match audio.engine.load_sound(&file_name, &audio_path) {
-                        Ok(_) => {
-                            println!("Loaded audio: {}", file_name);
-                            loaded = true;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to load audio '{}': {:?}", file_name, e);
-                        }
-                    }
-                    break;
-                }
-            }
-            if !loaded {
-                tracing::warn!("Audio file not found: {}", file_name);
-            }
+        }
+        if !found {
+            tracing::warn!("Audio file not found: {}", file_name);
         }
     }
 
@@ -574,17 +593,7 @@ pub(super) fn load_audio_from_world(
                     if ext == "ogg" || ext == "wav" || ext == "mp3" || ext == "flac" {
                         let rel_name =
                             format!("audio/{}", path.file_name().unwrap().to_string_lossy());
-                        if audio.engine.has_sound(&rel_name) {
-                            continue;
-                        }
-                        match audio.engine.load_sound(&rel_name, &path) {
-                            Ok(_) => {
-                                println!("Preloaded audio: {}", rel_name);
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to preload audio '{}': {:?}", rel_name, e);
-                            }
-                        }
+                        load(&rel_name, &path, Need::Later);
                     }
                 }
             }

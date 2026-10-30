@@ -10,6 +10,9 @@ flint-core = { workspace = true }
 flint-ecs = { workspace = true }
 flint-runtime = { workspace = true }
 kira = { workspace = true }
+# Decoding a packet at a time (#124), as kira does in one call.
+symphonia = { workspace = true }
+web-time = { workspace = true }
 glam = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

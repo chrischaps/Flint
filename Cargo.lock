@@ -1623,10 +1623,12 @@ dependencies = [
  "glam",
  "kira",
  "send_wrapper",
+ "symphonia",
  "toml",
  "tracing",
  "wasm-bindgen",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]

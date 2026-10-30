@@ -28,6 +28,8 @@ preload_audio = false
 
 With `preload_audio = false` only `audio_source` files load, and [music sessions](music-sessions.md) resolve their stems through their own path. The default is `true` (ADR 0066, scene audio preload opt-out).
 
+In the browser, and whenever a late bundle of audio arrives, nothing is decoded in one go: each sound joins a decode queue that the player works through 2 ms a frame, one packet at a time, autoplay sources above silence first and then the rest smallest first. An `audio_source` starts once its sound is decoded. A script's `play_sound` of a sound still queued decodes it on the spot if the file is 64 KB or less; a bigger one moves to the front of the queue and that play is skipped with a warning. The desktop decodes at scene load, as before.
+
 ## Mixer Buses
 
 Every ordinary sound routes through one of two buses — `music` and `sfx` — both children

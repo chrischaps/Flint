@@ -6,6 +6,7 @@
 //! - `AudioTrigger` — maps GameEvents to sound playback (collision, interaction)
 //! - `AudioSystem` — implements `RuntimeSystem` for game loop integration
 
+pub mod decode;
 pub mod engine;
 pub mod meter;
 pub mod sync;
