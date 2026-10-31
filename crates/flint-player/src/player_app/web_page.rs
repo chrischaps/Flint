@@ -163,6 +163,23 @@ fn request_lock() {
     }
 }
 
+/// Let go of the pointer lock, if the page holds one. A browser without the
+/// Pointer Lock API (iOS WebKit: Safari, and Chrome on iPad and iPhone)
+/// has no `exitPointerLock`, and calling it there throws through the event
+/// loop and freezes the game (Float#3), so it is looked up first, as
+/// [`request_lock`] does.
+pub(super) fn exit_lock() {
+    let Some(document) = document() else { return };
+    let Ok(exit) = js_sys::Reflect::get(&document, &"exitPointerLock".into())
+        .and_then(|f| f.dyn_into::<js_sys::Function>())
+    else {
+        return;
+    };
+    if lock_held() {
+        let _ = exit.call0(&document);
+    }
+}
+
 impl PlayerApp {
     /// At a resize: how the canvas's pixels compare with the CSS pixels
     /// times `devicePixelRatio` that winit puts touches in.

@@ -6,7 +6,13 @@
 # File reads are denied too: `std::fs` fails on wasm32, so every runtime read
 # goes through `flint_core::vfs` (#97), which the web player backs with its
 # bundle. Writes, and hot reload's polling of the disk, stay native.
+#
+# winit's cursor grab is denied as well: on the web it calls the Pointer Lock
+# API without asking whether the browser has one, and iOS WebKit hasn't, so
+# it throws through the event loop and freezes the game (Float#3). The page
+# asks for and lets go of the lock itself (player_app/web_page.rs).
 disallowed-methods = [
+    { path = "winit::window::Window::set_cursor_grab", reason = "throws on iOS WebKit, which has no Pointer Lock API; use web_page's request_lock/exit_lock (Float#3)" },
     { path = "std::time::Instant::now", reason = "panics on wasm32; use web_time::Instant (#100)" },
     { path = "std::time::Instant::elapsed", reason = "calls Instant::now, which panics on wasm32; use web_time::Instant (#100)" },
     { path = "std::time::SystemTime::now", reason = "panics on wasm32; use web_time::SystemTime (#100)" },

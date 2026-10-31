@@ -25,7 +25,9 @@ use winit::event_loop::ActiveEventLoop;
 #[cfg(target_os = "android")]
 use winit::keyboard::NativeKeyCode;
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, WindowId};
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+use winit::window::CursorGrabMode;
+use winit::window::WindowId;
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
 
@@ -307,8 +309,15 @@ impl PlayerApp {
 
     pub(super) fn release_cursor(&mut self) {
         if let Some(window) = &self.window {
+            // On the web the lock is let go of by the page, not winit: winit
+            // calls `exitPointerLock` without asking whether the browser has
+            // one, and iOS WebKit hasn't, so the first finger's release threw
+            // through the event loop and froze the game (Float#3).
+            #[cfg(target_arch = "wasm32")]
+            super::web_page::exit_lock();
             #[cfg(not(target_os = "android"))]
             {
+                #[cfg(not(target_arch = "wasm32"))]
                 let _ = window.set_cursor_grab(CursorGrabMode::None);
                 window.set_cursor_visible(true);
                 // The cursor comes back where it read while captured, so

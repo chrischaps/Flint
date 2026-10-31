@@ -681,6 +681,32 @@ once. On such a page, Begin asks for no lock, and neither does
 `sync_pointer_lock` while the last input came from a finger. A laptop
 with a touchscreen has a fine main pointer, so it keeps mouse look.
 
+**No Pointer Lock API (Float#3).** iOS WebKit, which is Safari and also Chrome
+on an iPad or iPhone, has neither `requestPointerLock` nor
+`exitPointerLock`. On the web, the player never lets winit touch the lock.
+`web_page::request_lock` and `web_page::exit_lock` look the function up
+first and skip it when it is missing. This matters because winit 0.30's
+`set_cursor_grab(None)` calls `document.exitPointerLock()` without
+checking. The first finger brings up the on-screen controls, and they
+release the cursor (`touch_overlay.rs`). On an iPad that release threw
+`TypeError: exitPointerLock is not a function` through the event loop, and
+the game stopped: frozen on its last frame, with the page around it still
+answering. Chrome and Android have the API, so no Pixel or desktop run saw
+it. The wasm clippy check now denies `winit::window::Window::set_cursor_grab`
+(`scripts/wasm-clippy/clippy.toml`). `tools/web-touch/ipad.mjs` replays the
+iPad in desktop Chrome over CDP: touch emulation, a 1180x820 DPR 2 viewport,
+an iPadOS Chrome user agent, and optionally WebKit's missing APIs deleted
+(`coalesced`, `dpbox`, `lock`). It taps, drags and calls the game FROZEN or
+LIVE from screenshots that should never repeat. Results:
+
+| Float on an emulated iPad, `lock` gap | the exception | frames after the tap |
+|---|---|---|
+| play.chaps.dev (Flint 335e75c) | at the title tap | byte-identical: FROZEN |
+| this fix | none | change; the drag turns the view: LIVE |
+| this fix, no gaps (Chrome's own API) | none | LIVE |
+
+Still unverified on a real iPad.
+
 **Seeing it.** `?perf=1` adds `touch  3 down (0.24 0.25) (0.83 0.49)
 (0.53 0.86)` and `most 3 at once, 7 in all` once a finger has touched,
 and the copied line ends `touch most 3 of 7`.
