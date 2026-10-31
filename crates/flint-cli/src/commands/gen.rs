@@ -80,6 +80,21 @@ pub fn run(args: GenArgs) -> Result<()> {
     let mut registry = GeneratorRegistry::new();
     flint_procgen::register_built_in_generators(&mut registry);
 
+    // Keys the generator won't read: a typo, or a knob for another pattern.
+    // Silently ignored params are the worst kind of spec bug, so say so.
+    if let Some(generator) = registry.get(&spec.generator) {
+        let issues = flint_procgen::lint_params(&generator.param_schema(), &spec.params);
+        for issue in &issues {
+            eprintln!("warning: {}: {issue}", spec_path.display());
+        }
+        if args.strict && !issues.is_empty() {
+            anyhow::bail!(
+                "{} spec parameter(s) would be ignored (--strict)",
+                issues.len()
+            );
+        }
+    }
+
     // Dry-run: print cost estimate and return
     if args.dry_run {
         let generator = registry

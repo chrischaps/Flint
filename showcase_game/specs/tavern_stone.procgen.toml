@@ -14,7 +14,6 @@ value = 13050
 width = 1024
 height = 1024
 pattern = "pipeline"
-seamless = true
 output_maps = ["albedo", "normal", "roughness"]
 
 # 1. Coursed stone layout
