@@ -88,6 +88,9 @@ pub struct ShadowPass {
     pub resolution: u32,
     pub enabled: bool,
     shadow_uniforms: ShadowUniforms,
+    /// Its [`gpu_id`](crate::bind_cache::gpu_id): bind groups kept over its
+    /// views and buffers name it (#139). A new resolution is a new pass.
+    pub id: u64,
 }
 
 impl ShadowPass {
@@ -291,6 +294,7 @@ impl ShadowPass {
             resolution,
             enabled: true,
             shadow_uniforms,
+            id: crate::bind_cache::gpu_id(),
         }
     }
 
