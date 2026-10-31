@@ -523,10 +523,10 @@ flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 | `--seed <u64>` | (from spec) | Override the spec's seed |
 | `--dry-run` | `false` | Print estimated cost without generating |
 | `--format <fmt>` | (auto) | Force output format: `glb` or `png` |
-| `--batch <N>` | (none) | Generate N variants with sequential seeds |
-| `--seed-start <u64>` | `0` | Starting seed for batch generation |
-| `--register` | `false` | Store output in content store with provenance |
-| `--force` | `false` | Regenerate even if cached |
+| `--batch <N>` | (none) | Generate N (at least 1) variants with sequential seeds, named `<stem>_<seed>.<ext>` |
+| `--seed-start <u64>` | `0` | First seed of a batch (requires `--batch`) |
+| `--register` | `false` | Store output in the content store with a provenance sidecar; reuse a stored result for the same spec + seed |
+| `--force` | `false` | With `--register`, regenerate even if this spec + seed is stored |
 | `--validate` | `false` | Validate output after generation |
 | `--strict` | `false` | Treat warnings as failures |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
