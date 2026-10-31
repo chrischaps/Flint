@@ -6,6 +6,7 @@
 //! report, up to `max_iterations` rounds, so what comes out is a spec the
 //! generator builds and not just JSON that parses.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use flint_procgen::{
@@ -15,11 +16,13 @@ use flint_procgen::{
 use serde_json::{json, Map, Value as Json};
 
 use crate::agent::{ProcGenAgent, SpecFeedback};
+pub use crate::agent::{Report, Round};
 use crate::config::AgentConfig;
+use crate::cost::{estimate_input_tokens, CostMeter};
 use crate::error::{ProcGenAiError, Result};
 use crate::http::{
-    base64, extract_json_object, image_media_type, parse_response, shorten, HttpRequest, Reply,
-    Transport, UreqTransport, Usage,
+    base64, extract_json_object, image_media_type, parse_response, shorten, HttpRequest,
+    HttpResponse, Reply, Transport, UreqTransport, Usage,
 };
 use crate::mock::{bump_patch, fnv1a, props, registry, resolve_name, slug, unknown_generator};
 use crate::prompt;
@@ -60,43 +63,6 @@ pub fn resolve_api_key(config_key: &str, env_key: Option<&str>) -> Option<String
         .map(str::to_string)
 }
 
-/// One request/response round of a conversation.
-#[derive(Debug, Clone, Default)]
-pub struct Round {
-    /// What the validator found in this round's reply; empty when accepted.
-    pub issues: Vec<String>,
-    /// Tokens this round cost.
-    pub usage: Usage,
-    /// The model that answered.
-    pub model: String,
-}
-
-/// How a conversation went.
-#[derive(Debug, Clone, Default)]
-pub struct Report {
-    /// Each round, in order.
-    pub rounds: Vec<Round>,
-    /// Params the schema repair had to fix after the last round (0 when
-    /// Claude converged on its own).
-    pub repaired: usize,
-    /// The model's own account of its choices (`rationale` / `changes`).
-    pub notes: Vec<String>,
-}
-
-impl Report {
-    /// Whether the last round's reply passed validation unaided.
-    pub fn converged(&self) -> bool {
-        self.rounds.last().is_some_and(|r| r.issues.is_empty())
-    }
-
-    /// Tokens across all rounds.
-    pub fn usage(&self) -> Usage {
-        self.rounds
-            .iter()
-            .fold(Usage::default(), |a, r| a.plus(r.usage))
-    }
-}
-
 /// A [`ProcGenAgent`] backed by the Claude Messages API.
 pub struct AnthropicAgent {
     config: AgentConfig,
@@ -107,6 +73,7 @@ pub struct AnthropicAgent {
     /// Extra attempts for a 429, 529, 5xx or network failure.
     pub max_retries: u32,
     sleep: fn(Duration),
+    meter: Option<Arc<CostMeter>>,
 }
 
 impl std::fmt::Debug for AnthropicAgent {
@@ -121,6 +88,9 @@ impl std::fmt::Debug for AnthropicAgent {
 }
 
 impl AnthropicAgent {
+    /// The output-token ceiling per reply a new agent starts with.
+    pub const DEFAULT_MAX_TOKENS: u32 = 16_000;
+
     /// An agent for `config`, with the key from `ANTHROPIC_API_KEY` when
     /// that is set (see [`resolve_api_key`]) and the model defaulted to
     /// [`DEFAULT_MODEL`] when empty.
@@ -159,9 +129,10 @@ impl AnthropicAgent {
             config,
             transport: Box::new(UreqTransport::default()),
             url: API_URL.to_string(),
-            max_tokens: 16_000,
+            max_tokens: Self::DEFAULT_MAX_TOKENS,
             max_retries: 2,
             sleep: std::thread::sleep,
+            meter: None,
         })
     }
 
@@ -183,16 +154,36 @@ impl AnthropicAgent {
         self
     }
 
+    /// Send every call through `meter`: each request is checked against its
+    /// ceiling before it goes out, and each reply's usage is priced and
+    /// recorded in its ledger (including replies that come back unusable,
+    /// which are billed all the same).
+    pub fn with_meter(mut self, meter: Arc<CostMeter>) -> Self {
+        self.meter = Some(meter);
+        self
+    }
+
+    /// The meter calls go through, if any.
+    pub fn meter(&self) -> Option<&Arc<CostMeter>> {
+        self.meter.as_ref()
+    }
+
+    fn set_meter_context(&self, spec_name: &str, operation: &str) {
+        if let Some(m) = &self.meter {
+            m.set_context(spec_name, operation);
+        }
+    }
+
     /// The resolved config. Its key is redacted in `Debug`.
     pub fn config(&self) -> &AgentConfig {
         &self.config
     }
 
     /// The request body for one call.
-    fn body(&self, system: &str, messages: &[Json]) -> Json {
+    fn body(&self, system: &str, messages: &[Json], max_tokens: u32) -> Json {
         let mut body = json!({
             "model": self.config.model,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens,
             "system": [{
                 "type": "text",
                 "text": system,
@@ -223,16 +214,26 @@ impl AnthropicAgent {
         if self.uses_fallback() {
             headers.push(("anthropic-beta".to_string(), FALLBACK_BETA.to_string()));
         }
-        let req = HttpRequest {
-            url: self.url.clone(),
-            headers,
-            body: self.body(system, messages).to_string(),
-        };
+        let input_estimate = estimate_input_tokens(&self.body(system, messages, self.max_tokens));
         let mut attempt = 0;
         loop {
             attempt += 1;
+            // Checked before every send, retries included: a retry is a new
+            // call, and the budget may have moved since the last check.
+            let max_tokens = match &self.meter {
+                Some(m) => m.admit(&self.config.model, input_estimate, self.max_tokens)?,
+                None => self.max_tokens,
+            };
+            let req = HttpRequest {
+                url: self.url.clone(),
+                headers: headers.clone(),
+                body: self.body(system, messages, max_tokens).to_string(),
+            };
             let result = match self.transport.post(&req) {
-                Ok(resp) => parse_response(&resp, attempt),
+                Ok(resp) => {
+                    self.meter_response(&resp);
+                    parse_response(&resp, attempt)
+                }
                 Err(e) => Err(ProcGenAiError::Network(e)),
             };
             match result {
@@ -249,6 +250,25 @@ impl AnthropicAgent {
                 other => return other,
             }
         }
+    }
+
+    /// Record a successful response's usage, read from the raw body so a
+    /// reply cut off at `max_tokens` or declined still counts what it cost.
+    fn meter_response(&self, resp: &HttpResponse) {
+        let Some(meter) = &self.meter else { return };
+        if !(200..300).contains(&resp.status) {
+            return;
+        }
+        let Ok(v) = serde_json::from_str::<Json>(&resp.body) else {
+            return;
+        };
+        let Some(usage) = v.get("usage") else { return };
+        let model = v
+            .get("model")
+            .and_then(Json::as_str)
+            .filter(|m| !m.is_empty())
+            .unwrap_or(&self.config.model);
+        meter.record(model, &Usage::of(usage));
     }
 
     /// Ask, validate, and on failure send the validator's report back, up to
@@ -353,6 +373,7 @@ impl AnthropicAgent {
         generator: &str,
     ) -> Result<(ProcGenSpec, Report)> {
         let ctx = Ctx::new(generator)?;
+        self.set_meter_context(&slug(prompt_text), "create");
         let turn = vec![text_block(&prompt::create_task(prompt_text))];
         let (obj, params, mut report) = self.converse(&ctx, turn, true, |_| Vec::new())?;
         let params = params.expect("create requires params");
@@ -419,6 +440,7 @@ impl AnthropicAgent {
             findings.push("the seed is random, so every run builds a different asset".into());
         }
 
+        self.set_meter_context(&spec.meta.name, "interpret");
         let turn = vec![text_block(&prompt::interpret_task(spec, &findings))];
         let shape = |obj: &Map<String, Json>| {
             if strings(obj, "suggestions").is_empty() {
@@ -469,6 +491,7 @@ impl AnthropicAgent {
         reference: Option<&[u8]>,
     ) -> Result<(ProcGenSpec, Report)> {
         let ctx = Ctx::new(&spec.generator)?;
+        self.set_meter_context(&spec.meta.name, "refine");
         let mut turn = Vec::new();
         if let Some(bytes) = reference {
             turn.push(image_block(bytes)?);
@@ -516,6 +539,26 @@ impl ProcGenAgent for AnthropicAgent {
 
     fn refine_spec(&self, spec: &ProcGenSpec, reference: Option<&[u8]>) -> Result<ProcGenSpec> {
         self.refine_spec_reported(spec, reference).map(|(s, _)| s)
+    }
+
+    fn create_spec_with_report(
+        &self,
+        prompt: &str,
+        generator: &str,
+    ) -> Result<(ProcGenSpec, Report)> {
+        self.create_spec_reported(prompt, generator)
+    }
+
+    fn interpret_spec_with_report(&self, spec: &ProcGenSpec) -> Result<(SpecFeedback, Report)> {
+        self.interpret_spec_reported(spec)
+    }
+
+    fn refine_spec_with_report(
+        &self,
+        spec: &ProcGenSpec,
+        reference: Option<&[u8]>,
+    ) -> Result<(ProcGenSpec, Report)> {
+        self.refine_spec_reported(spec, reference)
     }
 }
 
