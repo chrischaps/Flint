@@ -27,7 +27,7 @@ pub use grid::{TilingGridParams, TilingGridPattern};
 pub use maps::{derive_maps, TextureMapParams};
 pub use ops::{OpPortInfo, TextureOp};
 pub use organic::{PerlinOrganicParams, PerlinOrganicPattern};
-pub use pattern::{Pattern, PatternCell, PatternField};
+pub use pattern::{Pattern, PatternCell, PatternField, SeamSteps};
 pub use voronoi::{VoronoiBrickParams, VoronoiBrickPattern};
 
 use crate::generator::{GenerationCost, Generator};
@@ -143,6 +143,8 @@ impl Generator for TextureGenerator {
                 "detail_scale": { "type": "number", "minimum": 0.0, "default": 8.0 },
                 "detail_strength": { "type": "number", "minimum": 0.0, "default": 0.1 },
                 "cell_count": { "type": "integer", "minimum": 1, "default": 12 },
+                "cell_size": { "type": "number", "exclusiveMinimum": 0.0, "description": "Typical stone size in pixels; overrides cell_count" },
+                "irregularity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "1 - regularity; give one or the other" },
                 "mortar_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.02 },
                 "height_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 },
                 "regularity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
@@ -155,7 +157,8 @@ impl Generator for TextureGenerator {
                 "columns": { "type": "integer", "minimum": 1, "default": 4 },
                 "rows": { "type": "integer", "minimum": 1, "default": 4 },
                 "gap_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05 },
-                "jitter": { "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0 }
+                "jitter": { "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0 },
+                "noise_strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03 }
             },
             "required": ["pattern"],
             "additionalProperties": false
@@ -493,5 +496,97 @@ base = 0.75
         assert_eq!(cost.estimated_vertices, 0);
         assert_eq!(cost.estimated_triangles, 0);
         assert!(cost.estimated_generation_ms > 0.0);
+    }
+
+    // ── Task 4.1 acceptance: every pattern, the same bar ────────────────────
+
+    fn all_patterns() -> Vec<(&'static str, Box<dyn Pattern>)> {
+        vec![
+            (
+                "voronoi_brick",
+                Box::new(VoronoiBrickPattern::new(VoronoiBrickParams::default())),
+            ),
+            (
+                "voronoi_cell_size",
+                Box::new(VoronoiBrickPattern::new(VoronoiBrickParams {
+                    cell_size: Some(24.0),
+                    regularity: 0.5,
+                    ..Default::default()
+                })),
+            ),
+            (
+                "perlin_organic",
+                Box::new(PerlinOrganicPattern::new(PerlinOrganicParams::default())),
+            ),
+            (
+                "simplex_organic",
+                Box::new(PerlinOrganicPattern::new(PerlinOrganicParams {
+                    noise_type: "simplex".into(),
+                    ..Default::default()
+                })),
+            ),
+            (
+                "tiling_grid",
+                Box::new(TilingGridPattern::new(TilingGridParams::default())),
+            ),
+            (
+                "tiling_grid_jitter",
+                Box::new(TilingGridPattern::new(TilingGridParams {
+                    jitter: 0.35,
+                    ..Default::default()
+                })),
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_pattern_is_valid_deterministic_and_seamless() {
+        use pattern::assert_valid;
+        for (name, pattern) in all_patterns() {
+            for (w, h) in [(128u32, 128u32), (160, 96)] {
+                for seed in [3u64, 42] {
+                    let a = pattern.generate(w, h, true, &mut SeededRng::new(seed));
+                    let b = pattern.generate(w, h, true, &mut SeededRng::new(seed));
+                    assert_valid(&a, w, h);
+                    assert_eq!(
+                        a.cells, b.cells,
+                        "{name} {w}x{h} seed {seed}: not deterministic"
+                    );
+                    let s = a.seam_steps();
+                    assert!(s.ratio() < 1.25, "{name} {w}x{h} seed {seed}: seam {s:?}");
+                    // Non-seamless output is valid too.
+                    assert_valid(
+                        &pattern.generate(w, h, false, &mut SeededRng::new(seed)),
+                        w,
+                        h,
+                    );
+                }
+            }
+        }
+    }
+
+    /// `cargo test -p flint-procgen --lib -- --ignored pattern_debug_pngs`
+    /// writes each pattern's height, cells and edges, and a 2 x 2 repeat of
+    /// the height to show the tile has no seam, to `target/test-output/`.
+    #[test]
+    #[ignore]
+    fn pattern_debug_pngs() {
+        use pattern::write_debug_png;
+        for (name, pattern) in all_patterns() {
+            let f = pattern.generate(256, 256, true, &mut SeededRng::new(42));
+            write_debug_png(&format!("{name}_height"), &f.to_height_image());
+            write_debug_png(&format!("{name}_cells"), &f.to_cell_id_image());
+            write_debug_png(&format!("{name}_edges"), &f.to_edge_distance_image());
+            let one = f.to_height_image();
+            let mut four = crate::types::ImageData::new(512, 512, ChannelSemantics::Height);
+            for y in 0..512u32 {
+                for x in 0..512u32 {
+                    let src = (((y % 256) * 256 + x % 256) * 4) as usize;
+                    let dst = ((y * 512 + x) * 4) as usize;
+                    four.pixels[dst..dst + 4].copy_from_slice(&one.pixels[src..src + 4]);
+                }
+            }
+            write_debug_png(&format!("{name}_height_2x2"), &four);
+        }
     }
 }

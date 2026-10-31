@@ -779,6 +779,7 @@ mod tests {
                 mortar_width: 0.03,
                 height_variation: 0.4,
                 regularity: 0.3,
+                ..Default::default()
             },
         };
 

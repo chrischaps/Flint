@@ -299,10 +299,7 @@ impl TextureOp for VoronoiGridOp {
         if self.regularity > 0.0 {
             let iterations = (self.regularity * 10.0).ceil() as usize;
             let relaxed = voronoi_util::lloyds_relaxation(&points, iterations, true);
-            for i in 0..points.len() {
-                points[i].0 = voronoi_util::lerp(points[i].0, relaxed[i].0, self.regularity);
-                points[i].1 = voronoi_util::lerp(points[i].1, relaxed[i].1, self.regularity);
-            }
+            voronoi_util::blend_points(&mut points, &relaxed, self.regularity, true);
         }
 
         // Build spatial acceleration grid (always seamless for tiling)
@@ -325,10 +322,13 @@ impl TextureOp for VoronoiGridOp {
                     }
                 }
 
-                let (closest_id, dist1, dist2) = grid.find_two_nearest(u, v, &points, true);
+                let near = grid.nearest(u, v);
+                let closest_id = near.id;
 
                 // Edge distance: normalized gap between nearest and second-nearest
-                let raw_edge_dist = dist2 - dist1;
+                // (kept as d2 - d1 so existing pipeline specs keep their groove
+                // widths; the search itself is now exact).
+                let raw_edge_dist = near.d2 - near.d1;
                 let edge_normalized = (raw_edge_dist / mortar_w).min(1.0);
 
                 // Binary mask: 1.0 inside cell, 0.0 in mortar zone

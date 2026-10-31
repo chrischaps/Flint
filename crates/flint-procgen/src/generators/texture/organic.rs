@@ -5,8 +5,6 @@
 //! values are quantized into bands for cell IDs, simulating geological strata
 //! or natural layering.
 
-use std::f64::consts::PI;
-
 use crate::algorithms::noise::{Fbm, NoiseSource, PerlinNoise, SimplexNoise};
 use crate::generators::util::{toml_f64, toml_string, toml_u32};
 use crate::{ProcGenError, Result, SeededRng};
@@ -173,6 +171,7 @@ impl Pattern for PerlinOrganicPattern {
             ),
         };
 
+        let perlin = PerlinNoise::new(noise_seed);
         let mut field = PatternField::new(width, height);
 
         for y in 0..height {
@@ -180,20 +179,21 @@ impl Pattern for PerlinOrganicPattern {
                 let u = x as f64 / width as f64;
                 let v = y as f64 / height as f64;
 
-                let raw = if seamless {
-                    // 3D projection for seamless tiling:
-                    // Map the 2D torus into 3D space using cylindrical coordinates.
-                    // This gives near-seamless results with our 3D noise.
-                    let u_angle = u * 2.0 * PI;
-                    let v_angle = v * 2.0 * PI;
-                    let nx = u_angle.cos();
-                    let ny = u_angle.sin();
-                    let nz = v_angle.cos();
-                    // We use sample_3d which gives seamless-ish results.
-                    // The 4th dimension (v_angle.sin()) is implicit in the 3D projection.
-                    noise.sample_3d(nx, ny, nz)
-                } else {
+                let raw = if !seamless {
                     noise.sample_2d(u, v)
+                } else if p.noise_type == "simplex" {
+                    crossfade_tile(noise.as_ref(), u, v)
+                } else {
+                    // Perlin tiles exactly: every octave gets a whole number
+                    // of lattice cells per tile (frequency rounded per octave).
+                    perlin.fbm_2d_periodic(
+                        u,
+                        v,
+                        p.frequency,
+                        p.octaves,
+                        p.lacunarity,
+                        p.persistence,
+                    )
                 };
 
                 // Map noise [-1, 1] → [0, 1]
@@ -221,6 +221,25 @@ impl Pattern for PerlinOrganicPattern {
 
         field
     }
+}
+
+/// Make any noise tile by cross-fading it with copies of itself shifted one
+/// tile left, up, and both: at `u = 1` the blend is exactly the `u = 0`
+/// value. Averaging lowers the variance mid-tile, so the blend is divided by
+/// the RMS of its weights to keep the contrast even across the tile.
+///
+/// Used for simplex, which has no periodic lattice; Perlin uses
+/// [`PerlinNoise::fbm_2d_periodic`], which tiles without blending.
+fn crossfade_tile(noise: &dyn NoiseSource, u: f64, v: f64) -> f64 {
+    let (a, b) = (noise.sample_2d(u, v), noise.sample_2d(u - 1.0, v));
+    let (c, d) = (
+        noise.sample_2d(u, v - 1.0),
+        noise.sample_2d(u - 1.0, v - 1.0),
+    );
+    let (wu, wv) = (1.0 - u, 1.0 - v);
+    let blend = wv * (wu * a + u * b) + v * (wu * c + u * d);
+    let rms = ((wu * wu + u * u) * (wv * wv + v * v)).sqrt();
+    (blend / rms).clamp(-1.0, 1.0)
 }
 
 // ===========================================================================
@@ -347,32 +366,77 @@ mod tests {
         );
     }
 
+    fn seamless(noise_type: &str, frequency: f64) -> PatternField {
+        let pattern = PerlinOrganicPattern::new(PerlinOrganicParams {
+            noise_type: noise_type.into(),
+            frequency,
+            ..Default::default()
+        });
+        pattern.generate(128, 128, true, &mut SeededRng::new(42))
+    }
+
     #[test]
-    fn organic_seamless_continuity() {
-        let pattern = default_pattern();
-        let mut rng = SeededRng::new(42);
-        let field = pattern.generate(64, 64, true, &mut rng);
-
-        // With 3D projection seamless tiling, top/bottom and left/right should match
-        let tolerance = 0.1;
-        let mut height_matches = 0;
-        let total = field.width;
-
-        for x in 0..field.width {
-            let top = field.get(x, 0);
-            let bottom = field.get(x, field.height - 1);
-            if (top.height - bottom.height).abs() < tolerance {
-                height_matches += 1;
-            }
+    fn organic_seamless_has_no_seam() {
+        // Perlin's periodic lattice and simplex's cross-fade both make the
+        // step across the wrap look like any step between neighbours.
+        for (noise, freq) in [
+            ("perlin", 4.0),
+            ("perlin", 0.7),
+            ("simplex", 4.0),
+            ("simplex", 0.7),
+        ] {
+            let s = seamless(noise, freq).seam_steps();
+            assert!(s.ratio() < 1.6, "{noise} @ {freq}: {s:?}");
         }
+    }
 
-        // At least 50% of boundary pixels should be close for a good seamless result
-        assert!(
-            height_matches > total / 2,
-            "seamless: only {}/{} top-bottom pixel heights match within tolerance",
-            height_matches,
-            total
-        );
+    #[test]
+    fn organic_seamless_is_not_a_mirror() {
+        // The old torus-in-3D trick fed cos(2πv) to the noise, so row y and
+        // row (h - y) were the same row: every tile was mirrored top to
+        // bottom. Real tiling noise has no such symmetry.
+        for noise in ["perlin", "simplex"] {
+            let f = seamless(noise, 4.0);
+            let (w, h) = (f.width, f.height);
+            let mut diff = 0.0f32;
+            for y in 1..h / 2 {
+                for x in 0..w {
+                    diff += (f.get(x, y).height - f.get(x, h - y).height).abs();
+                }
+            }
+            let mean = diff / ((h / 2 - 1) * w) as f32;
+            assert!(
+                mean > 0.03,
+                "{noise}: rows mirror each other (mean diff {mean})"
+            );
+        }
+    }
+
+    #[test]
+    fn organic_octaves_add_detail() {
+        // More octaves, more fine structure. The mean absolute second
+        // difference (curvature) weighs octave k by its frequency squared
+        // times its amplitude, so each octave added should raise it.
+        let detail = |octaves: u32| {
+            let pattern = PerlinOrganicPattern::new(PerlinOrganicParams {
+                octaves,
+                ..Default::default()
+            });
+            let f = pattern.generate(128, 128, true, &mut SeededRng::new(42));
+            let h = |x: u32, y: u32| f.get(x, y).height;
+            let mut sum = 0.0f32;
+            for y in 0..128 {
+                for x in 1..127 {
+                    sum += (h(x + 1, y) - 2.0 * h(x, y) + h(x - 1, y)).abs();
+                }
+            }
+            sum / (128.0 * 126.0)
+        };
+        let steps: Vec<f32> = [1, 2, 4, 6].iter().map(|&o| detail(o)).collect();
+        for pair in steps.windows(2) {
+            assert!(pair[1] > pair[0], "detail by octave {steps:?}");
+        }
+        assert!(steps[3] > steps[0] * 1.5, "detail by octave {steps:?}");
     }
 
     #[test]
@@ -419,31 +483,20 @@ mod tests {
     #[test]
     #[ignore]
     fn organic_visual_debug_pngs() {
-        use std::path::PathBuf;
-
-        let dir = PathBuf::from(std::env::temp_dir()).join("flint_pattern_debug");
-        std::fs::create_dir_all(&dir).unwrap();
-
+        use crate::generators::texture::pattern::write_debug_png;
         let pattern = default_pattern();
         let mut rng = SeededRng::new(42);
         let field = pattern.generate(256, 256, true, &mut rng);
-
-        for (name, img) in [
-            ("organic_height", field.to_height_image()),
-            ("organic_cells", field.to_cell_id_image()),
-            ("organic_edges", field.to_edge_distance_image()),
-        ] {
-            let path = dir.join(format!("{name}.png"));
-            image::save_buffer(
-                &path,
-                &img.pixels,
-                img.width,
-                img.height,
-                image::ColorType::Rgba8,
-            )
-            .unwrap();
-            println!("wrote {}", path.display());
+        write_debug_png("organic_height", &field.to_height_image());
+        write_debug_png("organic_cells", &field.to_cell_id_image());
+        write_debug_png("organic_edges", &field.to_edge_distance_image());
+        for octaves in [1u32, 2, 4, 6] {
+            let p = PerlinOrganicPattern::new(PerlinOrganicParams {
+                octaves,
+                ..Default::default()
+            });
+            let f = p.generate(256, 256, true, &mut SeededRng::new(42));
+            write_debug_png(&format!("organic_octaves_{octaves}"), &f.to_height_image());
         }
-        println!("\nOrganic debug PNGs written to: {}", dir.display());
     }
 }
