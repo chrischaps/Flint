@@ -115,7 +115,8 @@ Input bindings support keyboard, mouse, and gamepad devices. See [Physics and Ru
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `delta_time()` | `f64` | Seconds since last frame |
+| `delta_time()` | `f64` | Seconds since last frame (scaled by `set_time_scale`) |
+| `set_time_scale(scale)` | --- | Game seconds per real second from the next frame (1.0 normal, 0.25 slow motion, clamped 0.05–4). Physics, particles and animation slow with it; audio does not. Held until changed; a scene load resets it to 1.0 |
 | `total_time()` | `f64` | Total elapsed time since scene start |
 
 ### Audio API
