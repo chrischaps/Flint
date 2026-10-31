@@ -17,6 +17,12 @@
 //! to landscape, with the turn-your-phone prompt over it), no frame runs.
 //! Game time stops, the mix fades out, and when the attribute goes the
 //! clock skips the gap, so the race carries on where it was.
+//!
+//! A hidden page sleeps (#162, `flint_audio::page`): its sound is
+//! suspended as it hides, no frame runs (browsers give a hidden page no
+//! rAF; should one come, it is skipped), and the first frame back skips
+//! the gap as a hold's does, so game time and the audio clock pick up
+//! together where they stopped.
 
 use super::PlayerApp;
 use std::cell::{Cell, RefCell};
@@ -30,6 +36,8 @@ thread_local! {
     static LAST_USED: Cell<f64> = const { Cell::new(f64::NAN) };
     /// Whether the page held the game last refresh.
     static HELD: Cell<bool> = const { Cell::new(false) };
+    /// How many times the page had been hidden at the last refresh (#162).
+    static SLEEPS_SEEN: Cell<u64> = const { Cell::new(0) };
 }
 
 /// The attribute on `<html>` by which the page holds the game.
@@ -98,7 +106,7 @@ impl PlayerApp {
     /// A rAF call: true when this refresh is drawn. Skipped ones cost a
     /// timestamp and a comparison.
     pub(super) fn web_frame_begin(&mut self) -> bool {
-        if self.follow_page_hold() {
+        if self.follow_page_sleep() || self.follow_page_hold() {
             return false;
         }
         if self.frame_pacer.is_none() && self.perf.is_none() {
@@ -111,6 +119,24 @@ impl PlayerApp {
             super::web_perf::record_frame(t);
         }
         due
+    }
+
+    /// True while the page is hidden. The first frame after it was hidden
+    /// skips the gap: game time stopped when the sound did (#162).
+    fn follow_page_sleep(&mut self) -> bool {
+        flint_audio::page::listen();
+        if flint_audio::page::hidden() {
+            return true;
+        }
+        let sleeps = flint_audio::page::sleeps();
+        if SLEEPS_SEEN.with(|s| s.replace(sleeps)) != sleeps {
+            self.clock.resync();
+            tracing::info!(
+                "[sleep] the page is back; game time carries on from {:.3} s",
+                self.clock.total_time
+            );
+        }
+        false
     }
 
     /// True while the page holds the game. Going in fades the mix out;

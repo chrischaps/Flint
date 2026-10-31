@@ -234,7 +234,11 @@ impl AudioEngine {
     pub fn silent() -> Self {
         // The worklet's wasm is fetched now, so Begin doesn't wait for it.
         #[cfg(target_arch = "wasm32")]
-        crate::worklet::preload();
+        {
+            crate::worklet::preload();
+            // A hidden page's sound sleeps (#162).
+            crate::page::listen();
+        }
         Self {
             mixer: Mixer::Silent,
             sound_cache: HashMap::new(),
