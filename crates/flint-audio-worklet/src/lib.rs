@@ -31,7 +31,9 @@ use kira::sound::PlaybackState;
 use kira::track::{
     SpatialTrackBuilder, SpatialTrackDistances, SpatialTrackHandle, TrackBuilder, TrackHandle,
 };
-use kira::{AudioManager, AudioManagerSettings, Decibels, Easing, Frame, PlaybackRate, Tween};
+use kira::{
+    AudioManager, AudioManagerSettings, Decibels, Easing, Frame, Panning, PlaybackRate, Tween,
+};
 
 use protocol::{Command, Reader, Target};
 
@@ -247,9 +249,10 @@ impl Mixer {
                 target,
                 db,
                 rate,
+                pan,
                 looping,
             } => {
-                let data = self.sound(sound, db, rate, looping)?;
+                let data = self.sound(sound, db, rate, looping)?.panning(Panning(pan));
                 let handle = match target {
                     Target::Bus(bus) => self.bus(bus)?.play(data).ok()?,
                     Target::Track(track) => self.tracks.get_mut(&track)?.play(data).ok()?,
@@ -294,6 +297,21 @@ impl Mixer {
             }
             Command::VoiceDrop { voice } => {
                 self.voices.remove(&voice)?;
+            }
+            Command::VoicePanning {
+                voice,
+                pan,
+                tween: t,
+            } => {
+                self.voices
+                    .get_mut(&voice)?
+                    .set_panning(Panning(pan), tween(t));
+            }
+            Command::VoicePause { voice, tween: t } => {
+                self.voices.get_mut(&voice)?.pause(tween(t));
+            }
+            Command::VoiceResume { voice, tween: t } => {
+                self.voices.get_mut(&voice)?.resume(tween(t));
             }
             Command::ClearOneShots => self.one_shots.clear(),
         }
@@ -380,6 +398,7 @@ mod tests {
             target: Target::Bus(BUS_MUSIC),
             db: 0.0,
             rate: 1.0,
+            pan: 0.0,
             looping: true,
         }]));
         let (l, r) = loudness(&mut m, 40);
@@ -426,6 +445,7 @@ mod tests {
             target: Target::Track(track),
             db: 0.0,
             rate: 1.0,
+            pan: 0.0,
             looping: true,
         };
         m.apply(&batch(&[track(1, 3.0), play(1, 1)]));
@@ -494,6 +514,7 @@ mod tests {
                 target: Target::Bus(BUS_SFX),
                 db: 0.0,
                 rate: 1.0,
+                pan: 0.0,
                 looping: false,
             },
             // No listener yet: a spatial track can't be made.

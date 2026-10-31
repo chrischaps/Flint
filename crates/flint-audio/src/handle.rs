@@ -7,8 +7,9 @@
 //! removes the track and what plays on it.
 
 use kira::sound::static_sound::StaticSoundHandle;
+use kira::sound::PlaybackState;
 use kira::track::SpatialTrackHandle;
-use kira::{Decibels, PlaybackRate, Tween};
+use kira::{Decibels, Panning, PlaybackRate, Tween};
 
 use crate::remote::{Command, RemoteTrack, RemoteVoice};
 
@@ -48,6 +49,49 @@ impl SoundHandle {
                 voice: v.id,
                 tween: tween.duration.as_secs_f32(),
             }),
+        }
+    }
+
+    /// kira's `Panning`: -1 left, 1 right, at constant power (#138).
+    pub fn set_panning(&mut self, panning: Panning, tween: Tween) {
+        match self {
+            Self::Local(h) => h.set_panning(panning, tween),
+            Self::Remote(v) => v.link.send(Command::VoicePanning {
+                voice: v.id,
+                pan: panning.0,
+                tween: tween.duration.as_secs_f32(),
+            }),
+        }
+    }
+
+    /// Pause, fading out over `tween`; [`resume`](Self::resume) picks up
+    /// where it stopped (#138).
+    pub fn pause(&mut self, tween: Tween) {
+        match self {
+            Self::Local(h) => h.pause(tween),
+            Self::Remote(v) => v.link.send(Command::VoicePause {
+                voice: v.id,
+                tween: tween.duration.as_secs_f32(),
+            }),
+        }
+    }
+
+    pub fn resume(&mut self, tween: Tween) {
+        match self {
+            Self::Local(h) => h.resume(tween),
+            Self::Remote(v) => v.link.send(Command::VoiceResume {
+                voice: v.id,
+                tween: tween.duration.as_secs_f32(),
+            }),
+        }
+    }
+
+    /// How a local sound is playing. A remote mixer says nothing back, so
+    /// `None` there.
+    pub fn local_state(&self) -> Option<PlaybackState> {
+        match self {
+            Self::Local(h) => Some(h.state()),
+            Self::Remote(_) => None,
         }
     }
 }
