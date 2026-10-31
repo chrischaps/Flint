@@ -453,6 +453,7 @@ impl PlayerApp {
                 renderer,
                 Some(&mut self.physics),
                 &context.device,
+                &context.queue,
             );
             renderer.update_from_world(&self.world, &context.device);
 

@@ -287,6 +287,22 @@ roughness = 0.8
 
 One spline can feed multiple mesh entities (road surface, walls, guardrails) with different cross-section dimensions and materials.
 
+A spline mesh can carry its own texture, which tiles along the sweep:
+
+```toml
+[entities.road_surface.spline_mesh]
+spline = "track_path"
+width = 12.0
+height = 0.3
+offset = [0.0, -0.15]
+color = [1.0, 1.0, 1.0, 1.0]                        # multiplies the texture
+texture = "textures/road_asphalt.png"               # loaded with mipmaps
+normal_texture = "textures/road_asphalt_normal.png"
+texture_length = 12.0                               # metres per repeat along the track
+```
+
+Texture `u` runs 0 to 1 across each face (left to right on top, bottom to top on the sides), and `v` is distance along the sweep divided by `texture_length`. Distance is measured along the mesh's own offset path, so a wall on the inside of a bend isn't squashed. On a closed spline the length is adjusted slightly so that a whole number of repeats meets at the seam. Chunked meshes (`chunk_size`) continue `v` from chunk to chunk. Set `collider = false` for scenery that should be drawn but not collide, such as verges beyond a barrier.
+
 ## Further Reading
 
 - [Your First Scene](../getting-started/first-scene.md) --- hands-on guide to building a scene

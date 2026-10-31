@@ -196,6 +196,31 @@ impl TextureCache {
         name: &str,
         path: &Path,
     ) -> Result<bool, String> {
+        self.load_file_with(device, queue, name, path, false)
+    }
+
+    /// [`load_file`](Self::load_file) with a full mip chain, for surfaces
+    /// seen at grazing angles and long distances (roads, floors) where a
+    /// single level shimmers. Levels are box-filtered on the CPU, colour in
+    /// linear light. If `name` is already cached it is kept as it is.
+    pub fn load_file_mipmapped(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        path: &Path,
+    ) -> Result<bool, String> {
+        self.load_file_with(device, queue, name, path, true)
+    }
+
+    fn load_file_with(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        path: &Path,
+        mipmaps: bool,
+    ) -> Result<bool, String> {
         if self.textures.contains_key(name) {
             return Ok(false);
         }
@@ -205,10 +230,17 @@ impl TextureCache {
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
 
-        let format = if is_data_map_name(name) {
+        let is_data = is_data_map_name(name);
+        let format = if is_data {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
             wgpu::TextureFormat::Rgba8UnormSrgb
+        };
+
+        let (data, mip_level_count) = if mipmaps {
+            mip_chain(&rgba, width, height, !is_data)
+        } else {
+            (rgba.into_raw(), 1)
         };
 
         let texture = device.create_texture_with_data(
@@ -220,7 +252,7 @@ impl TextureCache {
                     height,
                     depth_or_array_layers: 1,
                 },
-                mip_level_count: 1,
+                mip_level_count,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
@@ -228,7 +260,7 @@ impl TextureCache {
                 view_formats: &[],
             },
             wgpu::util::TextureDataOrder::LayerMajor,
-            &rgba,
+            &data,
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -371,25 +403,44 @@ impl TextureCache {
             ));
         }
 
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &tex.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(tex.width * 4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: tex.width,
-                height: tex.height,
-                depth_or_array_layers: 1,
-            },
-        );
+        // A mipmapped texture gets its whole chain rebuilt, or the smaller
+        // levels would go on showing the old image at a distance.
+        let levels = tex.texture.mip_level_count();
+        let chain;
+        let data = if levels > 1 {
+            let srgb = tex.texture.format() == wgpu::TextureFormat::Rgba8UnormSrgb;
+            chain = mip_chain(data, tex.width, tex.height, srgb).0;
+            chain.as_slice()
+        } else {
+            data
+        };
+
+        let (mut w, mut h, mut offset) = (tex.width, tex.height, 0usize);
+        for level in 0..levels {
+            let len = (w * h * 4) as usize;
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &tex.texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &data[offset..offset + len],
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            offset += len;
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        }
 
         Ok(())
     }
@@ -444,5 +495,124 @@ impl TextureCache {
                 vec![255u8; pixel_count * 4]
             }
         }
+    }
+}
+
+/// Number of mip levels down to 1x1 for a `width` x `height` image.
+pub fn mip_level_count(width: u32, height: u32) -> u32 {
+    32 - width.max(height).max(1).leading_zeros()
+}
+
+/// A full mip chain for RGBA8 pixels: level 0 (the input) first, then each
+/// half-size level, all concatenated in the order
+/// `create_texture_with_data` expects. Each level is a 2x2 box filter of the
+/// one above (an odd edge repeats its last texel). With `srgb` the colour
+/// channels are averaged in linear light, so thin bright paint fades into
+/// the ground at a distance instead of darkening it; alpha is always linear.
+/// Returns the bytes and the level count.
+pub fn mip_chain(rgba: &[u8], width: u32, height: u32, srgb: bool) -> (Vec<u8>, u32) {
+    let levels = mip_level_count(width, height);
+    let to_linear: Vec<f32> = (0..256)
+        .map(|i| {
+            let c = i as f32 / 255.0;
+            if !srgb {
+                c
+            } else if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        })
+        .collect();
+    let to_byte = |v: f32, colour: bool| -> u8 {
+        let v = v.clamp(0.0, 1.0);
+        let e = if colour && srgb {
+            if v <= 0.003_130_8 {
+                v * 12.92
+            } else {
+                1.055 * v.powf(1.0 / 2.4) - 0.055
+            }
+        } else {
+            v
+        };
+        (e * 255.0 + 0.5) as u8
+    };
+
+    let mut out = rgba.to_vec();
+    let mut cur: Vec<f32> = rgba
+        .chunks_exact(4)
+        .flat_map(|p| {
+            [
+                to_linear[p[0] as usize],
+                to_linear[p[1] as usize],
+                to_linear[p[2] as usize],
+                p[3] as f32 / 255.0,
+            ]
+        })
+        .collect();
+    let (mut w, mut h) = (width as usize, height as usize);
+    for _ in 1..levels {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = vec![0.0f32; nw * nh * 4];
+        for y in 0..nh {
+            let (y0, y1) = ((2 * y).min(h - 1), (2 * y + 1).min(h - 1));
+            for x in 0..nw {
+                let (x0, x1) = ((2 * x).min(w - 1), (2 * x + 1).min(w - 1));
+                for c in 0..4 {
+                    next[(y * nw + x) * 4 + c] = 0.25
+                        * (cur[(y0 * w + x0) * 4 + c]
+                            + cur[(y0 * w + x1) * 4 + c]
+                            + cur[(y1 * w + x0) * 4 + c]
+                            + cur[(y1 * w + x1) * 4 + c]);
+                }
+            }
+        }
+        out.extend(next.chunks_exact(4).flat_map(|p| {
+            [
+                to_byte(p[0], true),
+                to_byte(p[1], true),
+                to_byte(p[2], true),
+                to_byte(p[3], false),
+            ]
+        }));
+        cur = next;
+        w = nw;
+        h = nh;
+    }
+    (out, levels)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_counts() {
+        assert_eq!(mip_level_count(1, 1), 1);
+        assert_eq!(mip_level_count(1024, 1024), 11);
+        assert_eq!(mip_level_count(1024, 256), 11);
+        assert_eq!(mip_level_count(5, 3), 3);
+    }
+
+    #[test]
+    fn chain_sizes_add_up() {
+        let (w, h) = (6u32, 3u32);
+        let (data, levels) = mip_chain(&vec![200u8; (w * h * 4) as usize], w, h, true);
+        // 6x3, 3x1, 1x1
+        assert_eq!(levels, 3);
+        assert_eq!(data.len(), (18 + 3 + 1) * 4);
+        // a flat colour stays the same colour all the way down
+        assert!(data.iter().all(|&b| b == 200));
+    }
+
+    #[test]
+    fn srgb_average_is_in_linear_light() {
+        // black and white average to linear 0.5, which is sRGB 188
+        let px = [0, 0, 0, 255, 255, 255, 255, 255];
+        let (data, _) = mip_chain(&px, 2, 1, true);
+        assert_eq!(&data[8..11], &[188, 188, 188]);
+        assert_eq!(data[11], 255);
+        let (data, _) = mip_chain(&px, 2, 1, false);
+        assert_eq!(data[8], 128);
     }
 }
