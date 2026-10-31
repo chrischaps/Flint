@@ -146,7 +146,7 @@ flint gen specs/stone_wall.procgen.toml -o wall.png
 flint gen specs/oak_tree.procgen.toml --dry-run          # cost estimate, no output
 flint gen specs/oak_tree.procgen.toml --seed 7 --register
 flint gen specs/beetle.procgen.toml --batch 5 --seed-start 100
-flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/lowpoly.toml --strict
+flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_tavern.style.toml --strict
 ```
 
 | Flag | Description |
@@ -158,11 +158,30 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/lowpoly.to
 | `--batch N`, `--seed-start S` | Sequential-seed variants |
 | `--register` | Store the output in `.flint/assets` and write a `.asset.toml` sidecar recording spec hash, seed and content hash |
 | `--force` | Regenerate even when a registered output with the same spec hash and seed exists |
-| `--validate`, `--strict`, `--style-guide` | Run the output validator (geometry, materials, style constraints); `--strict` turns warnings, including ignored spec keys, into exit code 1 |
+| `--validate`, `--strict`, `--style-guide` | Run the output validator (see [Validation](#validation)); `--strict` turns warnings, including ignored spec keys, into exit code 1. `--style-guide` needs `--validate` |
 
 Image sets write one PNG per map with the map name suffixed.
 
 Before anything is generated, `flint gen` checks that the spec's generator is registered (an unknown one is refused with the list of known generators) and that the output can hold what it makes: `-o tree.png` for a mesh, or `--format png` on one, fails with a suggested path instead of writing GLB bytes under a `.png` name. `--dry-run` shows the seed it would use, including a `--seed` override.
+
+### Validation
+
+`--validate` checks what was generated, not the spec, and prints one line per check and a summary (`Validation: 23 passed, 4 warnings, 0 failed`). Failures exit 1; warnings exit 0 unless `--strict`.
+
+| Check | Fails when | Warns when |
+|-------|-----------|------------|
+| mesh integrity | indices aren't whole triangles, point past the vertices, or a position isn't finite | |
+| spec triangle target | over 2x the spec's `[[lod]] target_triangles` for that level | over the target |
+| style triangle budget | over 2x the style's `geometry.max_triangles` (every mesh, every LOD) | over the budget |
+| UV range | a UV is outside [0,1] (UVs on a textured submesh may tile) or not finite; with `require_uvs`, every vertex shares one UV | |
+| normals | a normal is zero or not finite | a normal isn't unit length |
+| PBR roughness / metallic | a material factor is outside [0,1] | outside the style's `roughness_range` / `metallic_range` |
+| palette | a style palette entry isn't a hex colour | a material's base colour is more than ΔE 20 (CIELAB) from every palette entry, or under half of a colour map's texels are within ΔE 20 |
+| roughness / metallic range (maps) | | under 90% of the map's texels are inside the style's range |
+| degenerate triangles | a triangle's area is at most 1e-6 x its longest edge squared | |
+| texture dimensions | the image isn't the spec's `width` x `height` | not a power of two |
+
+A style guide is the `[style]` TOML that `flint asset` uses, e.g. `styles/medieval_tavern.style.toml`.
 
 ## Previewing
 

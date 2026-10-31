@@ -3,12 +3,48 @@
 //! Checks meshes and images against budget constraints, PBR ranges, and
 //! style guide parameters. The [`validate_output`] entry point dispatches
 //! to per-variant checks and returns a [`ValidationReport`].
+//!
+//! Every check runs on the generated output, never on the spec: a spec can
+//! promise 8000 triangles and a palette of browns, and only the mesh and the
+//! pixels say whether it kept the promise.
 
 use std::fmt;
 
 use crate::output::GeneratorOutput;
 use crate::spec::ProcGenSpec;
-use crate::types::{ImageData, MaterialData, MeshData, Vertex};
+use crate::types::{ChannelSemantics, ImageData, MaterialData, MeshData, Vertex};
+
+/// How far (CIE76 ΔE) a colour may sit from its nearest palette entry and
+/// still count as "on palette". 2.3 is the just-noticeable difference; 20 is
+/// a clearly different shade of the same family (light oak against sienna),
+/// beyond it the eye names a different colour.
+pub const PALETTE_DELTA_E: f32 = 20.0;
+
+/// The share of a colour texture's texels that must be on palette.
+pub const PALETTE_TEXEL_SHARE: f32 = 0.5;
+
+/// The share of a roughness or metallic map's texels that must fall inside
+/// the style's range for it.
+pub const MAP_TEXEL_SHARE: f32 = 0.9;
+
+/// Slack on range comparisons: material factors are `f32` and style ranges
+/// `f64`, so `0.15_f32` reads as 0.15000000596 and must not fall outside
+/// `[0.0, 0.15]`.
+const RANGE_EPSILON: f64 = 1e-6;
+
+/// A triangle is degenerate when its area is at most this times its longest
+/// edge squared: its height is a two-millionth of its length. Relative, so
+/// a pole sliver on a metre-wide ellipsoid (vertices 5e-8 apart, because
+/// `sin(PI)` is not 0 in f32) counts, and a millimetre-scale detail doesn't.
+/// A blade of grass a thousand times longer than it is wide scores 5e-4.
+const SLIVER_RATIO: f32 = 1e-6;
+
+/// A normal whose length is further than this from 1 is not unit length.
+const NORMAL_LENGTH_TOLERANCE: f32 = 0.01;
+
+/// Cap on texels sampled per texture for the palette and roughness checks,
+/// so a 4K map validates as fast as a 256² one.
+const MAX_TEXEL_SAMPLES: usize = 65_536;
 
 // ── Status / Check / Constraints ────────────────────────────────────────────
 
@@ -40,16 +76,24 @@ pub struct ValidationCheck {
 
 /// Plain-data struct carrying optional budget/style constraints.
 ///
-/// Built in the CLI from spec LOD targets and style guide fields, so that
-/// `flint-procgen` never depends on `flint-asset-gen`.
+/// Built in the CLI from spec fields and the style guide, so that
+/// `flint-procgen` never depends on `flint-asset-gen`. The spec's own LOD
+/// targets are read from the spec by [`validate_output`], not from here.
 #[derive(Debug, Clone, Default)]
 pub struct ValidationConstraints {
+    /// A ceiling on every mesh's triangle count (the style guide's
+    /// `geometry.max_triangles`).
     pub max_triangles: Option<u32>,
     pub roughness_range: Option<[f64; 2]>,
     pub metallic_range: Option<[f64; 2]>,
     pub expected_texture_width: Option<u32>,
     pub expected_texture_height: Option<u32>,
+    /// Hex colours (`#RRGGBB`, `RRGGBB` or `#RGB`). Materials' base colours
+    /// and colour textures are checked against them.
     pub palette: Vec<String>,
+    /// The style guide's `geometry.require_uvs`: a mesh whose vertices all
+    /// share one UV has no layout and fails.
+    pub require_uvs: bool,
 }
 
 /// Aggregated validation results.
@@ -60,24 +104,19 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn count_passed(&self) -> usize {
-        self.checks
-            .iter()
-            .filter(|c| c.status == CheckStatus::Pass)
-            .count()
+        self.count(CheckStatus::Pass)
     }
 
     pub fn count_warnings(&self) -> usize {
-        self.checks
-            .iter()
-            .filter(|c| c.status == CheckStatus::Warn)
-            .count()
+        self.count(CheckStatus::Warn)
     }
 
     pub fn count_failed(&self) -> usize {
-        self.checks
-            .iter()
-            .filter(|c| c.status == CheckStatus::Fail)
-            .count()
+        self.count(CheckStatus::Fail)
+    }
+
+    fn count(&self, status: CheckStatus) -> usize {
+        self.checks.iter().filter(|c| c.status == status).count()
     }
 
     pub fn has_failures(&self) -> bool {
@@ -91,23 +130,25 @@ impl ValidationReport {
     /// Print each check with a status indicator.
     pub fn print_checks(&self) {
         for c in &self.checks {
-            let icon = match c.status {
-                CheckStatus::Pass => " PASS",
-                CheckStatus::Warn => " WARN",
-                CheckStatus::Fail => " FAIL",
-            };
-            println!("  [{icon}] {}: {}", c.name, c.detail);
+            println!("  [{:>5}] {}: {}", c.status.to_string(), c.name, c.detail);
         }
     }
 
-    /// Print a one-line summary.
-    pub fn print_summary(&self) {
-        println!(
-            "Validation: {} passed, {} warnings, {} failed",
+    /// The one-line summary, e.g. `Validation: 5 passed, 1 warning, 0 failed`.
+    pub fn summary(&self) -> String {
+        let warnings = self.count_warnings();
+        format!(
+            "Validation: {} passed, {} {}, {} failed",
             self.count_passed(),
-            self.count_warnings(),
+            warnings,
+            if warnings == 1 { "warning" } else { "warnings" },
             self.count_failed(),
-        );
+        )
+    }
+
+    /// Print the one-line summary.
+    pub fn print_summary(&self) {
+        println!("{}", self.summary());
     }
 }
 
@@ -120,29 +161,38 @@ pub fn validate_output(
     constraints: &ValidationConstraints,
 ) -> ValidationReport {
     let mut checks = Vec::new();
+    let palette = parse_palette(&constraints.palette, &mut checks);
+    let spec_target = |level: usize| {
+        spec.lod
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .find(|l| l.level as usize == level)
+            .map(|l| l.target_triangles)
+    };
 
     match output {
         GeneratorOutput::Mesh(mesh) => {
-            validate_mesh(mesh, constraints, &mut checks, None);
+            validate_mesh(
+                mesh,
+                constraints,
+                &palette,
+                spec_target(0),
+                &mut checks,
+                None,
+            );
         }
         GeneratorOutput::MeshWithLods(lods) => {
-            let lod_spec = spec.lod.as_deref().unwrap_or(&[]);
             for (i, mesh) in lods.iter().enumerate() {
-                let per_lod_target = lod_spec
-                    .iter()
-                    .find(|l| l.level as usize == i)
-                    .map(|l| l.target_triangles);
-                let prefix = Some(format!("LOD{i}"));
-                validate_mesh(mesh, constraints, &mut checks, prefix.as_deref());
-                // Per-LOD triangle budget from spec
-                if let Some(target) = per_lod_target {
-                    check_triangle_budget_value(
-                        mesh.triangle_count(),
-                        target,
-                        &mut checks,
-                        &format!("LOD{i} spec target"),
-                    );
-                }
+                let prefix = format!("LOD{i}");
+                validate_mesh(
+                    mesh,
+                    constraints,
+                    &palette,
+                    spec_target(i),
+                    &mut checks,
+                    Some(&prefix),
+                );
             }
         }
         GeneratorOutput::SkinnedMesh(skinned) => {
@@ -164,15 +214,22 @@ pub fn validate_output(
                 submeshes: skinned.submeshes.clone(),
                 bounding_box: skinned.bounding_box,
             };
-            validate_mesh(&proxy, constraints, &mut checks, Some("skinned"));
+            validate_mesh(
+                &proxy,
+                constraints,
+                &palette,
+                spec_target(0),
+                &mut checks,
+                Some("skinned"),
+            );
         }
         GeneratorOutput::Image(img) => {
-            validate_image(img, constraints, &mut checks, None);
+            validate_image(img, constraints, &palette, &mut checks, None);
         }
         GeneratorOutput::ImageSet(images) => {
             for img in images {
-                let prefix = Some(format!("{:?}", img.channel_semantics).to_lowercase());
-                validate_image(img, constraints, &mut checks, prefix.as_deref());
+                let prefix = format!("{:?}", img.channel_semantics).to_lowercase();
+                validate_image(img, constraints, &palette, &mut checks, Some(&prefix));
             }
         }
         GeneratorOutput::Sound(_) => {
@@ -187,54 +244,127 @@ pub fn validate_output(
     ValidationReport { checks }
 }
 
+fn push(checks: &mut Vec<ValidationCheck>, name: String, status: CheckStatus, detail: String) {
+    checks.push(ValidationCheck {
+        name,
+        status,
+        detail,
+    });
+}
+
+fn labeller(prefix: Option<&str>) -> impl Fn(&str) -> String + '_ {
+    move |name: &str| match prefix {
+        Some(p) => format!("{p} {name}"),
+        None => name.to_string(),
+    }
+}
+
 // ── Mesh checks ─────────────────────────────────────────────────────────────
 
 fn validate_mesh(
     mesh: &MeshData,
     constraints: &ValidationConstraints,
+    palette: &[Palette],
+    spec_target: Option<u32>,
     checks: &mut Vec<ValidationCheck>,
     prefix: Option<&str>,
 ) {
-    let label = |name: &str| match prefix {
-        Some(p) => format!("{p} {name}"),
-        None => name.to_string(),
-    };
+    let label = labeller(prefix);
 
-    // 1. Triangle budget
+    // Indices and positions first: every later check reads through them.
+    let sound = check_integrity(mesh, checks, &label("mesh integrity"));
+
+    // Triangle budgets: the spec's target for this level, then the style's
+    // ceiling. With neither, report the count so the line still says it.
+    let tris = mesh.triangle_count();
+    if let Some(target) = spec_target {
+        check_triangle_budget_value(tris, target, checks, &label("spec triangle target"));
+    }
     if let Some(max_tris) = constraints.max_triangles {
-        check_triangle_budget_value(
-            mesh.triangle_count(),
-            max_tris,
+        check_triangle_budget_value(tris, max_tris, checks, &label("style triangle budget"));
+    }
+    if spec_target.is_none() && constraints.max_triangles.is_none() {
+        push(
             checks,
-            &label("triangle budget"),
+            label("triangle budget"),
+            CheckStatus::Pass,
+            format!("{tris} triangles (no budget set)"),
         );
-    } else {
-        checks.push(ValidationCheck {
-            name: label("triangle budget"),
-            status: CheckStatus::Pass,
-            detail: format!("{} triangles (no budget set)", mesh.triangle_count()),
-        });
     }
 
-    // 2. UV range [0,1]
-    check_uv_range(mesh, checks, &label("UV range"));
+    check_uv_range(mesh, constraints.require_uvs, checks, &label("UV range"));
+    check_normals(&mesh.vertices, checks, &label("normals"));
 
-    // 3 & 4. PBR roughness & metallic
-    check_pbr_roughness(
+    check_pbr_factor(
         &mesh.materials,
-        constraints,
+        "roughness",
+        |m| m.roughness,
+        constraints.roughness_range,
         checks,
         &label("PBR roughness"),
     );
-    check_pbr_metallic(&mesh.materials, constraints, checks, &label("PBR metallic"));
-
-    // 5. Degenerate triangles
-    check_degenerate_triangles(
-        &mesh.vertices,
-        &mesh.indices,
+    check_pbr_factor(
+        &mesh.materials,
+        "metallic",
+        |m| m.metallic,
+        constraints.metallic_range,
         checks,
-        &label("degenerate triangles"),
+        &label("PBR metallic"),
     );
+    if !palette.is_empty() {
+        check_material_palette(&mesh.materials, palette, checks, &label("palette"));
+    }
+
+    if sound {
+        check_degenerate_triangles(
+            &mesh.vertices,
+            &mesh.indices,
+            checks,
+            &label("degenerate triangles"),
+        );
+    }
+}
+
+/// Index count a multiple of three, every index inside the vertex buffer,
+/// every position finite. Returns whether the triangles can be read.
+fn check_integrity(mesh: &MeshData, checks: &mut Vec<ValidationCheck>, name: &str) -> bool {
+    let n = mesh.vertices.len();
+    let mut problems = Vec::new();
+    if !mesh.indices.len().is_multiple_of(3) {
+        problems.push(format!(
+            "{} indices is not a whole number of triangles",
+            mesh.indices.len()
+        ));
+    }
+    let out_of_range = mesh.indices.iter().filter(|&&i| i as usize >= n).count();
+    if out_of_range > 0 {
+        let max = mesh.indices.iter().max().copied().unwrap_or(0);
+        problems.push(format!(
+            "{out_of_range} indices past the {n} vertices (highest {max})"
+        ));
+    }
+    let non_finite = mesh
+        .vertices
+        .iter()
+        .filter(|v| v.position.iter().any(|c| !c.is_finite()))
+        .count();
+    if non_finite > 0 {
+        problems.push(format!("{non_finite}/{n} positions not finite"));
+    }
+
+    if problems.is_empty() {
+        push(
+            checks,
+            name.into(),
+            CheckStatus::Pass,
+            format!("{} triangles over {n} vertices", mesh.triangle_count()),
+        );
+        true
+    } else {
+        push(checks, name.into(), CheckStatus::Fail, problems.join("; "));
+        // A non-finite position still leaves the indices readable.
+        mesh.indices.len().is_multiple_of(3) && out_of_range == 0
+    }
 }
 
 fn check_triangle_budget_value(
@@ -244,31 +374,35 @@ fn check_triangle_budget_value(
     name: &str,
 ) {
     let budget = budget as usize;
-    if actual <= budget {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Pass,
-            detail: format!("{actual} triangles <= {budget} budget"),
-        });
+    let (status, detail) = if actual <= budget {
+        (CheckStatus::Pass, format!("{actual} triangles <= {budget}"))
     } else if actual <= budget * 2 {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Warn,
-            detail: format!("{actual} triangles > {budget} budget (within 2x tolerance)"),
-        });
+        (
+            CheckStatus::Warn,
+            format!("{actual} triangles > {budget} (within 2x tolerance)"),
+        )
     } else {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Fail,
-            detail: format!("{actual} triangles > {budget} budget (exceeds 2x)"),
-        });
-    }
+        (
+            CheckStatus::Fail,
+            format!(
+                "{actual} triangles > {budget} ({:.1}x, over the 2x tolerance)",
+                actual as f64 / budget.max(1) as f64
+            ),
+        )
+    };
+    push(checks, name.into(), status, detail);
 }
 
 /// UVs must lie in [0,1], except on a submesh whose material carries a
 /// texture: glTF samplers repeat by default, so a tiling texture (the tree's
-/// bark, #22) wraps on purpose. Non-finite UVs always fail.
-fn check_uv_range(mesh: &MeshData, checks: &mut Vec<ValidationCheck>, name: &str) {
+/// bark, #22) wraps on purpose. Non-finite UVs always fail. With
+/// `require_uvs`, a mesh whose vertices all share one UV has no layout.
+fn check_uv_range(
+    mesh: &MeshData,
+    require_uvs: bool,
+    checks: &mut Vec<ValidationCheck>,
+    name: &str,
+) {
     let vertices = &mesh.vertices;
     let mut tiles = vec![false; vertices.len()];
     for sub in &mesh.submeshes {
@@ -299,121 +433,115 @@ fn check_uv_range(mesh: &MeshData, checks: &mut Vec<ValidationCheck>, name: &str
             tiled += 1;
         }
     }
-    if bad == 0 {
-        let detail = if tiled == 0 {
-            format!("all {} vertices in [0,1]", vertices.len())
-        } else {
+
+    if bad > 0 {
+        push(
+            checks,
+            name.into(),
+            CheckStatus::Fail,
+            format!("{bad}/{} vertices outside [0,1]", vertices.len()),
+        );
+        return;
+    }
+    let flat = vertices.len() > 1 && vertices.iter().all(|v| v.uv == vertices[0].uv);
+    if require_uvs && flat {
+        push(
+            checks,
+            name.into(),
+            CheckStatus::Fail,
             format!(
-                "all {} vertices in [0,1] or tiling a textured material ({tiled} wrap)",
-                vertices.len()
-            )
-        };
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Pass,
-            detail,
-        });
-    } else {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Fail,
-            detail: format!("{bad}/{} vertices outside [0,1]", vertices.len()),
-        });
+                "every vertex at UV {:?}: no layout, and the style requires UVs",
+                vertices[0].uv
+            ),
+        );
+        return;
     }
+    let detail = if tiled == 0 {
+        format!("all {} vertices in [0,1]", vertices.len())
+    } else {
+        format!(
+            "all {} vertices in [0,1] or tiling a textured material ({tiled} wrap)",
+            vertices.len()
+        )
+    };
+    push(checks, name.into(), CheckStatus::Pass, detail);
 }
 
-fn check_pbr_roughness(
+/// Normals must be finite and non-zero (Fail: lighting breaks), and should
+/// be unit length (Warn: shading darkens or blows out where they are not).
+fn check_normals(vertices: &[Vertex], checks: &mut Vec<ValidationCheck>, name: &str) {
+    let mut broken = 0usize;
+    let mut unnormalised = 0usize;
+    for v in vertices {
+        let [x, y, z] = v.normal;
+        let len = (x * x + y * y + z * z).sqrt();
+        if !len.is_finite() || len < 1e-6 {
+            broken += 1;
+        } else if (len - 1.0).abs() > NORMAL_LENGTH_TOLERANCE {
+            unnormalised += 1;
+        }
+    }
+    let n = vertices.len();
+    let (status, detail) = if broken > 0 {
+        (
+            CheckStatus::Fail,
+            format!("{broken}/{n} normals zero or not finite"),
+        )
+    } else if unnormalised > 0 {
+        (
+            CheckStatus::Warn,
+            format!("{unnormalised}/{n} normals not unit length"),
+        )
+    } else {
+        (CheckStatus::Pass, format!("all {n} unit length"))
+    };
+    push(checks, name.into(), status, detail);
+}
+
+/// A PBR factor must lie in [0,1] (Fail) and inside the style's range when
+/// one is set (Warn).
+fn check_pbr_factor(
     materials: &[MaterialData],
-    constraints: &ValidationConstraints,
+    factor: &str,
+    get: impl Fn(&MaterialData) -> f32,
+    style_range: Option<[f64; 2]>,
     checks: &mut Vec<ValidationCheck>,
     name: &str,
 ) {
-    let mut fail = false;
-    let mut warn = false;
-    let mut details = Vec::new();
-
+    let mut fail = Vec::new();
+    let mut warn = Vec::new();
     for mat in materials {
-        let r = mat.roughness as f64;
-        if r < 0.0 || r > 1.0 {
-            fail = true;
-            details.push(format!("'{}' roughness {:.2} outside [0,1]", mat.name, r));
-        } else if let Some([lo, hi]) = constraints.roughness_range {
-            if r < lo || r > hi {
-                warn = true;
-                details.push(format!(
-                    "'{}' roughness {:.2} outside style range [{:.2},{:.2}]",
-                    mat.name, r, lo, hi
+        let v = get(mat) as f64;
+        if !(0.0..=1.0).contains(&v) {
+            fail.push(format!("'{}' {factor} {v:.2} outside [0,1]", mat.name));
+        } else if let Some([lo, hi]) = style_range {
+            if v < lo - RANGE_EPSILON || v > hi + RANGE_EPSILON {
+                warn.push(format!(
+                    "'{}' {factor} {v:.2} outside style range [{lo:.2},{hi:.2}]",
+                    mat.name
                 ));
             }
         }
     }
-
-    if fail {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Fail,
-            detail: details.join("; "),
-        });
-    } else if warn {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Warn,
-            detail: details.join("; "),
-        });
+    let (status, detail) = if !fail.is_empty() {
+        (CheckStatus::Fail, fail.join("; "))
+    } else if !warn.is_empty() {
+        (CheckStatus::Warn, warn.join("; "))
+    } else if let Some([lo, hi]) = style_range {
+        (
+            CheckStatus::Pass,
+            format!(
+                "all {} materials in style range [{lo:.2},{hi:.2}]",
+                materials.len()
+            ),
+        )
     } else {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Pass,
-            detail: format!("all {} materials in range", materials.len()),
-        });
-    }
-}
-
-fn check_pbr_metallic(
-    materials: &[MaterialData],
-    constraints: &ValidationConstraints,
-    checks: &mut Vec<ValidationCheck>,
-    name: &str,
-) {
-    let mut fail = false;
-    let mut warn = false;
-    let mut details = Vec::new();
-
-    for mat in materials {
-        let m = mat.metallic as f64;
-        if m < 0.0 || m > 1.0 {
-            fail = true;
-            details.push(format!("'{}' metallic {:.2} outside [0,1]", mat.name, m));
-        } else if let Some([lo, hi]) = constraints.metallic_range {
-            if m < lo || m > hi {
-                warn = true;
-                details.push(format!(
-                    "'{}' metallic {:.2} outside style range [{:.2},{:.2}]",
-                    mat.name, m, lo, hi
-                ));
-            }
-        }
-    }
-
-    if fail {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Fail,
-            detail: details.join("; "),
-        });
-    } else if warn {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Warn,
-            detail: details.join("; "),
-        });
-    } else {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Pass,
-            detail: format!("all {} materials in range", materials.len()),
-        });
-    }
+        (
+            CheckStatus::Pass,
+            format!("all {} materials in [0,1]", materials.len()),
+        )
+    };
+    push(checks, name.into(), status, detail);
 }
 
 fn check_degenerate_triangles(
@@ -425,48 +553,180 @@ fn check_degenerate_triangles(
     let tri_count = indices.len() / 3;
     let mut degenerate = 0usize;
 
-    for i in 0..tri_count {
-        let i0 = indices[i * 3] as usize;
-        let i1 = indices[i * 3 + 1] as usize;
-        let i2 = indices[i * 3 + 2] as usize;
-
-        if i0 >= vertices.len() || i1 >= vertices.len() || i2 >= vertices.len() {
-            continue; // out-of-range indices are a separate concern
-        }
-
-        let p0 = vertices[i0].position;
-        let p1 = vertices[i1].position;
-        let p2 = vertices[i2].position;
-
-        // Edge vectors
+    for tri in indices.as_chunks::<3>().0 {
+        let [p0, p1, p2] = [0, 1, 2].map(|k| vertices[tri[k] as usize].position);
         let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
         let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-
-        // Cross product
         let cx = e1[1] * e2[2] - e1[2] * e2[1];
         let cy = e1[2] * e2[0] - e1[0] * e2[2];
         let cz = e1[0] * e2[1] - e1[1] * e2[0];
-
-        // Area = 0.5 * |cross|, but we compare area > 1e-10
         let area = 0.5 * (cx * cx + cy * cy + cz * cz).sqrt();
-        if area <= 1e-10 {
+        let e3 = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+        let longest = [e1, e2, e3]
+            .map(|e| e[0] * e[0] + e[1] * e[1] + e[2] * e[2])
+            .into_iter()
+            .fold(0.0f32, f32::max);
+        if area <= SLIVER_RATIO * longest {
             degenerate += 1;
         }
     }
 
-    if degenerate == 0 {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Pass,
-            detail: format!("all {tri_count} triangles have non-zero area"),
-        });
+    let (status, detail) = if degenerate == 0 {
+        (
+            CheckStatus::Pass,
+            format!("all {tri_count} triangles have non-zero area"),
+        )
     } else {
-        checks.push(ValidationCheck {
-            name: name.into(),
-            status: CheckStatus::Fail,
-            detail: format!("{degenerate}/{tri_count} degenerate triangles found"),
-        });
+        (
+            CheckStatus::Fail,
+            format!("{degenerate}/{tri_count} degenerate triangles found"),
+        )
+    };
+    push(checks, name.into(), status, detail);
+}
+
+// ── Palette ─────────────────────────────────────────────────────────────────
+
+/// One palette entry: its hex as written and its CIELAB coordinates.
+#[derive(Debug, Clone)]
+struct Palette {
+    hex: String,
+    lab: [f32; 3],
+}
+
+/// Parse the style's hex palette. An entry that isn't a colour is a failed
+/// check of its own (the guide is wrong), and the rest are still used.
+fn parse_palette(hexes: &[String], checks: &mut Vec<ValidationCheck>) -> Vec<Palette> {
+    let mut bad = Vec::new();
+    let palette = hexes
+        .iter()
+        .filter_map(|hex| match parse_hex(hex) {
+            Some(rgb) => Some(Palette {
+                hex: hex.clone(),
+                lab: srgb_to_lab(rgb),
+            }),
+            None => {
+                bad.push(format!("'{hex}'"));
+                None
+            }
+        })
+        .collect();
+    if !bad.is_empty() {
+        push(
+            checks,
+            "style palette".into(),
+            CheckStatus::Fail,
+            format!("not hex colours: {}", bad.join(", ")),
+        );
     }
+    palette
+}
+
+/// `#RRGGBB`, `RRGGBB` or `#RGB` to sRGB in [0,1].
+fn parse_hex(hex: &str) -> Option<[f32; 3]> {
+    let h = hex.trim().trim_start_matches('#');
+    let digits: Vec<u8> = match h.len() {
+        6 => (0..3)
+            .map(|i| u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok())
+            .collect::<Option<_>>()?,
+        3 => h
+            .chars()
+            .map(|c| c.to_digit(16).map(|d| (d * 17) as u8))
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    Some([0, 1, 2].map(|i| digits[i] as f32 / 255.0))
+}
+
+fn linear_to_srgb(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// sRGB (D65) to CIELAB.
+fn srgb_to_lab(rgb: [f32; 3]) -> [f32; 3] {
+    let [r, g, b] = rgb.map(srgb_to_linear);
+    let x = (0.412_456_4 * r + 0.357_576_1 * g + 0.180_437_5 * b) / 0.950_47;
+    let y = 0.212_672_9 * r + 0.715_152_2 * g + 0.072_175 * b;
+    let z = (0.019_333_9 * r + 0.119_192 * g + 0.950_304_1 * b) / 1.088_83;
+    let f = |t: f32| {
+        if t > 216.0 / 24389.0 {
+            t.cbrt()
+        } else {
+            (24389.0 / 27.0 * t + 16.0) / 116.0
+        }
+    };
+    let (fx, fy, fz) = (f(x), f(y), f(z));
+    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+}
+
+/// The nearest palette entry and its CIE76 ΔE.
+fn nearest(palette: &[Palette], lab: [f32; 3]) -> (&Palette, f32) {
+    palette
+        .iter()
+        .map(|p| {
+            let d = ((p.lab[0] - lab[0]).powi(2)
+                + (p.lab[1] - lab[1]).powi(2)
+                + (p.lab[2] - lab[2]).powi(2))
+            .sqrt();
+            (p, d)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("palette is non-empty")
+}
+
+/// Each material's base colour within [`PALETTE_DELTA_E`] of a palette entry.
+fn check_material_palette(
+    materials: &[MaterialData],
+    palette: &[Palette],
+    checks: &mut Vec<ValidationCheck>,
+    name: &str,
+) {
+    let mut off = Vec::new();
+    let mut worst = 0.0f32;
+    for mat in materials {
+        let [r, g, b, _] = mat.base_color;
+        let srgb = [r, g, b].map(linear_to_srgb);
+        let (p, d) = nearest(palette, srgb_to_lab(srgb));
+        worst = worst.max(d);
+        if d > PALETTE_DELTA_E {
+            off.push(format!(
+                "'{}' {} is ΔE {d:.0} from nearest {}",
+                mat.name,
+                hex_of(srgb),
+                p.hex
+            ));
+        }
+    }
+    let (status, detail) = if off.is_empty() {
+        (
+            CheckStatus::Pass,
+            format!(
+                "all {} materials within ΔE {PALETTE_DELTA_E:.0} (worst {worst:.1})",
+                materials.len()
+            ),
+        )
+    } else {
+        (CheckStatus::Warn, off.join("; "))
+    };
+    push(checks, name.into(), status, detail);
+}
+
+fn hex_of(srgb: [f32; 3]) -> String {
+    let [r, g, b] = srgb.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    format!("#{r:02X}{g:02X}{b:02X}")
 }
 
 // ── Image checks ────────────────────────────────────────────────────────────
@@ -474,60 +734,130 @@ fn check_degenerate_triangles(
 fn validate_image(
     img: &ImageData,
     constraints: &ValidationConstraints,
+    palette: &[Palette],
     checks: &mut Vec<ValidationCheck>,
     prefix: Option<&str>,
 ) {
-    let label = |name: &str| match prefix {
-        Some(p) => format!("{p} {name}"),
-        None => name.to_string(),
+    let label = labeller(prefix);
+    check_texture_dimensions(img, constraints, checks, &label("texture dimensions"));
+
+    match img.channel_semantics {
+        ChannelSemantics::Color if !palette.is_empty() => {
+            check_texture_palette(img, palette, checks, &label("palette"));
+        }
+        ChannelSemantics::Roughness => {
+            if let Some(range) = constraints.roughness_range {
+                check_texture_range(img, "roughness", range, checks, &label("roughness range"));
+            }
+        }
+        ChannelSemantics::Metallic => {
+            if let Some(range) = constraints.metallic_range {
+                check_texture_range(img, "metallic", range, checks, &label("metallic range"));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The size the spec asked for (Fail when it differs), in powers of two
+/// (Warn when not: mipmaps and block compression want them).
+fn check_texture_dimensions(
+    img: &ImageData,
+    constraints: &ValidationConstraints,
+    checks: &mut Vec<ValidationCheck>,
+    name: &str,
+) {
+    let (w, h) = (img.width, img.height);
+    let ew = constraints.expected_texture_width.unwrap_or(w);
+    let eh = constraints.expected_texture_height.unwrap_or(h);
+    let (status, detail) = if (w, h) != (ew, eh) {
+        (
+            CheckStatus::Fail,
+            format!("{w}x{h} != {ew}x{eh} the spec asked for"),
+        )
+    } else if !w.is_power_of_two() || !h.is_power_of_two() {
+        (CheckStatus::Warn, format!("{w}x{h}: not power-of-two"))
+    } else {
+        (CheckStatus::Pass, format!("{w}x{h}"))
     };
+    push(checks, name.into(), status, detail);
+}
 
-    // Texture dimensions — check expected size
-    let mut dim_status = CheckStatus::Pass;
-    let mut dim_detail = format!("{}x{}", img.width, img.height);
+/// Up to [`MAX_TEXEL_SAMPLES`] RGBA texels, spread evenly over the image.
+fn sample_texels(img: &ImageData) -> impl Iterator<Item = &[u8]> {
+    let count = img.pixels.len() / 4;
+    let step = count.div_ceil(MAX_TEXEL_SAMPLES).max(1);
+    img.pixels.chunks_exact(4).step_by(step)
+}
 
-    if let Some(ew) = constraints.expected_texture_width {
-        if img.width != ew {
-            dim_status = CheckStatus::Fail;
-            dim_detail = format!("width {} != expected {}", img.width, ew);
+/// The share of a colour map's texels within [`PALETTE_DELTA_E`] of the
+/// palette must reach [`PALETTE_TEXEL_SHARE`]. Texels are sRGB, as written.
+fn check_texture_palette(
+    img: &ImageData,
+    palette: &[Palette],
+    checks: &mut Vec<ValidationCheck>,
+    name: &str,
+) {
+    let mut near = 0usize;
+    let mut total = 0usize;
+    let mut sum_de = 0.0f64;
+    for px in sample_texels(img) {
+        let srgb = [px[0], px[1], px[2]].map(|c| c as f32 / 255.0);
+        let (_, d) = nearest(palette, srgb_to_lab(srgb));
+        sum_de += d as f64;
+        total += 1;
+        if d <= PALETTE_DELTA_E {
+            near += 1;
         }
     }
-    if let Some(eh) = constraints.expected_texture_height {
-        if img.height != eh {
-            dim_status = if dim_status == CheckStatus::Fail {
-                CheckStatus::Fail
-            } else {
-                CheckStatus::Fail
-            };
-            dim_detail = if dim_status == CheckStatus::Fail
-                && constraints.expected_texture_width.is_some()
-            {
-                format!(
-                    "{}x{} != expected {}x{}",
-                    img.width,
-                    img.height,
-                    constraints.expected_texture_width.unwrap_or(img.width),
-                    eh
-                )
-            } else {
-                format!("height {} != expected {}", img.height, eh)
-            };
+    let share = near as f32 / total.max(1) as f32;
+    let mean = sum_de / total.max(1) as f64;
+    let detail = format!(
+        "{:.0}% of texels within ΔE {PALETTE_DELTA_E:.0} of the palette (mean ΔE {mean:.1})",
+        share * 100.0
+    );
+    let status = if share >= PALETTE_TEXEL_SHARE {
+        CheckStatus::Pass
+    } else {
+        CheckStatus::Warn
+    };
+    push(checks, name.into(), status, detail);
+}
+
+/// The share of a grayscale map's texels inside the style's range must
+/// reach [`MAP_TEXEL_SHARE`]. The value is the red channel over 255.
+fn check_texture_range(
+    img: &ImageData,
+    factor: &str,
+    [lo, hi]: [f64; 2],
+    checks: &mut Vec<ValidationCheck>,
+    name: &str,
+) {
+    let mut inside = 0usize;
+    let mut total = 0usize;
+    let mut sum = 0.0f64;
+    for px in sample_texels(img) {
+        let v = px[0] as f64 / 255.0;
+        sum += v;
+        total += 1;
+        // Half a byte of slack: 0.6 is byte 153, and 153/255 is 0.6 exactly,
+        // but 0.95 lands between bytes.
+        if v >= lo - 0.5 / 255.0 && v <= hi + 0.5 / 255.0 {
+            inside += 1;
         }
     }
-
-    // Warn if not power-of-two (only if not already failing)
-    if dim_status == CheckStatus::Pass {
-        if !img.width.is_power_of_two() || !img.height.is_power_of_two() {
-            dim_status = CheckStatus::Warn;
-            dim_detail = format!("{}x{} — not power-of-two", img.width, img.height);
-        }
-    }
-
-    checks.push(ValidationCheck {
-        name: label("texture dimensions"),
-        status: dim_status,
-        detail: dim_detail,
-    });
+    let share = inside as f64 / total.max(1) as f64;
+    let mean = sum / total.max(1) as f64;
+    let detail = format!(
+        "{:.0}% of texels in style range [{lo:.2},{hi:.2}] (mean {factor} {mean:.2})",
+        share * 100.0
+    );
+    let status = if share >= MAP_TEXEL_SHARE as f64 {
+        CheckStatus::Pass
+    } else {
+        CheckStatus::Warn
+    };
+    push(checks, name.into(), status, detail);
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -977,5 +1307,404 @@ value = 42
         assert_eq!(format!("{}", CheckStatus::Pass), "PASS");
         assert_eq!(format!("{}", CheckStatus::Warn), "WARN");
         assert_eq!(format!("{}", CheckStatus::Fail), "FAIL");
+    }
+
+    // ── #30: the checks the audit found missing ─────────────────────────────
+
+    fn check<'a>(report: &'a ValidationReport, name: &str) -> &'a ValidationCheck {
+        report
+            .checks
+            .iter()
+            .find(|c| c.name.contains(name))
+            .unwrap_or_else(|| panic!("no '{name}' check in {:#?}", report.checks))
+    }
+
+    #[test]
+    fn summary_line_says_warning_for_one() {
+        let mk = |status| ValidationCheck {
+            name: "x".into(),
+            status,
+            detail: String::new(),
+        };
+        let one = ValidationReport {
+            checks: vec![mk(CheckStatus::Pass), mk(CheckStatus::Warn)],
+        };
+        assert_eq!(one.summary(), "Validation: 1 passed, 1 warning, 0 failed");
+        let two = ValidationReport {
+            checks: vec![mk(CheckStatus::Warn), mk(CheckStatus::Warn)],
+        };
+        assert_eq!(two.summary(), "Validation: 0 passed, 2 warnings, 0 failed");
+    }
+
+    // The beetle's elytra are metallic 0.15 and the tavern allows [0, 0.15]:
+    // f32 0.15 widened to f64 is 0.15000000596, which used to warn.
+    #[test]
+    fn style_range_edge_is_inside() {
+        let mut mesh = make_triangle();
+        mesh.materials[0].metallic = 0.15;
+        mesh.materials[0].roughness = 0.95;
+        let report = validate_output(
+            &GeneratorOutput::Mesh(mesh),
+            &make_spec(),
+            &ValidationConstraints {
+                metallic_range: Some([0.0, 0.15]),
+                roughness_range: Some([0.6, 0.95]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(check(&report, "metallic").status, CheckStatus::Pass);
+        assert_eq!(check(&report, "roughness").status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn out_of_range_index_fails_integrity_without_panicking() {
+        let mut mesh = make_triangle();
+        mesh.indices = vec![0, 1, 7];
+        let report = validate_output(
+            &GeneratorOutput::Mesh(mesh),
+            &make_spec(),
+            &ValidationConstraints::default(),
+        );
+        let c = check(&report, "mesh integrity");
+        assert_eq!(c.status, CheckStatus::Fail);
+        assert!(c.detail.contains("highest 7"), "{}", c.detail);
+        // The degenerate check can't read the triangle, so it doesn't run.
+        assert!(!report.checks.iter().any(|c| c.name.contains("degenerate")));
+    }
+
+    #[test]
+    fn nan_position_fails_integrity() {
+        let mut mesh = make_triangle();
+        mesh.vertices[2].position[1] = f32::NAN;
+        let report = validate_output(
+            &GeneratorOutput::Mesh(mesh),
+            &make_spec(),
+            &ValidationConstraints::default(),
+        );
+        assert_eq!(check(&report, "mesh integrity").status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn zero_normal_fails_and_long_normal_warns() {
+        let status = |n: [f32; 3]| {
+            let mut mesh = make_triangle();
+            mesh.vertices[1].normal = n;
+            check(
+                &validate_output(
+                    &GeneratorOutput::Mesh(mesh),
+                    &make_spec(),
+                    &ValidationConstraints::default(),
+                ),
+                "normals",
+            )
+            .status
+        };
+        assert_eq!(status([0.0, 0.0, 1.0]), CheckStatus::Pass);
+        assert_eq!(status([0.0, 0.0, 2.0]), CheckStatus::Warn);
+        assert_eq!(status([0.0, 0.0, 0.0]), CheckStatus::Fail);
+        assert_eq!(status([f32::NAN, 0.0, 1.0]), CheckStatus::Fail);
+    }
+
+    #[test]
+    fn require_uvs_fails_a_mesh_with_no_layout() {
+        let mut mesh = make_triangle();
+        for v in &mut mesh.vertices {
+            v.uv = [0.0, 0.0];
+        }
+        let run = |require_uvs| {
+            check(
+                &validate_output(
+                    &GeneratorOutput::Mesh(mesh.clone()),
+                    &make_spec(),
+                    &ValidationConstraints {
+                        require_uvs,
+                        ..Default::default()
+                    },
+                ),
+                "UV range",
+            )
+            .status
+        };
+        assert_eq!(run(false), CheckStatus::Pass);
+        assert_eq!(run(true), CheckStatus::Fail);
+    }
+
+    fn tavern() -> Vec<String> {
+        ["#8B4513", "#A0522D", "#D4A574", "#4A4A4A"]
+            .map(String::from)
+            .to_vec()
+    }
+
+    #[test]
+    fn material_palette_compliance() {
+        let run = |srgb: [f32; 3]| {
+            let mut mesh = make_triangle();
+            let [r, g, b] = srgb.map(srgb_to_linear);
+            mesh.materials[0].base_color = [r, g, b, 1.0];
+            validate_output(
+                &GeneratorOutput::Mesh(mesh),
+                &make_spec(),
+                &ValidationConstraints {
+                    palette: tavern(),
+                    ..Default::default()
+                },
+            )
+        };
+        // Sienna itself, and a slightly lighter sienna, are on palette.
+        let on = run([
+            0xA0 as f32 / 255.0,
+            0x52 as f32 / 255.0,
+            0x2D as f32 / 255.0,
+        ]);
+        assert_eq!(check(&on, "palette").status, CheckStatus::Pass);
+        let near = run([0.66, 0.35, 0.20]);
+        assert_eq!(check(&near, "palette").status, CheckStatus::Pass);
+        // Leaf green is not a tavern colour.
+        let off = run([0.25, 0.55, 0.15]);
+        let c = check(&off, "palette");
+        assert_eq!(c.status, CheckStatus::Warn);
+        assert!(c.detail.contains("nearest"), "{}", c.detail);
+    }
+
+    #[test]
+    fn no_palette_check_without_a_palette() {
+        let report = validate_output(
+            &GeneratorOutput::Mesh(make_triangle()),
+            &make_spec(),
+            &ValidationConstraints::default(),
+        );
+        assert!(!report.checks.iter().any(|c| c.name.contains("palette")));
+    }
+
+    #[test]
+    fn a_bad_palette_entry_is_reported() {
+        let report = validate_output(
+            &GeneratorOutput::Mesh(make_triangle()),
+            &make_spec(),
+            &ValidationConstraints {
+                palette: vec!["#8B4513".into(), "brownish".into()],
+                ..Default::default()
+            },
+        );
+        let c = check(&report, "style palette");
+        assert_eq!(c.status, CheckStatus::Fail);
+        assert!(c.detail.contains("brownish"));
+        // The good entry is still used.
+        assert!(report.checks.iter().any(|c| c.name == "palette"));
+    }
+
+    fn filled(
+        w: u32,
+        h: u32,
+        sem: ChannelSemantics,
+        rgb: impl Fn(u32, u32) -> [u8; 3],
+    ) -> ImageData {
+        let mut img = ImageData::new(w, h, sem);
+        for y in 0..h {
+            for x in 0..w {
+                let o = ((y * w + x) * 4) as usize;
+                let [r, g, b] = rgb(x, y);
+                img.pixels[o..o + 4].copy_from_slice(&[r, g, b, 255]);
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn texture_palette_counts_texels() {
+        let run = |img: ImageData| {
+            check(
+                &validate_output(
+                    &GeneratorOutput::Image(img),
+                    &make_spec(),
+                    &ValidationConstraints {
+                        palette: tavern(),
+                        ..Default::default()
+                    },
+                ),
+                "palette",
+            )
+            .clone()
+        };
+        let wood = run(filled(16, 16, ChannelSemantics::Color, |_, _| {
+            [0x8B, 0x45, 0x13]
+        }));
+        assert_eq!(wood.status, CheckStatus::Pass);
+        assert!(wood.detail.starts_with("100%"), "{}", wood.detail);
+        // Three quarters cyan: a quarter on palette is not enough.
+        let cyan = run(filled(16, 16, ChannelSemantics::Color, |x, _| {
+            if x < 4 {
+                [0x8B, 0x45, 0x13]
+            } else {
+                [0, 200, 220]
+            }
+        }));
+        assert_eq!(cyan.status, CheckStatus::Warn);
+        assert!(cyan.detail.starts_with("25%"), "{}", cyan.detail);
+    }
+
+    #[test]
+    fn roughness_map_against_style_range() {
+        let run = |byte: u8| {
+            check(
+                &validate_output(
+                    &GeneratorOutput::ImageSet(vec![filled(
+                        8,
+                        8,
+                        ChannelSemantics::Roughness,
+                        |_, _| [byte; 3],
+                    )]),
+                    &make_spec(),
+                    &ValidationConstraints {
+                        roughness_range: Some([0.6, 0.95]),
+                        ..Default::default()
+                    },
+                ),
+                "roughness range",
+            )
+            .status
+        };
+        assert_eq!(run(200), CheckStatus::Pass); // 0.78
+        assert_eq!(run(153), CheckStatus::Pass); // 0.60, the edge
+        assert_eq!(run(242), CheckStatus::Pass); // 0.949, rounds to the edge
+        assert_eq!(run(60), CheckStatus::Warn); // 0.24, glossy
+    }
+
+    #[test]
+    fn texture_dimension_messages() {
+        let run = |w, h, ew, eh| {
+            check(
+                &validate_output(
+                    &GeneratorOutput::Image(ImageData::new(w, h, ChannelSemantics::Color)),
+                    &make_spec(),
+                    &ValidationConstraints {
+                        expected_texture_width: ew,
+                        expected_texture_height: eh,
+                        ..Default::default()
+                    },
+                ),
+                "texture dimensions",
+            )
+            .clone()
+        };
+        let c = run(256, 128, Some(256), Some(256));
+        assert_eq!(c.status, CheckStatus::Fail);
+        assert_eq!(c.detail, "256x128 != 256x256 the spec asked for");
+        let c = run(256, 128, None, Some(256));
+        assert_eq!(c.detail, "256x128 != 256x256 the spec asked for");
+        assert_eq!(run(256, 128, None, None).status, CheckStatus::Pass);
+    }
+
+    // The spec's LOD target and the style's ceiling are separate lines, and
+    // LOD0 is no longer checked against the same number twice.
+    #[test]
+    fn lod_targets_and_style_ceiling_are_separate() {
+        let output = GeneratorOutput::MeshWithLods(vec![make_triangle(), make_triangle()]);
+        let mut spec = make_spec();
+        spec.lod = Some(vec![crate::LodLevel {
+            level: 0,
+            target_triangles: 10,
+        }]);
+        let report = validate_output(
+            &output,
+            &spec,
+            &ValidationConstraints {
+                max_triangles: Some(5),
+                ..Default::default()
+            },
+        );
+        let names: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|c| c.name.contains("triangle target") || c.name.contains("triangle budget"))
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "LOD0 spec triangle target",
+                "LOD0 style triangle budget",
+                "LOD1 style triangle budget"
+            ]
+        );
+    }
+
+    #[test]
+    fn degenerate_is_relative_to_size() {
+        let status = |p: [[f32; 3]; 3]| {
+            let mut mesh = make_triangle();
+            for (v, p) in mesh.vertices.iter_mut().zip(p) {
+                v.position = p;
+            }
+            check(
+                &validate_output(
+                    &GeneratorOutput::Mesh(mesh),
+                    &make_spec(),
+                    &ValidationConstraints::default(),
+                ),
+                "degenerate",
+            )
+            .status
+        };
+        // A pole sliver: two corners 5e-8 apart on a half-metre shape. Its
+        // area (~1e-8) is over the old absolute 1e-10, but it is a sliver.
+        assert_eq!(
+            status([[5e-8, 0.55, 0.0], [0.0, 0.55, 0.0], [0.14, 0.53, 0.0]]),
+            CheckStatus::Fail
+        );
+        // A millimetre triangle (area 5e-7) is fine, and so is a grass blade.
+        assert_eq!(
+            status([[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]]),
+            CheckStatus::Pass
+        );
+        assert_eq!(
+            status([[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            CheckStatus::Pass
+        );
+    }
+
+    // The UV sphere and ellipsoid no longer emit their pole slivers.
+    #[test]
+    fn sphere_and_ellipsoid_have_no_slivers() {
+        use crate::algorithms::mesh_builder::primitives::{
+            ellipsoid, sphere, EllipsoidParams, SphereParams,
+        };
+        let meshes = [
+            sphere(&SphereParams {
+                radius: 1.0,
+                segments: 16,
+                rings: 12,
+            }),
+            ellipsoid(&EllipsoidParams {
+                radius_x: 0.35,
+                radius_y: 0.25,
+                radius_z: 0.55,
+                segments: 16,
+                rings: 12,
+            }),
+        ];
+        for mesh in meshes {
+            let report = validate_output(
+                &GeneratorOutput::Mesh(mesh),
+                &make_spec(),
+                &ValidationConstraints::default(),
+            );
+            let c = check(&report, "degenerate");
+            assert_eq!(c.status, CheckStatus::Pass, "{}", c.detail);
+        }
+    }
+
+    #[test]
+    fn lab_matches_reference_values() {
+        // White, and sRGB red: L*a*b* (53.24, 80.09, 67.20).
+        let w = srgb_to_lab([1.0, 1.0, 1.0]);
+        assert!((w[0] - 100.0).abs() < 0.05 && w[1].abs() < 0.05 && w[2].abs() < 0.05);
+        let r = srgb_to_lab([1.0, 0.0, 0.0]);
+        assert!((r[0] - 53.24).abs() < 0.1, "{r:?}");
+        assert!((r[1] - 80.09).abs() < 0.2, "{r:?}");
+        assert!((r[2] - 67.20).abs() < 0.2, "{r:?}");
+        assert_eq!(parse_hex("#fff"), Some([1.0, 1.0, 1.0]));
+        assert_eq!(parse_hex("8B4513").map(hex_of).as_deref(), Some("#8B4513"));
+        assert_eq!(parse_hex("#12345"), None);
     }
 }
