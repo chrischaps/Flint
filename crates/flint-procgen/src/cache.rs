@@ -3,9 +3,17 @@
 //! Keyed by `(spec_content_hash, seed)` so repeated requests for the same
 //! spec+seed skip regeneration. Uses simple linear-scan LRU eviction, which
 //! is fine for the expected cache sizes (dozens of entries).
+//!
+//! Outputs are held behind an [`Arc`]: a hit hands out a second reference to
+//! the same mesh or image instead of copying megabytes of vertices.
+//!
+//! Recency is a per-cache access counter, not a clock. Two accesses never
+//! tie (a browser's coarsened `performance.now()` can return the same
+//! instant for a whole frame's worth of lookups), and the eviction order is
+//! the same on every run.
 
 use std::collections::HashMap;
-use web_time::Instant;
+use std::sync::Arc;
 
 use flint_core::ContentHash;
 
@@ -34,7 +42,7 @@ impl Default for ProcGenCacheConfig {
 }
 
 /// Cache performance statistics.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CacheStats {
     /// Number of entries currently in the cache.
     pub entry_count: usize,
@@ -46,13 +54,16 @@ pub struct CacheStats {
     pub hits: u64,
     /// Number of cache misses since creation/last clear.
     pub misses: u64,
+    /// Number of entries evicted to stay under budget since creation/last clear.
+    pub evictions: u64,
 }
 
 /// A cached generator output with metadata for LRU tracking.
 struct CachedAsset {
-    output: GeneratorOutput,
+    output: Arc<GeneratorOutput>,
     byte_size: usize,
-    last_access: Instant,
+    /// Value of the cache's access counter when this entry was last touched.
+    last_access: u64,
 }
 
 /// In-memory LRU cache for procedural generation outputs.
@@ -60,12 +71,19 @@ struct CachedAsset {
 /// Keyed by `(ContentHash, Seed)` — the content hash of the spec file and
 /// the generation seed. Evicts least-recently-used entries when the memory
 /// budget is exceeded.
+///
+/// A spec with `mode = "random"` keys as `Seed::Random`, so it is generated
+/// once and then reused for the life of the cache: a random tree keeps its
+/// shape when a scene is revisited, and changes on the next run.
 pub struct ProcGenCache {
     entries: HashMap<(ContentHash, Seed), CachedAsset>,
     total_bytes: usize,
     config: ProcGenCacheConfig,
+    /// Monotonic access counter; each get/insert takes the next value.
+    tick: u64,
     hits: u64,
     misses: u64,
+    evictions: u64,
 }
 
 impl ProcGenCache {
@@ -75,45 +93,75 @@ impl ProcGenCache {
             entries: HashMap::new(),
             total_bytes: 0,
             config,
+            tick: 0,
             hits: 0,
             misses: 0,
+            evictions: 0,
         }
+    }
+
+    /// The configuration this cache was built with.
+    pub fn config(&self) -> &ProcGenCacheConfig {
+        &self.config
+    }
+
+    fn next_tick(&mut self) -> u64 {
+        self.tick += 1;
+        self.tick
     }
 
     /// Look up a cached output by spec hash and seed.
     ///
-    /// Updates the LRU timestamp on hit. Returns `None` on miss or if the
-    /// cache is disabled.
-    pub fn get(&mut self, spec_hash: ContentHash, seed: &Seed) -> Option<&GeneratorOutput> {
+    /// Counts a hit or a miss and, on a hit, marks the entry most recently
+    /// used. Returns `None` on miss or if the cache is disabled.
+    pub fn get(&mut self, spec_hash: ContentHash, seed: &Seed) -> Option<Arc<GeneratorOutput>> {
         if !self.config.enabled {
             self.misses += 1;
             return None;
         }
-        let key = (spec_hash, seed.clone());
-        if self.entries.contains_key(&key) {
-            self.entries.get_mut(&key).unwrap().last_access = Instant::now();
-            self.hits += 1;
-            Some(&self.entries[&key].output)
-        } else {
-            self.misses += 1;
-            None
+        let tick = self.next_tick();
+        match self.entries.get_mut(&(spec_hash, seed.clone())) {
+            Some(entry) => {
+                entry.last_access = tick;
+                self.hits += 1;
+                Some(Arc::clone(&entry.output))
+            }
+            None => {
+                self.misses += 1;
+                None
+            }
         }
     }
 
-    /// Insert a generator output into the cache.
+    /// Whether an output is cached for this key, without counting a hit or a
+    /// miss and without changing its LRU position. For "should I queue
+    /// this?" probes, which are not uses of the asset.
+    pub fn contains(&self, spec_hash: ContentHash, seed: &Seed) -> bool {
+        self.config.enabled && self.entries.contains_key(&(spec_hash, seed.clone()))
+    }
+
+    /// Insert a generator output into the cache and return the shared handle
+    /// to it (the same `Arc` a later [`get`](Self::get) returns).
     ///
-    /// Evicts LRU entries if the memory budget would be exceeded. Silently
-    /// skips entries that are individually larger than the budget.
-    pub fn insert(&mut self, spec_hash: ContentHash, seed: &Seed, output: GeneratorOutput) {
+    /// Evicts LRU entries if the memory budget would be exceeded. Entries
+    /// individually larger than the whole budget, and everything while the
+    /// cache is disabled, are passed back without being stored.
+    pub fn insert(
+        &mut self,
+        spec_hash: ContentHash,
+        seed: &Seed,
+        output: impl Into<Arc<GeneratorOutput>>,
+    ) -> Arc<GeneratorOutput> {
+        let output = output.into();
         if !self.config.enabled {
-            return;
+            return output;
         }
 
         let byte_size = output.estimated_bytes();
 
         // Don't cache entries larger than the entire budget.
         if byte_size > self.config.max_memory_bytes {
-            return;
+            return output;
         }
 
         let key = (spec_hash, seed.clone());
@@ -125,23 +173,25 @@ impl ProcGenCache {
 
         // Evict LRU entries until we have room.
         while self.total_bytes + byte_size > self.config.max_memory_bytes {
-            if let Some(lru_key) = self.find_lru_key() {
-                let evicted = self.entries.remove(&lru_key).unwrap();
-                self.total_bytes -= evicted.byte_size;
-            } else {
+            let Some(lru_key) = self.find_lru_key() else {
                 break;
-            }
+            };
+            let evicted = self.entries.remove(&lru_key).unwrap();
+            self.total_bytes -= evicted.byte_size;
+            self.evictions += 1;
         }
 
         self.total_bytes += byte_size;
+        let last_access = self.next_tick();
         self.entries.insert(
             key,
             CachedAsset {
-                output,
+                output: Arc::clone(&output),
                 byte_size,
-                last_access: Instant::now(),
+                last_access,
             },
         );
+        output
     }
 
     /// Remove all entries and reset counters.
@@ -150,6 +200,7 @@ impl ProcGenCache {
         self.total_bytes = 0;
         self.hits = 0;
         self.misses = 0;
+        self.evictions = 0;
     }
 
     /// Current cache statistics.
@@ -160,6 +211,7 @@ impl ProcGenCache {
             max_memory_bytes: self.config.max_memory_bytes,
             hits: self.hits,
             misses: self.misses,
+            evictions: self.evictions,
         }
     }
 
@@ -339,5 +391,110 @@ mod tests {
         cache.insert(h, &s, small_image(4)); // 64 bytes, same key
         assert_eq!(cache.stats().entry_count, 1);
         assert_eq!(cache.stats().total_bytes, 64);
+    }
+
+    #[test]
+    fn ticket_lru_scenario_evicts_second() {
+        // Insert 3, touch the first, insert a 4th that needs one slot:
+        // the second (least recently used) goes, not the first (oldest).
+        let mut cache = ProcGenCache::new(ProcGenCacheConfig {
+            max_memory_bytes: 48,
+            ..Default::default()
+        });
+        let s = seed(1);
+        for n in 1..=3 {
+            cache.insert(hash(n), &s, small_image(2)); // 16 bytes each
+        }
+        assert!(cache.get(hash(1), &s).is_some());
+        cache.insert(hash(4), &s, small_image(2));
+
+        assert!(cache.contains(hash(1), &s));
+        assert!(!cache.contains(hash(2), &s));
+        assert!(cache.contains(hash(3), &s));
+        assert!(cache.contains(hash(4), &s));
+        assert_eq!(cache.stats().evictions, 1);
+    }
+
+    #[test]
+    fn budget_holds_across_many_inserts() {
+        let mut cache = ProcGenCache::new(ProcGenCacheConfig {
+            max_memory_bytes: 1000,
+            ..Default::default()
+        });
+        let s = seed(1);
+        // Mixed sizes: 16, 64, 144, 256 bytes.
+        for n in 0..64u8 {
+            cache.insert(hash(n), &s, small_image(2 + 2 * (n as u32 % 4)));
+            let stats = cache.stats();
+            assert!(stats.total_bytes <= 1000, "over budget after insert {n}");
+        }
+        let stats = cache.stats();
+        assert!(stats.evictions > 0);
+        assert!(stats.entry_count > 1);
+    }
+
+    #[test]
+    fn lru_order_never_ties() {
+        // Thousands of accesses inside one clock tick must still order
+        // strictly: recency is a counter, not a timestamp.
+        let mut cache = ProcGenCache::new(ProcGenCacheConfig {
+            max_memory_bytes: 16 * 8,
+            ..Default::default()
+        });
+        let s = seed(1);
+        for n in 0..8 {
+            cache.insert(hash(n), &s, small_image(2));
+        }
+        // Touch everything but #5, in reverse.
+        for n in (0..8).rev().filter(|n| *n != 5) {
+            cache.get(hash(n), &s);
+        }
+        cache.insert(hash(100), &s, small_image(2));
+        assert!(!cache.contains(hash(5), &s));
+        assert_eq!(cache.stats().entry_count, 8);
+    }
+
+    #[test]
+    fn contains_is_not_a_use() {
+        let mut cache = ProcGenCache::new(ProcGenCacheConfig {
+            max_memory_bytes: 32,
+            ..Default::default()
+        });
+        let s = seed(1);
+        cache.insert(hash(1), &s, small_image(2));
+        cache.insert(hash(2), &s, small_image(2));
+
+        // Probing #1 leaves it least recently used, and counts nothing.
+        assert!(cache.contains(hash(1), &s));
+        assert!(!cache.contains(hash(9), &s));
+        assert_eq!(cache.stats().hits, 0);
+        assert_eq!(cache.stats().misses, 0);
+
+        cache.insert(hash(3), &s, small_image(2));
+        assert!(!cache.contains(hash(1), &s));
+        assert!(cache.contains(hash(2), &s));
+    }
+
+    #[test]
+    fn hits_share_one_allocation() {
+        let mut cache = ProcGenCache::new(ProcGenCacheConfig::default());
+        let s = seed(1);
+        let inserted = cache.insert(hash(1), &s, small_image(64));
+        let a = cache.get(hash(1), &s).unwrap();
+        let b = cache.get(hash(1), &s).unwrap();
+        assert!(Arc::ptr_eq(&inserted, &a));
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(*a, small_image(64));
+    }
+
+    #[test]
+    fn disabled_insert_hands_output_back() {
+        let mut cache = ProcGenCache::new(ProcGenCacheConfig {
+            enabled: false,
+            ..Default::default()
+        });
+        let out = cache.insert(hash(1), &seed(1), small_image(2));
+        assert_eq!(*out, small_image(2));
+        assert!(!cache.contains(hash(1), &seed(1)));
     }
 }

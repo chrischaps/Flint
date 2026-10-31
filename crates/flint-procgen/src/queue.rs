@@ -3,6 +3,8 @@
 //! The [`ProcGenQueue`] spreads generation work across frames within a
 //! configurable time budget, prioritizing assets closest to the camera.
 
+use std::sync::Arc;
+
 use web_time::Instant;
 
 use flint_core::ContentHash;
@@ -36,7 +38,8 @@ pub struct GenerationRequest {
 /// A completed asset ready for GPU upload.
 pub struct CompletedAsset {
     pub spec_name: String,
-    pub output: GeneratorOutput,
+    /// Shared with the cache: uploading it copies nothing.
+    pub output: Arc<GeneratorOutput>,
     pub asset_kind: AssetKind,
 }
 
@@ -150,7 +153,7 @@ impl ProcGenQueue {
             if let Some(cached) = cache.get(req.content_hash, &req.seed) {
                 let completed = CompletedAsset {
                     spec_name: req.spec_name.clone(),
-                    output: cached.clone(),
+                    output: cached,
                     asset_kind: req.asset_kind,
                 };
                 completions.push(completed);
@@ -169,7 +172,7 @@ impl ProcGenQueue {
             let req = self.pending.remove(0);
             match registry.generate_from_spec(&req.spec) {
                 Ok(output) => {
-                    cache.insert(req.content_hash, &req.seed, output.clone());
+                    let output = cache.insert(req.content_hash, &req.seed, output);
                     completions.push(CompletedAsset {
                         spec_name: req.spec_name,
                         output,
