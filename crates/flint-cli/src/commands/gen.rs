@@ -1,18 +1,18 @@
 //! `flint gen` — run a procedural generation spec and write the output.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args;
-use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
     export_glb, Generator, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig,
     SeedMode, ValidationConstraints,
 };
+
+use super::gen_store::{self, WrittenFile};
 
 #[derive(Args)]
 pub struct GenArgs {
@@ -23,8 +23,8 @@ pub struct GenArgs {
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Override the spec's seed with a fixed value
-    #[arg(long)]
+    /// Override the spec's seed with a fixed value (a batch takes --seed-start)
+    #[arg(long, conflicts_with = "batch")]
     pub seed: Option<u64>,
 
     /// Print estimated cost without generating
@@ -35,20 +35,23 @@ pub struct GenArgs {
     #[arg(long, value_parser = parse_format)]
     pub format: Option<String>,
 
-    /// Number of variants to generate with sequential seeds
-    #[arg(long)]
+    /// Number of variants to generate, one after another, with sequential
+    /// seeds; each is written as `<stem>_<seed>.<ext>` (or fills `{seed}`)
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub batch: Option<u32>,
 
-    /// Starting seed for batch generation (default: 0)
-    #[arg(long)]
+    /// First seed of a batch: seeds S, S+1, ..., S+N-1 (default: 0)
+    #[arg(long, requires = "batch")]
     pub seed_start: Option<u64>,
 
-    /// Register output(s) in the content store with provenance metadata
+    /// Store output(s) in the content store (.flint/assets), write a
+    /// provenance sidecar beside each file, and reuse an earlier registered
+    /// result for the same spec + seed instead of generating
     #[arg(long)]
     pub register: bool,
 
-    /// Regenerate even if cached in content store
-    #[arg(long)]
+    /// With --register, generate even if this spec + seed is already stored
+    #[arg(long, requires = "register")]
     pub force: bool,
 
     /// Validate output after generation
@@ -143,7 +146,35 @@ pub fn run(args: GenArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Compute spec hash once if registration is enabled
+    // Every variant this run makes, as (seed, output path): one for a plain
+    // run, N for `--batch N`. Seeds are resolved here, before generating, so
+    // a random or derived spec records the seed it really used (a plain
+    // `--register` used to record 0 whatever the spec said).
+    let variants: Vec<(u64, PathBuf)> = match args.batch {
+        Some(n) => {
+            let start = args.seed_start.unwrap_or(0);
+            (0..u64::from(n))
+                .map(|i| {
+                    let seed = start.checked_add(i).ok_or_else(|| {
+                        anyhow!("--seed-start {start} with --batch {n} runs past the largest seed")
+                    })?;
+                    Ok((
+                        seed,
+                        resolve_output_path_for_seed(&args, &spec, seed, format),
+                    ))
+                })
+                .collect::<Result<_>>()?
+        }
+        None => {
+            let seed = spec
+                .resolve_seed()
+                .with_context(|| format!("{}: invalid [seed]", spec_path.display()))?;
+            vec![(seed, single_output_path(&args, &spec, seed, format))]
+        }
+    };
+    let batch_total = args.batch;
+
+    let store = args.register.then(gen_store::Store::open_default);
     let spec_hash = if args.register {
         Some(
             ContentHash::from_file(spec_path)
@@ -153,124 +184,78 @@ pub fn run(args: GenArgs) -> Result<()> {
         None
     };
 
-    // Batch mode
-    if let Some(batch_count) = args.batch {
-        let seed_start = args.seed_start.unwrap_or(0);
-        let mut generated = 0u32;
-        let mut skipped = 0u32;
-        let mut validation_failed = false;
+    let (mut generated, mut cached) = (0u32, 0u32);
+    let mut validation_failed = false;
+    for (i, (seed, out_path)) in variants.iter().enumerate() {
+        let seed = *seed;
+        let tag = batch_total
+            .map(|n| format!("[{}/{}] ", i + 1, n))
+            .unwrap_or_default();
+        let seed_spec = spec_with_seed(&spec, seed);
 
-        for i in 0..batch_count {
-            let seed = seed_start + i as u64;
-            let batch_spec = spec_with_seed(&spec, seed);
-            let out_path = resolve_output_path_for_seed(&args, &batch_spec, seed, format);
-
-            // Check dedup cache
-            if args.register && !args.force {
-                if let Some(ref sh) = spec_hash {
-                    if check_cache_hit(&out_path, sh, seed)? {
-                        println!(
-                            "[{}/{}] Cached: {} (spec+seed unchanged)",
-                            i + 1,
-                            batch_count,
+        // The cache: this spec + seed was registered before, and the store
+        // still holds every file it made.
+        if let (Some(store), Some(sh), false) = (&store, &spec_hash, args.force) {
+            if let Some(prov) = store.lookup(sh, seed) {
+                let targets = planned_files(out_path, &prov);
+                if let Some(reuse) = store.reuse(&prov, &targets)? {
+                    store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
+                    match reuse {
+                        gen_store::Reuse::Present => println!(
+                            "{tag}Cached: {} (seed {seed}, spec unchanged)",
                             out_path.display()
-                        );
-                        skipped += 1;
-                        continue;
+                        ),
+                        gen_store::Reuse::Restored(k) => println!(
+                            "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
+                             or changed file{} from the content store)",
+                            out_path.display(),
+                            if k == 1 { "" } else { "s" }
+                        ),
                     }
-                }
-            }
-
-            println!("[{}/{}] Generating seed {}...", i + 1, batch_count, seed);
-
-            let output = generate_one(&batch_spec, &registry, &out_path)?;
-            generated += 1;
-
-            // Register in content store
-            if args.register {
-                if let Some(ref sh) = spec_hash {
-                    register_output(&out_path, &batch_spec, sh, seed)?;
-                }
-            }
-
-            // Validate
-            if args.validate {
-                let passed = run_validation(
-                    &output,
-                    &batch_spec,
-                    args.style_guide.as_deref(),
-                    args.strict,
-                )?;
-                if !passed {
-                    validation_failed = true;
+                    if args.validate {
+                        println!("  validation skipped for a cached result (--force regenerates)");
+                    }
+                    cached += 1;
+                    continue;
                 }
             }
         }
 
-        println!();
-        println!(
-            "Batch complete: {} generated, {} cached",
-            generated, skipped
-        );
-
-        if validation_failed {
-            std::process::exit(1);
-        }
-    } else {
-        // Single generation (any --seed override was applied above)
-        let seed_val = args.seed;
-
-        // If output path is explicit, we can do dedup check before generating
-        if let Some(ref out) = args.output {
-            let out_path = PathBuf::from(out);
-            if args.register && !args.force {
-                if let Some(ref sh) = spec_hash {
-                    if let Some(s) = seed_val {
-                        if check_cache_hit(&out_path, sh, s)? {
-                            println!("Cached: {} (spec+seed unchanged)", out_path.display());
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-
-            let output = generate_one(&spec, &registry, &out_path)?;
-
-            if args.register {
-                if let Some(ref sh) = spec_hash {
-                    let s = seed_val.unwrap_or(0);
-                    register_output(&out_path, &spec, sh, s)?;
-                }
-            }
-
-            if args.validate {
-                let passed =
-                    run_validation(&output, &spec, args.style_guide.as_deref(), args.strict)?;
-                if !passed {
-                    std::process::exit(1);
-                }
-            }
+        if batch_total.is_some() {
+            println!("{tag}Generating seed {seed}...");
         } else {
-            // No explicit output — generate, then determine path from output type
-            let (out_path, output) = generate_single_auto_path(&spec, &registry, format)?;
+            println!("Seed:       {}", describe_resolved_seed(&spec, seed));
+        }
 
-            if args.register {
-                if let Some(ref sh) = spec_hash {
-                    let s = seed_val.unwrap_or(0);
-                    register_output(&out_path, &spec, sh, s)?;
-                }
-            }
+        let (output, files) = generate_one(&seed_spec, &registry, out_path)?;
+        generated += 1;
 
-            if args.validate {
-                let passed =
-                    run_validation(&output, &spec, args.style_guide.as_deref(), args.strict)?;
-                if !passed {
-                    std::process::exit(1);
-                }
+        if let (Some(store), Some(sh)) = (&store, &spec_hash) {
+            let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
+            for (f, (_, hash)) in files.iter().zip(&prov.files) {
+                println!("Registered: {} -> {hash}", f.path.display());
             }
+        }
+
+        if args.validate
+            && !run_validation(
+                &output,
+                &seed_spec,
+                args.style_guide.as_deref(),
+                args.strict,
+            )?
+        {
+            validation_failed = true;
         }
     }
 
+    if batch_total.is_some() {
+        println!();
+        println!("Batch complete: {generated} generated, {cached} cached");
+    }
+    if validation_failed {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -399,43 +384,91 @@ fn describe_seed(spec: &ProcGenSpec) -> String {
     }
 }
 
-/// Generate a single output from a spec and write it to disk at the given path.
+/// Generate a single output from a spec and write it to disk at the given
+/// path, returning the output and every file written.
 fn generate_one(
     spec: &ProcGenSpec,
     registry: &GeneratorRegistry,
     out_path: &Path,
-) -> Result<GeneratorOutput> {
+) -> Result<(GeneratorOutput, Vec<WrittenFile>)> {
     let (output, gen_time) = generate_and_get_output(spec, registry)?;
-    write_output(&output, out_path, gen_time)?;
-    Ok(output)
+    let files = write_output(&output, out_path, gen_time)?;
+    Ok((output, files))
 }
 
-/// Generate a single output with auto-detected output path (no explicit -o given).
-/// Returns the path and the output.
-fn generate_single_auto_path(
-    spec: &ProcGenSpec,
-    registry: &GeneratorRegistry,
-    ext: &str,
-) -> Result<(PathBuf, GeneratorOutput)> {
-    let (output, gen_time) = generate_and_get_output(spec, registry)?;
-
-    let name = spec
-        .meta
-        .name
-        .replace(' ', "_")
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "");
-    let out_path = PathBuf::from(format!("{name}.{ext}"));
-
-    write_output(&output, &out_path, gen_time)?;
-    Ok((out_path, output))
+/// Where a plain (non-batch) run writes: `-o` as given (with any `{seed}`
+/// filled in), or the spec's name in the generator's format.
+fn single_output_path(args: &GenArgs, spec: &ProcGenSpec, seed: u64, ext: &str) -> PathBuf {
+    match &args.output {
+        Some(out) => PathBuf::from(out.replace("{seed}", &seed.to_string())),
+        None => PathBuf::from(format!("{}.{ext}", gen_store::slug(&spec.meta.name))),
+    }
 }
 
-/// Write a GeneratorOutput to disk and print summary info.
+/// The seed a run is about to use, and where it came from.
+fn describe_resolved_seed(spec: &ProcGenSpec, seed: u64) -> String {
+    match spec.seed.mode {
+        SeedMode::Random => format!("{seed} (random; --seed {seed} makes this one again)"),
+        SeedMode::Fixed => format!("{seed} (fixed)"),
+        SeedMode::Derived => format!(
+            "{seed} (derived from '{}')",
+            spec.seed.derive_from.as_deref().unwrap_or("")
+        ),
+    }
+}
+
+/// An image set is written as `<stem>_<map>.png` files: inside `out_path`
+/// when it names a directory, else beside it with its stem.
+fn image_set_dir_and_stem(out_path: &Path) -> (PathBuf, String) {
+    let is_dir = out_path.is_dir()
+        || out_path
+            .to_str()
+            .is_some_and(|s| s.ends_with('/') || s.ends_with('\\'));
+    if is_dir {
+        (out_path.to_path_buf(), "output".to_string())
+    } else {
+        (
+            out_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            out_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("output")
+                .to_string(),
+        )
+    }
+}
+
+/// The file a run writes for one role: the output path itself, or one map of
+/// an image set.
+fn output_file_path(out_path: &Path, role: Option<&str>) -> PathBuf {
+    match role {
+        None => out_path.to_path_buf(),
+        Some(role) => {
+            let (dir, stem) = image_set_dir_and_stem(out_path);
+            dir.join(format!("{stem}_{role}.png"))
+        }
+    }
+}
+
+/// The files a registered run wrote, placed at this run's output path.
+fn planned_files(out_path: &Path, prov: &gen_store::Provenance) -> Vec<WrittenFile> {
+    prov.files
+        .iter()
+        .map(|(role, _)| WrittenFile {
+            role: role.clone(),
+            path: output_file_path(out_path, role.as_deref()),
+        })
+        .collect()
+}
+
+/// Write a GeneratorOutput to disk, print summary info, and return the files
+/// written (one, or one per map of an image set).
 fn write_output(
     output: &GeneratorOutput,
     out_path: &Path,
     gen_time: std::time::Duration,
-) -> Result<()> {
+) -> Result<Vec<WrittenFile>> {
+    let mut written = Vec::new();
     if let Some(parent) = out_path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
@@ -482,31 +515,13 @@ fn write_output(
             println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::ImageSet(images) => {
-            // If out_path is a directory (exists as dir or ends with separator),
-            // write images directly inside it with stem "output".
-            let (parent, stem) = if out_path.is_dir()
-                || out_path
-                    .to_str()
-                    .map_or(false, |s| s.ends_with('/') || s.ends_with('\\'))
-            {
-                let dir = out_path;
-                std::fs::create_dir_all(dir)
-                    .with_context(|| format!("failed to create directory {}", dir.display()))?;
-                (dir as &Path, "output")
-            } else {
-                (
-                    out_path.parent().unwrap_or(Path::new(".")),
-                    out_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("output"),
-                )
-            };
+            let (dir, _) = image_set_dir_and_stem(out_path);
+            std::fs::create_dir_all(&dir)
+                .with_context(|| format!("failed to create directory {}", dir.display()))?;
             let mut total_size: u64 = 0;
             for img in images {
-                let suffix = format!("{:?}", img.channel_semantics).to_lowercase();
-                let file_name = format!("{stem}_{suffix}.png");
-                let img_path = parent.join(&file_name);
+                let role = format!("{:?}", img.channel_semantics).to_lowercase();
+                let img_path = output_file_path(out_path, Some(&role));
                 img.save_png(&img_path)
                     .with_context(|| format!("failed to save {}", img_path.display()))?;
                 let size = std::fs::metadata(&img_path)?.len();
@@ -518,6 +533,10 @@ fn write_output(
                     img.height,
                     format_bytes(size)
                 );
+                written.push(WrittenFile {
+                    role: Some(role),
+                    path: img_path,
+                });
             }
             println!();
             println!("Images:     {}", images.len());
@@ -547,125 +566,13 @@ fn write_output(
         }
     }
 
-    Ok(())
-}
-
-/// Register an output file in the content store and write a sidecar .asset.toml.
-fn register_output(
-    out_path: &Path,
-    spec: &ProcGenSpec,
-    spec_hash: &ContentHash,
-    seed: u64,
-) -> Result<()> {
-    let store = ContentStore::new(".flint/assets");
-    let content_hash = store
-        .store(out_path)
-        .map_err(|e| anyhow::anyhow!("{}", e))
-        .context("failed to register in content store")?;
-
-    let ext = out_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin");
-
-    let asset_type = match ext {
-        "glb" | "gltf" => AssetType::Mesh,
-        "png" | "jpg" | "jpeg" => AssetType::Texture,
-        "wav" | "ogg" | "mp3" => AssetType::Audio,
-        _ => AssetType::Mesh,
-    };
-
-    let name = format!(
-        "{}_{}",
-        spec.meta
-            .name
-            .replace(' ', "_")
-            .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', ""),
-        seed
-    );
-
-    let mut properties = HashMap::new();
-    properties.insert(
-        "generator".to_string(),
-        toml::Value::String(spec.generator.clone()),
-    );
-    properties.insert(
-        "spec_hash".to_string(),
-        toml::Value::String(spec_hash.to_prefixed_hex()),
-    );
-    properties.insert("seed".to_string(), toml::Value::Integer(seed as i64));
-    properties.insert(
-        "timestamp".to_string(),
-        toml::Value::String(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs().to_string())
-                .unwrap_or_default(),
-        ),
-    );
-    properties.insert(
-        "flint_version".to_string(),
-        toml::Value::String(env!("CARGO_PKG_VERSION").to_string()),
-    );
-
-    let meta = AssetMeta {
-        name,
-        asset_type,
-        hash: content_hash.to_prefixed_hex(),
-        source_path: Some(out_path.display().to_string()),
-        format: Some(ext.to_string()),
-        tags: spec.meta.tags.clone(),
-        properties,
-    };
-
-    let asset_file = AssetFile { asset: meta };
-    let sidecar_path = sidecar_path_for(out_path);
-    let toml_str =
-        toml::to_string_pretty(&asset_file).context("failed to serialize asset metadata")?;
-    std::fs::write(&sidecar_path, toml_str)
-        .with_context(|| format!("failed to write sidecar {}", sidecar_path.display()))?;
-
-    println!(
-        "Registered: {} -> {}",
-        out_path.display(),
-        content_hash.to_prefixed_hex()
-    );
-
-    Ok(())
-}
-
-/// Check if a cached sidecar exists with matching spec_hash and seed.
-fn check_cache_hit(out_path: &Path, spec_hash: &ContentHash, seed: u64) -> Result<bool> {
-    let sidecar = sidecar_path_for(out_path);
-    if !sidecar.exists() || !out_path.exists() {
-        return Ok(false);
+    if written.is_empty() {
+        written.push(WrittenFile {
+            role: None,
+            path: out_path.to_path_buf(),
+        });
     }
-
-    let content = std::fs::read_to_string(&sidecar)
-        .with_context(|| format!("failed to read sidecar {}", sidecar.display()))?;
-    let asset_file: AssetFile = toml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", sidecar.display()))?;
-
-    let cached_spec_hash = asset_file
-        .asset
-        .properties
-        .get("spec_hash")
-        .and_then(|v| v.as_str());
-    let cached_seed = asset_file
-        .asset
-        .properties
-        .get("seed")
-        .and_then(|v| v.as_integer());
-
-    Ok(cached_spec_hash == Some(&spec_hash.to_prefixed_hex()) && cached_seed == Some(seed as i64))
-}
-
-/// Get the .asset.toml sidecar path for an output file.
-fn sidecar_path_for(out_path: &Path) -> PathBuf {
-    out_path.with_extension(format!(
-        "{}.asset.toml",
-        out_path.extension().and_then(|e| e.to_str()).unwrap_or("")
-    ))
+    Ok(written)
 }
 
 /// Resolve output path for batch mode, inserting the seed into the filename.
@@ -675,33 +582,32 @@ fn resolve_output_path_for_seed(
     seed: u64,
     ext: &str,
 ) -> PathBuf {
-    if let Some(ref out) = args.output {
-        return resolve_batch_output_path(Path::new(out), seed);
-    }
-
     // Named after the spec, in the generator's own format (a texture batch
     // used to default to `.glb`).
-    let name = spec
-        .meta
-        .name
-        .replace(' ', "_")
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "");
-    PathBuf::from(format!("{name}_{seed}.{ext}"))
+    let name = gen_store::slug(&spec.meta.name);
+    match &args.output {
+        Some(out) => resolve_batch_output_path(Path::new(out), seed, &name, ext),
+        None => PathBuf::from(format!("{name}_{seed}.{ext}")),
+    }
 }
 
 /// Insert a seed into a file path: `tree.glb` → `tree_42.glb`.
-/// If the path contains `{seed}`, substitute it directly.
-fn resolve_batch_output_path(base: &Path, seed: u64) -> PathBuf {
+/// If the path contains `{seed}`, substitute it directly. A directory gets
+/// `<name>_<seed>.<ext>` inside it (it used to become a sibling `.glb`).
+fn resolve_batch_output_path(base: &Path, seed: u64, name: &str, ext: &str) -> PathBuf {
     let base_str = base.to_string_lossy();
     if base_str.contains("{seed}") {
         return PathBuf::from(base_str.replace("{seed}", &seed.to_string()));
+    }
+    if base.is_dir() || base_str.ends_with('/') || base_str.ends_with('\\') {
+        return base.join(format!("{name}_{seed}.{ext}"));
     }
 
     let stem = base
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
-    let ext = base.extension().and_then(|e| e.to_str()).unwrap_or("glb");
+    let ext = base.extension().and_then(|e| e.to_str()).unwrap_or(ext);
     let parent = base.parent().unwrap_or(Path::new("."));
     parent.join(format!("{stem}_{seed}.{ext}"))
 }
@@ -855,36 +761,47 @@ mod tests {
     #[test]
     fn test_batch_output_path_default_insertion() {
         let base = Path::new("/tmp/tree.glb");
-        let result = resolve_batch_output_path(base, 42);
+        let result = resolve_batch_output_path(base, 42, "oak", "glb");
         assert_eq!(result, PathBuf::from("/tmp/tree_42.glb"));
     }
 
     #[test]
     fn test_batch_output_path_seed_template() {
         let base = Path::new("/tmp/tree_{seed}.glb");
-        let result = resolve_batch_output_path(base, 7);
+        let result = resolve_batch_output_path(base, 7, "oak", "glb");
         assert_eq!(result, PathBuf::from("/tmp/tree_7.glb"));
     }
 
     #[test]
     fn test_batch_output_path_no_parent() {
         let base = Path::new("tree.glb");
-        let result = resolve_batch_output_path(base, 0);
+        let result = resolve_batch_output_path(base, 0, "oak", "glb");
         assert_eq!(result, PathBuf::from("tree_0.glb"));
     }
 
     #[test]
-    fn test_sidecar_path() {
-        let out = Path::new("/tmp/tree_42.glb");
-        let sidecar = sidecar_path_for(out);
-        assert_eq!(sidecar, PathBuf::from("/tmp/tree_42.glb.asset.toml"));
+    fn a_batch_into_a_directory_lands_inside_it_in_the_native_format() {
+        let result = resolve_batch_output_path(Path::new("out/"), 3, "wall", "png");
+        assert_eq!(result, Path::new("out/").join("wall_3.png"));
+        // No extension: the generator's format, not always .glb.
+        let result = resolve_batch_output_path(Path::new("out/wall"), 3, "x", "png");
+        assert_eq!(result, Path::new("out").join("wall_3.png"));
     }
 
     #[test]
-    fn test_sidecar_path_png() {
-        let out = Path::new("wall.png");
-        let sidecar = sidecar_path_for(out);
-        assert_eq!(sidecar, PathBuf::from("wall.png.asset.toml"));
+    fn image_set_maps_sit_beside_the_stem_or_inside_a_directory() {
+        assert_eq!(
+            output_file_path(Path::new("tex/wall_3.png"), Some("normal")),
+            Path::new("tex").join("wall_3_normal.png")
+        );
+        assert_eq!(
+            output_file_path(Path::new("tex/"), Some("color")),
+            Path::new("tex/").join("output_color.png")
+        );
+        assert_eq!(
+            output_file_path(Path::new("tree.glb"), None),
+            PathBuf::from("tree.glb")
+        );
     }
 
     #[test]

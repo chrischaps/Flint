@@ -155,12 +155,18 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_t
 | `--seed` | Override the spec's seed |
 | `--dry-run` | Print the generator's cost estimate without generating |
 | `--format` | `glb`, `png` or `wav`; must be the generator's own format (mesh: GLB, images: PNG, sound: WAV). Names the file when `-o` is omitted or has another extension |
-| `--batch N`, `--seed-start S` | Sequential-seed variants |
-| `--register` | Store the output in `.flint/assets` and write a `.asset.toml` sidecar recording spec hash, seed and content hash |
-| `--force` | Regenerate even when a registered output with the same spec hash and seed exists |
+| `--batch N`, `--seed-start S` | N variants with seeds S..S+N-1 (S defaults to 0), made one after another and written as `<stem>_<seed>.<ext>` (or filling a `{seed}` in `-o`). `--seed-start` needs `--batch`, and `--seed` can't be combined with it |
+| `--register` | Store each output file in `.flint/assets`, write a `<file>.asset.toml` sidecar beside it, and reuse an earlier registered result for the same spec + seed |
+| `--force` | With `--register`, generate even when this spec + seed is already stored |
 | `--validate`, `--strict`, `--style-guide` | Run the output validator (see [Validation](#validation)); `--strict` turns warnings, including ignored spec keys, into exit code 1. `--style-guide` needs `--validate` |
 
 Image sets write one PNG per map with the map name suffixed.
+
+### Registering outputs
+
+`--register` gives every file a provenance sidecar (`tree_42.glb.asset.toml`) whose `[asset.properties]` record `generator`, `spec_hash` (the spec file's content hash), `seed` (the seed actually used, so a `random` spec's variant can be made again with `--seed`), `timestamp` (ISO 8601 UTC), `flint_version`, and for an image set the `map`. The bytes go into the content store at `.flint/assets/<2 hex>/<hash>.<ext>`, and `.flint/procgen/<spec hash>/<seed>.toml` lists the hashes that spec + seed produced.
+
+That entry is the cache. A later `--register` run with the same spec and seed checks the files on disk against it and does not generate: `Cached:` when they match, and when one was deleted or has changed since, it is copied back from the store. Only when the store has lost a file does the run generate again. The spec hash covers the spec file, not the generator code, so after changing a generator pass `--force`.
 
 Before anything is generated, `flint gen` checks that the spec's generator is registered (an unknown one is refused with the list of known generators) and that the output can hold what it makes: `-o tree.png` for a mesh, or `--format png` on one, fails with a suggested path instead of writing GLB bytes under a `.png` name. `--dry-run` shows the seed it would use, including a `--seed` override.
 

@@ -14,6 +14,7 @@ pub mod providers;
 pub mod registration;
 pub mod semantic;
 pub mod style;
+pub mod time;
 pub mod validate;
 
 pub use config::FlintConfig;

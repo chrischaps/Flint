@@ -26,7 +26,7 @@ pub struct MockAgent;
 
 /// Specs for generators whose params have no usable defaults (a creature
 /// needs a skeleton). The mock starts from these and applies the prompt.
-const CREATURE_TEMPLATE: &str = include_str!("../templates/creature_v1.procgen.toml");
+pub(crate) const CREATURE_TEMPLATE: &str = include_str!("../templates/creature_v1.procgen.toml");
 
 /// How a prompt word changes a param.
 #[derive(Debug, Clone, Copy)]
@@ -137,7 +137,7 @@ const KEYWORDS: &[(&[&str], &str, Nudge)] = &[
 ];
 
 /// FNV-1a: a stable 64-bit hash, so seeds survive Rust and platform changes.
-fn fnv1a(parts: &[&[u8]]) -> u64 {
+pub(crate) fn fnv1a(parts: &[&[u8]]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for part in parts {
         for b in part.iter().chain(&[0xff]) {
@@ -148,7 +148,7 @@ fn fnv1a(parts: &[&[u8]]) -> u64 {
     h
 }
 
-fn registry() -> GeneratorRegistry {
+pub(crate) fn registry() -> GeneratorRegistry {
     let mut r = GeneratorRegistry::new();
     register_built_in_generators(&mut r);
     r.register(Box::new(flint_procgen::mock::MockGenerator));
@@ -157,7 +157,7 @@ fn registry() -> GeneratorRegistry {
 
 /// The registered name for `generator`: exact, or with `_v1` appended
 /// (so `"tree"` finds `tree_v1`).
-fn resolve_name(registry: &GeneratorRegistry, generator: &str) -> Option<String> {
+pub(crate) fn resolve_name(registry: &GeneratorRegistry, generator: &str) -> Option<String> {
     let g = generator.trim();
     if registry.get(g).is_some() {
         return Some(g.to_string());
@@ -166,7 +166,7 @@ fn resolve_name(registry: &GeneratorRegistry, generator: &str) -> Option<String>
     registry.get(&v1).is_some().then_some(v1)
 }
 
-fn unknown_generator(registry: &GeneratorRegistry, generator: &str) -> ProcGenAiError {
+pub(crate) fn unknown_generator(registry: &GeneratorRegistry, generator: &str) -> ProcGenAiError {
     let mut names = registry.generator_names();
     names.sort_unstable();
     ProcGenAiError::SpecError(format!(
@@ -183,7 +183,7 @@ fn words(prompt: &str) -> Vec<String> {
         .collect()
 }
 
-fn props(schema: &Json) -> Option<&serde_json::Map<String, Json>> {
+pub(crate) fn props(schema: &Json) -> Option<&serde_json::Map<String, Json>> {
     schema.get("properties").and_then(Json::as_object)
 }
 
@@ -244,7 +244,7 @@ fn apply_keywords(schema: &Json, params: &mut toml::Value, prompt: &str) -> Vec<
     used
 }
 
-fn slug(prompt: &str) -> String {
+pub(crate) fn slug(prompt: &str) -> String {
     let w = words(prompt);
     if w.is_empty() {
         "untitled".to_string()
@@ -254,7 +254,7 @@ fn slug(prompt: &str) -> String {
 }
 
 /// `1.2.3` → `1.2.4`; anything else is left alone.
-fn bump_patch(version: &str) -> String {
+pub(crate) fn bump_patch(version: &str) -> String {
     let mut parts: Vec<&str> = version.split('.').collect();
     if let Some(last) = parts.last_mut().and_then(|p| p.parse::<u64>().ok()) {
         let bumped = (last + 1).to_string();

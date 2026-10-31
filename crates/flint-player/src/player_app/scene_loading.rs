@@ -853,9 +853,9 @@ pub(super) fn resolve_procgen_assets(
     // Generate and upload each unresolved asset
     for name in &unresolved_models {
         match resolver.generate(name) {
-            Ok(output) => match output {
+            Ok(output) => match &*output {
                 flint_procgen::GeneratorOutput::Mesh(mesh) => {
-                    upload_procgen_mesh(name, &mesh, renderer, device);
+                    upload_procgen_mesh(name, mesh, renderer, device);
                     tracing::info!(
                         "Procgen resolved mesh '{}' ({} tris)",
                         name,
@@ -873,7 +873,7 @@ pub(super) fn resolve_procgen_assets(
                     }
                 }
                 flint_procgen::GeneratorOutput::Image(img) => {
-                    upload_procgen_image(name, &img, renderer, device, queue);
+                    upload_procgen_image(name, img, renderer, device, queue);
                     tracing::info!(
                         "Procgen resolved image '{}' ({}x{})",
                         name,
@@ -925,9 +925,9 @@ pub(super) fn resolve_procgen_assets(
             continue; // Already handled above
         }
         match resolver.generate(name) {
-            Ok(output) => match output {
+            Ok(output) => match &*output {
                 flint_procgen::GeneratorOutput::Image(img) => {
-                    upload_procgen_image(name, &img, renderer, device, queue);
+                    upload_procgen_image(name, img, renderer, device, queue);
                     tracing::info!(
                         "Procgen resolved texture '{}' ({}x{})",
                         name,
@@ -977,11 +977,13 @@ pub(super) fn resolve_procgen_assets(
     if !unresolved_models.is_empty() || !unresolved_textures.is_empty() {
         let stats = resolver.cache_stats();
         tracing::debug!(
-            "Procgen cache: {} entries, {} bytes, {} hits / {} misses",
+            "Procgen cache: {} entries, {} of {} bytes, {} hits / {} misses, {} evicted",
             stats.entry_count,
             stats.total_bytes,
+            stats.max_memory_bytes,
             stats.hits,
             stats.misses,
+            stats.evictions,
         );
     }
 }
@@ -1175,7 +1177,7 @@ pub(super) fn upload_completed_procgen_assets(
     queue: &wgpu::Queue,
 ) {
     for asset in completed {
-        match (&asset.output, asset.asset_kind) {
+        match (&*asset.output, asset.asset_kind) {
             (flint_procgen::GeneratorOutput::Mesh(mesh), _) => {
                 upload_procgen_mesh(&asset.spec_name, mesh, renderer, device);
                 tracing::info!(
