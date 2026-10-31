@@ -13,8 +13,10 @@
 //! again.
 //!
 //! The page's Begin button (`flint_web.rs`) calls [`begin`] from its click:
-//! it locks the pointer then and there, inside the gesture, and leaves word
-//! for the player to start its sound on the next frame.
+//! it locks the pointer and opens the `AudioContext` then and there, inside
+//! the gesture, and leaves word for the player to start its sound on that
+//! context on the next frame. Chrome on a desktop would take a context
+//! opened a frame late; iOS WebKit keeps it suspended (Float#2).
 //!
 //! A phone has no pointer to lock (#132): on a page whose main pointer is a
 //! finger, or while the last input came from one, no lock is asked for. The
@@ -85,12 +87,15 @@ pub(super) struct PointerLock {
 }
 
 /// The page's Begin gesture: lock the pointer on the player's canvas now,
-/// while the click's activation is live, and have the player start its
-/// sound next frame (`PlayerApp::start_audio`). Call it from the click.
+/// while the click's activation is live, open the `AudioContext` now too
+/// (iOS starts one only inside the gesture, Float#2), and have the player
+/// start its sound on it next frame (`PlayerApp::start_audio`). Call it
+/// from the click.
 pub fn begin() {
     if !touch_first() {
         request_lock();
     }
+    flint_audio::worklet::unlock();
     BEGIN_REQUESTED.with(|b| b.set(true));
 }
 

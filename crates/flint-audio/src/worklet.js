@@ -140,6 +140,108 @@ export function flint_worklet_wanted() {
   return asked !== 'main' && typeof AudioWorkletNode === 'function';
 }
 
+// iOS and iPadOS WebKit (every browser there, Chrome included) start an
+// AudioContext only from inside a gesture's own handler. Chrome elsewhere
+// counts any gesture the page has had, so a context opened on the frame
+// after Begin plays on a desktop and stays suspended on an iPad, silently
+// (Float#2). So Begin's click opens the context here, before it returns,
+// and the worklet takes it a frame later. Every context Flint plays
+// through is also resumed by any later tap or key: the main-thread
+// fallback's, which cpal opens outside the gesture, and one iOS
+// interrupted (a call, the app switcher, the screen locking).
+
+/** The context Begin's gesture opened, until the worklet takes it. */
+let unlocked = null;
+/** Every context Flint plays through, for a later gesture to resume. */
+const owned = new Set();
+
+function wake() {
+  for (const ctx of owned) {
+    if (ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {});
+  }
+}
+
+let listening = false;
+
+/** Resume `ctx` whenever the page gets a gesture while it isn't running. */
+export function flint_audio_keep_awake(ctx) {
+  owned.add(ctx);
+  ctx.addEventListener('statechange', () => {
+    if (ctx.state === 'closed') owned.delete(ctx);
+  });
+  if (listening) return;
+  listening = true;
+  // touchend, not only click: winit cancels the click a tap on the canvas
+  // would make, and WebKit counts touchend as the gesture.
+  for (const type of ['touchend', 'pointerup', 'click', 'keydown']) {
+    document.addEventListener(type, wake, { capture: true, passive: true });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') wake();
+  });
+}
+
+/** Call inside Begin's gesture: open (or resume) the page's context and
+ *  play one silent frame through it, which is what WebKit waits for. */
+export function flint_audio_unlock(latency) {
+  // Let sound play with the ringer silenced, as a video would: WebKit's
+  // default "auto" session mutes Web Audio with it (iOS 17, iPadOS 17).
+  try {
+    const session = navigator.audioSession;
+    if (session && session.type !== 'playback') session.type = 'playback';
+  } catch (_) {}
+  if (!unlocked && typeof AudioContext === 'function') {
+    try {
+      unlocked = new AudioContext({ latencyHint: latency });
+    } catch (e) {
+      console.warn(`[flint-audio] no AudioContext at Begin: ${e}`);
+      return;
+    }
+    watch(unlocked);
+    flint_audio_keep_awake(unlocked);
+  }
+  if (!unlocked) return;
+  unlocked.resume().catch(() => {});
+  const blip = unlocked.createBufferSource();
+  blip.buffer = unlocked.createBuffer(1, 1, unlocked.sampleRate);
+  blip.connect(unlocked.destination);
+  blip.start(0);
+  console.log(`[flint-audio] Begin opened the AudioContext (${unlocked.state})`);
+}
+
+/** The context Begin opened, or a new one when there wasn't a Begin. */
+function takeContext(latency) {
+  const ctx = unlocked;
+  unlocked = null;
+  if (ctx && ctx.state !== 'closed') return ctx;
+  const fresh = new AudioContext({ latencyHint: latency });
+  watch(fresh);
+  flint_audio_keep_awake(fresh);
+  return fresh;
+}
+
+/** The main thread mixes after all, on a context cpal opens: close the
+ *  one Begin opened for the worklet, if nobody took it. */
+export function flint_audio_release_unlocked() {
+  if (unlocked) unlocked.close().catch(() => {});
+  unlocked = null;
+}
+
+/** Resolves once `ctx` runs. A suspended context renders nothing, so the
+ *  processor can't say it's ready until then. */
+function running(ctx) {
+  if (ctx.state === 'running') return Promise.resolve();
+  console.warn(`[flint-audio] AudioContext ${ctx.state}: sound starts at the next tap or key`);
+  return new Promise((resolve) => {
+    const check = () => {
+      if (ctx.state !== 'running') return;
+      ctx.removeEventListener('statechange', check);
+      resolve();
+    };
+    ctx.addEventListener('statechange', check);
+  });
+}
+
 function watch(ctx) {
   ctx.onstatechange = () => {
     const line = `[flint-audio] AudioContext ${ctx.state} at ${ctx.currentTime.toFixed(1)} s`;
@@ -156,15 +258,14 @@ function watch(ctx) {
 }
 
 export class FlintWorklet {
-  /** Open the AudioContext now (call it inside the page's gesture) and the
-   *  processor as soon as the wasm is in. */
+  /** Take the AudioContext Begin's gesture opened (or open one now) and
+   *  start the processor as soon as the wasm is in and the context runs. */
   constructor(url, meterFrames, latency, onStats) {
     this.state = 0; // 0 starting, 1 running, 2 failed
     this.queue = [];
     this.node = null;
-    this.ctx = new AudioContext({ latencyHint: latency });
+    this.ctx = takeContext(latency);
     this.ctx.resume().catch(() => {});
-    watch(this.ctx);
     flint_worklet_preload(url);
     this.open(meterFrames, onStats).catch((e) => {
       this.state = 2;
@@ -192,6 +293,7 @@ export class FlintWorklet {
         stallMs: Number(new URLSearchParams(location.search).get('audiostall')) || 0,
       },
     });
+    await running(this.ctx);
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('the processor never said ready')), READY_MS);
       node.port.onmessage = (e) => {
