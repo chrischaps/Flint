@@ -521,6 +521,14 @@ the page's `#perf` panel):
   `Volumetric`, `Kuwahara`), not one `Post-process`. Without timestamps the
   panel says so and the CPU phases are all it has. `?perf=cpu` leaves GPU
   timing off; on Chrome it made no difference to the frame times.
+- **webgpu**: the calls the mean frame made into WebGPU, which on the web
+  each cross from wasm into JS: submits, render passes, bind groups,
+  `writeBuffer`s and the bytes they carried, and buffers made (#139). With
+  `?perf` the page wraps `GPUQueue.submit`/`writeBuffer`,
+  `GPUDevice.createBindGroup`/`createBuffer` and
+  `GPUCommandEncoder.beginRenderPass` before the wasm loads and keeps
+  running totals in `window.flintGpuCalls`; each readout divides what moved
+  by the frames since the last.
 
 **Copy line** puts the whole readout on one line for an issue:
 

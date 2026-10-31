@@ -13,6 +13,7 @@ mod context;
 mod debug;
 pub mod frustum;
 pub mod gpu_select;
+pub mod bind_cache;
 pub mod gpu_timer;
 mod gpu_mesh;
 pub mod grass_pipeline;

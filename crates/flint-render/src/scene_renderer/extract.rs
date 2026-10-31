@@ -278,7 +278,7 @@ impl SceneRenderer {
                 mr_view,
                 em_view,
             );
-            let transform_buffer = binds.transform_buffer.clone();
+            let transform = binds.transform.clone();
             let transform_bind_group = binds.transform_bind_group.clone();
             let material_buffer = binds.material_buffer.clone();
             let material_bind_group = binds.material_bind_group.clone();
@@ -365,7 +365,7 @@ impl SceneRenderer {
                 vertex_buffer: gpu_mesh.vertex_buffer.clone(),
                 index_buffer: gpu_mesh.index_buffer.clone(),
                 index_count: gpu_mesh.index_count,
-                transform_buffer,
+                transform,
                 transform_bind_group,
                 material_buffer,
                 material_bind_group,

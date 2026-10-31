@@ -78,7 +78,10 @@ pub struct GpuSkinnedMesh {
     pub index_buffer: Arc<wgpu::Buffer>,
     pub index_count: u32,
     pub material: ImportedMaterial,
-    pub bone_buffer: wgpu::Buffer,
+    /// The asset's bone matrices, one buffer for all its sub-meshes: they
+    /// were always written alike, and Float's body was 72 writes a frame
+    /// (#139).
+    pub bone_buffer: Arc<wgpu::Buffer>,
     pub bone_bind_group: wgpu::BindGroup,
     pub skin_index: usize,
     index_data: Vec<u8>,
@@ -385,6 +388,14 @@ impl MeshCache {
             ];
             MAX_BONES
         ];
+        // Create bone storage buffer initialized to identity
+        let bone_buffer = Arc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{} Bone Buffer", name)),
+                contents: bytemuck::cast_slice(&identity_bones),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
 
         let gpu_skinned: Vec<GpuSkinnedMesh> = import_result
             .meshes
@@ -456,13 +467,6 @@ impl MeshCache {
                     usage: wgpu::BufferUsages::INDEX,
                 });
 
-                // Create bone storage buffer initialized to identity
-                let bone_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} Bone Buffer", name)),
-                    contents: bytemuck::cast_slice(&identity_bones),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                });
-
                 let bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     layout: bone_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
@@ -477,7 +481,7 @@ impl MeshCache {
                     index_buffer: Arc::new(index_buffer),
                     index_count: mesh.indices.len() as u32,
                     material,
-                    bone_buffer,
+                    bone_buffer: bone_buffer.clone(),
                     bone_bind_group,
                     skin_index,
                     index_data,

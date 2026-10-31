@@ -565,9 +565,22 @@ impl PlayerApp {
             self.stats_gpu_timing = false;
         }
 
-        if let Err(e) = renderer.render(context, &self.camera, &view) {
-            tracing::warn!("Render error: {:?}", e);
-        }
+        // The whole frame (scene, HUD, the GPU timer's resolve) goes into
+        // one encoder and one submission (#139): on the web each submission
+        // crosses into JS.
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Frame Encoder"),
+            });
+        renderer.encode_to(
+            &context.device,
+            &context.queue,
+            &mut encoder,
+            &context.depth_view,
+            &self.camera,
+            &view,
+        );
         // A field borrow, not `perf_mark`: `context` is still held.
         if let Some(perf) = &mut self.perf {
             perf.mark(super::perf::Phase::Render);
@@ -580,9 +593,11 @@ impl PlayerApp {
             format: Some(context.hud_format),
             ..Default::default()
         });
-        self.render_hud(&hud_view);
+        self.render_hud(&hud_view, &mut encoder);
         if let (Some(context), Some(renderer)) = (&self.render_context, &mut self.scene_renderer) {
-            renderer.finish_gpu_timings(&context.device, &context.queue);
+            renderer.encode_gpu_timings(&context.device, &mut encoder);
+            context.queue.submit(std::iter::once(encoder.finish()));
+            renderer.frame_submitted();
         }
         self.perf_mark(super::perf::Phase::Hud);
 
@@ -1468,7 +1483,11 @@ impl PlayerApp {
     }
 
     #[profiling::function]
-    fn render_hud(&mut self, target_view: &wgpu::TextureView) {
+    fn render_hud(
+        &mut self,
+        target_view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
         // Lazy-load any sprite textures referenced by draw commands
         // (must happen before egui_winit borrow)
         self.load_pending_sprites();
@@ -1604,17 +1623,12 @@ impl PlayerApp {
 
         let mut egui_renderer = self.egui_renderer.take().unwrap();
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("HUD Encoder"),
-            });
         // The HUD's GPU time, with the renderer's phases (ADR 0108).
         let ui_scope = self
             .scene_renderer
             .as_mut()
             .and_then(|r| r.gpu_timer_mut())
-            .map(|t| t.begin(&mut encoder, "UI"));
+            .map(|t| t.begin(encoder, "UI"));
 
         for (id, image_delta) in &full_output.textures_delta.set {
             egui_renderer.update_texture(&context.device, &context.queue, *id, image_delta);
@@ -1623,7 +1637,7 @@ impl PlayerApp {
         egui_renderer.update_buffers(
             &context.device,
             &context.queue,
-            &mut encoder,
+            encoder,
             &paint_jobs,
             &screen_descriptor,
         );
@@ -1636,7 +1650,7 @@ impl PlayerApp {
             pipeline.draw(
                 &context.device,
                 &context.queue,
-                &mut encoder,
+                encoder,
                 target_view,
                 &context.depth_view,
                 &glyphs,
@@ -1668,9 +1682,8 @@ impl PlayerApp {
             self.scene_renderer.as_mut().and_then(|r| r.gpu_timer_mut()),
             ui_scope,
         ) {
-            timer.end(&mut encoder, scope);
+            timer.end(encoder, scope);
         }
-        context.queue.submit(std::iter::once(encoder.finish()));
 
         for id in &full_output.textures_delta.free {
             egui_renderer.free_texture(id);

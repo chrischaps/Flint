@@ -420,6 +420,38 @@
           delete button.dataset.done;
         }, 1600);
       });
+
+      // With ?perf, count the WebGPU calls that cross from wasm into JS
+      // (#139): each costs far more here than natively. The player reads
+      // window.flintGpuCalls and shows them per frame (web_perf.rs).
+      (() => {
+        if (!new URLSearchParams(location.search).has("perf")) return;
+        if (typeof GPUQueue === "undefined") return;
+        const calls = (window.flintGpuCalls = {
+          submit: 0,
+          writeBuffer: 0,
+          writeBytes: 0,
+          createBindGroup: 0,
+          createBuffer: 0,
+          beginRenderPass: 0,
+        });
+        const count = (proto, name, also) => {
+          const real = proto[name];
+          proto[name] = function (...args) {
+            calls[name]++;
+            if (also) also(args);
+            return real.apply(this, args);
+          };
+        };
+        count(GPUQueue.prototype, "submit");
+        count(GPUQueue.prototype, "writeBuffer", ([, , data, , size]) => {
+          const unit = data.BYTES_PER_ELEMENT || 1;
+          calls.writeBytes += size === undefined ? data.byteLength : size * unit;
+        });
+        count(GPUDevice.prototype, "createBindGroup");
+        count(GPUDevice.prototype, "createBuffer");
+        count(GPUCommandEncoder.prototype, "beginRenderPass");
+      })();
     </script>
 
     <!-- Full screen (#135). The gate's switch rides on the Begin click; the
