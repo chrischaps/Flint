@@ -77,6 +77,15 @@ impl GameClock {
         }
     }
 
+    /// Forget the wall time since the last tick, so the next one steps
+    /// nothing rather than the whole gap. For time the game was held through
+    /// on purpose (the web page's turn-your-phone prompt, FlintKart#27): without it
+    /// the first frame back would leap `MAX_DELTA`.
+    pub fn resync(&mut self) {
+        self.first_tick = true;
+        self.pace_debt = 0.0;
+    }
+
     /// Advance the clock. Call once per frame.
     pub fn tick(&mut self) {
         let now = Instant::now();
@@ -312,6 +321,18 @@ mod tests {
         let dts = run(&mut clock, std::iter::repeat_n(HZ60 / 2.0, 240));
         assert!(dts[120..].iter().all(|dt| (dt - HZ60 / 2.0).abs() < 1e-9));
         assert!((clock.total_time - 2.0).abs() < MAX_LEAD);
+    }
+
+    #[test]
+    fn a_resync_steps_nothing_for_the_held_gap() {
+        let mut clock = GameClock::new();
+        clock.tick();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        clock.resync();
+        clock.tick();
+        assert_eq!(clock.delta_time, 0.0);
+        clock.tick();
+        assert!(clock.delta_time < 0.04, "{}", clock.delta_time);
     }
 
     #[test]
