@@ -5,13 +5,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::cache::{ProcGenCache, ProcGenCacheConfig};
 use crate::output::GeneratorOutput;
 use crate::queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
 use crate::registry::GeneratorRegistry;
 use crate::spec::ProcGenSpec;
-use crate::{register_built_in_generators, CacheStats, ProcGenError, Result};
+use crate::{register_built_in_generators, CacheStats, ProcGenError, Result, Seed};
 use flint_core::ContentHash;
 
 /// Discovers procgen specs by name and generates assets with caching.
@@ -29,7 +30,11 @@ pub struct ProcGenResolver {
 impl ProcGenResolver {
     /// Create a new resolver with default cache config and built-in generators.
     pub fn new() -> Self {
-        let config = ProcGenCacheConfig::default();
+        Self::with_config(ProcGenCacheConfig::default())
+    }
+
+    /// Create a resolver whose cache and queue use `config`.
+    pub fn with_config(config: ProcGenCacheConfig) -> Self {
         let budget_ms = config.runtime_max_generation_ms_per_frame;
         let mut registry = GeneratorRegistry::new();
         register_built_in_generators(&mut registry);
@@ -66,29 +71,29 @@ impl ProcGenResolver {
         self.specs.len()
     }
 
+    /// The cache key for a spec: the hash of its (normalised) TOML and its seed.
+    fn cache_key(spec: &ProcGenSpec) -> Result<(ContentHash, Seed)> {
+        let seed = spec.seed.to_seed()?;
+        let content_hash = ContentHash::from_str(&toml::to_string(spec).unwrap_or_default());
+        Ok((content_hash, seed))
+    }
+
     /// Generate (or retrieve from cache) the output for the named spec.
-    pub fn generate(&mut self, name: &str) -> Result<GeneratorOutput> {
+    ///
+    /// A hit returns the cached output itself, shared: no copy is made.
+    pub fn generate(&mut self, name: &str) -> Result<Arc<GeneratorOutput>> {
         let spec = self
             .specs
             .get(name)
-            .ok_or_else(|| ProcGenError::UnknownGenerator(format!("no spec named '{name}'")))?
-            .clone();
+            .ok_or_else(|| ProcGenError::UnknownGenerator(format!("no spec named '{name}'")))?;
+        let (content_hash, seed) = Self::cache_key(spec)?;
 
-        let seed = spec.seed.to_seed()?;
-        let content_hash = ContentHash::from_str(&toml::to_string(&spec).unwrap_or_default());
-
-        // Check cache first
         if let Some(cached) = self.cache.get(content_hash, &seed) {
-            return Ok(cached.clone());
+            return Ok(cached);
         }
 
-        // Generate
-        let output = self.registry.generate_from_spec(&spec)?;
-
-        // Cache the result
-        self.cache.insert(content_hash, &seed, output.clone());
-
-        Ok(output)
+        let output = self.registry.generate_from_spec(spec)?;
+        Ok(self.cache.insert(content_hash, &seed, output))
     }
 
     /// Current cache statistics.
@@ -112,14 +117,13 @@ impl ProcGenResolver {
             None => return false,
         };
 
-        let seed = match spec.seed.to_seed() {
-            Ok(s) => s,
-            Err(_) => return false,
+        let Ok((content_hash, seed)) = Self::cache_key(&spec) else {
+            return false;
         };
-        let content_hash = ContentHash::from_str(&toml::to_string(&spec).unwrap_or_default());
 
-        // Already cached — no need to queue
-        if self.cache.get(content_hash, &seed).is_some() {
+        // Already cached — no need to queue. A probe, not a use: the queue's
+        // own lookup counts the hit when it hands the asset out.
+        if self.cache.contains(content_hash, &seed) {
             return false;
         }
 
@@ -156,18 +160,13 @@ impl ProcGenResolver {
         self.queue.is_pending(name)
     }
 
-    /// Check if a spec name has a cached output.
-    pub fn is_cached(&mut self, name: &str) -> bool {
-        let spec = match self.specs.get(name) {
-            Some(s) => s,
-            None => return false,
-        };
-        let seed = match spec.seed.to_seed() {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        let content_hash = ContentHash::from_str(&toml::to_string(spec).unwrap_or_default());
-        self.cache.get(content_hash, &seed).is_some()
+    /// Check if a spec name has a cached output. Does not count as a hit or
+    /// a miss, or change what the cache evicts next.
+    pub fn is_cached(&self, name: &str) -> bool {
+        self.specs
+            .get(name)
+            .and_then(|spec| Self::cache_key(spec).ok())
+            .is_some_and(|(hash, seed)| self.cache.contains(hash, &seed))
     }
 
     /// Current queue statistics.
@@ -250,8 +249,40 @@ value = 42
         let output2 = resolver.generate("test_cube").unwrap();
         assert_eq!(resolver.cache_stats().hits, 1);
         assert_eq!(output1, output2);
+        // The hit is the cached output itself, not a copy of it.
+        assert!(Arc::ptr_eq(&output1, &output2));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probes_do_not_count_as_uses() {
+        let dir = temp_dir("probes");
+        fs::write(dir.join("cube.procgen.toml"), MOCK_SPEC).unwrap();
+
+        let mut resolver = ProcGenResolver::new();
+        resolver.discover_and_index(&[dir.as_path()]);
+
+        assert!(!resolver.is_cached("test_cube"));
+        resolver.generate("test_cube").unwrap(); // the one miss
+        assert!(resolver.is_cached("test_cube"));
+        assert!(!resolver.is_cached("nonexistent"));
+        // Already cached: enqueue declines, and checking that counts nothing.
+        assert!(!resolver.enqueue("test_cube", [0.0; 3], AssetKind::Model));
+
+        let stats = resolver.cache_stats();
+        assert_eq!((stats.hits, stats.misses), (0, 1));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_config_reaches_the_cache() {
+        let resolver = ProcGenResolver::with_config(ProcGenCacheConfig {
+            max_memory_bytes: 4096,
+            ..Default::default()
+        });
+        assert_eq!(resolver.cache_stats().max_memory_bytes, 4096);
     }
 
     #[test]
