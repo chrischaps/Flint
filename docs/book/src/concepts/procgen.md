@@ -154,13 +154,15 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/lowpoly.to
 | `-o, --output` | File or directory. Derived from `meta.name` and the output kind when omitted |
 | `--seed` | Override the spec's seed |
 | `--dry-run` | Print the generator's cost estimate without generating |
-| `--format` | Force `glb` or `png` instead of inferring from the extension |
+| `--format` | `glb`, `png` or `wav`; must be the generator's own format (mesh: GLB, images: PNG, sound: WAV). Names the file when `-o` is omitted or has another extension |
 | `--batch N`, `--seed-start S` | Sequential-seed variants |
 | `--register` | Store the output in `.flint/assets` and write a `.asset.toml` sidecar recording spec hash, seed and content hash |
 | `--force` | Regenerate even when a registered output with the same spec hash and seed exists |
 | `--validate`, `--strict`, `--style-guide` | Run the output validator (geometry, materials, style constraints); `--strict` turns warnings, including ignored spec keys, into exit code 1 |
 
 Image sets write one PNG per map with the map name suffixed.
+
+Before anything is generated, `flint gen` checks that the spec's generator is registered (an unknown one is refused with the list of known generators) and that the output can hold what it makes: `-o tree.png` for a mesh, or `--format png` on one, fails with a suggested path instead of writing GLB bytes under a `.png` name. `--dry-run` shows the seed it would use, including a `--seed` override.
 
 ## Previewing
 
