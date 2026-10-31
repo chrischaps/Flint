@@ -18,6 +18,7 @@ use crate::algorithms::noise::{
 use crate::rng::{hsv_to_rgb, rgb_to_hsv};
 use crate::SeededRng;
 
+use super::cell_memo::CellMemo;
 use super::field::TextureField;
 use super::voronoi_util::{self, SpatialGrid};
 
@@ -445,11 +446,12 @@ impl TextureOp for CellHeightOp {
         let h = field.height;
         let seed = rng.seed();
         field.ensure_channel("height");
+        let mut cells = CellMemo::new(|id| cell_height_for_id(id, self.variation, seed));
 
         for y in 0..h {
             for x in 0..w {
                 let cell_id = field.get("cell_id", x, y) as u32;
-                let cell_h = cell_height_for_id(cell_id, self.variation, seed);
+                let cell_h = cells.get(cell_id);
                 field.set("height", x, y, cell_h);
             }
         }
@@ -668,6 +670,7 @@ impl TextureOp for NoiseLayerOp {
         field.ensure_channel(&self.output);
 
         let use_cell_offset = self.cell_offset && field.has_channel("cell_id");
+        let mut offsets = CellMemo::new(|id| cell_noise_offset(id, seed));
 
         for y in 0..h {
             for x in 0..w {
@@ -675,7 +678,7 @@ impl TextureOp for NoiseLayerOp {
                 let mut ny = y as f64 / h as f64 * self.scale_y as f64;
                 if use_cell_offset {
                     let cid = field.get("cell_id", x, y) as u32;
-                    let (ox, oy) = cell_noise_offset(cid, seed);
+                    let (ox, oy) = offsets.get(cid);
                     nx += ox;
                     ny += oy;
                 }
@@ -788,81 +791,95 @@ impl TextureOp for BlendOp {
     }
 
     fn apply(&self, field: &mut TextureField, _rng: &mut SeededRng) {
-        let w = field.width;
-        let h = field.height;
+        // Work on whole channels: the per-pixel get/get/set cost three map
+        // lookups a pixel, more than the blend itself (#187). Source and
+        // mask are copied first, so a channel may blend into itself; a
+        // missing one reads as 0, as `TextureField::get` does.
+        let len = (field.width * field.height) as usize;
+        let read = |name: &str| {
+            field
+                .channel(name)
+                .map_or_else(|| vec![0.0; len], <[f32]>::to_vec)
+        };
+        let src = read(&self.source);
+        let mask = self.mask.as_deref().map(read);
         field.ensure_channel(&self.target);
+        let dst = field
+            .channel_mut(&self.target)
+            .expect("target channel was just ensured");
 
-        for y in 0..h {
-            for x in 0..w {
-                let src = field.get(&self.source, x, y);
-                let dst = field.get(&self.target, x, y);
-                let blended = match self.mode {
-                    BlendMode::Add => dst + (src - 0.5) * self.strength,
-                    BlendMode::AddRaw => dst + src * self.strength,
-                    BlendMode::Multiply => dst * (1.0 + (src - 1.0) * self.strength),
-                    BlendMode::Mix => dst + (src - dst) * self.strength,
-                    BlendMode::Screen => {
-                        let b = 1.0 - (1.0 - dst) * (1.0 - src);
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::Overlay => {
-                        let b = if dst < 0.5 {
-                            2.0 * dst * src
-                        } else {
-                            1.0 - 2.0 * (1.0 - dst) * (1.0 - src)
-                        };
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::SoftLight => {
-                        // Pegtop formula
-                        let b = (1.0 - 2.0 * src) * dst * dst + 2.0 * src * dst;
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::LinearLight => {
-                        let b = 2.0 * src + dst - 1.0;
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::Difference => {
-                        let b = (dst - src).abs();
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::Darken => {
-                        let b = dst.min(src);
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::Lighten => {
-                        let b = dst.max(src);
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::ColorDodge => {
-                        let b = if src >= 1.0 {
-                            1.0
-                        } else {
-                            (dst / (1.0 - src)).min(1.0)
-                        };
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::ColorBurn => {
-                        let b = if src <= 0.0 {
-                            0.0
-                        } else {
-                            (1.0 - (1.0 - dst) / src).max(0.0)
-                        };
-                        lerp(dst, b, self.strength)
-                    }
-                    BlendMode::Subtract => {
-                        let b = dst - src;
-                        lerp(dst, b, self.strength)
-                    }
+        for (i, d) in dst.iter_mut().enumerate() {
+            let blended = self.blend_pixel(*d, src[i]);
+            let blended = match &mask {
+                Some(m) => lerp(*d, blended, m[i]),
+                None => blended,
+            };
+            *d = blended.clamp(0.0, 1.0);
+        }
+    }
+}
+
+impl BlendOp {
+    /// The blended value before masking and clamping.
+    #[inline]
+    fn blend_pixel(&self, dst: f32, src: f32) -> f32 {
+        match self.mode {
+            BlendMode::Add => dst + (src - 0.5) * self.strength,
+            BlendMode::AddRaw => dst + src * self.strength,
+            BlendMode::Multiply => dst * (1.0 + (src - 1.0) * self.strength),
+            BlendMode::Mix => dst + (src - dst) * self.strength,
+            BlendMode::Screen => {
+                let b = 1.0 - (1.0 - dst) * (1.0 - src);
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::Overlay => {
+                let b = if dst < 0.5 {
+                    2.0 * dst * src
+                } else {
+                    1.0 - 2.0 * (1.0 - dst) * (1.0 - src)
                 };
-                let blended = match &self.mask {
-                    Some(ch) => {
-                        let m = field.get(ch, x, y);
-                        lerp(dst, blended, m)
-                    }
-                    None => blended,
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::SoftLight => {
+                // Pegtop formula
+                let b = (1.0 - 2.0 * src) * dst * dst + 2.0 * src * dst;
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::LinearLight => {
+                let b = 2.0 * src + dst - 1.0;
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::Difference => {
+                let b = (dst - src).abs();
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::Darken => {
+                let b = dst.min(src);
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::Lighten => {
+                let b = dst.max(src);
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::ColorDodge => {
+                let b = if src >= 1.0 {
+                    1.0
+                } else {
+                    (dst / (1.0 - src)).min(1.0)
                 };
-                field.set(&self.target, x, y, blended.clamp(0.0, 1.0));
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::ColorBurn => {
+                let b = if src <= 0.0 {
+                    0.0
+                } else {
+                    (1.0 - (1.0 - dst) / src).max(0.0)
+                };
+                lerp(dst, b, self.strength)
+            }
+            BlendMode::Subtract => {
+                let b = dst - src;
+                lerp(dst, b, self.strength)
             }
         }
     }
@@ -940,11 +957,13 @@ impl TextureOp for CellColorOp {
         field.ensure_channel("r");
         field.ensure_channel("g");
         field.ensure_channel("b");
+        let mut cells =
+            CellMemo::new(|id| cell_color_hsl(id, self.base_color, self.variation, seed));
 
         for y in 0..h {
             for x in 0..w {
                 let cell_id = field.get("cell_id", x, y) as u32;
-                let color = cell_color_hsl(cell_id, self.base_color, self.variation, seed);
+                let color = cells.get(cell_id);
                 field.set("r", x, y, color[0]);
                 field.set("g", x, y, color[1]);
                 field.set("b", x, y, color[2]);
@@ -1108,6 +1127,7 @@ impl TextureOp for CellRoughnessOp {
         let h = field.height;
         let seed = rng.seed();
         field.ensure_channel("roughness");
+        let mut cells = CellMemo::new(|id| cell_roughness_shift(id, self.variation, seed));
 
         for y in 0..h {
             for x in 0..w {
@@ -1115,7 +1135,7 @@ impl TextureOp for CellRoughnessOp {
                 let e = field.get("edge_dist", x, y);
 
                 // Per-cell roughness variation
-                let cell_shift = cell_roughness_shift(cell_id, self.variation, seed);
+                let cell_shift = cells.get(cell_id);
                 let surface_rough = (self.base + cell_shift).clamp(0.0, 1.0);
 
                 // Mortar blend
@@ -1962,6 +1982,7 @@ impl TextureOp for MusgraveTextureOp {
         };
 
         let use_cell_offset = self.cell_offset && field.has_channel("cell_id");
+        let mut offsets = CellMemo::new(|id| cell_noise_offset(id, seed));
 
         for y in 0..h {
             for x in 0..w {
@@ -1969,7 +1990,7 @@ impl TextureOp for MusgraveTextureOp {
                 let mut ny = y as f64 / h as f64 * self.scale_y as f64;
                 if use_cell_offset {
                     let cid = field.get("cell_id", x, y) as u32;
-                    let (ox, oy) = cell_noise_offset(cid, seed);
+                    let (ox, oy) = offsets.get(cid);
                     nx += ox;
                     ny += oy;
                 }
