@@ -22,10 +22,7 @@ use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
 use flint_core::ContentHash;
 use flint_procgen::{OutputKind, ProcGenSpec};
 
-/// Content store root, shared with `flint asset` and the AI asset pipeline.
-pub const STORE_ROOT: &str = ".flint/assets";
-/// Provenance entries: which hashes a spec + seed produced.
-pub const INDEX_ROOT: &str = ".flint/procgen";
+use flint_asset::Project;
 
 /// One file a run wrote. `role` names an image-set map (`color`, `normal`,
 /// ...) and is `None` for a run that writes a single file.
@@ -59,19 +56,28 @@ pub enum Reuse {
 
 pub struct Store {
     content: ContentStore,
+    store_root: PathBuf,
     index_root: PathBuf,
 }
 
 impl Store {
-    pub fn open_default() -> Self {
-        Self::open(Path::new(STORE_ROOT), Path::new(INDEX_ROOT))
+    /// The project's store: `<root>/.flint/assets` (shared with `flint
+    /// asset` and the AI asset pipeline) and `<root>/.flint/procgen`.
+    pub fn open_project(project: &Project) -> Self {
+        Self::open(&project.store_dir(), &project.procgen_dir())
     }
 
     pub fn open(store_root: &Path, index_root: &Path) -> Self {
         Self {
             content: ContentStore::new(store_root),
+            store_root: store_root.to_path_buf(),
             index_root: index_root.to_path_buf(),
         }
+    }
+
+    /// Where the content-addressed bytes live.
+    pub fn store_root(&self) -> &Path {
+        &self.store_root
     }
 
     fn entry_path(&self, spec_hash: &ContentHash, seed: u64) -> PathBuf {
@@ -155,7 +161,13 @@ impl Store {
                 .content
                 .store(&f.path)
                 .map_err(|e| anyhow::anyhow!("{e}"))
-                .with_context(|| format!("failed to store {} in {STORE_ROOT}", f.path.display()))?;
+                .with_context(|| {
+                    format!(
+                        "failed to store {} in {}",
+                        f.path.display(),
+                        self.store_root.display()
+                    )
+                })?;
             recorded.push((f.role.clone(), hash.to_prefixed_hex()));
         }
 

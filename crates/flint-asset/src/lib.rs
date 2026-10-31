@@ -4,11 +4,13 @@
 //! metadata catalogs, and reference resolution.
 
 mod catalog;
+pub mod project;
 mod resolver;
 mod store;
 mod types;
 
 pub use catalog::AssetCatalog;
+pub use project::Project;
 pub use resolver::{AssetResolver, ResolutionStrategy, ResolveResult};
 pub use store::ContentStore;
 pub use types::{AssetFile, AssetMeta, AssetRef, AssetType};

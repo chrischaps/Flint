@@ -3,13 +3,13 @@
 use anyhow::Result;
 use clap::Subcommand;
 use flint_asset::{
-    AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, ResolutionStrategy,
+    AssetCatalog, AssetMeta, AssetResolver, AssetType, ContentStore, Project, ResolutionStrategy,
 };
 use flint_asset_gen::provider::{
     AssetKind, AudioParams, GenerateRequest, ModelParams, TextureParams,
 };
 use flint_asset_gen::{
-    register_generated_asset, write_asset_sidecar, FlintConfig, JobStore, StyleGuide,
+    register_generated_asset_in, write_asset_sidecar_with_root, FlintConfig, JobStore, StyleGuide,
 };
 use flint_core::components as comp;
 use flint_import::import_gltf;
@@ -108,7 +108,7 @@ pub enum AssetCommands {
         #[arg(long)]
         tags: Option<String>,
 
-        /// Output directory (defaults to .flint/generated)
+        /// Output directory (defaults to <project>/.flint/generated)
         #[arg(long)]
         output: Option<String>,
 
@@ -133,9 +133,9 @@ pub enum AssetCommands {
         #[arg(long, default_value = "build/manifest.toml")]
         output: String,
 
-        /// Assets directory to scan
-        #[arg(long, default_value = "assets")]
-        assets_dir: String,
+        /// Assets directory to scan (defaults to the project's assets/)
+        #[arg(long)]
+        assets_dir: Option<String>,
     },
 
     /// Regenerate an existing asset with new parameters
@@ -218,7 +218,9 @@ pub fn run(cmd: AssetCommands) -> Result<()> {
             duration,
         ),
         AssetCommands::Validate { path, style } => run_validate(&path, style.as_deref()),
-        AssetCommands::Manifest { output, assets_dir } => run_manifest(&output, &assets_dir),
+        AssetCommands::Manifest { output, assets_dir } => {
+            run_manifest(&output, assets_dir.as_deref())
+        }
         AssetCommands::Regenerate {
             name,
             seed,
@@ -345,9 +347,13 @@ fn run_generate(
     println!("  Prompt: {}", prompt);
 
     // Generate
-    let out_dir = output_dir.as_deref().unwrap_or(".flint/generated");
+    let project = Project::current();
+    let out_dir = match output_dir.as_deref() {
+        Some(d) => std::path::PathBuf::from(d),
+        None => project.generated_dir(),
+    };
 
-    let result = gen_provider.generate(&request, style.as_ref(), Path::new(out_dir))?;
+    let result = gen_provider.generate(&request, style.as_ref(), &out_dir)?;
 
     println!("  Downloaded: {}", result.output_path);
 
@@ -375,18 +381,25 @@ fn run_generate(
     }
 
     // Store in content-addressed storage and register sidecar metadata
-    let registered = register_generated_asset(&request, &result)?;
-    println!("  Stored: {}", registered.hash);
+    let registered = register_generated_asset_in(&project, &request, &result)?;
+    println!(
+        "  Stored: {} in {}",
+        registered.hash,
+        Project::display(&project.store_dir())
+    );
     println!("  Sidecar: {}", registered.sidecar_path.display());
 
     println!("  Done in {:.1}s", result.duration_secs);
     Ok(())
 }
 
-fn run_manifest(output: &str, assets_dir: &str) -> Result<()> {
-    let manifest =
-        flint_asset_gen::manifest::BuildManifest::from_assets_directory(Path::new(assets_dir))
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+fn run_manifest(output: &str, assets_dir: Option<&str>) -> Result<()> {
+    let assets_dir = match assets_dir {
+        Some(d) => std::path::PathBuf::from(d),
+        None => Project::current().catalog_dir(),
+    };
+    let manifest = flint_asset_gen::manifest::BuildManifest::from_assets_directory(&assets_dir)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let output_path = Path::new(output);
     manifest
@@ -415,7 +428,7 @@ fn run_regenerate(
     output_dir: Option<String>,
 ) -> Result<()> {
     // Look up the existing asset in catalog for its metadata
-    let catalog = AssetCatalog::load_from_directory("assets")?;
+    let catalog = AssetCatalog::load_from_directory(Project::current().catalog_dir())?;
     let meta = catalog
         .get(name)
         .ok_or_else(|| anyhow::anyhow!("Asset '{}' not found in catalog", name))?;
@@ -592,26 +605,29 @@ fn run_import(path: &str, name: Option<String>, tags: Option<String>) -> Result<
         meta.tags = tag_str.split(',').map(|t| t.trim().to_string()).collect();
     }
 
-    // Store in content-addressed storage
-    let store = ContentStore::new(".flint/assets");
+    // Store in the project's content-addressed storage (#179)
+    let project = Project::current();
+    let store = ContentStore::new(project.store_dir());
     store.store(source_path)?;
 
-    // Write sidecar .asset.toml
-    let sidecar_path = write_asset_sidecar(&meta)?;
+    // Write sidecar .asset.toml into the project's catalog
+    let sidecar_path = write_asset_sidecar_with_root(&meta, &project.catalog_dir())?;
 
     println!("Asset '{}' registered.", meta.name);
     println!("  Hash: {}", meta.hash);
     println!("  Type: {:?}", meta.asset_type);
+    println!("  Stored in: {}", Project::display(&project.store_dir()));
     println!("  Sidecar: {}", sidecar_path.display());
 
     Ok(())
 }
 
 fn run_list(type_filter: Option<String>, tag_filter: Option<String>, format: &str) -> Result<()> {
-    let catalog = AssetCatalog::load_from_directory("assets")?;
+    let catalog_dir = Project::current().catalog_dir();
+    let catalog = AssetCatalog::load_from_directory(&catalog_dir)?;
 
     if catalog.is_empty() {
-        println!("No assets found in assets/");
+        println!("No assets found in {}", Project::display(&catalog_dir));
         return Ok(());
     }
 
@@ -658,7 +674,7 @@ fn run_list(type_filter: Option<String>, tag_filter: Option<String>, format: &st
 }
 
 fn run_info(name: &str) -> Result<()> {
-    let catalog = AssetCatalog::load_from_directory("assets")?;
+    let catalog = AssetCatalog::load_from_directory(Project::current().catalog_dir())?;
 
     match catalog.get(name) {
         Some(meta) => {
@@ -714,7 +730,11 @@ fn run_resolve(
             None => None,
         };
 
-        let out = output_dir.unwrap_or(".flint/generated");
+        let generated = Project::for_path(Path::new(scene_path))
+            .generated_dir()
+            .display()
+            .to_string();
+        let out = output_dir.unwrap_or(&generated);
 
         flint_asset_gen::batch::resolve_scene(
             scene_path,
@@ -738,7 +758,9 @@ fn run_resolve(
         ),
     };
 
-    let catalog = AssetCatalog::load_from_directory("assets")?;
+    // The scene's project's catalog, not the working directory's (#179).
+    let catalog =
+        AssetCatalog::load_from_directory(Project::for_path(Path::new(scene_path)).catalog_dir())?;
     let resolver = AssetResolver::new(strategy);
 
     // Load and scan scene for asset references

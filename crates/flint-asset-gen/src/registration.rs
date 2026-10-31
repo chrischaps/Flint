@@ -1,14 +1,11 @@
 //! Shared helpers for registering generated/imported assets into Flint's catalog.
 
 use crate::provider::{AssetKind, GenerateRequest, GenerateResult};
-use flint_asset::{AssetMeta, AssetType, ContentStore};
+use flint_asset::{AssetMeta, AssetType, ContentStore, Project};
 use flint_core::{FlintError, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-const DEFAULT_STORE_ROOT: &str = ".flint/assets";
-const DEFAULT_ASSETS_ROOT: &str = "assets";
 
 #[derive(Debug, Clone)]
 pub struct RegisteredAsset {
@@ -17,18 +14,28 @@ pub struct RegisteredAsset {
     pub meta: AssetMeta,
 }
 
-/// Register a generated asset using default project paths:
-/// - content store: `.flint/assets`
-/// - sidecars: `assets/<kind>/*.asset.toml`
+/// Register a generated asset into the current project ([`Project::current`],
+/// found by walking up from the working directory, #179):
+/// - content store: `<root>/.flint/assets`
+/// - sidecars: `<root>/assets/<kind>/*.asset.toml`
 pub fn register_generated_asset(
+    request: &GenerateRequest,
+    result: &GenerateResult,
+) -> Result<RegisteredAsset> {
+    register_generated_asset_in(&Project::current(), request, result)
+}
+
+/// Register a generated asset into `project`'s store and catalog.
+pub fn register_generated_asset_in(
+    project: &Project,
     request: &GenerateRequest,
     result: &GenerateResult,
 ) -> Result<RegisteredAsset> {
     register_generated_asset_with_roots(
         request,
         result,
-        Path::new(DEFAULT_STORE_ROOT),
-        Path::new(DEFAULT_ASSETS_ROOT),
+        &project.store_dir(),
+        &project.catalog_dir(),
     )
 }
 
@@ -73,9 +80,9 @@ pub fn register_generated_asset_with_roots(
     })
 }
 
-/// Write a sidecar file using default `assets/` root.
+/// Write a sidecar file into the current project's `assets/` catalog.
 pub fn write_asset_sidecar(meta: &AssetMeta) -> Result<PathBuf> {
-    write_asset_sidecar_with_root(meta, Path::new(DEFAULT_ASSETS_ROOT))
+    write_asset_sidecar_with_root(meta, &Project::current().catalog_dir())
 }
 
 /// Write a sidecar file under a specific assets root directory.
