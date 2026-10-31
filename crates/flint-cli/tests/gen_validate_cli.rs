@@ -204,3 +204,136 @@ fn textures_are_checked_against_the_style() {
     assert!(t.contains("roughness style range: "), "{t}");
     assert!(t.contains("Validation: "), "{t}");
 }
+
+// ── --report json (#185) ────────────────────────────────────────────────────
+
+fn tavern_oak_json(dir: &Path, extra: &[&str]) -> Output {
+    let out = dir.join("tree.glb");
+    let mut args = vec![
+        spec("oak_tree.procgen.toml"),
+        "-o".into(),
+        out.to_str().unwrap().into(),
+        "--validate".into(),
+        "--style-guide".into(),
+        tavern(),
+        "--report".into(),
+        "json".into(),
+    ];
+    args.extend(extra.iter().map(|s| s.to_string()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    gen(&args)
+}
+
+/// stdout is nothing but the JSON line, it round-trips into a
+/// `ValidationReport`, and the over-budget LOD says by how much in numbers.
+#[test]
+fn json_report_round_trips_and_carries_the_numbers() {
+    let dir = scratch("json");
+    let o = tavern_oak_json(&dir, &[]);
+    let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(o.status.success(), "{}", text(&o));
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 1, "stdout must hold only the report: {stdout}");
+    let v: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(v["verdict"], "pass", "{v}");
+    assert_eq!(v["spec"], "oak_tree_01", "{v}");
+    assert!(v["warnings"].as_u64().unwrap() >= 1, "{v}");
+
+    let report: flint_procgen::ValidationReport = serde_json::from_str(lines[0]).unwrap();
+    let budget = report
+        .checks
+        .iter()
+        .find(|c| c.name == "LOD0 style triangle budget")
+        .unwrap_or_else(|| panic!("{report:#?}"));
+    assert_eq!(budget.status, flint_procgen::CheckStatus::Warn);
+    let (actual, limit) = budget.measured().unwrap();
+    assert_eq!(limit, 5000.0);
+    assert!(actual > limit && actual <= 2.0 * limit, "{actual}");
+    // Counts are JSON integers.
+    assert!(
+        lines[0].contains(&format!(r#""actual":{actual},"limit":5000"#)),
+        "{}",
+        lines[0]
+    );
+
+    // The human report still goes somewhere a person can read it.
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("[ WARN] LOD0 style triangle budget"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Validation: "), "{stderr}");
+}
+
+/// `--strict` turns the warning into a `fail` verdict and exit 1.
+#[test]
+fn json_report_verdict_follows_strict() {
+    let dir = scratch("json_strict");
+    let o = tavern_oak_json(&dir, &["--strict"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["verdict"], "fail", "{v}");
+    assert_eq!(v["failed"], 0, "{v}");
+}
+
+/// A batch writes one line per variant, each naming its seed.
+#[test]
+fn json_report_is_one_line_per_batch_variant() {
+    let dir = scratch("json_batch");
+    let src = std::fs::read_to_string(repo_root().join("specs/stone_wall.procgen.toml")).unwrap();
+    let small = src
+        .replace("height = 512", "height = 32")
+        .replace("width = 512", "width = 32");
+    let spec_path = dir.join("wall.procgen.toml");
+    std::fs::write(&spec_path, small).unwrap();
+    let out = dir.join("wall.png");
+    let o = gen(&[
+        spec_path.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--batch",
+        "2",
+        "--seed-start",
+        "7",
+        "--validate",
+        "--report",
+        "json",
+    ]);
+    assert!(o.status.success(), "{}", text(&o));
+    let seeds: Vec<u64> = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            v["seed"].as_u64().unwrap()
+        })
+        .collect();
+    assert_eq!(seeds, [7, 8]);
+}
+
+#[test]
+fn report_needs_validate() {
+    let o = gen(&[&spec("oak_tree.procgen.toml"), "--report", "json"]);
+    assert!(!o.status.success());
+    assert!(text(&o).contains("--validate"), "{}", text(&o));
+}
+
+/// Without `--report`, stdout is the human report it always was.
+#[test]
+fn the_human_report_is_the_default() {
+    let dir = scratch("human");
+    let out = dir.join("tree.glb");
+    let o = gen(&[
+        &spec("oak_tree.procgen.toml"),
+        "-o",
+        out.to_str().unwrap(),
+        "--validate",
+    ]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        stdout.contains("[ PASS] LOD0 spec triangle target"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Validation: "), "{stdout}");
+    assert!(!stdout.contains('{'), "{stdout}");
+}

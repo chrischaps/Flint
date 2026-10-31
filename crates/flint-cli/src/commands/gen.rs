@@ -1,18 +1,45 @@
 //! `flint gen` — run a procedural generation spec and write the output.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
     export_glb, Generator, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig,
-    SeedMode, ValidationConstraints,
+    SeedMode, ValidationConstraints, ValidationReport,
 };
+use serde::Serialize;
 
 use super::gen_store::{self, WrittenFile};
+
+/// Set by `--report json`: stdout then carries only the JSON report, and
+/// every human line `flint gen` prints goes to stderr instead (#185).
+static STDOUT_IS_JSON: AtomicBool = AtomicBool::new(false);
+
+/// `println!`, or `eprintln!` while stdout belongs to the JSON report.
+macro_rules! say {
+    ($($arg:tt)*) => {
+        if STDOUT_IS_JSON.load(Ordering::Relaxed) {
+            eprintln!($($arg)*)
+        } else {
+            println!($($arg)*)
+        }
+    };
+}
+
+/// How `--validate` reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    /// One `[ PASS]` / `[ WARN]` / `[ FAIL]` line per check and a summary.
+    Human,
+    /// One JSON object per variant on stdout (JSON Lines); human output
+    /// moves to stderr.
+    Json,
+}
 
 #[derive(Args)]
 pub struct GenArgs {
@@ -62,6 +89,13 @@ pub struct GenArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Validation report format. `json` writes one object per variant to
+    /// stdout: spec, seed, output, verdict, counts and every check's name,
+    /// status, detail and, where it measured one, `actual` against `limit`
+    /// (a ceiling). Everything else goes to stderr.
+    #[arg(long, value_enum, requires = "validate")]
+    pub report: Option<ReportFormat>,
+
     /// Style guide TOML path for additional validation constraints
     /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
     #[arg(long, requires = "validate")]
@@ -78,6 +112,8 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
 }
 
 pub fn run(args: GenArgs) -> Result<()> {
+    let json = args.report == Some(ReportFormat::Json);
+    STDOUT_IS_JSON.store(json, Ordering::Relaxed);
     let spec_path = Path::new(&args.spec);
     let mut spec = ProcGenSpec::from_file(spec_path)
         .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;
@@ -120,29 +156,29 @@ pub fn run(args: GenArgs) -> Result<()> {
     // Dry-run: print cost estimate and return
     if args.dry_run {
         let cost = generator.estimate_cost(&spec);
-        println!("Spec:       {}", spec.meta.name);
-        println!("Generator:  {}", spec.generator);
-        println!("Seed:       {}", describe_seed(&spec));
-        println!(
+        say!("Spec:       {}", spec.meta.name);
+        say!("Generator:  {}", spec.generator);
+        say!("Seed:       {}", describe_seed(&spec));
+        say!(
             "Output:     {} ({})",
             kind_noun(kind),
             format.to_uppercase()
         );
-        println!();
-        println!("Estimated cost:");
-        println!(
+        say!();
+        say!("Estimated cost:");
+        say!(
             "  Vertices:      {}",
             format_count(cost.estimated_vertices as u64)
         );
-        println!(
+        say!(
             "  Triangles:     {}",
             format_count(cost.estimated_triangles as u64)
         );
-        println!(
+        say!(
             "  Texture bytes: {}",
             format_bytes(cost.estimated_texture_bytes)
         );
-        println!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
+        say!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
         return Ok(());
     }
 
@@ -201,11 +237,11 @@ pub fn run(args: GenArgs) -> Result<()> {
                 if let Some(reuse) = store.reuse(&prov, &targets)? {
                     store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
                     match reuse {
-                        gen_store::Reuse::Present => println!(
+                        gen_store::Reuse::Present => say!(
                             "{tag}Cached: {} (seed {seed}, spec unchanged)",
                             out_path.display()
                         ),
-                        gen_store::Reuse::Restored(k) => println!(
+                        gen_store::Reuse::Restored(k) => say!(
                             "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
                              or changed file{} from the content store)",
                             out_path.display(),
@@ -213,7 +249,20 @@ pub fn run(args: GenArgs) -> Result<()> {
                         ),
                     }
                     if args.validate {
-                        println!("  validation skipped for a cached result (--force regenerates)");
+                        say!("  validation skipped for a cached result (--force regenerates)");
+                        if json {
+                            emit_json(&VariantReport {
+                                spec: &spec.meta.name,
+                                seed,
+                                output: out_path.display().to_string(),
+                                verdict: Verdict::Skipped,
+                                reason: Some("cached result; --force regenerates"),
+                                passed: 0,
+                                warnings: 0,
+                                failed: 0,
+                                report: &ValidationReport { checks: Vec::new() },
+                            })?;
+                        }
                     }
                     cached += 1;
                     continue;
@@ -222,9 +271,9 @@ pub fn run(args: GenArgs) -> Result<()> {
         }
 
         if batch_total.is_some() {
-            println!("{tag}Generating seed {seed}...");
+            say!("{tag}Generating seed {seed}...");
         } else {
-            println!("Seed:       {}", describe_resolved_seed(&spec, seed));
+            say!("Seed:       {}", describe_resolved_seed(&spec, seed));
         }
 
         let (output, files) = generate_one(&seed_spec, &registry, out_path)?;
@@ -233,25 +282,37 @@ pub fn run(args: GenArgs) -> Result<()> {
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
             let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
             for (f, (_, hash)) in files.iter().zip(&prov.files) {
-                println!("Registered: {} -> {hash}", f.path.display());
+                say!("Registered: {} -> {hash}", f.path.display());
             }
         }
 
-        if args.validate
-            && !run_validation(
+        if args.validate {
+            let (report, passed) = run_validation(
                 &output,
                 &seed_spec,
                 args.style_guide.as_deref(),
                 args.strict,
-            )?
-        {
-            validation_failed = true;
+            )?;
+            if json {
+                emit_json(&VariantReport {
+                    spec: &spec.meta.name,
+                    seed,
+                    output: out_path.display().to_string(),
+                    verdict: if passed { Verdict::Pass } else { Verdict::Fail },
+                    reason: None,
+                    passed: report.count_passed(),
+                    warnings: report.count_warnings(),
+                    failed: report.count_failed(),
+                    report: &report,
+                })?;
+            }
+            validation_failed |= !passed;
         }
     }
 
     if batch_total.is_some() {
-        println!();
-        println!("Batch complete: {generated} generated, {cached} cached");
+        say!();
+        say!("Batch complete: {generated} generated, {cached} cached");
     }
     if validation_failed {
         std::process::exit(1);
@@ -482,12 +543,12 @@ fn write_output(
             let file_size = glb.len();
             std::fs::write(out_path, glb)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB");
-            println!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
-            println!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB");
+            say!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
+            say!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::MeshWithLods(lods) => {
             let glb = export_glb::mesh_lods_to_glb(lods).context("GLB export (LODs) failed")?;
@@ -496,23 +557,23 @@ fn write_output(
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
             let total_verts: usize = lods.iter().map(|m| m.vertex_count()).sum();
             let total_tris: usize = lods.iter().map(|m| m.triangle_count()).sum();
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB ({} LOD levels)", lods.len());
-            println!("Vertices:   {} (total)", format_count(total_verts as u64));
-            println!("Triangles:  {} (total)", format_count(total_tris as u64));
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB ({} LOD levels)", lods.len());
+            say!("Vertices:   {} (total)", format_count(total_verts as u64));
+            say!("Triangles:  {} (total)", format_count(total_tris as u64));
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::Image(img) => {
             img.save_png(out_path)
                 .with_context(|| format!("failed to save PNG to {}", out_path.display()))?;
             let file_size = std::fs::metadata(out_path)?.len();
-            println!("Output:     {}", out_path.display());
-            println!("Format:     PNG");
-            println!("Dimensions: {}x{}", img.width, img.height);
-            println!("Channel:    {:?}", img.channel_semantics);
-            println!("File size:  {}", format_bytes(file_size));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     PNG");
+            say!("Dimensions: {}x{}", img.width, img.height);
+            say!("Channel:    {:?}", img.channel_semantics);
+            say!("File size:  {}", format_bytes(file_size));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::ImageSet(images) => {
             let (dir, _) = image_set_dir_and_stem(out_path);
@@ -526,7 +587,7 @@ fn write_output(
                     .with_context(|| format!("failed to save {}", img_path.display()))?;
                 let size = std::fs::metadata(&img_path)?.len();
                 total_size += size;
-                println!(
+                say!(
                     "  {} ({}x{}, {})",
                     img_path.display(),
                     img.width,
@@ -538,31 +599,31 @@ fn write_output(
                     path: img_path,
                 });
             }
-            println!();
-            println!("Images:     {}", images.len());
-            println!("Total size: {}", format_bytes(total_size));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!();
+            say!("Images:     {}", images.len());
+            say!("Total size: {}", format_bytes(total_size));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::SkinnedMesh(mesh) => {
             let glb = export_glb::skinned_mesh_to_glb(mesh).context("Skinned GLB export failed")?;
             let file_size = glb.len();
             std::fs::write(out_path, glb)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB (skinned)");
-            println!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
-            println!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
-            println!("Bones:      {}", mesh.bone_count());
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB (skinned)");
+            say!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
+            say!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
+            say!("Bones:      {}", mesh.bone_count());
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::Sound(bytes) => {
             std::fs::write(out_path, bytes)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     WAV (raw)");
-            println!("File size:  {}", format_bytes(bytes.len() as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     WAV (raw)");
+            say!("File size:  {}", format_bytes(bytes.len() as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
     }
 
@@ -646,13 +707,49 @@ fn build_validation_constraints(
     c
 }
 
-/// Run validation on a generator output, printing results. Returns true if passed.
+/// One variant's line of `--report json`. Its `checks` key is the
+/// [`ValidationReport`]'s, so the line deserialises straight into one (the
+/// other keys are ignored).
+#[derive(Serialize)]
+struct VariantReport<'a> {
+    spec: &'a str,
+    seed: u64,
+    output: String,
+    verdict: Verdict,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    passed: usize,
+    warnings: usize,
+    failed: usize,
+    #[serde(flatten)]
+    report: &'a ValidationReport,
+}
+
+/// The variant's outcome as the exit code sees it: `--strict` makes a
+/// warning a `fail`; a cached result is `skipped`, not checked.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Verdict {
+    Pass,
+    Fail,
+    Skipped,
+}
+
+/// Write one JSON line to stdout.
+fn emit_json(line: &VariantReport) -> Result<()> {
+    let json = serde_json::to_string(line).context("serialising the validation report")?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Run validation on a generator output and print the human report (to
+/// stderr under `--report json`). Returns the report and whether it passed.
 fn run_validation(
     output: &GeneratorOutput,
     spec: &ProcGenSpec,
     style_guide_path: Option<&str>,
     strict: bool,
-) -> Result<bool> {
+) -> Result<(ValidationReport, bool)> {
     let style_guide = if let Some(path) = style_guide_path {
         Some(
             StyleGuide::load(Path::new(path))
@@ -666,19 +763,22 @@ fn run_validation(
     let constraints = build_validation_constraints(spec, style_guide.as_ref());
     let report = flint_procgen::validate_output(output, spec, &constraints);
 
-    println!();
-    report.print_checks();
-    println!();
-    report.print_summary();
-
-    if report.has_failures() {
-        Ok(false)
-    } else if strict && report.has_warnings() {
-        println!("Strict mode: warnings treated as failures");
-        Ok(false)
-    } else {
-        Ok(true)
+    say!();
+    for line in report.check_lines() {
+        say!("{line}");
     }
+    say!();
+    say!("{}", report.summary());
+
+    let passed = if report.has_failures() {
+        false
+    } else if strict && report.has_warnings() {
+        say!("Strict mode: warnings treated as failures");
+        false
+    } else {
+        true
+    };
+    Ok((report, passed))
 }
 
 /// Human-friendly byte size.

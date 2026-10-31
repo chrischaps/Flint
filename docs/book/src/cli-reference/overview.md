@@ -530,6 +530,7 @@ flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 | `--validate` | `false` | Validate output after generation |
 | `--strict` | `false` | Treat warnings as failures |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
+| `--report <fmt>` | `human` | Validation report format: `human`, or `json` (one object per variant on stdout, with each check's `actual` and `limit`; human output moves to stderr). Requires `--validate` |
 
 ## The `prefab view` Command
 
