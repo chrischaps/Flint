@@ -27,10 +27,11 @@ id = "float"
 title = "SET + DRIFT"
 line = "Sit at the edge of a raft at sea, from sunrise to stars. There is nothing to win."
 repo = "chrischaps/Float"
-# engine-catchup: the engine subtree at Flint main, bundle.toml (#102), the
-# sea and wind in an early ambience bundle (#124), and a touch layout: drag
-# to look, two buttons to scoot (#134)
-ref = "bd19afab86a619b7b7fc6a70dd244fb61e659e2d"
+# master, now that engine-catchup is merged into it: the engine subtree at
+# Flint main, bundle.toml (#102), the early ambience bundle (#124), the touch
+# layout (#134), the iPad pointer-lock fix (#153, Float#4), the raft polish
+# (Float#7) and the body playtest pass (Float#8)
+ref = "3e0b75f4f40fb30fde7247d45ee68e91bd43087d"
 page = "https://chaps.dev/projects/float/"
 video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
 poster = "https://chaps.dev/projects/float/poster-day.jpg"
