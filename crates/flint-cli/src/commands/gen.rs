@@ -106,6 +106,7 @@ pub fn run(args: GenArgs) -> Result<()> {
     }
 
     let kind = generator.output_kind();
+    let revision = generator.revision();
     let format = check_output_format(
         &spec.generator,
         kind,
@@ -193,21 +194,35 @@ pub fn run(args: GenArgs) -> Result<()> {
             .unwrap_or_default();
         let seed_spec = spec_with_seed(&spec, seed);
 
-        // The cache: this spec + seed was registered before, and the store
-        // still holds every file it made.
+        // The cache: this spec + seed was registered before, by the
+        // generator revision running now, and the store still holds every
+        // file it made.
         if let (Some(store), Some(sh), false) = (&store, &spec_hash, args.force) {
-            if let Some(prov) = store.lookup(sh, seed) {
+            let fresh = store.lookup(sh, seed).filter(|prov| {
+                match prov.stale_for(&spec.generator, revision) {
+                    Some(why) => {
+                        println!(
+                            "{tag}Stale: {} (seed {seed}, {why}), regenerating",
+                            out_path.display()
+                        );
+                        false
+                    }
+                    None => true,
+                }
+            });
+            if let Some(prov) = fresh {
                 let targets = planned_files(out_path, &prov);
                 if let Some(reuse) = store.reuse(&prov, &targets)? {
                     store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
+                    let rev = format!("{} rev {revision}", spec.generator);
                     match reuse {
                         gen_store::Reuse::Present => println!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged)",
                             out_path.display()
                         ),
                         gen_store::Reuse::Restored(k) => println!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
-                             or changed file{} from the content store)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged; restored {k} \
+                             missing or changed file{} from the content store)",
                             out_path.display(),
                             if k == 1 { "" } else { "s" }
                         ),
@@ -231,7 +246,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         generated += 1;
 
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
-            let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
+            let prov = store.register(&seed_spec, sh, seed, revision, kind, &files)?;
             for (f, (_, hash)) in files.iter().zip(&prov.files) {
                 println!("Registered: {} -> {hash}", f.path.display());
             }

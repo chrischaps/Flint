@@ -813,6 +813,13 @@ impl Generator for TreeGenerator {
         "tree_v1"
     }
 
+    /// 1: the first tree. 2: a sway that reaches the tip, bark that tiles
+    /// (#22). 3: limbs along the trunk, one tube each (#23). 4: two-sided
+    /// leaf cards in season shades, LODs that keep the trunk (#24).
+    fn revision(&self) -> u32 {
+        4
+    }
+
     fn output_kind(&self) -> OutputKind {
         OutputKind::Mesh
     }
