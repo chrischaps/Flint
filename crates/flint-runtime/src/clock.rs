@@ -24,6 +24,10 @@ pub struct GameClock {
     /// Wall time since the last tick, before pacing and the clamp. Equal
     /// to the wall time even when `delta_time` is paced or `frame_step`ped.
     pub raw_delta_time: f64,
+    /// Game seconds per real second (1.0 = normal, 0.25 = slow motion).
+    /// Scales `delta_time`, so scripts, physics, particles and animation
+    /// slow together; `raw_delta_time` stays on the wall clock.
+    pub time_scale: f64,
     /// Vsync pacing: the display's refresh period, when frames are
     /// presented one a vblank (Fifo). See [`GameClock::set_vsync_period`].
     vsync_period: Option<f64>,
@@ -48,6 +52,7 @@ impl Default for GameClock {
             fixed_timestep: 1.0 / 60.0,
             frame_step: None,
             raw_delta_time: 0.0,
+            time_scale: 1.0,
             vsync_period: None,
             pace_debt: 0.0,
             raw_mean: 0.0,
@@ -70,6 +75,15 @@ impl GameClock {
             fixed_timestep: 1.0 / hz,
             ..Self::default()
         }
+    }
+
+    /// Forget the wall time since the last tick, so the next one steps
+    /// nothing rather than the whole gap. For time the game was held through
+    /// on purpose (the web page's turn-your-phone prompt, FlintKart#27): without it
+    /// the first frame back would leap `MAX_DELTA`.
+    pub fn resync(&mut self) {
+        self.first_tick = true;
+        self.pace_debt = 0.0;
     }
 
     /// Advance the clock. Call once per frame.
@@ -97,7 +111,7 @@ impl GameClock {
         };
 
         // Clamp to avoid spiral of death (max 250ms frame time)
-        self.delta_time = elapsed.min(MAX_DELTA);
+        self.delta_time = elapsed.min(MAX_DELTA) * self.time_scale;
         self.total_time += self.delta_time;
         self.accumulator += self.delta_time;
     }
@@ -263,6 +277,16 @@ mod tests {
     }
 
     #[test]
+    fn time_scale_slows_game_time_not_wall_time() {
+        let mut clock = paced(None);
+        clock.time_scale = 0.25;
+        clock.advance(0.02);
+        assert!((clock.delta_time - 0.005).abs() < 1e-12);
+        assert!((clock.raw_delta_time - 0.02).abs() < 1e-12);
+        assert!((clock.total_time - 0.005).abs() < 1e-12);
+    }
+
+    #[test]
     fn unpaced_steps_by_the_raw_time() {
         let mut clock = paced(None);
         let dts = run(&mut clock, bursts(8));
@@ -297,6 +321,18 @@ mod tests {
         let dts = run(&mut clock, std::iter::repeat_n(HZ60 / 2.0, 240));
         assert!(dts[120..].iter().all(|dt| (dt - HZ60 / 2.0).abs() < 1e-9));
         assert!((clock.total_time - 2.0).abs() < MAX_LEAD);
+    }
+
+    #[test]
+    fn a_resync_steps_nothing_for_the_held_gap() {
+        let mut clock = GameClock::new();
+        clock.tick();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        clock.resync();
+        clock.tick();
+        assert_eq!(clock.delta_time, 0.0);
+        clock.tick();
+        assert!(clock.delta_time < 0.04, "{}", clock.delta_time);
     }
 
     #[test]

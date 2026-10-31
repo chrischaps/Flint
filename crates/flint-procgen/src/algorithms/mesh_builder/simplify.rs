@@ -4,7 +4,8 @@
 //! is reached. Uses f64 internally for numerical stability with large meshes.
 
 use crate::types::{BoundingBox, MeshData, Vertex};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use flint_core::Vec3;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 /// Simplify a mesh to approximately `target_triangles` using quadric error metrics.
 ///
@@ -107,8 +108,43 @@ impl Quadric {
     }
 
     /// Find the optimal position that minimizes the quadric error.
-    /// Falls back to the midpoint of the two vertices if the matrix is singular.
+    /// Falls back to the best of the midpoint and the two vertices if the
+    /// matrix is singular, or if the optimum lies farther from the edge's
+    /// midpoint than the edge is long. A tube's quadric is nearly flat along
+    /// its axis, so a solvable but ill-conditioned system can put the
+    /// optimum metres down the limb, and the collapse stretches a triangle
+    /// across the whole tree.
     fn optimal_position(&self, v1: [f64; 3], v2: [f64; 3]) -> [f64; 3] {
+        let mid = [
+            (v1[0] + v2[0]) * 0.5,
+            (v1[1] + v2[1]) * 0.5,
+            (v1[2] + v2[2]) * 0.5,
+        ];
+        let dist_sq = |a: [f64; 3], b: [f64; 3]| {
+            (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
+        };
+        if let Some(opt) = self.solve() {
+            if dist_sq(opt, mid) <= dist_sq(v1, v2) {
+                return opt;
+            }
+        }
+        // Singular or runaway: pick the lowest-error of midpoint, v1, v2
+        let e_mid = self.evaluate(mid[0], mid[1], mid[2]);
+        let e_v1 = self.evaluate(v1[0], v1[1], v1[2]);
+        let e_v2 = self.evaluate(v2[0], v2[1], v2[2]);
+
+        if e_mid <= e_v1 && e_mid <= e_v2 {
+            mid
+        } else if e_v1 <= e_v2 {
+            v1
+        } else {
+            v2
+        }
+    }
+
+    /// The point where the quadric's gradient vanishes, if the system is
+    /// not singular.
+    fn solve(&self) -> Option<[f64; 3]> {
         // Try to solve the linear system from the derivative of v^T*Q*v = 0
         // The 3x3 upper-left submatrix and the 3x1 right-hand side:
         // [a2, ab, ac] [x]   [-ad]
@@ -136,26 +172,9 @@ impl Quadric {
                     + self.bd * (self.a2 * self.bc - self.ab * self.ac)
                     - self.cd * (self.a2 * self.b2 - self.ab * self.ab));
 
-            [x, y, z]
+            Some([x, y, z])
         } else {
-            // Singular: try midpoint, v1, v2 — pick the lowest-error one
-            let mid = [
-                (v1[0] + v2[0]) * 0.5,
-                (v1[1] + v2[1]) * 0.5,
-                (v1[2] + v2[2]) * 0.5,
-            ];
-
-            let e_mid = self.evaluate(mid[0], mid[1], mid[2]);
-            let e_v1 = self.evaluate(v1[0], v1[1], v1[2]);
-            let e_v2 = self.evaluate(v2[0], v2[1], v2[2]);
-
-            if e_mid <= e_v1 && e_mid <= e_v2 {
-                mid
-            } else if e_v1 <= e_v2 {
-                v1
-            } else {
-                v2
-            }
+            None
         }
     }
 }
@@ -202,12 +221,13 @@ struct SimplifyState {
     tangents: Vec<[f64; 4]>,
     triangles: Vec<[u32; 3]>, // active triangles
     tri_active: Vec<bool>,    // per-triangle active flag
+    active_tris: usize,       // how many of tri_active are set
     vertex_active: Vec<bool>,
     quadrics: Vec<Quadric>,
-    generation: Vec<u32>,            // per-vertex generation counter
-    vertex_tris: Vec<Vec<usize>>,    // triangles adjacent to each vertex
-    remap: Vec<u32>,                 // vertex remap (v -> canonical vertex)
-    boundary_vertices: HashSet<u32>, // vertices on boundary edges
+    generation: Vec<u32>,             // per-vertex generation counter
+    vertex_tris: Vec<Vec<usize>>,     // triangles adjacent to each vertex
+    remap: Vec<u32>,                  // vertex remap (v -> canonical vertex)
+    boundary_vertices: BTreeSet<u32>, // vertices on boundary edges
 }
 
 impl SimplifyState {
@@ -266,7 +286,7 @@ impl SimplifyState {
         let remap: Vec<u32> = (0..n as u32).collect();
 
         // Detect boundary edges (edges that appear in only one triangle)
-        let mut edge_count: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut edge_count: BTreeMap<(u32, u32), u32> = BTreeMap::new();
         for tri in &triangles {
             for k in 0..3 {
                 let a = tri[k].min(tri[(k + 1) % 3]);
@@ -274,7 +294,7 @@ impl SimplifyState {
                 *edge_count.entry((a, b)).or_insert(0) += 1;
             }
         }
-        let mut boundary_vertices = HashSet::new();
+        let mut boundary_vertices = BTreeSet::new();
         for (&(a, b), &count) in &edge_count {
             if count == 1 {
                 boundary_vertices.insert(a);
@@ -379,6 +399,7 @@ impl SimplifyState {
             uvs,
             tangents,
             triangles,
+            active_tris: tri_active.len(),
             tri_active,
             vertex_active,
             quadrics,
@@ -389,12 +410,14 @@ impl SimplifyState {
         }
     }
 
+    /// Kept as a running count: counting the flags every collapse made
+    /// simplification quadratic (seconds for a 12k-triangle tree).
     fn active_triangle_count(&self) -> usize {
-        self.tri_active.iter().filter(|&&a| a).count()
+        self.active_tris
     }
 
     fn build_edge_queue(&self) -> BinaryHeap<EdgeCollapse> {
-        let mut edges_seen = HashSet::new();
+        let mut edges_seen = BTreeSet::new();
         let mut heap = BinaryHeap::new();
 
         for (ti, tri) in self.triangles.iter().enumerate() {
@@ -517,6 +540,7 @@ impl SimplifyState {
             // Check for degenerate (two or more identical vertices)
             if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] {
                 self.tri_active[ti] = false;
+                self.active_tris -= 1;
             } else {
                 // Add triangle to v1's adjacency if not already there
                 if !self.vertex_tris[v1 as usize].contains(&ti) {
@@ -526,7 +550,7 @@ impl SimplifyState {
         }
 
         // Collect affected vertices for re-evaluation
-        let mut affected = HashSet::new();
+        let mut affected = BTreeSet::new();
         for &ti in &self.vertex_tris[v1 as usize] {
             if !self.tri_active[ti] {
                 continue;
@@ -596,8 +620,15 @@ impl SimplifyState {
             let i1 = new_index[resolved[tri[1] as usize] as usize];
             let i2 = new_index[resolved[tri[2] as usize] as usize];
 
-            // Skip degenerate
+            // Skip degenerate: repeated corners, or distinct corners that
+            // collapses have left on one line (a UV seam's twin vertices
+            // share a position, so a triangle across the seam can flatten)
             if i0 == i1 || i1 == i2 || i0 == i2 {
+                continue;
+            }
+            let corner = |i: u32| Vec3::from_array(vertices[i as usize].position);
+            let (p0, p1, p2) = (corner(i0), corner(i1), corner(i2));
+            if 0.5 * (p1 - p0).cross(&(p2 - p0)).length() <= 1e-10 {
                 continue;
             }
             indices.push(i0);

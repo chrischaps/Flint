@@ -1228,8 +1228,9 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     }
 
     // any_input_just_pressed() -> bool
-    // True on any raw keyboard/mouse/gamepad press this frame, including
-    // keys with no action binding ("press any key" screens).
+    // True on any raw keyboard/mouse/gamepad press, or a finger landing,
+    // this frame, including keys with no action binding ("press any key"
+    // screens).
     {
         let ctx = ctx.clone();
         engine.register_fn("any_input_just_pressed", move || -> bool {
@@ -1273,6 +1274,17 @@ fn register_input_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
         engine.register_fn("touch_controls_visible", move || -> bool {
             let c = crate::lock_or_recover(&ctx);
             c.input.touch_controls_visible
+        });
+    }
+
+    // set_touch_controls(enabled: bool)
+    // Put the on-screen controls away (false) while a menu wants every tap,
+    // and bring them back (true) for play (#134). Applied after this frame's
+    // scripts; it lasts across scene changes, like set_cursor_captured.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_touch_controls", move |enabled: bool| {
+            crate::lock_or_recover(&ctx).touch_controls_override = Some(enabled);
         });
     }
 
@@ -1869,6 +1881,17 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         engine.register_fn("set_camera_roll", move |radians: f64| {
             let mut c = crate::lock_or_recover(&ctx);
             c.camera_roll_override = Some(radians as f32);
+        });
+    }
+
+    // set_time_scale(scale) — game seconds per real second, from the next
+    // frame on (1.0 normal, 0.25 slow motion). Held until changed; a scene
+    // load resets it to 1.0.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_time_scale", move |scale: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.time_scale_request = Some(scale.clamp(0.05, 4.0));
         });
     }
 

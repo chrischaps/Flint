@@ -13,8 +13,14 @@
 #   line    one sentence under the title
 #   controls  the gate's small line on how it's played (default: sound on ·
 #           mouse to look · Esc frees the pointer)
-#   touch   that line on a phone or tablet (default: sound on · a paired pad
-#           plays it all · touch controls are coming; #132)
+#   touch   that line on a phone or tablet, also under the chooser's card
+#           there (default: sound on · the controls come up at a touch · a
+#           paired pad plays it all; #134)
+#   orientation  "landscape" for a game played sideways on a phone or
+#           tablet (FlintKart#27): Begin's full screen locks it there where the
+#           browser can (Chrome on Android), and elsewhere, held upright, a
+#           turn-your-phone prompt holds the game until it's turned. Unset
+#           (the default), the game turns freely with the phone (Float#1)
 #   page    the game's page on chaps.dev
 #   video   a film of the game for browsers without WebGPU: any https URL,
 #           or a path in the game's repo, copied beside its bundle
@@ -26,25 +32,37 @@ id = "float"
 title = "SET + DRIFT"
 line = "Sit at the edge of a raft at sea, from sunrise to stars. There is nothing to win."
 repo = "chrischaps/Float"
-# engine-catchup: the engine subtree at Flint main, bundle.toml (#102) and
-# the sea and wind in an early ambience bundle (#124)
-ref = "73cb26b52134632c2bcfd406e5300fed82eaa626"
+# master, now that engine-catchup is merged into it: the engine subtree at
+# Flint main, bundle.toml (#102), the early ambience bundle (#124), the touch
+# layout (#134), the iPad pointer-lock fix (#153, Float#4), the raft polish
+# (Float#7) and the body playtest pass (Float#8)
+ref = "3e0b75f4f40fb30fde7247d45ee68e91bd43087d"
 page = "https://chaps.dev/projects/float/"
 video = "https://chaps.dev/projects/float/a-day-at-sea.mp4"
 poster = "https://chaps.dev/projects/float/poster-day.jpg"
 film = "Meanwhile, one whole day at sea, filmed in the game."
+touch = "sound on · drag anywhere to look · ◀ ▶ to scoot along the edge"
 
 [[game]]
 id = "kart"
 title = "Flint Kart"
-line = "Six karts, three laps, one drift-boost at a time. Keys or a pad."
+line = "Six karts, three laps, one drift-boost at a time. Keys, a pad or a phone."
 controls = "sound on · WASD or a pad · Shift or LB to drift · E or X for items"
+touch = "held sideways, sound on · left thumb steers, up for gas, down to brake · hold DRIFT, tap ITEM"
+orientation = "landscape"
 repo = "chrischaps/FlintKart"
-# engine-catchup: trike-backports, the engine subtree at Flint main, and
-# bundle.toml with the film and poster under web/ (#104)
-ref = "25029fbdf18cd6fa0844ebecad24b204d8a6db3c"
+# master, which now holds engine-catchup (bundle.toml and the film under web/,
+# #104; the touch stick, DRIFT and ITEM, #134) and the glow-up: road
+# surfaces, kart and driver models, feel, sound, effects, UI, AI, camera
+# and Lighthouse Bay (FlintKart#14-#25), then the HUD starburst, title
+# sunburst, sky refresh and countdown numerals (FlintKart#28-#45). Its
+# engine subtree matches Flint main, apart from the chooser's home link (#157).
+# Pinned on the branch web-poster-flint-158: aa75d20 with the poster and
+# film retaken on Lighthouse Bay from that game (#158). Move the pin to
+# master once that branch is merged
+ref = "52805dc77412494f2655dd4571f069ff0c9f9d20"
 page = "https://chaps.dev/projects/flint-kart/"
 # Paths, not URLs: build.py copies them from the repo beside the bundle.
 video = "web/kart-race.mp4"
 poster = "web/kart-poster.jpg"
-film = "Meanwhile, the first lap of a race on Oval Plus, filmed in the game."
+film = "Meanwhile, the first lap of a race on Lighthouse Bay, filmed in the game."

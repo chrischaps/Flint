@@ -180,6 +180,34 @@ impl MeshBuilder {
         });
     }
 
+    /// Merge another MeshData with its materials, keeping its submeshes.
+    ///
+    /// The mesh's materials are appended to this builder's, and each of its
+    /// submeshes (or the whole mesh, when it has none) is recorded against
+    /// its material's new index.
+    pub fn merge_with_materials(&mut self, mesh: &MeshData) {
+        let material_base = self.materials.len();
+        let index_base = self.indices.len() as u32;
+        self.materials.extend(mesh.materials.iter().cloned());
+        self.merge(mesh);
+        if mesh.submeshes.is_empty() {
+            if !mesh.indices.is_empty() {
+                self.submeshes.push(SubMesh {
+                    index_start: index_base,
+                    index_count: mesh.indices.len() as u32,
+                    material_index: material_base,
+                });
+            }
+        } else {
+            self.submeshes
+                .extend(mesh.submeshes.iter().map(|s| SubMesh {
+                    index_start: index_base + s.index_start,
+                    index_count: s.index_count,
+                    material_index: material_base + s.material_index,
+                }));
+        }
+    }
+
     /// Translate all vertex positions by an offset.
     pub fn translate(&mut self, offset: Vec3) {
         for v in &mut self.vertices {

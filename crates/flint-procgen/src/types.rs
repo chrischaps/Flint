@@ -36,6 +36,10 @@ pub struct MaterialData {
     pub metallic: f32,
     /// Roughness factor (0.0 = mirror, 1.0 = fully rough).
     pub roughness: f32,
+    /// Tangent-space normal map, embedded as the material's `normalTexture`
+    /// on GLB export (named `<material>_normal`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normal_map: Option<ImageData>,
 }
 
 impl Default for MaterialData {
@@ -45,6 +49,7 @@ impl Default for MaterialData {
             base_color: [0.5, 0.5, 0.5, 1.0],
             metallic: 0.0,
             roughness: 0.5,
+            normal_map: None,
         }
     }
 }

@@ -11,6 +11,18 @@
 //!
 //! The perf readout's frames (`web_perf.rs`) are the drawn ones, at these
 //! timestamps, so `?perf=1` shows 33.3 ms when every other refresh is.
+//!
+//! The page can hold the game (FlintKart#27): while `<html>` has `data-hold` (a
+//! game that plays sideways, held upright where the phone can't be locked
+//! to landscape, with the turn-your-phone prompt over it), no frame runs.
+//! Game time stops, the mix fades out, and when the attribute goes the
+//! clock skips the gap, so the race carries on where it was.
+//!
+//! A hidden page sleeps (#162, `flint_audio::page`): its sound is
+//! suspended as it hides, no frame runs (browsers give a hidden page no
+//! rAF; should one come, it is skipped), and the first frame back skips
+//! the gap as a hold's does, so game time and the audio clock pick up
+//! together where they stopped.
 
 use super::PlayerApp;
 use std::cell::{Cell, RefCell};
@@ -22,6 +34,20 @@ thread_local! {
     static STARTED: Cell<bool> = const { Cell::new(false) };
     /// The timestamp the player last drew or skipped at.
     static LAST_USED: Cell<f64> = const { Cell::new(f64::NAN) };
+    /// Whether the page held the game last refresh.
+    static HELD: Cell<bool> = const { Cell::new(false) };
+    /// How many times the page had been hidden at the last refresh (#162).
+    static SLEEPS_SEEN: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The attribute on `<html>` by which the page holds the game.
+const HOLD_ATTRIBUTE: &str = "data-hold";
+
+fn page_holds() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .is_some_and(|root| root.has_attribute(HOLD_ATTRIBUTE))
 }
 
 pub(super) fn now_ms() -> f64 {
@@ -80,6 +106,9 @@ impl PlayerApp {
     /// A rAF call: true when this refresh is drawn. Skipped ones cost a
     /// timestamp and a comparison.
     pub(super) fn web_frame_begin(&mut self) -> bool {
+        if self.follow_page_sleep() || self.follow_page_hold() {
+            return false;
+        }
         if self.frame_pacer.is_none() && self.perf.is_none() {
             return true;
         }
@@ -90,6 +119,40 @@ impl PlayerApp {
             super::web_perf::record_frame(t);
         }
         due
+    }
+
+    /// True while the page is hidden. The first frame after it was hidden
+    /// skips the gap: game time stopped when the sound did (#162).
+    fn follow_page_sleep(&mut self) -> bool {
+        flint_audio::page::listen();
+        if flint_audio::page::hidden() {
+            return true;
+        }
+        let sleeps = flint_audio::page::sleeps();
+        if SLEEPS_SEEN.with(|s| s.replace(sleeps)) != sleeps {
+            self.clock.resync();
+            tracing::info!(
+                "[sleep] the page is back; game time carries on from {:.3} s",
+                self.clock.total_time
+            );
+        }
+        false
+    }
+
+    /// True while the page holds the game. Going in fades the mix out;
+    /// coming out brings it back and resyncs the clock.
+    fn follow_page_hold(&mut self) -> bool {
+        let held = page_holds();
+        if HELD.with(|h| h.replace(held)) != held {
+            self.audio.engine.set_held(held);
+            if held {
+                tracing::info!("[hold] the page holds the game");
+            } else {
+                self.clock.resync();
+                tracing::info!("[hold] the page let go of the game");
+            }
+        }
+        held
     }
 
     /// A drawn frame's work is done: let the pacer judge it, and pace the

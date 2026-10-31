@@ -217,7 +217,7 @@ fn validate_mesh(
     }
 
     // 2. UV range [0,1]
-    check_uv_range(&mesh.vertices, checks, &label("UV range"));
+    check_uv_range(mesh, checks, &label("UV range"));
 
     // 3 & 4. PBR roughness & metallic
     check_pbr_roughness(
@@ -265,18 +265,53 @@ fn check_triangle_budget_value(
     }
 }
 
-fn check_uv_range(vertices: &[Vertex], checks: &mut Vec<ValidationCheck>, name: &str) {
+/// UVs must lie in [0,1], except on a submesh whose material carries a
+/// texture: glTF samplers repeat by default, so a tiling texture (the tree's
+/// bark, #22) wraps on purpose. Non-finite UVs always fail.
+fn check_uv_range(mesh: &MeshData, checks: &mut Vec<ValidationCheck>, name: &str) {
+    let vertices = &mesh.vertices;
+    let mut tiles = vec![false; vertices.len()];
+    for sub in &mesh.submeshes {
+        let textured = mesh
+            .materials
+            .get(sub.material_index)
+            .is_some_and(|m| m.normal_map.is_some());
+        if !textured {
+            continue;
+        }
+        let start = sub.index_start as usize;
+        let end = (start + sub.index_count as usize).min(mesh.indices.len());
+        for &i in &mesh.indices[start.min(end)..end] {
+            if let Some(t) = tiles.get_mut(i as usize) {
+                *t = true;
+            }
+        }
+    }
+
     let mut bad = 0usize;
-    for v in vertices {
-        if v.uv[0] < 0.0 || v.uv[0] > 1.0 || v.uv[1] < 0.0 || v.uv[1] > 1.0 {
+    let mut tiled = 0usize;
+    for (v, &tiling) in vertices.iter().zip(&tiles) {
+        let [u, w] = v.uv;
+        let outside = !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&w);
+        if !u.is_finite() || !w.is_finite() || (outside && !tiling) {
             bad += 1;
+        } else if outside {
+            tiled += 1;
         }
     }
     if bad == 0 {
+        let detail = if tiled == 0 {
+            format!("all {} vertices in [0,1]", vertices.len())
+        } else {
+            format!(
+                "all {} vertices in [0,1] or tiling a textured material ({tiled} wrap)",
+                vertices.len()
+            )
+        };
         checks.push(ValidationCheck {
             name: name.into(),
             status: CheckStatus::Pass,
-            detail: format!("all {} vertices in [0,1]", vertices.len()),
+            detail,
         });
     } else {
         checks.push(ValidationCheck {
@@ -582,6 +617,39 @@ value = 42
             .unwrap();
         assert_eq!(uv_check.status, CheckStatus::Fail);
         assert!(uv_check.detail.contains("1/3"));
+    }
+
+    // 2b. UVs that tile a textured submesh (bark) pass; NaN never does
+    #[test]
+    fn uv_tiling_a_textured_material_passes() {
+        use crate::types::{ChannelSemantics, SubMesh};
+        let mut mesh = make_triangle();
+        mesh.vertices[0].uv = [1.5, 3.0];
+        mesh.materials = vec![MaterialData {
+            normal_map: Some(ImageData::new(4, 4, ChannelSemantics::Normal)),
+            ..MaterialData::default()
+        }];
+        mesh.submeshes = vec![SubMesh {
+            index_start: 0,
+            index_count: 3,
+            material_index: 0,
+        }];
+        let uv_status = |mesh: &MeshData| {
+            let report = validate_output(
+                &GeneratorOutput::Mesh(mesh.clone()),
+                &make_spec(),
+                &ValidationConstraints::default(),
+            );
+            report
+                .checks
+                .iter()
+                .find(|c| c.name.contains("UV range"))
+                .unwrap()
+                .status
+        };
+        assert_eq!(uv_status(&mesh), CheckStatus::Pass);
+        mesh.vertices[1].uv = [f32::NAN, 0.0];
+        assert_eq!(uv_status(&mesh), CheckStatus::Fail);
     }
 
     // 3. Triangle count over budget → Warn (under 2x), Fail (over 2x)

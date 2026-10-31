@@ -739,6 +739,32 @@ once. On such a page, Begin asks for no lock, and neither does
 `sync_pointer_lock` while the last input came from a finger. A laptop
 with a touchscreen has a fine main pointer, so it keeps mouse look.
 
+**No Pointer Lock API (Float#3).** iOS WebKit, which is Safari and also Chrome
+on an iPad or iPhone, has neither `requestPointerLock` nor
+`exitPointerLock`. On the web, the player never lets winit touch the lock.
+`web_page::request_lock` and `web_page::exit_lock` look the function up
+first and skip it when it is missing. This matters because winit 0.30's
+`set_cursor_grab(None)` calls `document.exitPointerLock()` without
+checking. The first finger brings up the on-screen controls, and they
+release the cursor (`touch_overlay.rs`). On an iPad that release threw
+`TypeError: exitPointerLock is not a function` through the event loop, and
+the game stopped: frozen on its last frame, with the page around it still
+answering. Chrome and Android have the API, so no Pixel or desktop run saw
+it. The wasm clippy check now denies `winit::window::Window::set_cursor_grab`
+(`scripts/wasm-clippy/clippy.toml`). `tools/web-touch/ipad.mjs` replays the
+iPad in desktop Chrome over CDP: touch emulation, a 1180x820 DPR 2 viewport,
+an iPadOS Chrome user agent, and optionally WebKit's missing APIs deleted
+(`coalesced`, `dpbox`, `lock`). It taps, drags and calls the game FROZEN or
+LIVE from screenshots that should never repeat. Results:
+
+| Float on an emulated iPad, `lock` gap | the exception | frames after the tap |
+|---|---|---|
+| play.chaps.dev (Flint 335e75c) | at the title tap | byte-identical: FROZEN |
+| this fix | none | change; the drag turns the view: LIVE |
+| this fix, no gaps (Chrome's own API) | none | LIVE |
+
+Still unverified on a real iPad.
+
 **Seeing it.** `?perf=1` adds `touch  3 down (0.24 0.25) (0.83 0.49)
 (0.53 0.86)` and `most 3 at once, 7 in all` once a finger has touched,
 and the copied line ends `touch most 3 of 7`.
@@ -846,9 +872,14 @@ asks the browser for the whole screen, and where the browser can't give it
   locked, since a locked pointer can't click it. If Escape has freed a
   pointer the game wants (the "click to look around" hint is showing), the
   same click takes the lock back first.
-- **On a touch screen**, once full screen is granted, the page asks
-  `screen.orientation.lock("landscape")`. Chrome on Android honours it in
-  full screen; elsewhere the refusal is ignored.
+- **No orientation lock, unless the game asks** (Float#1; until then a
+  touch screen asked `screen.orientation.lock("landscape")` once full
+  screen was granted, and the gate said "best held sideways" in portrait).
+  Full screen keeps the way the phone is held and turns with it. The
+  canvas is `100vw` by `100dvh`, so a turn resizes it; winit's
+  `ResizeObserver` sends `Resized` and the surface and the camera's aspect
+  follow, with no reload. A game can ask to be played sideways, per game
+  in `games.toml` (FlintKart#27, below); SET + DRIFT doesn't.
 - **Where there is no Fullscreen API.** `document.fullscreenEnabled` is
   false on iPhone Safari, and in an iframe without `allowfullscreen`. In
   both cases the button and the switch stay hidden. On iPhone Safari
@@ -896,6 +927,53 @@ phone was tried: Chrome on Android, iPhone Safari and the installed
 home-screen page are still to be checked on devices. These runs predate
 #132, which since stopped a touch page asking for the pointer lock and
 shrank the perf readout on a phone.
+
+## Played sideways, per game (FlintKart#27)
+
+SET + DRIFT turns freely with the phone (Float#1), but Flint Kart's touch
+layout (a stick for the left thumb, DRIFT and ITEM for the right) wants the
+long side across. So the lock comes back only for a game that asks for it,
+with `orientation = "landscape"` in `tools/play-site/games.toml`. `build.py`
+checks the value and carries it into `games.json`. Unset, nothing changes.
+
+On a `(pointer: coarse)` device, the doorway marks `<html data-landscape>`
+for such a game, and then:
+
+- **Where the browser can lock** (Chrome on Android, in full screen only),
+  Begin's full screen is followed by `screen.orientation.lock("landscape")`.
+  Leaving full screen calls `unlock()`; the browser drops the lock then
+  anyway.
+- **Where it can't, or it was refused** (iPhone Safari has neither the
+  Fullscreen API nor the lock; the switch was off; an embed without
+  `allowfullscreen`): once Begin has lifted the gate, a portrait viewport
+  (`(orientation: portrait)`) brings up `#turn`, "Turn your phone
+  sideways", and sets `<html data-hold>`. The prompt waits 0.45 s before it
+  fades in, so a lock that is granted turns the phone without a flash.
+- **The hold** is the engine's, not the game's (`web_pacing.rs`): while
+  `data-hold` is on `<html>`, `web_frame_begin` runs no frame, so game
+  time, physics, scripts and particles stop where they are. The mix fades
+  out over 0.12 s (`AudioEngine::set_held`, which keeps the volumes the
+  game asks for meanwhile and returns to them over 0.25 s). When the
+  attribute goes, `GameClock::resync` drops the held gap, so the first
+  frame back steps nothing rather than `MAX_DELTA`. No game script changes.
+- **The gate** says it: Kart's `touch` line starts "held sideways".
+
+Desktop never sees any of it: the mark needs a coarse pointer, whatever the
+window's shape.
+
+| Run (emulated in headed Chrome, touch on) | Seen |
+|---|---|
+| `?game=kart`, Pixel shape (412x915, DPR 2.625), Begin in portrait | one lock call, `["landscape"]` (headless emulation refuses it: "not available on this device"); full screen on; `data-hold` and the prompt on; two captures of the canvas under the prompt 1.5 s apart identical |
+| then turned to landscape | prompt gone, hold off, canvas 1373x618 and moving; `[hold] the page let go of the game` logged |
+| the same with the lock made to succeed, then `exitFullscreen` | one `unlock()` call |
+| `?game=kart`, iPhone shape (393x852, DPR 3), no Fullscreen API, no lock | gate shows the "held sideways" line and Add to Home Screen; Begin brings up the prompt and holds; landscape lets go and the canvas moves; upright again holds again, and lets go again, with no reload |
+| `?game=float`, both shapes | no `data-landscape`, no lock call, no prompt, upright or sideways |
+| `?game=kart`, desktop, a 600x1000 window and a 1400x800 one | no `data-landscape`, no lock, no prompt |
+
+**Not done here.** No real phone was tried: Chrome on Android (does the
+lock turn it, and does the prompt stay away), iPhone Safari and the
+installed home-screen page are still to be checked by hand. The hold was
+seen on Kart's title screen, not mid-race.
 
 ## Frame rate on phones (#140)
 
@@ -979,6 +1057,81 @@ a cheaper mix, and less render CPU. The pacing is ready for it.
 untouched page animation frames after about 30 s. A CDP screenshot woke
 it, with one frame of 55.8 s. That happens with or without pacing, so
 pre-Begin windows longer than that can't be trusted.
+
+## The shipped games on a phone (#134)
+
+#133 gave the engine on-screen controls. This is them in the two games
+play.chaps.dev serves, and the page around them on a small screen.
+
+**SET + DRIFT** is drag to look and two buttons to scoot, nothing else: the
+whole screen is the look region (`sensitivity = 0.7`, about 100° for a
+swipe across a phone), and two buttons drive the `scoot` axis from its two
+ends. That needed one engine change: a touch button's **`value`** (default
+1), what it adds to its action while held, so ◀ adds +1 and ▶ adds -1 as A
+and D do. A lone glyph label draws as an icon (0.62 of the radius, not the
+16-point word size). The title card's "Press Any Key" reads
+`any_input_just_pressed()`, which knew keys, mouse buttons and pad buttons
+but not fingers, so a phone could never lift it. A finger landing now
+counts.
+
+**Flint Kart** gets the engine's floating stick under the left thumb (x
+steers, up is gas, down brakes), DRIFT held and ITEM tapped by the right.
+They replace the script joystick it had from the Android port. Its menus
+are tapped, and a floating stick in the lower left would take the first
+card's taps, so scripts can now put the controls away:
+**`set_touch_controls(false)`** hides them and lets every touch through
+(a finger already seen still counts, so `true` brings them back already
+showing). The menu scene calls it on entering. The race HUD brings them
+out while racing and puts them away under the pause and finish menus. On a
+short touch screen the HUD drops its standings board for DRIFT and ITEM
+(the big position stays). The hints say "tap" and "ITEM" for a finger.
+
+**The page** at 390 px wide: no horizontal scroll, every target 44 px or
+more on a coarse pointer (Begin was 43, 39 in the embed), hovers only where
+there is hover (a tapped card no longer stays lifted), the chooser's cards
+carry each game's `touch` line, and the gate said "best held sideways" in
+portrait (dropped in Float#1: either way up is fine). Once playing on a touch screen, the bottom corners are the
+game's: the wordmark fades from under the stick, and the full-screen
+button (which sat on ▶) hides in full screen and waits at the bottom centre
+out of it.
+
+**Measured.** Both games are bundled as play.chaps.dev bundles them. They
+were served to a Pixel 8 Pro over `adb reverse` and driven over CDP by
+**touch events only** after Begin (`Input.dispatchTouchEvent`; Begin
+itself is a `click()` with a user gesture, which a synthetic touch doesn't
+give). Kart was steered by a coach: the game's own AI driver run for the
+player's kart, logging what it would do, turned into thumb positions on
+the stick and presses on DRIFT and ITEM. Every run uses `?perf=1`, Chrome
+156, DPR 2.25, the default scene scale 0.67 and `fps=auto`.
+
+| Pixel 8 Pro, Chrome 156 | canvas | frame p50 / p90 / p99 ms | CPU ms a frame | GPU ms | audio late | thermal |
+|---|---|---|---|---|---|---|
+| Kart, Oval Plus, lap 1 | 2244x1008 | 33.3 / 33.4 / 41.7 | 26.1 | | 0 of 907 | 0 at the start |
+| Kart, Oval Plus, at the finish | 2244x1008 | 41.7 / 50.1 / 66.7 | 40.9 (scripts 11.2, sync 9.5, render 9.3) | 8.3 | 0 of 3,626 | warming |
+| SET + DRIFT, landscape, 10 s windows over 60 s | 2244x1008 | 33.3 / 33.4 / 33.5–41.6 | 21.1–23.3 (render 9.6, scripts 5.8) | 7.5 | 7 of 1,810 | 1, skin 39 °C |
+| SET + DRIFT, portrait, right after | 1008x2005 | 33.4 / 41.7 / 50.0 | 30.9 (render 12.4, scripts 8.3) | 9.7 | 6 of 1,134 | 1 |
+
+Kart finished its three laps in 2:14.30 (6th), touch only. The coach
+loses time over USB at 24–30 fps (51 s laps against the AI's 22); a thumb
+on the glass has no such lag. The same harness in desktop Chrome with touch
+emulation finished in 1:35.21 at 16.7 ms flat.
+
+**Memory**, SET + DRIFT, landscape: Chrome's GPU process 783 MB PSS, 423
+MB of it graphics (GL 351, EGL 72); the page's renderer 766 MB RSS (an
+isolated process, so `dumpsys meminfo` won't itemise it); the JS heap
+17–62 MB. The wasm heap isn't readable from the page, because wasm-bindgen
+doesn't expose the module's memory there.
+
+**No change to the default `?scale=`.** Neither game holds 60 on the phone,
+but both are CPU-bound (21–41 ms of CPU against 7.5–9.7 of GPU), and #140
+found that a smaller scene doesn't help a CPU-bound frame. `fps=auto` holds
+SET + DRIFT at an even 30 (p90 33.4 in every window, landscape). Kart
+holds it on the first lap and slips to 42–50 ms as the race goes on and
+the phone warms: its scripts (kart_controller 4.3, item_manager 3.0) and
+`sync` grow. That is a CPU ticket, not a scale one.
+
+The harness (`touchrace.mjs`, `floatphone.mjs`, `chooser.mjs`) is in the
+Vault beside #104's race harness.
 
 ## Async startup (#99)
 
@@ -1137,6 +1290,20 @@ stream from inside the click handler:
   mix time and the longest wait between requests. It also logs the
   `AudioContext`'s state changes and device errors. `AudioEngine::buffer_stats()`
   returns the totals, which the page shows in its corner.
+- **Inside the click, not the frame after** (chrischaps/Float#2). The bundle
+  page's Begin only leaves word for the player, which calls `start()` on
+  its next frame. Desktop Chrome counts any earlier gesture and plays a
+  context made then; iOS and iPadOS WebKit (every iPad browser, Chrome
+  too) start one only inside the gesture's own handler, so an iPad stayed
+  silent. `web_page::begin` now calls `flint_audio::worklet::unlock()` from
+  the click: it opens the context, resumes it, starts a one-frame silent
+  buffer and sets `navigator.audioSession.type = "playback"` (so the
+  ringer switch doesn't mute it); the worklet takes that context. Every
+  context Flint plays through is also resumed at the next `touchend`,
+  `pointerup`, `click` or `keydown`: cpal's main-thread context, which
+  can't be opened in the click, starts at the second tap, and a context
+  iOS interrupts comes back at a touch. The worklet's ready timer waits
+  for the context to run.
 
 cpal's WebAudio host renders on the **main thread**: each buffer's
 `onended` mixes the next one, with two in flight. So a frame that holds the
@@ -1318,6 +1485,40 @@ audio thread went 80–140 ms between buffers, starved while the phone ran hot
 with a 99%-busy main thread beside it. A cheaper mix (#138) helps here
 directly. `?audiostall=N` is the knob for testing the meter, and `?mixer=main`
 is the one for comparisons.
+
+### A hidden page sleeps (#162)
+
+A browser keeps a page the player has left running: another app on
+Android, another tab on a desktop. The worklet mixed on as if someone were
+listening, and the main-thread stream, its thread throttled, stuttered.
+Now `flint_audio::page` listens for `visibilitychange`, `pagehide` and
+`pageshow`. Hidden, it suspends every `AudioContext` Flint plays through
+that is running (`worklet.js` lists them); shown, it resumes those and no
+others, so a context still waiting for its first gesture still waits for it.
+Each worklet is told a sleep is coming, so its meter doesn't count the gap
+as a late buffer, and the main-thread stream's meter forgets its wait
+across one. A suspended context's clock stops, and kira's clocks and the
+rhythm sessions timed against them stop with it.
+
+A hidden page gets no `requestAnimationFrame` (Chrome desktop gave the
+hidden tab 1 callback in 6 s), so no frame runs. `web_frame_begin` skips
+one if a frame comes anyway, and the first frame back calls
+`GameClock::resync`, as the page's hold does. Without that resync it
+would step `MAX_DELTA` (250 ms). The pure decision, `PageSleep`, is
+unit-tested natively.
+
+**Chrome desktop, headed, Float, 10 s after Begin, then 6 s behind another
+tab** (`Target.createTarget` over CDP), then back:
+
+| | main | this change |
+|---|---|---|
+| Worklet buffers mixed while hidden | 135 (5.4 s of sound) | 0 |
+| Context state while hidden | running | suspended within 2 ms of `visibilitychange` |
+| Audio clock across the 6 s | kept running | 10.06 → 10.08 s |
+| Late-buffer lines on return (worklet / main thread) | 0 / 0 | 0 / 0 |
+| Main-thread meter's longest wait after return | n/a, never stopped | 73 ms |
+
+Android was not measured here; the phone check is in the PR.
 
 ## Size
 

@@ -38,6 +38,9 @@ const LATENCY_HINT: &str = "balanced";
 extern "C" {
     fn flint_worklet_preload(url: &str);
     fn flint_worklet_wanted() -> bool;
+    fn flint_audio_unlock(latency: &str);
+    fn flint_audio_keep_awake(ctx: &web_sys::AudioContext);
+    fn flint_audio_release_unlocked();
 
     #[derive(Clone)]
     type FlintWorklet;
@@ -67,6 +70,24 @@ extern "C" {
 /// before Begin.
 pub fn preload() {
     flint_worklet_preload(WASM_URL);
+}
+
+/// Open the page's `AudioContext` from inside the gesture that begins the
+/// game, before its handler returns (Float#2). iOS and iPadOS WebKit start
+/// a context only there; the engine's [`start`](crate::engine::AudioEngine::start)
+/// runs a frame later and takes this one. Also asks for the "playback"
+/// audio session, so the ringer switch doesn't silence the game.
+pub fn unlock() {
+    flint_audio_unlock(LATENCY_HINT);
+}
+
+/// Resume `ctx` at the page's next gesture whenever it isn't running: the
+/// main-thread stream's context, which cpal opens outside the gesture, and
+/// any context iOS interrupted. Closes the context [`unlock`] opened if the
+/// worklet never took it.
+pub(crate) fn keep_awake(ctx: &web_sys::AudioContext) {
+    flint_audio_release_unlocked();
+    flint_audio_keep_awake(ctx);
 }
 
 /// Where this page asks to mix: the worklet, unless it can't run here or

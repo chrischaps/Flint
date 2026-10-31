@@ -838,6 +838,12 @@ impl PlayerApp {
             perf.record_scripts(self.script.update_times());
         }
 
+        // set_time_scale: this frame's physics already has its accumulator,
+        // so the new scale starts with the next tick
+        if let Some(scale) = self.script.take_time_scale_request() {
+            self.clock.time_scale = scale;
+        }
+
         // Fixed-timestep physics + FPS camera/listener follow, against the
         // poses and joint targets the scripts just wrote
         self.tick_fixed_physics(&config, has_fps_player);
@@ -931,6 +937,11 @@ impl PlayerApp {
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
             self.audio.set_filter_cutoff(cutoff);
+        }
+
+        // A menu put the touch controls away, or play brought them back.
+        if let Some(enabled) = self.script.take_touch_controls_override() {
+            self.input.touch_controls_mut().set_enabled(enabled);
         }
 
         // Apply cursor capture request from scripts (skipped while a debug

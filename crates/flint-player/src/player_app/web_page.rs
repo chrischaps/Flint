@@ -13,8 +13,10 @@
 //! again.
 //!
 //! The page's Begin button (`flint_web.rs`) calls [`begin`] from its click:
-//! it locks the pointer then and there, inside the gesture, and leaves word
-//! for the player to start its sound on the next frame.
+//! it locks the pointer and opens the `AudioContext` then and there, inside
+//! the gesture, and leaves word for the player to start its sound on that
+//! context on the next frame. Chrome on a desktop would take a context
+//! opened a frame late; iOS WebKit keeps it suspended (Float#2).
 //!
 //! A phone has no pointer to lock (#132): on a page whose main pointer is a
 //! finger, or while the last input came from one, no lock is asked for. The
@@ -85,12 +87,15 @@ pub(super) struct PointerLock {
 }
 
 /// The page's Begin gesture: lock the pointer on the player's canvas now,
-/// while the click's activation is live, and have the player start its
-/// sound next frame (`PlayerApp::start_audio`). Call it from the click.
+/// while the click's activation is live, open the `AudioContext` now too
+/// (iOS starts one only inside the gesture, Float#2), and have the player
+/// start its sound on it next frame (`PlayerApp::start_audio`). Call it
+/// from the click.
 pub fn begin() {
     if !touch_first() {
         request_lock();
     }
+    flint_audio::worklet::unlock();
     BEGIN_REQUESTED.with(|b| b.set(true));
 }
 
@@ -160,6 +165,23 @@ fn request_lock() {
             let _ = promise.catch(&refused);
             refused.forget();
         }
+    }
+}
+
+/// Let go of the pointer lock, if the page holds one. A browser without the
+/// Pointer Lock API (iOS WebKit: Safari, and Chrome on iPad and iPhone)
+/// has no `exitPointerLock`, and calling it there throws through the event
+/// loop and freezes the game (Float#3), so it is looked up first, as
+/// [`request_lock`] does.
+pub(super) fn exit_lock() {
+    let Some(document) = document() else { return };
+    let Ok(exit) = js_sys::Reflect::get(&document, &"exitPointerLock".into())
+        .and_then(|f| f.dyn_into::<js_sys::Function>())
+    else {
+        return;
+    };
+    if lock_held() {
+        let _ = exit.call0(&document);
     }
 }
 

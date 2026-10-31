@@ -390,10 +390,24 @@ impl ScriptSystem {
         }
     }
 
+    /// Take the time scale a script asked for this frame, if any (clears it)
+    pub fn take_time_scale_request(&mut self) -> Option<f64> {
+        let mut c = crate::lock_or_recover(&self.engine.ctx);
+        c.time_scale_request.take()
+    }
+
     /// Take audio low-pass filter override set by scripts this frame (clears it)
     pub fn take_audio_overrides(&mut self) -> Option<f32> {
         let mut c = crate::lock_or_recover(&self.engine.ctx);
         c.audio_lowpass_cutoff_override.take()
+    }
+
+    /// Take the `set_touch_controls` request set by scripts this frame
+    /// (clears it)
+    pub fn take_touch_controls_override(&mut self) -> Option<bool> {
+        crate::lock_or_recover(&self.engine.ctx)
+            .touch_controls_override
+            .take()
     }
 
     /// Take the cursor capture request set by scripts this frame (clears it)
