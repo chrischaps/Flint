@@ -305,8 +305,9 @@ AI-assisted procedural generation (tool-time only):
 - `ProcGenAgent` trait --- `interpret_spec()`, `create_spec_from_prompt()`, `refine_spec()`; object-safe (`Box<dyn ProcGenAgent>`)
 - `MockAgent` --- local and deterministic (no network, no key): specs start from the generator's `param_schema()` defaults, a small keyword table shapes them ("tall", "autumn", "brick"), and `"tree"` resolves to `tree_v1`
 - `schema` --- `check_params` / `repair_params` hold a spec's params against its generator's schema (unknown params, ranges, enums, hex colours, required keys); `interpret_spec` reports these as suggestions with a repaired `revised_spec`
-- `AgentConfig` --- `Debug` redacts the API key and serialization skips it
-- `cargo run -p flint-procgen-ai --example walkthrough -- out/` writes create/refine specs for `flint gen`
+- `AnthropicAgent` --- asks Claude over the Messages API (`ureq`, API version `2026-10-21`, default model `claude-opus-5-5`). The system prompt holds the generator's `param_schema()` verbatim, the spec format and a valid example, and it is the same for every call to that generator, so it is cached. Each reply's params are checked against the schema and then actually generated (an empty mesh counts as a failure). A failed reply goes back with the validator's report for another round, up to `max_iterations`; after that the schema repair clamps what it can. `refine_spec` sends the reference image as base64. For a texture it also sends what the spec builds now, with the measured average colour of both images. The `*_reported` methods return a `Report` with each round's issues and token usage. 429/529/5xx responses are retried (honouring `retry-after`); 401 is not.
+- `AgentConfig` --- `Debug` redacts the API key and serialization skips it; `ANTHROPIC_API_KEY` takes precedence over a key in the config; optional `effort`
+- `cargo run -p flint-procgen-ai --example walkthrough -- out/` writes create/refine specs for `flint gen`; `--example claude_live -- out/` does the same against the real API (spends tokens)
 
 ### flint-terrain
 

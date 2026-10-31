@@ -1876,10 +1876,12 @@ name = "flint-procgen-ai"
 version = "0.1.0"
 dependencies = [
  "flint-procgen",
+ "image",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "ureq",
 ]
 
 [[package]]
