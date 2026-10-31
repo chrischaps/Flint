@@ -499,6 +499,7 @@ impl PlayerApp {
             scene_renderer,
             Some(&mut self.physics),
             &render_context.device,
+            &render_context.queue,
         );
 
         // Refresh renderer with any new procedural meshes

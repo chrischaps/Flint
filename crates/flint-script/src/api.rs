@@ -1884,6 +1884,17 @@ fn register_physics_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>)
         });
     }
 
+    // set_time_scale(scale) — game seconds per real second, from the next
+    // frame on (1.0 normal, 0.25 slow motion). Held until changed; a scene
+    // load resets it to 1.0.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("set_time_scale", move |scale: f64| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.time_scale_request = Some(scale.clamp(0.05, 4.0));
+        });
+    }
+
     // set_vignette(intensity) — override vignette intensity from scripts
     {
         let ctx = ctx.clone();

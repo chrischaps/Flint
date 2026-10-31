@@ -282,6 +282,10 @@ fn looks_like_file(s: &str) -> bool {
         return false;
     }
     let name = s.rsplit(['/', '\\']).next().unwrap_or(s);
+    // ".scene.toml" names a suffix (a script stripping it), not a file
+    if name.starts_with('.') {
+        return false;
+    }
     match name.rsplit_once('.') {
         Some((stem, ext)) => {
             !stem.is_empty() && ASSET_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
@@ -708,6 +712,7 @@ mod tests {
         assert!(looks_like_file("raft.rhai"));
         assert!(looks_like_file("textures\\rain_drop.png"));
         assert!(!looks_like_file(".ogg"));
+        assert!(!looks_like_file(".scene.toml"));
         assert!(!looks_like_file("audio/music_"));
         assert!(!looks_like_file("https://x.com/a.png"));
         assert!(!looks_like_file("Press any key.png now"));

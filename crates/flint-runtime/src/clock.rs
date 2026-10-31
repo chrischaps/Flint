@@ -24,6 +24,10 @@ pub struct GameClock {
     /// Wall time since the last tick, before pacing and the clamp. Equal
     /// to the wall time even when `delta_time` is paced or `frame_step`ped.
     pub raw_delta_time: f64,
+    /// Game seconds per real second (1.0 = normal, 0.25 = slow motion).
+    /// Scales `delta_time`, so scripts, physics, particles and animation
+    /// slow together; `raw_delta_time` stays on the wall clock.
+    pub time_scale: f64,
     /// Vsync pacing: the display's refresh period, when frames are
     /// presented one a vblank (Fifo). See [`GameClock::set_vsync_period`].
     vsync_period: Option<f64>,
@@ -48,6 +52,7 @@ impl Default for GameClock {
             fixed_timestep: 1.0 / 60.0,
             frame_step: None,
             raw_delta_time: 0.0,
+            time_scale: 1.0,
             vsync_period: None,
             pace_debt: 0.0,
             raw_mean: 0.0,
@@ -97,7 +102,7 @@ impl GameClock {
         };
 
         // Clamp to avoid spiral of death (max 250ms frame time)
-        self.delta_time = elapsed.min(MAX_DELTA);
+        self.delta_time = elapsed.min(MAX_DELTA) * self.time_scale;
         self.total_time += self.delta_time;
         self.accumulator += self.delta_time;
     }
@@ -260,6 +265,16 @@ mod tests {
         for (dt, n) in dts.iter().zip([4.0, 5.0, 6.0, 4.0]) {
             assert!((dt - n * hz120).abs() < 1e-9, "{dts:?}");
         }
+    }
+
+    #[test]
+    fn time_scale_slows_game_time_not_wall_time() {
+        let mut clock = paced(None);
+        clock.time_scale = 0.25;
+        clock.advance(0.02);
+        assert!((clock.delta_time - 0.005).abs() < 1e-12);
+        assert!((clock.raw_delta_time - 0.02).abs() < 1e-12);
+        assert!((clock.total_time - 0.005).abs() < 1e-12);
     }
 
     #[test]
