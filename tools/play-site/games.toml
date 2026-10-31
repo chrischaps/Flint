@@ -17,7 +17,7 @@
 #           there (default: sound on · the controls come up at a touch · a
 #           paired pad plays it all; #134)
 #   orientation  "landscape" for a game played sideways on a phone or
-#           tablet (#27): Begin's full screen locks it there where the
+#           tablet (FlintKart#27): Begin's full screen locks it there where the
 #           browser can (Chrome on Android), and elsewhere, held upright, a
 #           turn-your-phone prompt holds the game until it's turned. Unset
 #           (the default), the game turns freely with the phone (Float#1)

@@ -12,7 +12,7 @@
 //! The perf readout's frames (`web_perf.rs`) are the drawn ones, at these
 //! timestamps, so `?perf=1` shows 33.3 ms when every other refresh is.
 //!
-//! The page can hold the game (#27): while `<html>` has `data-hold` (a
+//! The page can hold the game (FlintKart#27): while `<html>` has `data-hold` (a
 //! game that plays sideways, held upright where the phone can't be locked
 //! to landscape, with the turn-your-phone prompt over it), no frame runs.
 //! Game time stops, the mix fades out, and when the attribute goes the

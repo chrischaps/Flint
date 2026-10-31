@@ -6,7 +6,7 @@
      steer it (src/bin/flint_web.rs). ?embed=1 is the iframe view: the world
      and its Begin button. ?perf=1 shows the perf readout (#120), and the
      fingers down once one has touched (#132). A game listed with
-     orientation = "landscape" (#27) plays sideways on a phone. See
+     orientation = "landscape" (FlintKart#27) plays sideways on a phone. See
      docs/design/web.md. -->
 <html lang="en">
   <head>
@@ -290,7 +290,7 @@
          points, the small print is a little larger, a card says how it's
          played by touch. The phone may be held either way (Float#1): the
          gate doesn't ask for it sideways, and full screen doesn't turn it,
-         unless the game plays sideways (#27, below). */
+         unless the game plays sideways (FlintKart#27, below). */
       @media (pointer: coarse) {
         /* Once playing, the bottom-left corner is the left thumb's: the
            wordmark leaves it to the stick. */
@@ -315,7 +315,7 @@
         .games .go { margin-top: 12px; padding: 4px 0; }
       }
 
-      /* Played sideways (#27). A game listed with orientation = "landscape"
+      /* Played sideways (FlintKart#27). A game listed with orientation = "landscape"
          turns a phone's full screen to landscape where the browser locks
          it (Chrome on Android). Where it can't (iPhone Safari, the switch
          off, an embed without full screen), once the game has begun and
@@ -472,7 +472,7 @@
           // Full screen keeps the way the phone is held, and the phone
           // turns it freely (Float#1). The canvas is 100vw by 100dvh, so a
           // turn resizes it and the surface follows. A game that plays
-          // sideways (#27) locks it to landscape, where the browser can
+          // sideways (FlintKart#27) locks it to landscape, where the browser can
           // (Chrome on Android, in full screen only); elsewhere the turn
           // prompt below asks for it.
           Promise.resolve(asked).then(
@@ -538,7 +538,7 @@
       })();
     </script>
 
-    <!-- Played sideways (#27). For a game the doorway marks data-landscape on
+    <!-- Played sideways (FlintKart#27). For a game the doorway marks data-landscape on
          a touch device: once Begin has lifted the gate, a portrait viewport
          holds the game behind the turn prompt, and turning the phone lets
          it go. No reload: the canvas follows the resize. -->
@@ -620,7 +620,7 @@
             // and on a touch device how it's played there.
             const controls = touchFirst ? entry.touch : entry.controls;
             if (controls) document.getElementById("gate-controls").textContent = controls;
-            // Played sideways on a phone (#27): the lock and the turn prompt.
+            // Played sideways on a phone (FlintKart#27): the lock and the turn prompt.
             if (touchFirst && entry.orientation === "landscape") {
               root.dataset.landscape = "";
               document.getElementById("turn-game").textContent = entry.title;

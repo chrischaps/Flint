@@ -186,7 +186,7 @@ pub struct AudioEngine {
     /// later (the web's click) opens where the game already is.
     filter_cutoff: f64,
     bus_volumes: [f64; 2],
-    /// Both buses quiet while the page holds the game (#27), whatever
+    /// Both buses quiet while the page holds the game (FlintKart#27), whatever
     /// `bus_volumes` asks for.
     held: bool,
     /// The mix moved after it started (the worklet failed and the main
@@ -444,7 +444,7 @@ impl AudioEngine {
         self.send_bus_volume(bus, 0.016);
     }
 
-    /// Hold the mix (#27): both buses fade out and stay out, under any
+    /// Hold the mix (FlintKart#27): both buses fade out and stay out, under any
     /// volume set meanwhile, and come back to it when let go. Sounds keep
     /// their places, so a loop resumes where the game left it.
     pub fn set_held(&mut self, held: bool) {

@@ -79,7 +79,7 @@ impl GameClock {
 
     /// Forget the wall time since the last tick, so the next one steps
     /// nothing rather than the whole gap. For time the game was held through
-    /// on purpose (the web page's turn-your-phone prompt, #27): without it
+    /// on purpose (the web page's turn-your-phone prompt, FlintKart#27): without it
     /// the first frame back would leap `MAX_DELTA`.
     pub fn resync(&mut self) {
         self.first_tick = true;
@@ -261,13 +261,7 @@ mod tests {
 
     /// Three quick frames, then a long one: a 60 Hz mean (#406).
     fn bursts(n: usize) -> impl Iterator<Item = f64> {
-        (0..n).map(|i| {
-            if i % 4 == 3 {
-                4.0 * HZ60 - 0.018
-            } else {
-                0.006
-            }
-        })
+        (0..n).map(|i| if i % 4 == 3 { 4.0 * HZ60 - 0.018 } else { 0.006 })
     }
 
     /// A page drawing one 120 Hz refresh in four (#140) steps 33.3 ms,
@@ -276,10 +270,7 @@ mod tests {
     fn paced_to_the_refresh_frames_step_the_refreshes_they_took() {
         let hz120 = 1.0 / 120.0;
         let mut clock = paced(Some(hz120));
-        let dts = run(
-            &mut clock,
-            [4.0 * hz120, 5.0 * hz120, 6.0 * hz120, 4.0 * hz120],
-        );
+        let dts = run(&mut clock, [4.0 * hz120, 5.0 * hz120, 6.0 * hz120, 4.0 * hz120]);
         for (dt, n) in dts.iter().zip([4.0, 5.0, 6.0, 4.0]) {
             assert!((dt - n * hz120).abs() < 1e-9, "{dts:?}");
         }
