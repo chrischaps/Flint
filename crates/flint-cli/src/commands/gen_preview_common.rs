@@ -271,6 +271,55 @@ fn render_param_field_inner(
                 });
             }
         }
+
+        // A table of named entries (e.g. a creature's materials): one
+        // collapsible row per name, its keys and values read-only.
+        ParamFieldType::ObjectMap => {
+            if let Some(toml::Value::Table(map)) = params.get(&field.name) {
+                egui::CollapsingHeader::new(format!("{} ({})", display_name, map.len()))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        for (name, entry) in map {
+                            match entry.as_table() {
+                                Some(table) => {
+                                    egui::CollapsingHeader::new(name)
+                                        .id_salt(format!("{}_{}", field.name, name))
+                                        .default_open(false)
+                                        .show(ui, |ui| {
+                                            egui::Grid::new(format!(
+                                                "{}_{}_grid",
+                                                field.name, name
+                                            ))
+                                            .num_columns(2)
+                                            .spacing([8.0, 2.0])
+                                            .show(
+                                                ui,
+                                                |ui| {
+                                                    for (k, v) in table {
+                                                        ui.label(k);
+                                                        ui.monospace(format_toml_value_compact(v));
+                                                        ui.end_row();
+                                                    }
+                                                },
+                                            );
+                                        });
+                                }
+                                None => {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("{name}:"));
+                                        ui.monospace(format_toml_value_compact(entry));
+                                    });
+                                }
+                            }
+                        }
+                    });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}:", display_name));
+                    ui.monospace("{}");
+                });
+            }
+        }
     }
 
     false
