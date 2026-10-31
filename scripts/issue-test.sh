@@ -332,6 +332,39 @@ bash "$SCRIPT" release 40 >/dev/null
 cd "$REPO"
 git worktree remove -f "$TMP/pr-wt"
 
+# A branch stacked on a sibling's, and the sibling squash-merged (#223): the
+# push carries the sibling's "Closes #50", which no claim here covers. It
+# passes once #50 is closed on GitHub; while #50 is open, or GitHub can't be
+# asked, it's refused as before.
+git worktree add -q "$TMP/sib" -b issue-50 master
+(cd "$TMP/sib" && echo a >s && git add s && git commit -q -m "Sibling, part one" -m "Closes #50" \
+  && echo b >>s && git commit -q -am "Sibling, part two")
+git worktree add -q "$TMP/stack" -b stacked issue-50
+mkdir -p "$TMP/stack/scripts" && cp "$SCRIPT" "$TMP/stack/scripts/issue.sh"
+(cd "$TMP/stack" && bash "$SCRIPT" claim 51 --here >/dev/null && git commit -q --allow-empty -m "Stacked" -m "Closes #51")
+git merge -q --squash issue-50 && git commit -q -m "Sibling (#98)" && git push -q origin master
+ghhook() { CLAIM_NO_GH= PATH="$TMP/bin:$PATH" hook "$@"; }
+printf '%s\n' "50 OPEN -" >"$GH_STATES"
+expect 2 "guard: push carrying an open sibling's Closes #50 is denied" ghhook "$TMP/stack" "git push"
+grep -q '#50 is named by a commit this push carries ([0-9a-f]* "Sibling, part one")' "$TMP/out" \
+  && grep -q "passes once #50 is closed" "$TMP/out" \
+  && ok "the denial names the sibling's commit and what would let it pass" || bad "the denial names the sibling's commit"
+expect 2 "guard: and so is it when GitHub can't be asked" hook "$TMP/stack" "git push"
+printf '%s\n' "50 CLOSED 5" >"$GH_STATES"
+: >"$GH_LOG"
+expect 0 "guard: push carrying a squash-merged, closed sibling's Closes #50 passes" ghhook "$TMP/stack" "git push"
+grep -q "i50:" "$GH_LOG" && ! grep -q "i51:" "$GH_LOG" \
+  && ok "it asks GitHub about the unclaimed issue only" || bad "it asks GitHub about the unclaimed issue only"
+expect 2 "guard: a commit naming the closed #50 is still denied" ghhook "$TMP/stack" 'git commit -m "Closes #50"'
+# A sibling's commit whose patch is already on master passes with no GitHub call.
+(cd "$TMP/stack" && echo c >u && git add u && git commit -q -m "Sibling 52" -m "Closes #52")
+git cherry-pick -n stacked && git commit -q -m "Sibling 52 (#97)" && git push -q origin master
+: >"$GH_LOG"
+expect 0 "guard: push carrying a commit already on master passes" ghhook "$TMP/stack" "git push"
+! grep -q "i52:" "$GH_LOG" && ok "without asking GitHub about it" || bad "without asking GitHub about it"
+(cd "$TMP/stack" && bash "$SCRIPT" release 51 >/dev/null)
+git worktree remove -f "$TMP/stack"; git worktree remove -f "$TMP/sib"; git branch -q -D stacked issue-50
+
 # claim --here drops a record that outlived its claim, rather than refusing.
 printf 'ghost\n/nowhere\n' >"$RECS/issue-26"
 cd "$TMP/app-wt"

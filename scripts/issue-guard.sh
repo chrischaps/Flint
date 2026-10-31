@@ -9,6 +9,14 @@
 # on another branch needs no claim. Commits are checked locally (the claim
 # record, the worktree); pushes also ask origin that the claim is still ours.
 #
+# A push also reads the Closes lines of the commits it carries past the base
+# branch. Two kinds of those aren't this session's work, and pass (#223):
+# commits whose change is already on the base (a sibling rebased or
+# cherry-picked in, or squashed from one commit), and commits naming an issue
+# that's closed on GitHub, whose claim was reaped with it. That's what a branch
+# stacked on a sibling's carries once the sibling squash-merges. The issue
+# named by the branch, or by the commit being made, always counts.
+#
 # The canonical copy is skills/setup-claims in chrischaps/Dashboard.
 
 set -uo pipefail
@@ -60,6 +68,9 @@ if [ -n "$commit" ]; then
     while read -r n; do [ -n "$n" ] && nums+=("$n"); done < <(closes <"$file")
   fi
 fi
+# The issues named only by the commits a push carries. They can be a
+# sibling's, so a closed one passes below.
+carried=() range=()
 if [ -n "$push" ]; then
   remote=${CLAIM_REMOTE:-origin}
   b=${CLAIM_BASE:-$base}
@@ -68,25 +79,53 @@ if [ -n "$push" ]; then
     [ -n "$b" ] || ! git rev-parse -q --verify "$remote/$c" >/dev/null || b=$c
   done
   if [ -n "$b" ] && git rev-parse -q --verify "$remote/$b" >/dev/null; then
-    while read -r n; do [ -n "$n" ] && nums+=("$n"); done < <(git log "$remote/$b..HEAD" --format=%B 2>/dev/null | closes)
+    # --cherry-pick leaves out the commits whose patch the base already has.
+    range=("$remote/$b...HEAD" --cherry-pick --right-only)
+    while read -r n; do
+      [ -n "$n" ] || continue
+      printf '%s\n' ${nums[@]+"${nums[@]}"} | grep -qx "$n" || carried+=("$n")
+    done < <(git log "${range[@]}" --format=%B 2>/dev/null | closes | sort -un)
   fi
 fi
 
-[ ${#nums[@]} -gt 0 ] || exit 0
+[ $((${#nums[@]} + ${#carried[@]})) -gt 0 ] || exit 0
+
+how_to_claim() { # <n>
+  local hint=${claim_hint//<n>/$1}
+  echo "  Claim it before working on it: scripts/issue.sh claim $1 (makes ../$(basename "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")")-$1), or scripts/issue.sh claim $1 --here (for this worktree)${hint:+, or $hint}.
+  Exit 2 from claim means another agent holds it: leave it and pick another issue (scripts/issue.sh list shows who holds what)."
+}
 
 denied=""
-for n in $(printf '%s\n' "${nums[@]}" | sort -un); do
+for n in $(printf '%s\n' ${nums[@]+"${nums[@]}"} | sort -un); do
   if [ -n "$push" ]; then why=$(bash "$tool" mine "$n" 2>&1)
   else why=$(bash "$tool" mine "$n" --offline 2>&1)
   fi
   [ $? -eq 0 ] && continue
-  hint=${claim_hint//<n>/$n}
   denied+="${why:-#$n is not claimed by this session}
-"
-  denied+="  Claim it before working on it: scripts/issue.sh claim $n (makes ../$(basename "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")")-$n), or scripts/issue.sh claim $n --here (for this worktree)${hint:+, or $hint}.
-  Exit 2 from claim means another agent holds it: leave it and pick another issue (scripts/issue.sh list shows who holds what).
+$(how_to_claim "$n")
 "
 done
+
+# A carried issue this session doesn't hold passes when GitHub says it's
+# closed. One call asks about all of them, and only when one would be refused.
+# Offline, none is known closed, and each is refused as before.
+unheld=()
+for n in ${carried[@]+"${carried[@]}"}; do
+  bash "$tool" mine "$n" >/dev/null 2>&1 || unheld+=("$n")
+done
+if [ ${#unheld[@]} -gt 0 ]; then
+  closed=$(bash "$tool" closed "${unheld[@]}" 2>/dev/null)
+  for n in "${unheld[@]}"; do
+    grep -qx "$n" <<<"$closed" && continue
+    by=$(git log "${range[@]}" -i -E --grep="(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+#$n([^0-9]|$)" \
+      --format='%h "%s"' 2>/dev/null | head -1)
+    denied+="#$n is named by a commit this push carries${by:+ ($by)}, and this session holds no claim on it.
+  If that commit is a sibling's that this branch was built on, the push passes once #$n is closed on GitHub; it's open, or GitHub couldn't be asked.
+$(how_to_claim "$n")
+"
+  done
+fi
 [ -z "$denied" ] && exit 0
 
 {

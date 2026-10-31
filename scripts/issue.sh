@@ -26,6 +26,8 @@
 #                                             pushes to it and releases; pr mode
 #                                             pushes the branch and opens a PR
 #   scripts/issue.sh mine <n> [--offline]     exit 0 if you hold n here (hooks)
+#   scripts/issue.sh closed <n>...            print those of n... closed on
+#                                             GitHub, one a line (hooks)
 #   scripts/issue.sh reap [--dry-run] [<n>...]
 #                                             delete every claim (or n's) whose
 #                                             issue is closed, whoever holds it
@@ -92,7 +94,7 @@ LABEL=claimed
 
 die() { echo "issue.sh: $*" >&2; exit 1; }
 
-usage() { sed -n '12,34p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '12,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 gh_on() { [ "${CLAIM_NO_GH:-}" != 1 ]; }
 
@@ -302,6 +304,20 @@ cmd_mine() {
   fi
   echo "$why"
   return 1
+}
+
+# closed <n>...: print the ones whose issue is closed on GitHub, one a line.
+# It prints nothing when GitHub can't be asked (CLAIM_NO_GH=1, offline, no
+# such issue), so a caller that skips what it prints errs toward refusing.
+cmd_closed() {
+  local n state _mins
+  for n in "$@"; do
+    case $n in ''|*[!0-9]*) die "closed: not an issue number: $n" ;; esac
+  done
+  gh_on || return 0
+  while read -r n state _mins; do
+    if is_closed "${state:-}"; then echo "$n"; fi
+  done < <(issue_states "$@")
 }
 
 cmd_list() {
@@ -686,6 +702,7 @@ case ${1:-} in
   release) shift; cmd_release "$@" ;;
   land) shift; cmd_land "$@" ;;
   mine) shift; cmd_mine "$@" ;;
+  closed) shift; cmd_closed "$@" ;;
   reap) shift; cmd_reap "$@" ;;
   merged) shift; cmd_merged "$@" ;;
   *) usage ;;
