@@ -8,12 +8,14 @@
 //!
 //! In the browser the mix runs in an `AudioWorklet`, off the main thread
 //! (#136): `remote` writes the engine's calls for it, `worklet` opens it,
-//! and `web` is the main-thread stream it falls back to.
+//! and `web` is the main-thread stream it falls back to. `page` suspends
+//! both while the page is hidden (#162).
 
 pub mod decode;
 pub mod engine;
 pub mod handle;
 pub mod meter;
+pub mod page;
 pub mod remote;
 pub mod sync;
 pub mod trigger;

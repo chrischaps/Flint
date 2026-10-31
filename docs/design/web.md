@@ -1428,6 +1428,40 @@ with a 99%-busy main thread beside it. A cheaper mix (#138) helps here
 directly. `?audiostall=N` is the knob for testing the meter, and `?mixer=main`
 is the one for comparisons.
 
+### A hidden page sleeps (#162)
+
+A browser keeps a page the player has left running: another app on
+Android, another tab on a desktop. The worklet mixed on as if someone were
+listening, and the main-thread stream, its thread throttled, stuttered.
+Now `flint_audio::page` listens for `visibilitychange`, `pagehide` and
+`pageshow`. Hidden, it suspends every `AudioContext` Flint plays through
+that is running (`worklet.js` lists them); shown, it resumes those and no
+others, so a context still waiting for its first gesture still waits for it.
+Each worklet is told a sleep is coming, so its meter doesn't count the gap
+as a late buffer, and the main-thread stream's meter forgets its wait
+across one. A suspended context's clock stops, and kira's clocks and the
+rhythm sessions timed against them stop with it.
+
+A hidden page gets no `requestAnimationFrame` (Chrome desktop gave the
+hidden tab 1 callback in 6 s), so no frame runs. `web_frame_begin` skips
+one if a frame comes anyway, and the first frame back calls
+`GameClock::resync`, as the page's hold does. Without that resync it
+would step `MAX_DELTA` (250 ms). The pure decision, `PageSleep`, is
+unit-tested natively.
+
+**Chrome desktop, headed, Float, 10 s after Begin, then 6 s behind another
+tab** (`Target.createTarget` over CDP), then back:
+
+| | main | this change |
+|---|---|---|
+| Worklet buffers mixed while hidden | 135 (5.4 s of sound) | 0 |
+| Context state while hidden | running | suspended within 2 ms of `visibilitychange` |
+| Audio clock across the 6 s | kept running | 10.06 → 10.08 s |
+| Late-buffer lines on return (worklet / main thread) | 0 / 0 | 0 / 0 |
+| Main-thread meter's longest wait after return | n/a, never stopped | 73 ms |
+
+Android was not measured here; the phone check is in the PR.
+
 ## Size
 
 Release profile, wasm-bindgen 0.2.108, binaryen `wasm-opt` version 123 `-Oz`,

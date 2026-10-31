@@ -60,6 +60,10 @@ class FlintMixer extends AudioWorkletProcessor {
       const s = m.samples;
       this.copyIn(new Uint8Array(s.buffer, s.byteOffset, s.byteLength));
       this.x.flint_load(m.id, m.rate, m.channels, s.length);
+    } else if (m.t === 'sleep') {
+      // The page is hidden and its context about to be suspended (#162):
+      // the clock's stop is a sleep, not sound lost.
+      this.slept = true;
     }
   }
   process(inputs, outputs) {
@@ -67,6 +71,12 @@ class FlintMixer extends AudioWorkletProcessor {
     if (!this.x || !out || out.length < 2) return true;
     const n = out[0].length;
     const t0 = Date.now();
+    if (this.slept) {
+      this.slept = false;
+      this.frames = 0;
+      this.baseline = null;
+      this.lastStart = 0;
+    }
     if (this.frames === 0) {
       this.start = t0;
       this.lag = t0 - currentTime * 1000;
@@ -159,6 +169,21 @@ function wake() {
   for (const ctx of owned) {
     if (ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => {});
   }
+}
+
+/** Every context Flint plays through, for the page to suspend while it is
+ *  hidden (#162, page.rs). */
+export function flint_audio_contexts() {
+  return Array.from(owned);
+}
+
+/** Every worklet started, to tell before their context is suspended. */
+const worklets = new Set();
+
+/** The page is going to sleep (#162): each processor's meter is to take
+ *  the gap that follows for a pause, not a dropout. */
+export function flint_audio_sleep() {
+  for (const w of worklets) w.post({ t: 'sleep' });
 }
 
 let listening = false;
@@ -266,6 +291,7 @@ export class FlintWorklet {
     this.node = null;
     this.ctx = takeContext(latency);
     this.ctx.resume().catch(() => {});
+    worklets.add(this);
     flint_worklet_preload(url);
     this.open(meterFrames, onStats).catch((e) => {
       this.state = 2;
