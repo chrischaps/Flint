@@ -234,6 +234,11 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.35); padding-bottom: 3px;
       }
       @media (hover: hover) { .door .more:hover { opacity: 1; border-color: rgba(255, 255, 255, 0.8); } }
+      /* The way home: the kicker reads as a path, chaps.dev / Flint. */
+      .door .kicker a { text-decoration: none; border-bottom: 1px solid rgba(255, 255, 255, 0.35); }
+      .door .kicker a:focus-visible { outline: 1.5px solid rgba(255, 255, 255, 0.6); outline-offset: 3px; }
+      @media (hover: hover) { .door .kicker:has(a:hover) { opacity: 0.9; } .door .kicker a:hover { border-color: rgba(255, 255, 255, 0.8); } }
+      .door .kicker .sep { margin: 0 0.5em; opacity: 0.6; }
 
       /* No WebGPU: the game's film fills the frame, the reason sits low. */
       .door.film { place-items: end start; min-height: 100vh; }
@@ -306,6 +311,7 @@
         .gate .wide { min-height: 44px; padding: 0 10px; margin-top: 8px; }
         .gate .home { font-size: 13px; }
         .door .more { padding: 18px 0 8px; }
+        .door .kicker a { display: inline-block; padding: 14px 0 4px; margin-top: -14px; }
         .games .hands {
           display: block; margin-top: 10px; font-size: 13px; line-height: 1.45; opacity: 0.6;
         }
@@ -624,12 +630,22 @@
           const lead = unknown
             ? `There's no game called “${unknown}” here. These are the ones there are.`
             : "Games made with Flint, a game engine written in Rust, playing in your browser.";
+          // Back to chaps.dev, except in an iframe, which a chaps.dev page holds.
+          const kicker = embed
+            ? el("p", { className: "kicker", textContent: "Flint" })
+            : el(
+                "p",
+                { className: "kicker" },
+                el("a", { href: "https://chaps.dev/", textContent: "chaps.dev" }),
+                el("span", { className: "sep", textContent: "/", ariaHidden: "true" }),
+                "Flint",
+              );
           door(
             "list",
             el(
               "div",
               { className: "words" },
-              el("p", { className: "kicker", textContent: "Flint" }),
+              kicker,
               el("h1", { textContent: "Play" }),
               el("p", { className: "why", textContent: lead }),
               el("ul", { className: "games" }, ...cards),
