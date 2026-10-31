@@ -186,6 +186,9 @@ pub struct AudioEngine {
     /// later (the web's click) opens where the game already is.
     filter_cutoff: f64,
     bus_volumes: [f64; 2],
+    /// Both buses quiet while the page holds the game (FlintKart#27), whatever
+    /// `bus_volumes` asks for.
+    held: bool,
     /// The mix moved after it started (the worklet failed and the main
     /// thread took over), so everything that was playing is gone.
     restarted: bool,
@@ -239,6 +242,7 @@ impl AudioEngine {
             master_volume: 1.0,
             filter_cutoff: 20000.0,
             bus_volumes: [1.0, 1.0],
+            held: false,
             restarted: false,
             #[cfg(target_arch = "wasm32")]
             meter: Default::default(),
@@ -347,12 +351,10 @@ impl AudioEngine {
     }
 
     fn apply_bus_volumes(&mut self) {
-        let [sfx, music] = self.bus_volumes;
-        if music != 1.0 {
-            self.set_bus_volume(Bus::Music, music);
-        }
-        if sfx != 1.0 {
-            self.set_bus_volume(Bus::Sfx, sfx);
+        for bus in [Bus::Music, Bus::Sfx] {
+            if self.held || self.bus_volumes[bus as usize] != 1.0 {
+                self.send_bus_volume(bus, 0.016);
+            }
         }
     }
 
@@ -439,18 +441,46 @@ impl AudioEngine {
     /// fades keep working underneath.
     pub fn set_bus_volume(&mut self, bus: Bus, volume: f64) {
         self.bus_volumes[bus as usize] = volume;
+        self.send_bus_volume(bus, 0.016);
+    }
+
+    /// Hold the mix (FlintKart#27): both buses fade out and stay out, under any
+    /// volume set meanwhile, and come back to it when let go. Sounds keep
+    /// their places, so a loop resumes where the game left it.
+    pub fn set_held(&mut self, held: bool) {
+        if held == self.held {
+            return;
+        }
+        self.held = held;
+        for bus in [Bus::Music, Bus::Sfx] {
+            self.send_bus_volume(bus, if held { 0.12 } else { 0.25 });
+        }
+    }
+
+    /// Whether [`set_held`](Self::set_held) holds the mix.
+    pub fn is_held(&self) -> bool {
+        self.held
+    }
+
+    /// Give the mixer a bus's volume: the one asked for, or none while held.
+    fn send_bus_volume(&mut self, bus: Bus, tween: f64) {
+        let volume = if self.held {
+            0.0
+        } else {
+            self.bus_volumes[bus as usize]
+        };
         let db = amplitude_to_db(volume);
         match &mut self.mixer {
             Mixer::Silent => {}
             Mixer::Local(l) => {
                 if let Ok(handle) = l.bus(bus) {
-                    handle.set_volume(db, tween_ms(16));
+                    handle.set_volume(db, tween_ms((tween * 1000.0) as u64));
                 }
             }
             Mixer::Remote(r) => r.link.send(Command::BusVolume {
                 bus: bus.code(),
                 db: db.0,
-                tween: 0.016,
+                tween: tween as f32,
             }),
         }
     }
@@ -1050,6 +1080,13 @@ mod tests {
         assert!(engine.has_sound("sea"));
         assert_eq!(engine.filter_cutoff, 800.0);
         assert_eq!(engine.bus_volumes, [1.0, 0.25]);
+        // A hold keeps the volumes asked for, to come back to.
+        engine.set_held(true);
+        engine.set_bus_volume(Bus::Sfx, 0.5);
+        assert!(engine.is_held());
+        assert_eq!(engine.bus_volumes, [0.5, 0.25]);
+        engine.set_held(false);
+        assert!(!engine.is_held());
         assert!(engine.create_listener(Vec3::new(0.0, 0.0, 0.0)).is_ok());
         assert!(!engine.has_listener(), "no listener without a device");
         assert!(engine.buffer_stats().is_none());

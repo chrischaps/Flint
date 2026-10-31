@@ -5,7 +5,9 @@
      packed by `flint bundle` (#98), and ?scene=<url>&msaa=4&width=&height=
      steer it (src/bin/flint_web.rs). ?embed=1 is the iframe view: the world
      and its Begin button. ?perf=1 shows the perf readout (#120), and the
-     fingers down once one has touched (#132). See docs/design/web.md. -->
+     fingers down once one has touched (#132). A game listed with
+     orientation = "landscape" (FlintKart#27) plays sideways on a phone. See
+     docs/design/web.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -234,6 +236,11 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.35); padding-bottom: 3px;
       }
       @media (hover: hover) { .door .more:hover { opacity: 1; border-color: rgba(255, 255, 255, 0.8); } }
+      /* The way home: the kicker reads as a path, chaps.dev / Flint. */
+      .door .kicker a { text-decoration: none; border-bottom: 1px solid rgba(255, 255, 255, 0.35); }
+      .door .kicker a:focus-visible { outline: 1.5px solid rgba(255, 255, 255, 0.6); outline-offset: 3px; }
+      @media (hover: hover) { .door .kicker:has(a:hover) { opacity: 0.9; } .door .kicker a:hover { border-color: rgba(255, 255, 255, 0.8); } }
+      .door .kicker .sep { margin: 0 0.5em; opacity: 0.6; }
 
       /* No WebGPU: the game's film fills the frame, the reason sits low. */
       .door.film { place-items: end start; min-height: 100vh; }
@@ -287,7 +294,8 @@
          hovers above are for a mouse only). Every target is at least 44
          points, the small print is a little larger, a card says how it's
          played by touch. The phone may be held either way (Float#1): the
-         gate doesn't ask for it sideways, and full screen doesn't turn it. */
+         gate doesn't ask for it sideways, and full screen doesn't turn it,
+         unless the game plays sideways (FlintKart#27, below). */
       @media (pointer: coarse) {
         /* Once playing, the bottom-left corner is the left thumb's: the
            wordmark leaves it to the stick. */
@@ -306,10 +314,51 @@
         .gate .wide { min-height: 44px; padding: 0 10px; margin-top: 8px; }
         .gate .home { font-size: 13px; }
         .door .more { padding: 18px 0 8px; }
+        .door .kicker a { display: inline-block; padding: 14px 0 4px; margin-top: -14px; }
         .games .hands {
           display: block; margin-top: 10px; font-size: 13px; line-height: 1.45; opacity: 0.6;
         }
         .games .go { margin-top: 12px; padding: 4px 0; }
+      }
+
+      /* Played sideways (FlintKart#27). A game listed with orientation = "landscape"
+         turns a phone's full screen to landscape where the browser locks
+         it (Chrome on Android). Where it can't (iPhone Safari, the switch
+         off, an embed without full screen), once the game has begun and
+         while the phone is upright, this covers it and the page holds the
+         game (html[data-hold], web_pacing.rs) until it's turned. */
+      #turn {
+        position: fixed; inset: 0; z-index: 3; display: grid; place-items: center;
+        padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+          max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+        text-align: center; color: #fff;
+        background: radial-gradient(ellipse at 50% 46%, rgba(13, 18, 41, 0.5), rgba(13, 18, 41, 0.9));
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        font: 400 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+        opacity: 0; pointer-events: none; visibility: hidden;
+        transition: opacity 0.5s ease, visibility 0s linear 0.5s;
+      }
+      /* A lock being granted turns the phone within a moment: the prompt
+         waits that long before it shows, so it doesn't flash. */
+      html[data-hold] #turn {
+        opacity: 1; pointer-events: auto; visibility: visible;
+        transition: opacity 0.6s ease 0.45s, visibility 0s;
+      }
+      #turn svg { width: 92px; height: 92px; margin: 0 auto 26px; display: block; overflow: visible; }
+      #turn .phone { transform-origin: 46px 46px; animation: turn 3.2s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
+      #turn .arc { opacity: 0.4; stroke-dasharray: 3 5; }
+      #turn h2 {
+        margin: 0 0 8px; font: 300 clamp(26px, 7vw, 34px)/1.15 ui-serif, Georgia, serif;
+        letter-spacing: 0.04em; text-shadow: 0 2px 24px rgba(0, 0, 0, 0.3);
+      }
+      #turn p { margin: 0 auto; max-width: 20em; opacity: 0.7; }
+      @keyframes turn {
+        0%, 22% { transform: rotate(0); }
+        50%, 80% { transform: rotate(-90deg); }
+        100% { transform: rotate(0); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #turn .phone { animation: none; transform: rotate(-90deg); }
       }
     </style>
   </head>
@@ -327,6 +376,16 @@
         <p class="home" id="gate-home" hidden>For the whole screen, tap <b>Share</b>
           <svg viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M6 1v8M3 3.5 6 1l3 2.5M3.5 6H1.5v7h9V6h-2"/></svg>
           then <b>Add to Home Screen</b>, and play from there.</p>
+      </div>
+    </div>
+    <div id="turn" role="alertdialog" aria-labelledby="turn-title" aria-describedby="turn-line">
+      <div>
+        <svg viewBox="0 0 92 92" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+          <path class="arc" d="M18 30a32 32 0 0 1 26-16M74 62a32 32 0 0 1-26 16"/>
+          <g class="phone"><rect x="33" y="18" width="26" height="56" rx="5"/><path d="M43 68h6"/></g>
+        </svg>
+        <h2 id="turn-title">Turn your phone sideways</h2>
+        <p id="turn-line"><span id="turn-game">This game</span> plays held sideways. It waits for you.</p>
       </div>
     </div>
     <div id="relook">click to look around</div>
@@ -416,10 +475,22 @@
           } catch (e) {
             asked = Promise.reject(e);
           }
-          // No orientation lock (Float#1): full screen keeps the way the
-          // phone is held, and the phone turns it freely. The canvas is
-          // 100vw by 100dvh, so a turn resizes it and the surface follows.
-          Promise.resolve(asked).catch((e) => console.warn("[fullscreen]", e && e.message));
+          // Full screen keeps the way the phone is held, and the phone
+          // turns it freely (Float#1). The canvas is 100vw by 100dvh, so a
+          // turn resizes it and the surface follows. A game that plays
+          // sideways (FlintKart#27) locks it to landscape, where the browser can
+          // (Chrome on Android, in full screen only); elsewhere the turn
+          // prompt below asks for it.
+          Promise.resolve(asked).then(
+            () => {
+              if (!touch || !("landscape" in root.dataset) || !screen.orientation?.lock) return;
+              screen.orientation.lock("landscape").then(
+                () => (root.dataset.locked = ""),
+                (e) => console.warn("[orientation]", e && e.message),
+              );
+            },
+            (e) => console.warn("[fullscreen]", e && e.message),
+          );
         }
 
         // The Begin click. Its own handler (flint_web.rs) asks for the
@@ -453,6 +524,13 @@
           const on = !!current();
           if (on) root.dataset.fullscreen = "";
           else delete root.dataset.fullscreen;
+          // Out of full screen the lock is gone anyway; say so to the phone.
+          if (!on && "locked" in root.dataset) {
+            delete root.dataset.locked;
+            try {
+              screen.orientation.unlock();
+            } catch {}
+          }
           const label = on ? "Leave full screen" : "Full screen";
           button.setAttribute("aria-label", label);
           button.title = label;
@@ -463,6 +541,30 @@
           if (document.pointerLockElement) root.dataset.looking = "";
           else delete root.dataset.looking;
         });
+      })();
+    </script>
+
+    <!-- Played sideways (FlintKart#27). For a game the doorway marks data-landscape on
+         a touch device: once Begin has lifted the gate, a portrait viewport
+         holds the game behind the turn prompt, and turning the phone lets
+         it go. No reload: the canvas follows the resize. -->
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const gate = document.getElementById("gate");
+        const upright = matchMedia("(orientation: portrait)");
+        const follow = () => {
+          const hold = "landscape" in root.dataset && gate.hasAttribute("data-gone") && upright.matches;
+          if (hold === "hold" in root.dataset) return;
+          if (hold) root.dataset.hold = "";
+          else delete root.dataset.hold;
+          // Keys go back to the game, not to the prompt.
+          if (!hold) document.getElementById("flint").focus({ preventScroll: true });
+        };
+        upright.addEventListener("change", follow);
+        addEventListener("resize", follow);
+        new MutationObserver(follow).observe(gate, { attributes: true, attributeFilter: ["data-gone"] });
+        new MutationObserver(follow).observe(root, { attributes: true, attributeFilter: ["data-landscape"] });
       })();
     </script>
 
@@ -524,6 +626,11 @@
             // and on a touch device how it's played there.
             const controls = touchFirst ? entry.touch : entry.controls;
             if (controls) document.getElementById("gate-controls").textContent = controls;
+            // Played sideways on a phone (FlintKart#27): the lock and the turn prompt.
+            if (touchFirst && entry.orientation === "landscape") {
+              root.dataset.landscape = "";
+              document.getElementById("turn-game").textContent = entry.title;
+            }
           }
           open();
         }
@@ -624,12 +731,22 @@
           const lead = unknown
             ? `There's no game called “${unknown}” here. These are the ones there are.`
             : "Games made with Flint, a game engine written in Rust, playing in your browser.";
+          // Back to chaps.dev, except in an iframe, which a chaps.dev page holds.
+          const kicker = embed
+            ? el("p", { className: "kicker", textContent: "Flint" })
+            : el(
+                "p",
+                { className: "kicker" },
+                el("a", { href: "https://chaps.dev/", textContent: "chaps.dev" }),
+                el("span", { className: "sep", textContent: "/", ariaHidden: "true" }),
+                "Flint",
+              );
           door(
             "list",
             el(
               "div",
               { className: "words" },
-              el("p", { className: "kicker", textContent: "Flint" }),
+              kicker,
               el("h1", { textContent: "Play" }),
               el("p", { className: "why", textContent: lead }),
               el("ul", { className: "games" }, ...cards),

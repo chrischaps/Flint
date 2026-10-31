@@ -814,12 +814,14 @@ asks the browser for the whole screen, and where the browser can't give it
   locked, since a locked pointer can't click it. If Escape has freed a
   pointer the game wants (the "click to look around" hint is showing), the
   same click takes the lock back first.
-- **No orientation lock** (Float#1; until then a touch screen asked
-  `screen.orientation.lock("landscape")` once full screen was granted, and
-  the gate said "best held sideways" in portrait). Full screen keeps the
-  way the phone is held and turns with it. The canvas is `100vw` by
-  `100dvh`, so a turn resizes it; winit's `ResizeObserver` sends `Resized`
-  and the surface and the camera's aspect follow, with no reload.
+- **No orientation lock, unless the game asks** (Float#1; until then a
+  touch screen asked `screen.orientation.lock("landscape")` once full
+  screen was granted, and the gate said "best held sideways" in portrait).
+  Full screen keeps the way the phone is held and turns with it. The
+  canvas is `100vw` by `100dvh`, so a turn resizes it; winit's
+  `ResizeObserver` sends `Resized` and the surface and the camera's aspect
+  follow, with no reload. A game can ask to be played sideways, per game
+  in `games.toml` (FlintKart#27, below); SET + DRIFT doesn't.
 - **Where there is no Fullscreen API.** `document.fullscreenEnabled` is
   false on iPhone Safari, and in an iframe without `allowfullscreen`. In
   both cases the button and the switch stay hidden. On iPhone Safari
@@ -867,6 +869,53 @@ phone was tried: Chrome on Android, iPhone Safari and the installed
 home-screen page are still to be checked on devices. These runs predate
 #132, which since stopped a touch page asking for the pointer lock and
 shrank the perf readout on a phone.
+
+## Played sideways, per game (FlintKart#27)
+
+SET + DRIFT turns freely with the phone (Float#1), but Flint Kart's touch
+layout (a stick for the left thumb, DRIFT and ITEM for the right) wants the
+long side across. So the lock comes back only for a game that asks for it,
+with `orientation = "landscape"` in `tools/play-site/games.toml`. `build.py`
+checks the value and carries it into `games.json`. Unset, nothing changes.
+
+On a `(pointer: coarse)` device, the doorway marks `<html data-landscape>`
+for such a game, and then:
+
+- **Where the browser can lock** (Chrome on Android, in full screen only),
+  Begin's full screen is followed by `screen.orientation.lock("landscape")`.
+  Leaving full screen calls `unlock()`; the browser drops the lock then
+  anyway.
+- **Where it can't, or it was refused** (iPhone Safari has neither the
+  Fullscreen API nor the lock; the switch was off; an embed without
+  `allowfullscreen`): once Begin has lifted the gate, a portrait viewport
+  (`(orientation: portrait)`) brings up `#turn`, "Turn your phone
+  sideways", and sets `<html data-hold>`. The prompt waits 0.45 s before it
+  fades in, so a lock that is granted turns the phone without a flash.
+- **The hold** is the engine's, not the game's (`web_pacing.rs`): while
+  `data-hold` is on `<html>`, `web_frame_begin` runs no frame, so game
+  time, physics, scripts and particles stop where they are. The mix fades
+  out over 0.12 s (`AudioEngine::set_held`, which keeps the volumes the
+  game asks for meanwhile and returns to them over 0.25 s). When the
+  attribute goes, `GameClock::resync` drops the held gap, so the first
+  frame back steps nothing rather than `MAX_DELTA`. No game script changes.
+- **The gate** says it: Kart's `touch` line starts "held sideways".
+
+Desktop never sees any of it: the mark needs a coarse pointer, whatever the
+window's shape.
+
+| Run (emulated in headed Chrome, touch on) | Seen |
+|---|---|
+| `?game=kart`, Pixel shape (412x915, DPR 2.625), Begin in portrait | one lock call, `["landscape"]` (headless emulation refuses it: "not available on this device"); full screen on; `data-hold` and the prompt on; two captures of the canvas under the prompt 1.5 s apart identical |
+| then turned to landscape | prompt gone, hold off, canvas 1373x618 and moving; `[hold] the page let go of the game` logged |
+| the same with the lock made to succeed, then `exitFullscreen` | one `unlock()` call |
+| `?game=kart`, iPhone shape (393x852, DPR 3), no Fullscreen API, no lock | gate shows the "held sideways" line and Add to Home Screen; Begin brings up the prompt and holds; landscape lets go and the canvas moves; upright again holds again, and lets go again, with no reload |
+| `?game=float`, both shapes | no `data-landscape`, no lock call, no prompt, upright or sideways |
+| `?game=kart`, desktop, a 600x1000 window and a 1400x800 one | no `data-landscape`, no lock, no prompt |
+
+**Not done here.** No real phone was tried: Chrome on Android (does the
+lock turn it, and does the prompt stay away), iPhone Safari and the
+installed home-screen page are still to be checked by hand. The hold was
+seen on Kart's title screen, not mid-race.
 
 ## Frame rate on phones (#140)
 
