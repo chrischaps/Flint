@@ -1,0 +1,83 @@
+# An English oak: a short, stout trunk and a broad crown of crooked limbs.
+#
+# The crown grows from an *L-system*, a rewriting rule applied a few times
+# over: each pass splits every branch tip into several, each turned a little
+# at random. The scaffold limbs it makes are spread up the trunk, biggest
+# lowest, as on a grown tree. (pine_tree.procgen.toml grows the other way,
+# by space colonization.)
+#
+#   flint gen specs/examples/oak_tree.procgen.toml -o oak.glb
+#   flint gen specs/examples/oak_tree.procgen.toml --seed 7 -o oak_7.glb   # a sibling
+#   flint edit specs/examples/oak_tree.procgen.toml                        # live sliders
+#
+# Every key is optional; anything left out takes the default that
+# `flint edit` shows (hover a field for what it does). Units are metres.
+
+generator = "tree_v1"
+
+[meta]
+name = "oak_tree"                        # what a scene's model.asset names
+description = "A broad oak with crooked limbs and dense foliage"
+version = "1.0.0"
+tags = ["tree", "vegetation", "deciduous", "oak", "example"]
+
+[seed]
+mode = "fixed"                           # the same tree, byte for byte, every run
+value = 42
+
+[params]
+# ── Trunk ────────────────────────────────────────────────────────────────
+trunk_height = 4.5
+trunk_radius_base = 0.38
+trunk_radius_top = 0.13                  # the limbs off the tip start this thick
+trunk_segments = 12
+radial_segments = 10
+trunk_curve_noise = 0.1                  # metres of sideways sway
+
+# ── Bark ─────────────────────────────────────────────────────────────────
+bark_color_base = "#4E3524"
+bark_roughness = 0.92
+bark_normal_strength = 1.2               # depth of the furrows in the bark normal map
+
+# ── Branching: the built-in L-system ─────────────────────────────────────
+branch_method = "lsystem"
+lsystem_iterations = 5                   # rewriting passes = branching depth. Each
+                                         # pass multiplies the segments, so 6 is a lot
+branch_start = 0.5                       # lowest limb halfway up the trunk
+crown_radius = 3.8                       # how far the limbs reach from the trunk
+branch_angle_min = 25.0                  # degrees a limb leaves its parent at,
+branch_angle_max = 50.0                  #   picked between these two
+lsystem_angle_variation = 14.0           # extra randomness on every turn: the
+                                         # oak's crookedness
+branch_length_falloff = 0.66             # each level is 66% as long as its parent
+branch_radius_falloff = 0.55             # and 55% as thick
+
+# ── Leaves ───────────────────────────────────────────────────────────────
+leaf_style = "billboard"                 # quads facing along their branch
+leaf_density = 0.9                       # 90% of branch tips get a cluster
+leaves_per_tip = 8
+leaf_spread_radius = 0.55                # a cluster's leaves scatter this far
+leaf_along_branch_density = 0.8          # clusters along the twigs, not only the tips
+leaf_along_branch_min_depth = 2          # but only from the second level of limbs out
+leaf_size = 0.32
+leaf_size_variation = 0.25
+leaf_color_base = "#3F7A1E"
+leaf_shades = 5                          # each its own material, so the crown is mottled
+leaf_color_variation = 0.1
+leaf_season = 0.06                       # 0 = summer, 0.4 yellow, 0.7 orange, 1 red:
+                                         # high summer, the first leaves turning
+leaf_season_variation = 0.1              # shades stray from it, so it turns unevenly
+
+# ── Levels of detail ─────────────────────────────────────────────────────
+# Each [[lod]] caps one level's triangles; the GLB holds the whole chain.
+[[lod]]
+level = 0
+target_triangles = 9000
+
+[[lod]]
+level = 1
+target_triangles = 2200
+
+[[lod]]
+level = 2
+target_triangles = 500

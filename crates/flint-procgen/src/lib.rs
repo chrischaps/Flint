@@ -49,7 +49,8 @@ pub use types::{
 };
 
 pub use param_ui::{
-    lint_params, parse_param_schema, ParamCondition, ParamFieldSpec, ParamFieldType, ParamIssue,
+    lint_params, param_reference_markdown, parse_param_schema, ParamCondition, ParamFieldSpec,
+    ParamFieldType, ParamIssue,
 };
 pub use validate::{
     validate_output, CheckStatus, ValidationCheck, ValidationConstraints, ValidationReport,
@@ -64,3 +65,13 @@ pub use generators::texture::{
     PerlinOrganicPattern, TextureField, TextureMapParams, TextureOp, TilingGridParams,
     TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
 };
+
+// The README's and CONTRIBUTING guide's Rust examples run as doctests, so
+// the docs can't drift from the API they describe.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../CONTRIBUTING.md")]
+pub struct ContributingDoctests;

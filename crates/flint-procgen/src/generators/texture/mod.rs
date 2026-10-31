@@ -137,17 +137,19 @@ impl Generator for TextureGenerator {
         json!({
             "type": "object",
             "properties": {
-                "width": { "type": "integer", "minimum": 1, "default": 512 },
-                "height": { "type": "integer", "minimum": 1, "default": 512 },
+                "width": { "type": "integer", "minimum": 1, "default": 512, "description": "Image width in pixels" },
+                "height": { "type": "integer", "minimum": 1, "default": 512, "description": "Image height in pixels" },
                 "pattern": {
                     "type": "string",
                     "enum": ["voronoi_brick", "perlin_organic", "tiling_grid", "pipeline"],
-                    "default": "voronoi_brick"
+                    "default": "voronoi_brick",
+                    "description": "The base shape: Voronoi stones, layered organic noise, a grid of tiles, or a pipeline of ops"
                 },
                 "output_maps": {
                     "type": "array",
                     "items": { "type": "string", "enum": ["albedo", "normal", "roughness"] },
-                    "default": ["albedo", "normal", "roughness"]
+                    "default": ["albedo", "normal", "roughness"],
+                    "description": "Which PBR maps to write; each becomes <stem>_<map>.png"
                 },
                 "ops": only(&["pipeline"], json!({
                     "type": "array",
@@ -155,34 +157,34 @@ impl Generator for TextureGenerator {
                     "description": "The pipeline's operations, run in order (or as a graph when an op has an `id`); see `op_param_schema` for each type"
                 })),
                 "seamless": derive(json!({ "type": "boolean", "default": true, "description": "Tile without a seam. Pipeline ops choose for themselves" })),
-                "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47" })),
-                "color_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.06 })),
-                "mortar_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E" })),
+                "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47", "description": "Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it" })),
+                "color_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.06, "description": "How far each cell's lightness strays from base_color (saturation moves by half that; hue stays)" })),
+                "mortar_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E", "description": "Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex" })),
                 "mortar_threshold": derive(json!({ "type": "number", "minimum": 0.0, "description": "distance_to_edge below which mortar colour and roughness blend in; default 0.5 (half the groove) for voronoi_brick and tiling_grid, 0.05 (strata lines) for perlin_organic" })),
-                "roughness_base": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.75 })),
-                "roughness_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.05 })),
-                "roughness_mortar": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 })),
-                "normal_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 1.0 })),
+                "roughness_base": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.75, "description": "Roughness of the cells' faces" })),
+                "roughness_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.05, "description": "Per-cell random spread of roughness" })),
+                "roughness_mortar": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Roughness in the grooves" })),
+                "normal_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 1.0, "description": "Depth of the normal map's relief; 0 is flat" })),
                 "detail_scale": derive(json!({ "type": "number", "minimum": 0.0, "default": 8.0, "description": "Detail lattice cells across the texture width (first octave)" })),
-                "detail_octaves": derive(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Octaves finer than 4 px are dropped" })),
+                "detail_octaves": derive(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Octaves in the detail field, each twice as fine; any finer than 4 px are dropped" })),
                 "detail_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.1, "description": "RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness" })),
-                "cell_count": voronoi(json!({ "type": "integer", "minimum": 1, "default": 12 })),
+                "cell_count": voronoi(json!({ "type": "integer", "minimum": 1, "default": 12, "description": "Voronoi cells (stones) across the whole texture" })),
                 "cell_size": voronoi(json!({ "type": "number", "exclusiveMinimum": 0.0, "description": "Typical stone size in pixels; overrides cell_count" })),
                 "irregularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "1 - regularity; give one or the other" })),
-                "mortar_width": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.02 })),
-                "regularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 })),
-                "height_variation": only(&["voronoi_brick", "tiling_grid"], json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 })),
-                "noise_type": organic(json!({ "type": "string", "enum": ["perlin", "simplex"], "default": "perlin" })),
-                "octaves": organic(json!({ "type": "integer", "minimum": 1, "default": 6 })),
-                "frequency": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 })),
-                "lacunarity": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 2.0 })),
-                "persistence": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.5 })),
-                "height_bands": organic(json!({ "type": "integer", "minimum": 1, "default": 8 })),
-                "columns": grid(json!({ "type": "integer", "minimum": 1, "default": 4 })),
-                "rows": grid(json!({ "type": "integer", "minimum": 1, "default": 4 })),
-                "gap_width": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05 })),
-                "jitter": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0 })),
-                "noise_strength": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03 }))
+                "mortar_width": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.02, "description": "Full width of the groove between stones, as a fraction of the texture width" })),
+                "regularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "description": "0 scatters the stones at random, 1 relaxes them into an even layout" })),
+                "height_variation": only(&["voronoi_brick", "tiling_grid"], json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3, "description": "Per-cell random height, 0 flat to 1 the most; shows in the normal map" })),
+                "noise_type": organic(json!({ "type": "string", "enum": ["perlin", "simplex"], "default": "perlin", "description": "Noise basis: perlin, or simplex (fewer grid artefacts)" })),
+                "octaves": organic(json!({ "type": "integer", "minimum": 1, "default": 6, "description": "Noise octaves layered into the bands; more adds finer detail" })),
+                "frequency": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 4.0, "description": "Noise lattice cells across the texture for the first octave; rounded to a whole number when seamless" })),
+                "lacunarity": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 2.0, "description": "Frequency multiplier from one octave to the next" })),
+                "persistence": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.5, "description": "Amplitude multiplier from one octave to the next; lower is smoother" })),
+                "height_bands": organic(json!({ "type": "integer", "minimum": 1, "default": 8, "description": "Bands the noise height is cut into; each band is a cell with its own shade" })),
+                "columns": grid(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Tiles across" })),
+                "rows": grid(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Tiles down" })),
+                "gap_width": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05, "description": "Grout between tiles, as a fraction of a tile" })),
+                "jitter": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0, "description": "How far each tile strays from the grid, 0 none to 0.5" })),
+                "noise_strength": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03, "description": "Fine surface noise on each tile's height" }))
             },
             "additionalProperties": false
         })
@@ -783,6 +785,7 @@ type = "derive_normal"
         for dir in [
             root.clone(),
             root.join("specs"),
+            root.join("specs/examples"),
             root.join("showcase_game/specs"),
             root.join("crates/flint-procgen-ai/templates"),
         ] {
@@ -799,7 +802,7 @@ type = "derive_normal"
                 checked += 1;
             }
         }
-        assert!(checked >= 28, "found only {checked} specs");
+        assert!(checked >= 32, "found only {checked} specs");
         assert!(problems.is_empty(), "\n{}", problems.join("\n"));
     }
 

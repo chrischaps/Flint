@@ -43,6 +43,13 @@ pub enum CrownVolume {
     Hemisphere { center: Vec3, radius: f32 },
     /// An axis-aligned box from `min` to `max` (hedges, espaliers, root beds).
     Box { min: Vec3, max: Vec3 },
+    /// An upright cone: a disc of `radius` at `base`, narrowing to a point
+    /// `height` above it (conifers).
+    Cone {
+        base: Vec3,
+        radius: f32,
+        height: f32,
+    },
 }
 
 impl CrownVolume {
@@ -54,6 +61,7 @@ impl CrownVolume {
             }
             CrownVolume::Ellipsoid { radii, .. } => radii.x > 0.0 && radii.y > 0.0 && radii.z > 0.0,
             CrownVolume::Box { min, max } => min.x <= max.x && min.y <= max.y && min.z <= max.z,
+            CrownVolume::Cone { radius, height, .. } => radius > 0.0 && height > 0.0,
         };
         if ok {
             Ok(())
@@ -100,6 +108,19 @@ impl CrownVolume {
                 rng.next_range(min.y, max.y),
                 rng.next_range(min.z, max.z),
             ),
+            CrownVolume::Cone {
+                base,
+                radius,
+                height,
+            } => loop {
+                let x = rng.next_range(-radius, radius);
+                let y = rng.next_range(0.0, height);
+                let z = rng.next_range(-radius, radius);
+                let r = radius * (1.0 - y / height);
+                if x * x + z * z <= r * r {
+                    return base + Vec3::new(x, y, z);
+                }
+            },
         }
     }
 }
@@ -1015,6 +1036,37 @@ mod tests {
                 "ellipsoid point at normalized distance {norm} is outside"
             );
         }
+    }
+
+    #[test]
+    fn cone_points_narrow_toward_the_apex() {
+        let base = Vec3::new(0.0, 2.0, 0.0);
+        let (radius, height) = (3.0, 6.0);
+        let volume = CrownVolume::Cone {
+            base,
+            radius,
+            height,
+        };
+        let mut rng = SeededRng::new(7);
+        let (mut low, mut high) = (0, 0);
+        for _ in 0..2000 {
+            let pt = volume.sample(&mut rng);
+            let y = pt.y - base.y;
+            assert!(
+                (-1e-6..=height + 1e-6).contains(&y),
+                "y={y} outside the cone"
+            );
+            let r = (pt.x * pt.x + pt.z * pt.z).sqrt();
+            let allowed = radius * (1.0 - y / height);
+            assert!(r <= allowed + 1e-5, "r={r} exceeds {allowed} at y={y}");
+            if y < height * 0.5 {
+                low += 1;
+            } else {
+                high += 1;
+            }
+        }
+        // The lower half of a cone holds 7/8 of its volume.
+        assert!(low > high * 4, "low {low} vs high {high}");
     }
 
     #[test]
