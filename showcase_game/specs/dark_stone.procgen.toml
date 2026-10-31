@@ -21,7 +21,6 @@ base_color = "#4A4540"
 color_variation = 0.12
 mortar_color = "#2A2520"
 mortar_width = 0.04
-mortar_threshold = 0.07
 cell_count = 18
 regularity = 0.2
 height_variation = 0.4
