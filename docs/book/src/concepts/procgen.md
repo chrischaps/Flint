@@ -50,7 +50,12 @@ target_triangles = 2000
 | `[params]` | | Opaque table; each generator defines and validates its own keys |
 | `[[lod]]` | `level`, `target_triangles` | Optional decimation targets; `level` is the LOD's index, 0 the most detailed |
 
-Every generator publishes a JSON Schema for its `params` table, which is what the previewer uses to build its parameter editor and what `flint gen --dry-run` validates against.
+Every generator publishes a JSON Schema for its `params` table, which is what the previewer uses to build its parameter editor and what `flint gen` checks a spec against before it runs (`flint_procgen::lint_params`). A key the generator would silently ignore is a warning: one that isn't in the schema (usually a typo, so the nearest key is suggested), or one that only applies in another mode. A schema marks those with `"x-when": { "pattern": ["voronoi_brick"] }`; the previewer hides such fields and leaves them out when it saves. `--strict` turns these warnings into an error.
+
+```
+warning: stone_wall.procgen.toml: `mortar_treshold` is not a parameter of this generator (did you mean `mortar_threshold`?)
+warning: stone_wall.procgen.toml: `cell_count` is ignored: it only applies when pattern is "voronoi_brick", and this spec has pattern = "perlin_organic"
+```
 
 ## Generators
 
@@ -76,9 +81,9 @@ Rules sharing a predecessor are picked per occurrence by weight, from the spec's
 
 ### `texture_v1`
 
-Produces an image set, by default albedo, normal and roughness (`output_maps`), at `width` by `height`, optionally `seamless`. Two routes:
+Produces an image set, by default albedo, normal and roughness (`output_maps`), at `width` by `height`. Two routes:
 
-**Patterns.** `pattern` selects a base-shape producer whose per-pixel field (cell ids, heights, edge distances) is turned into PBR maps by shared derivation parameters: `base_color`, `color_variation`, `mortar_color`, `mortar_threshold`, `roughness_base`, `roughness_variation`, `roughness_mortar`, `normal_strength`, `detail_scale`, `detail_strength`.
+**Patterns.** `pattern` (default `voronoi_brick`) selects a base-shape producer whose per-pixel field (cell ids, heights, edge distances) is turned into PBR maps by shared derivation parameters: `base_color`, `color_variation`, `mortar_color`, `mortar_threshold`, `roughness_base`, `roughness_variation`, `roughness_mortar`, `normal_strength`, `detail_scale`, `detail_strength`.
 
 The three maps agree with each other. Each cell gets its own shade of `base_color`: lightness moves by up to `color_variation` and saturation by half that, in sRGB, while the hue stays the same, so a grey-brown wall stays grey-brown. Mortar colour and roughness blend in where `distance_to_edge` falls below `mortar_threshold`. The default threshold fills the bottom half of a Voronoi or grid groove, or draws thin strata lines on organic bands. One detail field serves all three maps: a tiling FBM with `detail_scale` lattice cells across the texture, `detail_octaves` octaves (any finer than 4 px are dropped), scaled to unit RMS. It makes the albedo brighter or darker by about `detail_strength` (0.1 means ±10%), adds relief to the normal map, and makes low spots rougher, so a dent is dark, rough and shaded in the same place. Normals come from a 3×3 Sobel kernel taken per UV unit, so the relief at 1024² matches 512².
 
@@ -88,16 +93,15 @@ The three maps agree with each other. Each cell gets its own shade of `base_colo
 | `perlin_organic` | Layered rock, dirt, bark, natural surfaces | `noise_type` (`perlin`, `simplex`), `frequency`, `octaves`, `lacunarity`, `persistence`, `height_bands` |
 | `tiling_grid` | Manufactured tiles, bricks, panels | `columns`, `rows`, `gap_width`, `jitter`, `height_variation`, `noise_strength` |
 
-With `seamless = true` every pattern tiles: Voronoi distances wrap round the tile, the grid's jittered tiles spill over one edge and return on the other, and organic noise repeats exactly. Seamless Perlin gives each octave a whole number of lattice cells per tile, so a fractional `frequency` is rounded (at least 1); seamless simplex cross-fades the noise with copies of itself shifted one tile across.
+With `seamless = true` (the default) every pattern tiles: Voronoi distances wrap round the tile, the grid's jittered tiles spill over one edge and return on the other, and organic noise repeats exactly. Seamless Perlin gives each octave a whole number of lattice cells per tile, so a fractional `frequency` is rounded (at least 1); seamless simplex cross-fades the noise with copies of itself shifted one tile across.
 
-**Pipeline.** `pattern = "pipeline"` switches to a composable node graph: an ordered `[[params.ops]]` list where each op reads named fields and writes named outputs.
+**Pipeline.** `pattern = "pipeline"` switches to a composable node graph: an ordered `[[params.ops]]` list where each op reads named fields and writes named outputs. The ops replace the derivation, so a pipeline reads only `width`, `height`, `output_maps` and `ops`; colours, roughness and tiling are set on the ops themselves.
 
 ```toml
 [params]
 pattern = "pipeline"
 width = 512
 height = 512
-seamless = true
 
 [[params.ops]]
 type = "voronoi_texture"
@@ -154,7 +158,7 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/lowpoly.to
 | `--batch N`, `--seed-start S` | Sequential-seed variants |
 | `--register` | Store the output in `.flint/assets` and write a `.asset.toml` sidecar recording spec hash, seed and content hash |
 | `--force` | Regenerate even when a registered output with the same spec hash and seed exists |
-| `--validate`, `--strict`, `--style-guide` | Run the output validator (geometry, materials, style constraints); `--strict` turns warnings into exit code 1 |
+| `--validate`, `--strict`, `--style-guide` | Run the output validator (geometry, materials, style constraints); `--strict` turns warnings, including ignored spec keys, into exit code 1 |
 
 Image sets write one PNG per map with the map name suffixed.
 

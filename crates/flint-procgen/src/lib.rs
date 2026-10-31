@@ -48,7 +48,9 @@ pub use types::{
     Vertex,
 };
 
-pub use param_ui::{parse_param_schema, ParamFieldSpec, ParamFieldType};
+pub use param_ui::{
+    lint_params, parse_param_schema, ParamCondition, ParamFieldSpec, ParamFieldType, ParamIssue,
+};
 pub use validate::{
     validate_output, CheckStatus, ValidationCheck, ValidationConstraints, ValidationReport,
 };

@@ -83,9 +83,24 @@ pub fn run(args: GenArgs) -> Result<()> {
     flint_procgen::register_built_in_generators(&mut registry);
 
     // Everything that can be wrong with the request is checked here, before
-    // a (possibly seconds-long) generation runs: the generator must exist and
-    // the output path / --format must be able to hold what it makes.
+    // a (possibly seconds-long) generation runs: the generator must exist,
+    // the spec's params must be ones it reads, and the output path /
+    // --format must be able to hold what it makes.
     let generator = resolve_generator(&registry, &spec, spec_path)?;
+
+    // Keys the generator won't read: a typo, or a knob for another pattern.
+    // Silently ignored params are the worst kind of spec bug, so say so.
+    let issues = flint_procgen::lint_params(&generator.param_schema(), &spec.params);
+    for issue in &issues {
+        eprintln!("warning: {}: {issue}", spec_path.display());
+    }
+    if args.strict && !issues.is_empty() {
+        bail!(
+            "{} spec parameter(s) would be ignored (--strict)",
+            issues.len()
+        );
+    }
+
     let kind = generator.output_kind();
     let format = check_output_format(
         &spec.generator,

@@ -35,6 +35,10 @@ use crate::output::{GeneratorOutput, OutputKind};
 use crate::spec::ProcGenSpec;
 use crate::{ProcGenError, Result, SeededRng};
 
+/// The patterns that build a field and run the map derivation over it
+/// (`"pipeline"` runs its ops instead).
+pub const LEGACY_PATTERNS: [&str; 3] = ["voronoi_brick", "perlin_organic", "tiling_grid"];
+
 // ─── TextureGenerator ───────────────────────────────────────────────────────
 
 /// Procedural texture generator — produces PBR texture map sets (albedo,
@@ -116,7 +120,21 @@ impl Generator for TextureGenerator {
     }
 
     fn param_schema(&self) -> serde_json::Value {
-        serde_json::json!({
+        use serde_json::{json, Value};
+
+        // `x-when` says which patterns read a key (see `param_ui::lint_params`):
+        // the editor hides the rest and `flint gen` warns about them.
+        let only = |patterns: &[&str], mut prop: Value| {
+            prop["x-when"] = json!({ "pattern": patterns });
+            prop
+        };
+        let voronoi = |prop| only(&["voronoi_brick"], prop);
+        let organic = |prop| only(&["perlin_organic"], prop);
+        let grid = |prop| only(&["tiling_grid"], prop);
+        // The fixed patterns run the map derivation; a pipeline's ops replace it.
+        let derive = |prop| only(&LEGACY_PATTERNS, prop);
+
+        json!({
             "type": "object",
             "properties": {
                 "width": { "type": "integer", "minimum": 1, "default": 512 },
@@ -131,37 +149,41 @@ impl Generator for TextureGenerator {
                     "items": { "type": "string", "enum": ["albedo", "normal", "roughness"] },
                     "default": ["albedo", "normal", "roughness"]
                 },
-                "seamless": { "type": "boolean", "default": true },
-                "base_color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47" },
-                "color_variation": { "type": "number", "minimum": 0.0, "default": 0.06 },
-                "mortar_color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E" },
-                "mortar_threshold": { "type": "number", "minimum": 0.0, "description": "distance_to_edge below which mortar colour and roughness blend in; default 0.5 (half the groove) for voronoi_brick and tiling_grid, 0.05 (strata lines) for perlin_organic" },
-                "roughness_base": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.75 },
-                "roughness_variation": { "type": "number", "minimum": 0.0, "default": 0.05 },
-                "roughness_mortar": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
-                "normal_strength": { "type": "number", "minimum": 0.0, "default": 1.0 },
-                "detail_scale": { "type": "number", "minimum": 0.0, "default": 8.0, "description": "Detail lattice cells across the texture width (first octave)" },
-                "detail_octaves": { "type": "integer", "minimum": 1, "default": 4, "description": "Octaves finer than 4 px are dropped" },
-                "detail_strength": { "type": "number", "minimum": 0.0, "default": 0.1, "description": "RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness" },
-                "cell_count": { "type": "integer", "minimum": 1, "default": 12 },
-                "cell_size": { "type": "number", "exclusiveMinimum": 0.0, "description": "Typical stone size in pixels; overrides cell_count" },
-                "irregularity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "1 - regularity; give one or the other" },
-                "mortar_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.02 },
-                "height_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 },
-                "regularity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                "noise_type": { "type": "string", "enum": ["perlin", "simplex"], "default": "perlin" },
-                "octaves": { "type": "integer", "minimum": 1, "default": 6 },
-                "frequency": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 },
-                "lacunarity": { "type": "number", "exclusiveMinimum": 0.0, "default": 2.0 },
-                "persistence": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.5 },
-                "height_bands": { "type": "integer", "minimum": 1, "default": 8 },
-                "columns": { "type": "integer", "minimum": 1, "default": 4 },
-                "rows": { "type": "integer", "minimum": 1, "default": 4 },
-                "gap_width": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05 },
-                "jitter": { "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0 },
-                "noise_strength": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03 }
+                "ops": only(&["pipeline"], json!({
+                    "type": "array",
+                    "items": { "type": "object", "required": ["type"] },
+                    "description": "The pipeline's operations, run in order (or as a graph when an op has an `id`); see `op_param_schema` for each type"
+                })),
+                "seamless": derive(json!({ "type": "boolean", "default": true, "description": "Tile without a seam. Pipeline ops choose for themselves" })),
+                "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47" })),
+                "color_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.06 })),
+                "mortar_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E" })),
+                "mortar_threshold": derive(json!({ "type": "number", "minimum": 0.0, "description": "distance_to_edge below which mortar colour and roughness blend in; default 0.5 (half the groove) for voronoi_brick and tiling_grid, 0.05 (strata lines) for perlin_organic" })),
+                "roughness_base": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.75 })),
+                "roughness_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.05 })),
+                "roughness_mortar": derive(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 })),
+                "normal_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 1.0 })),
+                "detail_scale": derive(json!({ "type": "number", "minimum": 0.0, "default": 8.0, "description": "Detail lattice cells across the texture width (first octave)" })),
+                "detail_octaves": derive(json!({ "type": "integer", "minimum": 1, "default": 4, "description": "Octaves finer than 4 px are dropped" })),
+                "detail_strength": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.1, "description": "RMS brightness change in the albedo (0.1 = 10%); also scales the detail's relief and roughness" })),
+                "cell_count": voronoi(json!({ "type": "integer", "minimum": 1, "default": 12 })),
+                "cell_size": voronoi(json!({ "type": "number", "exclusiveMinimum": 0.0, "description": "Typical stone size in pixels; overrides cell_count" })),
+                "irregularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "1 - regularity; give one or the other" })),
+                "mortar_width": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.02 })),
+                "regularity": voronoi(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 })),
+                "height_variation": only(&["voronoi_brick", "tiling_grid"], json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 })),
+                "noise_type": organic(json!({ "type": "string", "enum": ["perlin", "simplex"], "default": "perlin" })),
+                "octaves": organic(json!({ "type": "integer", "minimum": 1, "default": 6 })),
+                "frequency": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 })),
+                "lacunarity": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 2.0 })),
+                "persistence": organic(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.5 })),
+                "height_bands": organic(json!({ "type": "integer", "minimum": 1, "default": 8 })),
+                "columns": grid(json!({ "type": "integer", "minimum": 1, "default": 4 })),
+                "rows": grid(json!({ "type": "integer", "minimum": 1, "default": 4 })),
+                "gap_width": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.05 })),
+                "jitter": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 0.5, "default": 0.0 })),
+                "noise_strength": grid(json!({ "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.03 }))
             },
-            "required": ["pattern"],
             "additionalProperties": false
         })
     }
@@ -172,11 +194,26 @@ impl Generator for TextureGenerator {
         let pixels = params.width as u64 * params.height as u64;
         let texture_bytes = pixels * 4 * num_maps;
 
+        // Fitted to release builds of the shipped specs (2026-10-31, desktop
+        // CPU): the fixed patterns cost ~150 ns per pixel per map, and a
+        // pipeline ~90 ns per pixel per op, whatever it outputs. Within ±40%
+        // on all 16; the old flat 100 ns/pixel/map was 4x low on pipelines.
+        let ms = if params.pattern == "pipeline" {
+            let ops = spec
+                .params
+                .get("ops")
+                .and_then(|o| o.as_array())
+                .map_or(0, |o| o.len());
+            pixels as f64 * (ops as f64 * 0.000_09 + num_maps as f64 * 0.000_01)
+        } else {
+            pixels as f64 * num_maps as f64 * 0.000_15
+        };
+
         GenerationCost {
             estimated_vertices: 0,
             estimated_triangles: 0,
             estimated_texture_bytes: texture_bytes,
-            estimated_generation_ms: pixels as f64 * num_maps as f64 * 0.0001,
+            estimated_generation_ms: ms,
         }
     }
 }
@@ -426,7 +463,9 @@ mortar_color = "#3A3228"
         assert!(schema["properties"]["cell_count"].is_object());
         assert!(schema["properties"]["noise_type"].is_object());
         assert!(schema["properties"]["columns"].is_object());
-        assert_eq!(schema["required"][0], "pattern");
+        // `pattern` has a default, so it isn't required.
+        assert!(schema.get("required").is_none());
+        assert_eq!(schema["properties"]["pattern"]["default"], "voronoi_brick");
         // Pipeline should be in the enum
         let patterns = &schema["properties"]["pattern"]["enum"];
         assert!(patterns.as_array().unwrap().iter().any(|v| v == "pipeline"));
@@ -497,6 +536,293 @@ base = 0.75
         assert_eq!(cost.estimated_vertices, 0);
         assert_eq!(cost.estimated_triangles, 0);
         assert!(cost.estimated_generation_ms > 0.0);
+    }
+
+    // ── Task 4.3 acceptance: registry, PNGs, routing, a schema that's true ──
+
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn registry() -> crate::GeneratorRegistry {
+        let mut reg = crate::GeneratorRegistry::new();
+        crate::register_built_in_generators(&mut reg);
+        reg
+    }
+
+    fn set(spec: &mut ProcGenSpec, key: &str, value: toml::Value) {
+        spec.params
+            .as_table_mut()
+            .unwrap()
+            .insert(key.into(), value);
+    }
+
+    #[test]
+    fn registry_resolves_and_runs_the_texture_generator() {
+        let reg = registry();
+        let gen = reg.get("texture_v1").expect("texture_v1 is registered");
+        assert_eq!(gen.output_kind(), OutputKind::Image);
+        let out = reg
+            .generate_from_spec(&texture_spec("tiling_grid"))
+            .unwrap();
+        assert_eq!(out.as_image_set().unwrap().len(), 3);
+    }
+
+    /// The ticket's end-to-end path: `specs/stone_wall.procgen.toml` ->
+    /// registry -> PNG files on disk -> decoded back at the spec's size.
+    #[test]
+    fn stone_wall_spec_to_png_files() {
+        let mut spec =
+            ProcGenSpec::from_file(&repo_root().join("specs/stone_wall.procgen.toml")).unwrap();
+        // Smaller than the shipped 512 so the debug test stays quick.
+        set(&mut spec, "width", 96.into());
+        set(&mut spec, "height", 80.into());
+        let images = registry()
+            .generate_from_spec(&spec)
+            .unwrap()
+            .into_image_set()
+            .unwrap();
+        assert_eq!(images.len(), 3);
+
+        let dir = std::env::temp_dir().join(format!("flint_tex_e2e_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for img in &images {
+            let path = dir.join(format!("{:?}.png", img.channel_semantics));
+            img.save_png(&path).unwrap();
+            assert!(std::fs::metadata(&path).unwrap().len() > 0);
+            let decoded = image::open(&path).unwrap();
+            assert_eq!((decoded.width(), decoded.height()), (96, 80));
+            assert_eq!(decoded.to_rgba8().into_raw(), img.pixels, "PNG is lossless");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn same_spec_and_seed_give_identical_png_bytes() {
+        for pattern in ["voronoi_brick", "perlin_organic", "tiling_grid"] {
+            let spec = texture_spec(pattern);
+            let png = |seed| {
+                TextureGenerator
+                    .generate(&spec, &mut SeededRng::new(seed))
+                    .unwrap()
+                    .into_image_set()
+                    .unwrap()
+                    .iter()
+                    .map(|i| i.to_png_bytes().unwrap())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(png(42), png(42), "{pattern}: same seed, different bytes");
+            assert_ne!(png(42), png(43), "{pattern}: the seed changes nothing");
+        }
+    }
+
+    #[test]
+    fn each_pattern_routes_to_its_own_generator() {
+        let albedo = |spec: &ProcGenSpec| {
+            TextureGenerator
+                .generate(spec, &mut SeededRng::new(42))
+                .unwrap()
+                .into_image_set()
+                .unwrap()
+                .remove(0)
+                .pixels
+        };
+        let v = albedo(&texture_spec("voronoi_brick"));
+        let o = albedo(&texture_spec("perlin_organic"));
+        let g = albedo(&texture_spec("tiling_grid"));
+        assert!(v != o && o != g && v != g);
+        // A spec with no pattern runs the schema's default.
+        let mut none = texture_spec("voronoi_brick");
+        none.params.as_table_mut().unwrap().remove("pattern");
+        assert_eq!(albedo(&none), v);
+    }
+
+    /// A value different from `current` (or from the schema default) that
+    /// the parameter's own range still accepts.
+    fn nudge(prop: &serde_json::Value, current: Option<&toml::Value>) -> toml::Value {
+        let max = prop["maximum"].as_f64();
+        match prop["type"].as_str().unwrap() {
+            "boolean" => {
+                let now = current
+                    .and_then(|v| v.as_bool())
+                    .or(prop["default"].as_bool())
+                    .unwrap_or(false);
+                (!now).into()
+            }
+            "integer" => {
+                let now = current
+                    .and_then(|v| v.as_integer())
+                    .or(prop["default"].as_i64())
+                    .unwrap_or(1);
+                let min = prop["minimum"].as_i64().unwrap_or(0);
+                // Down, where allowed: more octaves than the size can hold
+                // are dropped, so "up" may be no change at all.
+                if now > min { now - 1 } else { now + 3 }.into()
+            }
+            "number" => {
+                let unset = if max.is_some() { 0.3 } else { 12.0 };
+                let now = current
+                    .and_then(|v| v.as_float())
+                    .or(prop["default"].as_f64());
+                if now.is_none() {
+                    return unset.into();
+                }
+                let now = now.unwrap();
+                let up = now * 1.5 + 0.1;
+                match max {
+                    Some(m) if up > m => (now * 0.5).into(),
+                    _ => up.into(),
+                }
+            }
+            "string" if prop["enum"].is_array() => {
+                let now = current
+                    .and_then(|v| v.as_str())
+                    .or(prop["default"].as_str())
+                    .unwrap();
+                let other = prop["enum"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|v| v.as_str() != Some(now))
+                    .unwrap();
+                other.as_str().unwrap().into()
+            }
+            "string" => "#20A0C0".into(),
+            t => panic!("no nudge for {t}"),
+        }
+    }
+
+    /// The schema's `x-when` is a promise: a key it says the pattern reads
+    /// changes the output, and a key it says is ignored changes nothing.
+    /// Checked by nudging every key under every pattern.
+    #[test]
+    fn schema_says_exactly_which_keys_each_pattern_reads() {
+        let schema = TextureGenerator.param_schema();
+        let props = schema["properties"].as_object().unwrap();
+        let pipeline = ProcGenSpec::parse(
+            r##"
+generator = "texture_v1"
+[meta]
+name = "nudge_pipeline"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 7
+[params]
+width = 48
+height = 40
+pattern = "pipeline"
+[[params.ops]]
+type = "brick_grid"
+[[params.ops]]
+type = "cell_color"
+[[params.ops]]
+type = "derive_normal"
+"##,
+        )
+        .unwrap();
+
+        for pattern in ["voronoi_brick", "perlin_organic", "tiling_grid", "pipeline"] {
+            let base = if pattern == "pipeline" {
+                pipeline.clone()
+            } else {
+                let mut s = texture_spec(pattern);
+                set(&mut s, "width", 48.into());
+                set(&mut s, "height", 40.into());
+                // Two detail octaves (24 and 12 px) fit at this size, so
+                // dropping one is visible.
+                set(&mut s, "detail_scale", 2.0.into());
+                set(&mut s, "detail_octaves", 2.into());
+                if pattern == "tiling_grid" {
+                    // At 48 px the default 5% gap is under a pixel: no mortar
+                    // pixels, so nothing for mortar_color to paint.
+                    set(&mut s, "gap_width", 0.2.into());
+                }
+                s
+            };
+            let run = |spec: &ProcGenSpec| {
+                TextureGenerator
+                    .generate(spec, &mut SeededRng::new(7))
+                    .unwrap()
+                    .into_image_set()
+                    .unwrap()
+            };
+            let reference = run(&base);
+            for (key, prop) in props {
+                if ["width", "height", "pattern", "output_maps", "ops"].contains(&key.as_str()) {
+                    continue;
+                }
+                let mut spec = base.clone();
+                let value = nudge(prop, spec.params.get(key));
+                set(&mut spec, key, value.clone());
+                let applies = crate::parse_param_schema(&schema)
+                    .iter()
+                    .find(|f| f.name == *key)
+                    .unwrap()
+                    .applies(&schema, spec.params.as_table().unwrap());
+                let changed = run(&spec) != reference;
+                assert_eq!(
+                    changed,
+                    applies,
+                    "{pattern}: {key} = {value} {} the output, but the schema says it {}",
+                    if changed { "changed" } else { "did not change" },
+                    if applies { "applies" } else { "is ignored" }
+                );
+            }
+        }
+    }
+
+    /// Every spec the repo ships, for every generator, uses only keys its
+    /// generator reads.
+    #[test]
+    fn shipped_specs_lint_clean() {
+        let reg = registry();
+        let root = repo_root();
+        let mut checked = 0;
+        let mut problems = Vec::new();
+        for dir in [
+            root.clone(),
+            root.join("specs"),
+            root.join("showcase_game/specs"),
+            root.join("crates/flint-procgen-ai/templates"),
+        ] {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if !path.to_string_lossy().ends_with(".procgen.toml") {
+                    continue;
+                }
+                let spec = ProcGenSpec::from_file(&path).unwrap();
+                let gen = reg.get(&spec.generator).unwrap();
+                for issue in crate::lint_params(&gen.param_schema(), &spec.params) {
+                    problems.push(format!("{}: {issue}", path.display()));
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 28, "found only {checked} specs");
+        assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn estimate_cost_counts_pipeline_ops() {
+        let short = ProcGenSpec::parse(
+            "generator = \"texture_v1\"\n[meta]\nname = \"a\"\nversion = \"1\"\n[seed]\nmode = \"fixed\"\nvalue = 1\n[params]\npattern = \"pipeline\"\n[[params.ops]]\ntype = \"brick_grid\"\n",
+        )
+        .unwrap();
+        let mut long = short.clone();
+        let ops = long.params["ops"].as_array().unwrap().clone();
+        let tripled: Vec<_> = ops.iter().cycle().take(3).cloned().collect();
+        set(&mut long, "ops", tripled.into());
+        let a = TextureGenerator
+            .estimate_cost(&short)
+            .estimated_generation_ms;
+        let b = TextureGenerator
+            .estimate_cost(&long)
+            .estimated_generation_ms;
+        assert!(
+            b > 2.0 * a,
+            "3 ops ({b} ms) should cost well over 1 op ({a} ms)"
+        );
     }
 
     // ── Task 4.1 acceptance: every pattern, the same bar ────────────────────
