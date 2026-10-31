@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Args;
 use flint_asset::{AssetFile, AssetMeta, AssetType, ContentStore};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
-    export_glb, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig, SeedMode,
-    ValidationConstraints,
+    export_glb, Generator, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig,
+    SeedMode, ValidationConstraints,
 };
 
 #[derive(Args)]
@@ -66,8 +66,10 @@ pub struct GenArgs {
 
 fn parse_format(s: &str) -> std::result::Result<String, String> {
     match s {
-        "glb" | "png" => Ok(s.to_string()),
-        _ => Err(format!("unsupported format '{s}'; valid values: glb, png")),
+        "glb" | "png" | "wav" => Ok(s.to_string()),
+        _ => Err(format!(
+            "unsupported format '{s}'; valid values: glb, png, wav"
+        )),
     }
 }
 
@@ -80,15 +82,33 @@ pub fn run(args: GenArgs) -> Result<()> {
     let mut registry = GeneratorRegistry::new();
     flint_procgen::register_built_in_generators(&mut registry);
 
+    // Everything that can be wrong with the request is checked here, before
+    // a (possibly seconds-long) generation runs: the generator must exist and
+    // the output path / --format must be able to hold what it makes.
+    let generator = resolve_generator(&registry, &spec, spec_path)?;
+    let kind = generator.output_kind();
+    let format = check_output_format(
+        &spec.generator,
+        kind,
+        args.output.as_deref(),
+        args.format.as_deref(),
+    )?;
+
+    if let Some(seed_val) = args.seed {
+        spec = spec_with_seed(&spec, seed_val);
+    }
+
     // Dry-run: print cost estimate and return
     if args.dry_run {
-        let generator = registry
-            .get(&spec.generator)
-            .with_context(|| format!("unknown generator '{}'", spec.generator))?;
         let cost = generator.estimate_cost(&spec);
         println!("Spec:       {}", spec.meta.name);
         println!("Generator:  {}", spec.generator);
-        println!("Seed:       {:?}", spec.seed.mode);
+        println!("Seed:       {}", describe_seed(&spec));
+        println!(
+            "Output:     {} ({})",
+            kind_noun(kind),
+            format.to_uppercase()
+        );
         println!();
         println!("Estimated cost:");
         println!(
@@ -127,7 +147,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         for i in 0..batch_count {
             let seed = seed_start + i as u64;
             let batch_spec = spec_with_seed(&spec, seed);
-            let out_path = resolve_output_path_for_seed(&args, &batch_spec, seed)?;
+            let out_path = resolve_output_path_for_seed(&args, &batch_spec, seed, format);
 
             // Check dedup cache
             if args.register && !args.force {
@@ -147,7 +167,7 @@ pub fn run(args: GenArgs) -> Result<()> {
 
             println!("[{}/{}] Generating seed {}...", i + 1, batch_count, seed);
 
-            let output = generate_one(&batch_spec, &registry, &out_path, args.format.as_deref())?;
+            let output = generate_one(&batch_spec, &registry, &out_path)?;
             generated += 1;
 
             // Register in content store
@@ -181,15 +201,7 @@ pub fn run(args: GenArgs) -> Result<()> {
             std::process::exit(1);
         }
     } else {
-        // Single generation
-        if let Some(seed_val) = args.seed {
-            spec.seed = SeedConfig {
-                mode: SeedMode::Fixed,
-                value: Some(seed_val),
-                derive_from: None,
-            };
-        }
-
+        // Single generation (any --seed override was applied above)
         let seed_val = args.seed;
 
         // If output path is explicit, we can do dedup check before generating
@@ -206,7 +218,7 @@ pub fn run(args: GenArgs) -> Result<()> {
                 }
             }
 
-            let output = generate_one(&spec, &registry, &out_path, args.format.as_deref())?;
+            let output = generate_one(&spec, &registry, &out_path)?;
 
             if args.register {
                 if let Some(ref sh) = spec_hash {
@@ -224,7 +236,7 @@ pub fn run(args: GenArgs) -> Result<()> {
             }
         } else {
             // No explicit output — generate, then determine path from output type
-            let (out_path, output) = generate_single_auto_path(&spec, &registry, &args)?;
+            let (out_path, output) = generate_single_auto_path(&spec, &registry, format)?;
 
             if args.register {
                 if let Some(ref sh) = spec_hash {
@@ -270,12 +282,112 @@ fn generate_and_get_output(
     Ok((output, gen_time))
 }
 
+/// Look up the spec's generator, or explain which spec named an unknown one
+/// and what the choices are.
+fn resolve_generator<'a>(
+    registry: &'a GeneratorRegistry,
+    spec: &ProcGenSpec,
+    spec_path: &Path,
+) -> Result<&'a dyn Generator> {
+    registry.get(&spec.generator).ok_or_else(|| {
+        let mut names = registry.generator_names();
+        names.sort_unstable();
+        anyhow!(
+            "{} names generator '{}', which isn't registered\n  known generators: {}",
+            spec_path.display(),
+            spec.generator,
+            names.join(", ")
+        )
+    })
+}
+
+/// File formats `flint gen` recognises by extension. An output path ending in
+/// one of these must match what the generator makes; any other extension is
+/// taken as the caller's choice of name.
+const KNOWN_FORMATS: [&str; 4] = ["glb", "gltf", "png", "wav"];
+
+/// The one format each kind of output is written in.
+fn kind_format(kind: OutputKind) -> &'static str {
+    match kind {
+        OutputKind::Mesh => "glb",
+        OutputKind::Image => "png",
+        OutputKind::Sound => "wav",
+    }
+}
+
+fn kind_noun(kind: OutputKind) -> &'static str {
+    match kind {
+        OutputKind::Mesh => "a mesh",
+        OutputKind::Image => "images",
+        OutputKind::Sound => "a sound",
+    }
+}
+
+/// Check that `--format` and the output path's extension agree with what the
+/// generator produces, and return the format that will be written.
+///
+/// Without this a mesh asked for as `-o tree.png` was written as GLB bytes
+/// under a `.png` name, and `--format` was accepted and ignored.
+fn check_output_format(
+    generator: &str,
+    kind: OutputKind,
+    output: Option<&str>,
+    format: Option<&str>,
+) -> Result<&'static str> {
+    let native = kind_format(kind);
+    if let Some(f) = format {
+        if f != native {
+            bail!(
+                "generator '{generator}' makes {}, written as {}; --format {f} can't hold it",
+                kind_noun(kind),
+                native.to_uppercase()
+            );
+        }
+    }
+    if let Some(out) = output {
+        let path = Path::new(out);
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if let Some(ext) = ext {
+            if KNOWN_FORMATS.contains(&ext.as_str()) && ext != native {
+                bail!(
+                    "output '{out}' asks for .{ext}, but generator '{generator}' makes {}, \
+                     written as {}\n  try: -o {}",
+                    kind_noun(kind),
+                    native.to_uppercase(),
+                    path.with_extension(native).display()
+                );
+            }
+        }
+    }
+    Ok(native)
+}
+
+/// The seed a run will use, as a person would want to read it.
+fn describe_seed(spec: &ProcGenSpec) -> String {
+    match spec.seed.mode {
+        SeedMode::Random => "random (a new seed each run; pass --seed to pin one)".to_string(),
+        SeedMode::Fixed => match spec.resolve_seed() {
+            Ok(s) => format!("{s} (fixed)"),
+            Err(e) => format!("invalid: {e}"),
+        },
+        SeedMode::Derived => match spec.resolve_seed() {
+            Ok(s) => format!(
+                "{s} (derived from '{}')",
+                spec.seed.derive_from.as_deref().unwrap_or("")
+            ),
+            Err(e) => format!("invalid: {e}"),
+        },
+    }
+}
+
 /// Generate a single output from a spec and write it to disk at the given path.
 fn generate_one(
     spec: &ProcGenSpec,
     registry: &GeneratorRegistry,
     out_path: &Path,
-    _format: Option<&str>,
 ) -> Result<GeneratorOutput> {
     let (output, gen_time) = generate_and_get_output(spec, registry)?;
     write_output(&output, out_path, gen_time)?;
@@ -287,16 +399,10 @@ fn generate_one(
 fn generate_single_auto_path(
     spec: &ProcGenSpec,
     registry: &GeneratorRegistry,
-    args: &GenArgs,
+    ext: &str,
 ) -> Result<(PathBuf, GeneratorOutput)> {
     let (output, gen_time) = generate_and_get_output(spec, registry)?;
 
-    let default_ext = match output.kind() {
-        OutputKind::Mesh => "glb",
-        OutputKind::Image => "png",
-        OutputKind::Sound => "wav",
-    };
-    let ext = args.format.as_deref().unwrap_or(default_ext);
     let name = spec
         .meta
         .name
@@ -547,19 +653,24 @@ fn sidecar_path_for(out_path: &Path) -> PathBuf {
 }
 
 /// Resolve output path for batch mode, inserting the seed into the filename.
-fn resolve_output_path_for_seed(args: &GenArgs, spec: &ProcGenSpec, seed: u64) -> Result<PathBuf> {
+fn resolve_output_path_for_seed(
+    args: &GenArgs,
+    spec: &ProcGenSpec,
+    seed: u64,
+    ext: &str,
+) -> PathBuf {
     if let Some(ref out) = args.output {
-        return Ok(resolve_batch_output_path(Path::new(out), seed));
+        return resolve_batch_output_path(Path::new(out), seed);
     }
 
-    // Derive from format or spec defaults
-    let ext = args.format.as_deref().unwrap_or("glb");
+    // Named after the spec, in the generator's own format (a texture batch
+    // used to default to `.glb`).
     let name = spec
         .meta
         .name
         .replace(' ', "_")
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "");
-    Ok(PathBuf::from(format!("{name}_{seed}.{ext}")))
+    PathBuf::from(format!("{name}_{seed}.{ext}"))
 }
 
 /// Insert a seed into a file path: `tree.glb` → `tree_42.glb`.
@@ -681,6 +792,52 @@ fn format_count(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_follows_the_generator_when_unspecified() {
+        assert_eq!(
+            check_output_format("t", OutputKind::Mesh, None, None).unwrap(),
+            "glb"
+        );
+        assert_eq!(
+            check_output_format("t", OutputKind::Image, None, None).unwrap(),
+            "png"
+        );
+        assert_eq!(
+            check_output_format("t", OutputKind::Sound, None, None).unwrap(),
+            "wav"
+        );
+    }
+
+    #[test]
+    fn matching_and_unrecognised_extensions_pass() {
+        let ok = |out| check_output_format("t", OutputKind::Mesh, Some(out), None);
+        assert!(ok("tree.glb").is_ok());
+        assert!(ok("TREE.GLB").is_ok());
+        assert!(ok("out/tree_{seed}.glb").is_ok());
+        assert!(ok("tree.bin").is_ok());
+        assert!(ok("tree").is_ok());
+        // ImageSet output may be a directory
+        assert!(check_output_format("t", OutputKind::Image, Some("out/"), None).is_ok());
+    }
+
+    #[test]
+    fn a_mismatched_extension_is_refused_with_a_suggestion() {
+        let err = check_output_format("tree_v1", OutputKind::Mesh, Some("out/tree.png"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("tree_v1"), "{err}");
+        assert!(err.contains("a mesh"), "{err}");
+        assert!(err.contains("tree.glb"), "{err}");
+        assert!(check_output_format("t", OutputKind::Mesh, Some("tree.gltf"), None).is_err());
+        assert!(check_output_format("t", OutputKind::Image, Some("wall.glb"), None).is_err());
+    }
+
+    #[test]
+    fn a_mismatched_format_flag_is_refused() {
+        assert!(check_output_format("t", OutputKind::Mesh, None, Some("png")).is_err());
+        assert!(check_output_format("t", OutputKind::Mesh, Some("x.bin"), Some("glb")).is_ok());
+    }
 
     #[test]
     fn test_batch_output_path_default_insertion() {
