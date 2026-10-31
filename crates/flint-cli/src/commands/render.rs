@@ -393,7 +393,14 @@ pub fn run(args: RenderArgs) -> Result<()> {
     );
 
     // Generate procedural geometry from spline + spline_mesh entities
-    spline_gen::load_splines(&args.scene, &mut world, &mut renderer, None, &ctx.device);
+    spline_gen::load_splines(
+        &args.scene,
+        &mut world,
+        &mut renderer,
+        None,
+        &ctx.device,
+        &ctx.queue,
+    );
 
     // Apply debug state
     if let Some(mode_str) = &args.debug_mode {

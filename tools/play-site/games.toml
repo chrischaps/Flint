@@ -45,10 +45,12 @@ line = "Six karts, three laps, one drift-boost at a time. Keys, a pad or a phone
 controls = "sound on · WASD or a pad · Shift or LB to drift · E or X for items"
 touch = "sound on · left thumb steers, up for gas, down to brake · hold DRIFT, tap ITEM"
 repo = "chrischaps/FlintKart"
-# engine-catchup: trike-backports, the engine subtree at Flint main,
-# bundle.toml with the film and poster under web/ (#104), and the engine's
-# touch stick, DRIFT and ITEM in place of its script joystick (#134)
-ref = "b2df1f58094c244373e6b256438c16feebc4649a"
+# master, which now holds engine-catchup (bundle.toml and the film under web/,
+# #104; the touch stick, DRIFT and ITEM, #134) and the glow-up: road
+# surfaces, kart and driver models, feel, sound, effects, UI, AI, camera
+# and Lighthouse Bay (FlintKart#14-#25). Its engine additions are upstream
+# in the same PR as this pin
+ref = "3e7294a25847e9b65d44183d075f8fb4d3abbc57"
 page = "https://chaps.dev/projects/flint-kart/"
 # Paths, not URLs: build.py copies them from the repo beside the bundle.
 video = "web/kart-race.mp4"

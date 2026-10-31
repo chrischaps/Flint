@@ -532,6 +532,9 @@ pub struct ScriptCallContext {
     pub postprocess_mode_params_override: Option<[f32; 4]>,
     /// Script-driven audio low-pass filter override (cutoff frequency in Hz)
     pub audio_lowpass_cutoff_override: Option<f32>,
+    /// Time scale asked for by `set_time_scale`, applied to the game clock
+    /// from the next frame and held until changed or a scene loads.
+    pub time_scale_request: Option<f64>,
     /// Script-driven cursor capture request. Games without a character
     /// controller (which normally gates capture) use this for mouse look.
     pub cursor_captured_override: Option<bool>,
@@ -637,6 +640,7 @@ impl ScriptCallContext {
             postprocess_render_mode_override: None,
             postprocess_mode_params_override: None,
             audio_lowpass_cutoff_override: None,
+            time_scale_request: None,
             cursor_captured_override: None,
             touch_controls_override: None,
             cursor_captured: false,
