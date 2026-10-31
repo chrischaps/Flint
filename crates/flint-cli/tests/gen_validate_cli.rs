@@ -201,6 +201,6 @@ fn textures_are_checked_against_the_style() {
     let t = text(&o);
     assert!(t.contains("color texture dimensions: 64x64"), "{t}");
     assert!(t.contains("color palette: "), "{t}");
-    assert!(t.contains("roughness roughness range: "), "{t}");
+    assert!(t.contains("roughness style range: "), "{t}");
     assert!(t.contains("Validation: "), "{t}");
 }

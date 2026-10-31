@@ -747,12 +747,12 @@ fn validate_image(
         }
         ChannelSemantics::Roughness => {
             if let Some(range) = constraints.roughness_range {
-                check_texture_range(img, "roughness", range, checks, &label("roughness range"));
+                check_texture_range(img, "roughness", range, checks, &label("style range"));
             }
         }
         ChannelSemantics::Metallic => {
             if let Some(range) = constraints.metallic_range {
-                check_texture_range(img, "metallic", range, checks, &label("metallic range"));
+                check_texture_range(img, "metallic", range, checks, &label("style range"));
             }
         }
         _ => {}
@@ -1560,7 +1560,7 @@ value = 42
                         ..Default::default()
                     },
                 ),
-                "roughness range",
+                "roughness style range",
             )
             .status
         };

@@ -177,7 +177,7 @@ Before anything is generated, `flint gen` checks that the spec's generator is re
 | normals | a normal is zero or not finite | a normal isn't unit length |
 | PBR roughness / metallic | a material factor is outside [0,1] | outside the style's `roughness_range` / `metallic_range` |
 | palette | a style palette entry isn't a hex colour | a material's base colour is more than ΔE 20 (CIELAB) from every palette entry, or under half of a colour map's texels are within ΔE 20 |
-| roughness / metallic range (maps) | | under 90% of the map's texels are inside the style's range |
+| style range (roughness / metallic maps) | | under 90% of the map's texels are inside the style's range |
 | degenerate triangles | a triangle's area is at most 1e-6 x its longest edge squared | |
 | texture dimensions | the image isn't the spec's `width` x `height` | not a power of two |
 
