@@ -1154,6 +1154,20 @@ stream from inside the click handler:
   mix time and the longest wait between requests. It also logs the
   `AudioContext`'s state changes and device errors. `AudioEngine::buffer_stats()`
   returns the totals, which the page shows in its corner.
+- **Inside the click, not the frame after** (chrischaps/Float#2). The bundle
+  page's Begin only leaves word for the player, which calls `start()` on
+  its next frame. Desktop Chrome counts any earlier gesture and plays a
+  context made then; iOS and iPadOS WebKit (every iPad browser, Chrome
+  too) start one only inside the gesture's own handler, so an iPad stayed
+  silent. `web_page::begin` now calls `flint_audio::worklet::unlock()` from
+  the click: it opens the context, resumes it, starts a one-frame silent
+  buffer and sets `navigator.audioSession.type = "playback"` (so the
+  ringer switch doesn't mute it); the worklet takes that context. Every
+  context Flint plays through is also resumed at the next `touchend`,
+  `pointerup`, `click` or `keydown`: cpal's main-thread context, which
+  can't be opened in the click, starts at the second tap, and a context
+  iOS interrupts comes back at a touch. The worklet's ready timer waits
+  for the context to run.
 
 cpal's WebAudio host renders on the **main thread**: each buffer's
 `onended` mixes the next one, with two in flight. So a frame that holds the
