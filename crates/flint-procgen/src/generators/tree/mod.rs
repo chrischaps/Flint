@@ -888,6 +888,8 @@ impl Generator for TreeGenerator {
                 "branch_length_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7 },
                 "branch_radius_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6 },
                 "branch_start": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.6 },
+                "branch_max_segments": { "type": "integer", "minimum": 1, "default": 5000, "description": "Cap on branch segments the growth may emit" },
+                "branch_radial_segments": { "type": "integer", "minimum": 3, "default": 6 },
                 "crown_shape": { "type": "string", "enum": ["sphere", "ellipsoid", "hemisphere", "box"], "default": "sphere" },
                 "crown_radius": { "type": "number", "exclusiveMinimum": 0.0, "default": 3.0 },
                 "crown_height_ratio": { "type": "number", "exclusiveMinimum": 0.0, "default": 1.5 },

@@ -14,7 +14,6 @@ value = 83120
 pattern = "pipeline"
 width = 512
 height = 512
-seamless = true
 output_maps = ["albedo", "normal", "roughness"]
 
 # Tile grid — large square tiles

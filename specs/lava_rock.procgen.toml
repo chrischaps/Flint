@@ -14,7 +14,6 @@ value = 66740
 pattern = "pipeline"
 width = 512
 height = 512
-seamless = true
 output_maps = ["albedo", "normal", "roughness"]
 
 # Voronoi cells for rock chunks — distance_to_edge reveals the cracks
