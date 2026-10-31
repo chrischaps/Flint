@@ -35,7 +35,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ID = re.compile(r"^[a-z0-9_-]+$")
 # What the page shows; repo and ref go in built-from.txt.
-PUBLIC = ("id", "title", "line", "controls", "page", "video", "poster", "film")
+PUBLIC = ("id", "title", "line", "controls", "touch", "orientation", "page", "video", "poster", "film")
+# What `orientation` may say; unset, a phone turns the game freely.
+ORIENTATIONS = ("landscape",)
 
 
 def load_games(path):
@@ -50,6 +52,8 @@ def load_games(path):
             sys.exit(f"{path}: id {g['id']!r} must be lowercase letters, digits, - and _")
         if g["id"] in seen:
             sys.exit(f"{path}: two games are called {g['id']!r}")
+        if g.get("orientation") is not None and g["orientation"] not in ORIENTATIONS:
+            sys.exit(f"{path}: {g['id']}: orientation must be one of {ORIENTATIONS}, not {g['orientation']!r}")
         if not re.fullmatch(r"[0-9a-f]{40}", g["ref"]):
             sys.exit(f"{path}: {g['id']}: ref must be a full commit SHA, not {g['ref']!r}")
         seen.add(g["id"])

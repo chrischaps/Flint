@@ -35,6 +35,13 @@
 //!                   the last 10 s, each phase's CPU time, each pass's GPU
 //!                   time where the adapter has timestamp-query (`cpu`
 //!                   leaves GPU timing off), and a line to copy
+//!   fps=30|60|auto|native  which refreshes are drawn (#140). A rate is
+//!                   drawn as a whole number of refreshes (30 is every
+//!                   other at 60 Hz, every fourth at 120); `auto` draws
+//!                   every refresh while the frames hold it and drops to
+//!                   the rate they do hold when they don't; `native` draws
+//!                   every refresh unpaced. Default: `auto` where the
+//!                   primary pointer is a finger, `native` elsewhere
 //!   loop=poll       run winit's loop flat out (`ControlFlow::Poll`), as
 //!                   before #121, to compare against; the default draws once
 //!                   per `requestAnimationFrame`
@@ -87,6 +94,10 @@ mod web {
         perf: Option<bool>,
         /// `loop=poll`: the old flat-out loop, for comparison (#121).
         poll: bool,
+        /// `touch=always|never`: the on-screen touch controls (#133).
+        touch: flint_runtime::TouchControlsMode,
+        /// `fps=`: which refreshes are drawn (#140).
+        fps: flint_player::FrameRateSetting,
     }
 
     impl WebArgs {
@@ -119,6 +130,18 @@ mod web {
                     _ => Some(true),
                 }),
                 poll: get("loop").as_deref() == Some("poll"),
+                touch: get("touch")
+                    .and_then(|v| flint_runtime::TouchControlsMode::parse(&v))
+                    .unwrap_or_default(),
+                fps: get("fps")
+                    .and_then(|v| flint_player::FrameRateSetting::parse(&v))
+                    .unwrap_or_else(|| {
+                        if flint_player::web_coarse_pointer() {
+                            flint_player::FrameRateSetting::Auto
+                        } else {
+                            flint_player::FrameRateSetting::Native
+                        }
+                    }),
             }
         }
     }
@@ -206,8 +229,10 @@ mod web {
         );
         app.msaa_sample_count = args.msaa;
         app.render_scale = args.render_scale;
+        app.input.touch_controls_mut().set_mode(args.touch);
         app.clock.frame_step = args.frame_step;
         app.hold_at = args.hold_at;
+        app.set_frame_rate(args.fps);
         if let Some(gpu) = args.perf {
             app.enable_perf(gpu);
         }

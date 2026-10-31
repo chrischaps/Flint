@@ -772,6 +772,9 @@ impl PlayerApp {
         // they're polled.
         self.gate_gamepads();
 
+        // The touch controls' layout follows the window and page (#133).
+        self.sync_touch_controls();
+
         // Music session drain + guide/timeline panel feed (F3, ADR 0018).
         self.tick_music_session();
 
@@ -848,6 +851,12 @@ impl PlayerApp {
         self.perf_mark(Phase::Scripts);
         if let Some(perf) = &mut self.perf {
             perf.record_scripts(self.script.update_times());
+        }
+
+        // set_time_scale: this frame's physics already has its accumulator,
+        // so the new scale starts with the next tick
+        if let Some(scale) = self.script.take_time_scale_request() {
+            self.clock.time_scale = scale;
         }
 
         // Fixed-timestep physics + FPS camera/listener follow, against the
@@ -943,6 +952,11 @@ impl PlayerApp {
         // Apply audio low-pass filter override from scripts
         if let Some(cutoff) = self.script.take_audio_overrides() {
             self.audio.set_filter_cutoff(cutoff);
+        }
+
+        // A menu put the touch controls away, or play brought them back.
+        if let Some(enabled) = self.script.take_touch_controls_override() {
+            self.input.touch_controls_mut().set_enabled(enabled);
         }
 
         // Apply cursor capture request from scripts (skipped while a debug
@@ -1514,6 +1528,9 @@ impl PlayerApp {
         });
         let mut laid_text = Vec::new();
 
+        let touch_widgets = self.input.touch_controls().widgets();
+        let touch_opacity = self.input.touch_controls().opacity();
+
         let show_stats = self.show_stats;
         let stats_data = if show_stats {
             self.scene_renderer.as_ref().map(|r| {
@@ -1563,6 +1580,9 @@ impl PlayerApp {
             for ext in extensions.iter_mut() {
                 ext.ui(ctx);
             }
+
+            // On-screen touch controls (#133), over the game's UI.
+            super::touch_overlay::paint(ctx, &touch_widgets, touch_opacity);
 
             #[cfg(feature = "debug-hud")]
             let debug_width =

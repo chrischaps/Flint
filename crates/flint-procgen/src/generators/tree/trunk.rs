@@ -25,6 +25,9 @@ pub struct TrunkOutput {
     pub tip_position: Vec3,
     /// Forward direction at the trunk tip.
     pub tip_direction: Vec3,
+    /// The trunk's centreline from root to tip, the rings' centres (for
+    /// attaching branches along it).
+    pub spine: Vec<Vec3>,
 }
 
 /// Generate a trunk mesh from the given parameters and RNG.
@@ -36,32 +39,7 @@ pub struct TrunkOutput {
 /// 4. Generates a procedural bark normal map
 /// 5. Sets up the bark material
 pub fn generate_trunk(params: &TrunkParams, rng: &mut SeededRng) -> Result<TrunkOutput> {
-    // --- Spine generation ---
-    let mut spine_rng = rng.fork("trunk_spine");
-    let noise_x = PerlinNoise::new(spine_rng.fork("noise_x").seed());
-    let noise_z = PerlinNoise::new(spine_rng.fork("noise_z").seed());
-
-    let num_points = params.segments + 1;
-    let freq = 1.0; // frequency for spine noise sampling
-    let mut positions = Vec::with_capacity(num_points as usize);
-
-    for i in 0..num_points {
-        let t = i as f32 / params.segments as f32;
-        let y = t * params.height;
-
-        let x = if params.curve_noise > 0.0 {
-            noise_x.sample_2d(y as f64 * freq, 0.0) as f32 * params.curve_noise
-        } else {
-            0.0
-        };
-        let z = if params.curve_noise > 0.0 {
-            noise_z.sample_2d(y as f64 * freq, 0.0) as f32 * params.curve_noise
-        } else {
-            0.0
-        };
-
-        positions.push(Vec3::new(x, y, z));
-    }
+    let positions = trunk_spine(params, rng);
 
     // Record tip info before extrusion
     let tip_position = *positions.last().unwrap();
@@ -79,25 +57,21 @@ pub fn generate_trunk(params: &TrunkParams, rng: &mut SeededRng) -> Result<Trunk
     };
 
     // --- Mesh extrusion ---
+    // The bark map wraps once around the base and tiles up the trunk with
+    // square texels, rather than stretching one tile over the whole height.
     let spine = build_spine_from_positions(&positions, params.radius_base, params.radius_top);
+    let spine_length: f32 = positions.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    let circumference = std::f32::consts::TAU * params.radius_base;
     let mut mesh = extrude_along_curve(&ExtrudeParams {
         spine,
         radial_segments: params.radial_segments,
         caps: true,
-        uv_length_scale: 1.0,
+        uv_length_scale: (spine_length / circumference).max(1.0),
     })?;
 
     // Recompute normals and tangents for correct lighting
     compute_normals(&mut mesh.vertices, &mesh.indices);
     compute_tangents(&mut mesh.vertices, &mesh.indices);
-
-    // --- Material ---
-    mesh.materials = vec![MaterialData {
-        name: "bark".into(),
-        base_color: params.bark_color,
-        metallic: 0.0,
-        roughness: params.bark_roughness,
-    }];
 
     // --- Bark normal map ---
     let mut bark_rng = rng.fork("bark");
@@ -107,12 +81,113 @@ pub fn generate_trunk(params: &TrunkParams, rng: &mut SeededRng) -> Result<Trunk
         params.bark_normal_strength,
     );
 
+    // --- Material ---
+    mesh.materials = vec![MaterialData {
+        name: "bark".into(),
+        base_color: params.bark_color,
+        metallic: 0.0,
+        roughness: params.bark_roughness,
+        normal_map: Some(normal_map.clone()),
+    }];
+
     Ok(TrunkOutput {
         mesh,
         normal_map,
         tip_position,
         tip_direction,
+        spine: positions,
     })
+}
+
+/// Wavelength of the trunk's main sway, as a fraction of its height.
+const SWAY_WAVELENGTH: f32 = 0.6;
+
+/// Fraction of the height over which the root eases from vertical into the
+/// sway, so the trunk leaves the ground straight up.
+const ROOT_EASE: f32 = 0.15;
+
+/// Generate the trunk's spine: `segments + 1` points from the origin up to
+/// about `height`, swayed sideways by two octaves of Perlin noise.
+///
+/// The noise is read along a line between lattice rows. Read along a row
+/// (`y = 0`), Perlin is zero at every whole unit, which pinned the old spine
+/// back to the axis once a metre and always at the tip.
+///
+/// If the sway bends the spine more sharply than the tube's radius allows,
+/// it is scaled down until every joint fits, so the extruded rings never
+/// cross each other.
+pub(super) fn trunk_spine(params: &TrunkParams, rng: &mut SeededRng) -> Vec<Vec3> {
+    let mut spine_rng = rng.fork("trunk_spine");
+    let noise_x = PerlinNoise::new(spine_rng.fork("noise_x").seed());
+    let noise_z = PerlinNoise::new(spine_rng.fork("noise_z").seed());
+
+    let freq = 1.0 / (SWAY_WAVELENGTH * params.height) as f64;
+    let sway = |noise: &PerlinNoise, y: f32| -> f32 {
+        let y = y as f64 * freq;
+        let n = noise.sample_2d(y, 0.5) + 0.35 * noise.sample_2d(y * 2.0 + 17.3, 3.5);
+        (n / 1.35) as f32
+    };
+
+    let n = params.segments as usize;
+    let offsets: Vec<(f32, f32)> = (0..=n)
+        .map(|i| {
+            let t = i as f32 / n as f32;
+            let y = t * params.height;
+            let ease = smoothstep(t / ROOT_EASE);
+            (
+                (sway(&noise_x, y) - sway(&noise_x, 0.0)) * ease,
+                (sway(&noise_z, y) - sway(&noise_z, 0.0)) * ease,
+            )
+        })
+        .collect();
+
+    let build = |amplitude: f32| -> Vec<Vec3> {
+        offsets
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, z))| {
+                let y = i as f32 / n as f32 * params.height;
+                Vec3::new(x * amplitude, y, z * amplitude)
+            })
+            .collect()
+    };
+
+    let mut amplitude = params.curve_noise;
+    let mut positions = build(amplitude);
+    while amplitude > 1e-4 && !bends_fit(&positions, params) {
+        amplitude *= 0.8;
+        positions = build(amplitude);
+    }
+    if !bends_fit(&positions, params) {
+        positions = build(0.0);
+    }
+    positions
+}
+
+/// Whether every joint of the spine turns gently enough for the tube around
+/// it: the inside of a bend through angle θ needs `r·tan(θ/2)` of each
+/// neighbouring segment, so adjacent rings cross once that exceeds half of
+/// the shorter one.
+pub(super) fn bends_fit(positions: &[Vec3], params: &TrunkParams) -> bool {
+    let n = positions.len().saturating_sub(1).max(1) as f32;
+    positions.windows(3).enumerate().all(|(i, w)| {
+        let a = w[1] - w[0];
+        let b = w[2] - w[1];
+        let (la, lb) = (a.length(), b.length());
+        if la < 1e-6 || lb < 1e-6 {
+            return false;
+        }
+        let cos = (a.dot(&b) / (la * lb)).clamp(-1.0, 1.0);
+        let half = cos.acos() * 0.5;
+        let t = (i + 1) as f32 / n;
+        let radius = params.radius_base + (params.radius_top - params.radius_base) * t;
+        radius * half.tan() < 0.5 * la.min(lb)
+    })
+}
+
+fn smoothstep(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
 }
 
 #[cfg(test)]
@@ -338,5 +413,144 @@ mod tests {
                 "vertex {i} normal length = {len:.4}, expected ~1.0"
             );
         }
+    }
+
+    fn horizontal(p: Vec3) -> f32 {
+        (p.x * p.x + p.z * p.z).sqrt()
+    }
+
+    /// The sway reaches most of `curve_noise` somewhere on every seed, and the
+    /// tip is not pulled back to the axis (as reading Perlin along a lattice
+    /// row used to do at every whole metre).
+    #[test]
+    fn curve_noise_is_visible_along_the_whole_spine() {
+        let params = TrunkParams {
+            height: 8.0,
+            segments: 16,
+            curve_noise: 0.4,
+            ..default_params()
+        };
+        let mut tips_off_axis = 0;
+        for seed in 0..32 {
+            let spine = trunk_spine(&params, &mut SeededRng::new(seed));
+            let widest = spine.iter().map(|&p| horizontal(p)).fold(0.0, f32::max);
+            assert!(
+                widest > 0.1 * params.curve_noise,
+                "seed {seed}: spine strays only {widest:.3} m"
+            );
+            let on_axis = spine[1..].iter().filter(|&&p| horizontal(p) < 1e-4).count();
+            assert_eq!(
+                on_axis, 0,
+                "seed {seed}: {on_axis} spine points on the axis"
+            );
+            if horizontal(*spine.last().unwrap()) > 0.05 {
+                tips_off_axis += 1;
+            }
+        }
+        assert!(
+            tips_off_axis > 24,
+            "only {tips_off_axis}/32 tips leave the axis"
+        );
+    }
+
+    /// The trunk is rooted at the origin and leaves the ground vertically.
+    #[test]
+    fn spine_is_rooted_at_the_origin() {
+        let params = TrunkParams {
+            curve_noise: 0.5,
+            segments: 20,
+            ..default_params()
+        };
+        for seed in 0..16 {
+            let spine = trunk_spine(&params, &mut SeededRng::new(seed));
+            assert_eq!(spine[0], Vec3::new(0.0, 0.0, 0.0));
+            let first = spine[1] - spine[0];
+            assert!(
+                horizontal(first) < 0.1 * first.y,
+                "seed {seed}: the root leans {:?}",
+                first
+            );
+            assert!((spine.last().unwrap().y - params.height).abs() < 1e-4);
+        }
+    }
+
+    /// However large `curve_noise` gets, no joint bends tighter than the
+    /// tube's radius, so neighbouring rings never cross.
+    #[test]
+    fn heavy_curve_noise_never_self_intersects() {
+        for (curve_noise, segments) in [(0.5, 10), (2.0, 12), (10.0, 24), (50.0, 40)] {
+            let params = TrunkParams {
+                curve_noise,
+                segments,
+                radius_base: 0.6,
+                ..default_params()
+            };
+            for seed in 0..32 {
+                let spine = trunk_spine(&params, &mut SeededRng::new(seed));
+                assert!(
+                    bends_fit(&spine, &params),
+                    "curve_noise {curve_noise}, seed {seed}: a joint bends too sharply"
+                );
+                let out = generate_trunk(&params, &mut SeededRng::new(seed)).unwrap();
+                assert!(out.mesh.validate().is_ok());
+            }
+        }
+    }
+
+    /// The taper runs from `radius_base` at the bottom ring to `radius_top`
+    /// at the top: each ring's distance from its spine point matches.
+    #[test]
+    fn radius_tapers_from_base_to_top() {
+        let params = TrunkParams {
+            curve_noise: 0.0,
+            radius_base: 0.5,
+            radius_top: 0.1,
+            ..default_params()
+        };
+        let out = generate_trunk(&params, &mut SeededRng::new(3)).unwrap();
+        let ring_radius = |y: f32| {
+            out.mesh
+                .vertices
+                .iter()
+                .filter(|v| (v.position[1] - y).abs() < 1e-4)
+                .map(|v| horizontal(Vec3::from_array(v.position)))
+                .fold(0.0, f32::max)
+        };
+        assert!((ring_radius(0.0) - 0.5).abs() < 1e-3);
+        assert!((ring_radius(params.height) - 0.1).abs() < 1e-3);
+        assert!((ring_radius(params.height * 0.5) - 0.3).abs() < 1e-3);
+    }
+
+    /// Texels are square on the trunk's surface: the bark map wraps once
+    /// around the base and repeats up the height instead of stretching.
+    #[test]
+    fn bark_uvs_repeat_up_the_trunk() {
+        let params = TrunkParams {
+            height: 6.0,
+            radius_base: 0.3,
+            curve_noise: 0.0,
+            ..default_params()
+        };
+        let out = generate_trunk(&params, &mut SeededRng::new(1)).unwrap();
+        let top_v = out
+            .mesh
+            .vertices
+            .iter()
+            .map(|v| v.uv[1])
+            .fold(0.0, f32::max);
+        let expected = 6.0 / (std::f32::consts::TAU * 0.3);
+        assert!(
+            (top_v - expected).abs() < 1e-3,
+            "top v = {top_v}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn bark_material_carries_the_normal_map() {
+        let out = generate_trunk(&default_params(), &mut SeededRng::new(5)).unwrap();
+        assert_eq!(
+            out.mesh.materials[0].normal_map.as_ref(),
+            Some(&out.normal_map)
+        );
     }
 }

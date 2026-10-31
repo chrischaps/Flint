@@ -160,6 +160,7 @@ mod web {
                     },
                 )]
                 .into(),
+                touch_controls: None,
             };
             input.load_bindings(game).expect("pause_day config");
 
@@ -171,6 +172,7 @@ mod web {
                 version: 1,
                 game_id: GAME_ID.into(),
                 actions: Default::default(),
+                touch_controls: None,
             };
             if let Some(path) = &user_path {
                 match user_files::read(path).map(|t| t.map(|t| InputConfig::from_toml_str(&t))) {
@@ -771,17 +773,24 @@ mod sound {
         // The corner readout: how steadily the stream has been fed.
         let s = sound;
         let tick = Closure::<dyn FnMut()>::new(move || {
-            let Some(stats) = s.borrow().engine.buffer_stats() else {
+            let Ok(mut sound) = s.try_borrow_mut() else {
+                return;
+            };
+            // Notices the worklet running, or failing over (#136).
+            sound.engine.poll();
+            let Some(stats) = sound.engine.buffer_stats() else {
                 return;
             };
             let secs = (stats.buffers as f64 * stats.buffer_ms / 1000.0) as u64;
             set_text(
                 "meter",
                 &format!(
-                    "WebAudio · {:.0} ms buffers · {} late of {} · {}:{:02}",
+                    "{} · {:.0} ms buffers · {} late of {} · mix {:.2} ms · {}:{:02}",
+                    sound.engine.mixer_name(),
                     stats.buffer_ms,
                     stats.late,
                     stats.buffers,
+                    stats.mix_mean_ms,
                     secs / 60,
                     secs % 60
                 ),

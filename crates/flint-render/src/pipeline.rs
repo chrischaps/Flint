@@ -531,6 +531,9 @@ impl RenderPipeline {
             mipmap_filter: wgpu::FilterMode::Linear,
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
+            // Ground seen edge-on (roads, floors) keeps its detail; needs
+            // all three filters linear, as they are
+            anisotropy_clamp: 8,
             ..Default::default()
         });
 

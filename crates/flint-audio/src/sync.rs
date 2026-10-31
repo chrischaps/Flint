@@ -4,28 +4,26 @@
 //! creates Kira tracks, and updates positions each frame.
 //! Also propagates per-frame pitch/volume changes from ECS to Kira sound handles.
 
-use crate::engine::{amplitude_to_db, AudioEngine, Bus};
+use crate::engine::{amplitude_to_db, AudioEngine, Bus, SoundHandle, SpatialTrack};
 use flint_core::components as comp;
 use flint_core::toml_util::{toml_f32, toml_f64};
 use flint_core::{EntityId, Vec3};
 use flint_ecs::FlintWorld;
-use kira::sound::static_sound::StaticSoundHandle;
-use kira::track::SpatialTrackHandle;
 use kira::Tween;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 /// Per-entity audio state: spatial track handle + active sound handles + cached parameters
 struct SpatialEntry {
-    track: SpatialTrackHandle,
-    handles: Vec<StaticSoundHandle>,
+    track: SpatialTrack,
+    handles: Vec<SoundHandle>,
     last_volume: f64,
     last_pitch: f64,
 }
 
 /// Non-spatial entry: sound handles + cached parameters
 struct NonSpatialEntry {
-    handles: Vec<StaticSoundHandle>,
+    handles: Vec<SoundHandle>,
     last_volume: f64,
     last_pitch: f64,
 }
@@ -71,12 +69,12 @@ impl AudioSync {
         };
         for entry in self.spatial_map.values_mut() {
             for handle in &mut entry.handles {
-                let _ = handle.stop(stop_tween);
+                handle.stop(stop_tween);
             }
         }
         for entry in self.non_spatial_map.values_mut() {
             for handle in &mut entry.handles {
-                let _ = handle.stop(stop_tween);
+                handle.stop(stop_tween);
             }
         }
         self.spatial_map.clear();

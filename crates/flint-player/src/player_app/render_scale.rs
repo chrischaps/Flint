@@ -189,7 +189,8 @@ impl super::PlayerApp {
     pub(super) fn update_render_scale(&mut self) {
         let setting = self.render_scale;
         if setting.dynamic && self.clock.frame_step.is_none() {
-            let refresh = self.clock.vsync_period();
+            // A paced page's budget is its period (#140), not the refresh.
+            let refresh = self.paced_period().or(self.clock.vsync_period());
             let dt = self.clock.raw_delta_time;
             if self.dynamic_scale.frame(dt, refresh) {
                 tracing::info!(

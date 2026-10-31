@@ -15,7 +15,7 @@ use gltf::json::mesh::{Mode, Primitive, Semantic};
 use gltf::json::validation::{Checked, USize64};
 
 use crate::skinning::SkinnedMeshData;
-use crate::types::{MaterialData, MeshData};
+use crate::types::{ImageData, MaterialData, MeshData};
 use crate::Result;
 
 /// Bytes per interleaved vertex: position(12) + normal(12) + tangent(16) + uv(8) = 48.
@@ -299,7 +299,7 @@ fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) ->
     // ─── Primitives & materials ─────────────────────────────────────────
     let primitives = if mesh.submeshes.is_empty() {
         let mat_data = mesh.materials.first().cloned().unwrap_or_default();
-        let mat_idx = root.push(material_from_data(&mat_data));
+        let mat_idx = root.push(material_from_data(&mat_data, &[]));
         vec![Primitive {
             attributes,
             extensions: None,
@@ -318,7 +318,7 @@ fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) ->
                     .get(sub.material_index)
                     .cloned()
                     .unwrap_or_default();
-                let mat_idx = root.push(material_from_data(&mat_data));
+                let mat_idx = root.push(material_from_data(&mat_data, &[]));
 
                 let sub_idx_acc = root.push(json::Accessor {
                     buffer_view: Some(idx_view_idx),
@@ -445,9 +445,79 @@ fn meshes_to_glb_inner(meshes: &[&MeshData]) -> Result<Vec<u8>> {
         })?;
     }
 
-    let bin_data = build_buffer(meshes);
-    let root = build_gltf_root(meshes, bin_data.len());
+    let mut bin_data = build_buffer(meshes);
+    let textures = embed_normal_maps(meshes, &mut bin_data)?;
+    let mut root = build_gltf_root(meshes, bin_data.len(), &textures);
+    // Images go after the meshes' views; materials already refer to their
+    // textures by these indices.
+    let buffer = json::Index::new(0);
+    for tex in &textures {
+        let view = root.push(json::buffer::View {
+            buffer,
+            byte_length: USize64::from(tex.byte_length),
+            byte_offset: Some(USize64::from(tex.byte_offset)),
+            byte_stride: None,
+            name: None,
+            target: None,
+            extensions: None,
+            extras: Default::default(),
+        });
+        let image = root.push(json::Image {
+            buffer_view: Some(view),
+            mime_type: Some(json::image::MimeType("image/png".into())),
+            name: Some(tex.name.clone()),
+            uri: None,
+            extensions: None,
+            extras: Default::default(),
+        });
+        root.push(json::Texture {
+            name: Some(tex.name.clone()),
+            sampler: None,
+            source: image,
+            extensions: None,
+            extras: Default::default(),
+        });
+    }
     write_glb(&root, &bin_data)
+}
+
+/// A material's normal map, PNG-encoded into the binary buffer.
+struct EmbeddedTexture<'a> {
+    image: &'a ImageData,
+    name: String,
+    byte_offset: usize,
+    byte_length: usize,
+}
+
+/// Append each distinct normal map among the meshes' materials to `buf` as a
+/// PNG. LODs clone their materials, so equal maps are stored once; the i-th
+/// entry becomes glTF texture i.
+fn embed_normal_maps<'a>(
+    meshes: &[&'a MeshData],
+    buf: &mut Vec<u8>,
+) -> Result<Vec<EmbeddedTexture<'a>>> {
+    let mut textures: Vec<EmbeddedTexture<'a>> = Vec::new();
+    for mat in meshes.iter().flat_map(|m| &m.materials) {
+        let Some(image) = mat.normal_map.as_ref() else {
+            continue;
+        };
+        if textures.iter().any(|t| t.image == image) {
+            continue;
+        }
+        let png = image.to_png_bytes()?;
+        let byte_offset = buf.len();
+        buf.extend_from_slice(&png);
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        textures.push(EmbeddedTexture {
+            image,
+            name: format!("{}_normal", mat.name),
+            byte_offset,
+            byte_length: png.len(),
+        });
+    }
+    Ok(textures)
 }
 
 /// Pack all mesh vertex + index data into a single binary buffer.
@@ -496,7 +566,11 @@ fn bytemuck_f32_slice(data: &[f32]) -> &[u8] {
 
 /// Build the glTF JSON root with buffer views, accessors, meshes, materials,
 /// nodes, and a single scene.
-fn build_gltf_root(meshes: &[&MeshData], buffer_byte_length: usize) -> json::Root {
+fn build_gltf_root(
+    meshes: &[&MeshData],
+    buffer_byte_length: usize,
+    textures: &[EmbeddedTexture],
+) -> json::Root {
     let mut root = json::Root::default();
     root.asset.generator = Some("Flint Procgen".into());
 
@@ -645,7 +719,7 @@ fn build_gltf_root(meshes: &[&MeshData], buffer_byte_length: usize) -> json::Roo
         let primitives = if mesh.submeshes.is_empty() {
             // Single primitive using full index buffer (legacy path)
             let mat_data = mesh.materials.first().cloned().unwrap_or_default();
-            let mat_idx = root.push(material_from_data(&mat_data));
+            let mat_idx = root.push(material_from_data(&mat_data, textures));
 
             vec![Primitive {
                 attributes: base_attributes,
@@ -666,7 +740,7 @@ fn build_gltf_root(meshes: &[&MeshData], buffer_byte_length: usize) -> json::Roo
                         .get(sub.material_index)
                         .cloned()
                         .unwrap_or_default();
-                    let mat_idx = root.push(material_from_data(&mat_data));
+                    let mat_idx = root.push(material_from_data(&mat_data, textures));
 
                     // Accessor into a sub-range of the shared index buffer view
                     let sub_idx_acc = root.push(json::Accessor {
@@ -733,11 +807,26 @@ fn build_gltf_root(meshes: &[&MeshData], buffer_byte_length: usize) -> json::Roo
     root
 }
 
-/// Convert a [`MaterialData`] into a glTF JSON material.
-fn material_from_data(mat: &MaterialData) -> json::Material {
-    use gltf::json::material::{PbrBaseColorFactor, PbrMetallicRoughness, StrengthFactor};
+/// Convert a [`MaterialData`] into a glTF JSON material, pointing its
+/// `normalTexture` at the embedded copy of its normal map, if any.
+fn material_from_data(mat: &MaterialData, textures: &[EmbeddedTexture]) -> json::Material {
+    use gltf::json::material::{
+        NormalTexture, PbrBaseColorFactor, PbrMetallicRoughness, StrengthFactor,
+    };
+
+    let normal_texture = mat.normal_map.as_ref().and_then(|image| {
+        let i = textures.iter().position(|t| t.image == image)?;
+        Some(NormalTexture {
+            index: json::Index::new(i as u32),
+            scale: 1.0,
+            tex_coord: 0,
+            extensions: None,
+            extras: Default::default(),
+        })
+    });
 
     json::Material {
+        normal_texture,
         name: Some(mat.name.clone()),
         pbr_metallic_roughness: PbrMetallicRoughness {
             base_color_factor: PbrBaseColorFactor(mat.base_color),
@@ -804,6 +893,7 @@ mod tests {
                 base_color: [0.8, 0.2, 0.1, 1.0],
                 metallic: 0.0,
                 roughness: 0.8,
+                normal_map: None,
             }],
             submeshes: vec![],
             bounding_box: BoundingBox {
@@ -855,6 +945,42 @@ mod tests {
         // Check index count
         let idx_acc = &json.accessors[prim.indices.unwrap().value()];
         assert_eq!(idx_acc.count.0, 3); // 3 indices
+    }
+
+    /// A material's normal map is embedded once, as a PNG the gltf crate
+    /// decodes back to the same pixels, and the material's `normalTexture`
+    /// points at it, in every LOD that shares the material.
+    #[test]
+    fn glb_embeds_normal_map_once() {
+        let mut image = ImageData::new(4, 4, crate::types::ChannelSemantics::Normal);
+        for (i, px) in image.pixels.chunks_mut(4).enumerate() {
+            px.copy_from_slice(&[100 + i as u8, 128, 230, 255]);
+        }
+        let mut mesh = triangle_mesh();
+        mesh.materials[0].normal_map = Some(image.clone());
+        let glb_bytes = mesh_lods_to_glb(&[mesh.clone(), mesh]).unwrap();
+
+        let (doc, _buffers, images) = gltf::import_slice(&glb_bytes).unwrap();
+        assert_eq!(doc.images().count(), 1);
+        assert_eq!(doc.textures().count(), 1);
+        assert_eq!(
+            doc.textures().next().unwrap().name(),
+            Some("test_mat_normal")
+        );
+        for mat in doc.materials() {
+            assert_eq!(mat.normal_texture().unwrap().texture().index(), 0);
+        }
+        assert_eq!((images[0].width, images[0].height), (4, 4));
+        assert_eq!(images[0].pixels, image.pixels);
+    }
+
+    #[test]
+    fn glb_no_images_without_normal_maps() {
+        let glb_bytes = mesh_to_glb(&triangle_mesh()).unwrap();
+        let gltf = gltf::Glb::from_slice(&glb_bytes).unwrap();
+        let json: json::Root = json::deserialize::from_slice(&gltf.json).unwrap();
+        assert!(json.images.is_empty());
+        assert!(json.materials[0].normal_texture.is_none());
     }
 
     #[test]
@@ -958,6 +1084,7 @@ mod tests {
                 base_color: [0.5, 0.5, 0.5, 1.0],
                 metallic: 0.0,
                 roughness: 0.5,
+                normal_map: None,
             }],
             submeshes: vec![],
             bounding_box: BoundingBox {

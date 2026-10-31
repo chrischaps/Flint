@@ -2460,6 +2460,22 @@ impl SceneRenderer {
         }
     }
 
+    /// Load a texture from an image file with a full mip chain (see
+    /// [`TextureCache::load_file_mipmapped`](crate::TextureCache::load_file_mipmapped)).
+    pub fn load_texture_file_mipmapped(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        path: &Path,
+    ) -> Result<bool, String> {
+        if let Some(cache) = &mut self.texture_cache {
+            cache.load_file_mipmapped(device, queue, name, path)
+        } else {
+            Err("Texture cache not initialized".to_string())
+        }
+    }
+
     /// Load raw RGBA8 pixel data into the texture cache.
     ///
     /// Returns `Ok(true)` if newly uploaded, `Ok(false)` if already cached.

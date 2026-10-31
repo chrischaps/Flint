@@ -1,0 +1,56 @@
+# On-screen touch controls (#133) for any first-person demo scene. The
+# actions are the built-in keyboard ones; this only adds the controls,
+# which appear once a finger touches and hide when a key or pad is used.
+#
+#   cargo run --bin flint-player -- demo/phase4_runtime.scene.toml --schemas schemas \
+#     --input-config demo/input_touch.toml
+#   (add --touch-controls always to drive them with the mouse on a desktop,
+#    or --input-script demo/input_touch_walk.txt --frame-step 0.0333 for two
+#    scripted thumbs; its pixels assume a 1280x720 window at scale 1.5)
+
+version = 1
+
+[actions.pause]
+bindings = [{ type = "key", code = "KeyP" }]
+
+[touch_controls]
+opacity = 0.9
+
+# Left thumb: a floating stick, anywhere in the lower left.
+[[touch_controls.sticks]]
+anchor = "bottom_left"
+offset = [130, 130]
+radius = 64
+up = "move_forward"
+down = "move_backward"
+left = "move_left"
+right = "move_right"
+
+# Right thumb: jump, with interact and sprint above it.
+[[touch_controls.buttons]]
+action = "jump"
+anchor = "bottom_right"
+offset = [100, 110]
+radius = 42
+
+[[touch_controls.buttons]]
+action = "interact"
+label = "use"
+anchor = "bottom_right"
+offset = [196, 70]
+radius = 32
+
+[[touch_controls.buttons]]
+action = "sprint"
+label = "run"
+anchor = "bottom_right"
+offset = [70, 210]
+radius = 32
+
+# Everything else on the right half turns the view.
+[touch_controls.look]
+sensitivity = 2.0
+
+# Stands in for Escape.
+[touch_controls.menu]
+action = "pause"
