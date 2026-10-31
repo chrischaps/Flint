@@ -49,10 +49,12 @@ repo = "chrischaps/FlintKart"
 # #104; the touch stick, DRIFT and ITEM, #134) and the glow-up: road
 # surfaces, kart and driver models, feel, sound, effects, UI, AI, camera
 # and Lighthouse Bay (FlintKart#14-#25). Its engine additions are upstream
-# in the same PR as this pin
-ref = "3e7294a25847e9b65d44183d075f8fb4d3abbc57"
+# in the same PR as this pin. Pinned one commit past master, on the branch
+# web-poster-flint-158: the poster and film retaken on Lighthouse Bay (#158).
+# Move the pin to master once that branch is merged
+ref = "b80fcc1631c31c73b30bd5b98488629a0a3601a2"
 page = "https://chaps.dev/projects/flint-kart/"
 # Paths, not URLs: build.py copies them from the repo beside the bundle.
 video = "web/kart-race.mp4"
 poster = "web/kart-poster.jpg"
-film = "Meanwhile, the first lap of a race on Oval Plus, filmed in the game."
+film = "Meanwhile, the first lap of a race on Lighthouse Bay, filmed in the game."
