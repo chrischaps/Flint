@@ -815,6 +815,8 @@ pub(super) fn resolve_procgen_assets(
     queue: &wgpu::Queue,
     config: &flint_render::model_loader::ModelLoadConfig,
 ) {
+    let started = web_time::Instant::now();
+    let before = resolver.cache_stats();
     // Collect unresolved asset names to avoid borrow conflicts
     let mut unresolved_models: Vec<String> = Vec::new();
     let mut unresolved_textures: Vec<String> = Vec::new();
@@ -976,6 +978,16 @@ pub(super) fn resolve_procgen_assets(
 
     if !unresolved_models.is_empty() || !unresolved_textures.is_empty() {
         let stats = resolver.cache_stats();
+        // One line a load: how long procgen held the scene up, and where the
+        // assets came from (#181: the disk tier is what makes a relaunch fast).
+        println!(
+            "[procgen] {} asset(s) in {:.0} ms: {} generated, {} from disk, {} from memory",
+            unresolved_models.len() + unresolved_textures.len(),
+            started.elapsed().as_secs_f64() * 1e3,
+            stats.misses - before.misses,
+            stats.disk_hits - before.disk_hits,
+            stats.hits - before.hits,
+        );
         tracing::debug!(
             "Procgen cache: {} entries, {} of {} bytes, {} hits / {} misses, {} evicted",
             stats.entry_count,

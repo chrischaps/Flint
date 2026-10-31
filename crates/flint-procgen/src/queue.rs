@@ -149,7 +149,8 @@ impl ProcGenQueue {
         while !self.pending.is_empty() {
             let req = &self.pending[0];
 
-            // Check cache first (no budget cost)
+            // Check cache first. A memory hit costs nothing; one read from
+            // the disk tier costs a file read and a decode, so it counts.
             if let Some(cached) = cache.get(req.content_hash, &req.seed) {
                 let completed = CompletedAsset {
                     spec_name: req.spec_name.clone(),
@@ -159,6 +160,9 @@ impl ProcGenQueue {
                 completions.push(completed);
                 self.pending.remove(0);
                 self.total_completed += 1;
+                if start.elapsed().as_secs_f64() * 1000.0 >= self.budget_ms {
+                    break;
+                }
                 continue;
             }
 

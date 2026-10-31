@@ -54,6 +54,13 @@ impl Generator for TextureGenerator {
         "texture_v1"
     }
 
+    /// 1: the first texture pipeline. 2: an exact Voronoi search, noise that
+    /// tiles without a mirror (#25). 3: map derivation that keeps stones'
+    /// hue (#26). 4: a schema that tells the truth (#27).
+    fn revision(&self) -> u32 {
+        4
+    }
+
     fn output_kind(&self) -> OutputKind {
         OutputKind::Image
     }
