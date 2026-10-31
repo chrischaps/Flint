@@ -302,8 +302,11 @@ Procedural generation framework:
 ### flint-procgen-ai
 
 AI-assisted procedural generation (tool-time only):
-- `ProcGenAgent` trait --- `interpret_spec()`, `create_spec_from_prompt()`, `refine_spec()`
-- `MockAgent` implementation for testing
+- `ProcGenAgent` trait --- `interpret_spec()`, `create_spec_from_prompt()`, `refine_spec()`; object-safe (`Box<dyn ProcGenAgent>`)
+- `MockAgent` --- local and deterministic (no network, no key): specs start from the generator's `param_schema()` defaults, a small keyword table shapes them ("tall", "autumn", "brick"), and `"tree"` resolves to `tree_v1`
+- `schema` --- `check_params` / `repair_params` hold a spec's params against its generator's schema (unknown params, ranges, enums, hex colours, required keys); `interpret_spec` reports these as suggestions with a repaired `revised_spec`
+- `AgentConfig` --- `Debug` redacts the API key and serialization skips it
+- `cargo run -p flint-procgen-ai --example walkthrough -- out/` writes create/refine specs for `flint gen`
 
 ### flint-terrain
 
