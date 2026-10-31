@@ -14,6 +14,10 @@ pub enum ProcGenAiError {
     /// Configuration issue (missing API key, bad model name, etc.).
     #[error("config error: {0}")]
     ConfigError(String),
+
+    /// An error from the procgen subsystem itself.
+    #[error(transparent)]
+    ProcGen(#[from] flint_procgen::ProcGenError),
 }
 
 pub type Result<T> = std::result::Result<T, ProcGenAiError>;
