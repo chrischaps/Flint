@@ -56,10 +56,13 @@ repo = "chrischaps/FlintKart"
 # surfaces, kart and driver models, feel, sound, effects, UI, AI, camera
 # and Lighthouse Bay (FlintKart#14-#25), then the HUD starburst, title
 # sunburst, sky refresh and countdown numerals (FlintKart#28-#45). Its
-# engine subtree matches Flint main, apart from the chooser's home link (#157)
-ref = "aa75d20c17f9648d0ac9bd1c8bfa7b00144c13a2"
+# engine subtree matches Flint main, apart from the chooser's home link (#157).
+# Pinned on the branch web-poster-flint-158: aa75d20 with the poster and
+# film retaken on Lighthouse Bay from that game (#158). Move the pin to
+# master once that branch is merged
+ref = "52805dc77412494f2655dd4571f069ff0c9f9d20"
 page = "https://chaps.dev/projects/flint-kart/"
 # Paths, not URLs: build.py copies them from the repo beside the bundle.
 video = "web/kart-race.mp4"
 poster = "web/kart-poster.jpg"
-film = "Meanwhile, the first lap of a race on Oval Plus, filmed in the game."
+film = "Meanwhile, the first lap of a race on Lighthouse Bay, filmed in the game."
