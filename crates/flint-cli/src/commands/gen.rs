@@ -171,7 +171,8 @@ pub struct GenArgs {
     pub strict: bool,
 
     /// Style guide TOML path for additional validation constraints
-    #[arg(long)]
+    /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
+    #[arg(long, requires = "validate")]
     pub style_guide: Option<String>,
 }
 
@@ -792,14 +793,9 @@ fn build_validation_constraints(
     spec: &ProcGenSpec,
     style_guide: Option<&StyleGuide>,
 ) -> ValidationConstraints {
+    // The spec's LOD targets are read from the spec by `validate_output`,
+    // one per level; `max_triangles` is the style's ceiling on every mesh.
     let mut c = ValidationConstraints::default();
-
-    // Extract max_triangles from LOD level 0 target if present
-    if let Some(ref lods) = spec.lod {
-        if let Some(lod0) = lods.iter().find(|l| l.level == 0) {
-            c.max_triangles = Some(lod0.target_triangles);
-        }
-    }
 
     // Extract texture dimensions from spec params if present
     if let Some(table) = spec.params.as_table() {
@@ -819,6 +815,8 @@ fn build_validation_constraints(
         c.roughness_range = style.materials.roughness_range;
         c.metallic_range = style.materials.metallic_range;
         c.palette = style.palette.clone();
+        // `require_normals` needs no flag: every mesh's normals are checked.
+        c.require_uvs = style.geometry.require_uvs.unwrap_or(false);
     }
 
     c
@@ -1016,8 +1014,10 @@ target_triangles = 1000
 "#,
         )
         .unwrap();
+        // LOD targets stay in the spec, where `validate_output` reads one
+        // per level; only a style guide sets the ceiling.
         let constraints = build_validation_constraints(&spec, None);
-        assert_eq!(constraints.max_triangles, Some(5000));
+        assert_eq!(constraints.max_triangles, None);
     }
 
     #[test]
@@ -1051,7 +1051,7 @@ value = 42
             },
             geometry: GeometryConstraints {
                 max_triangles: Some(3000),
-                require_uvs: None,
+                require_uvs: Some(true),
                 require_normals: None,
             },
         };
@@ -1061,6 +1061,7 @@ value = 42
         assert_eq!(constraints.roughness_range, Some([0.6, 0.95]));
         assert_eq!(constraints.metallic_range, Some([0.0, 0.15]));
         assert_eq!(constraints.palette, vec!["#FF0000".to_string()]);
+        assert!(constraints.require_uvs);
     }
 
     #[test]
