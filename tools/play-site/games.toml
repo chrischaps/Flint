@@ -16,6 +16,11 @@
 #   touch   that line on a phone or tablet, also under the chooser's card
 #           there (default: sound on · the controls come up at a touch · a
 #           paired pad plays it all; #134)
+#   orientation  "landscape" for a game played sideways on a phone or
+#           tablet (#27): Begin's full screen locks it there where the
+#           browser can (Chrome on Android), and elsewhere, held upright, a
+#           turn-your-phone prompt holds the game until it's turned. Unset
+#           (the default), the game turns freely with the phone (Float#1)
 #   page    the game's page on chaps.dev
 #   video   a film of the game for browsers without WebGPU: any https URL,
 #           or a path in the game's repo, copied beside its bundle
@@ -43,7 +48,8 @@ id = "kart"
 title = "Flint Kart"
 line = "Six karts, three laps, one drift-boost at a time. Keys, a pad or a phone."
 controls = "sound on · WASD or a pad · Shift or LB to drift · E or X for items"
-touch = "sound on · left thumb steers, up for gas, down to brake · hold DRIFT, tap ITEM"
+touch = "held sideways, sound on · left thumb steers, up for gas, down to brake · hold DRIFT, tap ITEM"
+orientation = "landscape"
 repo = "chrischaps/FlintKart"
 # master, which now holds engine-catchup (bundle.toml and the film under web/,
 # #104; the touch stick, DRIFT and ITEM, #134) and the glow-up: road

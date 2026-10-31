@@ -11,6 +11,12 @@
 //!
 //! The perf readout's frames (`web_perf.rs`) are the drawn ones, at these
 //! timestamps, so `?perf=1` shows 33.3 ms when every other refresh is.
+//!
+//! The page can hold the game (#27): while `<html>` has `data-hold` (a
+//! game that plays sideways, held upright where the phone can't be locked
+//! to landscape, with the turn-your-phone prompt over it), no frame runs.
+//! Game time stops, the mix fades out, and when the attribute goes the
+//! clock skips the gap, so the race carries on where it was.
 
 use super::PlayerApp;
 use std::cell::{Cell, RefCell};
@@ -22,6 +28,18 @@ thread_local! {
     static STARTED: Cell<bool> = const { Cell::new(false) };
     /// The timestamp the player last drew or skipped at.
     static LAST_USED: Cell<f64> = const { Cell::new(f64::NAN) };
+    /// Whether the page held the game last refresh.
+    static HELD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The attribute on `<html>` by which the page holds the game.
+const HOLD_ATTRIBUTE: &str = "data-hold";
+
+fn page_holds() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .is_some_and(|root| root.has_attribute(HOLD_ATTRIBUTE))
 }
 
 pub(super) fn now_ms() -> f64 {
@@ -80,6 +98,9 @@ impl PlayerApp {
     /// A rAF call: true when this refresh is drawn. Skipped ones cost a
     /// timestamp and a comparison.
     pub(super) fn web_frame_begin(&mut self) -> bool {
+        if self.follow_page_hold() {
+            return false;
+        }
         if self.frame_pacer.is_none() && self.perf.is_none() {
             return true;
         }
@@ -90,6 +111,22 @@ impl PlayerApp {
             super::web_perf::record_frame(t);
         }
         due
+    }
+
+    /// True while the page holds the game. Going in fades the mix out;
+    /// coming out brings it back and resyncs the clock.
+    fn follow_page_hold(&mut self) -> bool {
+        let held = page_holds();
+        if HELD.with(|h| h.replace(held)) != held {
+            self.audio.engine.set_held(held);
+            if held {
+                tracing::info!("[hold] the page holds the game");
+            } else {
+                self.clock.resync();
+                tracing::info!("[hold] the page let go of the game");
+            }
+        }
+        held
     }
 
     /// A drawn frame's work is done: let the pacer judge it, and pace the
