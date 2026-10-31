@@ -1,0 +1,63 @@
+# Ends a claim (claim/issue-<n>, made by scripts/issue.sh) when its issue
+# closes, for every agent on every machine, whether or not the session that
+# claimed it is still alive.
+#
+# - A merged PR: `issue.sh merged <pr>` reaps the claims of the issues the PR
+#   closes ("Closes #n" in its body or commits, or linked by hand) and deletes
+#   its head branch when that is issue-<n> for one of them.
+# - An issue closed by anything (the merge, by hand): `issue.sh reap <n>`.
+#   GitHub closes a merged PR's issues a moment after the merge, so whichever
+#   run comes second finds the claim already gone.
+#
+# A PR that mentions an issue without closing it, or one closed unmerged,
+# leaves every claim alone: reap only deletes the claim of a closed issue.
+# Numbers come from the event payload through env, never ${{ }} in a shell,
+# and the scripts come from the default branch, never the PR's code.
+#
+# Manual check: claim an issue, open a PR that says "Closes #<n>", merge it;
+# within a minute `git ls-remote origin 'refs/heads/claim/*'` no longer lists
+# claim/issue-<n> and the issue has lost its "claimed" label. This run's log
+# says what it reaped.
+#
+# The canonical copy is skills/setup-claims in chrischaps/Dashboard; its
+# install.sh vendors it. Change it there, not here.
+name: Release claim
+
+on:
+  pull_request:
+    types: [closed]
+  issues:
+    types: [closed]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  release:
+    # A fork's PR gets a read-only token, and its branch isn't here to delete:
+    # the run for its issue's close reaps the claim instead.
+    if: >-
+      github.event_name == 'issues' ||
+      (github.event.pull_request.merged &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts
+      - name: Release the claims of closed issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAIM_REAP_GRACE_MINUTES: '0'
+          PR: ${{ github.event.pull_request.number }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          if [ -n "$PR" ]; then
+            bash scripts/issue.sh merged "$PR"
+          else
+            bash scripts/issue.sh reap "$ISSUE"
+          fi

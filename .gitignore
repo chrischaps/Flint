@@ -47,6 +47,7 @@ arch-data.json
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/next-issue/
+!.claude/skills/close-epic/
 
 # trunk output for the web spike (crates/flint-player/index.html)
 /crates/flint-player/dist/
