@@ -188,6 +188,34 @@ impl PerlinNoise {
         let v = fade(yf);
         lerp(lerp(n00, n10, u), lerp(n01, n11, u), v).clamp(-1.0, 1.0)
     }
+
+    /// FBM that tiles over the unit square: `(u, v)` in `[0, 1)` is one tile.
+    ///
+    /// Each octave samples [`Self::sample_2d_periodic`] with a whole number of
+    /// lattice cells per tile, `round(frequency · lacunarityᵏ)` (at least 1),
+    /// so every octave repeats exactly at the tile edge. A fractional base
+    /// frequency or lacunarity is rounded per octave rather than refused.
+    /// Normalised by the amplitude sum, so the output stays in \[-1, 1\].
+    pub fn fbm_2d_periodic(
+        &self,
+        u: f64,
+        v: f64,
+        frequency: f64,
+        octaves: u32,
+        lacunarity: f64,
+        persistence: f64,
+    ) -> f64 {
+        let (mut sum, mut amp, mut norm, mut freq) = (0.0, 1.0, 0.0, frequency);
+        for _ in 0..octaves.max(1) {
+            let period = (freq.round() as i64).max(1);
+            let p = period as f64;
+            sum += amp * self.sample_2d_periodic(u * p, v * p, period, period);
+            norm += amp;
+            amp *= persistence;
+            freq *= lacunarity;
+        }
+        sum / norm
+    }
 }
 
 /// 3D Perlin with the cube-edge gradients peaks slightly above 1 (1.0025 over
