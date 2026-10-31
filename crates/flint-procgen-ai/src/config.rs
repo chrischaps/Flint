@@ -20,6 +20,10 @@ pub struct AgentConfig {
     /// API key for the provider. Not serialized.
     #[serde(default, skip_serializing)]
     pub api_key: String,
+    /// Reasoning effort (`low` ... `max`) for providers that take one;
+    /// `None` uses the model's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 impl AgentConfig {
@@ -30,6 +34,19 @@ impl AgentConfig {
             model: "mock".to_string(),
             max_iterations: 3,
             api_key: String::new(),
+            effort: None,
+        }
+    }
+
+    /// A config for [`crate::AnthropicAgent`]: [`crate::anthropic::DEFAULT_MODEL`],
+    /// three iterations, and no key (the agent reads `ANTHROPIC_API_KEY`).
+    pub fn anthropic() -> Self {
+        Self {
+            provider: "anthropic".to_string(),
+            model: crate::anthropic::DEFAULT_MODEL.to_string(),
+            max_iterations: 3,
+            api_key: String::new(),
+            effort: None,
         }
     }
 
@@ -74,6 +91,7 @@ impl fmt::Debug for AgentConfig {
             .field("model", &self.model)
             .field("max_iterations", &self.max_iterations)
             .field("api_key", &key)
+            .field("effort", &self.effort)
             .finish()
     }
 }
@@ -88,6 +106,7 @@ mod tests {
             model: "claude-sonnet-5-5".into(),
             max_iterations: 4,
             api_key: "sk-secret-123".into(),
+            effort: None,
         }
     }
 

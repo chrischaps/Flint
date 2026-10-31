@@ -827,7 +827,7 @@ See `docs/flint-procgen-implementation-plan.md` for details.
 
 **Deliverables:**
 - flint-procgen-ai: ProcGenAgent trait and MockAgent --- complete
-- Anthropic provider implementation --- pending
+- Anthropic provider implementation (`AnthropicAgent`) --- complete
 - CLI integration with cost tracking --- pending
 
 ---
