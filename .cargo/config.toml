@@ -12,5 +12,8 @@ rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]
 # The web player (docs/design/web.md). getrandom 0.3 needs both this cfg and
 # its `wasm_js` feature (set in flint-player's wasm32 dependencies) to reach
 # crypto.getRandomValues; without either it refuses to compile.
+# simd128 (#137): every WebGPU browser runs wasm SIMD, glam's math switches
+# to v128 lanes under it, and it costs nothing in size (web.md, Size). It
+# reaches the AudioWorklet's wasm too, which is built for this target.
 [target.wasm32-unknown-unknown]
-rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\"", "-C", "target-feature=+simd128"]
