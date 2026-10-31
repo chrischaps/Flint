@@ -73,6 +73,10 @@ fn watch(ctx: &web_sys::AudioContext) {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
 
+    // cpal opens its context on the frame after Begin, outside the
+    // gesture: iOS keeps it suspended until the next tap (Float#2).
+    crate::worklet::keep_awake(ctx);
+
     let c = ctx.clone();
     let on_state = Closure::<dyn FnMut()>::new(move || {
         let state = c.state();
