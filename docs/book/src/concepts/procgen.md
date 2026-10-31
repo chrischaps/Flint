@@ -159,8 +159,27 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_t
 | `--register` | Store each output file in `.flint/assets`, write a `<file>.asset.toml` sidecar beside it, and reuse an earlier registered result for the same spec + seed |
 | `--force` | With `--register`, generate even when this spec + seed is already stored |
 | `--validate`, `--strict`, `--style-guide` | Run the output validator (see [Validation](#validation)); `--strict` turns warnings, including ignored spec keys, into exit code 1. `--style-guide` needs `--validate` |
+| `--refine <image>`, `--refine-rounds N` | Before generating, ask Claude to move the spec toward a reference image (needs `ANTHROPIC_API_KEY`), in up to N measured rounds (default 3, at most 8). Writes `<name>.refined.procgen.toml` beside the spec and generates from it. Not with `--batch` or `--dry-run` |
 
 Image sets write one PNG per map with the map name suffixed.
+
+### Refining toward a reference
+
+```bash
+flint gen specs/oak_tree.procgen.toml --refine refs/autumn_oak.png -o oak.glb
+```
+
+Claude sees the reference beside a picture of what the spec builds now: a texture's own pixels, or for a mesh a 512x512 render from the headless model renderer (`flint edit model.glb --render`, auto-framed, no grid). It also gets a measured distance between the two (`flint_procgen_ai::measure`: mean colour, a 16-bin luminance histogram and a 16x16 luminance layout, as a score out of 100). Each round's reply is rendered and measured again. While the distance falls, the new render and numbers go back for another round; the first round that gets no closer ends the loop, and the closest spec is kept, which is the spec unchanged if no round improved on it.
+
+![A green oak refined toward an orange reference: the reference, the start, and the round the loop kept](../images/procgen-refine-oak.png)
+
+```text
+  start    distance   2.9  (colour  18.1, histogram 0.03, layout 0.02)
+  round 1  distance   2.0  (colour   2.5, histogram 0.04, layout 0.02)  <- kept
+  round 2  distance   2.4  (colour   1.9, histogram 0.05, layout 0.02)
+```
+
+The score measures whole images, backdrop included, so for a mesh it moves most with colour and only a little with shape. It is a ruler for "closer or further" between rounds, not a judge of likeness.
 
 ### Registering outputs
 

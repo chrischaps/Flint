@@ -86,6 +86,9 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
    flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
+   flint gen specs/oak_tree.procgen.toml --refine ref.png -o tree.glb  # Claude refines toward ref.png first
+   #   (ANTHROPIC_API_KEY; sees a headless render each round, loops while the measured
+   #    distance falls, --refine-rounds N; writes <name>.refined.procgen.toml)
    ```
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.

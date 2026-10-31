@@ -8,6 +8,7 @@ pub mod edit_router;
 pub mod entity;
 pub mod gen;
 pub mod gen_preview;
+pub mod gen_refine;
 pub mod gen_store;
 pub mod gen_preview_common;
 pub mod init;

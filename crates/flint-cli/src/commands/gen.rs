@@ -12,6 +12,7 @@ use flint_procgen::{
     SeedMode, ValidationConstraints,
 };
 
+use super::gen_refine;
 use super::gen_store::{self, WrittenFile};
 
 #[derive(Args)]
@@ -66,6 +67,19 @@ pub struct GenArgs {
     /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
     #[arg(long, requires = "validate")]
     pub style_guide: Option<String>,
+
+    /// Refine the spec toward this reference image with Claude before
+    /// generating (needs ANTHROPIC_API_KEY). Claude sees a render of what
+    /// the spec builds; each round is rendered and measured, and the loop
+    /// keeps going while the distance falls. The closest spec is written
+    /// beside the original as `<name>.refined.procgen.toml`.
+    #[arg(long, conflicts_with_all = ["batch", "dry_run"])]
+    pub refine: Option<String>,
+
+    /// Most measured rounds for --refine
+    #[arg(long, requires = "refine", default_value = "3",
+          value_parser = clap::value_parser!(u32).range(1..=8))]
+    pub refine_rounds: u32,
 }
 
 fn parse_format(s: &str) -> std::result::Result<String, String> {
@@ -115,6 +129,17 @@ pub fn run(args: GenArgs) -> Result<()> {
 
     if let Some(seed_val) = args.seed {
         spec = spec_with_seed(&spec, seed_val);
+    }
+
+    // Refine first, then generate what the refine kept.
+    if let Some(reference) = &args.refine {
+        spec = gen_refine::refine(&spec, Path::new(reference), args.refine_rounds)?;
+        let refined_path = gen_refine::refined_spec_path(spec_path);
+        let text = toml::to_string(&spec).context("failed to serialize the refined spec")?;
+        std::fs::write(&refined_path, text)
+            .with_context(|| format!("failed to write {}", refined_path.display()))?;
+        println!("Refined:    {}", refined_path.display());
+        println!();
     }
 
     // Dry-run: print cost estimate and return

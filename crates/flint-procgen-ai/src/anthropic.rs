@@ -21,8 +21,10 @@ use crate::http::{
     base64, extract_json_object, image_media_type, parse_response, shorten, HttpRequest, Reply,
     Transport, UreqTransport, Usage,
 };
+use crate::measure::{self, Distance};
 use crate::mock::{bump_patch, fnv1a, props, registry, resolve_name, slug, unknown_generator};
-use crate::prompt;
+use crate::preview::Previewer;
+use crate::prompt::{self, Current};
 use crate::schema::{check_params, json_to_toml, prop_type, repair_params};
 
 /// The model used when a config names none.
@@ -80,7 +82,17 @@ pub struct Report {
     /// Claude converged on its own).
     pub repaired: usize,
     /// The model's own account of its choices (`rationale` / `changes`).
+    /// For a measured refine, the changes of the round that was kept.
     pub notes: Vec<String>,
+    /// A refine's measured distance to the reference, per refine round:
+    /// `[0]` is the spec as it came in, `[i]` what round `i` built. Empty
+    /// when nothing could be measured (no reference, or no picture of
+    /// what the spec builds).
+    pub distances: Vec<Distance>,
+    /// Which refine round's spec was returned: 0 for the spec as it came in
+    /// (no round moved it closer), `i` for round `i`. A refine that isn't
+    /// measured always keeps its one round. 0 for create and interpret.
+    pub kept: usize,
 }
 
 impl Report {
@@ -106,6 +118,11 @@ pub struct AnthropicAgent {
     pub max_tokens: u32,
     /// Extra attempts for a 429, 529, 5xx or network failure.
     pub max_retries: u32,
+    /// Most refine rounds a measured refine runs: it renders each round's
+    /// result, and asks again while the distance to the reference falls.
+    /// 1 is a single shot. Defaults to the config's `max_iterations`.
+    pub refine_rounds: u32,
+    previewer: Option<Box<dyn Previewer>>,
     sleep: fn(Duration),
 }
 
@@ -116,6 +133,8 @@ impl std::fmt::Debug for AnthropicAgent {
             .field("url", &self.url)
             .field("max_tokens", &self.max_tokens)
             .field("max_retries", &self.max_retries)
+            .field("refine_rounds", &self.refine_rounds)
+            .field("previewer", &self.previewer.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -156,13 +175,30 @@ impl AnthropicAgent {
         })?;
         config.validate()?;
         Ok(Self {
+            refine_rounds: config.max_iterations,
             config,
             transport: Box::new(UreqTransport::default()),
             url: API_URL.to_string(),
             max_tokens: 16_000,
             max_retries: 2,
+            previewer: None,
             sleep: std::thread::sleep,
         })
+    }
+
+    /// Let refine see what a spec builds: `previewer` renders it (a mesh,
+    /// which this crate can't draw) and the refine loop measures each
+    /// render against the reference. When it returns `None`, a texture
+    /// still falls back to the generator's own pixels.
+    pub fn with_previewer(mut self, previewer: impl Previewer + 'static) -> Self {
+        self.previewer = Some(Box::new(previewer));
+        self
+    }
+
+    /// Set [`Self::refine_rounds`] (at least 1).
+    pub fn with_refine_rounds(mut self, rounds: u32) -> Self {
+        self.refine_rounds = rounds.max(1);
+        self
     }
 
     /// Replace the HTTP transport (tests, proxies).
@@ -255,20 +291,23 @@ impl AnthropicAgent {
     /// `max_iterations` rounds. Returns the accepted reply object and its
     /// params (`None` when the reply set `"params": null` and that's
     /// allowed). `shape` adds task-specific checks on the reply object.
+    ///
+    /// `messages` ends with the user turn to answer, and on return holds the
+    /// whole exchange, ending with the assistant's last reply, so a caller
+    /// can add a turn and converse again.
     fn converse(
         &self,
         ctx: &Ctx,
-        first_turn: Vec<Json>,
+        messages: &mut Vec<Json>,
         params_required: bool,
         shape: impl Fn(&Map<String, Json>) -> Vec<String>,
     ) -> Result<(Map<String, Json>, Option<toml::Value>, Report)> {
         let system = prompt::system_prompt(&ctx.name, ctx.generator());
-        let mut messages = vec![json!({"role": "user", "content": first_turn})];
         let mut report = Report::default();
         let mut last: Option<(Map<String, Json>, Option<toml::Value>)> = None;
 
         for round in 1..=self.config.max_iterations {
-            let reply = self.call(&system, &messages)?;
+            let reply = self.call(&system, messages)?;
             messages.push(json!({"role": "assistant", "content": reply.content}));
 
             let mut issues = Vec::new();
@@ -353,8 +392,10 @@ impl AnthropicAgent {
         generator: &str,
     ) -> Result<(ProcGenSpec, Report)> {
         let ctx = Ctx::new(generator)?;
-        let turn = vec![text_block(&prompt::create_task(prompt_text))];
-        let (obj, params, mut report) = self.converse(&ctx, turn, true, |_| Vec::new())?;
+        let mut messages = vec![user_turn(vec![text_block(&prompt::create_task(
+            prompt_text,
+        ))])];
+        let (obj, params, mut report) = self.converse(&ctx, &mut messages, true, |_| Vec::new())?;
         let params = params.expect("create requires params");
 
         let name = obj
@@ -419,7 +460,9 @@ impl AnthropicAgent {
             findings.push("the seed is random, so every run builds a different asset".into());
         }
 
-        let turn = vec![text_block(&prompt::interpret_task(spec, &findings))];
+        let mut messages = vec![user_turn(vec![text_block(&prompt::interpret_task(
+            spec, &findings,
+        ))])];
         let shape = |obj: &Map<String, Json>| {
             if strings(obj, "suggestions").is_empty() {
                 vec!["`suggestions` must be a non-empty array of strings".to_string()]
@@ -427,7 +470,7 @@ impl AnthropicAgent {
                 Vec::new()
             }
         };
-        let (obj, params, report) = self.converse(&ctx, turn, false, shape)?;
+        let (obj, params, report) = self.converse(&ctx, &mut messages, false, shape)?;
 
         let confidence = obj
             .get("confidence")
@@ -461,8 +504,15 @@ impl AnthropicAgent {
 
     /// [`ProcGenAgent::refine_spec`], with the conversation's [`Report`].
     ///
-    /// For a texture generator Claude also sees what the spec builds now,
-    /// beside the reference, so it can compare instead of guess.
+    /// With a reference, Claude also sees what the spec builds now beside
+    /// it: a texture's own pixels, or whatever the [`Previewer`] draws (a
+    /// mesh render). When both images can be measured the refine is a
+    /// loop: each round's result is pictured and measured
+    /// ([`measure::distance`]), and while the distance falls the new
+    /// picture and numbers go back for another round, up to
+    /// [`Self::refine_rounds`]. The first round that doesn't get closer
+    /// ends it, and the closest spec is returned: the input itself
+    /// (`report.kept == 0`) when no round improved on it.
     pub fn refine_spec_reported(
         &self,
         spec: &ProcGenSpec,
@@ -473,35 +523,107 @@ impl AnthropicAgent {
         if let Some(bytes) = reference {
             turn.push(image_block(bytes)?);
         }
-        let current = match (reference, ctx.generator().output_kind()) {
-            (Some(_), OutputKind::Image) => ctx.preview_png(&spec.params),
-            _ => None,
+        let (current, shown) = match reference {
+            Some(_) => self.picture(&ctx, spec),
+            None => (None, Current::None),
         };
-        if let Some(png) = &current {
-            turn.push(image_block(png)?);
+        if let Some((_, block)) = &current {
+            turn.push(block.clone());
         }
+        let measure_of = |img: &[u8]| reference.and_then(|r| measure::distance(r, img));
         // Eyes misjudge the overall tone of a small image; numbers don't.
-        let measured = match (
-            reference.and_then(mean_rgb),
-            current.as_deref().and_then(mean_rgb),
-        ) {
-            (Some(r), Some(c)) => Some((r, c)),
-            _ => None,
-        };
+        let start = current.as_ref().and_then(|(img, _)| measure_of(img));
         turn.push(text_block(&prompt::refine_task(
             spec,
             reference.is_some(),
-            current.is_some(),
-            measured,
+            shown,
+            start.as_ref(),
         )));
-        let (obj, params, mut report) = self.converse(&ctx, turn, true, |_| Vec::new())?;
+        let mut messages = vec![user_turn(turn)];
 
-        let mut refined = spec.clone();
-        refined.generator = ctx.name.clone();
-        refined.params = params.expect("refine requires params");
-        refined.meta.version = bump_patch(&refined.meta.version);
-        report.notes = strings(&obj, "changes");
-        Ok((refined, report))
+        let mut report = Report::default();
+        report.distances.extend(start);
+        let rounds = if start.is_some() {
+            self.refine_rounds.max(1)
+        } else {
+            1
+        };
+        let mut best: Option<(ProcGenSpec, Distance)> = None;
+        for round in 1..=rounds {
+            let (obj, params, r) = self.converse(&ctx, &mut messages, true, |_| Vec::new())?;
+            report.rounds.extend(r.rounds);
+            report.repaired += r.repaired;
+            let mut refined = spec.clone();
+            refined.generator = ctx.name.clone();
+            refined.params = params.expect("refine requires params");
+            refined.meta.version = bump_patch(&refined.meta.version);
+            let changes = strings(&obj, "changes");
+
+            // Unmeasured (no start, or this round's result can't be pictured
+            // or measured): keep what was asked for, as a single shot would.
+            let before = best.as_ref().map(|(_, d)| *d).or(start);
+            let measured = before.and_then(|before| {
+                let (shot, _) = self.picture(&ctx, &refined);
+                let (img, block) = shot?;
+                Some((before, measure_of(&img)?, block))
+            });
+            let Some((before, after, block)) = measured else {
+                report.notes = changes;
+                report.kept = round as usize;
+                return Ok((refined, report));
+            };
+            report.distances.push(after);
+            if after.score >= before.score {
+                if best.is_none() {
+                    report.notes = vec![format!(
+                        "round {round} moved the asset no closer (distance {:.1} -> {:.1}); the spec is returned unchanged",
+                        before.score, after.score
+                    )];
+                }
+                break;
+            }
+            report.notes = changes;
+            report.kept = round as usize;
+            best = Some((refined, after));
+            if round < rounds {
+                messages.push(user_turn(vec![
+                    block,
+                    text_block(&prompt::refine_progress(round, &before, &after, shown)),
+                ]));
+            }
+        }
+        Ok((best.map_or_else(|| spec.clone(), |(s, _)| s), report))
+    }
+
+    /// What `spec` builds, as an encoded image and its message block: the
+    /// [`Previewer`]'s picture when it gives one, else a texture's own
+    /// pixels. `(None, Current::None)` when neither can show it.
+    fn picture(&self, ctx: &Ctx, spec: &ProcGenSpec) -> (Option<(Vec<u8>, Json)>, Current) {
+        let texture = ctx.generator().output_kind() == OutputKind::Image;
+        let drawn = self
+            .previewer
+            .as_ref()
+            .and_then(|p| p.preview(spec))
+            .map(|img| {
+                (
+                    img,
+                    if texture {
+                        Current::Texture
+                    } else {
+                        Current::Render
+                    },
+                )
+            });
+        let found = drawn.or_else(|| {
+            texture
+                .then(|| ctx.preview_png(&spec.params))
+                .flatten()
+                .map(|img| (img, Current::Texture))
+        });
+        match found.and_then(|(img, kind)| image_block(&img).ok().map(|b| ((img, b), kind))) {
+            Some((pair, kind)) => (Some(pair), kind),
+            None => (None, Current::None),
+        }
     }
 }
 
@@ -649,20 +771,8 @@ impl Ctx {
     }
 }
 
-/// The average sRGB colour of an encoded image, ignoring alpha.
-fn mean_rgb(bytes: &[u8]) -> Option<[u8; 3]> {
-    let img = image::load_from_memory(bytes).ok()?.to_rgb8();
-    let n = u64::from(img.width()) * u64::from(img.height());
-    if n == 0 {
-        return None;
-    }
-    let mut sum = [0u64; 3];
-    for p in img.pixels() {
-        for (s, c) in sum.iter_mut().zip(p.0) {
-            *s += u64::from(c);
-        }
-    }
-    Some(sum.map(|s| ((s + n / 2) / n) as u8))
+fn user_turn(content: Vec<Json>) -> Json {
+    json!({"role": "user", "content": content})
 }
 
 fn text_block(text: &str) -> Json {
