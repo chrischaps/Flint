@@ -788,9 +788,12 @@ asks the browser for the whole screen, and where the browser can't give it
   locked, since a locked pointer can't click it. If Escape has freed a
   pointer the game wants (the "click to look around" hint is showing), the
   same click takes the lock back first.
-- **On a touch screen**, once full screen is granted, the page asks
-  `screen.orientation.lock("landscape")`. Chrome on Android honours it in
-  full screen; elsewhere the refusal is ignored.
+- **No orientation lock** (Float#1; until then a touch screen asked
+  `screen.orientation.lock("landscape")` once full screen was granted, and
+  the gate said "best held sideways" in portrait). Full screen keeps the
+  way the phone is held and turns with it. The canvas is `100vw` by
+  `100dvh`, so a turn resizes it; winit's `ResizeObserver` sends `Resized`
+  and the surface and the camera's aspect follow, with no reload.
 - **Where there is no Fullscreen API.** `document.fullscreenEnabled` is
   false on iPhone Safari, and in an iframe without `allowfullscreen`. In
   both cases the button and the switch stay hidden. On iPhone Safari
@@ -953,8 +956,8 @@ short touch screen the HUD drops its standings board for DRIFT and ITEM
 **The page** at 390 px wide: no horizontal scroll, every target 44 px or
 more on a coarse pointer (Begin was 43, 39 in the embed), hovers only where
 there is hover (a tapped card no longer stays lifted), the chooser's cards
-carry each game's `touch` line, and the gate says "best held sideways" in
-portrait. Once playing on a touch screen, the bottom corners are the
+carry each game's `touch` line, and the gate said "best held sideways" in
+portrait (dropped in Float#1: either way up is fine). Once playing on a touch screen, the bottom corners are the
 game's: the wordmark fades from under the stick, and the full-screen
 button (which sat on ▶) hides in full screen and waits at the bottom centre
 out of it.

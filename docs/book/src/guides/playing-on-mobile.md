@@ -7,7 +7,7 @@ The games at [play.chaps.dev](https://play.chaps.dev) play on a phone in Chrome 
 ## On the phone
 
 1. Open play.chaps.dev and tap a game. Each card says how it's played by touch.
-2. Tap **Begin**. On Android the gate's *full screen* switch is on for a phone, and the game turns the screen sideways where the browser allows it. On iPhone, add the page to the home screen for the whole screen (the gate says how). In portrait the gate says the game is best held sideways; it still plays upright.
+2. Tap **Begin**. On Android the gate's *full screen* switch is on for a phone. Full screen keeps the way you hold the phone, and the game turns with it, upright or sideways. On iPhone, add the page to the home screen for the whole screen (the gate says how).
 3. Touch the screen. The controls appear at the first touch, and go away again if a key or a paired gamepad is used.
 
 | Game | Touch layout |
