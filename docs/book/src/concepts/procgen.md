@@ -172,15 +172,17 @@ Before anything is generated, `flint gen` checks that the spec's generator is re
 
 ### Validation
 
-`--validate` checks what was generated, not the spec, and prints one line per check and a summary (`Validation: 23 passed, 4 warnings, 0 failed`). Failures exit 1; warnings exit 0 unless `--strict`.
+`--validate` checks what was written, not the spec: each GLB is imported again through `import_gltf()` (the importer the player uses) and each PNG decoded again, so an exporter bug fails the checks the way a generator bug would. It prints `Validating <file> (as written)`, one line per check and a summary (`Validation: 23 passed, 4 warnings, 0 failed`). Failures exit 1; warnings exit 0 unless `--strict`. A cached `--register` result is not validated (`--force` regenerates it).
+
+`flint asset validate model.glb --style <name>` runs the same checks under the same names on any model, generated, imported or AI-made; only the spec triangle target needs a spec. A mesh file is one mesh (its nodes merged) unless its mesh nodes are `LOD_0`, `LOD_1`, ..., which are checked one level each, as `flint gen` writes them.
 
 | Check | Fails when | Warns when |
 |-------|-----------|------------|
 | mesh integrity | indices aren't whole triangles, point past the vertices, or a position isn't finite | |
 | spec triangle target | over 2x the spec's `[[lod]] target_triangles` for that level | over the target |
 | style triangle budget | over 2x the style's `geometry.max_triangles` (every mesh, every LOD) | over the budget |
-| UV range | a UV is outside [0,1] (UVs on a textured submesh may tile) or not finite; with `require_uvs`, every vertex shares one UV | |
-| normals | a normal is zero or not finite | a normal isn't unit length |
+| UV range | a UV is outside [0,1] (UVs on a textured submesh may tile) or not finite; with `require_uvs`, every vertex shares one UV or the file has no UVs | the file has no UVs |
+| normals | a normal is zero or not finite; with `require_normals`, the file has no normals | a normal isn't unit length; the file has no normals (renderers derive flat ones) |
 | PBR roughness / metallic | a material factor is outside [0,1] | outside the style's `roughness_range` / `metallic_range` |
 | palette | a style palette entry isn't a hex colour | a material's base colour is more than ΔE 20 (CIELAB) from every palette entry, or under half of a colour map's texels are within ΔE 20 |
 | style range (roughness / metallic maps) | | under 90% of the map's texels are inside the style's range |

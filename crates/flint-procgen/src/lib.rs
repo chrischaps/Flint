@@ -15,6 +15,7 @@ pub mod export_glb;
 mod generator;
 pub mod generators;
 pub mod mock;
+pub mod model;
 mod output;
 pub mod param_ui;
 mod queue;
@@ -48,11 +49,13 @@ pub use types::{
     Vertex,
 };
 
+pub use model::{read_model, read_png, Model, ModelLayout, ModelMesh};
 pub use param_ui::{
     lint_params, parse_param_schema, ParamCondition, ParamFieldSpec, ParamFieldType, ParamIssue,
 };
 pub use validate::{
-    validate_output, CheckStatus, ValidationCheck, ValidationConstraints, ValidationReport,
+    validate_model, validate_output, CheckStatus, ValidationCheck, ValidationConstraints,
+    ValidationReport,
 };
 
 // Texture pattern types

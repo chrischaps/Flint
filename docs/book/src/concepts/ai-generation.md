@@ -130,18 +130,20 @@ flint asset resolve my_scene.scene.toml --strategy human_task --output-dir tasks
 
 ## Model Validation
 
-After generating a 3D model, Flint can validate it against a style guide's constraints. The validator imports the GLB file through the same `import_gltf()` pipeline used by the player, then checks:
+After generating a 3D model, Flint can validate it against a style guide's constraints. The validator imports the GLB file through the same `import_gltf()` pipeline used by the player, then runs the checks `flint gen --validate` runs on procedural output, under the same names (see [Validation](procgen.md#validation) for the full table):
 
-- **Triangle count** against `geometry.max_triangles`
-- **UV coordinates** present if `geometry.require_uvs` is set
-- **Normals** present if `geometry.require_normals` is set
-- **Material properties** against `materials.roughness_range` and `materials.metallic_range`
+- **mesh integrity** and **degenerate triangles**
+- **style triangle budget** against `geometry.max_triangles`, per mesh (per LOD for a `LOD_0`, `LOD_1`, ... file)
+- **UV range**: missing UVs warn, or fail if `geometry.require_uvs` is set
+- **normals**: zero normals fail; missing ones warn, or fail if `geometry.require_normals` is set
+- **PBR roughness / metallic** against `materials.roughness_range` and `materials.metallic_range`
+- **palette**: each material's base colour against the style's `palette`
 
 ```bash
 flint asset validate model.glb --style medieval_tavern
 ```
 
-Each check reports Pass, Warn, or Fail status.
+Each check reports PASS, WARN, or FAIL; any FAIL exits 1.
 
 ## Build Manifests
 

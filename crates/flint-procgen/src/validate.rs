@@ -10,6 +10,7 @@
 
 use std::fmt;
 
+use crate::model::{Model, ModelLayout, ModelMesh};
 use crate::output::GeneratorOutput;
 use crate::spec::ProcGenSpec;
 use crate::types::{ChannelSemantics, ImageData, MaterialData, MeshData, Vertex};
@@ -92,8 +93,13 @@ pub struct ValidationConstraints {
     /// and colour textures are checked against them.
     pub palette: Vec<String>,
     /// The style guide's `geometry.require_uvs`: a mesh whose vertices all
-    /// share one UV has no layout and fails.
+    /// share one UV, or that has none, fails.
     pub require_uvs: bool,
+    /// The style guide's `geometry.require_normals`: a mesh read from a
+    /// file without normals fails (without it, missing normals warn; glTF
+    /// renderers derive flat ones). Normals that are present are always
+    /// checked.
+    pub require_normals: bool,
 }
 
 /// Aggregated validation results.
@@ -155,6 +161,10 @@ impl ValidationReport {
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 /// Validate a generator output against spec and constraints.
+///
+/// This checks the output in memory. To check what was written to disk,
+/// read it back with [`read_model`](crate::model::read_model) and call
+/// [`validate_model`]: the same checks, under the same names.
 pub fn validate_output(
     output: &GeneratorOutput,
     spec: &ProcGenSpec,
@@ -162,19 +172,12 @@ pub fn validate_output(
 ) -> ValidationReport {
     let mut checks = Vec::new();
     let palette = parse_palette(&constraints.palette, &mut checks);
-    let spec_target = |level: usize| {
-        spec.lod
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .find(|l| l.level as usize == level)
-            .map(|l| l.target_triangles)
-    };
+    let spec_target = |level: usize| spec_target(Some(spec), level);
 
     match output {
         GeneratorOutput::Mesh(mesh) => {
             validate_mesh(
-                mesh,
+                &MeshView::generated(mesh),
                 constraints,
                 &palette,
                 spec_target(0),
@@ -184,9 +187,9 @@ pub fn validate_output(
         }
         GeneratorOutput::MeshWithLods(lods) => {
             for (i, mesh) in lods.iter().enumerate() {
-                let prefix = format!("LOD{i}");
+                let prefix = lod_prefix(i);
                 validate_mesh(
-                    mesh,
+                    &MeshView::generated(mesh),
                     constraints,
                     &palette,
                     spec_target(i),
@@ -215,12 +218,12 @@ pub fn validate_output(
                 bounding_box: skinned.bounding_box,
             };
             validate_mesh(
-                &proxy,
+                &MeshView::generated(&proxy),
                 constraints,
                 &palette,
                 spec_target(0),
                 &mut checks,
-                Some("skinned"),
+                Some(SKINNED_PREFIX),
             );
         }
         GeneratorOutput::Image(img) => {
@@ -244,6 +247,91 @@ pub fn validate_output(
     ValidationReport { checks }
 }
 
+/// Validate a model read from a file (see [`crate::model`]) against an
+/// optional spec (for its LOD targets) and constraints.
+///
+/// The checks and their names are [`validate_output`]'s: a GLB that
+/// `flint gen` wrote reports the lines its in-memory output did, and an
+/// imported model gets the procgen rules (integrity, slivers, normals,
+/// palette) too. Attributes the file leaves out are reported as missing.
+pub fn validate_model(
+    model: &Model,
+    spec: Option<&ProcGenSpec>,
+    constraints: &ValidationConstraints,
+) -> ValidationReport {
+    let mut checks = Vec::new();
+    let palette = parse_palette(&constraints.palette, &mut checks);
+    for (i, mesh) in model.meshes.iter().enumerate() {
+        let prefix = match model.layout {
+            ModelLayout::Single => None,
+            ModelLayout::Lods => Some(lod_prefix(i)),
+            ModelLayout::Skinned => Some(SKINNED_PREFIX.to_string()),
+        };
+        validate_mesh(
+            &MeshView::read(mesh),
+            constraints,
+            &palette,
+            spec_target(spec, i),
+            &mut checks,
+            prefix.as_deref(),
+        );
+    }
+    ValidationReport { checks }
+}
+
+const SKINNED_PREFIX: &str = "skinned";
+
+fn lod_prefix(level: usize) -> String {
+    format!("LOD{level}")
+}
+
+/// The spec's triangle target for one LOD level.
+fn spec_target(spec: Option<&ProcGenSpec>, level: usize) -> Option<u32> {
+    spec?
+        .lod
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .find(|l| l.level as usize == level)
+        .map(|l| l.target_triangles)
+}
+
+/// What the mesh checks read: the mesh, and what its source left out.
+struct MeshView<'a> {
+    mesh: &'a MeshData,
+    normals_missing: usize,
+    uvs_missing: usize,
+    /// Per material: whether it samples a texture, so its UVs may tile.
+    textured: Vec<bool>,
+}
+
+impl<'a> MeshView<'a> {
+    /// A mesh made in memory: every attribute present, and a material
+    /// textured when it carries a normal map (the only texture a generated
+    /// material holds; the exporter embeds it, so the file agrees).
+    fn generated(mesh: &'a MeshData) -> Self {
+        Self {
+            mesh,
+            normals_missing: 0,
+            uvs_missing: 0,
+            textured: mesh
+                .materials
+                .iter()
+                .map(|m| m.normal_map.is_some())
+                .collect(),
+        }
+    }
+
+    fn read(m: &'a ModelMesh) -> Self {
+        Self {
+            mesh: &m.mesh,
+            normals_missing: m.normals_missing,
+            uvs_missing: m.uvs_missing,
+            textured: m.textured.clone(),
+        }
+    }
+}
+
 fn push(checks: &mut Vec<ValidationCheck>, name: String, status: CheckStatus, detail: String) {
     checks.push(ValidationCheck {
         name,
@@ -262,7 +350,7 @@ fn labeller(prefix: Option<&str>) -> impl Fn(&str) -> String + '_ {
 // ── Mesh checks ─────────────────────────────────────────────────────────────
 
 fn validate_mesh(
-    mesh: &MeshData,
+    view: &MeshView,
     constraints: &ValidationConstraints,
     palette: &[Palette],
     spec_target: Option<u32>,
@@ -270,6 +358,7 @@ fn validate_mesh(
     prefix: Option<&str>,
 ) {
     let label = labeller(prefix);
+    let mesh = view.mesh;
 
     // Indices and positions first: every later check reads through them.
     let sound = check_integrity(mesh, checks, &label("mesh integrity"));
@@ -292,8 +381,8 @@ fn validate_mesh(
         );
     }
 
-    check_uv_range(mesh, constraints.require_uvs, checks, &label("UV range"));
-    check_normals(&mesh.vertices, checks, &label("normals"));
+    check_uv_range(view, constraints.require_uvs, checks, &label("UV range"));
+    check_normals(view, constraints.require_normals, checks, &label("normals"));
 
     check_pbr_factor(
         &mesh.materials,
@@ -396,20 +485,41 @@ fn check_triangle_budget_value(
 /// UVs must lie in [0,1], except on a submesh whose material carries a
 /// texture: glTF samplers repeat by default, so a tiling texture (the tree's
 /// bark, #22) wraps on purpose. Non-finite UVs always fail. With
-/// `require_uvs`, a mesh whose vertices all share one UV has no layout.
+/// `require_uvs`, a mesh whose vertices all share one UV has no layout, and
+/// one its file gave no UVs fails (without it, missing UVs warn).
 fn check_uv_range(
-    mesh: &MeshData,
+    view: &MeshView,
     require_uvs: bool,
     checks: &mut Vec<ValidationCheck>,
     name: &str,
 ) {
+    let mesh = view.mesh;
     let vertices = &mesh.vertices;
+    if view.uvs_missing > 0 {
+        let (status, why) = if require_uvs {
+            (CheckStatus::Fail, ", and the style requires UVs")
+        } else {
+            (CheckStatus::Warn, "")
+        };
+        push(
+            checks,
+            name.into(),
+            status,
+            format!(
+                "{}/{} vertices have no UVs{why}",
+                view.uvs_missing,
+                vertices.len()
+            ),
+        );
+        return;
+    }
     let mut tiles = vec![false; vertices.len()];
     for sub in &mesh.submeshes {
-        let textured = mesh
-            .materials
+        let textured = view
+            .textured
             .get(sub.material_index)
-            .is_some_and(|m| m.normal_map.is_some());
+            .copied()
+            .unwrap_or(false);
         if !textured {
             continue;
         }
@@ -469,7 +579,33 @@ fn check_uv_range(
 
 /// Normals must be finite and non-zero (Fail: lighting breaks), and should
 /// be unit length (Warn: shading darkens or blows out where they are not).
-fn check_normals(vertices: &[Vertex], checks: &mut Vec<ValidationCheck>, name: &str) {
+/// A file may leave them out, and glTF renderers then derive flat normals:
+/// that warns, or fails under the style's `require_normals`.
+fn check_normals(
+    view: &MeshView,
+    require_normals: bool,
+    checks: &mut Vec<ValidationCheck>,
+    name: &str,
+) {
+    let vertices = &view.mesh.vertices;
+    if view.normals_missing > 0 {
+        let (status, why) = if require_normals {
+            (CheckStatus::Fail, ", and the style requires normals")
+        } else {
+            (CheckStatus::Warn, " (renderers derive flat ones)")
+        };
+        push(
+            checks,
+            name.into(),
+            status,
+            format!(
+                "{}/{} vertices have no normals{why}",
+                view.normals_missing,
+                vertices.len()
+            ),
+        );
+        return;
+    }
     let mut broken = 0usize;
     let mut unnormalised = 0usize;
     for v in vertices {

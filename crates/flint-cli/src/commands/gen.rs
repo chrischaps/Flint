@@ -240,6 +240,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         if args.validate
             && !run_validation(
                 &output,
+                &files,
                 &seed_spec,
                 args.style_guide.as_deref(),
                 args.strict,
@@ -617,9 +618,12 @@ fn build_validation_constraints(
     spec: &ProcGenSpec,
     style_guide: Option<&StyleGuide>,
 ) -> ValidationConstraints {
-    // The spec's LOD targets are read from the spec by `validate_output`,
-    // one per level; `max_triangles` is the style's ceiling on every mesh.
-    let mut c = ValidationConstraints::default();
+    // The spec's LOD targets are read from the spec by the validator, one
+    // per level; `max_triangles` is the style's ceiling on every mesh. The
+    // style's half is the one `flint asset validate` uses.
+    let mut c = style_guide
+        .map(StyleGuide::validation_constraints)
+        .unwrap_or_default();
 
     // Extract texture dimensions from spec params if present
     if let Some(table) = spec.params.as_table() {
@@ -631,24 +635,63 @@ fn build_validation_constraints(
         }
     }
 
-    // Overlay style guide constraints
-    if let Some(style) = style_guide {
-        if let Some(max_tris) = style.geometry.max_triangles {
-            c.max_triangles = Some(max_tris);
-        }
-        c.roughness_range = style.materials.roughness_range;
-        c.metallic_range = style.materials.metallic_range;
-        c.palette = style.palette.clone();
-        // `require_normals` needs no flag: every mesh's normals are checked.
-        c.require_uvs = style.geometry.require_uvs.unwrap_or(false);
-    }
-
     c
 }
 
-/// Run validation on a generator output, printing results. Returns true if passed.
+/// Validate what a run wrote, as it lies on disk: a GLB is re-imported
+/// through `flint_import` (the importer the renderer uses) and a PNG is
+/// decoded again, so an exporter or encoder bug fails the same checks a
+/// generator bug would. The in-memory `output` says only what each file is
+/// (an image's channel semantics); sound has no file checks and is
+/// validated as made.
+fn validate_written(
+    output: &GeneratorOutput,
+    files: &[WrittenFile],
+    spec: &ProcGenSpec,
+    constraints: &ValidationConstraints,
+) -> Result<flint_procgen::ValidationReport> {
+    let file = |i: usize| {
+        files
+            .get(i)
+            .map(|f| f.path.as_path())
+            .ok_or_else(|| anyhow!("the run wrote no file #{i} to validate"))
+    };
+    let report = match output {
+        GeneratorOutput::Mesh(_)
+        | GeneratorOutput::MeshWithLods(_)
+        | GeneratorOutput::SkinnedMesh(_) => {
+            let path = file(0)?;
+            let model = flint_procgen::read_model(path)
+                .with_context(|| format!("failed to read back {}", path.display()))?;
+            flint_procgen::validate_model(&model, Some(spec), constraints)
+        }
+        GeneratorOutput::Image(img) => {
+            let path = file(0)?;
+            let read = flint_procgen::read_png(path, img.channel_semantics)
+                .with_context(|| format!("failed to read back {}", path.display()))?;
+            flint_procgen::validate_output(&GeneratorOutput::Image(read), spec, constraints)
+        }
+        GeneratorOutput::ImageSet(images) => {
+            let read = images
+                .iter()
+                .enumerate()
+                .map(|(i, img)| {
+                    let path = file(i)?;
+                    flint_procgen::read_png(path, img.channel_semantics)
+                        .with_context(|| format!("failed to read back {}", path.display()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            flint_procgen::validate_output(&GeneratorOutput::ImageSet(read), spec, constraints)
+        }
+        GeneratorOutput::Sound(_) => flint_procgen::validate_output(output, spec, constraints),
+    };
+    Ok(report)
+}
+
+/// Validate the files a run wrote, printing results. Returns true if passed.
 fn run_validation(
     output: &GeneratorOutput,
+    files: &[WrittenFile],
     spec: &ProcGenSpec,
     style_guide_path: Option<&str>,
     strict: bool,
@@ -664,9 +707,11 @@ fn run_validation(
     };
 
     let constraints = build_validation_constraints(spec, style_guide.as_ref());
-    let report = flint_procgen::validate_output(output, spec, &constraints);
+    let report = validate_written(output, files, spec, &constraints)?;
 
     println!();
+    let shown: Vec<String> = files.iter().map(|f| f.path.display().to_string()).collect();
+    println!("Validating {} (as written)", shown.join(", "));
     report.print_checks();
     println!();
     report.print_summary();
@@ -908,5 +953,118 @@ height = 512
         let constraints = build_validation_constraints(&spec, None);
         assert_eq!(constraints.expected_texture_width, Some(512));
         assert_eq!(constraints.expected_texture_height, Some(512));
+    }
+
+    fn quad() -> flint_procgen::MeshData {
+        let v = |x: f32, y: f32| flint_procgen::Vertex {
+            position: [x, y, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            uv: [x, y],
+        };
+        let mut mesh = flint_procgen::MeshData {
+            vertices: vec![v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            materials: vec![flint_procgen::MaterialData::default()],
+            submeshes: vec![],
+            bounding_box: flint_procgen::BoundingBox::from_positions(&[]),
+        };
+        mesh.recompute_bounds();
+        mesh
+    }
+
+    fn mock_spec() -> ProcGenSpec {
+        ProcGenSpec::parse(
+            "generator = \"mock\"\n[meta]\nname = \"quad\"\nversion = \"1.0.0\"\n\
+             [seed]\nmode = \"fixed\"\nvalue = 0\n",
+        )
+        .unwrap()
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("flint_gen_validate_{name}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(format!("{name}.glb"))
+    }
+
+    /// `--validate` checks the bytes on disk: a mesh that is fine in
+    /// memory, written by an exporter that drops its normals to zero,
+    /// fails, though validating the in-memory output would have passed.
+    #[test]
+    fn validation_reads_what_a_broken_exporter_wrote() {
+        let mesh = quad();
+        let output = GeneratorOutput::Mesh(mesh.clone());
+        let spec = mock_spec();
+        let constraints = ValidationConstraints::default();
+
+        // A broken exporter: writes the mesh with every normal zeroed.
+        let broken_exporter = |m: &flint_procgen::MeshData| {
+            let mut m = m.clone();
+            for v in &mut m.vertices {
+                v.normal = [0.0; 3];
+            }
+            export_glb::mesh_to_glb(&m).unwrap()
+        };
+        let path = scratch("broken");
+        std::fs::write(&path, broken_exporter(&mesh)).unwrap();
+        let files = [WrittenFile {
+            role: None,
+            path: path.clone(),
+        }];
+
+        let in_memory = flint_procgen::validate_output(&output, &spec, &constraints);
+        assert!(!in_memory.has_failures(), "{:#?}", in_memory.checks);
+
+        let on_disk = validate_written(&output, &files, &spec, &constraints).unwrap();
+        let normals = on_disk.checks.iter().find(|c| c.name == "normals").unwrap();
+        assert_eq!(normals.status, flint_procgen::CheckStatus::Fail);
+        assert!(normals.detail.contains("4/4"), "{}", normals.detail);
+
+        // The working exporter's file passes, check for check.
+        std::fs::write(&path, export_glb::mesh_to_glb(&mesh).unwrap()).unwrap();
+        let fixed = validate_written(&output, &files, &spec, &constraints).unwrap();
+        assert!(!fixed.has_failures(), "{:#?}", fixed.checks);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A PNG is decoded again before its checks run.
+    #[test]
+    fn validation_reads_the_written_png() {
+        use flint_procgen::{ChannelSemantics, ImageData};
+        let img = ImageData::new(8, 8, ChannelSemantics::Color);
+        let path = scratch("tex").with_extension("png");
+        // On disk it is 4x4, whatever the in-memory image says.
+        ImageData::new(4, 4, ChannelSemantics::Color)
+            .save_png(&path)
+            .unwrap();
+        let constraints = ValidationConstraints {
+            expected_texture_width: Some(8),
+            expected_texture_height: Some(8),
+            ..Default::default()
+        };
+        let files = [WrittenFile {
+            role: None,
+            path: path.clone(),
+        }];
+        let report = validate_written(
+            &GeneratorOutput::Image(img),
+            &files,
+            &mock_spec(),
+            &constraints,
+        )
+        .unwrap();
+        let dims = report
+            .checks
+            .iter()
+            .find(|c| c.name == "texture dimensions")
+            .unwrap();
+        assert_eq!(
+            dims.status,
+            flint_procgen::CheckStatus::Fail,
+            "{}",
+            dims.detail
+        );
+        std::fs::remove_file(&path).ok();
     }
 }
