@@ -219,3 +219,32 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+# The web player's hot path, built for speed inside the size-built wasm
+# (#137): scripts (rhai, flint-script), the renderer (flint-render, wgpu),
+# math (glam), and sound (kira, cpal, symphonia, flint-audio), which decodes
+# on the main thread and mixes there where there is no AudioWorklet. The
+# overrides survive fat LTO, since LLVM keeps each function's size attributes,
+# and they cost 0.45 MB gzipped. On a Pixel 8 Pro they cut scripts by about a
+# fifth and frame CPU by about a tenth. docs/design/web.md (Size) has the
+# measurements, and why the player and ECS crates aren't on the list.
+[profile.web-release.package.kira]
+opt-level = 3
+[profile.web-release.package.cpal]
+opt-level = 3
+[profile.web-release.package.symphonia-core]
+opt-level = 3
+[profile.web-release.package.symphonia-codec-vorbis]
+opt-level = 3
+[profile.web-release.package.rhai]
+opt-level = 3
+[profile.web-release.package.flint-script]
+opt-level = 3
+[profile.web-release.package.flint-render]
+opt-level = 3
+[profile.web-release.package.flint-audio]
+opt-level = 3
+[profile.web-release.package.wgpu]
+opt-level = 3
+[profile.web-release.package.glam]
+opt-level = 3

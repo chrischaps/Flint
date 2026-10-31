@@ -1627,3 +1627,62 @@ Not trimmed:
 
 3.1 MB gzipped is in the range of other WebGPU game demos. Float's 10 MB of
 data, most of it music, now costs three times what the engine does.
+
+### Built for speed (#137)
+
+#123 built the whole wasm for size. On a phone, that slows exactly the loops
+a CPU-bound frame spends its time in. Two levers buy some of the speed back:
+
+- **wasm SIMD**: `-C target-feature=+simd128` for `wasm32-unknown-unknown` in
+  `.cargo/config.toml`. Every WebGPU browser runs it. glam's `Vec4`, `Quat`
+  and `Mat4` switch to `v128` lanes under it. It also reaches the
+  AudioWorklet's wasm, which the same target builds.
+- **`opt-level = 3` for the hot crates**: `[profile.web-release.package.*]`
+  for rhai, flint-script, flint-render, wgpu, glam, kira, cpal,
+  symphonia-core, symphonia-codec-vorbis and flint-audio. The rest of the
+  wasm stays at `z`. The overrides survive fat LTO, because LLVM keeps each
+  function's `optsize`/`minsize` attributes when the modules merge.
+
+Sizes (trunk 0.21.14, its `wasm-opt`, gzip -9 of the page's `.wasm`; the
+worklet's wasm adds 0.07 MB either way):
+
+| Build | `.wasm` | gzip -9 | |
+|---|---|---|---|
+| main before #137 (opt `z`, no SIMD) | 7.48 MB | 3.19 MB | |
+| + SIMD | | 3.11 MB (measured before #136, against 3.13) | smaller |
+| + SIMD, hot crates at `s` | | 3.30 MB (before #136) | not measured on the phone |
+| **+ SIMD, hot crates at `3`** (what ships) | 9.10 MB | **3.64 MB** | |
+| + flint-player, the ECS, runtime, animation, particles, core at `3` | 10.94 MB | 4.12 MB | over the 4 MB line |
+| everything at `3` | | 4.38 MB (before #136) | over the line |
+| what ships, with `wasm-opt -O3` instead of `-Oz` | 9.32 MB | 3.64 MB | no faster (below) |
+
+**On the phone.** Pixel 8 Pro, Chrome 156, Float, `?perf=1`, served from
+`trunk build` output over `adb reverse`. Each run lasts 90 s from Begin, and
+the perf windows are averaged from 40 s on. Builds alternate, with a cooldown
+before each run until the skin temperature stops falling. On USB power the
+phone rests at 39 °C skin, thermal status 1, and no lower. The phone is shared
+through `.pixel-lock` with the other sessions profiling it, so no other game
+tab was open during a run.
+
+| ms a frame (mean of runs) | main | SIMD + hot crates at 3 | Change |
+|---|---|---|---|
+| CPU | 17.66 (17.14, 18.17) | 15.94 (16.06, 15.54, 16.23) | **−10%** |
+| scripts | 6.84 | 5.46 | **−20%** |
+| render | 4.81 | 4.79 | 0 |
+| sync | 2.86 | 2.69 | −6% |
+| anim/fx | 1.48 | 1.38 | −7% |
+| frame p50 | 33.3 | 33.3 | held at 30 fps (#140) |
+
+- **Scripts are where it pays.** rhai's interpreter loop is the hottest code
+  the main thread runs, and `z` had made it a fifth slower.
+- **Render doesn't move.** After #139 its 4.8 ms is mostly WebGPU calls across
+  the JS boundary, not Rust.
+- **The frame target (20% less CPU) wasn't reached.** When #137 was written,
+  the mix ran on the main thread, and the audio target counted on it. #136
+  moved the mix into an AudioWorklet that is already built at `opt-level = 3`,
+  and #138 made it cheaper, so the main thread no longer pays for it. What's
+  left is about a third scripts. 10% of the frame and 20% of the scripts is
+  what the build alone can give.
+- **Widening the list costs too much.** Adding the player and ECS crates goes
+  past 4 MB. `wasm-opt -O3` instead of `-Oz` changed neither the size nor the
+  speed: 16.26 ms CPU over two runs against 15.94, so the page keeps `-Oz`.
