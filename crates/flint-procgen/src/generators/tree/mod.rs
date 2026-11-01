@@ -925,22 +925,157 @@ impl Generator for TreeGenerator {
         })
     }
 
+    /// Walks the tree the generator would grow, without meshing it: the
+    /// trunk spine and branch skeleton are grown from the spec's seed (cheap
+    /// next to extrusion, normals, tangents and LOD simplification), their
+    /// tubes counted ring by ring, the leaves taken at their expected count
+    /// (density and along-branch placement are coin flips), and each `[[lod]]`
+    /// sized by the budget split [`tree_lod`] makes. With LODs the counts are
+    /// the sum over every level written, as `flint gen` reports them.
     fn estimate_cost(&self, spec: &ProcGenSpec) -> GenerationCost {
         let trunk = TrunkParams::from_toml(&spec.params).unwrap_or_default();
         let branch = BranchParams::from_toml(&spec.params).unwrap_or_default();
+        let leaf = LeafParams::from_toml(&spec.params).unwrap_or_default();
+        let size = estimate_tree_size(spec, &trunk, &branch, &leaf);
 
-        let trunk_verts = trunk.segments * trunk.radial_segments;
-        let branch_verts = branch.max_segments * branch.radial_segments;
-        let total_verts = trunk_verts + branch_verts;
+        let (vertices, triangles) = match spec.lod.as_ref().filter(|l| !l.is_empty()) {
+            None => (size.vertices(), size.triangles()),
+            Some(lod_levels) => {
+                // Output index = `[[lod]] level`; a skipped level repeats the
+                // one before it, as `generate` writes them.
+                let deepest = lod_levels.iter().map(|l| l.level).max().unwrap_or(0);
+                let mut previous = (size.vertices(), size.triangles());
+                let (mut v, mut t) = (0u64, 0u64);
+                for level in 0..=deepest {
+                    if let Some(l) = lod_levels.iter().find(|l| l.level == level) {
+                        previous = size.at_lod(l.target_triangles as u64);
+                    }
+                    v += previous.0;
+                    t += previous.1;
+                }
+                (v, t)
+            }
+        };
 
         GenerationCost {
-            estimated_vertices: total_verts,
-            estimated_triangles: total_verts, // rough estimate
+            estimated_vertices: vertices.min(u32::MAX as u64) as u32,
+            estimated_triangles: triangles.min(u32::MAX as u64) as u32,
             estimated_texture_bytes: (trunk.bark_normal_resolution as u64)
                 .pow(2)
                 .saturating_mul(4),
-            estimated_generation_ms: 50.0 + branch.max_segments as f64 * 0.01,
+            estimated_generation_ms: 50.0 + size.branch_segments as f64 * 0.01,
         }
+    }
+}
+
+/// What a tree spec grows into before any LOD, counted rather than built.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TreeSize {
+    /// Trunk and branch tubes together, as [`generate_tree`] merges them.
+    bark_vertices: u64,
+    bark_triangles: u64,
+    /// Expected leaf cards, and one card's size.
+    leaf_cards: f64,
+    card_vertices: u64,
+    card_triangles: u64,
+    branch_segments: usize,
+}
+
+impl TreeSize {
+    fn leaf_vertices(&self) -> u64 {
+        (self.leaf_cards * self.card_vertices as f64).round() as u64
+    }
+
+    fn leaf_triangles(&self) -> u64 {
+        (self.leaf_cards * self.card_triangles as f64).round() as u64
+    }
+
+    fn vertices(&self) -> u64 {
+        self.bark_vertices + self.leaf_vertices()
+    }
+
+    fn triangles(&self) -> u64 {
+        self.bark_triangles + self.leaf_triangles()
+    }
+
+    /// Vertices and triangles of [`tree_lod`] at `target` triangles: the
+    /// bark simplified to its share of the target (vertices falling with its
+    /// triangles), and as many whole leaf cards as the rest of it holds.
+    fn at_lod(&self, target: u64) -> (u64, u64) {
+        let total = self.triangles();
+        if target >= total || total == 0 {
+            return (self.vertices(), total);
+        }
+        let bark_budget =
+            ((target as f64 * self.bark_triangles as f64 / total as f64).round() as u64).max(1);
+        let bark_vertices = (self.bark_vertices as f64 * bark_budget as f64
+            / self.bark_triangles.max(1) as f64)
+            .round() as u64;
+        let cards = if self.card_triangles == 0 {
+            0
+        } else {
+            let fit = target.saturating_sub(bark_budget) / self.card_triangles;
+            fit.min(self.leaf_cards.round() as u64)
+        };
+        (
+            bark_vertices + cards * self.card_vertices,
+            bark_budget + cards * self.card_triangles,
+        )
+    }
+}
+
+/// Grow the trunk spine and branch skeleton the way [`TreeGenerator`]
+/// does (same seed, same RNG forks) and count what they would mesh into.
+fn estimate_tree_size(
+    spec: &ProcGenSpec,
+    trunk: &TrunkParams,
+    branch: &BranchParams,
+    leaf: &LeafParams,
+) -> TreeSize {
+    let mut rng = SeededRng::new(spec.resolve_seed().unwrap_or(42));
+    let spine = trunk::trunk_spine(trunk, &mut rng.fork("trunk"));
+    let (trunk_vertices, trunk_triangles) = branches::tube_size(
+        spine.len(),
+        trunk.radial_segments,
+        &[trunk.radius_base, trunk.radius_top],
+    );
+    let trunk_spine = TrunkSpine {
+        points: spine,
+        radius_base: trunk.radius_base,
+        radius_top: trunk.radius_top,
+    };
+    // A failed growth (over the segment budget, say) fails the real run too;
+    // the estimate then costs the trunk alone.
+    let segments = branches::grow_branch_segments(branch, &trunk_spine, &mut rng.fork("branches"))
+        .unwrap_or_default();
+    let (branch_vertices, branch_triangles) =
+        branches::tube_counts(&segments, branch.radial_segments);
+
+    let leaf_cards = if leaf.style == LeafStyle::None || segments.is_empty() {
+        0.0
+    } else {
+        let tips = branches::extract_tips(&segments).0.len() as f64;
+        let along: usize = if leaf.leaf_along_branch_density > 0.0 {
+            segments
+                .iter()
+                .filter(|s| s.depth >= leaf.leaf_along_branch_min_depth && s.length() >= 1e-6)
+                .map(|s| leaves::along_branch_clusters(s.length(), leaf))
+                .sum()
+        } else {
+            0
+        };
+        let sites = tips + leaf.leaf_along_branch_density as f64 * along as f64;
+        sites * leaf.density as f64 * leaf.leaves_per_tip as f64
+    };
+    let (card_vertices, card_triangles) = leaves::card_size(leaf.style);
+
+    TreeSize {
+        bark_vertices: trunk_vertices + branch_vertices,
+        bark_triangles: trunk_triangles + branch_triangles,
+        leaf_cards,
+        card_vertices,
+        card_triangles,
+        branch_segments: segments.len(),
     }
 }
 
@@ -1342,6 +1477,98 @@ branch_levels = 2
         let output = TreeGenerator.generate(&spec, &mut rng).unwrap();
         assert!(output.as_mesh().is_some());
         assert!(output.as_mesh().unwrap().validate().is_ok());
+    }
+
+    // ─── Cost estimate ──────────────────────────────────────────────────────
+
+    /// Every tree spec the engine ships, by name.
+    fn shipped_tree_specs() -> Vec<(&'static str, ProcGenSpec)> {
+        [
+            (
+                "oak_tree",
+                include_str!("../../../../../specs/oak_tree.procgen.toml"),
+            ),
+            (
+                "oak_tree2",
+                include_str!("../../../../../specs/oak_tree.procgen2.toml"),
+            ),
+            (
+                "weeping_willow",
+                include_str!("../../../../../specs/weeping_willow.procgen.toml"),
+            ),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name, ProcGenSpec::parse(text).unwrap()))
+        .collect()
+    }
+
+    /// Vertices and triangles of everything `generate` writes, every LOD
+    /// summed, as `flint gen` counts them.
+    fn generated_counts(spec: &ProcGenSpec) -> (usize, usize) {
+        let mut rng = SeededRng::new(spec.resolve_seed().unwrap());
+        match TreeGenerator.generate(spec, &mut rng).unwrap() {
+            GeneratorOutput::Mesh(m) => (m.vertex_count(), m.triangle_count()),
+            GeneratorOutput::MeshWithLods(lods) => lods.iter().fold((0, 0), |(v, t), m| {
+                (v + m.vertex_count(), t + m.triangle_count())
+            }),
+            other => panic!("a tree is a mesh, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn estimated_bark_is_the_bark_generate_builds() {
+        // The skeleton is grown from the same seed and forks, so the tubes
+        // count exactly; only the leaves are an expectation.
+        for (name, spec) in shipped_tree_specs() {
+            let trunk = TrunkParams::from_toml(&spec.params).unwrap();
+            let branch = BranchParams::from_toml(&spec.params).unwrap();
+            let leaf = LeafParams::from_toml(&spec.params).unwrap();
+            let size = estimate_tree_size(&spec, &trunk, &branch, &leaf);
+            let mut rng = SeededRng::new(spec.resolve_seed().unwrap());
+            let tree = generate_tree(&trunk, &branch, &mut rng).unwrap();
+            assert_eq!(
+                (size.bark_vertices, size.bark_triangles),
+                (
+                    tree.mesh.vertex_count() as u64,
+                    tree.mesh.triangle_count() as u64
+                ),
+                "{name}: bark counted against bark built"
+            );
+        }
+    }
+
+    #[test]
+    fn dry_run_estimate_is_within_2x_of_generate() {
+        // `flint gen --dry-run` is the only way to cost a spec without
+        // generating it (#174): it once read 30,096 vertices and as many
+        // triangles for an oak that wrote 18,059 and 10,493.
+        for (name, spec) in shipped_tree_specs() {
+            for lods in [true, false] {
+                let spec = if lods {
+                    spec.clone()
+                } else {
+                    ProcGenSpec {
+                        lod: None,
+                        ..spec.clone()
+                    }
+                };
+                let cost = TreeGenerator.estimate_cost(&spec);
+                let (verts, tris) = generated_counts(&spec);
+                for (what, est, real) in [
+                    ("vertices", cost.estimated_vertices as f64, verts as f64),
+                    ("triangles", cost.estimated_triangles as f64, tris as f64),
+                ] {
+                    let ratio = est / real;
+                    eprintln!(
+                        "{name} lods={lods} {what}: estimated {est} real {real} ({ratio:.3}x)"
+                    );
+                    assert!(
+                        (0.5..=2.0).contains(&ratio),
+                        "{name} (lods: {lods}): {what} estimated {est}, generated {real}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

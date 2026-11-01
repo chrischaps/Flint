@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::cost::CostMeter;
 use crate::http::HttpResponse;
 use crate::MockAgent;
 
@@ -703,4 +704,104 @@ fn works_as_a_trait_object() {
         .create_spec_from_prompt("tall pine tree with sparse branches", "tree")
         .unwrap();
     assert_eq!(spec.generator, "tree_v1");
+}
+
+// ── Cost tracking ─────────────────────────────────────────────────────────
+
+fn metered(script: &Scripted, meter: CostMeter) -> (AnthropicAgent, Arc<CostMeter>) {
+    let meter = Arc::new(meter.with_notify(|_| {}));
+    (agent(script).with_meter(meter.clone()), meter)
+}
+
+fn costly(text: &str, input: u64, output: u64) -> std::result::Result<HttpResponse, String> {
+    let body = json!({
+        "model": "claude-opus-5-5",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": input, "output_tokens": output},
+    });
+    Ok(HttpResponse {
+        status: 200,
+        retry_after: None,
+        body: body.to_string(),
+    })
+}
+
+#[test]
+fn every_round_is_priced_and_named() {
+    // A bad first reply, then a good one: two calls, two entries.
+    let script = Scripted::new(vec![ok("no json here"), ok(PINE)]);
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic"));
+    agent
+        .create_spec_reported("tall pine tree", "tree")
+        .unwrap();
+    let entries = meter.entries();
+    assert_eq!(entries.len(), 2);
+    for e in &entries {
+        assert_eq!(e.model, "claude-opus-5-5");
+        assert_eq!(e.spec_name, "tall_pine_tree");
+        assert_eq!(e.operation, "create");
+        // 120 in x $4 + 400 out x $20 + 3,000 cache read x $0.20, per MTok.
+        assert!(
+            (e.estimated_usd - 0.009_08).abs() < 1e-9,
+            "{}",
+            e.estimated_usd
+        );
+    }
+    assert!((meter.spent() - 0.018_16).abs() < 1e-9);
+}
+
+#[test]
+fn a_reply_cut_off_at_max_tokens_is_still_paid_for() {
+    let body = json!({
+        "model": "claude-opus-5-5",
+        "content": [{"type": "text", "text": "{\"params\": {"}],
+        "stop_reason": "max_tokens",
+        "usage": {"input_tokens": 100, "output_tokens": 16_000},
+    });
+    let script = Scripted::new(vec![Ok(HttpResponse {
+        status: 200,
+        retry_after: None,
+        body: body.to_string(),
+    })]);
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic"));
+    assert!(agent.create_spec_reported("pine", "tree").is_err());
+    assert_eq!(meter.calls(), 1);
+    assert!((meter.spent() - (0.0004 + 0.32)).abs() < 1e-9);
+}
+
+#[test]
+fn the_ceiling_stops_the_call_before_it_is_sent() {
+    let script = Scripted::new(vec![ok(PINE)]);
+    // Not even the smallest useful reply fits a tenth of a cent.
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic").with_ceiling(0.001));
+    let err = agent.create_spec_reported("pine", "tree").unwrap_err();
+    assert!(matches!(err, ProcGenAiError::CostCeiling { .. }), "{err}");
+    assert!(err.to_string().contains("--max-cost $0.0010"), "{err}");
+    assert_eq!(script.count(), 0, "nothing was sent");
+    assert_eq!(meter.calls(), 0);
+}
+
+#[test]
+fn a_tight_ceiling_lowers_max_tokens_instead_of_refusing() {
+    let script = Scripted::new(vec![ok(PINE)]);
+    // $0.20 can't pay for a 16K Opus 5.5 reply ($0.32) but can for ~9K.
+    let (agent, _) = metered(&script, CostMeter::new("anthropic").with_ceiling(0.20));
+    agent.create_spec_reported("pine", "tree").unwrap();
+    let sent = script.bodies()[0]["max_tokens"].as_u64().unwrap();
+    assert!((2_048..16_000).contains(&sent), "{sent}");
+}
+
+#[test]
+fn the_ceiling_is_checked_before_each_round() {
+    // Round 1's reply is unusable and expensive; round 2 can't be afforded.
+    let script = Scripted::new(vec![
+        costly("not json", 1_000, 14_000),
+        costly(PINE, 1_000, 14_000),
+    ]);
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic").with_ceiling(0.30));
+    let err = agent.create_spec_reported("pine", "tree").unwrap_err();
+    assert!(matches!(err, ProcGenAiError::CostCeiling { .. }), "{err}");
+    assert_eq!(script.count(), 1);
+    assert!(meter.spent() <= 0.30);
 }

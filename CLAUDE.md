@@ -86,9 +86,17 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
    flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
-   flint gen specs/oak_tree.procgen.toml --refine ref.png -o tree.glb  # Claude refines toward ref.png first
-   #   (ANTHROPIC_API_KEY; sees a headless render each round, loops while the measured
-   #    distance falls, --refine-rounds N; writes <name>.refined.procgen.toml)
+   flint gen --ai-create "twisted dead tree" -o tree.glb     # agent writes the spec (ANTHROPIC_API_KEY;
+                                                             #   --ai-provider mock is offline and free)
+   flint gen specs/oak_tree.procgen.toml --ai-assist --max-cost 0.50 -o tree.glb
+   flint gen specs/oak_tree.procgen.toml --ai-refine --reference ref.png -o tree.glb
+   #   Claude sees a headless render of what the spec builds each round and the refine
+   #   loops while the measured distance falls (--refine-rounds N; #183)
+   flint gen --cost-report --since 2026-10-01                # sums .flint/procgen_costs.json
+   # --ai-model, --ai-iterations, --ai-generator,
+   # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
+   # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
+   # refused before sending if its worst case could pass --max-cost.
    ```
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.
@@ -189,19 +197,19 @@ flint-player        Standalone player (game loop, physics, audio, animation, scr
 
 ## Documentation Pipeline
 
-The book is `docs/book` (mdBook), published to docs.chaps.dev. It is kept in sync by a deterministic checker plus an agent playbook; do not sweep it by hand from memory.
+The book is `docs/book` (mdBook), published to docs.chaps.dev by hand from this machine. There is no drift checker and no CI for the docs: when a change alters a command, flag, key or component the book describes, update the book in the same PR, checking against the code rather than memory.
 
 ```bash
-python tools/docs-check/check.py              # drift report; exit 0 clean, 1 drift
-python tools/docs-check/check.py --report md  # same, as a PR-body block
-mdbook build docs/book                        # must be clean before any docs commit
+mdbook build docs/book                                   # must be clean before any docs commit; output in docs/book/book/ (gitignored)
+powershell -ExecutionPolicy Bypass -File docs/build.ps1 -SkipRustdoc -Serve  # preview at http://localhost:3000 (drop -SkipRustdoc for the API docs)
+powershell -ExecutionPolicy Bypass -File docs/build.ps1 -Publish            # mdBook + rustdoc into ~/dev/docs.chaps.dev/flint, committed and pushed
+bash docs/publish.sh --publish                           # the same in bash (--skip-rustdoc, --serve, --docs-repo <dir>)
 ```
 
-- `docs/book/.synced-to` holds the engine SHA the book was last verified against. Update it in every `docs:` commit.
-- `docs/DOCS_SYNC.md` is the playbook (ownership map, rules against inventing keys, commit style). The `docs-sync` skill and `.github/workflows/docs-sync.yml` both follow it: a push to `main` touching `crates/`, `schemas/`, `CLAUDE.md` or `Cargo.toml` runs the checker, and on drift Claude Code opens or refreshes a `docs-sync` PR.
-- `.github/workflows/docs-publish.yml` rebuilds mdBook + rustdoc and pushes docs.chaps.dev when `docs/book/**` lands on `main`. `docs/build.ps1` remains for local `-Serve` previews.
-- Renders for the book are produced locally (no GPU in CI) via the `flint-render` skill and land in `docs/book/src/images/` in kebab-case; `renders/` is scratch and gitignored.
-- When a keybinding is retired, add it to `DEAD_PATTERNS` in the checker so it cannot creep back.
+Without `-Publish` / `--publish` the scripts build and copy into the docs repo but don't commit. `docs/publish.bat` is `build.ps1 -Publish`. Windows PowerShell 5.1 (`powershell`) runs `build.ps1`; `pwsh` may not be installed.
+
+- Publishing pushes to the separate `docs.chaps.dev` repo (default `~/dev/docs.chaps.dev`; `-DocsRepo` / `--docs-repo` to change it). It is outward-facing: only on request.
+- Renders for the book are made locally with `flint render` (no GPU in CI) and land in `docs/book/src/images/` in kebab-case.
 
 ## Project Structure
 
@@ -210,7 +218,7 @@ mdbook build docs/book                        # must be clean before any docs co
 - `styles/` -- Style guide TOML definitions for AI generation
 - `demo/` -- Showcase scenes, scripts, audio, animations, `particles/` effect assets
 - `testGame/` -- Test project (levels/, schemas/)
-- `docs/book/` -- mdBook source; `docs/DOCS_SYNC.md` -- docs playbook; `tools/docs-check/` -- drift checker
+- `docs/book/` -- mdBook source; `docs/build.ps1` / `docs/publish.sh` -- build, preview and publish it
 - `docs/design/flint-design-doc.md` -- Full design document for remaining phases
 
 <!-- claims:begin (from chrischaps/Dashboard skills/setup-claims; re-run its install.sh to update) -->
