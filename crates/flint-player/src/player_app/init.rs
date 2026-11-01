@@ -90,6 +90,7 @@ impl PlayerApp {
             skybox_path: None,
             scene_ambient: None,
             msaa_sample_count: 1,
+            procgen_disk_cache: cfg!(not(target_arch = "wasm32")),
             procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
@@ -410,6 +411,27 @@ impl PlayerApp {
             self.catalog.as_ref(),
             self.content_store.as_ref(),
         );
+
+        // The procgen disk tier (#181), set up once, before the first scene's
+        // assets are resolved.
+        if self.procgen_resolver.disk_stats().is_none() {
+            let scene_dir = Path::new(&self.scene_path)
+                .parent()
+                .unwrap_or(Path::new("."));
+            if let Some(disk) = self
+                .procgen_disk_cache
+                .then(|| procgen_disk_config(scene_dir))
+                .flatten()
+            {
+                println!("[procgen] disk cache: {}", disk.dir.display());
+                self.procgen_resolver = flint_procgen::ProcGenResolver::with_config(
+                    flint_procgen::ProcGenCacheConfig {
+                        disk: Some(disk),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
 
         // Procgen before the model loader: catalog > procgen > file (#32).
         super::procgen_assets::resolve_scene(
@@ -904,4 +926,24 @@ impl PlayerApp {
             self.load_ui_texture(&name);
         }
     }
+}
+
+/// Where the procgen disk tier goes for a scene in `scene_dir` (#181):
+/// `FLINT_PROCGEN_CACHE=<dir>` if set (`0`, `off` or empty: no disk tier),
+/// else `.flint/procgen-cache/` in the project, the scene folder's parent
+/// when that holds `schemas/` or `specs/` (a `levels/` layout, as in
+/// `showcase_game`), otherwise the scene folder itself. Until projects have
+/// a root marker and a config file (#179), that guess is the project.
+fn procgen_disk_config(scene_dir: &Path) -> Option<flint_procgen::DiskCacheConfig> {
+    if let Ok(value) = std::env::var("FLINT_PROCGEN_CACHE") {
+        return match value.trim() {
+            "" | "0" | "off" | "false" => None,
+            dir => Some(flint_procgen::DiskCacheConfig::new(dir)),
+        };
+    }
+    let project = scene_dir
+        .parent()
+        .filter(|p| vfs::is_dir(p.join("schemas")) || vfs::is_dir(p.join("specs")))
+        .unwrap_or(scene_dir);
+    Some(flint_procgen::DiskCacheConfig::in_project(project))
 }

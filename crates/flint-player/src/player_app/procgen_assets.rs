@@ -521,13 +521,26 @@ pub fn resolve_scene(
     mode: ProcGenMode,
     mut sink: GpuSink<'_>,
 ) {
+    let started = web_time::Instant::now();
     discover_specs(resolver, scene_path);
     let requests = collect_requests(world, sink.config, resolver, &sink);
     if requests.is_empty() {
         return;
     }
+    let before = resolver.cache_stats();
     resolve(&requests, resolver, &mut sink, mode);
     let stats = resolver.cache_stats();
+    // One line a load: how long procgen held the scene up, and where the
+    // assets came from (#181: the disk tier is what makes a relaunch fast).
+    // Deferred assets are queued, so they appear in none of the three.
+    println!(
+        "[procgen] {} asset(s) in {:.0} ms: {} generated, {} from disk, {} from memory",
+        requests.len(),
+        started.elapsed().as_secs_f64() * 1e3,
+        stats.misses - before.misses,
+        stats.disk_hits - before.disk_hits,
+        stats.hits - before.hits,
+    );
     tracing::debug!(
         "Procgen cache: {} entries, {} of {} bytes, {} hits / {} misses, {} evicted",
         stats.entry_count,

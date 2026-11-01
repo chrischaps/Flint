@@ -266,6 +266,11 @@ pub struct PlayerApp {
     /// ratio) and whether to step under it to hold the frame rate (#122).
     /// The desktop's default draws at the surface; a page's caps DPR 1.5.
     pub render_scale: render_scale::RenderScaleSetting,
+    /// Keep procgen outputs on disk between runs (#181), in the project's
+    /// `.flint/procgen-cache/` (or `FLINT_PROCGEN_CACHE=<dir>`; `=0` turns
+    /// it off). On by default natively; off for a bundle, whose files are
+    /// not on the disk, and always off on the web.
+    pub procgen_disk_cache: bool,
     dynamic_scale: render_scale::DynamicScale,
     /// Which refreshes the web player draws (#140, `?fps=`); `None` draws
     /// every one, as the desktop always does. See `set_frame_rate`.

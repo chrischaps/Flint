@@ -222,6 +222,8 @@ fn main() -> Result<()> {
     );
 
     app.msaa_sample_count = args.msaa;
+    // A bundle's files aren't on the disk: nothing to key a disk cache by.
+    app.procgen_disk_cache = args.bundle.is_none();
     if args.procgen_defer {
         app.procgen_mode = flint_player::ProcGenMode::Deferred;
     }
