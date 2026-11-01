@@ -21,7 +21,6 @@ bark_color_base = "#3D6B2A"
 bark_roughness = 0.7
 
 branch_method = "lsystem"
-branch_levels = 2
 branch_angle_min = 30.0
 branch_angle_max = 70.0
 branch_length_falloff = 0.5
@@ -29,7 +28,6 @@ branch_radius_falloff = 0.6
 lsystem_iterations = 2
 lsystem_angle_variation = 20.0
 
-crown_shape = "ellipsoid"
 crown_radius = 1.0
 
 leaf_style = "billboard"

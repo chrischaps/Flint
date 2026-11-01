@@ -194,6 +194,9 @@ pub enum CrownShape {
     Hemisphere,
     /// A box `2 * crown_radius` wide and deep, `crown_radius * crown_height_ratio` tall.
     Box,
+    /// A cone `crown_radius` wide at its base, narrowing to a point
+    /// `crown_radius * crown_height_ratio` above it (conifers).
+    Cone,
 }
 
 // ─── BranchParams ───────────────────────────────────────────────────────────
@@ -393,11 +396,12 @@ impl BranchParams {
                 "ellipsoid" | "Ellipsoid" => CrownShape::Ellipsoid,
                 "hemisphere" | "Hemisphere" => CrownShape::Hemisphere,
                 "box" | "Box" => CrownShape::Box,
+                "cone" | "Cone" => CrownShape::Cone,
                 other => {
                     return Err(ProcGenError::InvalidParameter {
                         name: "crown_shape".into(),
                         reason: format!(
-                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", \"hemisphere\" or \"box\""
+                            "unknown shape \"{other}\"; expected \"sphere\", \"ellipsoid\", \"hemisphere\", \"box\" or \"cone\""
                         ),
                     });
                 }
@@ -868,58 +872,132 @@ impl Generator for TreeGenerator {
     }
 
     fn param_schema(&self) -> serde_json::Value {
-        serde_json::json!({
+        use serde_json::{json, Value};
+
+        // `x-when` says which branch method reads a key (see
+        // `param_ui::lint_params`): the editor hides the rest and `flint gen`
+        // warns about them. `tree_schema_says_which_method_reads_each_key`
+        // holds the schema to it.
+        let only = |method: &str, mut prop: Value| {
+            prop["x-when"] = json!({ "branch_method": [method] });
+            prop
+        };
+        let lsys = |prop| only("lsystem", prop);
+        let colon = |prop| only("space_colonization", prop);
+        let hex = "^#?[0-9a-fA-F]{6,8}$";
+
+        json!({
             "type": "object",
             "properties": {
-                "trunk_height": { "type": "number", "minimum": 0.01, "default": 5.0 },
-                "trunk_radius_base": { "type": "number", "minimum": 0.01, "default": 0.3 },
-                "trunk_radius_top": { "type": "number", "minimum": 0.0, "default": 0.1 },
-                "trunk_segments": { "type": "integer", "minimum": 2, "default": 10 },
-                "radial_segments": { "type": "integer", "minimum": 3, "default": 8 },
-                "trunk_curve_noise": { "type": "number", "minimum": 0.0, "default": 0.1 },
-                "bark_color_base": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#573214" },
-                "bark_roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.9 },
-                "bark_normal_strength": { "type": "number", "default": 1.0 },
-                "bark_normal_resolution": { "type": "integer", "default": 256 },
-                "branch_method": { "type": "string", "enum": ["lsystem", "space_colonization"], "default": "lsystem" },
-                "branch_levels": { "type": "integer", "minimum": 1, "default": 3 },
-                "branch_angle_min": { "type": "number", "default": 20.0 },
-                "branch_angle_max": { "type": "number", "default": 40.0 },
-                "branch_length_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7 },
-                "branch_radius_falloff": { "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6 },
-                "branch_start": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.6 },
-                "branch_max_segments": { "type": "integer", "minimum": 1, "default": 5000, "description": "Cap on branch segments the growth may emit" },
-                "branch_radial_segments": { "type": "integer", "minimum": 3, "default": 6 },
-                "crown_shape": { "type": "string", "enum": ["sphere", "ellipsoid", "hemisphere", "box"], "default": "sphere" },
-                "crown_radius": { "type": "number", "exclusiveMinimum": 0.0, "default": 3.0 },
-                "crown_height_ratio": { "type": "number", "exclusiveMinimum": 0.0, "default": 1.5 },
-                "num_attraction_points": { "type": "integer", "minimum": 0, "default": 500 },
-                "kill_distance": { "type": "number", "exclusiveMinimum": 0.0, "default": 0.5 },
-                "influence_distance": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 },
-                "step_size": { "type": "number", "exclusiveMinimum": 0.0, "default": 0.3 },
-                "branch_pipe_exponent": { "type": "number", "minimum": 1.0, "default": 2.0 },
-                "lsystem_iterations": { "type": "integer", "minimum": 1, "default": 3 },
-                "lsystem_angle_variation": { "type": "number", "minimum": 0.0, "default": 10.0 },
-                "lsystem_preset": { "type": "string", "enum": ["fractal_plant", "weed", "stochastic_plant", "bush"] },
-                "lsystem_axiom": { "type": "string" },
-                "lsystem_rules": { "type": "array", "items": { "type": "string" } },
-                "lsystem_angle": { "type": "number" },
-                "lsystem_step": { "type": "number", "exclusiveMinimum": 0.0 },
-                "lsystem_size": { "type": "number", "exclusiveMinimum": 0.0, "default": 4.0 },
-                "lsystem_tropism": { "type": "number", "default": 0.0 },
-                "leaf_style": { "type": "string", "enum": ["billboard", "mesh", "none"], "default": "billboard" },
-                "leaf_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8 },
-                "leaf_color_base": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#2D8C0D" },
-                "leaf_color_variation": { "type": "number", "minimum": 0.0, "default": 0.08 },
-                "leaf_season": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                "leaf_season_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06 },
-                "leaf_shades": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4 },
-                "leaf_size": { "type": "number", "minimum": 0.01, "default": 0.15 },
-                "leaf_size_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3 },
-                "leaves_per_tip": { "type": "integer", "minimum": 1, "default": 5 },
-                "leaf_spread_radius": { "type": "number", "minimum": 0.0, "default": 0.3 },
-                "leaf_along_branch_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-                "leaf_along_branch_min_depth": { "type": "integer", "minimum": 0, "default": 2 }
+                // ── Trunk ──
+                "trunk_height": { "type": "number", "minimum": 0.01, "default": 5.0,
+                    "description": "Trunk length in metres, from the ground to where it ends" },
+                "trunk_radius_base": { "type": "number", "minimum": 0.01, "default": 0.3,
+                    "description": "Trunk radius at the ground, metres" },
+                "trunk_radius_top": { "type": "number", "minimum": 0.0, "default": 0.1,
+                    "description": "Trunk radius at its tip, metres; the limbs carrying on from the tip start this thick" },
+                "trunk_segments": { "type": "integer", "minimum": 2, "default": 10,
+                    "description": "Rings along the trunk; more follow its sway more smoothly" },
+                "radial_segments": { "type": "integer", "minimum": 3, "default": 8,
+                    "description": "Sides around the trunk" },
+                "trunk_curve_noise": { "type": "number", "minimum": 0.0, "default": 0.1,
+                    "description": "Largest sideways sway of the trunk, metres (wavelength about 0.6 of its height); 0 grows it straight" },
+
+                // ── Bark ──
+                "bark_color_base": { "type": "string", "pattern": hex, "default": "#573214",
+                    "description": "Bark albedo, sRGB hex" },
+                "bark_roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.9,
+                    "description": "Bark material roughness" },
+                "bark_normal_strength": { "type": "number", "default": 1.0,
+                    "description": "Depth of the bark normal map's furrows and cracks; 0 is smooth" },
+                "bark_normal_resolution": { "type": "integer", "default": 256,
+                    "description": "Side of the square bark normal map in pixels; a power of two, at least 16" },
+
+                // ── Branching ──
+                "branch_method": { "type": "string", "enum": ["lsystem", "space_colonization"], "default": "lsystem",
+                    "description": "How limbs grow: an L-system (a built-in rule, or a grammar of your own) or space colonization toward points filling the crown" },
+                "branch_levels": { "type": "integer", "minimum": 1, "default": 3, "deprecated": true,
+                    "description": "Has no effect: the L-system's depth is lsystem_iterations, and space colonization grows until its points run out" },
+                "branch_start": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.6,
+                    "description": "Where on the trunk the lowest limb leaves it, 0 the ground to 1 the tip. A grammar ignores it and grows from the tip" },
+                "branch_max_segments": { "type": "integer", "minimum": 1, "default": 5000,
+                    "description": "Cap on branch segments the growth may emit, a guard against runaway grammars" },
+                "branch_radial_segments": { "type": "integer", "minimum": 3, "default": 6,
+                    "description": "Sides around the thickest limbs; thinner ones get fewer, down to three" },
+                "crown_radius": { "type": "number", "exclusiveMinimum": 0.0, "default": 3.0,
+                    "description": "Crown size, metres: the built-in L-system's reach, or the colonized volume's radius. A grammar uses lsystem_size instead" },
+
+                // ── L-system ──
+                "branch_angle_min": lsys(json!({ "type": "number", "default": 20.0,
+                    "description": "Smallest angle a limb leaves its parent at, degrees" })),
+                "branch_angle_max": lsys(json!({ "type": "number", "default": 40.0,
+                    "description": "Largest angle a limb leaves its parent at, degrees; a grammar without lsystem_angle turns by the middle of min and max" })),
+                "branch_length_falloff": lsys(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.7,
+                    "description": "Each branching level's length as a fraction of its parent's" })),
+                "branch_radius_falloff": lsys(json!({ "type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0, "default": 0.6,
+                    "description": "Each branching level's radius as a fraction of its parent's" })),
+                "lsystem_iterations": lsys(json!({ "type": "integer", "minimum": 1, "default": 3,
+                    "description": "Rewriting passes: the crown's branching depth. Each one multiplies the segment count" })),
+                "lsystem_angle_variation": lsys(json!({ "type": "number", "minimum": 0.0, "default": 10.0,
+                    "description": "Random spread added to every turn of the built-in rule, degrees. A grammar ignores it" })),
+                "lsystem_preset": lsys(json!({ "type": "string", "enum": ["fractal_plant", "weed", "stochastic_plant", "bush"],
+                    "description": "A built-in grammar from The Algorithmic Beauty of Plants, in place of the built-in rule" })),
+                "lsystem_axiom": lsys(json!({ "type": "string",
+                    "description": "Your own grammar's starting string; with lsystem_rules it replaces the built-in rule" })),
+                "lsystem_rules": lsys(json!({ "type": "array", "items": { "type": "string" },
+                    "description": "Your own grammar's productions, e.g. \"X -> F[+X][-X]FX\" or weighted \"F (0.7) -> FF\"" })),
+                "lsystem_angle": lsys(json!({ "type": "number",
+                    "description": "A grammar's turn angle, degrees; defaults to the preset's, else the middle of branch_angle_min/max" })),
+                "lsystem_step": lsys(json!({ "type": "number", "exclusiveMinimum": 0.0,
+                    "description": "A grammar's fixed step length in metres; when unset its crown is scaled to lsystem_size" })),
+                "lsystem_size": lsys(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 4.0,
+                    "description": "How far a grammar's crown reaches from the trunk tip, metres, when lsystem_step is unset" })),
+                "lsystem_tropism": lsys(json!({ "type": "number", "default": 0.0,
+                    "description": "A grammar's bend toward the ground per step; negative bends up toward the light" })),
+
+                // ── Space colonization ──
+                "crown_shape": colon(json!({ "type": "string", "enum": ["sphere", "ellipsoid", "hemisphere", "box", "cone"], "default": "sphere",
+                    "description": "The volume the attraction points fill; it rests on the trunk at branch_start" })),
+                "crown_height_ratio": colon(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 1.5,
+                    "description": "Crown height as a multiple of crown_radius, for the ellipsoid, box and cone" })),
+                "num_attraction_points": colon(json!({ "type": "integer", "minimum": 0, "default": 500,
+                    "description": "Points scattered through the crown; branches grow until they have consumed them. More gives a denser crown" })),
+                "influence_distance": colon(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 4.0,
+                    "description": "How far a point pulls the nearest branch tip, metres" })),
+                "kill_distance": colon(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 0.5,
+                    "description": "How close a branch must come to consume a point, metres; smaller fills the crown more finely" })),
+                "step_size": colon(json!({ "type": "number", "exclusiveMinimum": 0.0, "default": 0.3,
+                    "description": "Length of each growth step, metres" })),
+                "branch_pipe_exponent": colon(json!({ "type": "number", "minimum": 1.0, "default": 2.0,
+                    "description": "Pipe model exponent n in r_parent^n = sum(r_child^n): 2 is da Vinci's rule, about 3 keeps twigs sturdier" })),
+
+                // ── Leaves ──
+                "leaf_style": { "type": "string", "enum": ["billboard", "mesh", "none"], "default": "billboard",
+                    "description": "Leaf cards: quads facing along their branch, diamonds tilted off it, or no leaves" },
+                "leaf_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8,
+                    "description": "Fraction of branch tips that get a cluster of leaves" },
+                "leaves_per_tip": { "type": "integer", "minimum": 1, "default": 5,
+                    "description": "Leaves in each cluster" },
+                "leaf_spread_radius": { "type": "number", "minimum": 0.0, "default": 0.3,
+                    "description": "Radius a cluster's leaves scatter within, metres" },
+                "leaf_along_branch_density": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0,
+                    "description": "Chance of a cluster on each branch segment as well as the tips; 0 leaves the tips only" },
+                "leaf_along_branch_min_depth": { "type": "integer", "minimum": 0, "default": 2,
+                    "description": "Shallowest branching level that gets along-branch leaves (1 = limbs off the trunk)" },
+                "leaf_size": { "type": "number", "minimum": 0.01, "default": 0.15,
+                    "description": "Leaf card size, metres" },
+                "leaf_size_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.3,
+                    "description": "Random size spread, as a fraction (0.3 = ±30%)" },
+                "leaf_color_base": { "type": "string", "pattern": hex, "default": "#2D8C0D",
+                    "description": "Leaf albedo before the season tints it, sRGB hex" },
+                "leaf_shades": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4,
+                    "description": "Distinct leaf shades, each its own material" },
+                "leaf_color_variation": { "type": "number", "minimum": 0.0, "default": 0.08,
+                    "description": "Lightness spread between the shades (HSL, ±)" },
+                "leaf_season": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0,
+                    "description": "Time of year: 0 the base colour, 0.4 yellow, 0.7 orange, 1 red" },
+                "leaf_season_variation": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.06,
+                    "description": "How far each shade's season strays from leaf_season, so a tree turns unevenly" }
             },
             "additionalProperties": false
         })
@@ -1577,5 +1655,158 @@ branch_levels = 2
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["trunk_height"].is_object());
         assert!(schema["properties"]["leaf_style"].is_object());
+    }
+
+    /// Nudge one key and see whether the tree changes; an error counts as
+    /// a change (the key was read and refused).
+    fn tree_nudge(prop: &serde_json::Value, current: Option<&toml::Value>) -> toml::Value {
+        let max = prop["maximum"].as_f64();
+        match prop["type"].as_str().unwrap() {
+            "integer" => {
+                let now = current
+                    .and_then(|v| v.as_integer())
+                    .or(prop["default"].as_i64())
+                    .unwrap_or(4);
+                let min = prop["minimum"].as_i64().unwrap_or(0);
+                // Powers of two stay powers of two (bark_normal_resolution).
+                if now >= 32 && (now as u64).is_power_of_two() {
+                    (now / 2).into()
+                } else if now > min {
+                    (now - 1).into()
+                } else {
+                    (now + 2).into()
+                }
+            }
+            "number" => {
+                let now = current
+                    .and_then(|v| v.as_float().or(v.as_integer().map(|i| i as f64)))
+                    .or(prop["default"].as_f64());
+                let Some(now) = now else {
+                    return if max.is_some() { 0.3 } else { 7.0 }.into();
+                };
+                let up = now * 1.3 + 0.05;
+                match max {
+                    Some(m) if up > m => (now * 0.6).into(),
+                    _ => up.into(),
+                }
+            }
+            "string" if prop["enum"].is_array() => {
+                let now = current
+                    .and_then(|v| v.as_str())
+                    .or(prop["default"].as_str())
+                    .unwrap_or("");
+                let other = prop["enum"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|v| v.as_str() != Some(now))
+                    .unwrap();
+                other.as_str().unwrap().into()
+            }
+            "string" => "#20A0C0".into(),
+            t => panic!("no nudge for {t}"),
+        }
+    }
+
+    fn small_tree(method: &str) -> ProcGenSpec {
+        let mut spec = ProcGenSpec::parse(&format!(
+            r##"
+generator = "tree_v1"
+[meta]
+name = "nudge_tree"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 11
+[params]
+branch_method = "{method}"
+trunk_segments = 6
+lsystem_iterations = 3
+num_attraction_points = 120
+leaf_density = 0.6
+leaf_along_branch_density = 0.4
+leaf_along_branch_min_depth = 2
+bark_normal_resolution = 32
+"##
+        ))
+        .unwrap();
+        if method == "space_colonization" {
+            spec.params
+                .as_table_mut()
+                .unwrap()
+                .insert("crown_shape".into(), "ellipsoid".into());
+        }
+        spec
+    }
+
+    #[test]
+    fn tree_schema_says_which_method_reads_each_key() {
+        // Keys the L-system reads only with a grammar, and only without one.
+        // `x-when` can name one controlling key, so these two splits live in
+        // the descriptions; this test holds both to the generator.
+        const GRAMMAR_ONLY: [&str; 4] = [
+            "lsystem_angle",
+            "lsystem_step",
+            "lsystem_size",
+            "lsystem_tropism",
+        ];
+        const BUILT_IN_ONLY: [&str; 3] =
+            ["crown_radius", "branch_start", "lsystem_angle_variation"];
+
+        let schema = TreeGenerator.param_schema();
+        let props = schema["properties"].as_object().unwrap();
+        let fields = crate::parse_param_schema(&schema);
+        let run = |spec: &ProcGenSpec| TreeGenerator.generate(spec, &mut SeededRng::new(11)).ok();
+        for route in ["lsystem", "grammar", "space_colonization"] {
+            let mut base = small_tree(if route == "grammar" { "lsystem" } else { route });
+            if route == "grammar" {
+                // A grammar with no angle of its own, so it turns by
+                // branch_angle_min/max as the descriptions say.
+                let t = base.params.as_table_mut().unwrap();
+                t.insert("lsystem_axiom".into(), "X".into());
+                t.insert(
+                    "lsystem_rules".into(),
+                    toml::Value::Array(vec!["X -> F[+X][-X]FX".into(), "F -> FF".into()]),
+                );
+            }
+            let reference = run(&base).expect("base tree builds");
+            for (key, prop) in props {
+                let key = key.as_str();
+                if [
+                    "branch_method",
+                    "lsystem_axiom",
+                    "lsystem_rules",
+                    "lsystem_preset",
+                ]
+                .contains(&key)
+                {
+                    continue;
+                }
+                let mut spec = base.clone();
+                let value = if key == "branch_max_segments" {
+                    // A cap only shows when growth reaches it.
+                    toml::Value::Integer(12)
+                } else {
+                    tree_nudge(prop, spec.params.get(key))
+                };
+                spec.params
+                    .as_table_mut()
+                    .unwrap()
+                    .insert(key.into(), value.clone());
+                let changed = run(&spec).as_ref() != Some(&reference);
+                let field = fields.iter().find(|f| f.name == key).unwrap();
+                let expected = prop["deprecated"] != true
+                    && field.applies(&schema, spec.params.as_table().unwrap())
+                    && !(route == "lsystem" && GRAMMAR_ONLY.contains(&key))
+                    && !(route == "grammar" && BUILT_IN_ONLY.contains(&key));
+                assert_eq!(
+                    changed,
+                    expected,
+                    "{route}: {key} = {value} {} the tree, but the schema says it {}",
+                    if changed { "changed" } else { "did not change" },
+                    if expected { "applies" } else { "is ignored" }
+                );
+            }
+        }
     }
 }
