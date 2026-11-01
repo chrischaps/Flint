@@ -1,33 +1,20 @@
-//! Model validation against style constraints
+//! Model validation against style constraints.
 //!
-//! Validates generated GLB models by importing them and checking against
-//! style guide constraints (triangle count, UVs, normals, material ranges).
+//! A thin wrapper over the procgen validator: the model is read back with
+//! [`flint_procgen::read_model`] and checked by
+//! [`flint_procgen::validate_model`], the checks `flint gen --validate` runs
+//! on the GLB it writes. One set of rules covers every model, generated,
+//! imported or AI-made: mesh integrity, triangle budget, UVs, normals, PBR
+//! ranges, palette and degenerate triangles.
 
 use crate::style::StyleGuide;
 use flint_core::{FlintError, Result};
-use flint_import::import_gltf;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// A single validation check result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidationCheck {
-    pub name: String,
-    pub status: CheckStatus,
-    pub detail: String,
-}
+pub use flint_procgen::{CheckStatus, ValidationCheck};
 
-/// Status of a validation check
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CheckStatus {
-    Pass,
-    Warn,
-    Fail,
-}
-
-/// Full validation report for a model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Full validation report for a model file.
+#[derive(Debug, Clone)]
 pub struct ValidationReport {
     pub path: String,
     pub checks: Vec<ValidationCheck>,
@@ -43,21 +30,19 @@ impl ValidationReport {
         self.checks.iter().filter(|c| c.status == status).count()
     }
 
-    /// Print a formatted summary
+    /// Print the model's header, each check as `flint gen --validate`
+    /// prints it, and the result.
     pub fn print_summary(&self) {
         println!("Validation: {}", self.path);
         println!(
             "  Meshes: {}, Materials: {}, Triangles: {}",
             self.mesh_count, self.material_count, self.total_triangles
         );
-        for check in &self.checks {
-            let icon = match check.status {
-                CheckStatus::Pass => "OK",
-                CheckStatus::Warn => "WARN",
-                CheckStatus::Fail => "FAIL",
-            };
-            println!("  {}: {}  {}", check.name, check.detail, icon);
-        }
+        let report = flint_procgen::ValidationReport {
+            checks: self.checks.clone(),
+        };
+        report.print_checks();
+        println!("  {}", report.summary());
         if self.passed {
             println!("  Result: PASSED");
         } else {
@@ -69,135 +54,23 @@ impl ValidationReport {
     }
 }
 
-/// Validate a GLB model against optional style constraints
+/// Validate a glTF/GLB model against optional style constraints.
 pub fn validate_model(path: &Path, style: Option<&StyleGuide>) -> Result<ValidationReport> {
-    let path_str = path.to_string_lossy().to_string();
-
-    // Import the model
-    let result = import_gltf(&path_str).map_err(|e| {
-        FlintError::GenerationError(format!("Failed to import model for validation: {}", e))
+    let model = flint_procgen::read_model(path).map_err(|e| {
+        FlintError::GenerationError(format!("Failed to import model for validation: {e}"))
     })?;
-
-    let mut checks = Vec::new();
-    let mut total_triangles: u32 = 0;
-
-    // Check each mesh
-    for mesh in &result.meshes {
-        let tri_count = (mesh.indices.len() / 3) as u32;
-        total_triangles += tri_count;
-
-        // UV check
-        if mesh.uvs.is_empty() {
-            let should_fail = style.and_then(|s| s.geometry.require_uvs).unwrap_or(false);
-            checks.push(ValidationCheck {
-                name: format!("{}: UVs", mesh.name),
-                status: if should_fail {
-                    CheckStatus::Fail
-                } else {
-                    CheckStatus::Warn
-                },
-                detail: "missing".to_string(),
-            });
-        } else {
-            checks.push(ValidationCheck {
-                name: format!("{}: UVs", mesh.name),
-                status: CheckStatus::Pass,
-                detail: "present".to_string(),
-            });
-        }
-
-        // Normal check
-        if mesh.normals.is_empty() {
-            let should_fail = style
-                .and_then(|s| s.geometry.require_normals)
-                .unwrap_or(false);
-            checks.push(ValidationCheck {
-                name: format!("{}: Normals", mesh.name),
-                status: if should_fail {
-                    CheckStatus::Fail
-                } else {
-                    CheckStatus::Warn
-                },
-                detail: "missing".to_string(),
-            });
-        } else {
-            checks.push(ValidationCheck {
-                name: format!("{}: Normals", mesh.name),
-                status: CheckStatus::Pass,
-                detail: "present".to_string(),
-            });
-        }
-    }
-
-    // Total triangle count check
-    if let Some(max_tris) = style.and_then(|s| s.geometry.max_triangles) {
-        if total_triangles > max_tris {
-            checks.push(ValidationCheck {
-                name: "Triangles".to_string(),
-                status: CheckStatus::Fail,
-                detail: format!("{} / {} max", total_triangles, max_tris),
-            });
-        } else {
-            checks.push(ValidationCheck {
-                name: "Triangles".to_string(),
-                status: CheckStatus::Pass,
-                detail: format!("{} / {} max", total_triangles, max_tris),
-            });
-        }
-    } else {
-        checks.push(ValidationCheck {
-            name: "Triangles".to_string(),
-            status: CheckStatus::Pass,
-            detail: format!("{}", total_triangles),
-        });
-    }
-
-    // Material checks
-    for mat in &result.materials {
-        if let Some(roughness_range) = style.and_then(|s| s.materials.roughness_range) {
-            let in_range = mat.roughness >= roughness_range[0] as f32
-                && mat.roughness <= roughness_range[1] as f32;
-            checks.push(ValidationCheck {
-                name: format!("{}: roughness", mat.name),
-                status: if in_range {
-                    CheckStatus::Pass
-                } else {
-                    CheckStatus::Warn
-                },
-                detail: format!(
-                    "{:.2} (range: {:.1}-{:.1})",
-                    mat.roughness, roughness_range[0], roughness_range[1]
-                ),
-            });
-        }
-
-        if let Some(metallic_range) = style.and_then(|s| s.materials.metallic_range) {
-            let in_range = mat.metallic >= metallic_range[0] as f32
-                && mat.metallic <= metallic_range[1] as f32;
-            checks.push(ValidationCheck {
-                name: format!("{}: metallic", mat.name),
-                status: if in_range {
-                    CheckStatus::Pass
-                } else {
-                    CheckStatus::Warn
-                },
-                detail: format!(
-                    "{:.2} (range: {:.1}-{:.1})",
-                    mat.metallic, metallic_range[0], metallic_range[1]
-                ),
-            });
-        }
-    }
-
-    let passed = !checks.iter().any(|c| c.status == CheckStatus::Fail);
+    let constraints = style
+        .map(StyleGuide::validation_constraints)
+        .unwrap_or_default();
+    let report = flint_procgen::validate_model(&model, None, &constraints);
 
     Ok(ValidationReport {
-        path: path_str,
-        checks,
-        mesh_count: result.meshes.len(),
-        material_count: result.materials.len(),
-        total_triangles,
-        passed,
+        path: path.to_string_lossy().to_string(),
+        passed: !report.has_failures(),
+        checks: report.checks,
+        mesh_count: model.meshes.len(),
+        material_count: model.material_count,
+        total_triangles: model.triangle_count() as u32,
     })
 }
 
@@ -206,16 +79,13 @@ mod tests {
     use super::*;
     use crate::provider::GenerationProvider;
 
-    #[test]
-    fn test_validate_mock_model() {
-        // Generate a mock GLB first, then validate it
+    fn mock_model(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let dir =
-            std::env::temp_dir().join(format!("flint_validate_test_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("flint_validate_{name}_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-
         let provider = crate::providers::mock::MockProvider::new();
         let request = crate::provider::GenerateRequest {
-            name: "test_model".to_string(),
+            name: name.to_string(),
             description: "test cube".to_string(),
             kind: crate::provider::AssetKind::Model,
             texture_params: None,
@@ -223,40 +93,12 @@ mod tests {
             audio_params: None,
             tags: vec![],
         };
-
         let result = provider.generate(&request, None, &dir).unwrap();
-
-        let report = validate_model(Path::new(&result.output_path), None).unwrap();
-        assert!(report.passed);
-        assert!(report.mesh_count > 0);
-        assert!(report.total_triangles > 0);
-
-        std::fs::remove_dir_all(&dir).ok();
+        (dir, result.output_path.into())
     }
 
-    #[test]
-    fn test_validate_with_style_constraints() {
-        let dir = std::env::temp_dir().join(format!(
-            "flint_validate_style_test_{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let provider = crate::providers::mock::MockProvider::new();
-        let request = crate::provider::GenerateRequest {
-            name: "test_model2".to_string(),
-            description: "test cube".to_string(),
-            kind: crate::provider::AssetKind::Model,
-            texture_params: None,
-            model_params: None,
-            audio_params: None,
-            tags: vec![],
-        };
-
-        let result = provider.generate(&request, None, &dir).unwrap();
-
-        // Style with very low triangle limit to force a failure
-        let strict_style = StyleGuide {
+    fn strict_style() -> StyleGuide {
+        StyleGuide {
             name: "strict_test".to_string(),
             description: None,
             prompt_prefix: None,
@@ -269,44 +111,89 @@ mod tests {
                 require_uvs: Some(true),
                 require_normals: Some(true),
             },
-        };
+        }
+    }
 
-        let report = validate_model(Path::new(&result.output_path), Some(&strict_style)).unwrap();
-        // Should fail due to triangle count > 0 and missing UVs on mock model
-        assert!(!report.passed);
+    fn check<'a>(report: &'a ValidationReport, name: &str) -> &'a ValidationCheck {
+        report
+            .checks
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("no '{name}' check in {:#?}", report.checks))
+    }
 
+    #[test]
+    fn test_validate_mock_model() {
+        let (dir, path) = mock_model("test_model");
+        let report = validate_model(&path, None).unwrap();
+        // The mock triangle has no normals or UVs: missing, so they warn.
+        assert!(report.passed, "{:#?}", report.checks);
+        assert_eq!(report.mesh_count, 1);
+        assert_eq!(report.total_triangles, 1);
+        assert_eq!(check(&report, "normals").status, CheckStatus::Warn);
+        assert_eq!(check(&report, "UV range").status, CheckStatus::Warn);
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn test_validation_report_counts() {
-        let report = ValidationReport {
-            path: "test.glb".to_string(),
-            checks: vec![
-                ValidationCheck {
-                    name: "UVs".to_string(),
-                    status: CheckStatus::Pass,
-                    detail: "present".to_string(),
-                },
-                ValidationCheck {
-                    name: "Triangles".to_string(),
-                    status: CheckStatus::Fail,
-                    detail: "10000 / 5000 max".to_string(),
-                },
-                ValidationCheck {
-                    name: "Normals".to_string(),
-                    status: CheckStatus::Warn,
-                    detail: "missing".to_string(),
-                },
-            ],
-            mesh_count: 1,
-            material_count: 1,
-            total_triangles: 10000,
-            passed: false,
-        };
+    fn test_validate_with_style_constraints() {
+        let (dir, path) = mock_model("test_model2");
+        let report = validate_model(&path, Some(&strict_style())).unwrap();
+        assert!(!report.passed);
+        // Each requirement fails under its own name.
+        assert_eq!(check(&report, "UV range").status, CheckStatus::Fail);
+        assert_eq!(check(&report, "normals").status, CheckStatus::Fail);
+        assert_eq!(
+            check(&report, "style triangle budget").status,
+            CheckStatus::Fail
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
-        assert_eq!(report.count_by_status(CheckStatus::Pass), 1);
-        assert_eq!(report.count_by_status(CheckStatus::Fail), 1);
-        assert_eq!(report.count_by_status(CheckStatus::Warn), 1);
+    /// `flint asset validate` reports the check names `flint gen
+    /// --validate` does, because they are the same checks.
+    #[test]
+    fn names_match_the_procgen_validator() {
+        let v = |x: f32, y: f32| flint_procgen::Vertex {
+            position: [x, y, 0.0],
+            normal: [0.0, 0.0, 1.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],
+            uv: [x, y],
+        };
+        let mut mesh = flint_procgen::MeshData {
+            vertices: vec![v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            materials: vec![flint_procgen::MaterialData::default()],
+            submeshes: vec![],
+            bounding_box: flint_procgen::BoundingBox::from_positions(&[]),
+        };
+        mesh.recompute_bounds();
+        let glb = flint_procgen::mesh_to_glb(&mesh).unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("flint_validate_names_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cube.glb");
+        std::fs::write(&path, glb).unwrap();
+
+        let style = StyleGuide {
+            palette: vec!["#808080".into()],
+            ..strict_style()
+        };
+        let report = validate_model(&path, Some(&style)).unwrap();
+        let spec = flint_procgen::ProcGenSpec::parse(
+            "generator = \"mock\"\n[meta]\nname = \"quad\"\nversion = \"1.0.0\"\n\
+             [seed]\nmode = \"fixed\"\nvalue = 0\n",
+        )
+        .unwrap();
+        let in_memory = flint_procgen::validate_output(
+            &flint_procgen::GeneratorOutput::Mesh(mesh),
+            &spec,
+            &style.validation_constraints(),
+        );
+        let names = |checks: &[ValidationCheck]| -> Vec<String> {
+            checks.iter().map(|c| c.name.clone()).collect()
+        };
+        assert_eq!(names(&report.checks), names(&in_memory.checks));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

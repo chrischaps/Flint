@@ -360,12 +360,12 @@ fn run_generate(
         ) {
             Ok(report) => {
                 for check in &report.checks {
-                    let icon = match check.status {
-                        flint_asset_gen::validate::CheckStatus::Pass => "OK",
-                        flint_asset_gen::validate::CheckStatus::Warn => "WARN",
-                        flint_asset_gen::validate::CheckStatus::Fail => "FAIL",
-                    };
-                    println!("    {}: {}  {}", check.name, check.detail, icon);
+                    println!(
+                        "    [{:>5}] {}: {}",
+                        check.status.to_string(),
+                        check.name,
+                        check.detail
+                    );
                 }
             }
             Err(e) => {
