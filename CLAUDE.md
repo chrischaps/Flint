@@ -89,8 +89,11 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen --ai-create "twisted dead tree" -o tree.glb     # agent writes the spec (ANTHROPIC_API_KEY;
                                                              #   --ai-provider mock is offline and free)
    flint gen specs/oak_tree.procgen.toml --ai-assist --max-cost 0.50 -o tree.glb
+   flint gen specs/oak_tree.procgen.toml --ai-refine --reference ref.png -o tree.glb
+   #   Claude sees a headless render of what the spec builds each round and the refine
+   #   loops while the measured distance falls (--refine-rounds N; #183)
    flint gen --cost-report --since 2026-10-01                # sums .flint/procgen_costs.json
-   # --ai-refine --reference img.png, --ai-model, --ai-iterations, --ai-generator,
+   # --ai-model, --ai-iterations, --ai-generator,
    # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
    # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
    # refused before sending if its worst case could pass --max-cost.

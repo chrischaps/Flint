@@ -548,6 +548,7 @@ flint gen --cost-report --since 2026-10-01
 | `--ai-generator <name>` | (guessed) | With `--ai-create`: `tree_v1`, `texture_v1` or `creature_v1` |
 | `--ai-assist` | `false` | Interpret the spec, then refine it |
 | `--ai-refine` | `false` | Refine against `--reference <image>` |
+| `--refine-rounds <N>` | `--ai-iterations` | With `--reference`: most measured refine rounds (1-8). Each round's result is rendered (meshes headlessly) and measured against the reference; the refine asks again while the distance falls and keeps the closest spec |
 | `--ai-provider <name>` | `anthropic` | `anthropic` or `mock` (offline, free) |
 | `--ai-model <id>` | `claude-opus-5-5` | Model; `.flint/procgen_ai.toml` can set the default |
 | `--ai-iterations <N>` | `3` | Rounds per AI step (1-20) |

@@ -10,10 +10,11 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use flint_procgen::ProcGenSpec;
 use flint_procgen_ai::cost::{self, price_for, CostLedger, CostMeter, CostSummary};
-use flint_procgen_ai::{AgentConfig, AnthropicAgent, MockAgent, ProcGenAgent, Report};
+use flint_procgen_ai::{AgentConfig, AnthropicAgent, Distance, MockAgent, ProcGenAgent, Report};
 use serde::Deserialize;
 
 use super::gen::GenArgs;
+use super::gen_refine::{MeshRenderPreviewer, PREVIEW_SIZE};
 
 /// Project defaults for the agent, read from this file when it exists.
 /// Every key is optional; flags override them.
@@ -109,13 +110,29 @@ pub fn build_meter(config: &AgentConfig, args: &GenArgs) -> Arc<CostMeter> {
     Arc::new(meter)
 }
 
-/// The agent for `config`, its calls going through `meter`.
-pub fn build_agent(config: AgentConfig, meter: Arc<CostMeter>) -> Result<Box<dyn ProcGenAgent>> {
+/// The agent for `config`, its calls going through `meter`. A Claude agent
+/// gets the mesh render previewer, so a refine against a reference sees
+/// what the spec builds and loops for up to `refine_rounds` measured rounds
+/// (default: the config's `max_iterations`) while it gets closer (#183).
+pub fn build_agent(
+    config: AgentConfig,
+    meter: Arc<CostMeter>,
+    refine_rounds: Option<u32>,
+) -> Result<Box<dyn ProcGenAgent>> {
     match config.provider.as_str() {
         "mock" => Ok(Box::new(MockAgent)),
         "anthropic" => {
-            let agent = AnthropicAgent::new(config).map_err(|e| anyhow!("{e}"))?;
-            Ok(Box::new(agent.with_meter(meter)))
+            let mut agent = AnthropicAgent::new(config)
+                .map_err(|e| anyhow!("{e}"))?
+                .with_meter(meter)
+                .with_previewer(MeshRenderPreviewer::new(
+                    PREVIEW_SIZE,
+                    std::env::temp_dir().join("flint-refine"),
+                ));
+            if let Some(n) = refine_rounds {
+                agent = agent.with_refine_rounds(n);
+            }
+            Ok(Box::new(agent))
         }
         other => bail!("unknown --ai-provider '{other}'"),
     }
@@ -316,9 +333,27 @@ fn print_report(step: &str, report: &Report) {
             eprintln!("  round {}: {issue}", i + 1);
         }
     }
+    // A measured refine: the distance to the reference, start and per round.
+    for (i, d) in report.distances.iter().enumerate() {
+        let label = if i == 0 {
+            "start".to_string()
+        } else {
+            format!("round {i}")
+        };
+        let kept = if i == report.kept { "  <- kept" } else { "" };
+        eprintln!("  {label:<8} {}{kept}", describe_distance(d));
+    }
     for note in &report.notes {
         eprintln!("  > {note}");
     }
+}
+
+/// `distance   2.0  (colour   2.5, histogram 0.04, layout 0.02)`.
+fn describe_distance(d: &Distance) -> String {
+    format!(
+        "distance {:5.1}  (colour {:5.1}, histogram {:.2}, layout {:.2})",
+        d.score, d.mean_colour, d.histogram, d.layout
+    )
 }
 
 /// `ai: 3 calls, $0.0421 (ceiling $0.50) -> .flint/procgen_costs.json`.
@@ -341,17 +376,28 @@ pub fn cost_line(meter: &CostMeter) -> String {
 
 /// `--dry-run` with AI steps: what would be asked, and the most each call
 /// could cost, without sending anything.
-pub fn print_plan(config: &AgentConfig, steps: Steps, max_cost: Option<f64>) {
+pub fn print_plan(config: &AgentConfig, steps: Steps, args: &GenArgs) {
     let (price, priced_as) = price_for(&config.provider, &config.model);
     let max_out = AnthropicAgent::DEFAULT_MAX_TOKENS;
+    // A refine against a reference is measured, and may converse once per
+    // refine round.
+    let refine_rounds = match (&args.reference, steps.refine) {
+        (Some(_), true) => args.refine_rounds.unwrap_or(config.max_iterations).max(1),
+        _ => 1,
+    };
     println!("AI steps:   {}", steps.names().join(" -> "));
     println!("Provider:   {} ({})", config.provider, config.model);
     println!("Rounds:     up to {} per step", config.max_iterations);
+    if refine_rounds > 1 {
+        println!("Refine:     up to {refine_rounds} measured rounds against the reference");
+    }
     if config.provider == "mock" {
         println!("Cost:       free (mock agent, no API calls)");
     } else {
         let per_reply = f64::from(max_out) * price.output / 1e6;
-        let calls = steps.names().len() as u32 * config.max_iterations;
+        let conversations = steps.names().len() as u32 - u32::from(steps.refine)
+            + if steps.refine { refine_rounds } else { 0 };
+        let calls = conversations * config.max_iterations;
         println!(
             "Cost:       output up to {} per call ({max_out} tokens at ${}/MTok{}), \
              at most {calls} calls",
@@ -362,7 +408,7 @@ pub fn print_plan(config: &AgentConfig, steps: Steps, max_cost: Option<f64>) {
                 .unwrap_or_default()
         );
     }
-    if let Some(m) = max_cost {
+    if let Some(m) = args.max_cost {
         println!("Ceiling:    --max-cost {}", cost::usd(m));
     }
     println!("(nothing was sent; drop --dry-run to run the AI steps)");
@@ -449,7 +495,15 @@ mod tests {
         assert!(a.print_spec);
         let b = args(&["spec.toml", "--ai-assist"]);
         assert!(b.ai_assist && Steps::of(&b).interpret && Steps::of(&b).refine);
-        let c = args(&["spec.toml", "--ai-refine", "--reference", "ref.png"]);
+        let c = args(&[
+            "spec.toml",
+            "--ai-refine",
+            "--reference",
+            "ref.png",
+            "--refine-rounds",
+            "4",
+        ]);
+        assert_eq!(c.refine_rounds, Some(4));
         assert_eq!(
             Steps::of(&c),
             Steps {
@@ -476,6 +530,15 @@ mod tests {
         assert!(bad(&["spec.toml", "--since", "2024-01-01"]));
         assert!(bad(&["spec.toml", "--max-cost", "-1"]));
         assert!(bad(&["spec.toml", "--ai-iterations", "0"]));
+        assert!(bad(&["spec.toml", "--ai-assist", "--refine-rounds", "2"])); // needs --reference
+        assert!(bad(&[
+            "spec.toml",
+            "--ai-refine",
+            "--reference",
+            "r.png",
+            "--refine-rounds",
+            "9"
+        ]));
     }
 
     #[test]

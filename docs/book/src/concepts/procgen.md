@@ -167,6 +167,25 @@ flint gen specs/oak_tree.procgen.toml --validate --style-guide styles/medieval_t
 
 Image sets write one PNG per map with the map name suffixed.
 
+### Refining toward a reference
+
+```bash
+flint gen specs/oak_tree.procgen.toml --ai-refine --reference refs/autumn_oak.png \
+  --refine-rounds 3 --save-spec specs/oak_autumn.procgen.toml -o oak.glb
+```
+
+This is the refine step of [AI assistance](#ai-assistance-and-cost) (`--ai-refine` or `--ai-assist`) given a `--reference`, so it needs `ANTHROPIC_API_KEY` and every call goes through the cost meter. Claude sees the reference beside a picture of what the spec builds now: a texture's own pixels, or for a mesh a 512x512 render from the headless model renderer (`flint edit model.glb --render`, auto-framed, no grid). It also gets a measured distance between the two (`flint_procgen_ai::measure`: mean colour, a 16-bin luminance histogram and a 16x16 luminance layout, as a score out of 100). Each round's reply is rendered and measured again. While the distance falls, the new render and numbers go back for another round; the first round that gets no closer ends the loop, and the closest spec is kept, which is the spec unchanged if no round improved on it. `--refine-rounds N` (1-8) caps the rounds; it defaults to `--ai-iterations`. The distances print to stderr, and `--save-spec` keeps the spec the loop kept.
+
+![A green oak refined toward an orange reference: the reference, the start, and the round the loop kept](../images/procgen-refine-oak.png)
+
+```text
+  start    distance   2.9  (colour  18.1, histogram 0.03, layout 0.02)
+  round 1  distance   2.0  (colour   2.5, histogram 0.04, layout 0.02)  <- kept
+  round 2  distance   2.4  (colour   1.9, histogram 0.05, layout 0.02)
+```
+
+The score measures whole images, backdrop included, so for a mesh it moves most with colour and only a little with shape. It is a ruler for "closer or further" between rounds, not a judge of likeness.
+
 ### Registering outputs
 
 `--register` gives every file a provenance sidecar (`tree_42.glb.asset.toml`) whose `[asset.properties]` record `generator`, `spec_hash` (the spec file's content hash), `seed` (the seed actually used, so a `random` spec's variant can be made again with `--seed`), `timestamp` (ISO 8601 UTC), `flint_version`, and for an image set the `map`. The bytes go into the content store at `.flint/assets/<2 hex>/<hash>.<ext>`, and `.flint/procgen/<spec hash>/<seed>.toml` lists the hashes that spec + seed produced.
