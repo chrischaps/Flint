@@ -231,6 +231,23 @@ Headless `flint render` does not run the resolver. For snapshots of procgen-back
 
 `flint-procgen-ai` sits on top for tool-time spec creation and refinement from prompts; it is not linked into the player.
 
+## AI assistance and cost
+
+`flint gen` can ask an agent to write or improve a spec before it generates:
+
+```bash
+flint gen --ai-create "twisted dead tree" -o tree.glb             # description -> spec -> GLB
+flint gen specs/oak_tree.procgen.toml --ai-assist -o tree.glb     # interpret + refine, then generate
+flint gen specs/stone_wall.procgen.toml --ai-refine --reference photo.png -o wall.png
+flint gen --ai-create "old brick wall" --ai-provider mock --print-spec --save-spec wall.procgen.toml
+```
+
+The default provider is `anthropic` (`ANTHROPIC_API_KEY`, model `claude-opus-5-5`); `mock` is the offline, deterministic agent. Every spec the Anthropic agent returns has been checked against the generator's schema and built before it is accepted. `--ai-create` guesses the generator from the description (a tree word, a creature word, a surface word, or a `.png` output), and `--ai-generator` names it. Project defaults live in `.flint/procgen_ai.toml` (`provider`, `model`, `max_iterations`, `effort`; never the key), and the flags override them. The agent's suggestions, rationale and round count go to stderr; `--print-spec` puts the final spec alone on stdout. A `--dry-run` with an AI flag prints the plan and the most a call could cost, and sends nothing.
+
+Every API call goes through a cost meter, which appends one JSON object per line to `.flint/procgen_costs.json`: `timestamp`, `provider`, `model`, `input_tokens`, `output_tokens`, the cache token counts, `estimated_usd`, `spec_name` and `operation`. A reply that came back unusable (cut off, declined) is recorded too, since it was billed. Prices are the published per-model rates; an unknown model is priced as the dearest one and marked `priced_as`.
+
+`--max-cost <USD>` is checked before every call, retries included: the meter prices the call's worst case (its estimated input plus a full reply) against what's left. When only a shorter reply fits, it lowers `max_tokens` for that call; when not even 2,048 output tokens fit, it refuses with `cost ceiling reached` and sends nothing. It warns once past 80%. `flint gen --cost-report` sums the ledger by provider, model and spec, and `--since YYYY-MM-DD` limits it to recent calls.
+
 ## Further Reading
 
 - [AI Asset Generation](ai-generation.md): the provider-driven half of the pipeline

@@ -86,6 +86,14 @@ Flint uses an **edit -> validate -> play** loop:
    flint gen specs/stone_wall.procgen.toml -o wall.png
    flint gen specs/oak_tree.procgen.toml --dry-run
    flint gen specs/oak_tree.procgen.toml --seed 42 -o tree.glb
+   flint gen --ai-create "twisted dead tree" -o tree.glb     # agent writes the spec (ANTHROPIC_API_KEY;
+                                                             #   --ai-provider mock is offline and free)
+   flint gen specs/oak_tree.procgen.toml --ai-assist --max-cost 0.50 -o tree.glb
+   flint gen --cost-report --since 2026-10-01                # sums .flint/procgen_costs.json
+   # --ai-refine --reference img.png, --ai-model, --ai-iterations, --ai-generator,
+   # --print-spec (spec alone on stdout), --save-spec. Every API call goes through
+   # flint_procgen_ai::CostMeter: priced, appended to the JSON Lines ledger, and
+   # refused before sending if its worst case could pass --max-cost.
    ```
 
 4. **`flint play`** -- Full game runtime with physics, scripting, audio, and input.

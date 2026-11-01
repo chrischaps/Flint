@@ -531,6 +531,30 @@ flint gen specs/oak_tree.procgen.toml --batch 10 --seed-start 0
 | `--strict` | `false` | Treat warnings as failures |
 | `--style-guide <path>` | (none) | Style guide TOML for validation constraints |
 
+AI assistance runs before generation; the agent's feedback goes to stderr:
+
+```bash
+ANTHROPIC_API_KEY=... flint gen --ai-create "twisted dead tree" -o tree.glb
+flint gen specs/oak_tree.procgen.toml --ai-assist --max-cost 0.50 -o tree.glb
+flint gen specs/stone_wall.procgen.toml --ai-refine --reference photo.png -o wall.png
+flint gen --cost-report --since 2026-10-01
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ai-create <text>` | (none) | Create a spec from a description, then generate it (no spec file) |
+| `--ai-generator <name>` | (guessed) | With `--ai-create`: `tree_v1`, `texture_v1` or `creature_v1` |
+| `--ai-assist` | `false` | Interpret the spec, then refine it |
+| `--ai-refine` | `false` | Refine against `--reference <image>` |
+| `--ai-provider <name>` | `anthropic` | `anthropic` or `mock` (offline, free) |
+| `--ai-model <id>` | `claude-opus-5-5` | Model; `.flint/procgen_ai.toml` can set the default |
+| `--ai-iterations <N>` | `3` | Rounds per AI step (1-20) |
+| `--print-spec` | `false` | Print the final spec as TOML on stdout (the summary moves to stderr) |
+| `--save-spec <path>` | (none) | Write the final spec to a file |
+| `--max-cost <USD>` | (none) | Refuse any AI call that could take the run past this amount |
+| `--cost-report` | `false` | Summarize `.flint/procgen_costs.json` by provider, model and spec |
+| `--since <date>` | (none) | With `--cost-report`: only calls from `YYYY-MM-DD` on |
+
 ## The `prefab view` Command
 
 Preview a prefab template in the interactive viewer:
