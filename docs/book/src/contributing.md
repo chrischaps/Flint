@@ -14,6 +14,7 @@ The five numbered engine phases (ECS, constraints, PBR rendering, runtime, AI as
 - **Animation** --- blend trees, animation state machines
 - **Scripting** --- new Rhai API functions, script debugging tools, performance profiling
 - **AI generation** --- new provider integrations, improved style validation, prompt engineering
+- **Procedural generators** --- new `flint-procgen` generators; the crate's [CONTRIBUTING guide](https://github.com/chrischaps/Flint/blob/main/crates/flint-procgen/CONTRIBUTING.md) builds one from scratch, schema and tests included
 
 ## Development Setup
 

@@ -99,6 +99,19 @@ pub struct GenArgs {
     )]
     pub ai_iterations: Option<u32>,
 
+    /// Most measured refine rounds against --reference. Claude sees a render
+    /// of what the spec builds; each round's result is rendered and
+    /// measured, and the refine asks again while the distance falls, keeping
+    /// the closest spec [default: --ai-iterations]
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "reference",
+        value_parser = clap::value_parser!(u32).range(1..=8),
+        help_heading = "AI assistance"
+    )]
+    pub refine_rounds: Option<u32>,
+
     /// Print the final spec (after any AI steps and --seed) to stdout as
     /// TOML; the generation summary moves to stderr
     #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
@@ -223,11 +236,11 @@ pub fn run(args: GenArgs) -> Result<()> {
     let mut spec = if steps.any() {
         let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
         if args.dry_run {
-            gen_ai::print_plan(&config, steps, args.max_cost);
+            gen_ai::print_plan(&config, steps, &args);
             return Ok(());
         }
         let meter = gen_ai::build_meter(&config, &args);
-        let agent = gen_ai::build_agent(config, meter.clone())?;
+        let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
         gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
     } else {
         loaded.expect("clap requires a spec unless --ai-create or --cost-report")
