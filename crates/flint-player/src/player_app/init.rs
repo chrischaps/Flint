@@ -10,7 +10,7 @@ use super::scene_loading::{
     build_model_load_config, load_animations_from_world, load_audio_from_world,
     load_particle_textures_from_world, load_scripts_from_world, load_sequences_from_world,
     load_sprite_animations_from_world, load_terrain_from_world_inner, register_node_animation_data,
-    register_skeletal_data, resolve_procgen_assets,
+    register_skeletal_data,
 };
 use super::TransitionPhase;
 use super::{CaptureConfig, PlayerApp};
@@ -90,6 +90,7 @@ impl PlayerApp {
             skybox_path: None,
             scene_ambient: None,
             msaa_sample_count: 1,
+            procgen_mode: super::procgen_assets::ProcGenMode::Immediate,
             render_scale: Default::default(),
             dynamic_scale: Default::default(),
             frame_pacer: None,
@@ -410,32 +411,19 @@ impl PlayerApp {
             self.content_store.as_ref(),
         );
 
-        // Discover procgen specs and resolve unresolved assets before model loading
-        {
-            let scene_dir = Path::new(&self.scene_path)
-                .parent()
-                .unwrap_or(Path::new("."));
-            let mut spec_dirs = vec![scene_dir.join("specs")];
-            if let Some(parent) = scene_dir.parent() {
-                spec_dirs.push(parent.join("specs"));
-            }
-            spec_dirs.push(scene_dir.join("models"));
-            let dir_refs: Vec<&Path> = spec_dirs
-                .iter()
-                .filter(|d| vfs::is_dir(d))
-                .map(|d| d.as_path())
-                .collect();
-            self.procgen_resolver.discover_and_index(&dir_refs);
-
-            resolve_procgen_assets(
-                &self.world,
-                &mut self.procgen_resolver,
-                &mut scene_renderer,
-                &render_context.device,
-                &render_context.queue,
-                &config,
-            );
-        }
+        // Procgen before the model loader: catalog > procgen > file (#32).
+        super::procgen_assets::resolve_scene(
+            &self.scene_path,
+            &self.world,
+            &mut self.procgen_resolver,
+            self.procgen_mode,
+            super::procgen_assets::GpuSink {
+                renderer: &mut scene_renderer,
+                device: &render_context.device,
+                queue: &render_context.queue,
+                config: &config,
+            },
+        );
 
         let load_result = model_loader::load_models_from_world(
             &mut self.world,

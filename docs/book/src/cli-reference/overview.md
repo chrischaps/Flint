@@ -64,7 +64,9 @@ without its score. See [Audio: Mixer Buses](../concepts/audio.md#mixer-buses).
 
 The standalone `flint-player` binary takes the same flags plus `--msaa <1|4>`
 (default `1`) for multisample anti-aliasing of the scene passes; `flint play`
-does not expose `--msaa`.
+does not expose `--msaa`. Its `--procgen-defer` shows placeholders for a
+scene's procgen assets at once and generates them over the following frames
+instead of during load (see [Specs in Scenes](../concepts/procgen.md#specs-in-scenes)).
 
 ### Player Screenshots (HUD included)
 

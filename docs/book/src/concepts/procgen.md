@@ -206,7 +206,7 @@ flint edit specs/alien_organic.procgen.toml     # pipeline pattern, opens the no
 
 ## Specs in Scenes
 
-The player indexes every `*.procgen.toml` in `specs/` beside the scene, `../specs/` (the game root when scenes live in `levels/`), and `models/` by `meta.name`, later directories overriding earlier ones. When an entity's `model.asset`, `material.texture` or `sprite.texture` names something that is neither a file on disk nor already in the mesh cache but *is* an indexed spec, the resolver generates it and uploads the result straight to the GPU:
+The player indexes every `*.procgen.toml` by `meta.name`, from `../specs/` (the game root when scenes live in `levels/`), then `specs/` beside the scene, then `models/`; a later directory's spec overrides an earlier one of the same name, so a scene's own spec beats the game's. Each name an entity's `model.asset`, `material.texture` or `sprite.texture` asks for resolves in one order: **catalog > procgen > file**. An asset catalog entry wins outright. A name with an indexed spec is generated and uploaded straight to the GPU under that name before any file is looked at, so a baked `models/<name>.glb` beside the spec is not drawn while the spec works. Anything else loads from its file, as before:
 
 ```toml
 [entities.old_oak.model]
@@ -216,7 +216,13 @@ asset = "garden_tree"            # specs/garden_tree.procgen.toml
 texture = "crypt_floor"          # specs/crypt_floor.procgen.toml, an image set
 ```
 
-Outputs are cached in memory keyed by spec hash and seed under a 256 MB budget, and queued generation is limited to a few milliseconds per frame so a scene full of specs streams in without a hitch. A `random` seed makes every instance unique; a `fixed` seed makes them identical, which is the difference between a cave full of beetles and one boss.
+A mesh's sub-meshes (a tree's bark and each leaf shade) upload as parts of the one model, each with its own material, and a material's generated normal map comes along. An image set uploads its first map under the spec's name and the rest as `<name>_normal`, `<name>_roughness` and so on, the companion names the material path looks for.
+
+When procgen can't make an asset (its generator isn't registered, the generator fails, or the output can't be drawn that way: a skinned creature as a model, a mesh as a texture) the player logs a warning saying why and falls through to the file. With no file either, a placeholder stays under the name: a magenta box standing on the entity's origin for a model, a 1x1 magenta texture for a texture.
+
+Outputs are cached in memory keyed by spec hash and seed under a 256 MB budget; the resolver lives as long as the player, so a scene loaded again (or another scene naming the same spec) is served from the cache. A `random` seed makes every instance unique; a `fixed` seed makes them identical, which is the difference between a cave full of beetles and one boss.
+
+By default the player generates during scene load, so the first frame shows every asset. `flint-player --procgen-defer` instead shows the placeholders at once and queues the generation, a few milliseconds of it per frame (`runtime_max_generation_ms_per_frame`), swapping each asset in under its name as it finishes; a queued asset that fails gives way to its file if there is one and keeps its placeholder if not. An asset is generated whole, so one expensive spec still costs the frame it lands in.
 
 Headless `flint render` does not run the resolver. For snapshots of procgen-backed scenes, generate the assets first with `flint gen -o models/<name>.glb` so they resolve as files.
 

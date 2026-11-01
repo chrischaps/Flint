@@ -71,6 +71,37 @@ impl ProcGenResolver {
         self.specs.len()
     }
 
+    /// Whether the named spec could be generated at all: it is indexed and
+    /// its generator is registered. `Err` says why not, without generating.
+    pub fn check_generator(&self, name: &str) -> std::result::Result<(), String> {
+        let spec = self
+            .specs
+            .get(name)
+            .ok_or_else(|| format!("no spec named '{name}'"))?;
+        if self.registry.get(&spec.generator).is_none() {
+            let mut known = self.registry.generator_names();
+            known.sort_unstable();
+            return Err(format!(
+                "its generator '{}' is not registered (known: {})",
+                spec.generator,
+                known.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
+    /// Register another generator alongside the built-ins (a game's own, or
+    /// a test's). One with a built-in's type name replaces it.
+    pub fn register_generator(&mut self, generator: Box<dyn crate::Generator>) {
+        self.registry.register(generator);
+    }
+
+    /// Queued requests that failed to generate since the last call. Each is
+    /// reported once; the caller decides what stands in for it.
+    pub fn take_failures(&mut self) -> Vec<crate::FailedAsset> {
+        self.queue.take_failures()
+    }
+
     /// The cache key for a spec: the hash of its (normalised) TOML and its seed.
     fn cache_key(spec: &ProcGenSpec) -> Result<(ContentHash, Seed)> {
         let seed = spec.seed.to_seed()?;
@@ -283,6 +314,54 @@ value = 42
             ..Default::default()
         });
         assert_eq!(resolver.cache_stats().max_memory_bytes, 4096);
+    }
+
+    #[test]
+    fn check_generator_names_what_is_missing() {
+        let dir = temp_dir("check_generator");
+        fs::write(dir.join("cube.procgen.toml"), MOCK_SPEC).unwrap();
+        let rock = MOCK_SPEC
+            .replace("test_cube", "rock")
+            .replace("\"mock\"", "\"boulder_v9\"");
+        fs::write(dir.join("rock.procgen.toml"), rock).unwrap();
+
+        let mut resolver = ProcGenResolver::new();
+        resolver.discover_and_index(&[dir.as_path()]);
+
+        assert_eq!(resolver.check_generator("test_cube"), Ok(()));
+        let err = resolver.check_generator("rock").unwrap_err();
+        assert!(err.contains("'boulder_v9' is not registered"), "{err}");
+        assert!(err.contains("mock, texture_v1"), "sorted known list: {err}");
+        assert!(resolver.check_generator("nonexistent").is_err());
+        // Checking generates nothing.
+        assert_eq!(resolver.cache_stats().misses, 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn queued_failures_are_reported_once() {
+        let dir = temp_dir("queued_failures");
+        let bad = MOCK_SPEC.replace("\"mock\"", "\"boulder_v9\"");
+        fs::write(dir.join("cube.procgen.toml"), bad).unwrap();
+
+        let mut resolver = ProcGenResolver::new();
+        resolver.discover_and_index(&[dir.as_path()]);
+        assert!(resolver.enqueue("test_cube", [0.0; 3], AssetKind::Texture));
+        assert!(resolver.process_frame([0.0; 3]).is_empty());
+
+        let failures = resolver.take_failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].spec_name, "test_cube");
+        assert_eq!(failures[0].asset_kind, AssetKind::Texture);
+        assert!(
+            failures[0].error.contains("boulder_v9"),
+            "{}",
+            failures[0].error
+        );
+        assert!(resolver.take_failures().is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
