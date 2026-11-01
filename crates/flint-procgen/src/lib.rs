@@ -36,7 +36,9 @@ pub use generators::register_built_in_generators;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use output::{GeneratorOutput, OutputKind};
-pub use queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
+pub use queue::{
+    AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,
+};
 pub use registry::GeneratorRegistry;
 pub use resolver::ProcGenResolver;
 pub use rng::SeededRng;
@@ -58,7 +60,7 @@ pub use validate::{
 
 // Texture pattern types
 pub use generators::texture::pipeline::{
-    op_default_params, op_param_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
+    op_default_params, op_param_schema, op_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
 };
 pub use generators::texture::{
     derive_maps, OpPortInfo, Pattern, PatternCell, PatternField, PerlinOrganicParams,

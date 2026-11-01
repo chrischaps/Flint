@@ -117,6 +117,7 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `body_parts` | array of tables |  | Geometry attached to bones |
 | `bones` | array of tables |  | Bone hierarchy definitions |
 | `limb_chains` | array of tables |  | Auto-generated bone chains with tapered geometry |
+| `materials` | table |  | Named materials, as [params.materials.<name>] tables; body parts and limb chains pick one by name |
 | `symmetry` | `bilateral` \| `none` | `"none"` | Symmetry mode for mirroring |
 
 ### `texture_v1` (image set, written as PNGs)
@@ -143,7 +144,7 @@ Only when `pattern` is `pipeline`:
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `ops` | array of tables |  | The pipeline's operations, run in order (or as a graph when an op has an `id`); see `op_param_schema` for each type |
+| `ops` | array of tables |  | The pipeline's operations, run in order (or as a graph when an op has an `id`); each type's keys are in `op_schema` |
 
 Only when `pattern` is `tiling_grid`:
 

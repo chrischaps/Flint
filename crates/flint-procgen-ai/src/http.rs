@@ -5,6 +5,8 @@
 //! Tests swap the transport for a scripted one, so every request the agent
 //! builds can be inspected and every response, good or broken, replayed.
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value as Json;
@@ -114,7 +116,7 @@ pub struct Usage {
 }
 
 impl Usage {
-    fn of(v: &Json) -> Self {
+    pub(crate) fn of(v: &Json) -> Self {
         let n = |k: &str| v.get(k).and_then(Json::as_u64).unwrap_or(0);
         Self {
             input_tokens: n("input_tokens"),
@@ -312,6 +314,65 @@ pub fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
         [b'G', b'I', b'F', b'8', ..] => Some("image/gif"),
         [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("image/webp"),
         _ => None,
+    }
+}
+
+/// A [`Transport`] that replays canned responses in order and keeps every
+/// request it was sent: for testing code that drives an agent, with no
+/// network. Clones share the script and the record.
+#[derive(Clone, Default)]
+pub struct ScriptedTransport {
+    responses: Arc<Mutex<VecDeque<std::result::Result<HttpResponse, String>>>>,
+    sent: Arc<Mutex<Vec<HttpRequest>>>,
+}
+
+impl ScriptedTransport {
+    /// A transport that answers with `responses`, one per request.
+    pub fn new(responses: Vec<std::result::Result<HttpResponse, String>>) -> Self {
+        Self {
+            responses: Arc::new(Mutex::new(responses.into())),
+            sent: Arc::default(),
+        }
+    }
+
+    /// A 200 Messages API reply whose one text block is `text`, from
+    /// `model`, with the given token counts.
+    pub fn reply(
+        model: &str,
+        text: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> std::result::Result<HttpResponse, String> {
+        let body = serde_json::json!({
+            "id": "msg_scripted",
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": [{"type": "text", "text": text}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        });
+        Ok(HttpResponse {
+            status: 200,
+            retry_after: None,
+            body: body.to_string(),
+        })
+    }
+
+    /// Every request sent so far.
+    pub fn requests(&self) -> Vec<HttpRequest> {
+        self.sent.lock().expect("transport lock").clone()
+    }
+}
+
+impl Transport for ScriptedTransport {
+    fn post(&self, req: &HttpRequest) -> std::result::Result<HttpResponse, String> {
+        self.sent.lock().expect("transport lock").push(req.clone());
+        self.responses
+            .lock()
+            .expect("transport lock")
+            .pop_front()
+            .unwrap_or_else(|| Err("the script has no more responses".to_string()))
     }
 }
 
