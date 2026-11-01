@@ -156,7 +156,7 @@ impl Generator for TextureGenerator {
                     "items": pipeline::ops_items_schema(),
                     "description": "The pipeline's operations, run in order (or as a graph when an op has an `id`); each type's keys are in `op_schema`"
                 })),
-                "seamless": derive(json!({ "type": "boolean", "default": true, "description": "Tile without a seam. Pipeline ops choose for themselves" })),
+                "seamless": { "type": "boolean", "default": true, "description": "Tile without a seam. In a pipeline, noise and repeating ops round their frequencies to whole cycles per tile (simplex cross-fades); false keeps the unwrapped fields" },
                 "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47", "description": "Albedo of the cells (stones, tiles, bands), sRGB hex; each cell gets its own shade of it" })),
                 "color_variation": derive(json!({ "type": "number", "minimum": 0.0, "default": 0.06, "description": "How far each cell's lightness strays from base_color (saturation moves by half that; hue stays)" })),
                 "mortar_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#40382E", "description": "Albedo in the grooves between cells (strata lines on perlin_organic), sRGB hex" })),
@@ -718,6 +718,12 @@ pattern = "pipeline"
 type = "brick_grid"
 [[params.ops]]
 type = "cell_color"
+[[params.ops]]
+type = "noise_layer"
+frequency = 2.5
+[[params.ops]]
+type = "blend"
+target = "height"
 [[params.ops]]
 type = "derive_normal"
 "##,

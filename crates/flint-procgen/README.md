@@ -127,6 +127,7 @@ Every key, generated from the generators' own schemas by `cargo run -p flint-pro
 | `height` | integer ≥ 1 | `512` | Image height in pixels |
 | `output_maps` | list of `albedo`, `normal`, `roughness` | `["albedo", "normal", "roughness"]` | Which PBR maps to write; each becomes <stem>_<map>.png |
 | `pattern` | `voronoi_brick` \| `perlin_organic` \| `tiling_grid` \| `pipeline` | `"voronoi_brick"` | The base shape: Voronoi stones, layered organic noise, a grid of tiles, or a pipeline of ops |
+| `seamless` | bool | `true` | Tile without a seam. In a pipeline, noise and repeating ops round their frequencies to whole cycles per tile (simplex cross-fades); false keeps the unwrapped fields |
 | `width` | integer ≥ 1 | `512` | Image width in pixels |
 
 Only when `pattern` is `perlin_organic`:
@@ -181,7 +182,6 @@ Only when `pattern` is `voronoi_brick` or `perlin_organic` or `tiling_grid`:
 | `roughness_base` | number 0–1 | `0.75` | Roughness of the cells' faces |
 | `roughness_mortar` | number 0–1 | `0.5` | Roughness in the grooves |
 | `roughness_variation` | number ≥ 0 | `0.05` | Per-cell random spread of roughness |
-| `seamless` | bool | `true` | Tile without a seam. Pipeline ops choose for themselves |
 
 Only when `pattern` is `voronoi_brick` or `tiling_grid`:
 
