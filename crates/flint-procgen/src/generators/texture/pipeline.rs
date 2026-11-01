@@ -1923,6 +1923,41 @@ variation = 0.12
         }
     }
 
+    /// Per-op wall time for a spec file (#187). Run with
+    /// `PROCGEN_PROFILE=specs/x.procgen.toml cargo test -p flint-procgen profile_spec_ops -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn profile_spec_ops() {
+        let path = std::env::var("PROCGEN_PROFILE")
+            .unwrap_or_else(|_| "../../specs/sci_fi_panel.procgen.toml".into());
+        let spec = ProcGenSpec::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let map_params = TextureMapParams::from_toml(&spec.params).unwrap();
+        let (_, ops) = parse_pipeline(&spec.params).unwrap();
+        let mut rng = SeededRng::new(1);
+        let mut field = TextureField::new(map_params.width, map_params.height);
+        let total = std::time::Instant::now();
+        for (i, op) in ops.iter().enumerate() {
+            let mut op_rng = rng.fork(&format!("op_{i}"));
+            let t = std::time::Instant::now();
+            op.apply(&mut field, &mut op_rng);
+            println!(
+                "op {i:2} {:20} {:9.2} ms",
+                spec.params["ops"][i]["type"].as_str().unwrap(),
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        let t = std::time::Instant::now();
+        let _ = extract_output_maps(&field, &map_params);
+        println!(
+            "extract maps             {:9.2} ms",
+            t.elapsed().as_secs_f64() * 1e3
+        );
+        println!(
+            "total                    {:9.2} ms",
+            total.elapsed().as_secs_f64() * 1e3
+        );
+    }
+
     /// Run `[[ops]]` tables (TOML) on a fresh field, as the sequential
     /// pipeline does, and return the field.
     fn run_ops(ops_toml: &str, size: (u32, u32), seamless: bool, seed: u64) -> TextureField {

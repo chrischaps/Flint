@@ -11,6 +11,7 @@
 //! - **Organic** ([`PerlinOrganicPattern`]) — layered rock, dirt, bark, natural surfaces
 //! - **Grid** ([`TilingGridPattern`]) — manufactured tiles, bricks, panels
 
+mod cell_memo;
 pub mod field;
 pub mod grid;
 pub mod maps;
@@ -196,19 +197,22 @@ impl Generator for TextureGenerator {
         let pixels = params.width as u64 * params.height as u64;
         let texture_bytes = pixels * 4 * num_maps;
 
-        // Fitted to release builds of the shipped specs (2026-10-31, desktop
-        // CPU): the fixed patterns cost ~150 ns per pixel per map, and a
-        // pipeline ~90 ns per pixel per op, whatever it outputs. Within ±40%
-        // on all 16; the old flat 100 ns/pixel/map was 4x low on pipelines.
+        // Fitted to release builds of the 16 shipped specs, one per process
+        // (2026-10-31, desktop CPU, after #187): a fixed pattern costs ~90 ns
+        // per pixel per map; a pipeline op ~40 ns per pixel, a slice-wise
+        // `blend` ~2 and the fractal noises ~100, plus ~10 ns per pixel per
+        // output map. Within ±35% on every pipeline spec and ±50% on the
+        // fixed ones; `estimate_cost_calibration` re-measures it.
         let ms = if params.pattern == "pipeline" {
-            let ops = spec
-                .params
-                .get("ops")
-                .and_then(|o| o.as_array())
-                .map_or(0, |o| o.len());
-            pixels as f64 * (ops as f64 * 0.000_09 + num_maps as f64 * 0.000_01)
+            let ops = spec.params.get("ops").and_then(|o| o.as_array());
+            let ops_ns: f64 = ops
+                .into_iter()
+                .flatten()
+                .map(|op| pipeline_op_ns(op.get("type").and_then(|t| t.as_str())))
+                .sum();
+            pixels as f64 * (ops_ns + num_maps as f64 * 10.0) * 1e-6
         } else {
-            pixels as f64 * num_maps as f64 * 0.000_15
+            pixels as f64 * num_maps as f64 * 90.0 * 1e-6
         };
 
         GenerationCost {
@@ -217,6 +221,18 @@ impl Generator for TextureGenerator {
             estimated_texture_bytes: texture_bytes,
             estimated_generation_ms: ms,
         }
+    }
+}
+
+/// Release-build cost of one pipeline op, in nanoseconds per pixel (see
+/// `estimate_cost` in the `Generator` impl above).
+fn pipeline_op_ns(op_type: Option<&str>) -> f64 {
+    match op_type {
+        // Runs over whole channel slices: no per-pixel map lookups.
+        Some("blend") => 2.0,
+        // Multi-octave fractal noise and feature-point searches.
+        Some("voronoi_texture" | "musgrave_texture") => 100.0,
+        _ => 40.0,
     }
 }
 
@@ -834,6 +850,35 @@ type = "derive_normal"
         );
     }
 
+    #[test]
+    fn estimate_cost_weighs_op_types() {
+        let est = |op: &str| {
+            let spec = ProcGenSpec::parse(&format!(
+                "generator = \"texture_v1\"
+[meta]
+name = \"a\"
+version = \"1\"
+[seed]
+mode = \"fixed\"
+value = 1
+[params]
+pattern = \"pipeline\"
+output_maps = [\"albedo\"]
+[[params.ops]]
+type = \"{op}\"
+"
+            ))
+            .unwrap();
+            TextureGenerator
+                .estimate_cost(&spec)
+                .estimated_generation_ms
+        };
+        // #187: a blend is far cheaper than a per-pixel op, which is cheaper
+        // than fractal noise.
+        assert!(est("blend") * 3.0 < est("map_range"));
+        assert!(est("map_range") * 2.0 < est("musgrave_texture"));
+    }
+
     // ── Task 4.1 acceptance: every pattern, the same bar ────────────────────
 
     fn all_patterns() -> Vec<(&'static str, Box<dyn Pattern>)> {
@@ -924,5 +969,60 @@ type = "derive_normal"
             }
             write_debug_png(&format!("{name}_height_2x2"), &four);
         }
+    }
+
+    /// Measured generation time against `estimate_cost` for every shipped
+    /// texture spec (#187). Run in release, where the fit was made:
+    /// `cargo test --release -p flint-procgen estimate_cost_calibration -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn estimate_cost_calibration() {
+        let root = repo_root();
+        let mut paths = Vec::new();
+        for dir in [
+            root.clone(),
+            root.join("specs"),
+            root.join("showcase_game/specs"),
+        ] {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.to_string_lossy().ends_with(".procgen.toml") {
+                    paths.push(path);
+                }
+            }
+        }
+        paths.sort();
+        // `CALIBRATE_ONLY=<substring>` times only matching specs. One spec per
+        // process is what `flint gen` sees; several in one process run slower
+        // (2x by the last spec on Windows, from the heap's state).
+        if let Ok(only) = std::env::var("CALIBRATE_ONLY") {
+            paths.retain(|p| p.to_string_lossy().contains(&only));
+        }
+        let mut worst: f64 = 1.0;
+        for path in paths {
+            let spec = ProcGenSpec::from_file(&path).unwrap();
+            if spec.generator != "texture_v1" {
+                continue;
+            }
+            let best = (0..3)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    TextureGenerator
+                        .generate(&spec, &mut SeededRng::new(1))
+                        .unwrap();
+                    t.elapsed().as_secs_f64() * 1e3
+                })
+                .fold(f64::INFINITY, f64::min);
+            let est = TextureGenerator
+                .estimate_cost(&spec)
+                .estimated_generation_ms;
+            let ratio = est / best;
+            worst = worst.max(ratio.max(1.0 / ratio));
+            println!(
+                "{:28} measured {best:8.1} ms  estimate {est:8.1} ms  x{ratio:.2}",
+                path.file_name().unwrap().to_string_lossy()
+            );
+        }
+        println!("worst ratio x{worst:.2}");
     }
 }
