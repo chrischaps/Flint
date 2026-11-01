@@ -7,7 +7,6 @@ use super::hud_render::render_draw_commands;
 #[cfg(feature = "debug-hud")]
 use super::music_guide_panel;
 use super::music_session;
-use super::scene_loading;
 #[cfg(feature = "debug-hud")]
 use super::timeline_panel;
 use super::PlayerApp;
@@ -1374,16 +1373,25 @@ impl PlayerApp {
         {
             let camera_pos = self.camera.position_array();
             let completed = self.procgen_resolver.process_frame(camera_pos);
-            if !completed.is_empty() {
+            let failures = self.procgen_resolver.take_failures();
+            if !completed.is_empty() || !failures.is_empty() {
                 if let (Some(renderer), Some(ctx)) =
                     (&mut self.scene_renderer, &self.render_context)
                 {
-                    scene_loading::upload_completed_procgen_assets(
-                        &completed,
+                    // Catalog names never reach the queue, so the file
+                    // fallback needs only the scene's own search paths.
+                    let config =
+                        flint_render::model_loader::ModelLoadConfig::from_scene_path(
+                            &self.scene_path,
+                        );
+                    let mut sink = super::procgen_assets::GpuSink {
                         renderer,
-                        &ctx.device,
-                        &ctx.queue,
-                    );
+                        device: &ctx.device,
+                        queue: &ctx.queue,
+                        config: &config,
+                    };
+                    super::procgen_assets::apply_completed(&completed, &mut sink);
+                    super::procgen_assets::apply_failures(&failures, &mut sink);
                 }
             }
         }

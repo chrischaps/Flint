@@ -99,6 +99,9 @@ impl GpuSkinnedMesh {
 pub struct MeshCache {
     meshes: HashMap<String, Vec<GpuMesh>>,
     skinned_meshes: HashMap<String, Vec<GpuSkinnedMesh>>,
+    /// Names whose mesh was made at runtime (procgen, an extension), not
+    /// imported from a file: the model loader leaves these alone.
+    procedural: std::collections::HashSet<String>,
 }
 
 impl MeshCache {
@@ -191,6 +194,7 @@ impl MeshCache {
             })
             .collect();
 
+        self.procedural.remove(name);
         self.meshes.insert(name.to_string(), gpu_meshes);
     }
 
@@ -338,6 +342,7 @@ impl MeshCache {
             })
             .collect();
 
+        self.procedural.remove(name);
         self.meshes.insert(name.to_string(), gpu_meshes);
     }
 
@@ -514,6 +519,46 @@ impl MeshCache {
         indices: &[u32],
         material: ImportedMaterial,
     ) {
+        self.upload_procedural_parts(
+            device,
+            name,
+            vec![(vertices.to_vec(), indices.to_vec(), material)],
+        );
+    }
+
+    /// Upload a procedural mesh made of several parts, each with its own
+    /// material (a tree's bark and leaves), all under `name`, replacing any
+    /// mesh already cached there. Draws the way a multi-primitive glTF does.
+    pub fn upload_procedural_parts(
+        &mut self,
+        device: &wgpu::Device,
+        name: &str,
+        parts: Vec<(Vec<Vertex>, Vec<u32>, ImportedMaterial)>,
+    ) {
+        let meshes = parts
+            .into_iter()
+            .map(|(vertices, indices, material)| {
+                Self::procedural_gpu_mesh(device, name, &vertices, &indices, material)
+            })
+            .collect();
+        // Replacing drops the old buffers here; draw lists still holding
+        // them let go at the next `update_from_world`.
+        self.procedural.insert(name.to_string());
+        self.meshes.insert(name.to_string(), meshes);
+    }
+
+    /// Whether `name` was uploaded procedurally (from vertex data, not a file).
+    pub fn is_procedural(&self, name: &str) -> bool {
+        self.procedural.contains(name)
+    }
+
+    fn procedural_gpu_mesh(
+        device: &wgpu::Device,
+        name: &str,
+        vertices: &[Vertex],
+        indices: &[u32],
+        material: ImportedMaterial,
+    ) -> GpuMesh {
         let vertex_data = bytemuck::cast_slice(vertices).to_vec();
         let index_data = bytemuck::cast_slice(indices).to_vec();
 
@@ -530,7 +575,7 @@ impl MeshCache {
         });
 
         let (aabb_min, aabb_max) = vertex_bounds(vertices);
-        let gpu_mesh = GpuMesh {
+        GpuMesh {
             vertex_buffer: Arc::new(vertex_buffer),
             index_buffer: Arc::new(index_buffer),
             index_count: indices.len() as u32,
@@ -539,17 +584,14 @@ impl MeshCache {
             aabb_max,
             vertex_data,
             index_data,
-        };
-
-        // Replacing drops the old buffers here; draw lists still holding
-        // them let go at the next `update_from_world`.
-        self.meshes.insert(name.to_string(), vec![gpu_mesh]);
+        }
     }
 
     /// Remove a mesh (static and skinned) by name. Returns whether it
     /// existed. Its GPU buffers are freed once the current frame's draw
     /// lists, which still hold them, are rebuilt.
     pub fn remove(&mut self, name: &str) -> bool {
+        self.procedural.remove(name);
         let had_static = self.meshes.remove(name).is_some();
         let had_skinned = self.skinned_meshes.remove(name).is_some();
         had_static || had_skinned
@@ -573,6 +615,7 @@ impl MeshCache {
     /// Clear all cached meshes (static and skinned)
     pub fn clear(&mut self) {
         self.meshes.clear();
+        self.procedural.clear();
         self.skinned_meshes.clear();
     }
 }

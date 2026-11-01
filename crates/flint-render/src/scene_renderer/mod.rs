@@ -2517,6 +2517,56 @@ impl SceneRenderer {
             .upload_procedural(device, name, vertices, indices, material);
     }
 
+    /// [`load_procedural_mesh`](Self::load_procedural_mesh) for a mesh of
+    /// several parts, each with its own material, all drawn under `name`.
+    pub fn load_procedural_mesh_parts(
+        &mut self,
+        device: &wgpu::Device,
+        name: &str,
+        parts: Vec<(
+            Vec<crate::primitives::Vertex>,
+            Vec<u32>,
+            flint_import::ImportedMaterial,
+        )>,
+    ) {
+        self.ray_meshes.remove(name);
+        self.mesh_cache.upload_procedural_parts(device, name, parts);
+    }
+
+    /// Upload raw RGBA8 pixels as the texture `name`, replacing one already
+    /// there. Cached material binds name their textures, so they are dropped
+    /// and remade on the next `update_from_world` to pick up the new one:
+    /// fine for a swap (a placeholder giving way), costly every frame.
+    #[allow(clippy::too_many_arguments)]
+    pub fn replace_texture_rgba(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        is_normal_map: bool,
+    ) -> Result<(), String> {
+        self.remove_texture(name);
+        self.load_texture_rgba(device, queue, name, width, height, data, is_normal_map)
+            .map(|_| ())
+    }
+
+    /// Remove the texture `name`, if loaded, and drop the cached material
+    /// binds that may hold it. Returns whether it was there.
+    pub fn remove_texture(&mut self, name: &str) -> bool {
+        let Some(cache) = &mut self.texture_cache else {
+            return false;
+        };
+        if !cache.contains(name) {
+            return false;
+        }
+        cache.remove_texture(name);
+        self.draw_bind_cache.clear();
+        true
+    }
+
     /// Make the mesh `name` a ray target (ADR 0105): from the next
     /// `update_from_world`, every entity drawing it places `mesh` in
     /// [`ray_scene`](Self::ray_scene) at its world matrix. Build `mesh` from

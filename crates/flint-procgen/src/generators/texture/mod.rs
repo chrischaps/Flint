@@ -152,8 +152,8 @@ impl Generator for TextureGenerator {
                 },
                 "ops": only(&["pipeline"], json!({
                     "type": "array",
-                    "items": { "type": "object", "required": ["type"] },
-                    "description": "The pipeline's operations, run in order (or as a graph when an op has an `id`); see `op_param_schema` for each type"
+                    "items": pipeline::ops_items_schema(),
+                    "description": "The pipeline's operations, run in order (or as a graph when an op has an `id`); each type's keys are in `op_schema`"
                 })),
                 "seamless": derive(json!({ "type": "boolean", "default": true, "description": "Tile without a seam. Pipeline ops choose for themselves" })),
                 "base_color": derive(json!({ "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#735A47" })),

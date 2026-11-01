@@ -27,6 +27,7 @@ flint-player = { workspace = true }
 flint-terrain = { workspace = true }
 flint-particles = { workspace = true }
 flint-procgen = { workspace = true }
+flint-procgen-ai = { workspace = true }
 flint-viewer = { workspace = true }
 flint-debug-ui = { workspace = true }
 flint-music = { workspace = true }
