@@ -10,6 +10,8 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::output::GeneratorOutput;
 use crate::spec::ProcGenSpec;
 use crate::types::{ChannelSemantics, ImageData, MaterialData, MeshData, Vertex};
@@ -48,8 +50,10 @@ const MAX_TEXEL_SAMPLES: usize = 65_536;
 
 // ── Status / Check / Constraints ────────────────────────────────────────────
 
-/// Outcome of a single validation check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Outcome of a single validation check. Serialises as `"pass"`, `"warn"`
+/// or `"fail"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CheckStatus {
     Pass,
     Warn,
@@ -67,11 +71,52 @@ impl fmt::Display for CheckStatus {
 }
 
 /// A single validation check result.
-#[derive(Debug, Clone)]
+///
+/// A check that measures something carries the number it measured in
+/// `actual` and the most the check allows in `limit`, so an agent can read
+/// "which LOD blew the budget, by how much" without parsing `detail` (#185).
+/// `limit` is always a ceiling: the check passes while `actual <= limit`
+/// (a triangle budget then warns up to twice it). Counts of bad things
+/// (vertices outside [0,1], degenerate triangles) have a limit of 0, a PBR
+/// factor measures how far it sits outside its range, and texture shares
+/// are of the texels that miss (off palette, outside the style's range), so
+/// they all read the same way.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValidationCheck {
     pub name: String,
     pub status: CheckStatus,
     pub detail: String,
+    /// What the check measured, when it measures a number.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_number"
+    )]
+    pub actual: Option<f64>,
+    /// The most `actual` may be and still pass.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_number"
+    )]
+    pub limit: Option<f64>,
+}
+
+impl ValidationCheck {
+    /// `(actual, limit)`, when the check measured against a limit.
+    pub fn measured(&self) -> Option<(f64, f64)> {
+        self.actual.zip(self.limit)
+    }
+}
+
+/// A whole number as a JSON integer (`7998`, not `7998.0`), anything else as
+/// a float; deserialising reads either back as `f64`.
+fn serialize_number<S: serde::Serializer>(v: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
+    match *v {
+        Some(x) if x.fract() == 0.0 && x.abs() < 9.0e15 => s.serialize_i64(x as i64),
+        Some(x) => s.serialize_f64(x),
+        None => s.serialize_none(),
+    }
 }
 
 /// Plain-data struct carrying optional budget/style constraints.
@@ -96,8 +141,9 @@ pub struct ValidationConstraints {
     pub require_uvs: bool,
 }
 
-/// Aggregated validation results.
-#[derive(Debug, Clone)]
+/// Aggregated validation results. Serialises as `{"checks": [...]}`; see
+/// [`ValidationCheck`] for each entry's fields.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValidationReport {
     pub checks: Vec<ValidationCheck>,
 }
@@ -127,10 +173,17 @@ impl ValidationReport {
         self.checks.iter().any(|c| c.status == CheckStatus::Warn)
     }
 
+    /// Each check as its report line, e.g. `  [ WARN] LOD0 ...: 7998 > 5000`.
+    pub fn check_lines(&self) -> impl Iterator<Item = String> + '_ {
+        self.checks
+            .iter()
+            .map(|c| format!("  [{:>5}] {}: {}", c.status.to_string(), c.name, c.detail))
+    }
+
     /// Print each check with a status indicator.
     pub fn print_checks(&self) {
-        for c in &self.checks {
-            println!("  [{:>5}] {}: {}", c.status.to_string(), c.name, c.detail);
+        for line in self.check_lines() {
+            println!("{line}");
         }
     }
 
@@ -237,6 +290,8 @@ pub fn validate_output(
                 name: "sound output".into(),
                 status: CheckStatus::Pass,
                 detail: "no mesh/image checks applicable".into(),
+                actual: None,
+                limit: None,
             });
         }
     }
@@ -249,6 +304,26 @@ fn push(checks: &mut Vec<ValidationCheck>, name: String, status: CheckStatus, de
         name,
         status,
         detail,
+        actual: None,
+        limit: None,
+    });
+}
+
+/// [`push`] for a check that measured `actual` against the ceiling `limit`.
+fn push_measured(
+    checks: &mut Vec<ValidationCheck>,
+    name: String,
+    status: CheckStatus,
+    detail: String,
+    actual: f64,
+    limit: f64,
+) {
+    checks.push(ValidationCheck {
+        name,
+        status,
+        detail,
+        actual: Some(actual),
+        limit: Some(limit),
     });
 }
 
@@ -284,12 +359,13 @@ fn validate_mesh(
         check_triangle_budget_value(tris, max_tris, checks, &label("style triangle budget"));
     }
     if spec_target.is_none() && constraints.max_triangles.is_none() {
-        push(
-            checks,
-            label("triangle budget"),
-            CheckStatus::Pass,
-            format!("{tris} triangles (no budget set)"),
-        );
+        checks.push(ValidationCheck {
+            name: label("triangle budget"),
+            status: CheckStatus::Pass,
+            detail: format!("{tris} triangles (no budget set)"),
+            actual: Some(tris as f64),
+            limit: None,
+        });
     }
 
     check_uv_range(mesh, constraints.require_uvs, checks, &label("UV range"));
@@ -390,7 +466,14 @@ fn check_triangle_budget_value(
             ),
         )
     };
-    push(checks, name.into(), status, detail);
+    push_measured(
+        checks,
+        name.into(),
+        status,
+        detail,
+        actual as f64,
+        budget as f64,
+    );
 }
 
 /// UVs must lie in [0,1], except on a submesh whose material carries a
@@ -435,11 +518,13 @@ fn check_uv_range(
     }
 
     if bad > 0 {
-        push(
+        push_measured(
             checks,
             name.into(),
             CheckStatus::Fail,
             format!("{bad}/{} vertices outside [0,1]", vertices.len()),
+            bad as f64,
+            0.0,
         );
         return;
     }
@@ -464,7 +549,7 @@ fn check_uv_range(
             vertices.len()
         )
     };
-    push(checks, name.into(), CheckStatus::Pass, detail);
+    push_measured(checks, name.into(), CheckStatus::Pass, detail, 0.0, 0.0);
 }
 
 /// Normals must be finite and non-zero (Fail: lighting breaks), and should
@@ -495,7 +580,8 @@ fn check_normals(vertices: &[Vertex], checks: &mut Vec<ValidationCheck>, name: &
     } else {
         (CheckStatus::Pass, format!("all {n} unit length"))
     };
-    push(checks, name.into(), status, detail);
+    let off = (broken + unnormalised) as f64;
+    push_measured(checks, name.into(), status, detail, off, 0.0);
 }
 
 /// A PBR factor must lie in [0,1] (Fail) and inside the style's range when
@@ -510,12 +596,17 @@ fn check_pbr_factor(
 ) {
     let mut fail = Vec::new();
     let mut warn = Vec::new();
+    // How far the worst material sits outside the range that judged it.
+    let mut worst = 0.0f64;
+    let outside = |v: f64, lo: f64, hi: f64| (lo - v).max(v - hi).max(0.0);
     for mat in materials {
         let v = get(mat) as f64;
         if !(0.0..=1.0).contains(&v) {
+            worst = worst.max(outside(v, 0.0, 1.0));
             fail.push(format!("'{}' {factor} {v:.2} outside [0,1]", mat.name));
         } else if let Some([lo, hi]) = style_range {
             if v < lo - RANGE_EPSILON || v > hi + RANGE_EPSILON {
+                worst = worst.max(outside(v, lo, hi));
                 warn.push(format!(
                     "'{}' {factor} {v:.2} outside style range [{lo:.2},{hi:.2}]",
                     mat.name
@@ -541,7 +632,10 @@ fn check_pbr_factor(
             format!("all {} materials in [0,1]", materials.len()),
         )
     };
-    push(checks, name.into(), status, detail);
+    // `actual` is the distance outside the range, so 0 passes. Rounded to
+    // the factor's f32 precision: 0.15_f32 above 0.1 is 0.05, not 0.0500000059.
+    let worst = (worst * 1e6).round() / 1e6;
+    push_measured(checks, name.into(), status, detail, worst, 0.0);
 }
 
 fn check_degenerate_triangles(
@@ -582,7 +676,7 @@ fn check_degenerate_triangles(
             format!("{degenerate}/{tri_count} degenerate triangles found"),
         )
     };
-    push(checks, name.into(), status, detail);
+    push_measured(checks, name.into(), status, detail, degenerate as f64, 0.0);
 }
 
 // ── Palette ─────────────────────────────────────────────────────────────────
@@ -721,7 +815,15 @@ fn check_material_palette(
     } else {
         (CheckStatus::Warn, off.join("; "))
     };
-    push(checks, name.into(), status, detail);
+    let worst = (worst as f64 * 10.0).round() / 10.0;
+    push_measured(
+        checks,
+        name.into(),
+        status,
+        detail,
+        worst,
+        PALETTE_DELTA_E as f64,
+    );
 }
 
 fn hex_of(srgb: [f32; 3]) -> String {
@@ -821,7 +923,14 @@ fn check_texture_palette(
     } else {
         CheckStatus::Warn
     };
-    push(checks, name.into(), status, detail);
+    push_measured(
+        checks,
+        name.into(),
+        status,
+        detail,
+        round_share(1.0 - share as f64),
+        round_share(1.0 - PALETTE_TEXEL_SHARE as f64),
+    );
 }
 
 /// The share of a grayscale map's texels inside the style's range must
@@ -857,7 +966,20 @@ fn check_texture_range(
     } else {
         CheckStatus::Warn
     };
-    push(checks, name.into(), status, detail);
+    push_measured(
+        checks,
+        name.into(),
+        status,
+        detail,
+        round_share(1.0 - share),
+        round_share(1.0 - MAP_TEXEL_SHARE as f64),
+    );
+}
+
+/// A share to four places, so `1 - 0.9_f32` reads 0.1 and not
+/// 0.09999996423721313.
+fn round_share(x: f64) -> f64 {
+    (x * 1e4).round() / 1e4
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1233,16 +1355,22 @@ value = 42
                     name: "a".into(),
                     status: CheckStatus::Pass,
                     detail: "ok".into(),
+                    actual: None,
+                    limit: None,
                 },
                 ValidationCheck {
                     name: "b".into(),
                     status: CheckStatus::Warn,
                     detail: "meh".into(),
+                    actual: None,
+                    limit: None,
                 },
                 ValidationCheck {
                     name: "c".into(),
                     status: CheckStatus::Fail,
                     detail: "bad".into(),
+                    actual: None,
+                    limit: None,
                 },
             ],
         };
@@ -1325,6 +1453,8 @@ value = 42
             name: "x".into(),
             status,
             detail: String::new(),
+            actual: None,
+            limit: None,
         };
         let one = ValidationReport {
             checks: vec![mk(CheckStatus::Pass), mk(CheckStatus::Warn)],
@@ -1706,5 +1836,144 @@ value = 42
         assert_eq!(parse_hex("#fff"), Some([1.0, 1.0, 1.0]));
         assert_eq!(parse_hex("8B4513").map(hex_of).as_deref(), Some("#8B4513"));
         assert_eq!(parse_hex("#12345"), None);
+    }
+
+    // #185: a mesh of `n` triangles (a fan over n + 1 vertices of a disc).
+    fn fan(n: u32) -> MeshData {
+        let mut mesh = make_triangle();
+        mesh.vertices.truncate(1);
+        mesh.vertices[0].position = [0.0, 0.0, 0.0];
+        for i in 0..=n {
+            let a = i as f32 / n as f32 * std::f32::consts::PI;
+            mesh.vertices.push(Vertex {
+                position: [a.cos(), a.sin(), 0.0],
+                normal: [0.0, 0.0, 1.0],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+                uv: [0.5, 0.5],
+            });
+        }
+        mesh.indices = (1..=n).flat_map(|i| [0, i, i + 1]).collect();
+        mesh
+    }
+
+    // "Which LOD blew the budget, by how much?" is answered by numbers.
+    #[test]
+    fn budgets_carry_actual_and_limit() {
+        let mut spec = make_spec();
+        spec.lod = Some(vec![
+            crate::LodLevel {
+                level: 0,
+                target_triangles: 8,
+            },
+            crate::LodLevel {
+                level: 1,
+                target_triangles: 2,
+            },
+        ]);
+        let output = GeneratorOutput::MeshWithLods(vec![fan(8), fan(7)]);
+        let report = validate_output(&output, &spec, &ValidationConstraints::default());
+
+        let lod0 = check(&report, "LOD0 spec triangle target");
+        assert_eq!(lod0.status, CheckStatus::Pass);
+        assert_eq!(lod0.measured(), Some((8.0, 8.0)));
+        let lod1 = check(&report, "LOD1 spec triangle target");
+        assert_eq!(lod1.status, CheckStatus::Fail);
+        assert_eq!(lod1.measured(), Some((7.0, 2.0)));
+
+        // Counts of bad things measure against 0.
+        assert_eq!(
+            check(&report, "LOD1 degenerate triangles").measured(),
+            Some((0.0, 0.0))
+        );
+        // Integrity has nothing to measure.
+        assert_eq!(check(&report, "LOD1 mesh integrity").actual, None);
+    }
+
+    #[test]
+    fn unbudgeted_count_has_actual_but_no_limit() {
+        let report = validate_output(
+            &GeneratorOutput::Mesh(fan(5)),
+            &make_spec(),
+            &ValidationConstraints::default(),
+        );
+        let c = check(&report, "triangle budget");
+        assert_eq!((c.actual, c.limit), (Some(5.0), None));
+    }
+
+    // A PBR factor measures how far it sits outside its range.
+    #[test]
+    fn pbr_factor_measures_distance_outside_range() {
+        let mut mesh = make_triangle();
+        mesh.materials[0].metallic = 0.4;
+        let report = validate_output(
+            &GeneratorOutput::Mesh(mesh),
+            &make_spec(),
+            &ValidationConstraints {
+                metallic_range: Some([0.0, 0.15]),
+                ..Default::default()
+            },
+        );
+        let c = check(&report, "metallic");
+        assert_eq!(c.status, CheckStatus::Warn);
+        let (actual, limit) = c.measured().unwrap();
+        assert!((actual - 0.25).abs() < 1e-6, "{actual}");
+        assert_eq!(limit, 0.0);
+    }
+
+    // A texture share is of the texels that miss, so limit is a ceiling too.
+    #[test]
+    fn texture_range_share_is_a_ceiling() {
+        let mut img = ImageData::new(4, 4, ChannelSemantics::Roughness);
+        // 12 of 16 texels at 0.2, outside [0.6, 0.95]; 4 at 0.8, inside.
+        for (i, px) in img.pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let v = if i < 12 { 51 } else { 204 };
+            px.copy_from_slice(&[v, v, v, 255]);
+        }
+        let report = validate_output(
+            &GeneratorOutput::Image(img),
+            &make_spec(),
+            &ValidationConstraints {
+                roughness_range: Some([0.6, 0.95]),
+                ..Default::default()
+            },
+        );
+        let c = check(&report, "style range");
+        assert_eq!(c.status, CheckStatus::Warn);
+        assert_eq!(c.measured(), Some((0.75, 0.1)));
+    }
+
+    // The JSON an agent reads round-trips into the report, whole numbers
+    // stay integers, and unmeasured checks carry no actual/limit keys.
+    #[test]
+    fn report_round_trips_through_json() {
+        let mut spec = make_spec();
+        spec.lod = Some(vec![crate::LodLevel {
+            level: 0,
+            target_triangles: 2,
+        }]);
+        let mut mesh = fan(7);
+        mesh.materials[0].roughness = 0.3;
+        let report = validate_output(
+            &GeneratorOutput::Mesh(mesh),
+            &spec,
+            &ValidationConstraints {
+                roughness_range: Some([0.6, 0.95]),
+                palette: vec!["#8B4513".into()],
+                ..Default::default()
+            },
+        );
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(
+            json.contains(
+                r#""name":"spec triangle target","status":"fail","detail":"7 triangles > 2 (3.5x, over the 2x tolerance)","actual":7,"limit":2"#
+            ),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#"{"name":"mesh integrity","status":"pass","detail":"7 triangles over 9 vertices"}"#),
+            "{json}"
+        );
+        let back: ValidationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, report);
     }
 }

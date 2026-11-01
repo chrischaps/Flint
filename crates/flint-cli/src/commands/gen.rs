@@ -5,30 +5,41 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{ArgGroup, Args};
+use clap::{ArgGroup, Args, ValueEnum};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
     export_glb, Generator, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig,
-    SeedMode, ValidationConstraints,
+    SeedMode, ValidationConstraints, ValidationReport,
 };
+use serde::Serialize;
 
 use super::gen_ai;
 use super::gen_store::{self, WrittenFile};
 
-/// The generation summary goes to stdout, unless stdout is carrying the spec
-/// (`--print-spec`), when it moves to stderr.
-static SUMMARY_TO_STDERR: AtomicBool = AtomicBool::new(false);
+/// Human lines go to stdout, unless stdout is carrying something a program
+/// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
+static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
-/// `println!` for the generation summary; see [`SUMMARY_TO_STDERR`].
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
 macro_rules! say {
     ($($t:tt)*) => {
-        if SUMMARY_TO_STDERR.load(Ordering::Relaxed) {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
             eprintln!($($t)*)
         } else {
             println!($($t)*)
         }
     };
+}
+
+/// How `--validate` reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    /// One `[ PASS]` / `[ WARN]` / `[ FAIL]` line per check and a summary.
+    Human,
+    /// One JSON object per variant on stdout (JSON Lines); human output
+    /// moves to stderr.
+    Json,
 }
 
 #[derive(Args)]
@@ -183,6 +194,13 @@ pub struct GenArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Validation report format. `json` writes one object per variant to
+    /// stdout: spec, seed, output, verdict, counts and every check's name,
+    /// status, detail and, where it measured one, `actual` against `limit`
+    /// (a ceiling). Everything else goes to stderr.
+    #[arg(long, value_enum, requires = "validate")]
+    pub report: Option<ReportFormat>,
+
     /// Style guide TOML path for additional validation constraints
     /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
     #[arg(long, requires = "validate")]
@@ -217,7 +235,8 @@ pub fn run(args: GenArgs) -> Result<()> {
             args.since.as_deref(),
         );
     }
-    SUMMARY_TO_STDERR.store(args.print_spec, Ordering::Relaxed);
+    let json = args.report == Some(ReportFormat::Json);
+    HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);
 
     let steps = gen_ai::Steps::of(&args);
     let loaded = match &args.spec {
@@ -236,7 +255,15 @@ pub fn run(args: GenArgs) -> Result<()> {
     let mut spec = if steps.any() {
         let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
         if args.dry_run {
-            gen_ai::print_plan(&config, steps, &args);
+            // With --print-spec a dry run has no spec to print, so the plan
+            // keeps stdout; only the JSON report needs it kept clear.
+            for line in gen_ai::plan_lines(&config, steps, &args) {
+                if json {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            }
             return Ok(());
         }
         let meter = gen_ai::build_meter(&config, &args);
@@ -419,6 +446,19 @@ pub fn run(args: GenArgs) -> Result<()> {
                     }
                     if args.validate {
                         say!("  validation skipped for a cached result (--force regenerates)");
+                        if json {
+                            emit_json(&VariantReport {
+                                spec: &spec.meta.name,
+                                seed,
+                                output: out_path.display().to_string(),
+                                verdict: Verdict::Skipped,
+                                reason: Some("cached result; --force regenerates"),
+                                passed: 0,
+                                warnings: 0,
+                                failed: 0,
+                                report: &ValidationReport { checks: Vec::new() },
+                            })?;
+                        }
                     }
                     cached += 1;
                     continue;
@@ -442,15 +482,27 @@ pub fn run(args: GenArgs) -> Result<()> {
             }
         }
 
-        if args.validate
-            && !run_validation(
+        if args.validate {
+            let (report, passed) = run_validation(
                 &output,
                 &seed_spec,
                 args.style_guide.as_deref(),
                 args.strict,
-            )?
-        {
-            validation_failed = true;
+            )?;
+            if json {
+                emit_json(&VariantReport {
+                    spec: &spec.meta.name,
+                    seed,
+                    output: out_path.display().to_string(),
+                    verdict: if passed { Verdict::Pass } else { Verdict::Fail },
+                    reason: None,
+                    passed: report.count_passed(),
+                    warnings: report.count_warnings(),
+                    failed: report.count_failed(),
+                    report: &report,
+                })?;
+            }
+            validation_failed |= !passed;
         }
     }
 
@@ -850,13 +902,49 @@ fn build_validation_constraints(
     c
 }
 
-/// Run validation on a generator output, printing results. Returns true if passed.
+/// One variant's line of `--report json`. Its `checks` key is the
+/// [`ValidationReport`]'s, so the line deserialises straight into one (the
+/// other keys are ignored).
+#[derive(Serialize)]
+struct VariantReport<'a> {
+    spec: &'a str,
+    seed: u64,
+    output: String,
+    verdict: Verdict,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    passed: usize,
+    warnings: usize,
+    failed: usize,
+    #[serde(flatten)]
+    report: &'a ValidationReport,
+}
+
+/// The variant's outcome as the exit code sees it: `--strict` makes a
+/// warning a `fail`; a cached result is `skipped`, not checked.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Verdict {
+    Pass,
+    Fail,
+    Skipped,
+}
+
+/// Write one JSON line to stdout.
+fn emit_json(line: &VariantReport) -> Result<()> {
+    let json = serde_json::to_string(line).context("serialising the validation report")?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Run validation on a generator output and print the human report (to
+/// stderr under `--report json`). Returns the report and whether it passed.
 fn run_validation(
     output: &GeneratorOutput,
     spec: &ProcGenSpec,
     style_guide_path: Option<&str>,
     strict: bool,
-) -> Result<bool> {
+) -> Result<(ValidationReport, bool)> {
     let style_guide = if let Some(path) = style_guide_path {
         Some(
             StyleGuide::load(Path::new(path))
@@ -871,18 +959,21 @@ fn run_validation(
     let report = flint_procgen::validate_output(output, spec, &constraints);
 
     say!();
-    report.print_checks();
+    for line in report.check_lines() {
+        say!("{line}");
+    }
     say!();
-    report.print_summary();
+    say!("{}", report.summary());
 
-    if report.has_failures() {
-        Ok(false)
+    let passed = if report.has_failures() {
+        false
     } else if strict && report.has_warnings() {
         say!("Strict mode: warnings treated as failures");
-        Ok(false)
+        false
     } else {
-        Ok(true)
-    }
+        true
+    };
+    Ok((report, passed))
 }
 
 /// Human-friendly byte size.
