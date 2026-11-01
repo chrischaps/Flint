@@ -5,7 +5,7 @@
 //! values are quantized into bands for cell IDs, simulating geological strata
 //! or natural layering.
 
-use crate::algorithms::noise::{Fbm, NoiseSource, PerlinNoise, SimplexNoise};
+use crate::algorithms::noise::{crossfade_tiled, Fbm, NoiseSource, PerlinNoise, SimplexNoise};
 use crate::generators::util::{toml_f64, toml_string, toml_u32};
 use crate::{ProcGenError, Result, SeededRng};
 
@@ -223,23 +223,12 @@ impl Pattern for PerlinOrganicPattern {
     }
 }
 
-/// Make any noise tile by cross-fading it with copies of itself shifted one
-/// tile left, up, and both: at `u = 1` the blend is exactly the `u = 0`
-/// value. Averaging lowers the variance mid-tile, so the blend is divided by
-/// the RMS of its weights to keep the contrast even across the tile.
-///
-/// Used for simplex, which has no periodic lattice; Perlin uses
-/// [`PerlinNoise::fbm_2d_periodic`], which tiles without blending.
+/// Make the whole FBM sum tile by cross-fading it with copies shifted one
+/// tile (see [`crossfade_tiled`]). Used for simplex, which has no periodic
+/// lattice; Perlin uses [`PerlinNoise::fbm_2d_periodic`], which tiles
+/// without blending.
 fn crossfade_tile(noise: &dyn NoiseSource, u: f64, v: f64) -> f64 {
-    let (a, b) = (noise.sample_2d(u, v), noise.sample_2d(u - 1.0, v));
-    let (c, d) = (
-        noise.sample_2d(u, v - 1.0),
-        noise.sample_2d(u - 1.0, v - 1.0),
-    );
-    let (wu, wv) = (1.0 - u, 1.0 - v);
-    let blend = wv * (wu * a + u * b) + v * (wu * c + u * d);
-    let rms = ((wu * wu + u * u) * (wv * wv + v * v)).sqrt();
-    (blend / rms).clamp(-1.0, 1.0)
+    crossfade_tiled(|x, y| noise.sample_2d(x, y), u, v, 1.0, 1.0)
 }
 
 // ===========================================================================

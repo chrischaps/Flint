@@ -15,6 +15,9 @@ pub struct ParamFieldSpec {
     pub field_type: ParamFieldType,
     /// The schema-declared default value, if any.
     pub default: Option<Value>,
+    /// The schema's `description`: what the parameter does, in a sentence.
+    /// The previewer shows it on hover.
+    pub description: Option<String>,
     /// When the field is read only for some values of another field
     /// (`"x-when"` in the schema); `None` means always.
     pub when: Option<ParamCondition>,
@@ -39,6 +42,9 @@ pub enum ParamFieldType {
     StringArray { item_enum: Option<Vec<String>> },
     /// Array of objects (e.g. bones, body_parts, limb_chains).
     ObjectArray,
+    /// A table (`"type": "object"`), usually of named tables, such as a
+    /// creature's `[params.materials.<name>]`. Shown, not edited.
+    ObjectMap,
 }
 
 /// Parse a generator's JSON Schema into a list of UI field descriptors.
@@ -68,6 +74,10 @@ pub fn parse_param_schema(schema: &Value) -> Vec<ParamFieldSpec> {
                 name: name.clone(),
                 field_type,
                 default,
+                description: prop
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(str::to_string),
                 when: parse_condition(prop),
             }
         })
@@ -117,6 +127,7 @@ fn classify_field(prop: &Value) -> ParamFieldType {
             let item_enum = prop.get("items").and_then(extract_string_enum);
             ParamFieldType::StringArray { item_enum }
         }
+        "object" => ParamFieldType::ObjectMap,
         _ => ParamFieldType::String,
     }
 }
@@ -205,10 +216,13 @@ impl ParamFieldSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParamIssue {
     /// The key is not in the schema at all (usually a typo). `suggestion` is
-    /// the closest schema key, when one is close.
+    /// the closest schema key, when one is close. `within` names the table
+    /// the key sits in (its schema's `title`, e.g. "brick_grid op") when that
+    /// isn't the generator's own params.
     Unknown {
         key: String,
         suggestion: Option<String>,
+        within: Option<String>,
     },
     /// The key exists but only applies when `controller` is one of `needs`;
     /// the spec has `controller = actual`, so the value is ignored.
@@ -218,13 +232,19 @@ pub enum ParamIssue {
         actual: String,
         needs: Vec<String>,
     },
+    /// The schema marks the key `"deprecated": true`: it is read (or once
+    /// was) but no longer does anything. `reason` is the key's description.
+    Deprecated { key: String, reason: Option<String> },
 }
 
 impl ParamIssue {
-    /// The params key the issue is about.
+    /// The params key the issue is about: a path such as `ops[2].colums`
+    /// when it sits inside a table or an array of them.
     pub fn key(&self) -> &str {
         match self {
-            Self::Unknown { key, .. } | Self::Inapplicable { key, .. } => key,
+            Self::Unknown { key, .. }
+            | Self::Inapplicable { key, .. }
+            | Self::Deprecated { key, .. } => key,
         }
     }
 }
@@ -234,10 +254,17 @@ impl std::fmt::Display for ParamIssue {
         match self {
             Self::Unknown {
                 key,
-                suggestion: Some(s),
-            } => write!(f, "`{key}` is not a parameter of this generator (did you mean `{s}`?)"),
-            Self::Unknown { key, .. } => {
-                write!(f, "`{key}` is not a parameter of this generator")
+                suggestion,
+                within,
+            } => {
+                match within {
+                    Some(w) => write!(f, "`{key}` is not a parameter of the {w}")?,
+                    None => write!(f, "`{key}` is not a parameter of this generator")?,
+                }
+                match suggestion {
+                    Some(s) => write!(f, " (did you mean `{s}`?)"),
+                    None => Ok(()),
+                }
             }
             Self::Inapplicable {
                 key,
@@ -253,48 +280,145 @@ impl std::fmt::Display for ParamIssue {
                     .collect::<Vec<_>>()
                     .join(" or ")
             ),
+            Self::Deprecated {
+                key,
+                reason: Some(r),
+            } => write!(f, "`{key}` is deprecated: {r}"),
+            Self::Deprecated { key, .. } => write!(f, "`{key}` is deprecated"),
         }
     }
 }
 
 /// Report every key in `params` that the generator described by `schema`
 /// will silently ignore: keys missing from the schema (when it sets
-/// `"additionalProperties": false`) and keys whose `x-when` condition the
-/// spec doesn't meet. Returned in key order; empty means every key is read.
+/// `"additionalProperties": false`), keys whose `x-when` condition the
+/// spec doesn't meet, and keys the schema marks `"deprecated": true`.
+/// Returned in key order; empty means every key is read.
+///
+/// Tables inside the params are checked against their own schemas, the
+/// issue's key then being a path (`materials.shell.rougness`, `ops[2].colums`):
+/// - a property with `"properties"` is checked like the params themselves;
+/// - a table of named tables (`"additionalProperties": { ... }`) checks
+///   every entry against that schema;
+/// - an array checks each element against `"items"`, and when `items` is a
+///   `"oneOf"` with a `"discriminator": { "propertyName": "type" }`, against
+///   the branch whose `type` property has the element's value as `const`.
 pub fn lint_params(schema: &Value, params: &toml::Value) -> Vec<ParamIssue> {
-    let Some(table) = params.as_table() else {
-        return Vec::new();
-    };
-    let properties = schema.get("properties").and_then(|p| p.as_object());
-    let closed = schema.get("additionalProperties") == Some(&Value::Bool(false));
-
-    let mut keys: Vec<&String> = table.keys().collect();
-    keys.sort();
     let mut issues = Vec::new();
-    for key in keys {
-        match properties.and_then(|p| p.get(key.as_str())) {
-            None if closed => issues.push(ParamIssue::Unknown {
-                key: key.clone(),
-                suggestion: properties.and_then(|p| closest(key, p.keys())),
-            }),
-            None => {}
-            Some(prop) => {
-                let Some(c) = parse_condition(prop) else {
-                    continue;
-                };
-                let actual = effective_string(schema, table, &c.key).unwrap_or_default();
-                if !c.any_of.contains(&actual) {
-                    issues.push(ParamIssue::Inapplicable {
-                        key: key.clone(),
-                        controller: c.key,
-                        actual,
-                        needs: c.any_of,
-                    });
+    lint_value(schema, params, "", &mut issues);
+    issues
+}
+
+/// Lint `value` against `schema`, prefixing issue keys with `path`.
+fn lint_value(schema: &Value, value: &toml::Value, path: &str, issues: &mut Vec<ParamIssue>) {
+    match value {
+        toml::Value::Table(table) => {
+            if schema.get("properties").is_some() {
+                lint_table(schema, table, path, issues);
+            } else if let Some(entry) = schema.get("additionalProperties").filter(|e| e.is_object())
+            {
+                let mut names: Vec<&String> = table.keys().collect();
+                names.sort();
+                for name in names {
+                    lint_value(entry, &table[name.as_str()], &join(path, name), issues);
                 }
             }
         }
+        toml::Value::Array(items) => {
+            let Some(item_schema) = schema.get("items") else {
+                return;
+            };
+            for (i, item) in items.iter().enumerate() {
+                if let Some(branch) = discriminated_branch(item_schema, item) {
+                    lint_value(branch, item, &format!("{path}[{i}]"), issues);
+                }
+            }
+        }
+        _ => {}
     }
-    issues
+}
+
+/// The schema an array element is checked against: `items` itself, or for a
+/// discriminated `oneOf` the branch matching the element's tag. `None` when
+/// no branch matches (the generator reports an unknown type itself).
+fn discriminated_branch<'a>(items: &'a Value, item: &toml::Value) -> Option<&'a Value> {
+    let Some(branches) = items.get("oneOf").and_then(|b| b.as_array()) else {
+        return Some(items);
+    };
+    let tag = items.get("discriminator")?.get("propertyName")?.as_str()?;
+    let wanted = item.get(tag)?.as_str()?;
+    branches.iter().find(|b| {
+        b.get("properties")
+            .and_then(|p| p.get(tag))
+            .and_then(|t| t.get("const"))
+            .and_then(|c| c.as_str())
+            == Some(wanted)
+    })
+}
+
+fn join(path: &str, key: &str) -> String {
+    if path.is_empty() {
+        key.to_string()
+    } else {
+        format!("{path}.{key}")
+    }
+}
+
+fn lint_table(
+    schema: &Value,
+    table: &toml::map::Map<String, toml::Value>,
+    path: &str,
+    issues: &mut Vec<ParamIssue>,
+) {
+    let properties = schema.get("properties").and_then(|p| p.as_object());
+    let closed = schema.get("additionalProperties") == Some(&Value::Bool(false));
+    let within = if path.is_empty() {
+        None
+    } else {
+        schema
+            .get("title")
+            .and_then(|t| t.as_str())
+            .map(str::to_string)
+    };
+
+    let mut keys: Vec<&String> = table.keys().collect();
+    keys.sort();
+    for key in keys {
+        match properties.and_then(|p| p.get(key.as_str())) {
+            None if closed => issues.push(ParamIssue::Unknown {
+                key: join(path, key),
+                suggestion: properties.and_then(|p| closest(key, p.keys())),
+                within: within.clone(),
+            }),
+            None => {}
+            Some(prop) => {
+                if prop.get("deprecated") == Some(&Value::Bool(true)) {
+                    issues.push(ParamIssue::Deprecated {
+                        key: join(path, key),
+                        reason: prop
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .map(str::to_string),
+                    });
+                    continue;
+                }
+                if let Some(c) = parse_condition(prop) {
+                    let actual = effective_string(schema, table, &c.key).unwrap_or_default();
+                    if !c.any_of.contains(&actual) {
+                        issues.push(ParamIssue::Inapplicable {
+                            key: join(path, key),
+                            controller: c.key,
+                            actual,
+                            needs: c.any_of,
+                        });
+                        // Nothing inside an ignored key is read either.
+                        continue;
+                    }
+                }
+                lint_value(prop, &table[key.as_str()], &join(path, key), issues);
+            }
+        }
+    }
 }
 
 /// The candidate within edit distance 2 (or a third of the key's length,
@@ -320,6 +444,121 @@ fn edit_distance(a: &str, b: &str) -> usize {
         prev = cur;
     }
     prev[b.len()]
+}
+
+// ─── Parameter reference ───────────────────────────────────────────────────
+
+/// A Markdown reference for one generator's `params`, built from its
+/// schema: a table per condition (keys every spec may set first, then one
+/// table per `x-when`), each row the key, its type and range, its default
+/// and its `description`. The crate README's catalog is this, for every
+/// built-in generator, and a test keeps the two equal.
+pub fn param_reference_markdown(schema: &Value) -> String {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return String::new();
+    };
+    // Group by condition; BTreeMap keeps the groups and their keys in order.
+    let mut groups: std::collections::BTreeMap<String, Vec<(&String, &Value)>> = Default::default();
+    for (key, prop) in props {
+        let heading = match parse_condition(prop) {
+            None => String::new(),
+            Some(c) => format!(
+                "Only when `{}` is {}",
+                c.key,
+                c.any_of
+                    .iter()
+                    .map(|v| format!("`{v}`"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ),
+        };
+        groups.entry(heading).or_default().push((key, prop));
+    }
+
+    let mut out = String::new();
+    for (heading, rows) in &groups {
+        if !heading.is_empty() {
+            out.push_str(&format!("\n{heading}:\n\n"));
+        }
+        out.push_str("| Key | Type | Default | What it does |\n|---|---|---|---|\n");
+        for (key, prop) in rows {
+            let mut text = prop
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            if prop.get("deprecated") == Some(&Value::Bool(true)) {
+                text = format!("**Deprecated.** {text}");
+            }
+            out.push_str(&format!(
+                "| `{key}` | {} | {} | {} |\n",
+                type_cell(prop),
+                prop.get("default").map(default_cell).unwrap_or_default(),
+                text.replace('|', "\\|")
+            ));
+        }
+    }
+    out
+}
+
+/// "number ≥ 0", "integer 1–8", "`a` \| `b`", "hex colour" and so on.
+fn type_cell(prop: &Value) -> String {
+    let num = |k: &str| prop.get(k).and_then(|v| v.as_f64());
+    let fmt = |v: f64| {
+        if v.fract() == 0.0 {
+            format!("{v:.0}")
+        } else {
+            format!("{v}")
+        }
+    };
+    let range = || match (num("minimum"), num("exclusiveMinimum"), num("maximum")) {
+        (Some(lo), _, Some(hi)) => format!(" {}–{}", fmt(lo), fmt(hi)),
+        (_, Some(lo), Some(hi)) => format!(" >{} to {}", fmt(lo), fmt(hi)),
+        (Some(lo), _, None) => format!(" ≥ {}", fmt(lo)),
+        (_, Some(lo), None) => format!(" > {}", fmt(lo)),
+        (None, None, Some(hi)) => format!(" ≤ {}", fmt(hi)),
+        _ => String::new(),
+    };
+    match classify_field(prop) {
+        ParamFieldType::Float { .. } => format!("number{}", range()),
+        ParamFieldType::Integer { .. } => format!("integer{}", range()),
+        ParamFieldType::Bool => "bool".into(),
+        ParamFieldType::HexColor => "hex colour".into(),
+        ParamFieldType::Enum { values } => values
+            .iter()
+            .map(|v| format!("`{v}`"))
+            .collect::<Vec<_>>()
+            .join(" \\| "),
+        ParamFieldType::String => "string".into(),
+        ParamFieldType::StringArray {
+            item_enum: Some(values),
+        } => format!(
+            "list of {}",
+            values
+                .iter()
+                .map(|v| format!("`{v}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ParamFieldType::StringArray { item_enum: None } => "list of strings".into(),
+        ParamFieldType::ObjectArray => "array of tables".into(),
+        ParamFieldType::ObjectMap => "table".into(),
+    }
+}
+
+fn default_cell(v: &Value) -> String {
+    match v {
+        Value::String(s) => format!("`\"{s}\"`"),
+        Value::Array(items) => format!(
+            "`[{}]`",
+            items
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => format!("`{other}`"),
+    }
 }
 
 #[cfg(test)]
@@ -660,11 +899,13 @@ mod tests {
             vec![
                 ParamIssue::Unknown {
                     key: "radus".into(),
-                    suggestion: Some("radius".into())
+                    suggestion: Some("radius".into()),
+                    within: None,
                 },
                 ParamIssue::Unknown {
                     key: "wobble".into(),
-                    suggestion: None
+                    suggestion: None,
+                    within: None,
                 },
             ]
         );
@@ -675,5 +916,95 @@ mod tests {
         let mut schema = shape_schema();
         schema["additionalProperties"] = json!(true);
         assert!(lint_params(&schema, &params("anything = 1")).is_empty());
+    }
+
+    // ── nested tables and arrays ────────────────────────────────────────────
+
+    fn nested_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "materials": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "title": "material",
+                        "properties": { "roughness": { "type": "number" } },
+                        "additionalProperties": false
+                    }
+                },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "discriminator": { "propertyName": "type" },
+                        "oneOf": [
+                            {
+                                "title": "grid op",
+                                "properties": {
+                                    "type": { "const": "grid" },
+                                    "columns": { "type": "integer" },
+                                    "stops": {
+                                        "type": "array",
+                                        "items": {
+                                            "title": "stop",
+                                            "properties": { "position": { "type": "number" } },
+                                            "additionalProperties": false
+                                        }
+                                    }
+                                },
+                                "additionalProperties": false
+                            },
+                            {
+                                "title": "open op",
+                                "properties": { "type": { "const": "open" } }
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn lint_follows_named_tables_and_tagged_arrays() {
+        let p = params(
+            r##"
+[materials.shell]
+rougness = 0.4
+[materials.leg]
+roughness = 0.6
+[[ops]]
+type = "grid"
+colums = 8
+[[ops.stops]]
+position = 0.0
+colour = "#fff"
+[[ops]]
+type = "open"
+anything = 1
+[[ops]]
+type = "no_such_op"
+whatever = 2
+"##,
+        );
+        let issues = lint_params(&nested_schema(), &p);
+        let shown: Vec<String> = issues.iter().map(|i| i.to_string()).collect();
+        assert_eq!(
+            shown,
+            [
+                "`materials.shell.rougness` is not a parameter of the material (did you mean `roughness`?)",
+                "`ops[0].colums` is not a parameter of the grid op (did you mean `columns`?)",
+                "`ops[0].stops[0].colour` is not a parameter of the stop",
+            ]
+        );
+        assert_eq!(issues[1].key(), "ops[0].colums");
+    }
+
+    #[test]
+    fn object_properties_are_maps_not_strings() {
+        let fields = parse_param_schema(&nested_schema());
+        let materials = fields.iter().find(|f| f.name == "materials").unwrap();
+        assert!(matches!(materials.field_type, ParamFieldType::ObjectMap));
     }
 }

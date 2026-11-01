@@ -39,7 +39,8 @@ pub fn run_pipeline(
     }
 
     // Sequential execution (legacy)
-    let mut field = TextureField::new(map_params.width, map_params.height);
+    let mut field =
+        TextureField::new(map_params.width, map_params.height).with_seamless(map_params.seamless);
     for (i, op) in ops.iter().enumerate() {
         let mut op_rng = rng.fork(&format!("op_{i}"));
         op.apply(&mut field, &mut op_rng);
@@ -65,7 +66,8 @@ pub fn run_pipeline_with_snapshots(
     }
 
     // Sequential execution (legacy)
-    let mut field = TextureField::new(map_params.width, map_params.height);
+    let mut field =
+        TextureField::new(map_params.width, map_params.height).with_seamless(map_params.seamless);
     let mut snapshots = Vec::with_capacity(ops.len());
 
     for (i, op) in ops.iter().enumerate() {
@@ -205,7 +207,8 @@ fn run_pipeline_dag(
     let dag_nodes = parse_dag_nodes(ops_array);
     let execution_order = compute_dag_order(&dag_nodes)?;
 
-    let mut field = TextureField::new(map_params.width, map_params.height);
+    let mut field =
+        TextureField::new(map_params.width, map_params.height).with_seamless(map_params.seamless);
 
     for &exec_idx in &execution_order {
         execute_dag_node(
@@ -237,7 +240,8 @@ fn run_pipeline_dag_with_snapshots(
     let dag_nodes = parse_dag_nodes(ops_array);
     let execution_order = compute_dag_order(&dag_nodes)?;
 
-    let mut field = TextureField::new(map_params.width, map_params.height);
+    let mut field =
+        TextureField::new(map_params.width, map_params.height).with_seamless(map_params.seamless);
     let mut snapshots_by_idx: Vec<Option<TextureField>> = vec![None; ops.len()];
 
     for &exec_idx in &execution_order {
@@ -477,7 +481,8 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "frequency": { "type": "number", "minimum": 0.1, "default": 10.0 },
                 "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
                 "scale_x": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 }
+                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 },
+                "cell_offset": { "type": "boolean", "default": false, "description": "Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern" }
             }
         }),
         "blend" => serde_json::json!({
@@ -564,8 +569,22 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
             "type": "object",
             "properties": {
                 "input": { "type": "string", "default": "input" },
-                "interpolation": { "type": "string", "enum": ["linear", "constant", "ease"], "default": "linear" }
-            }
+                "interpolation": { "type": "string", "enum": ["linear", "constant", "ease"], "default": "linear" },
+                "stops": {
+                    "type": "array",
+                    "description": "The ramp's colours, as [[params.ops.stops]] tables",
+                    "items": {
+                        "type": "object",
+                        "title": "color_ramp stop",
+                        "properties": {
+                            "position": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                            "color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#000000" }
+                        },
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["stops"]
         }),
         "checker_texture" => serde_json::json!({
             "type": "object",
@@ -631,7 +650,8 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "offset": { "type": "number", "default": 1.0 },
                 "gain": { "type": "number", "default": 2.0 },
                 "scale_x": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 }
+                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 },
+                "cell_offset": { "type": "boolean", "default": false, "description": "Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern" }
             }
         }),
         // Phase 3
@@ -716,6 +736,45 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
         }),
         _ => serde_json::json!({ "type": "object", "properties": {} }),
     }
+}
+
+/// The full, closed schema of one `[[params.ops]]` table of type `op_type`:
+/// its [`op_param_schema`] knobs plus the keys every op may carry (`type`,
+/// and `id` / `inputs` for graph wiring), with `"additionalProperties": false`
+/// so [`crate::lint_params`] reports a typo inside an op.
+pub fn op_schema(op_type: &str) -> serde_json::Value {
+    let mut schema = op_param_schema(op_type);
+    let props = schema["properties"]
+        .as_object_mut()
+        .expect("op schemas have properties");
+    props.insert("type".into(), serde_json::json!({ "const": op_type }));
+    props.insert(
+        "id".into(),
+        serde_json::json!({ "type": "string", "description": "Names the op so others can wire to its outputs (graph mode)" }),
+    );
+    props.insert(
+        "inputs".into(),
+        serde_json::json!({
+            "type": "object",
+            "description": "Graph wiring: local channel = \"source_id.channel\"",
+            "additionalProperties": { "type": "string" }
+        }),
+    );
+    schema["title"] = serde_json::json!(format!("{op_type} op"));
+    schema["additionalProperties"] = serde_json::json!(false);
+    schema
+}
+
+/// The schema of the `[[params.ops]]` array's items: one closed branch per
+/// op type, chosen by the op's `type` (see [`crate::lint_params`]).
+pub fn ops_items_schema() -> serde_json::Value {
+    let branches: Vec<serde_json::Value> = ALL_OP_TYPES.iter().map(|t| op_schema(t)).collect();
+    serde_json::json!({
+        "type": "object",
+        "required": ["type"],
+        "discriminator": { "propertyName": "type" },
+        "oneOf": branches
+    })
 }
 
 /// Return default parameter values for a given op type as a TOML map.
@@ -1862,5 +1921,242 @@ variation = 0.12
         for img in &maps_a {
             assert!(img.validate().is_ok());
         }
+    }
+
+    /// Run `[[ops]]` tables (TOML) on a fresh field, as the sequential
+    /// pipeline does, and return the field.
+    fn run_ops(ops_toml: &str, size: (u32, u32), seamless: bool, seed: u64) -> TextureField {
+        let doc: toml::Value = toml::from_str(ops_toml).unwrap();
+        let ops = doc["ops"].as_array().unwrap();
+        let mut field = TextureField::new(size.0, size.1).with_seamless(seamless);
+        let mut rng = SeededRng::new(seed);
+        for (i, v) in ops.iter().enumerate() {
+            let op = parse_op(v, i).unwrap();
+            op.apply(&mut field, &mut rng.fork(&format!("op_{i}")));
+        }
+        field
+    }
+
+    /// Every op that samples noise or repeats a pattern, in each of its
+    /// modes, with the channel it writes; `voronoi_grid` comes first where
+    /// the op reads cells. Frequencies are fractional and the axes unequal on
+    /// purpose: a tiling op must round them itself.
+    fn tiling_cases() -> Vec<(String, String, &'static str)> {
+        const CELLS: &str = "[[ops]]\ntype = \"voronoi_grid\"\ncell_count = 9\n";
+        let mut cases = Vec::new();
+        let mut case = |name: String, op: String, channel: &'static str| {
+            cases.push((name, op, channel));
+        };
+        for noise in ["perlin", "simplex", "value", "voronoi"] {
+            case(
+                format!("noise_layer {noise}"),
+                format!("[[ops]]\ntype = \"noise_layer\"\noutput = \"out\"\nnoise_type = \"{noise}\"\nfrequency = 3.3\noctaves = 4\nscale_x = 2.0\nscale_y = 0.7\n"),
+                "out",
+            );
+            case(
+                format!("noise_layer {noise} cell_offset"),
+                format!("{CELLS}[[ops]]\ntype = \"noise_layer\"\noutput = \"out\"\nnoise_type = \"{noise}\"\nfrequency = 5.5\noctaves = 3\ncell_offset = true\n"),
+                "out",
+            );
+            for kind in [
+                "fbm",
+                "multifractal",
+                "ridged_multifractal",
+                "hybrid_multifractal",
+                "hetero_terrain",
+            ] {
+                case(
+                    format!("musgrave {kind} {noise}"),
+                    format!("[[ops]]\ntype = \"musgrave_texture\"\noutput = \"out\"\nnoise_type = \"{noise}\"\nmusgrave_type = \"{kind}\"\nfrequency = 2.6\noctaves = 4\nlacunarity = 2.1\nscale_x = 1.5\nscale_y = 1.0\n"),
+                    "out",
+                );
+            }
+            case(
+                format!("edge_erode {noise}"),
+                format!("{CELLS}[[ops]]\ntype = \"edge_erode\"\nnoise_type = \"{noise}\"\nnoise_frequency = 13.7\nstrength = 0.03\nedge_width = 0.6\nthreshold = 0.2\n"),
+                "edge_dist",
+            );
+        }
+        for feature in ["f1", "f2", "smooth_f1", "distance_to_edge"] {
+            for metric in ["euclidean", "manhattan"] {
+                case(
+                    format!("voronoi_texture {feature} {metric}"),
+                    format!("[[ops]]\ntype = \"voronoi_texture\"\noutput = \"out\"\nfeature = \"{feature}\"\nmetric = \"{metric}\"\nscale = 5.4\n"),
+                    "out",
+                );
+            }
+        }
+        for wave in ["sine", "saw", "triangle"] {
+            for direction in ["x", "y", "diagonal"] {
+                case(
+                    format!("wave_texture {wave} {direction}"),
+                    format!("[[ops]]\ntype = \"wave_texture\"\noutput = \"out\"\nwave_type = \"{wave}\"\ndirection = \"{direction}\"\nscale = 3.4\ndistortion = 0.05\ndetail = 3\n"),
+                    "out",
+                );
+            }
+        }
+        case(
+            "checker_texture".into(),
+            "[[ops]]\ntype = \"checker_texture\"\noutput = \"out\"\nscale_x = 5.0\nscale_y = 3.0\n"
+                .into(),
+            "out",
+        );
+        cases
+    }
+
+    /// The #25 seam check, per op: with `seamless` (the default) the step
+    /// across each wrap is no larger than the roughest step inside the tile,
+    /// at two sizes (one not square) and two seeds.
+    #[test]
+    fn every_tiling_op_tiles() {
+        let mut failures = Vec::new();
+        for (name, ops, channel) in tiling_cases() {
+            // A saw wave starts a band at u = 0, so its cliff sits on the
+            // seam (bent a little by the distortion) in nearly every row:
+            // an edge on the wrap by design, as a grid's groove is (see
+            // `grid_seamless_has_no_seam`).
+            let limit = if name.contains("saw") { 1.6 } else { 1.25 };
+            for size in [(128u32, 128u32), (160, 96)] {
+                for seed in [3u64, 42] {
+                    let s = run_ops(&ops, size, true, seed).seam_steps(channel);
+                    if !(s.ratio() < limit) {
+                        failures.push(format!("{name} {size:?} seed {seed}: {s:?}"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "seams:\n{}", failures.join("\n"));
+    }
+
+    /// The check sees the seams `seamless = false` leaves, so the test above
+    /// is measuring something.
+    #[test]
+    fn unwrapped_noise_ops_show_a_seam() {
+        for (name, ops, channel) in tiling_cases() {
+            let unwrapped_seam = name.starts_with("noise_layer") && !name.contains("cell_offset")
+                || name.starts_with("musgrave fbm")
+                || name.starts_with("voronoi_texture f1");
+            if unwrapped_seam {
+                let s = run_ops(&ops, (128, 128), false, 42).seam_steps(channel);
+                assert!(s.ratio() > 1.5, "{name}: expected a seam, got {s:?}");
+            }
+        }
+    }
+
+    /// `seamless` reaches the ops through the spec: a pipeline of noise
+    /// tiles by default and keeps its old seam with `seamless = false`.
+    #[test]
+    fn pipeline_seamless_switch_reaches_the_ops() {
+        let ops = r##"
+[[params.ops]]
+type = "noise_layer"
+output = "height"
+frequency = 3.3
+octaves = 5
+"##;
+        let run = |seamless: Option<bool>| {
+            let mut spec = pipeline_spec(ops);
+            if let Some(b) = seamless {
+                spec.params
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("seamless".into(), toml::Value::Boolean(b));
+            }
+            let map_params = TextureMapParams::from_toml(&spec.params).unwrap();
+            run_pipeline_with_snapshots(&spec.params, &map_params, &mut SeededRng::new(42))
+                .unwrap()
+                .1
+                .pop()
+                .unwrap()
+                .seam_steps("height")
+                .ratio()
+        };
+        assert!(run(None) < 1.25, "default {}", run(None));
+        assert!(run(Some(true)) < 1.25);
+        assert!(run(Some(false)) > 1.5, "unwrapped {}", run(Some(false)));
+    }
+
+    /// Every key `parse_op` reads for an op is in that op's schema, and every
+    /// key the schema lists is read: the lint trusts the schema, so a key it
+    /// lacks would be reported as a typo, and one it invents would hide one.
+    /// Read from this file's own source, arm by arm.
+    #[test]
+    fn op_schemas_list_exactly_the_keys_parse_op_reads() {
+        let src = include_str!("pipeline.rs");
+        let body = &src[src.find("pub fn parse_op(").unwrap()..];
+        let body = &body[..body.find("// ─── Parsing Helpers").unwrap()];
+        let key_re = |line: &str| -> Option<String> {
+            for pat in [".get(\"", "(table, \"", "(stop_table, \""] {
+                if let Some(at) = line.find(pat) {
+                    let rest = &line[at + pat.len()..];
+                    return Some(rest[..rest.find('"').unwrap()].to_string());
+                }
+            }
+            None
+        };
+        let mut problems = Vec::new();
+        for op in ALL_OP_TYPES {
+            let arm_start = body.find(&format!("        \"{op}\" => {{")).unwrap();
+            let arm = &body[arm_start..];
+            // The arm ends at the next arm (or the catch-all) at the same indent.
+            let next = arm[1..]
+                .find("\n        \"")
+                .or_else(|| arm[1..].find("\n        other =>"))
+                .unwrap();
+            let arm = &arm[..next + 1];
+            let mut read: Vec<String> = arm.lines().filter_map(key_re).collect();
+            read.retain(|k| k != "type");
+            read.sort();
+            read.dedup();
+
+            let schema = op_param_schema(op);
+            let mut listed: Vec<String> = Vec::new();
+            for (k, prop) in schema["properties"].as_object().unwrap() {
+                listed.push(k.clone());
+                if let Some(items) = prop["items"]["properties"].as_object() {
+                    listed.extend(items.keys().cloned());
+                }
+            }
+            listed.sort();
+            listed.dedup();
+            if read != listed {
+                problems.push(format!(
+                    "{op}: parse_op reads {read:?}, schema lists {listed:?}"
+                ));
+            }
+        }
+        assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn lint_reports_a_typo_inside_an_op() {
+        use crate::generator::Generator;
+        let spec = pipeline_spec(
+            r##"
+[[params.ops]]
+type = "brick_grid"
+colums = 8
+[[params.ops]]
+type = "color_ramp"
+id = "ramp"
+[params.ops.inputs]
+input = "grid.height"
+[[params.ops.stops]]
+position = 0.0
+colour = "#000000"
+"##,
+        );
+        let schema = super::super::TextureGenerator.param_schema();
+        let shown: Vec<String> = crate::lint_params(&schema, &spec.params)
+            .iter()
+            .map(|i| i.to_string())
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "`ops[0].colums` is not a parameter of the brick_grid op (did you mean `columns`?)",
+                "`ops[1].stops[0].colour` is not a parameter of the color_ramp stop (did you mean `color`?)",
+            ]
+        );
     }
 }

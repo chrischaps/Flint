@@ -36,7 +36,9 @@ pub use generators::register_built_in_generators;
 pub use generators::texture::TextureGenerator;
 pub use generators::tree::TreeGenerator;
 pub use output::{GeneratorOutput, OutputKind};
-pub use queue::{AssetKind, CompletedAsset, GenerationRequest, ProcGenQueue, QueueStats};
+pub use queue::{
+    AssetKind, CompletedAsset, FailedAsset, GenerationRequest, ProcGenQueue, QueueStats,
+};
 pub use registry::GeneratorRegistry;
 pub use resolver::ProcGenResolver;
 pub use rng::SeededRng;
@@ -49,7 +51,8 @@ pub use types::{
 };
 
 pub use param_ui::{
-    lint_params, parse_param_schema, ParamCondition, ParamFieldSpec, ParamFieldType, ParamIssue,
+    lint_params, param_reference_markdown, parse_param_schema, ParamCondition, ParamFieldSpec,
+    ParamFieldType, ParamIssue,
 };
 pub use validate::{
     validate_output, CheckStatus, ValidationCheck, ValidationConstraints, ValidationReport,
@@ -57,10 +60,20 @@ pub use validate::{
 
 // Texture pattern types
 pub use generators::texture::pipeline::{
-    op_default_params, op_param_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
+    op_default_params, op_param_schema, op_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
 };
 pub use generators::texture::{
     derive_maps, OpPortInfo, Pattern, PatternCell, PatternField, PerlinOrganicParams,
     PerlinOrganicPattern, TextureField, TextureMapParams, TextureOp, TilingGridParams,
     TilingGridPattern, VoronoiBrickParams, VoronoiBrickPattern,
 };
+
+// The README's and CONTRIBUTING guide's Rust examples run as doctests, so
+// the docs can't drift from the API they describe.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../CONTRIBUTING.md")]
+pub struct ContributingDoctests;

@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::cost::CostMeter;
 use crate::http::HttpResponse;
 use crate::MockAgent;
 
@@ -512,6 +513,149 @@ fn refining_a_texture_also_shows_what_it_builds_now() {
         .contains("The second is what this spec generates now"));
 }
 
+/// A stand-in for the CLI's model render: a solid image in the spec's leaf
+/// colour, so a refine that moves `leaf_color_base` moves the "render".
+fn leaf_render(spec: &ProcGenSpec) -> Option<Vec<u8>> {
+    let hex = spec.params.get("leaf_color_base")?.as_str()?;
+    let v = u32::from_str_radix(hex.trim_start_matches('#'), 16).ok()?;
+    Some(png((v >> 16) as u8, (v >> 8) as u8, v as u8))
+}
+
+fn tree_with_leaves(hex: &str) -> ProcGenSpec {
+    let mut spec = MockAgent.create_spec_from_prompt("pine", "tree").unwrap();
+    spec.params
+        .as_table_mut()
+        .unwrap()
+        .insert("leaf_color_base".into(), toml::Value::String(hex.into()));
+    spec
+}
+
+fn leaves_reply(hex: &str) -> std::result::Result<HttpResponse, String> {
+    ok(&json!({
+        "params": {"leaf_color_base": hex},
+        "changes": [format!("`leaf_color_base` -> {hex}")],
+    })
+    .to_string())
+}
+
+#[test]
+fn refining_a_tree_with_a_previewer_sends_a_render_of_the_current_tree() {
+    let spec = tree_with_leaves("#808080");
+    let reference = png(30, 120, 40);
+    let script = Scripted::new(vec![leaves_reply("#808080")]);
+    agent(&script)
+        .with_previewer(leaf_render)
+        .refine_spec(&spec, Some(&reference))
+        .unwrap();
+
+    let content = script.bodies()[0]["messages"][0]["content"].clone();
+    let blocks = content.as_array().unwrap();
+    assert_eq!(blocks.len(), 3, "reference, render, text");
+    assert_eq!(blocks[0]["source"]["data"], base64(&reference));
+    let render = leaf_render(&spec).unwrap();
+    assert_eq!(blocks[1]["type"], "image");
+    assert_eq!(blocks[1]["source"]["data"], base64(&render));
+    let text = blocks[2]["text"].as_str().unwrap();
+    assert!(
+        text.contains("a render of the mesh this spec builds now"),
+        "{text}"
+    );
+    assert!(text.contains("current output #808080"), "{text}");
+    assert!(text.contains("out of 100"), "{text}");
+}
+
+#[test]
+fn the_measured_loop_runs_while_the_distance_falls_and_keeps_the_closest() {
+    // Reference green; rounds go grey -> olive -> near green -> red.
+    let spec = tree_with_leaves("#808080");
+    let script = Scripted::new(vec![
+        leaves_reply("#607040"),
+        leaves_reply("#28782C"),
+        leaves_reply("#C03020"),
+    ]);
+    let (refined, report) = agent(&script)
+        .with_previewer(leaf_render)
+        .with_refine_rounds(5)
+        .refine_spec_reported(&spec, Some(&png(30, 120, 40)))
+        .unwrap();
+
+    assert_eq!(
+        script.count(),
+        3,
+        "the third round got further: the loop stops"
+    );
+    let scores: Vec<f64> = report.distances.iter().map(|d| d.score).collect();
+    assert_eq!(scores.len(), 4, "start + three rounds: {scores:?}");
+    assert!(scores[1] < scores[0] && scores[2] < scores[1], "{scores:?}");
+    assert!(scores[3] > scores[2], "{scores:?}");
+    assert_eq!(report.kept, 2);
+    assert_eq!(refined.params["leaf_color_base"].as_str(), Some("#28782C"));
+    assert_eq!(refined.meta.version, "1.0.1");
+    assert_eq!(
+        report.notes,
+        vec!["`leaf_color_base` -> #28782C".to_string()]
+    );
+    assert_eq!(report.rounds.len(), 3);
+
+    // Round 2 was asked with round 1's render and its measured progress.
+    let second = script.bodies()[1]["messages"].clone();
+    let msgs = second.as_array().unwrap();
+    assert_eq!(msgs.len(), 3, "user, assistant, user");
+    let progress = msgs[2]["content"].as_array().unwrap();
+    assert_eq!(
+        progress[0]["source"]["data"],
+        base64(&leaf_render(&tree_with_leaves("#607040")).unwrap())
+    );
+    let text = progress[1]["text"].as_str().unwrap();
+    assert!(
+        text.contains(&format!("from {:.1} to {:.1}", scores[0], scores[1])),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_measured_loop_stops_at_refine_rounds() {
+    let spec = tree_with_leaves("#808080");
+    let script = Scripted::new(vec![leaves_reply("#607040"), leaves_reply("#28782C")]);
+    let (refined, report) = agent(&script)
+        .with_previewer(leaf_render)
+        .with_refine_rounds(2)
+        .refine_spec_reported(&spec, Some(&png(30, 120, 40)))
+        .unwrap();
+    assert_eq!(script.count(), 2);
+    assert_eq!(report.distances.len(), 3);
+    assert_eq!(report.kept, 2);
+    assert_eq!(refined.params["leaf_color_base"].as_str(), Some("#28782C"));
+}
+
+#[test]
+fn a_first_round_that_gets_further_returns_the_spec_unchanged() {
+    let spec = tree_with_leaves("#28782C");
+    let script = Scripted::new(vec![leaves_reply("#E0E0E0")]);
+    let (refined, report) = agent(&script)
+        .with_previewer(leaf_render)
+        .refine_spec_reported(&spec, Some(&png(30, 120, 40)))
+        .unwrap();
+    assert_eq!(script.count(), 1);
+    assert_eq!(report.kept, 0);
+    assert_eq!(refined, spec);
+    assert!(report.notes[0].contains("no closer"), "{:?}", report.notes);
+}
+
+#[test]
+fn without_a_picture_a_tree_refine_is_one_unmeasured_shot() {
+    let spec = tree_with_leaves("#808080");
+    let script = Scripted::new(vec![leaves_reply("#607040")]);
+    let (refined, report) = agent(&script)
+        .with_previewer(|_: &ProcGenSpec| None)
+        .refine_spec_reported(&spec, Some(&png(30, 120, 40)))
+        .unwrap();
+    assert_eq!(script.count(), 1);
+    assert!(report.distances.is_empty());
+    assert_eq!(report.kept, 1);
+    assert_eq!(refined.params["leaf_color_base"].as_str(), Some("#607040"));
+}
+
 #[test]
 fn a_reference_that_is_not_an_image_is_refused_before_sending() {
     let spec = MockAgent.create_spec_from_prompt("pine", "tree").unwrap();
@@ -560,4 +704,104 @@ fn works_as_a_trait_object() {
         .create_spec_from_prompt("tall pine tree with sparse branches", "tree")
         .unwrap();
     assert_eq!(spec.generator, "tree_v1");
+}
+
+// ── Cost tracking ─────────────────────────────────────────────────────────
+
+fn metered(script: &Scripted, meter: CostMeter) -> (AnthropicAgent, Arc<CostMeter>) {
+    let meter = Arc::new(meter.with_notify(|_| {}));
+    (agent(script).with_meter(meter.clone()), meter)
+}
+
+fn costly(text: &str, input: u64, output: u64) -> std::result::Result<HttpResponse, String> {
+    let body = json!({
+        "model": "claude-opus-5-5",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": input, "output_tokens": output},
+    });
+    Ok(HttpResponse {
+        status: 200,
+        retry_after: None,
+        body: body.to_string(),
+    })
+}
+
+#[test]
+fn every_round_is_priced_and_named() {
+    // A bad first reply, then a good one: two calls, two entries.
+    let script = Scripted::new(vec![ok("no json here"), ok(PINE)]);
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic"));
+    agent
+        .create_spec_reported("tall pine tree", "tree")
+        .unwrap();
+    let entries = meter.entries();
+    assert_eq!(entries.len(), 2);
+    for e in &entries {
+        assert_eq!(e.model, "claude-opus-5-5");
+        assert_eq!(e.spec_name, "tall_pine_tree");
+        assert_eq!(e.operation, "create");
+        // 120 in x $4 + 400 out x $20 + 3,000 cache read x $0.20, per MTok.
+        assert!(
+            (e.estimated_usd - 0.009_08).abs() < 1e-9,
+            "{}",
+            e.estimated_usd
+        );
+    }
+    assert!((meter.spent() - 0.018_16).abs() < 1e-9);
+}
+
+#[test]
+fn a_reply_cut_off_at_max_tokens_is_still_paid_for() {
+    let body = json!({
+        "model": "claude-opus-5-5",
+        "content": [{"type": "text", "text": "{\"params\": {"}],
+        "stop_reason": "max_tokens",
+        "usage": {"input_tokens": 100, "output_tokens": 16_000},
+    });
+    let script = Scripted::new(vec![Ok(HttpResponse {
+        status: 200,
+        retry_after: None,
+        body: body.to_string(),
+    })]);
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic"));
+    assert!(agent.create_spec_reported("pine", "tree").is_err());
+    assert_eq!(meter.calls(), 1);
+    assert!((meter.spent() - (0.0004 + 0.32)).abs() < 1e-9);
+}
+
+#[test]
+fn the_ceiling_stops_the_call_before_it_is_sent() {
+    let script = Scripted::new(vec![ok(PINE)]);
+    // Not even the smallest useful reply fits a tenth of a cent.
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic").with_ceiling(0.001));
+    let err = agent.create_spec_reported("pine", "tree").unwrap_err();
+    assert!(matches!(err, ProcGenAiError::CostCeiling { .. }), "{err}");
+    assert!(err.to_string().contains("--max-cost $0.0010"), "{err}");
+    assert_eq!(script.count(), 0, "nothing was sent");
+    assert_eq!(meter.calls(), 0);
+}
+
+#[test]
+fn a_tight_ceiling_lowers_max_tokens_instead_of_refusing() {
+    let script = Scripted::new(vec![ok(PINE)]);
+    // $0.20 can't pay for a 16K Opus 5.5 reply ($0.32) but can for ~9K.
+    let (agent, _) = metered(&script, CostMeter::new("anthropic").with_ceiling(0.20));
+    agent.create_spec_reported("pine", "tree").unwrap();
+    let sent = script.bodies()[0]["max_tokens"].as_u64().unwrap();
+    assert!((2_048..16_000).contains(&sent), "{sent}");
+}
+
+#[test]
+fn the_ceiling_is_checked_before_each_round() {
+    // Round 1's reply is unusable and expensive; round 2 can't be afforded.
+    let script = Scripted::new(vec![
+        costly("not json", 1_000, 14_000),
+        costly(PINE, 1_000, 14_000),
+    ]);
+    let (agent, meter) = metered(&script, CostMeter::new("anthropic").with_ceiling(0.30));
+    let err = agent.create_spec_reported("pine", "tree").unwrap_err();
+    assert!(matches!(err, ProcGenAiError::CostCeiling { .. }), "{err}");
+    assert_eq!(script.count(), 1);
+    assert!(meter.spent() <= 0.30);
 }

@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{Args, ValueEnum};
+use clap::{ArgGroup, Args, ValueEnum};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
@@ -14,19 +14,20 @@ use flint_procgen::{
 };
 use serde::Serialize;
 
+use super::gen_ai;
 use super::gen_store::{self, WrittenFile};
 
-/// Set by `--report json`: stdout then carries only the JSON report, and
-/// every human line `flint gen` prints goes to stderr instead (#185).
-static STDOUT_IS_JSON: AtomicBool = AtomicBool::new(false);
+/// Human lines go to stdout, unless stdout is carrying something a program
+/// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
+static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
-/// `println!`, or `eprintln!` while stdout belongs to the JSON report.
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
 macro_rules! say {
-    ($($arg:tt)*) => {
-        if STDOUT_IS_JSON.load(Ordering::Relaxed) {
-            eprintln!($($arg)*)
+    ($($t:tt)*) => {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
+            eprintln!($($t)*)
         } else {
-            println!($($arg)*)
+            println!($($t)*)
         }
     };
 }
@@ -42,9 +43,113 @@ pub enum ReportFormat {
 }
 
 #[derive(Args)]
+#[command(group(
+    ArgGroup::new("ai_step")
+        .args(["ai_assist", "ai_refine", "ai_create"])
+        .multiple(true)
+))]
 pub struct GenArgs {
-    /// Path to a .procgen.toml spec file
-    pub spec: String,
+    /// Path to a .procgen.toml spec file (not needed with --ai-create or
+    /// --cost-report)
+    #[arg(required_unless_present_any = ["ai_create", "cost_report"])]
+    pub spec: Option<String>,
+
+    /// Ask the AI agent to review the spec (interpret) and then improve it
+    /// (refine) before generating; suggestions are printed to stderr
+    #[arg(long, help_heading = "AI assistance")]
+    pub ai_assist: bool,
+
+    /// Create a new spec from a description, then generate it
+    #[arg(
+        long,
+        value_name = "DESCRIPTION",
+        conflicts_with = "spec",
+        help_heading = "AI assistance"
+    )]
+    pub ai_create: Option<String>,
+
+    /// Refine the spec against the --reference image before generating
+    #[arg(long, requires = "reference", help_heading = "AI assistance")]
+    pub ai_refine: bool,
+
+    /// Reference image (PNG, JPEG, GIF or WebP) for the refine step
+    #[arg(
+        long,
+        value_name = "IMAGE",
+        requires = "ai_step",
+        help_heading = "AI assistance"
+    )]
+    pub reference: Option<String>,
+
+    /// With --ai-create: the generator to write for (tree_v1, texture_v1,
+    /// creature_v1). Guessed from the description when omitted
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "ai_create",
+        help_heading = "AI assistance"
+    )]
+    pub ai_generator: Option<String>,
+
+    /// AI provider: anthropic or mock [default: anthropic, or
+    /// .flint/procgen_ai.toml's provider]
+    #[arg(long, value_name = "PROVIDER", help_heading = "AI assistance")]
+    pub ai_provider: Option<String>,
+
+    /// Model to ask [default: .flint/procgen_ai.toml's model, else the
+    /// provider's default]
+    #[arg(long, value_name = "MODEL", help_heading = "AI assistance")]
+    pub ai_model: Option<String>,
+
+    /// Most rounds per AI step before the agent gives up [default: 3]
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..=20),
+        help_heading = "AI assistance"
+    )]
+    pub ai_iterations: Option<u32>,
+
+    /// Most measured refine rounds against --reference. Claude sees a render
+    /// of what the spec builds; each round's result is rendered and
+    /// measured, and the refine asks again while the distance falls, keeping
+    /// the closest spec [default: --ai-iterations]
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "reference",
+        value_parser = clap::value_parser!(u32).range(1..=8),
+        help_heading = "AI assistance"
+    )]
+    pub refine_rounds: Option<u32>,
+
+    /// Print the final spec (after any AI steps and --seed) to stdout as
+    /// TOML; the generation summary moves to stderr
+    #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
+    pub print_spec: bool,
+
+    /// Write the final spec to this file
+    #[arg(long, value_name = "PATH", help_heading = "AI assistance")]
+    pub save_spec: Option<String>,
+
+    /// Refuse any AI call that could take this run's spend past USD; checked
+    /// before every call, with a warning past 80%
+    #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
+    pub max_cost: Option<f64>,
+
+    /// Print what AI calls have cost, from .flint/procgen_costs.json: total,
+    /// per provider, per model, per spec
+    #[arg(long, help_heading = "Cost tracking")]
+    pub cost_report: bool,
+
+    /// With --cost-report: only calls on or after this date (YYYY-MM-DD)
+    #[arg(
+        long,
+        value_name = "DATE",
+        requires = "cost_report",
+        help_heading = "Cost tracking"
+    )]
+    pub since: Option<String>,
 
     /// Output path (file or directory). Derived from spec name if omitted.
     #[arg(short, long)]
@@ -111,12 +216,75 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
     }
 }
 
+fn parse_usd(s: &str) -> std::result::Result<f64, String> {
+    let v: f64 = s
+        .trim()
+        .trim_start_matches('$')
+        .parse()
+        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
+    }
+    Ok(v)
+}
+
 pub fn run(args: GenArgs) -> Result<()> {
+    if args.cost_report {
+        return gen_ai::cost_report(
+            &flint_procgen_ai::CostLedger::open_default(),
+            args.since.as_deref(),
+        );
+    }
     let json = args.report == Some(ReportFormat::Json);
-    STDOUT_IS_JSON.store(json, Ordering::Relaxed);
-    let spec_path = Path::new(&args.spec);
-    let mut spec = ProcGenSpec::from_file(spec_path)
-        .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;
+    HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);
+
+    let steps = gen_ai::Steps::of(&args);
+    let loaded = match &args.spec {
+        Some(p) => {
+            let path = Path::new(p);
+            Some(
+                ProcGenSpec::from_file(path)
+                    .with_context(|| format!("failed to load spec from {}", path.display()))?,
+            )
+        }
+        None => None,
+    };
+
+    // The AI steps run first: they make the spec everything below checks.
+    // A dry run only says what they would do.
+    let mut spec = if steps.any() {
+        let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
+        if args.dry_run {
+            // With --print-spec a dry run has no spec to print, so the plan
+            // keeps stdout; only the JSON report needs it kept clear.
+            for line in gen_ai::plan_lines(&config, steps, &args) {
+                if json {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            }
+            return Ok(());
+        }
+        let meter = gen_ai::build_meter(&config, &args);
+        let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
+        gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
+    } else {
+        loaded.expect("clap requires a spec unless --ai-create or --cost-report")
+    };
+
+    // What messages call the spec, and the bytes its provenance hashes: the
+    // file as written, or the AI's spec as it will be saved.
+    let label = match (&args.spec, steps.any()) {
+        (Some(p), false) => p.clone(),
+        (Some(p), true) => format!("{p} (after AI)"),
+        (None, _) => format!("AI spec '{}'", spec.meta.name),
+    };
+    let ai_spec_text = steps
+        .any()
+        .then(|| toml::to_string(&spec))
+        .transpose()
+        .context("failed to serialize the AI's spec")?;
 
     // Build registry
     let mut registry = GeneratorRegistry::new();
@@ -126,13 +294,13 @@ pub fn run(args: GenArgs) -> Result<()> {
     // a (possibly seconds-long) generation runs: the generator must exist,
     // the spec's params must be ones it reads, and the output path /
     // --format must be able to hold what it makes.
-    let generator = resolve_generator(&registry, &spec, spec_path)?;
+    let generator = resolve_generator(&registry, &spec, &label)?;
 
     // Keys the generator won't read: a typo, or a knob for another pattern.
     // Silently ignored params are the worst kind of spec bug, so say so.
     let issues = flint_procgen::lint_params(&generator.param_schema(), &spec.params);
     for issue in &issues {
-        eprintln!("warning: {}: {issue}", spec_path.display());
+        eprintln!("warning: {label}: {issue}");
     }
     if args.strict && !issues.is_empty() {
         bail!(
@@ -142,6 +310,7 @@ pub fn run(args: GenArgs) -> Result<()> {
     }
 
     let kind = generator.output_kind();
+    let revision = generator.revision();
     let format = check_output_format(
         &spec.generator,
         kind,
@@ -151,6 +320,19 @@ pub fn run(args: GenArgs) -> Result<()> {
 
     if let Some(seed_val) = args.seed {
         spec = spec_with_seed(&spec, seed_val);
+    }
+
+    if args.print_spec || args.save_spec.is_some() {
+        let text = toml::to_string(&spec).context("failed to serialize the spec")?;
+        if args.print_spec {
+            print!("{text}");
+        }
+        if let Some(path) = &args.save_spec {
+            std::fs::write(path, &text).with_context(|| format!("failed to write {path}"))?;
+            eprintln!("Saved spec: {path}");
+        }
+    } else if args.spec.is_none() {
+        eprintln!("hint: --save-spec <path> keeps the AI's spec for later runs");
     }
 
     // Dry-run: print cost estimate and return
@@ -204,20 +386,20 @@ pub fn run(args: GenArgs) -> Result<()> {
         None => {
             let seed = spec
                 .resolve_seed()
-                .with_context(|| format!("{}: invalid [seed]", spec_path.display()))?;
+                .with_context(|| format!("{label}: invalid [seed]"))?;
             vec![(seed, single_output_path(&args, &spec, seed, format))]
         }
     };
     let batch_total = args.batch;
 
     let store = args.register.then(gen_store::Store::open_default);
-    let spec_hash = if args.register {
-        Some(
-            ContentHash::from_file(spec_path)
-                .with_context(|| format!("failed to hash spec file {}", spec_path.display()))?,
-        )
-    } else {
-        None
+    let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
+        (false, _, _) => None,
+        (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),
+        (true, None, Some(p)) => Some(
+            ContentHash::from_file(p).with_context(|| format!("failed to hash spec file {p}"))?,
+        ),
+        (true, None, None) => unreachable!("a run without AI steps has a spec file"),
     };
 
     let (mut generated, mut cached) = (0u32, 0u32);
@@ -229,21 +411,35 @@ pub fn run(args: GenArgs) -> Result<()> {
             .unwrap_or_default();
         let seed_spec = spec_with_seed(&spec, seed);
 
-        // The cache: this spec + seed was registered before, and the store
-        // still holds every file it made.
+        // The cache: this spec + seed was registered before, by the
+        // generator revision running now, and the store still holds every
+        // file it made.
         if let (Some(store), Some(sh), false) = (&store, &spec_hash, args.force) {
-            if let Some(prov) = store.lookup(sh, seed) {
+            let fresh = store.lookup(sh, seed).filter(|prov| {
+                match prov.stale_for(&spec.generator, revision) {
+                    Some(why) => {
+                        say!(
+                            "{tag}Stale: {} (seed {seed}, {why}), regenerating",
+                            out_path.display()
+                        );
+                        false
+                    }
+                    None => true,
+                }
+            });
+            if let Some(prov) = fresh {
                 let targets = planned_files(out_path, &prov);
                 if let Some(reuse) = store.reuse(&prov, &targets)? {
                     store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
+                    let rev = format!("{} rev {revision}", spec.generator);
                     match reuse {
                         gen_store::Reuse::Present => say!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged)",
                             out_path.display()
                         ),
                         gen_store::Reuse::Restored(k) => say!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
-                             or changed file{} from the content store)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged; restored {k} \
+                             missing or changed file{} from the content store)",
                             out_path.display(),
                             if k == 1 { "" } else { "s" }
                         ),
@@ -280,7 +476,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         generated += 1;
 
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
-            let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
+            let prov = store.register(&seed_spec, sh, seed, revision, kind, &files)?;
             for (f, (_, hash)) in files.iter().zip(&prov.files) {
                 say!("Registered: {} -> {hash}", f.path.display());
             }
@@ -349,14 +545,13 @@ fn generate_and_get_output(
 fn resolve_generator<'a>(
     registry: &'a GeneratorRegistry,
     spec: &ProcGenSpec,
-    spec_path: &Path,
+    label: &str,
 ) -> Result<&'a dyn Generator> {
     registry.get(&spec.generator).ok_or_else(|| {
         let mut names = registry.generator_names();
         names.sort_unstable();
         anyhow!(
-            "{} names generator '{}', which isn't registered\n  known generators: {}",
-            spec_path.display(),
+            "{label} names generator '{}', which isn't registered\n  known generators: {}",
             spec.generator,
             names.join(", ")
         )
