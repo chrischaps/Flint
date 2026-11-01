@@ -57,6 +57,18 @@ pub enum ProcGenAiError {
     #[error("unusable response: {0}")]
     BadResponse(String),
 
+    /// The next call could take the run past its cost ceiling, so it was
+    /// not sent.
+    #[error("cost ceiling reached: {} spent, and the next call could cost up to {}, past --max-cost {}; nothing more was sent", crate::cost::usd(*spent), crate::cost::usd(*next), crate::cost::usd(*max))]
+    CostCeiling {
+        /// Dollars spent so far this run.
+        spent: f64,
+        /// The next call's estimated worst case (smallest useful reply).
+        next: f64,
+        /// The ceiling.
+        max: f64,
+    },
+
     /// An error from the procgen subsystem itself.
     #[error(transparent)]
     ProcGen(#[from] flint_procgen::ProcGenError),

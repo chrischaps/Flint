@@ -116,10 +116,7 @@ pub fn generate_branches(
         });
     }
 
-    let segments = match params.method {
-        BranchMethod::LSystem => generate_lsystem_branches(params, trunk, rng)?,
-        BranchMethod::SpaceColonization => generate_colonization_branches(params, trunk, rng)?,
-    };
+    let segments = grow_branch_segments(params, trunk, rng)?;
 
     if segments.is_empty() {
         // Return empty but valid output
@@ -144,6 +141,20 @@ pub fn generate_branches(
         segment_count,
         segments,
     })
+}
+
+/// Grow the branch skeleton (segments only, no mesh) the way
+/// [`generate_branches`] does, from the same RNG stream. Cheap next to the
+/// meshing, which is what lets a cost estimate walk the real skeleton.
+pub(super) fn grow_branch_segments(
+    params: &BranchParams,
+    trunk: &TrunkSpine,
+    rng: &mut SeededRng,
+) -> Result<Vec<BranchSegment>> {
+    match params.method {
+        BranchMethod::LSystem => generate_lsystem_branches(params, trunk, rng),
+        BranchMethod::SpaceColonization => generate_colonization_branches(params, trunk, rng),
+    }
 }
 
 // ─── L-System Path ──────────────────────────────────────────────────────────
@@ -606,6 +617,51 @@ fn radial_segments_for(radius: f32, thickest: f32, base: u32) -> u32 {
 /// A limb's last ring is at most this fraction of the one before.
 const TIP_TAPER: f32 = 0.4;
 
+/// A limb's radii as [`segments_to_mesh`] extrudes them: the tip tapered.
+fn tapered_radii(limb: &Limb) -> Vec<f32> {
+    let mut radii = limb.radii.clone();
+    let n = radii.len();
+    if n >= 2 {
+        // Taper to the tip, rather than end on a sawn-off stub.
+        radii[n - 1] = radii[n - 1].min(radii[n - 2] * TIP_TAPER);
+    }
+    radii
+}
+
+/// Vertices and triangles [`segments_to_mesh`] would build for `segments`,
+/// counted from the limbs and their sides without making the mesh.
+pub(super) fn tube_counts(segments: &[BranchSegment], base_radial_segments: u32) -> (u64, u64) {
+    let limbs = join_limbs(segments);
+    let thickest = limbs.iter().map(|l| l.radii[0]).fold(0.0f32, f32::max);
+    let (mut verts, mut tris) = (0u64, 0u64);
+    for limb in &limbs {
+        let radii = tapered_radii(limb);
+        let sides = radial_segments_for(limb.radii[0], thickest, base_radial_segments);
+        let (v, t) = tube_size(radii.len(), sides, &radii);
+        verts += v;
+        tris += t;
+    }
+    (verts, tris)
+}
+
+/// Vertices and triangles of a capped extrusion with `rings` rings of
+/// `sides` sides, the radii being its rings' (a cap closes an end whose
+/// ring has width). Mirrors `extrude_along_curve` with a circle profile:
+/// each ring repeats its first vertex as the seam.
+pub(super) fn tube_size(rings: usize, sides: u32, radii: &[f32]) -> (u64, u64) {
+    let sides = sides as u64;
+    let rings = rings as u64;
+    let mut verts = rings * (sides + 1);
+    let mut tris = rings.saturating_sub(1) * sides * 2;
+    for r in [radii.first(), radii.last()].into_iter().flatten() {
+        if *r > 1e-10 {
+            verts += 1;
+            tris += sides;
+        }
+    }
+    (verts, tris)
+}
+
 /// Convert branch segments into a mesh, one tapered tube per limb.
 ///
 /// Each limb's rings sit at its joints, so the bark is unbroken through a
@@ -618,12 +674,7 @@ pub fn segments_to_mesh(segments: &[BranchSegment], base_radial_segments: u32) -
     let thickest = limbs.iter().map(|l| l.radii[0]).fold(0.0f32, f32::max);
 
     for limb in &limbs {
-        let mut radii = limb.radii.clone();
-        let n = radii.len();
-        if n >= 2 {
-            // Taper to the tip, rather than end on a sawn-off stub.
-            radii[n - 1] = radii[n - 1].min(radii[n - 2] * TIP_TAPER);
-        }
+        let radii = tapered_radii(limb);
         let mut spine = build_spine_from_positions(&limb.points, 0.0, 0.0);
         for (point, &radius) in spine.iter_mut().zip(&radii) {
             point.radius = radius;
