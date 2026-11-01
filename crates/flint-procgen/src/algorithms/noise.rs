@@ -29,6 +29,21 @@ pub trait NoiseSource: Send + Sync {
     /// Sample the noise field at a 3D point. Returns a value in \[-1, 1\].
     fn sample_3d(&self, x: f64, y: f64, z: f64) -> f64;
 
+    /// Sample a version of the field that repeats every `period_x` along x
+    /// and `period_y` along y, so `[0, period)` on each axis is one tile.
+    ///
+    /// Lattice noises (Perlin, value, Worley) wrap their lattice: a period is
+    /// rounded to a whole number of cells (at least 1) and the coordinate is
+    /// stretched to match, so the tile still spans `[0, period)` and the
+    /// field is unchanged in character. [`Fbm`] passes each octave its own
+    /// period, so every octave rounds for itself. The default, used by
+    /// simplex (whose skewed lattice has no square period), cross-fades the
+    /// plain field with copies shifted one period; see [`crossfade_tiled`].
+    /// A period that isn't positive leaves that axis unwrapped.
+    fn sample_2d_tiled(&self, x: f64, y: f64, period_x: f64, period_y: f64) -> f64 {
+        crossfade_tiled(|x, y| self.sample_2d(x, y), x, y, period_x, period_y)
+    }
+
     /// Convenience: remap [`sample_2d`](NoiseSource::sample_2d) to \[0, 1\].
     fn sample_2d_01(&self, x: f64, y: f64) -> f64 {
         self.sample_2d(x, y) * 0.5 + 0.5
@@ -38,6 +53,68 @@ pub trait NoiseSource: Send + Sync {
     fn sample_3d_01(&self, x: f64, y: f64, z: f64) -> f64 {
         self.sample_3d(x, y, z) * 0.5 + 0.5
     }
+}
+
+/// Make any field tile by cross-fading it with copies of itself shifted one
+/// period left, up, and both: at `x = period_x` the blend is exactly the
+/// `x = 0` value. Averaging lowers the variance mid-tile, so the blend is
+/// divided by the RMS of its weights to keep the contrast even across the
+/// tile. Coordinates outside `[0, period)` are wrapped first. A period that
+/// isn't positive leaves that axis unblended.
+pub fn crossfade_tiled(
+    f: impl Fn(f64, f64) -> f64,
+    x: f64,
+    y: f64,
+    period_x: f64,
+    period_y: f64,
+) -> f64 {
+    // (wrapped coordinate, its copy one period back, weight of the copy)
+    let axis = |c: f64, p: f64| {
+        if p > 0.0 && p.is_finite() {
+            let m = c.rem_euclid(p);
+            (m, m - p, m / p)
+        } else {
+            (c, c, 0.0)
+        }
+    };
+    let (x0, x1, s) = axis(x, period_x);
+    let (y0, y1, t) = axis(y, period_y);
+    let (ws, wt) = (1.0 - s, 1.0 - t);
+    // Copies with zero weight are skipped, not sampled.
+    let a = f(x0, y0);
+    let b = if s > 0.0 { f(x1, y0) } else { 0.0 };
+    let c = if t > 0.0 { f(x0, y1) } else { 0.0 };
+    let d = if s > 0.0 && t > 0.0 { f(x1, y1) } else { 0.0 };
+    let blend = wt * (ws * a + s * b) + t * (ws * c + s * d);
+    let rms = ((ws * ws + s * s) * (wt * wt + t * t)).sqrt();
+    (blend / rms).clamp(-1.0, 1.0)
+}
+
+/// Whole lattice cells per tile for a requested period, and the factor that
+/// stretches a coordinate in `[0, period)` onto `[0, cells)`. A period that
+/// isn't positive gets no wrap (`None`) and no stretch.
+#[inline]
+fn whole_cells(period: f64) -> (Option<i64>, f64) {
+    if period > 0.0 && period.is_finite() {
+        let cells = period.round().max(1.0);
+        (Some(cells as i64), cells / period)
+    } else {
+        (None, 1.0)
+    }
+}
+
+/// A lattice period for the permutation-table noises. `None` (no wrap)
+/// becomes a multiple of the table's 256, which wraps nothing the table
+/// doesn't already repeat.
+#[inline]
+fn table_period(cells: Option<i64>) -> i64 {
+    cells.unwrap_or(1 << 40)
+}
+
+/// A cell coordinate wrapped into `[0, period)`, or left as it is.
+#[inline]
+fn wrap_cell(c: i64, period: Option<i64>) -> i64 {
+    period.map_or(c, |p| c.rem_euclid(p))
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +316,12 @@ impl NoiseSource for PerlinNoise {
         lerp(lerp(n00, n10, u), lerp(n01, n11, u), v).clamp(-1.0, 1.0)
     }
 
+    fn sample_2d_tiled(&self, x: f64, y: f64, period_x: f64, period_y: f64) -> f64 {
+        let (px, sx) = whole_cells(period_x);
+        let (py, sy) = whole_cells(period_y);
+        self.sample_2d_periodic(x * sx, y * sy, table_period(px), table_period(py))
+    }
+
     fn sample_3d(&self, x: f64, y: f64, z: f64) -> f64 {
         let (xi, xf) = split(x);
         let (yi, yf) = split(y);
@@ -437,6 +520,25 @@ impl NoiseSource for ValueNoise {
         )
     }
 
+    fn sample_2d_tiled(&self, x: f64, y: f64, period_x: f64, period_y: f64) -> f64 {
+        let (px, sx) = whole_cells(period_x);
+        let (py, sy) = whole_cells(period_y);
+        let (xi, xf) = split(x * sx);
+        let (yi, yf) = split(y * sy);
+        let v = |dx: i64, dy: i64| {
+            byte_to_signed(self.perm.hash2(
+                (xi + dx).rem_euclid(table_period(px)),
+                (yi + dy).rem_euclid(table_period(py)),
+            ))
+        };
+        let u = fade(xf);
+        lerp(
+            lerp(v(0, 0), v(1, 0), u),
+            lerp(v(0, 1), v(1, 1), u),
+            fade(yf),
+        )
+    }
+
     fn sample_3d(&self, x: f64, y: f64, z: f64) -> f64 {
         let (xi, xf) = split(x);
         let (yi, yf) = split(y);
@@ -530,7 +632,7 @@ impl WorleyNoise {
     /// point, normalised to approximately \[0, 1\] (clamped, which preserves
     /// `f1 <= f2`).
     pub fn f1_f2(&self, x: f64, y: f64) -> WorleySample {
-        let n = self.nearest_2d(x * self.frequency, y * self.frequency);
+        let n = self.nearest_2d(x * self.frequency, y * self.frequency, (None, None));
         let norm = worley_norm(self.metric);
         WorleySample {
             f1: (n.f1 / norm).clamp(0.0, 1.0) as f32,
@@ -542,7 +644,11 @@ impl WorleyNoise {
     /// sample's cell; a ring at Chebyshev radius `r` is at least `r − 1` away
     /// (a lower bound under every Minkowski metric), so the search stops as
     /// soon as that bound reaches F2. In practice it ends after ring 1 or 2.
-    fn nearest_2d(&self, x: f64, y: f64) -> Nearest {
+    ///
+    /// With `wrap = (Some(px), Some(py))` cell coordinates are hashed modulo
+    /// the period, so the feature points (and the per-cell value) repeat
+    /// every `px` × `py` cells; `None` leaves an axis unwrapped.
+    fn nearest_2d(&self, x: f64, y: f64, wrap: (Option<i64>, Option<i64>)) -> Nearest {
         let (ix, fx) = split(x);
         let (iy, fy) = split(y);
         let mut best = Nearest {
@@ -564,7 +670,8 @@ impl WorleyNoise {
                     if gap_x.max(gap_y) >= best.f2 {
                         continue;
                     }
-                    let h = cell_hash(self.seed, &[ix + dx, iy + dy]);
+                    let (cx, cy) = (wrap_cell(ix + dx, wrap.0), wrap_cell(iy + dy, wrap.1));
+                    let h = cell_hash(self.seed, &[cx, cy]);
                     let px = dx as f64 + unit(h, 0);
                     let py = dy as f64 + unit(h, 1);
                     let d = voronoi_distance(px - fx, py - fy, self.metric);
@@ -625,7 +732,15 @@ impl Nearest {
 
 impl NoiseSource for WorleyNoise {
     fn sample_2d(&self, x: f64, y: f64) -> f64 {
-        let n = self.nearest_2d(x * self.frequency, y * self.frequency);
+        let n = self.nearest_2d(x * self.frequency, y * self.frequency, (None, None));
+        self.to_signed(&n, worley_norm(self.metric))
+    }
+
+    fn sample_2d_tiled(&self, x: f64, y: f64, period_x: f64, period_y: f64) -> f64 {
+        let f = self.frequency;
+        let (px, sx) = whole_cells(period_x * f);
+        let (py, sy) = whole_cells(period_y * f);
+        let n = self.nearest_2d(x * f * sx, y * f * sy, (px, py));
         self.to_signed(&n, worley_norm(self.metric))
     }
 
@@ -770,6 +885,13 @@ impl<S: NoiseSource> NoiseSource for Fbm<S> {
         self.layer(|f| self.source.sample_2d(x * f, y * f))
     }
 
+    fn sample_2d_tiled(&self, x: f64, y: f64, period_x: f64, period_y: f64) -> f64 {
+        self.layer(|f| {
+            self.source
+                .sample_2d_tiled(x * f, y * f, period_x * f, period_y * f)
+        })
+    }
+
     fn sample_3d(&self, x: f64, y: f64, z: f64) -> f64 {
         self.layer(|f| self.source.sample_3d(x * f, y * f, z * f))
     }
@@ -844,8 +966,59 @@ pub fn voronoi_sample(
     feature: VoronoiFeature,
     metric: VoronoiMetric,
 ) -> VoronoiResult {
-    let sx = x * scale;
-    let sy = y * scale;
+    voronoi_cells(
+        x * scale,
+        y * scale,
+        None,
+        seed,
+        randomness,
+        feature,
+        metric,
+    )
+}
+
+/// [`voronoi_sample`] tiling over the unit square: `scale` is rounded to a
+/// whole number of cells per tile (at least 1) and cell coordinates are
+/// hashed modulo it, so the feature points, values and cell ids repeat at
+/// `x = 1` and `y = 1`.
+pub fn voronoi_sample_tiled(
+    x: f64,
+    y: f64,
+    seed: u64,
+    scale: f64,
+    randomness: f64,
+    feature: VoronoiFeature,
+    metric: VoronoiMetric,
+) -> VoronoiResult {
+    let cells = scale.round().max(1.0);
+    let period = cells.min(i32::MAX as f64) as i32;
+    let wrap = Some((period, period));
+    voronoi_cells(
+        x * cells,
+        y * cells,
+        wrap,
+        seed,
+        randomness,
+        feature,
+        metric,
+    )
+}
+
+/// Voronoi over cell space (one cell per unit), optionally wrapping cell
+/// coordinates every `wrap` cells.
+fn voronoi_cells(
+    sx: f64,
+    sy: f64,
+    wrap: Option<(i32, i32)>,
+    seed: u64,
+    randomness: f64,
+    feature: VoronoiFeature,
+    metric: VoronoiMetric,
+) -> VoronoiResult {
+    let hash_cell = |cx: i32, cy: i32| match wrap {
+        Some((px, py)) => (cx.rem_euclid(px), cy.rem_euclid(py)),
+        None => (cx, cy),
+    };
     let ix = sx.floor() as i32;
     let iy = sy.floor() as i32;
 
@@ -858,7 +1031,8 @@ pub fn voronoi_sample(
         for dx in -1..=1 {
             let cx = ix + dx;
             let cy = iy + dy;
-            let (ox, oy) = voronoi_hash(cx, cy, seed);
+            let (hx, hy) = hash_cell(cx, cy);
+            let (ox, oy) = voronoi_hash(hx, hy, seed);
             let px = cx as f64 + 0.5 + (ox - 0.5) * randomness;
             let py = cy as f64 + 0.5 + (oy - 0.5) * randomness;
             let dist = voronoi_distance(sx - px, sy - py, metric);
@@ -866,7 +1040,7 @@ pub fn voronoi_sample(
             if dist < d1 {
                 d2 = d1;
                 d1 = dist;
-                closest_cell = (cx, cy);
+                closest_cell = hash_cell(cx, cy);
             } else if dist < d2 {
                 d2 = dist;
             }
@@ -935,27 +1109,82 @@ pub fn musgrave_sample(
     offset: f64,
     gain: f64,
 ) -> f64 {
+    let octave = |f: f64| source.sample_2d(x * f, y * f);
+    musgrave_octaves(
+        &octave,
+        musgrave_type,
+        frequency,
+        octaves,
+        lacunarity,
+        dimension,
+        offset,
+        gain,
+    )
+}
+
+/// [`musgrave_sample`] over a field that repeats every `period_x` ×
+/// `period_y` in `(x, y)`: each octave samples
+/// [`NoiseSource::sample_2d_tiled`] with the period scaled by its frequency,
+/// so every octave (and so the sum) tiles.
+#[allow(clippy::too_many_arguments)]
+pub fn musgrave_sample_tiled(
+    source: &dyn NoiseSource,
+    x: f64,
+    y: f64,
+    period_x: f64,
+    period_y: f64,
+    musgrave_type: MusgraveType,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+    gain: f64,
+) -> f64 {
+    let octave = |f: f64| source.sample_2d_tiled(x * f, y * f, period_x * f, period_y * f);
+    musgrave_octaves(
+        &octave,
+        musgrave_type,
+        frequency,
+        octaves,
+        lacunarity,
+        dimension,
+        offset,
+        gain,
+    )
+}
+
+/// The Musgrave variants over `octave(frequency)`, one noise sample per octave.
+#[allow(clippy::too_many_arguments)]
+fn musgrave_octaves(
+    octave: &dyn Fn(f64) -> f64,
+    musgrave_type: MusgraveType,
+    frequency: f64,
+    octaves: u32,
+    lacunarity: f64,
+    dimension: f64,
+    offset: f64,
+    gain: f64,
+) -> f64 {
     match musgrave_type {
-        MusgraveType::Fbm => musgrave_fbm(source, x, y, frequency, octaves, lacunarity, dimension),
-        MusgraveType::Multifractal => musgrave_multifractal(
-            source, x, y, frequency, octaves, lacunarity, dimension, offset,
-        ),
+        MusgraveType::Fbm => musgrave_fbm(octave, frequency, octaves, lacunarity, dimension),
+        MusgraveType::Multifractal => {
+            musgrave_multifractal(octave, frequency, octaves, lacunarity, dimension, offset)
+        }
         MusgraveType::RidgedMultifractal => musgrave_ridged(
-            source, x, y, frequency, octaves, lacunarity, dimension, offset, gain,
+            octave, frequency, octaves, lacunarity, dimension, offset, gain,
         ),
         MusgraveType::HybridMultifractal => musgrave_hybrid(
-            source, x, y, frequency, octaves, lacunarity, dimension, offset, gain,
+            octave, frequency, octaves, lacunarity, dimension, offset, gain,
         ),
-        MusgraveType::HeteroTerrain => musgrave_hetero(
-            source, x, y, frequency, octaves, lacunarity, dimension, offset,
-        ),
+        MusgraveType::HeteroTerrain => {
+            musgrave_hetero(octave, frequency, octaves, lacunarity, dimension, offset)
+        }
     }
 }
 
 fn musgrave_fbm(
-    source: &dyn NoiseSource,
-    x: f64,
-    y: f64,
+    octave: &dyn Fn(f64) -> f64,
     frequency: f64,
     octaves: u32,
     lacunarity: f64,
@@ -965,7 +1194,7 @@ fn musgrave_fbm(
     let mut freq = frequency;
     for i in 0..octaves {
         let amp = freq.powf(-dimension);
-        value += source.sample_2d(x * freq, y * freq) * amp;
+        value += octave(freq) * amp;
         freq *= lacunarity;
         // Small offset per octave to decorrelate
         let _ = i;
@@ -975,9 +1204,7 @@ fn musgrave_fbm(
 
 #[allow(clippy::too_many_arguments)]
 fn musgrave_multifractal(
-    source: &dyn NoiseSource,
-    x: f64,
-    y: f64,
+    octave: &dyn Fn(f64) -> f64,
     frequency: f64,
     octaves: u32,
     lacunarity: f64,
@@ -988,7 +1215,7 @@ fn musgrave_multifractal(
     let mut freq = frequency;
     for _ in 0..octaves {
         let amp = freq.powf(-dimension);
-        value *= (source.sample_2d(x * freq, y * freq) + offset) * amp;
+        value *= (octave(freq) + offset) * amp;
         freq *= lacunarity;
     }
     value
@@ -996,9 +1223,7 @@ fn musgrave_multifractal(
 
 #[allow(clippy::too_many_arguments)]
 fn musgrave_ridged(
-    source: &dyn NoiseSource,
-    x: f64,
-    y: f64,
+    octave: &dyn Fn(f64) -> f64,
     frequency: f64,
     octaves: u32,
     lacunarity: f64,
@@ -1011,7 +1236,7 @@ fn musgrave_ridged(
     let mut freq = frequency;
     for _ in 0..octaves {
         let amp = freq.powf(-dimension);
-        let signal = offset - source.sample_2d(x * freq, y * freq).abs();
+        let signal = offset - octave(freq).abs();
         let signal = signal * signal * weight;
         weight = (signal * gain).clamp(0.0, 1.0);
         value += signal * amp;
@@ -1022,9 +1247,7 @@ fn musgrave_ridged(
 
 #[allow(clippy::too_many_arguments)]
 fn musgrave_hybrid(
-    source: &dyn NoiseSource,
-    x: f64,
-    y: f64,
+    octave: &dyn Fn(f64) -> f64,
     frequency: f64,
     octaves: u32,
     lacunarity: f64,
@@ -1034,14 +1257,14 @@ fn musgrave_hybrid(
 ) -> f64 {
     let mut freq = frequency;
     let amp0 = freq.powf(-dimension);
-    let mut value = (source.sample_2d(x * freq, y * freq) + offset) * amp0;
+    let mut value = (octave(freq) + offset) * amp0;
     let mut weight = value;
     freq *= lacunarity;
 
     for _ in 1..octaves {
         weight = (weight * gain).clamp(0.0, 1.0);
         let amp = freq.powf(-dimension);
-        let signal = (source.sample_2d(x * freq, y * freq) + offset) * amp;
+        let signal = (octave(freq) + offset) * amp;
         value += weight * signal;
         freq *= lacunarity;
     }
@@ -1050,9 +1273,7 @@ fn musgrave_hybrid(
 
 #[allow(clippy::too_many_arguments)]
 fn musgrave_hetero(
-    source: &dyn NoiseSource,
-    x: f64,
-    y: f64,
+    octave: &dyn Fn(f64) -> f64,
     frequency: f64,
     octaves: u32,
     lacunarity: f64,
@@ -1061,12 +1282,12 @@ fn musgrave_hetero(
 ) -> f64 {
     let mut freq = frequency;
     let amp0 = freq.powf(-dimension);
-    let mut value = (source.sample_2d(x * freq, y * freq) + offset) * amp0;
+    let mut value = (octave(freq) + offset) * amp0;
     freq *= lacunarity;
 
     for _ in 1..octaves {
         let amp = freq.powf(-dimension);
-        let increment = (source.sample_2d(x * freq, y * freq) + offset) * amp * value;
+        let increment = (octave(freq) + offset) * amp * value;
         value += increment;
         freq *= lacunarity;
     }
@@ -1396,7 +1617,7 @@ mod tests {
                     }
                 }
                 d.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                let got = n.nearest_2d(x, y);
+                let got = n.nearest_2d(x, y, (None, None));
                 assert_eq!(got.f1, d[0], "{metric:?} f1 at ({x}, {y})");
                 assert_eq!(got.f2, d[1], "{metric:?} f2 at ({x}, {y})");
             }
@@ -1683,6 +1904,118 @@ mod tests {
                 image::ColorType::Rgba8,
             )
             .unwrap();
+        }
+    }
+
+    fn tiling_sources() -> Vec<(&'static str, Box<dyn NoiseSource>)> {
+        vec![
+            ("perlin", Box::new(PerlinNoise::new(4))),
+            ("simplex", Box::new(SimplexNoise::new(4))),
+            ("value", Box::new(ValueNoise::new(4))),
+            ("worley", Box::new(WorleyNoise::new(4).with_frequency(1.7))),
+            (
+                "worley distance",
+                Box::new(WorleyNoise::new(4).with_return_distance(true)),
+            ),
+            (
+                "perlin fbm",
+                Box::new(Fbm::new(PerlinNoise::new(4)).with_frequency(2.3)),
+            ),
+            (
+                "simplex fbm",
+                Box::new(Fbm::new(SimplexNoise::new(4)).with_octaves(4)),
+            ),
+            (
+                "worley fbm",
+                Box::new(Fbm::new(WorleyNoise::new(4)).with_lacunarity(2.2)),
+            ),
+        ]
+    }
+
+    /// A tiled sample repeats exactly one period on along each axis, for
+    /// fractional periods too, and stays in range.
+    #[test]
+    fn tiled_samples_repeat_every_period() {
+        for (name, n) in tiling_sources() {
+            for (px, py) in [(1.0, 1.0), (3.3, 0.7), (6.0, 2.5)] {
+                for (x, y) in points().map(|(x, y, _)| (x.rem_euclid(px), y.rem_euclid(py))) {
+                    let a = n.sample_2d_tiled(x, y, px, py);
+                    assert!((-1.0..=1.0).contains(&a), "{name}: {a} out of range");
+                    for (b, axis) in [
+                        (n.sample_2d_tiled(x + px, y, px, py), "x"),
+                        (n.sample_2d_tiled(x, y - py, px, py), "y"),
+                        (n.sample_2d_tiled(x - 2.0 * px, y + py, px, py), "xy"),
+                    ] {
+                        assert!(
+                            (a - b).abs() < 1e-6,
+                            "{name} period ({px}, {py}) at ({x}, {y}) shifted {axis}: {a} vs {b}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Wrapping a lattice changes only which cells repeat: inside the first
+    /// tile, a whole-number period gives the plain field back exactly.
+    #[test]
+    fn lattice_tiling_keeps_the_field() {
+        let perlin = PerlinNoise::new(8);
+        let value = ValueNoise::new(8);
+        let worley = WorleyNoise::new(8);
+        for (x, y) in [(0.3, 0.6), (1.7, 2.2), (2.9, 0.05)] {
+            assert_eq!(
+                perlin.sample_2d_tiled(x, y, 4.0, 4.0),
+                perlin.sample_2d(x, y)
+            );
+            assert_eq!(value.sample_2d_tiled(x, y, 4.0, 4.0), value.sample_2d(x, y));
+        }
+        // Worley also searches neighbouring cells, so only points whose
+        // neighbourhood stays inside the tile agree.
+        assert_eq!(
+            worley.sample_2d_tiled(4.5, 4.5, 9.0, 9.0),
+            worley.sample_2d(4.5, 4.5)
+        );
+    }
+
+    /// A period that isn't positive leaves its axis unwrapped (a noise op
+    /// with `scale_x = 0` samples a constant x).
+    #[test]
+    fn tiling_with_no_period_is_plain() {
+        let p = PerlinNoise::new(2);
+        let s = SimplexNoise::new(2);
+        for (x, y) in [(0.3, 0.6), (5.7, -2.2)] {
+            assert_eq!(p.sample_2d_tiled(x, y, 0.0, 0.0), p.sample_2d(x, y));
+            assert_eq!(s.sample_2d_tiled(x, y, 0.0, 0.0), s.sample_2d(x, y));
+        }
+    }
+
+    /// The tiled Musgrave and Voronoi samplers repeat at the unit tile.
+    #[test]
+    fn tiled_musgrave_and_voronoi_repeat() {
+        let src = SimplexNoise::new(6);
+        for kind in [
+            MusgraveType::Fbm,
+            MusgraveType::Multifractal,
+            MusgraveType::RidgedMultifractal,
+            MusgraveType::HybridMultifractal,
+            MusgraveType::HeteroTerrain,
+        ] {
+            let m = |x: f64, y: f64| {
+                musgrave_sample_tiled(&src, x, y, 1.5, 1.0, kind, 2.6, 4, 2.1, 1.0, 1.0, 2.0)
+            };
+            for (x, y) in [(0.1, 0.2), (0.77, 0.5)] {
+                assert!((m(x, y) - m(x + 1.5, y + 1.0)).abs() < 1e-6, "{kind:?}");
+            }
+        }
+        for feature in [VoronoiFeature::F1, VoronoiFeature::DistanceToEdge] {
+            let v = |x: f64, y: f64| {
+                voronoi_sample_tiled(x, y, 9, 5.4, 1.0, feature, VoronoiMetric::Euclidean)
+            };
+            for (x, y) in [(0.01, 0.3), (0.99, 0.98)] {
+                let (a, b) = (v(x, y), v(x + 1.0, y - 1.0));
+                assert!((a.value - b.value).abs() < 1e-9 && a.cell_id == b.cell_id);
+            }
         }
     }
 }
