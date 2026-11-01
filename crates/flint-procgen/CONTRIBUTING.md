@@ -4,7 +4,7 @@ A generator is one Rust type that turns a spec's `[params]` and a seeded RNG int
 
 The checklist, before the detail:
 
-1. Implement [`Generator`](src/generator.rs): `type_name`, `output_kind`, `generate`, `param_schema`, `estimate_cost`.
+1. Implement [`Generator`](src/generator.rs): `type_name`, `revision`, `output_kind`, `generate`, `param_schema`, `estimate_cost`.
 2. Parse `[params]` into a typed struct with defaults, and refuse bad values with `ProcGenError::InvalidParameter`.
 3. Draw every random number from the `SeededRng` you're given, forked per stage.
 4. Write a schema that describes every key: type, range, default, `description`, and `x-when` for keys only one mode reads.
@@ -148,7 +148,7 @@ impl PebblesGenerator {
 - **Mode-specific keys get `"x-when"`.** If a key is read only for some values of another key, say so: `"x-when": { "pattern": ["voronoi_brick"] }`. Editors hide the key under other modes, and `flint gen` warns when a spec sets it there. `tree_v1` and `texture_v1` both do this.
 - **Retire a key with `"deprecated": true`** rather than deleting it, so old specs get a warning that explains instead of an "unknown key".
 
-The name carries a version (`pebbles_v1`). If you change what a spec produces, every stored asset made from it changes too, so a breaking change is a new name (`pebbles_v2`), registered beside the old one.
+The name carries a version (`pebbles_v1`), and the generator carries a revision (`revision`, starting at 1). They answer different changes. When the same spec and seed would come out different (a fixed bug, a better shading curve), bump the revision: `flint gen --register` keys its cache on the spec's bytes and the seed, so an entry made by another revision is stale and gets regenerated. A refactor that leaves every output byte-identical keeps the number. When old specs must go on producing what they did (a key changes meaning, stored assets must not move), that's a new name (`pebbles_v2`), registered beside the old one.
 
 ```rust
 # use flint_procgen::generators::util::{parse_hex_color, toml_f32, toml_u32};
@@ -163,6 +163,11 @@ The name carries a version (`pebbles_v1`). If you change what a spec produces, e
 impl Generator for PebblesGenerator {
     fn type_name(&self) -> &str {
         "pebbles_v1"
+    }
+
+    /// Bump whenever the same spec and seed would produce different output.
+    fn revision(&self) -> u32 {
+        1
     }
 
     fn output_kind(&self) -> OutputKind {
@@ -227,6 +232,7 @@ A registry of your own, for tests or tools, takes it the same way:
 # pub struct PebblesGenerator;
 # impl Generator for PebblesGenerator {
 #     fn type_name(&self) -> &str { "pebbles_v1" }
+#     fn revision(&self) -> u32 { 1 }
 #     fn output_kind(&self) -> OutputKind { OutputKind::Image }
 #     fn generate(&self, _: &ProcGenSpec, rng: &mut SeededRng) -> Result<GeneratorOutput> {
 #         let mut img = ImageData::new(8, 8, ChannelSemantics::Color);

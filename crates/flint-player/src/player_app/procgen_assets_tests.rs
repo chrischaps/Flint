@@ -65,6 +65,9 @@ impl Generator for Broken {
     fn type_name(&self) -> &str {
         "broken"
     }
+    fn revision(&self) -> u32 {
+        1
+    }
     fn output_kind(&self) -> OutputKind {
         OutputKind::Mesh
     }

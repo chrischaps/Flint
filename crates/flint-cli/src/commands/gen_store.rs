@@ -5,7 +5,8 @@
 //!
 //! - the bytes, in the content store at `.flint/assets/<2 hex>/<hash>.<ext>`;
 //! - a sidecar beside each output file, `<file>.asset.toml`, carrying the
-//!   provenance (generator, spec hash, seed, timestamp, Flint version);
+//!   provenance (generator and its revision, spec hash, seed, timestamp,
+//!   Flint version);
 //! - a provenance entry at `.flint/procgen/<spec hash>/<seed>.toml` listing
 //!   the hashes that spec + seed produced.
 //!
@@ -13,6 +14,13 @@
 //! whatever happens to sit at the output path: a later run with the same spec
 //! and seed finds it, checks the files on disk against its hashes, and copies
 //! back from the store any that were deleted or changed, without generating.
+//!
+//! The spec hash covers the spec's bytes, not the code that reads them, so
+//! the entry also records the generator's [`revision`]: an entry made by
+//! another revision (or by a Flint that didn't record one) is stale, and the
+//! run regenerates and says why.
+//!
+//! [`revision`]: flint_procgen::Generator::revision
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,12 +47,36 @@ pub struct WrittenFile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     pub generator: String,
+    /// The generator's [`revision`](flint_procgen::Generator::revision) when
+    /// it made the files. `None` for an entry from before revisions were
+    /// recorded, which no current generator can vouch for.
+    pub generator_revision: Option<u32>,
     pub spec_hash: String,
     pub seed: u64,
     pub timestamp: String,
     pub flint_version: String,
     /// (role, content hash) for each file the run wrote.
     pub files: Vec<(Option<String>, String)>,
+}
+
+impl Provenance {
+    /// Why this entry can't stand for what `generator` at `revision` would
+    /// make now, or `None` if it can: `tree_v1 rev 3 -> 4`.
+    pub fn stale_for(&self, generator: &str, revision: u32) -> Option<String> {
+        let recorded = match self.generator_revision {
+            Some(r) if self.generator == generator && r == revision => return None,
+            Some(r) => format!("rev {r}"),
+            None => "rev unrecorded".to_string(),
+        };
+        Some(if self.generator == generator {
+            format!("{generator} {recorded} -> {revision}")
+        } else {
+            format!(
+                "{} {recorded} -> {generator} rev {revision}",
+                self.generator
+            )
+        })
+    }
 }
 
 /// What a cache lookup could do without generating.
@@ -146,6 +178,7 @@ impl Store {
         spec: &ProcGenSpec,
         spec_hash: &ContentHash,
         seed: u64,
+        generator_revision: u32,
         kind: OutputKind,
         files: &[WrittenFile],
     ) -> Result<Provenance> {
@@ -161,6 +194,7 @@ impl Store {
 
         let prov = Provenance {
             generator: spec.generator.clone(),
+            generator_revision: Some(generator_revision),
             spec_hash: spec_hash.to_prefixed_hex(),
             seed,
             timestamp: flint_asset_gen::time::now_iso8601(),
@@ -255,6 +289,9 @@ fn sidecar_for(
         properties.insert(k.to_string(), v);
     };
     put("generator", toml::Value::String(prov.generator.clone()));
+    if let Some(rev) = prov.generator_revision {
+        put("generator_revision", toml::Value::Integer(i64::from(rev)));
+    }
     put("spec_hash", toml::Value::String(prov.spec_hash.clone()));
     put("seed", seed_value(prov.seed));
     put("timestamp", toml::Value::String(prov.timestamp.clone()));
@@ -290,6 +327,9 @@ fn sidecar_for(
 fn render_entry(p: &Provenance) -> String {
     let mut t = toml::Table::new();
     t.insert("generator".into(), p.generator.clone().into());
+    if let Some(rev) = p.generator_revision {
+        t.insert("generator_revision".into(), i64::from(rev).into());
+    }
     t.insert("spec_hash".into(), p.spec_hash.clone().into());
     t.insert("seed".into(), seed_value(p.seed));
     t.insert("timestamp".into(), p.timestamp.clone().into());
@@ -339,8 +379,19 @@ fn parse_entry(text: &str) -> Result<Provenance> {
             Ok((role, hash.to_string()))
         })
         .collect::<Result<Vec<_>>>()?;
+    // Absent in entries written before revisions were recorded; anything
+    // else that isn't a u32 is a damaged entry.
+    let generator_revision = match t.get("generator_revision") {
+        None => None,
+        Some(v) => Some(
+            v.as_integer()
+                .and_then(|i| u32::try_from(i).ok())
+                .context("invalid 'generator_revision'")?,
+        ),
+    };
     Ok(Provenance {
         generator: str_of("generator")?,
+        generator_revision,
         spec_hash: str_of("spec_hash")?,
         seed,
         timestamp: str_of("timestamp")?,
@@ -370,6 +421,7 @@ mod tests {
         for seed in [0, 42, u64::MAX] {
             let p = Provenance {
                 generator: "texture_v1".into(),
+                generator_revision: Some(4),
                 spec_hash: "sha256:ab".into(),
                 seed,
                 timestamp: "2026-10-31T21:05:37Z".into(),
@@ -381,6 +433,57 @@ mod tests {
             };
             assert_eq!(parse_entry(&render_entry(&p)).unwrap(), p);
         }
+    }
+
+    fn entry(generator: &str, generator_revision: Option<u32>) -> Provenance {
+        Provenance {
+            generator: generator.into(),
+            generator_revision,
+            spec_hash: "sha256:ab".into(),
+            seed: 7,
+            timestamp: "2026-10-31T21:05:37Z".into(),
+            flint_version: "0.1.0".into(),
+            files: vec![(None, "sha256:01".into())],
+        }
+    }
+
+    #[test]
+    fn an_entry_from_another_revision_is_stale_and_says_which() {
+        assert_eq!(entry("tree_v1", Some(4)).stale_for("tree_v1", 4), None);
+        assert_eq!(
+            entry("tree_v1", Some(3)).stale_for("tree_v1", 4).as_deref(),
+            Some("tree_v1 rev 3 -> 4")
+        );
+        // Newer than the running generator (an older checkout) is stale too.
+        assert_eq!(
+            entry("tree_v1", Some(5)).stale_for("tree_v1", 4).as_deref(),
+            Some("tree_v1 rev 5 -> 4")
+        );
+        assert_eq!(
+            entry("tree_v1", Some(4)).stale_for("tree_v2", 4).as_deref(),
+            Some("tree_v1 rev 4 -> tree_v2 rev 4")
+        );
+    }
+
+    #[test]
+    fn an_entry_without_a_revision_is_stale_and_still_parses() {
+        let mut p = entry("texture_v1", None);
+        assert_eq!(
+            p.stale_for("texture_v1", 4).as_deref(),
+            Some("texture_v1 rev unrecorded -> 4")
+        );
+        let text = render_entry(&p);
+        assert!(!text.contains("generator_revision"), "{text}");
+        assert_eq!(parse_entry(&text).unwrap(), p);
+        p.generator_revision = Some(2);
+        assert_eq!(parse_entry(&render_entry(&p)).unwrap(), p);
+    }
+
+    #[test]
+    fn a_damaged_revision_is_an_unreadable_entry() {
+        let text = render_entry(&entry("tree_v1", Some(1)))
+            .replace("generator_revision = 1", "generator_revision = -1");
+        assert!(parse_entry(&text).is_err());
     }
 
     #[test]
