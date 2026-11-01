@@ -282,6 +282,20 @@ impl Generator for CreatureGenerator {
                         },
                         "required": ["name", "parent_bone", "segments"]
                     }
+                },
+                "materials": {
+                    "type": "object",
+                    "description": "Named materials, as [params.materials.<name>] tables; body parts and limb chains pick one by name",
+                    "additionalProperties": {
+                        "type": "object",
+                        "title": "creature material",
+                        "properties": {
+                            "base_color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#808080" },
+                            "roughness": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
+                            "metallic": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 }
+                        },
+                        "additionalProperties": false
+                    }
                 }
             }
         })
@@ -525,5 +539,31 @@ metallic = 0.1
         assert_eq!(mesh.materials.len(), 1);
         assert_eq!(mesh.materials[0].name, "shell");
         assert!((mesh.materials[0].roughness - 0.3).abs() < 1e-3);
+    }
+
+    /// The schema describes `[params.materials.<name>]`: the previewer shows
+    /// it as a table (not a text box) and a typo inside a material is caught.
+    #[test]
+    fn schema_describes_materials() {
+        let schema = CreatureGenerator.param_schema();
+        let fields = crate::parse_param_schema(&schema);
+        let materials = fields.iter().find(|f| f.name == "materials").unwrap();
+        assert!(matches!(
+            materials.field_type,
+            crate::ParamFieldType::ObjectMap
+        ));
+
+        let params: toml::Value = toml::from_str(
+            "[materials.shell]\nbase_color = \"#8B4513\"\nrougness = 0.3\n[materials.leg]\nmetallic = 0.2\n",
+        )
+        .unwrap();
+        let shown: Vec<String> = crate::lint_params(&schema, &params)
+            .iter()
+            .map(|i| i.to_string())
+            .collect();
+        assert_eq!(
+            shown,
+            ["`materials.shell.rougness` is not a parameter of the creature material (did you mean `roughness`?)"]
+        );
     }
 }

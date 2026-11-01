@@ -1675,6 +1675,7 @@ dependencies = [
  "flint-physics",
  "flint-player",
  "flint-procgen",
+ "flint-procgen-ai",
  "flint-query",
  "flint-render",
  "flint-runtime",

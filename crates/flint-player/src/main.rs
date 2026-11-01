@@ -63,6 +63,12 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     msaa: u32,
 
+    /// Don't generate procgen assets during load: show placeholders (a
+    /// magenta box or texel) and swap each real asset in as the
+    /// frame-budgeted queue makes it (#32)
+    #[arg(long)]
+    procgen_defer: bool,
+
     /// Draw the 3D scene at this fraction of the window's pixels on each
     /// side (0.25-1), upscaled under a full-resolution HUD; `auto` steps
     /// down to hold 60 fps and back up when it can (#122)
@@ -218,6 +224,9 @@ fn main() -> Result<()> {
     app.msaa_sample_count = args.msaa;
     // A bundle's files aren't on the disk: nothing to key a disk cache by.
     app.procgen_disk_cache = args.bundle.is_none();
+    if args.procgen_defer {
+        app.procgen_mode = flint_player::ProcGenMode::Deferred;
+    }
     if let Some(value) = &args.render_scale {
         app.render_scale = flint_player::RenderScaleSetting::default()
             .parse(value)
