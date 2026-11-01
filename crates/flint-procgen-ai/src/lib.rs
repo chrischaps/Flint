@@ -2,13 +2,17 @@
 //! [`flint_procgen::ProcGenSpec`]s.
 //!
 //! Tool-time only. This crate is not a default workspace member and nothing
-//! in the player links it (the CLI does, for `flint gen --ai-*`); build it
-//! alone with `cargo build -p flint-procgen-ai`.
+//! in the player links it. `flint-cli` does, for `flint gen --ai-*` and
+//! `flint gen --refine`, and supplies the mesh [`Previewer`] this crate
+//! can't (it depends on `flint-procgen` only, not on `flint-render`). Build
+//! it alone with `cargo build -p flint-procgen-ai`.
 //!
 //! - [`ProcGenAgent`] is the object-safe trait every agent implements.
 //! - [`AnthropicAgent`] asks Claude through the Messages API, and holds
 //!   every reply to the generator's schema and an actual build before it
-//!   accepts it, sending failures back for another round.
+//!   accepts it, sending failures back for another round. Its refine can
+//!   see what a spec builds (a [`Previewer`] draws meshes) and keeps
+//!   refining while the [`measure`]d distance to the reference falls.
 //! - [`MockAgent`] is a local, deterministic agent for tests and pipelines
 //!   with no network: its specs always fit the generator's param schema.
 //! - [`cost`] prices every call, keeps the append-only ledger at
@@ -22,7 +26,9 @@ pub mod config;
 pub mod cost;
 pub mod error;
 pub mod http;
+pub mod measure;
 pub mod mock;
+pub mod preview;
 pub mod prompt;
 pub mod schema;
 
@@ -32,5 +38,7 @@ pub use config::AgentConfig;
 pub use cost::{CostEntry, CostLedger, CostMeter, CostSummary};
 pub use error::{ProcGenAiError, Result};
 pub use http::{HttpRequest, HttpResponse, ScriptedTransport, Transport, Usage};
+pub use measure::Distance;
 pub use mock::MockAgent;
+pub use preview::Previewer;
 pub use schema::{check_params, repair_params, IssueKind, ParamIssue};

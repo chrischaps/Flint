@@ -10,6 +10,7 @@ pub mod gen;
 pub mod gen_ai;
 pub mod gen_preview;
 pub mod gen_preview_common;
+pub mod gen_refine;
 pub mod gen_store;
 pub mod init;
 pub mod particle_edit;

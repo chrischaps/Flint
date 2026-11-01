@@ -15,6 +15,9 @@ pub struct ParamFieldSpec {
     pub field_type: ParamFieldType,
     /// The schema-declared default value, if any.
     pub default: Option<Value>,
+    /// The schema's `description`: what the parameter does, in a sentence.
+    /// The previewer shows it on hover.
+    pub description: Option<String>,
     /// When the field is read only for some values of another field
     /// (`"x-when"` in the schema); `None` means always.
     pub when: Option<ParamCondition>,
@@ -71,6 +74,10 @@ pub fn parse_param_schema(schema: &Value) -> Vec<ParamFieldSpec> {
                 name: name.clone(),
                 field_type,
                 default,
+                description: prop
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(str::to_string),
                 when: parse_condition(prop),
             }
         })
@@ -225,6 +232,9 @@ pub enum ParamIssue {
         actual: String,
         needs: Vec<String>,
     },
+    /// The schema marks the key `"deprecated": true`: it is read (or once
+    /// was) but no longer does anything. `reason` is the key's description.
+    Deprecated { key: String, reason: Option<String> },
 }
 
 impl ParamIssue {
@@ -232,7 +242,9 @@ impl ParamIssue {
     /// when it sits inside a table or an array of them.
     pub fn key(&self) -> &str {
         match self {
-            Self::Unknown { key, .. } | Self::Inapplicable { key, .. } => key,
+            Self::Unknown { key, .. }
+            | Self::Inapplicable { key, .. }
+            | Self::Deprecated { key, .. } => key,
         }
     }
 }
@@ -268,14 +280,20 @@ impl std::fmt::Display for ParamIssue {
                     .collect::<Vec<_>>()
                     .join(" or ")
             ),
+            Self::Deprecated {
+                key,
+                reason: Some(r),
+            } => write!(f, "`{key}` is deprecated: {r}"),
+            Self::Deprecated { key, .. } => write!(f, "`{key}` is deprecated"),
         }
     }
 }
 
 /// Report every key in `params` that the generator described by `schema`
 /// will silently ignore: keys missing from the schema (when it sets
-/// `"additionalProperties": false`) and keys whose `x-when` condition the
-/// spec doesn't meet. Returned in key order; empty means every key is read.
+/// `"additionalProperties": false`), keys whose `x-when` condition the
+/// spec doesn't meet, and keys the schema marks `"deprecated": true`.
+/// Returned in key order; empty means every key is read.
 ///
 /// Tables inside the params are checked against their own schemas, the
 /// issue's key then being a path (`materials.shell.rougness`, `ops[2].colums`):
@@ -374,6 +392,16 @@ fn lint_table(
             }),
             None => {}
             Some(prop) => {
+                if prop.get("deprecated") == Some(&Value::Bool(true)) {
+                    issues.push(ParamIssue::Deprecated {
+                        key: join(path, key),
+                        reason: prop
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .map(str::to_string),
+                    });
+                    continue;
+                }
                 if let Some(c) = parse_condition(prop) {
                     let actual = effective_string(schema, table, &c.key).unwrap_or_default();
                     if !c.any_of.contains(&actual) {
@@ -416,6 +444,121 @@ fn edit_distance(a: &str, b: &str) -> usize {
         prev = cur;
     }
     prev[b.len()]
+}
+
+// ─── Parameter reference ───────────────────────────────────────────────────
+
+/// A Markdown reference for one generator's `params`, built from its
+/// schema: a table per condition (keys every spec may set first, then one
+/// table per `x-when`), each row the key, its type and range, its default
+/// and its `description`. The crate README's catalog is this, for every
+/// built-in generator, and a test keeps the two equal.
+pub fn param_reference_markdown(schema: &Value) -> String {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return String::new();
+    };
+    // Group by condition; BTreeMap keeps the groups and their keys in order.
+    let mut groups: std::collections::BTreeMap<String, Vec<(&String, &Value)>> = Default::default();
+    for (key, prop) in props {
+        let heading = match parse_condition(prop) {
+            None => String::new(),
+            Some(c) => format!(
+                "Only when `{}` is {}",
+                c.key,
+                c.any_of
+                    .iter()
+                    .map(|v| format!("`{v}`"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            ),
+        };
+        groups.entry(heading).or_default().push((key, prop));
+    }
+
+    let mut out = String::new();
+    for (heading, rows) in &groups {
+        if !heading.is_empty() {
+            out.push_str(&format!("\n{heading}:\n\n"));
+        }
+        out.push_str("| Key | Type | Default | What it does |\n|---|---|---|---|\n");
+        for (key, prop) in rows {
+            let mut text = prop
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            if prop.get("deprecated") == Some(&Value::Bool(true)) {
+                text = format!("**Deprecated.** {text}");
+            }
+            out.push_str(&format!(
+                "| `{key}` | {} | {} | {} |\n",
+                type_cell(prop),
+                prop.get("default").map(default_cell).unwrap_or_default(),
+                text.replace('|', "\\|")
+            ));
+        }
+    }
+    out
+}
+
+/// "number ≥ 0", "integer 1–8", "`a` \| `b`", "hex colour" and so on.
+fn type_cell(prop: &Value) -> String {
+    let num = |k: &str| prop.get(k).and_then(|v| v.as_f64());
+    let fmt = |v: f64| {
+        if v.fract() == 0.0 {
+            format!("{v:.0}")
+        } else {
+            format!("{v}")
+        }
+    };
+    let range = || match (num("minimum"), num("exclusiveMinimum"), num("maximum")) {
+        (Some(lo), _, Some(hi)) => format!(" {}–{}", fmt(lo), fmt(hi)),
+        (_, Some(lo), Some(hi)) => format!(" >{} to {}", fmt(lo), fmt(hi)),
+        (Some(lo), _, None) => format!(" ≥ {}", fmt(lo)),
+        (_, Some(lo), None) => format!(" > {}", fmt(lo)),
+        (None, None, Some(hi)) => format!(" ≤ {}", fmt(hi)),
+        _ => String::new(),
+    };
+    match classify_field(prop) {
+        ParamFieldType::Float { .. } => format!("number{}", range()),
+        ParamFieldType::Integer { .. } => format!("integer{}", range()),
+        ParamFieldType::Bool => "bool".into(),
+        ParamFieldType::HexColor => "hex colour".into(),
+        ParamFieldType::Enum { values } => values
+            .iter()
+            .map(|v| format!("`{v}`"))
+            .collect::<Vec<_>>()
+            .join(" \\| "),
+        ParamFieldType::String => "string".into(),
+        ParamFieldType::StringArray {
+            item_enum: Some(values),
+        } => format!(
+            "list of {}",
+            values
+                .iter()
+                .map(|v| format!("`{v}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ParamFieldType::StringArray { item_enum: None } => "list of strings".into(),
+        ParamFieldType::ObjectArray => "array of tables".into(),
+        ParamFieldType::ObjectMap => "table".into(),
+    }
+}
+
+fn default_cell(v: &Value) -> String {
+    match v {
+        Value::String(s) => format!("`\"{s}\"`"),
+        Value::Array(items) => format!(
+            "`[{}]`",
+            items
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => format!("`{other}`"),
+    }
 }
 
 #[cfg(test)]
