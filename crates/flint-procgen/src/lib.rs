@@ -57,7 +57,7 @@ pub use validate::{
 
 // Texture pattern types
 pub use generators::texture::pipeline::{
-    op_default_params, op_param_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
+    op_default_params, op_param_schema, op_schema, run_pipeline_with_snapshots, ALL_OP_TYPES,
 };
 pub use generators::texture::{
     derive_maps, OpPortInfo, Pattern, PatternCell, PatternField, PerlinOrganicParams,
