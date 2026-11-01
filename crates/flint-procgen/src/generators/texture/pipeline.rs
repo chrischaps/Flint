@@ -477,7 +477,8 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "frequency": { "type": "number", "minimum": 0.1, "default": 10.0 },
                 "octaves": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
                 "scale_x": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 }
+                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 },
+                "cell_offset": { "type": "boolean", "default": false, "description": "Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern" }
             }
         }),
         "blend" => serde_json::json!({
@@ -564,8 +565,22 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
             "type": "object",
             "properties": {
                 "input": { "type": "string", "default": "input" },
-                "interpolation": { "type": "string", "enum": ["linear", "constant", "ease"], "default": "linear" }
-            }
+                "interpolation": { "type": "string", "enum": ["linear", "constant", "ease"], "default": "linear" },
+                "stops": {
+                    "type": "array",
+                    "description": "The ramp's colours, as [[params.ops.stops]] tables",
+                    "items": {
+                        "type": "object",
+                        "title": "color_ramp stop",
+                        "properties": {
+                            "position": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+                            "color": { "type": "string", "pattern": "^#?[0-9a-fA-F]{6,8}$", "default": "#000000" }
+                        },
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["stops"]
         }),
         "checker_texture" => serde_json::json!({
             "type": "object",
@@ -631,7 +646,8 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
                 "offset": { "type": "number", "default": 1.0 },
                 "gain": { "type": "number", "default": 2.0 },
                 "scale_x": { "type": "number", "minimum": 0.01, "default": 1.0 },
-                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 }
+                "scale_y": { "type": "number", "minimum": 0.01, "default": 1.0 },
+                "cell_offset": { "type": "boolean", "default": false, "description": "Offset the noise per cell (reads the cell id), so neighbouring stones don't share a pattern" }
             }
         }),
         // Phase 3
@@ -716,6 +732,45 @@ pub fn op_param_schema(op_type: &str) -> serde_json::Value {
         }),
         _ => serde_json::json!({ "type": "object", "properties": {} }),
     }
+}
+
+/// The full, closed schema of one `[[params.ops]]` table of type `op_type`:
+/// its [`op_param_schema`] knobs plus the keys every op may carry (`type`,
+/// and `id` / `inputs` for graph wiring), with `"additionalProperties": false`
+/// so [`crate::lint_params`] reports a typo inside an op.
+pub fn op_schema(op_type: &str) -> serde_json::Value {
+    let mut schema = op_param_schema(op_type);
+    let props = schema["properties"]
+        .as_object_mut()
+        .expect("op schemas have properties");
+    props.insert("type".into(), serde_json::json!({ "const": op_type }));
+    props.insert(
+        "id".into(),
+        serde_json::json!({ "type": "string", "description": "Names the op so others can wire to its outputs (graph mode)" }),
+    );
+    props.insert(
+        "inputs".into(),
+        serde_json::json!({
+            "type": "object",
+            "description": "Graph wiring: local channel = \"source_id.channel\"",
+            "additionalProperties": { "type": "string" }
+        }),
+    );
+    schema["title"] = serde_json::json!(format!("{op_type} op"));
+    schema["additionalProperties"] = serde_json::json!(false);
+    schema
+}
+
+/// The schema of the `[[params.ops]]` array's items: one closed branch per
+/// op type, chosen by the op's `type` (see [`crate::lint_params`]).
+pub fn ops_items_schema() -> serde_json::Value {
+    let branches: Vec<serde_json::Value> = ALL_OP_TYPES.iter().map(|t| op_schema(t)).collect();
+    serde_json::json!({
+        "type": "object",
+        "required": ["type"],
+        "discriminator": { "propertyName": "type" },
+        "oneOf": branches
+    })
 }
 
 /// Return default parameter values for a given op type as a TOML map.
@@ -1862,5 +1917,89 @@ variation = 0.12
         for img in &maps_a {
             assert!(img.validate().is_ok());
         }
+    }
+
+    /// Every key `parse_op` reads for an op is in that op's schema, and every
+    /// key the schema lists is read: the lint trusts the schema, so a key it
+    /// lacks would be reported as a typo, and one it invents would hide one.
+    /// Read from this file's own source, arm by arm.
+    #[test]
+    fn op_schemas_list_exactly_the_keys_parse_op_reads() {
+        let src = include_str!("pipeline.rs");
+        let body = &src[src.find("pub fn parse_op(").unwrap()..];
+        let body = &body[..body.find("// ─── Parsing Helpers").unwrap()];
+        let key_re = |line: &str| -> Option<String> {
+            for pat in [".get(\"", "(table, \"", "(stop_table, \""] {
+                if let Some(at) = line.find(pat) {
+                    let rest = &line[at + pat.len()..];
+                    return Some(rest[..rest.find('"').unwrap()].to_string());
+                }
+            }
+            None
+        };
+        let mut problems = Vec::new();
+        for op in ALL_OP_TYPES {
+            let arm_start = body.find(&format!("        \"{op}\" => {{")).unwrap();
+            let arm = &body[arm_start..];
+            // The arm ends at the next arm (or the catch-all) at the same indent.
+            let next = arm[1..]
+                .find("\n        \"")
+                .or_else(|| arm[1..].find("\n        other =>"))
+                .unwrap();
+            let arm = &arm[..next + 1];
+            let mut read: Vec<String> = arm.lines().filter_map(key_re).collect();
+            read.retain(|k| k != "type");
+            read.sort();
+            read.dedup();
+
+            let schema = op_param_schema(op);
+            let mut listed: Vec<String> = Vec::new();
+            for (k, prop) in schema["properties"].as_object().unwrap() {
+                listed.push(k.clone());
+                if let Some(items) = prop["items"]["properties"].as_object() {
+                    listed.extend(items.keys().cloned());
+                }
+            }
+            listed.sort();
+            listed.dedup();
+            if read != listed {
+                problems.push(format!(
+                    "{op}: parse_op reads {read:?}, schema lists {listed:?}"
+                ));
+            }
+        }
+        assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+    }
+
+    #[test]
+    fn lint_reports_a_typo_inside_an_op() {
+        use crate::generator::Generator;
+        let spec = pipeline_spec(
+            r##"
+[[params.ops]]
+type = "brick_grid"
+colums = 8
+[[params.ops]]
+type = "color_ramp"
+id = "ramp"
+[params.ops.inputs]
+input = "grid.height"
+[[params.ops.stops]]
+position = 0.0
+colour = "#000000"
+"##,
+        );
+        let schema = super::super::TextureGenerator.param_schema();
+        let shown: Vec<String> = crate::lint_params(&schema, &spec.params)
+            .iter()
+            .map(|i| i.to_string())
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "`ops[0].colums` is not a parameter of the brick_grid op (did you mean `columns`?)",
+                "`ops[1].stops[0].colour` is not a parameter of the color_ramp stop (did you mean `color`?)",
+            ]
+        );
     }
 }
