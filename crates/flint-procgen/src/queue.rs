@@ -43,6 +43,15 @@ pub struct CompletedAsset {
     pub asset_kind: AssetKind,
 }
 
+/// A queued asset whose generation failed, kept for the caller to act on
+/// (fall back to a file, keep a placeholder) rather than only logged.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FailedAsset {
+    pub spec_name: String,
+    pub asset_kind: AssetKind,
+    pub error: String,
+}
+
 /// Statistics about the generation queue.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueueStats {
@@ -65,6 +74,8 @@ pub struct ProcGenQueue {
     reprioritize_threshold_sq: f32,
     total_completed: u64,
     last_stats: QueueStats,
+    /// Failures since the last [`take_failures`](Self::take_failures).
+    failures: Vec<FailedAsset>,
 }
 
 impl ProcGenQueue {
@@ -76,7 +87,13 @@ impl ProcGenQueue {
             reprioritize_threshold_sq: 4.0,
             total_completed: 0,
             last_stats: QueueStats::default(),
+            failures: Vec::new(),
         }
+    }
+
+    /// The requests that failed to generate since the last call, each once.
+    pub fn take_failures(&mut self) -> Vec<FailedAsset> {
+        std::mem::take(&mut self.failures)
     }
 
     pub fn set_budget_ms(&mut self, budget_ms: f64) {
@@ -181,10 +198,11 @@ impl ProcGenQueue {
                     self.total_completed += 1;
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[procgen] Queued generation failed for '{}': {}",
-                        req.spec_name, e
-                    );
+                    self.failures.push(FailedAsset {
+                        spec_name: req.spec_name,
+                        asset_kind: req.asset_kind,
+                        error: e.to_string(),
+                    });
                 }
             }
 

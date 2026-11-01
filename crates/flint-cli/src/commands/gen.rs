@@ -1,10 +1,11 @@
 //! `flint gen` — run a procedural generation spec and write the output.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::Args;
+use clap::{ArgGroup, Args};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
@@ -12,12 +13,119 @@ use flint_procgen::{
     SeedMode, ValidationConstraints,
 };
 
+use super::gen_ai;
 use super::gen_store::{self, WrittenFile};
 
+/// The generation summary goes to stdout, unless stdout is carrying the spec
+/// (`--print-spec`), when it moves to stderr.
+static SUMMARY_TO_STDERR: AtomicBool = AtomicBool::new(false);
+
+/// `println!` for the generation summary; see [`SUMMARY_TO_STDERR`].
+macro_rules! say {
+    ($($t:tt)*) => {
+        if SUMMARY_TO_STDERR.load(Ordering::Relaxed) {
+            eprintln!($($t)*)
+        } else {
+            println!($($t)*)
+        }
+    };
+}
+
 #[derive(Args)]
+#[command(group(
+    ArgGroup::new("ai_step")
+        .args(["ai_assist", "ai_refine", "ai_create"])
+        .multiple(true)
+))]
 pub struct GenArgs {
-    /// Path to a .procgen.toml spec file
-    pub spec: String,
+    /// Path to a .procgen.toml spec file (not needed with --ai-create or
+    /// --cost-report)
+    #[arg(required_unless_present_any = ["ai_create", "cost_report"])]
+    pub spec: Option<String>,
+
+    /// Ask the AI agent to review the spec (interpret) and then improve it
+    /// (refine) before generating; suggestions are printed to stderr
+    #[arg(long, help_heading = "AI assistance")]
+    pub ai_assist: bool,
+
+    /// Create a new spec from a description, then generate it
+    #[arg(
+        long,
+        value_name = "DESCRIPTION",
+        conflicts_with = "spec",
+        help_heading = "AI assistance"
+    )]
+    pub ai_create: Option<String>,
+
+    /// Refine the spec against the --reference image before generating
+    #[arg(long, requires = "reference", help_heading = "AI assistance")]
+    pub ai_refine: bool,
+
+    /// Reference image (PNG, JPEG, GIF or WebP) for the refine step
+    #[arg(
+        long,
+        value_name = "IMAGE",
+        requires = "ai_step",
+        help_heading = "AI assistance"
+    )]
+    pub reference: Option<String>,
+
+    /// With --ai-create: the generator to write for (tree_v1, texture_v1,
+    /// creature_v1). Guessed from the description when omitted
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "ai_create",
+        help_heading = "AI assistance"
+    )]
+    pub ai_generator: Option<String>,
+
+    /// AI provider: anthropic or mock [default: anthropic, or
+    /// .flint/procgen_ai.toml's provider]
+    #[arg(long, value_name = "PROVIDER", help_heading = "AI assistance")]
+    pub ai_provider: Option<String>,
+
+    /// Model to ask [default: .flint/procgen_ai.toml's model, else the
+    /// provider's default]
+    #[arg(long, value_name = "MODEL", help_heading = "AI assistance")]
+    pub ai_model: Option<String>,
+
+    /// Most rounds per AI step before the agent gives up [default: 3]
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..=20),
+        help_heading = "AI assistance"
+    )]
+    pub ai_iterations: Option<u32>,
+
+    /// Print the final spec (after any AI steps and --seed) to stdout as
+    /// TOML; the generation summary moves to stderr
+    #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
+    pub print_spec: bool,
+
+    /// Write the final spec to this file
+    #[arg(long, value_name = "PATH", help_heading = "AI assistance")]
+    pub save_spec: Option<String>,
+
+    /// Refuse any AI call that could take this run's spend past USD; checked
+    /// before every call, with a warning past 80%
+    #[arg(long, value_name = "USD", value_parser = parse_usd, help_heading = "Cost tracking")]
+    pub max_cost: Option<f64>,
+
+    /// Print what AI calls have cost, from .flint/procgen_costs.json: total,
+    /// per provider, per model, per spec
+    #[arg(long, help_heading = "Cost tracking")]
+    pub cost_report: bool,
+
+    /// With --cost-report: only calls on or after this date (YYYY-MM-DD)
+    #[arg(
+        long,
+        value_name = "DATE",
+        requires = "cost_report",
+        help_heading = "Cost tracking"
+    )]
+    pub since: Option<String>,
 
     /// Output path (file or directory). Derived from spec name if omitted.
     #[arg(short, long)]
@@ -63,7 +171,8 @@ pub struct GenArgs {
     pub strict: bool,
 
     /// Style guide TOML path for additional validation constraints
-    #[arg(long)]
+    /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
+    #[arg(long, requires = "validate")]
     pub style_guide: Option<String>,
 }
 
@@ -76,10 +185,66 @@ fn parse_format(s: &str) -> std::result::Result<String, String> {
     }
 }
 
+fn parse_usd(s: &str) -> std::result::Result<f64, String> {
+    let v: f64 = s
+        .trim()
+        .trim_start_matches('$')
+        .parse()
+        .map_err(|_| format!("'{s}' isn't an amount in USD (e.g. 0.50)"))?;
+    if !v.is_finite() || v < 0.0 {
+        return Err(format!("--max-cost must be a non-negative amount, not {s}"));
+    }
+    Ok(v)
+}
+
 pub fn run(args: GenArgs) -> Result<()> {
-    let spec_path = Path::new(&args.spec);
-    let mut spec = ProcGenSpec::from_file(spec_path)
-        .with_context(|| format!("failed to load spec from {}", spec_path.display()))?;
+    if args.cost_report {
+        return gen_ai::cost_report(
+            &flint_procgen_ai::CostLedger::open_default(),
+            args.since.as_deref(),
+        );
+    }
+    SUMMARY_TO_STDERR.store(args.print_spec, Ordering::Relaxed);
+
+    let steps = gen_ai::Steps::of(&args);
+    let loaded = match &args.spec {
+        Some(p) => {
+            let path = Path::new(p);
+            Some(
+                ProcGenSpec::from_file(path)
+                    .with_context(|| format!("failed to load spec from {}", path.display()))?,
+            )
+        }
+        None => None,
+    };
+
+    // The AI steps run first: they make the spec everything below checks.
+    // A dry run only says what they would do.
+    let mut spec = if steps.any() {
+        let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
+        if args.dry_run {
+            gen_ai::print_plan(&config, steps, args.max_cost);
+            return Ok(());
+        }
+        let meter = gen_ai::build_meter(&config, &args);
+        let agent = gen_ai::build_agent(config, meter.clone())?;
+        gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
+    } else {
+        loaded.expect("clap requires a spec unless --ai-create or --cost-report")
+    };
+
+    // What messages call the spec, and the bytes its provenance hashes: the
+    // file as written, or the AI's spec as it will be saved.
+    let label = match (&args.spec, steps.any()) {
+        (Some(p), false) => p.clone(),
+        (Some(p), true) => format!("{p} (after AI)"),
+        (None, _) => format!("AI spec '{}'", spec.meta.name),
+    };
+    let ai_spec_text = steps
+        .any()
+        .then(|| toml::to_string(&spec))
+        .transpose()
+        .context("failed to serialize the AI's spec")?;
 
     // Build registry
     let mut registry = GeneratorRegistry::new();
@@ -89,13 +254,13 @@ pub fn run(args: GenArgs) -> Result<()> {
     // a (possibly seconds-long) generation runs: the generator must exist,
     // the spec's params must be ones it reads, and the output path /
     // --format must be able to hold what it makes.
-    let generator = resolve_generator(&registry, &spec, spec_path)?;
+    let generator = resolve_generator(&registry, &spec, &label)?;
 
     // Keys the generator won't read: a typo, or a knob for another pattern.
     // Silently ignored params are the worst kind of spec bug, so say so.
     let issues = flint_procgen::lint_params(&generator.param_schema(), &spec.params);
     for issue in &issues {
-        eprintln!("warning: {}: {issue}", spec_path.display());
+        eprintln!("warning: {label}: {issue}");
     }
     if args.strict && !issues.is_empty() {
         bail!(
@@ -116,32 +281,45 @@ pub fn run(args: GenArgs) -> Result<()> {
         spec = spec_with_seed(&spec, seed_val);
     }
 
+    if args.print_spec || args.save_spec.is_some() {
+        let text = toml::to_string(&spec).context("failed to serialize the spec")?;
+        if args.print_spec {
+            print!("{text}");
+        }
+        if let Some(path) = &args.save_spec {
+            std::fs::write(path, &text).with_context(|| format!("failed to write {path}"))?;
+            eprintln!("Saved spec: {path}");
+        }
+    } else if args.spec.is_none() {
+        eprintln!("hint: --save-spec <path> keeps the AI's spec for later runs");
+    }
+
     // Dry-run: print cost estimate and return
     if args.dry_run {
         let cost = generator.estimate_cost(&spec);
-        println!("Spec:       {}", spec.meta.name);
-        println!("Generator:  {}", spec.generator);
-        println!("Seed:       {}", describe_seed(&spec));
-        println!(
+        say!("Spec:       {}", spec.meta.name);
+        say!("Generator:  {}", spec.generator);
+        say!("Seed:       {}", describe_seed(&spec));
+        say!(
             "Output:     {} ({})",
             kind_noun(kind),
             format.to_uppercase()
         );
-        println!();
-        println!("Estimated cost:");
-        println!(
+        say!();
+        say!("Estimated cost:");
+        say!(
             "  Vertices:      {}",
             format_count(cost.estimated_vertices as u64)
         );
-        println!(
+        say!(
             "  Triangles:     {}",
             format_count(cost.estimated_triangles as u64)
         );
-        println!(
+        say!(
             "  Texture bytes: {}",
             format_bytes(cost.estimated_texture_bytes)
         );
-        println!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
+        say!("  Gen time:      {:.1} ms", cost.estimated_generation_ms);
         return Ok(());
     }
 
@@ -167,20 +345,20 @@ pub fn run(args: GenArgs) -> Result<()> {
         None => {
             let seed = spec
                 .resolve_seed()
-                .with_context(|| format!("{}: invalid [seed]", spec_path.display()))?;
+                .with_context(|| format!("{label}: invalid [seed]"))?;
             vec![(seed, single_output_path(&args, &spec, seed, format))]
         }
     };
     let batch_total = args.batch;
 
     let store = args.register.then(gen_store::Store::open_default);
-    let spec_hash = if args.register {
-        Some(
-            ContentHash::from_file(spec_path)
-                .with_context(|| format!("failed to hash spec file {}", spec_path.display()))?,
-        )
-    } else {
-        None
+    let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
+        (false, _, _) => None,
+        (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),
+        (true, None, Some(p)) => Some(
+            ContentHash::from_file(p).with_context(|| format!("failed to hash spec file {p}"))?,
+        ),
+        (true, None, None) => unreachable!("a run without AI steps has a spec file"),
     };
 
     let (mut generated, mut cached) = (0u32, 0u32);
@@ -200,11 +378,11 @@ pub fn run(args: GenArgs) -> Result<()> {
                 if let Some(reuse) = store.reuse(&prov, &targets)? {
                     store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
                     match reuse {
-                        gen_store::Reuse::Present => println!(
+                        gen_store::Reuse::Present => say!(
                             "{tag}Cached: {} (seed {seed}, spec unchanged)",
                             out_path.display()
                         ),
-                        gen_store::Reuse::Restored(k) => println!(
+                        gen_store::Reuse::Restored(k) => say!(
                             "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
                              or changed file{} from the content store)",
                             out_path.display(),
@@ -212,7 +390,7 @@ pub fn run(args: GenArgs) -> Result<()> {
                         ),
                     }
                     if args.validate {
-                        println!("  validation skipped for a cached result (--force regenerates)");
+                        say!("  validation skipped for a cached result (--force regenerates)");
                     }
                     cached += 1;
                     continue;
@@ -221,9 +399,9 @@ pub fn run(args: GenArgs) -> Result<()> {
         }
 
         if batch_total.is_some() {
-            println!("{tag}Generating seed {seed}...");
+            say!("{tag}Generating seed {seed}...");
         } else {
-            println!("Seed:       {}", describe_resolved_seed(&spec, seed));
+            say!("Seed:       {}", describe_resolved_seed(&spec, seed));
         }
 
         let (output, files) = generate_one(&seed_spec, &registry, out_path)?;
@@ -232,7 +410,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
             let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
             for (f, (_, hash)) in files.iter().zip(&prov.files) {
-                println!("Registered: {} -> {hash}", f.path.display());
+                say!("Registered: {} -> {hash}", f.path.display());
             }
         }
 
@@ -249,8 +427,8 @@ pub fn run(args: GenArgs) -> Result<()> {
     }
 
     if batch_total.is_some() {
-        println!();
-        println!("Batch complete: {generated} generated, {cached} cached");
+        say!();
+        say!("Batch complete: {generated} generated, {cached} cached");
     }
     if validation_failed {
         std::process::exit(1);
@@ -287,14 +465,13 @@ fn generate_and_get_output(
 fn resolve_generator<'a>(
     registry: &'a GeneratorRegistry,
     spec: &ProcGenSpec,
-    spec_path: &Path,
+    label: &str,
 ) -> Result<&'a dyn Generator> {
     registry.get(&spec.generator).ok_or_else(|| {
         let mut names = registry.generator_names();
         names.sort_unstable();
         anyhow!(
-            "{} names generator '{}', which isn't registered\n  known generators: {}",
-            spec_path.display(),
+            "{label} names generator '{}', which isn't registered\n  known generators: {}",
             spec.generator,
             names.join(", ")
         )
@@ -481,12 +658,12 @@ fn write_output(
             let file_size = glb.len();
             std::fs::write(out_path, glb)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB");
-            println!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
-            println!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB");
+            say!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
+            say!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::MeshWithLods(lods) => {
             let glb = export_glb::mesh_lods_to_glb(lods).context("GLB export (LODs) failed")?;
@@ -495,23 +672,23 @@ fn write_output(
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
             let total_verts: usize = lods.iter().map(|m| m.vertex_count()).sum();
             let total_tris: usize = lods.iter().map(|m| m.triangle_count()).sum();
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB ({} LOD levels)", lods.len());
-            println!("Vertices:   {} (total)", format_count(total_verts as u64));
-            println!("Triangles:  {} (total)", format_count(total_tris as u64));
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB ({} LOD levels)", lods.len());
+            say!("Vertices:   {} (total)", format_count(total_verts as u64));
+            say!("Triangles:  {} (total)", format_count(total_tris as u64));
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::Image(img) => {
             img.save_png(out_path)
                 .with_context(|| format!("failed to save PNG to {}", out_path.display()))?;
             let file_size = std::fs::metadata(out_path)?.len();
-            println!("Output:     {}", out_path.display());
-            println!("Format:     PNG");
-            println!("Dimensions: {}x{}", img.width, img.height);
-            println!("Channel:    {:?}", img.channel_semantics);
-            println!("File size:  {}", format_bytes(file_size));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     PNG");
+            say!("Dimensions: {}x{}", img.width, img.height);
+            say!("Channel:    {:?}", img.channel_semantics);
+            say!("File size:  {}", format_bytes(file_size));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::ImageSet(images) => {
             let (dir, _) = image_set_dir_and_stem(out_path);
@@ -525,7 +702,7 @@ fn write_output(
                     .with_context(|| format!("failed to save {}", img_path.display()))?;
                 let size = std::fs::metadata(&img_path)?.len();
                 total_size += size;
-                println!(
+                say!(
                     "  {} ({}x{}, {})",
                     img_path.display(),
                     img.width,
@@ -537,31 +714,31 @@ fn write_output(
                     path: img_path,
                 });
             }
-            println!();
-            println!("Images:     {}", images.len());
-            println!("Total size: {}", format_bytes(total_size));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!();
+            say!("Images:     {}", images.len());
+            say!("Total size: {}", format_bytes(total_size));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::SkinnedMesh(mesh) => {
             let glb = export_glb::skinned_mesh_to_glb(mesh).context("Skinned GLB export failed")?;
             let file_size = glb.len();
             std::fs::write(out_path, glb)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     GLB (skinned)");
-            println!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
-            println!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
-            println!("Bones:      {}", mesh.bone_count());
-            println!("File size:  {}", format_bytes(file_size as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     GLB (skinned)");
+            say!("Vertices:   {}", format_count(mesh.vertex_count() as u64));
+            say!("Triangles:  {}", format_count(mesh.triangle_count() as u64));
+            say!("Bones:      {}", mesh.bone_count());
+            say!("File size:  {}", format_bytes(file_size as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
         GeneratorOutput::Sound(bytes) => {
             std::fs::write(out_path, bytes)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;
-            println!("Output:     {}", out_path.display());
-            println!("Format:     WAV (raw)");
-            println!("File size:  {}", format_bytes(bytes.len() as u64));
-            println!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
+            say!("Output:     {}", out_path.display());
+            say!("Format:     WAV (raw)");
+            say!("File size:  {}", format_bytes(bytes.len() as u64));
+            say!("Gen time:   {:.1} ms", gen_time.as_secs_f64() * 1000.0);
         }
     }
 
@@ -616,14 +793,9 @@ fn build_validation_constraints(
     spec: &ProcGenSpec,
     style_guide: Option<&StyleGuide>,
 ) -> ValidationConstraints {
+    // The spec's LOD targets are read from the spec by `validate_output`,
+    // one per level; `max_triangles` is the style's ceiling on every mesh.
     let mut c = ValidationConstraints::default();
-
-    // Extract max_triangles from LOD level 0 target if present
-    if let Some(ref lods) = spec.lod {
-        if let Some(lod0) = lods.iter().find(|l| l.level == 0) {
-            c.max_triangles = Some(lod0.target_triangles);
-        }
-    }
 
     // Extract texture dimensions from spec params if present
     if let Some(table) = spec.params.as_table() {
@@ -643,6 +815,8 @@ fn build_validation_constraints(
         c.roughness_range = style.materials.roughness_range;
         c.metallic_range = style.materials.metallic_range;
         c.palette = style.palette.clone();
+        // `require_normals` needs no flag: every mesh's normals are checked.
+        c.require_uvs = style.geometry.require_uvs.unwrap_or(false);
     }
 
     c
@@ -668,15 +842,15 @@ fn run_validation(
     let constraints = build_validation_constraints(spec, style_guide.as_ref());
     let report = flint_procgen::validate_output(output, spec, &constraints);
 
-    println!();
+    say!();
     report.print_checks();
-    println!();
+    say!();
     report.print_summary();
 
     if report.has_failures() {
         Ok(false)
     } else if strict && report.has_warnings() {
-        println!("Strict mode: warnings treated as failures");
+        say!("Strict mode: warnings treated as failures");
         Ok(false)
     } else {
         Ok(true)
@@ -840,8 +1014,10 @@ target_triangles = 1000
 "#,
         )
         .unwrap();
+        // LOD targets stay in the spec, where `validate_output` reads one
+        // per level; only a style guide sets the ceiling.
         let constraints = build_validation_constraints(&spec, None);
-        assert_eq!(constraints.max_triangles, Some(5000));
+        assert_eq!(constraints.max_triangles, None);
     }
 
     #[test]
@@ -875,7 +1051,7 @@ value = 42
             },
             geometry: GeometryConstraints {
                 max_triangles: Some(3000),
-                require_uvs: None,
+                require_uvs: Some(true),
                 require_normals: None,
             },
         };
@@ -885,6 +1061,7 @@ value = 42
         assert_eq!(constraints.roughness_range, Some([0.6, 0.95]));
         assert_eq!(constraints.metallic_range, Some([0.0, 0.15]));
         assert_eq!(constraints.palette, vec!["#FF0000".to_string()]);
+        assert!(constraints.require_uvs);
     }
 
     #[test]
