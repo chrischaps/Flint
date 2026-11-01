@@ -42,6 +42,29 @@ impl GeneratorRegistry {
         self.generators.keys().map(|k| k.as_str()).collect()
     }
 
+    /// A Markdown parameter reference for every registered generator, in
+    /// name order: a `###` heading with the output kind, then
+    /// [`crate::param_reference_markdown`] of its schema. The crate README's
+    /// catalog is this for the built-ins (`cargo run -p flint-procgen
+    /// --example param_catalog` prints it).
+    pub fn reference_markdown(&self) -> String {
+        let mut names = self.generator_names();
+        names.sort_unstable();
+        let mut out = String::new();
+        for name in names {
+            let generator = self.get(name).unwrap();
+            let kind = match generator.output_kind() {
+                crate::OutputKind::Mesh => "mesh, written as GLB",
+                crate::OutputKind::Image => "image set, written as PNGs",
+                crate::OutputKind::Sound => "sound, written as WAV",
+            };
+            out.push_str(&format!("### `{name}` ({kind})\n\n"));
+            out.push_str(&crate::param_reference_markdown(&generator.param_schema()));
+            out.push('\n');
+        }
+        out
+    }
+
     /// Resolve the generator from a spec, create a seeded RNG, and run
     /// generation.
     pub fn generate_from_spec(&self, spec: &ProcGenSpec) -> Result<GeneratorOutput> {
@@ -139,6 +162,25 @@ value = 42
     fn box_dyn_generator_compiles() {
         // Object safety: this line compiling proves the trait is object-safe.
         let _: Box<dyn Generator> = Box::new(MockGenerator);
+    }
+
+    /// Every parameter a built-in generator takes says what it does: the
+    /// previewer shows it on hover and the crate README's catalog prints it.
+    #[test]
+    fn every_built_in_parameter_is_described() {
+        let mut reg = GeneratorRegistry::new();
+        crate::register_built_in_generators(&mut reg);
+        let mut missing = Vec::new();
+        for name in reg.generator_names() {
+            let schema = reg.get(name).unwrap().param_schema();
+            for (key, prop) in schema["properties"].as_object().unwrap() {
+                let text = prop["description"].as_str().unwrap_or("");
+                if text.trim().is_empty() {
+                    missing.push(format!("{name}.{key}"));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "undescribed: {missing:?}");
     }
 
     #[test]

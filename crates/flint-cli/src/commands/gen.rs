@@ -99,6 +99,19 @@ pub struct GenArgs {
     )]
     pub ai_iterations: Option<u32>,
 
+    /// Most measured refine rounds against --reference. Claude sees a render
+    /// of what the spec builds; each round's result is rendered and
+    /// measured, and the refine asks again while the distance falls, keeping
+    /// the closest spec [default: --ai-iterations]
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "reference",
+        value_parser = clap::value_parser!(u32).range(1..=8),
+        help_heading = "AI assistance"
+    )]
+    pub refine_rounds: Option<u32>,
+
     /// Print the final spec (after any AI steps and --seed) to stdout as
     /// TOML; the generation summary moves to stderr
     #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
@@ -224,11 +237,11 @@ pub fn run(args: GenArgs) -> Result<()> {
     let mut spec = if steps.any() {
         let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
         if args.dry_run {
-            gen_ai::print_plan(&config, steps, args.max_cost);
+            gen_ai::print_plan(&config, steps, &args);
             return Ok(());
         }
         let meter = gen_ai::build_meter(&config, &args);
-        let agent = gen_ai::build_agent(config, meter.clone())?;
+        let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
         gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
     } else {
         loaded.expect("clap requires a spec unless --ai-create or --cost-report")
@@ -271,6 +284,7 @@ pub fn run(args: GenArgs) -> Result<()> {
     }
 
     let kind = generator.output_kind();
+    let revision = generator.revision();
     let format = check_output_format(
         &spec.generator,
         kind,
@@ -382,21 +396,35 @@ pub fn run(args: GenArgs) -> Result<()> {
             .unwrap_or_default();
         let seed_spec = spec_with_seed(&spec, seed);
 
-        // The cache: this spec + seed was registered before, and the store
-        // still holds every file it made.
+        // The cache: this spec + seed was registered before, by the
+        // generator revision running now, and the store still holds every
+        // file it made.
         if let (Some(store), Some(sh), false) = (&store, &spec_hash, args.force) {
-            if let Some(prov) = store.lookup(sh, seed) {
+            let fresh = store.lookup(sh, seed).filter(|prov| {
+                match prov.stale_for(&spec.generator, revision) {
+                    Some(why) => {
+                        say!(
+                            "{tag}Stale: {} (seed {seed}, {why}), regenerating",
+                            out_path.display()
+                        );
+                        false
+                    }
+                    None => true,
+                }
+            });
+            if let Some(prov) = fresh {
                 let targets = planned_files(out_path, &prov);
                 if let Some(reuse) = store.reuse(&prov, &targets)? {
                     store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
+                    let rev = format!("{} rev {revision}", spec.generator);
                     match reuse {
                         gen_store::Reuse::Present => say!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged)",
                             out_path.display()
                         ),
                         gen_store::Reuse::Restored(k) => say!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
-                             or changed file{} from the content store)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged; restored {k} \
+                             missing or changed file{} from the content store)",
                             out_path.display(),
                             if k == 1 { "" } else { "s" }
                         ),
@@ -420,7 +448,7 @@ pub fn run(args: GenArgs) -> Result<()> {
         generated += 1;
 
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
-            let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
+            let prov = store.register(&seed_spec, sh, seed, revision, kind, &files)?;
             for (f, (_, hash)) in files.iter().zip(&prov.files) {
                 say!("Registered: {} -> {hash}", f.path.display());
             }

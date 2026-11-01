@@ -249,6 +249,77 @@ fn a_plain_register_records_the_specs_own_seed_and_hits_the_cache() {
     assert!(second.contains("Cached: "), "{second}");
 }
 
+/// The one provenance entry a single registered run left in `dir`.
+fn only_entry(dir: &Path) -> PathBuf {
+    let specs: Vec<_> = std::fs::read_dir(dir.join(".flint/procgen"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(specs.len(), 1, "{specs:?}");
+    let entries: Vec<_> = std::fs::read_dir(&specs[0])
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    entries[0].clone()
+}
+
+#[test]
+fn an_entry_from_another_generator_revision_is_stale_and_regenerates() {
+    // #178: the spec hash doesn't cover the generator, so an entry an older
+    // tree_v1 made used to come back `Cached:` after the generator changed.
+    let dir = project("stale_revision");
+    let oak = oak_spec();
+    let args = [s(&oak), "-o", "tree.glb", "--register"];
+    ok(gen_in(&dir, &args));
+    let sidecar = dir.join("tree.glb.asset.toml");
+    let rev = props(&sidecar)["generator_revision"]
+        .as_integer()
+        .expect("the sidecar records the generator revision");
+    assert!(rev >= 1);
+    let entry = only_entry(&dir);
+    let line = format!("generator_revision = {rev}");
+    let text = std::fs::read_to_string(&entry).unwrap();
+    assert!(text.contains(&line), "{text}");
+
+    // As if the files were made by the revision before this one.
+    std::fs::write(
+        &entry,
+        text.replace(&line, &format!("generator_revision = {}", rev - 1)),
+    )
+    .unwrap();
+    let t = ok(gen_in(&dir, &args));
+    assert!(
+        t.contains(&format!(
+            "Stale: tree.glb (seed 42, tree_v1 rev {} -> {rev}), regenerating",
+            rev - 1
+        )),
+        "{t}"
+    );
+    assert!(t.contains("Registered: "), "{t}");
+    assert!(!t.contains("Cached: "), "{t}");
+    // The rewrite records the revision that made the file, and is a hit.
+    assert_eq!(
+        props(&sidecar)["generator_revision"].as_integer(),
+        Some(rev)
+    );
+    assert!(std::fs::read_to_string(&entry).unwrap().contains(&line));
+    let t = ok(gen_in(&dir, &args));
+    assert!(
+        t.contains(&format!("spec and tree_v1 rev {rev} unchanged")),
+        "{t}"
+    );
+
+    // An entry from before revisions were recorded is stale too.
+    let text = std::fs::read_to_string(&entry).unwrap();
+    std::fs::write(&entry, text.replace(&format!("{line}\n"), "")).unwrap();
+    let t = ok(gen_in(&dir, &args));
+    assert!(
+        t.contains(&format!("tree_v1 rev unrecorded -> {rev}), regenerating")),
+        "{t}"
+    );
+}
+
 #[test]
 fn the_cache_restores_a_deleted_or_altered_output_from_the_store() {
     let dir = project("restore");
