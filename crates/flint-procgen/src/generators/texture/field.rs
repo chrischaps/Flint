@@ -89,11 +89,15 @@ impl TextureField {
         let w = self.width;
         let h = self.height;
         let idx = (y * w + x) as usize;
-        let buf = self
-            .channels
-            .entry(channel.to_string())
-            .or_insert_with(|| vec![0.0; (w * h) as usize]);
+        // Look up before inserting: `entry` needs an owned key, which would
+        // allocate a String on every pixel write (#187).
+        if let Some(buf) = self.channels.get_mut(channel) {
+            buf[idx] = value;
+            return;
+        }
+        let mut buf = vec![0.0; (w * h) as usize];
         buf[idx] = value;
+        self.channels.insert(channel.to_string(), buf);
     }
 
     /// Ensure a channel exists, creating it (filled with `0.0`) if missing.

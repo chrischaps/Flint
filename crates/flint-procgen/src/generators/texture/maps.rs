@@ -21,6 +21,7 @@
 //! is seamless, and octaves finer than [`MIN_DETAIL_PERIOD_PX`] are dropped so
 //! it never aliases into per-pixel static.
 
+use super::cell_memo::CellMemo;
 use crate::algorithms::noise::PerlinNoise;
 use crate::generators::texture::pattern::PatternField;
 use crate::generators::util::{
@@ -421,16 +422,14 @@ pub fn derive_albedo(
 fn albedo(field: &PatternField, params: &TextureMapParams, ctx: &MapContext) -> ImageData {
     let (w, h) = (field.width, field.height);
     let mut img = ImageData::new(w, h, ChannelSemantics::Color);
+    let mut tints = CellMemo::new(|id| {
+        cell_albedo(id, params.base_color, params.color_variation, ctx.cell_seed)
+    });
 
     for y in 0..h {
         for x in 0..w {
             let cell = field.get(x, y);
-            let tint = cell_albedo(
-                cell.cell_id,
-                params.base_color,
-                params.color_variation,
-                ctx.cell_seed,
-            );
+            let tint = tints.get(cell.cell_id);
             let m = mortar_mix(cell.distance_to_edge, params.mortar_threshold);
             let gain = (1.0 + params.detail_strength * ctx.detail(x, y)).max(0.0);
 
@@ -532,12 +531,13 @@ pub fn derive_roughness(
 fn roughness(field: &PatternField, params: &TextureMapParams, ctx: &MapContext) -> ImageData {
     let (w, h) = (field.width, field.height);
     let mut img = ImageData::new(w, h, ChannelSemantics::Roughness);
+    let mut shifts =
+        CellMemo::new(|id| cell_roughness_shift(id, params.roughness_variation, ctx.cell_seed));
 
     for y in 0..h {
         for x in 0..w {
             let cell = field.get(x, y);
-            let shift =
-                cell_roughness_shift(cell.cell_id, params.roughness_variation, ctx.cell_seed);
+            let shift = shifts.get(cell.cell_id);
             let surface = (params.roughness_base + shift).clamp(0.0, 1.0);
             let m = mortar_mix(cell.distance_to_edge, params.mortar_threshold);
             let r = surface * (1.0 - m) + params.roughness_mortar * m
