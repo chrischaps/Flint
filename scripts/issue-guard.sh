@@ -10,7 +10,8 @@
 # record, the worktree); pushes also ask origin that the claim is still ours.
 #
 # A push also reads the Closes lines of the commits it carries past the base
-# branch. Two kinds of those aren't this session's work, and pass (#223):
+# branch: the one this worktree's claim records (claim --base, #243), else the
+# repo's. Two kinds of those aren't this session's work, and pass (#223):
 # commits whose change is already on the base (a sibling rebased or
 # cherry-picked in, or squashed from one commit), and commits naming an issue
 # that's closed on GitHub, whose claim was reaped with it. That's what a branch
@@ -73,7 +74,9 @@ fi
 carried=() range=()
 if [ -n "$push" ]; then
   remote=${CLAIM_REMOTE:-origin}
-  b=${CLAIM_BASE:-$base}
+  # The base this worktree's claim records (claim --base), else the repo's. A
+  # tool too old to answer falls through to the repo's, read here.
+  b=$(bash "$tool" base 2>/dev/null) || b=${CLAIM_BASE:-$base}
   [ -n "$b" ] || b=$(git symbolic-ref -q --short "refs/remotes/$remote/HEAD" 2>/dev/null | sed "s#^$remote/##")
   for c in main master; do
     [ -n "$b" ] || ! git rev-parse -q --verify "$remote/$c" >/dev/null || b=$c
