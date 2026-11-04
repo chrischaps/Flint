@@ -1,0 +1,59 @@
+# A dry-laid fieldstone wall: rounded stones of uneven size, deep mortar.
+#
+# texture_v1 writes a set of PBR maps that agree with each other. A
+# *pattern* lays out the cells (here Voronoi stones), and one derivation
+# turns that layout into all three maps, so a stone that sits proud in the
+# normal map is also its own shade in the albedo and its own roughness.
+#
+#   flint gen specs/examples/stone_wall.procgen.toml -o stone_wall.png
+#     -> stone_wall_color.png, stone_wall_normal.png, stone_wall_roughness.png
+#   flint edit specs/examples/stone_wall.procgen.toml   # T tiles the preview
+#
+# Every key is optional; anything left out takes the default that
+# `flint edit` shows (hover a field for what it does). Keys for another
+# pattern are refused by `flint gen --strict`.
+
+generator = "texture_v1"
+
+[meta]
+name = "stone_wall"                      # what a scene's material.texture names
+description = "Rounded fieldstones in deep mortar"
+version = "1.0.0"
+tags = ["texture", "stone", "wall", "example"]
+
+[seed]
+mode = "fixed"
+value = 2203
+
+[params]
+width = 512
+height = 512
+output_maps = ["albedo", "normal", "roughness"]
+seamless = true                          # tiles on every edge: lay it on a wall
+
+# ── Layout: Voronoi stones ───────────────────────────────────────────────
+pattern = "voronoi_brick"
+cell_count = 30                          # stones across the whole texture
+regularity = 0.35                        # 0 random, 1 evenly relaxed. In between
+                                         # gives stones of believably uneven size
+mortar_width = 0.03                      # the groove's full width, as a fraction of
+                                         # the texture width (about 15 px here)
+height_variation = 0.55                  # each stone sits at its own depth
+
+# ── Colour ───────────────────────────────────────────────────────────────
+base_color = "#8C8273"                   # weathered limestone
+color_variation = 0.05                   # each stone's lightness strays up to 5%;
+                                         # the hue stays, so grey stays grey
+mortar_color = "#4A443B"
+mortar_threshold = 0.5                   # how far into the groove the mortar fills:
+                                         # 0.5 is its bottom half, so the stone edges
+                                         # roll down into it
+
+# ── Surface ──────────────────────────────────────────────────────────────
+roughness_base = 0.86
+roughness_variation = 0.08
+roughness_mortar = 0.95                  # mortar is chalkier than the stone faces
+normal_strength = 1.6                    # the normal map's depth
+detail_scale = 12.0                      # one detail field pits the stones in all
+detail_octaves = 5                       #   three maps at once: a dent is darker,
+detail_strength = 0.12                   #   deeper and rougher in the same place

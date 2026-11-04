@@ -15,8 +15,17 @@ fn oak_spec() -> PathBuf {
     repo_root().join("specs/oak_tree.procgen.toml")
 }
 
-/// A fresh, empty project directory for one test.
+/// A fresh project directory for one test, empty but for the `flint.toml`
+/// that marks it as a project. Without it the store would be found by
+/// walking up to the engine checkout `target/` sits in (#179).
 fn project(name: &str) -> PathBuf {
+    let dir = scratch(name);
+    std::fs::write(dir.join("flint.toml"), "").unwrap();
+    dir
+}
+
+/// A fresh, empty directory with no project marker.
+fn scratch(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("gen_batch_register")
         .join(name);
@@ -65,6 +74,7 @@ fn files_in(dir: &Path) -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "flint.toml")
         .collect();
     v.sort();
     v
@@ -239,6 +249,77 @@ fn a_plain_register_records_the_specs_own_seed_and_hits_the_cache() {
     assert!(second.contains("Cached: "), "{second}");
 }
 
+/// The one provenance entry a single registered run left in `dir`.
+fn only_entry(dir: &Path) -> PathBuf {
+    let specs: Vec<_> = std::fs::read_dir(dir.join(".flint/procgen"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(specs.len(), 1, "{specs:?}");
+    let entries: Vec<_> = std::fs::read_dir(&specs[0])
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    entries[0].clone()
+}
+
+#[test]
+fn an_entry_from_another_generator_revision_is_stale_and_regenerates() {
+    // #178: the spec hash doesn't cover the generator, so an entry an older
+    // tree_v1 made used to come back `Cached:` after the generator changed.
+    let dir = project("stale_revision");
+    let oak = oak_spec();
+    let args = [s(&oak), "-o", "tree.glb", "--register"];
+    ok(gen_in(&dir, &args));
+    let sidecar = dir.join("tree.glb.asset.toml");
+    let rev = props(&sidecar)["generator_revision"]
+        .as_integer()
+        .expect("the sidecar records the generator revision");
+    assert!(rev >= 1);
+    let entry = only_entry(&dir);
+    let line = format!("generator_revision = {rev}");
+    let text = std::fs::read_to_string(&entry).unwrap();
+    assert!(text.contains(&line), "{text}");
+
+    // As if the files were made by the revision before this one.
+    std::fs::write(
+        &entry,
+        text.replace(&line, &format!("generator_revision = {}", rev - 1)),
+    )
+    .unwrap();
+    let t = ok(gen_in(&dir, &args));
+    assert!(
+        t.contains(&format!(
+            "Stale: tree.glb (seed 42, tree_v1 rev {} -> {rev}), regenerating",
+            rev - 1
+        )),
+        "{t}"
+    );
+    assert!(t.contains("Registered: "), "{t}");
+    assert!(!t.contains("Cached: "), "{t}");
+    // The rewrite records the revision that made the file, and is a hit.
+    assert_eq!(
+        props(&sidecar)["generator_revision"].as_integer(),
+        Some(rev)
+    );
+    assert!(std::fs::read_to_string(&entry).unwrap().contains(&line));
+    let t = ok(gen_in(&dir, &args));
+    assert!(
+        t.contains(&format!("spec and tree_v1 rev {rev} unchanged")),
+        "{t}"
+    );
+
+    // An entry from before revisions were recorded is stale too.
+    let text = std::fs::read_to_string(&entry).unwrap();
+    std::fs::write(&entry, text.replace(&format!("{line}\n"), "")).unwrap();
+    let t = ok(gen_in(&dir, &args));
+    assert!(
+        t.contains(&format!("tree_v1 rev unrecorded -> {rev}), regenerating")),
+        "{t}"
+    );
+}
+
 #[test]
 fn the_cache_restores_a_deleted_or_altered_output_from_the_store() {
     let dir = project("restore");
@@ -315,4 +396,59 @@ fn flags_that_would_be_ignored_are_refused() {
         assert!(!o.status.success(), "{why} was accepted:\n{}", text(&o));
     }
     assert!(files_in(&dir).is_empty(), "wrote {:?}", files_in(&dir));
+}
+
+#[test]
+fn every_folder_of_a_project_shares_one_store() {
+    // #179's done-when: a game laid out the way `flint init` and the game
+    // repos are (schemas/ + scenes/), registered from its root, then from
+    // specs/, then from its engine/ subtree and with --project from outside.
+    let game = scratch("one_store");
+    for d in ["schemas", "scenes", "specs", "engine/crates/flint-core"] {
+        std::fs::create_dir_all(game.join(d)).unwrap();
+    }
+    std::fs::write(game.join("engine/crates/flint-core/Cargo.toml"), "").unwrap();
+    std::fs::copy(oak_spec(), game.join("specs/oak.procgen.toml")).unwrap();
+    let spec = game.join("specs/oak.procgen.toml");
+
+    let first = ok(gen_in(
+        &game,
+        &["specs/oak.procgen.toml", "-o", "tree.glb", "--register"],
+    ));
+    assert!(first.contains("Registered: "), "{first}");
+    assert!(
+        first.contains("Store:      .flint") && first.contains("schemas/ + scenes/"),
+        "the store's place is printed:\n{first}"
+    );
+    assert_eq!(store_blobs(&game), 1);
+
+    let specs = game.join("specs");
+    let second = ok(gen_in(
+        &specs,
+        &["oak.procgen.toml", "-o", "tree.glb", "--register"],
+    ));
+    assert!(second.contains("Cached: "), "from specs/:\n{second}");
+    assert!(!second.contains("Registered: "), "{second}");
+
+    let engine = game.join("engine");
+    let third = ok(gen_in(&engine, &[s(&spec), "-o", "tree.glb", "--register"]));
+    assert!(third.contains("Cached: "), "from engine/:\n{third}");
+
+    let outside = scratch("one_store_outside");
+    let fourth = ok(gen_in(
+        &outside,
+        &[s(&spec), "-o", "tree.glb", "--register", "--project", s(&game)],
+    ));
+    assert!(fourth.contains("Cached: "), "with --project:\n{fourth}");
+    assert!(fourth.contains("by --project"), "{fourth}");
+
+    // One store, one blob; no second .flint/ anywhere it ran.
+    assert_eq!(store_blobs(&game), 1);
+    for d in [&specs, &engine, &outside] {
+        assert!(
+            !d.join(".flint").exists(),
+            "a stray store in {}",
+            d.display()
+        );
+    }
 }

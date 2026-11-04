@@ -132,6 +132,9 @@ mod tests {
         assert_eq!(report.total_triangles, 1);
         assert_eq!(check(&report, "normals").status, CheckStatus::Warn);
         assert_eq!(check(&report, "UV range").status, CheckStatus::Warn);
+        // `--report json` reads the missing vertices as numbers: 3 over a ceiling of 0.
+        assert_eq!(check(&report, "normals").measured(), Some((3.0, 0.0)));
+        assert_eq!(check(&report, "UV range").measured(), Some((3.0, 0.0)));
         std::fs::remove_dir_all(&dir).ok();
     }
 

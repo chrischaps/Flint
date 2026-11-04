@@ -25,6 +25,11 @@ pub struct TextureField {
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
+    /// Whether ops that sample noise or repeat a pattern make it tile (the
+    /// spec's `seamless`, default true): each rounds its frequencies to a
+    /// whole number of cycles per tile and wraps its lattice; simplex noise
+    /// cross-fades. False keeps the plain, unwrapped fields.
+    pub seamless: bool,
     /// Named per-pixel float buffers, each of length `width * height`.
     channels: HashMap<String, Vec<f32>>,
 }
@@ -35,7 +40,36 @@ impl TextureField {
         Self {
             width,
             height,
+            seamless: true,
             channels: HashMap::new(),
+        }
+    }
+
+    /// The same field with `seamless` set.
+    pub fn with_seamless(mut self, seamless: bool) -> Self {
+        self.seamless = seamless;
+        self
+    }
+
+    /// How visible the tile's seams are in one channel; the measure of
+    /// [`PatternField::seam_steps`](super::pattern::PatternField::seam_steps)
+    /// (a missing channel reads as zeros).
+    pub fn seam_steps(&self, channel: &str) -> super::pattern::SeamSteps {
+        let (w, h) = (self.width, self.height);
+        let at = |x: u32, y: u32| self.get(channel, x, y);
+        let col_pair =
+            |a: u32, b: u32| (0..h).map(|y| (at(a, y) - at(b, y)).abs()).sum::<f32>() / h as f32;
+        let row_pair =
+            |a: u32, b: u32| (0..w).map(|x| (at(x, a) - at(x, b)).abs()).sum::<f32>() / w as f32;
+        let cols: Vec<f32> = (1..w).map(|x| col_pair(x - 1, x)).collect();
+        let rows: Vec<f32> = (1..h).map(|y| row_pair(y - 1, y)).collect();
+        let max = |v: &[f32]| v.iter().copied().fold(0.0f32, f32::max);
+        super::pattern::SeamSteps {
+            across_x: col_pair(w - 1, 0),
+            across_y: row_pair(h - 1, 0),
+            interior_x: max(&cols),
+            interior_y: max(&rows),
+            interior: cols.iter().sum::<f32>() / cols.len().max(1) as f32,
         }
     }
 

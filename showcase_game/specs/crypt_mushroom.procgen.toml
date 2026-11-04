@@ -21,7 +21,6 @@ bark_color_base = "#B8A89C"
 bark_roughness = 0.4
 
 branch_method = "lsystem"
-branch_levels = 1
 branch_angle_min = 60.0
 branch_angle_max = 85.0
 branch_length_falloff = 0.4
@@ -29,7 +28,6 @@ branch_radius_falloff = 0.8
 lsystem_iterations = 1
 lsystem_angle_variation = 8.0
 
-crown_shape = "hemisphere"
 crown_radius = 1.2
 
 leaf_style = "mesh"

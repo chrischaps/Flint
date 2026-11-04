@@ -19,6 +19,9 @@
 #                                             take over a younger claim, because
 #                                             a human asked; the reason is recorded
 #   scripts/issue.sh claim <n> --no-worktree  claim without making a worktree
+#   scripts/issue.sh claim <n> --base <branch>
+#                                             branch from <branch> on origin (a
+#                                             feature branch) and land on it
 #   scripts/issue.sh renew <n>                refresh your claim's timestamp
 #   scripts/issue.sh release <n>              give up your claim
 #   scripts/issue.sh land <n> [--verify CMD]  verify, then deliver: push mode
@@ -28,12 +31,15 @@
 #   scripts/issue.sh mine <n> [--offline]     exit 0 if you hold n here (hooks)
 #   scripts/issue.sh closed <n>...            print those of n... closed on
 #                                             GitHub, one a line (hooks)
+#   scripts/issue.sh base [<n>]               print the branch n's work lands on;
+#                                             with no n, this worktree's (hooks)
 #   scripts/issue.sh reap [--dry-run] [<n>...]
 #                                             delete every claim (or n's) whose
 #                                             issue is closed, whoever holds it
 #   scripts/issue.sh merged <pr> [--dry-run]  reap the claims of the issues a
 #                                             merged PR closes, and delete its
-#                                             issue-<n> branch
+#                                             issue-<n> branch; on a claim's own
+#                                             feature base, close the issue first
 #
 # A pr-mode land leaves its claim on origin until the PR merges, and the
 # merge closes the issue, so reap is where those claims end. The
@@ -42,6 +48,18 @@
 # a minute of its issue; the SessionStart hook reaps whatever that missed.
 # Reaping is the one way to delete another agent's claim: a closed issue's
 # claim guards nothing.
+#
+# Work on a feature branch: claim <n> --base feature/x. The base goes in the
+# claim commit, not in issue.conf, which would ride into the default branch
+# with the merge. So it's the one claim's: renew and --steal carry it, and land
+# and the guard read it back. A claim with no base recorded (made without
+# --base, or by an older kit) uses CLAIM_BASE, issue.conf, then origin's HEAD.
+# GitHub closes an issue only for a merge to the default branch, so a merged PR
+# into the base its claim records has merged close the issue, with a comment
+# naming the PR and the base, and then reap. A PR into any other branch closes
+# nothing, and a merge to the default branch is left to GitHub. The feature
+# branch must be cut from a default branch that already holds release-claim.yml:
+# GitHub reads a PR's workflow from the branch the PR merges into.
 #
 # --override is for a human who knows the holder is gone (a session they
 # closed, a machine that's off). Agents use it only when asked to. The reason
@@ -65,7 +83,8 @@
 #
 # Environment (wins over issue.conf):
 #   CLAIM_REMOTE     remote to use (default origin)
-#   CLAIM_BASE, CLAIM_LAND, CLAIM_VERIFY   as base, land and verify above
+#   CLAIM_BASE, CLAIM_LAND, CLAIM_VERIFY   as base, land and verify above (a
+#                    base recorded by claim --base wins over both)
 #   CLAIM_TTL_HOURS  age after which a claim may be stolen (default 24)
 #   CLAIM_AGENT_ID   name to claim under (default <host>-<time>-<random>);
 #                    when set, renew, release and land refuse a claim made
@@ -94,11 +113,12 @@ LABEL=claimed
 
 die() { echo "issue.sh: $*" >&2; exit 1; }
 
-usage() { sed -n '12,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '12,42p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 gh_on() { [ "${CLAIM_NO_GH:-}" != 1 ]; }
 
-# The branch work lands on: issue.conf, else origin's HEAD, else main or master.
+# The branch work lands on when its claim records none: issue.conf, else
+# origin's HEAD, else main or master.
 base_branch() {
   local b=${CLAIM_BASE:-$base}
   if [ -z "$b" ]; then
@@ -192,6 +212,18 @@ drop_label() { # <n>...
   for n in "$@"; do gh api -X DELETE "repos/{owner}/{repo}/issues/$n/labels/$LABEL" >/dev/null 2>&1 || true; done
 }
 
+default_branch() { gh api "repos/{owner}/{repo}" -q .default_branch; }
+
+# GitHub closes an issue only for a merge to the default branch, so work landed
+# on a claim's feature base closes its issue here. Closes first and comments
+# after, so a run that failed to close can run again without saying it twice.
+close_on_base() { # <n> <base> <default branch> <what landed it>
+  gh api -X PATCH "repos/{owner}/{repo}/issues/$1" -f state=closed -f state_reason=completed >/dev/null || return 1
+  gh api "repos/{owner}/{repo}/issues/$1/comments" \
+    -f body="Landed on \`$2\` by $4, so this is closed here: GitHub closes issues only for merges to the default branch. The work reaches \`$3\` when \`$2\` does." >/dev/null \
+    || echo "issue.sh: closed #$1, but couldn't comment on it" >&2
+}
+
 # The url of branch's open PR, or nothing.
 pr_of_branch() { # <branch>
   gh api -X GET "repos/{owner}/{repo}/pulls" -F head="{owner}:$1" -f state=open -q '.[0].html_url // empty'
@@ -233,19 +265,23 @@ claim_body() { git log -1 --format=%B "$1"; }
 
 agent_of() { claim_body "$1" | sed -n 's/^agent: //p'; }
 
+# The base a claim commit records (claim --base), or nothing.
+recorded_base() { claim_body "$1" 2>/dev/null | sed -n 's/^base: //p' || true; }
+
 age_text() {
   local s=$(( $(now) - $1 ))
   if [ "$s" -lt 3600 ]; then echo "$(( s / 60 ))m"; else echo "$(( s / 3600 ))h$(( s % 3600 / 60 ))m"; fi
 }
 
-make_claim() { # <n> <agent> [parent] [extra trailer lines]
+make_claim() { # <n> <agent> [parent] [extra trailer lines] [base]
   local msg parent=()
   [ -n "${3:-}" ] && parent=(-p "$3")
   msg="claim #$1
 
 agent: $2
 host: $(hostname)
-at: $(date -u +%Y-%m-%dT%H:%M:%SZ)${4:+
+at: $(date -u +%Y-%m-%dT%H:%M:%SZ)${5:+
+base: $5}${4:+
 $4}"
   printf '%s\n' "$msg" | git commit-tree "$(git mktree </dev/null)" ${parent[@]+"${parent[@]}"}
 }
@@ -320,8 +356,38 @@ cmd_closed() {
   done < <(issue_states "$@")
 }
 
+# base [<n>]: print the branch n's work lands on: the base its claim records,
+# else the repo's. With no n, the same for the claims held in this worktree,
+# so the guard can judge a push from any branch; claims here that disagree say
+# nothing about this push, so those get the repo's, which errs toward refusing.
+cmd_base() {
+  local n=${1:-} rec branch here sha _t b found=""
+  if [ -n "$n" ]; then
+    read -r sha _t <<<"$(remote_claim "$n")"
+    b=""
+    [ -z "${sha:-}" ] || b=$(recorded_base "$sha")
+    echo "${b:-$(base_branch)}"
+    return 0
+  fi
+  here=$(git rev-parse --show-toplevel)
+  branch=$(git branch --show-current)
+  for rec in "$(record_dir)"/issue-*; do
+    [ -f "$rec" ] || continue
+    # By its worktree, or by the branch for a claim made with --no-worktree.
+    [ "$(sed -n 2p "$rec")" = "$here" ] || [ "${rec##*/}" = "${branch##*/}" ] || continue
+    read -r sha _t <<<"$(remote_claim "${rec##*/issue-}")"
+    [ -n "${sha:-}" ] || continue
+    b=$(recorded_base "$sha")
+    b=${b:-$(base_branch)}
+    if [ -z "$found" ]; then found=$b
+    elif [ "$found" != "$b" ]; then base_branch; return 0
+    fi
+  done
+  echo "${found:-$(base_branch)}"
+}
+
 cmd_list() {
-  local found=0 ref sha n claims states="" state mins note closed=()
+  local found=0 ref sha n claims states="" state mins note on closed=()
   claims=$(remote_claims)
   if [ -n "$claims" ]; then
     found=1
@@ -333,7 +399,8 @@ cmd_list() {
       note=""
       read -r state mins <<<"$(state_of "$n" "$states")"
       if is_closed "${state:-}"; then note="  issue closed"; closed+=("#$n"); fi
-      printf '#%-5s %-40s %s ago%s\n' "$n" "$(agent_of "$sha")" "$(age_text "$(git log -1 --format=%ct "$sha")")" "$note"
+      on=$(recorded_base "$sha")
+      printf '#%-5s %-40s %s ago%s%s\n' "$n" "$(agent_of "$sha")" "$(age_text "$(git log -1 --format=%ct "$sha")")" "${on:+  on $on}" "$note"
     done <<<"$claims"
   fi
   if [ "$ISSUE_BRANCH_CLAIMS" = 1 ]; then
@@ -354,7 +421,7 @@ held() { # <n> <holder> <claim time or empty> <worktree>
 }
 
 cmd_claim() {
-  local n=${1:?issue number} steal="" override="" make_wt=1 here="" ref agent sha old old_t state wt base_ref="" note="" b
+  local n=${1:?issue number} steal="" override="" make_wt=1 here="" ref agent sha old old_t state wt base_ref="" note="" b on=""
   shift
   while [ $# -gt 0 ]; do
     case $1 in
@@ -364,6 +431,9 @@ cmd_claim() {
         override=$2; shift ;;
       --no-worktree) make_wt="" ;;
       --here) make_wt="" here=1 ;;
+      --base)
+        [ $# -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || die "--base needs a branch, e.g. --base feature/x"
+        on=$2; shift ;;
       *) die "claim: unknown option $1" ;;
     esac
     shift
@@ -386,6 +456,17 @@ cmd_claim() {
     if [ -n "$(issue_branch_claim "$n")" ] && [ "$(git branch --show-current)" != "issue-$n" ]; then
       held "$n" "the branch issue-$n on $REMOTE (an older-style claim)" "" "$wt"
     fi
+  fi
+
+  # A takeover continues the same work, so it lands where that claim would have.
+  if [ -n "$steal" ] && [ -z "$on" ]; then
+    read -r old old_t <<<"$(remote_claim "$n")"
+    [ -z "${old:-}" ] || on=$(recorded_base "$old")
+  fi
+  if [ -n "$on" ]; then
+    git ls-remote --exit-code --heads "$REMOTE" "refs/heads/$on" >/dev/null 2>&1 \
+      || die "--base: $on isn't a branch on $REMOTE; push it first, cut from a $(base_branch) that holds release-claim.yml"
+    git fetch -q "$REMOTE" "+refs/heads/$on:refs/remotes/$REMOTE/$on"
   fi
 
   # Checked before claiming, so a refusal leaves nothing to undo. A worktree
@@ -413,18 +494,18 @@ cmd_claim() {
     if [ -n "$override" ]; then
       note="taken over from \`$(agent_of "$old")\`'s $(age_text "$old_t")-old claim, by override: $override"
       sha=$(make_claim "$n" "$agent" "" "stolen-from: $(agent_of "$old")
-override: $override")
+override: $override" "$on")
     else
       [ $(( $(now) - old_t )) -ge $(( TTL_HOURS * 3600 )) ] \
         || die "#$n claim by $(agent_of "$old") is $(age_text "$old_t") old, under the ${TTL_HOURS}h TTL. Only a human can say it's gone sooner: then add --override \"<reason>\""
       note="taken over from \`$(agent_of "$old")\`'s stale claim"
-      sha=$(make_claim "$n" "$agent" "" "stolen-from: $(agent_of "$old")")
+      sha=$(make_claim "$n" "$agent" "" "stolen-from: $(agent_of "$old")" "$on")
     fi
     # Compare-and-swap: fails if the holder renewed since we looked.
     git push -q --force-with-lease="$ref:$old" "$REMOTE" "$sha:$ref" \
       || die "#$n claim changed while stealing it; run list and look again"
   else
-    sha=$(make_claim "$n" "$agent")
+    sha=$(make_claim "$n" "$agent" "" "" "$on")
     if ! git push -q "$REMOTE" "$sha:$ref" 2>/dev/null; then
       read -r old old_t <<<"$(remote_claim "$n")"
       [ -n "${old:-}" ] || die "push of the claim for #$n failed, and nobody holds it; check the network and retry"
@@ -435,7 +516,7 @@ override: $override")
   mkdir -p "$(record_dir)"
   if [ -n "$make_wt" ]; then
     # Continue an earlier agent's pushed work in progress, if there is any.
-    b=$(base_branch)
+    b=${on:-$(base_branch)}
     git fetch -q "$REMOTE" "$b"
     base_ref=$REMOTE/$b
     if git fetch -q "$REMOTE" "refs/heads/issue-$n:refs/remotes/$REMOTE/issue-$n" 2>/dev/null; then
@@ -455,20 +536,24 @@ override: $override")
   if gh_on; then
     add_label "$n"
     gh api "repos/{owner}/{repo}/issues/$n/comments" \
-      -f body="Claimed by \`$agent\` on \`$(hostname)\`${note:+, $note}." >/dev/null || true
+      -f body="Claimed by \`$agent\` on \`$(hostname)\`${note:+, $note}${on:+, to land on \`$on\`}." >/dev/null || true
   fi
   echo "claimed #$n as $agent${note:+, ${note//\`/}}"
   if [ -n "$make_wt" ]; then
     echo "worktree: $wt (branch issue-$n from $base_ref). Work there; renew, release and land run only from it"
   elif [ -n "$here" ]; then
     echo "for this worktree: $wt. Renew, release and land run only from it"
+    # This worktree was made before the claim, perhaps from the default branch.
+    [ -z "$on" ] || git merge-base --is-ancestor "$REMOTE/$on" HEAD \
+      || echo "issue.sh: warning: HEAD isn't built on $REMOTE/$on, so its PR would carry more than this work; rebase or reset onto it first" >&2
   fi
+  [ -z "$on" ] || echo "base: $on. land opens its PR there, and that merge closes the issue"
 }
 
 cmd_renew() {
   local n=${1:?issue number} old new
   old=$(require_mine "$n")
-  new=$(make_claim "$n" "$(record_agent "$n")" "$old")
+  new=$(make_claim "$n" "$(record_agent "$n")" "$old" "" "$(recorded_base "$old")")
   git push -q "$REMOTE" "$new:$(ref_of "$n")" || die "renew of #$n was rejected"
   echo "renewed #$n"
 }
@@ -571,30 +656,69 @@ cmd_reap() {
   done
 }
 
+# merged's step for a PR into a branch that isn't the default: GitHub leaves
+# its issues open, so close each one whose claim records that same branch as
+# its base, leaving reap to end the claim. A merge to the default branch, a PR
+# nobody claimed for this branch, and a claim on another base are all left alone.
+close_merged_on_base() { # <pr> <its base> <--dry-run or empty> <n>...
+  local pr=$1 to=$2 dry=$3 default states n state _mins sha _t on failed=""
+  shift 3
+  default=$(default_branch 2>/dev/null) && [ -n "$default" ] \
+    || { echo "couldn't read the default branch: no issue closed for PR #$pr"; return 0; }
+  [ "$to" != "$default" ] || return 0
+  states=$(issue_states "$@")
+  for n in "$@"; do
+    read -r state _mins <<<"$(state_of "$n" "$states")"
+    [ "${state:-}" = OPEN ] || continue
+    read -r sha _t <<<"$(remote_claim "$n")"
+    on=""
+    [ -z "${sha:-}" ] || on=$(recorded_base "$sha")
+    if [ "$on" != "$to" ]; then
+      if [ -n "${sha:-}" ]; then
+        echo "left #$n open: PR #$pr merged into $to, and its claim's base is ${on:-not recorded}"
+      else
+        echo "left #$n open: PR #$pr merged into $to, and it has no claim"
+      fi
+    elif [ -n "$dry" ]; then
+      echo "would close #$n: PR #$pr merged into $to, its claim's base"
+    elif close_on_base "$n" "$to" "$default" "PR #$pr"; then
+      echo "closed #$n: PR #$pr merged into $to, its claim's base"
+    else
+      echo "issue.sh: couldn't close #$n" >&2
+      failed=1
+    fi
+  done
+  # Fail the run, so it's seen; running it again picks up what's still open.
+  [ -z "$failed" ] || die "an issue PR #$pr closes is still open, so its claim stays"
+}
+
 # The issues a PR's text closes, one number per line: its closing keywords as
 # land checks for them, digits only, never the branch name.
 closing_numbers() {
   grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?):? +#[0-9]+\b' | grep -oE '[0-9]+$' | sort -un || true
 }
 
-# Line 1 "<state> <cross-repo> <head branch> <head sha>"; then every text
+# Line 1 "<state> <cross-repo> <head branch> <head sha> <base branch>"; then every text
 # that can close an issue: GitHub's own list of the issues the PR closes (its
 # body, and any linked by hand), the body, and each commit's message.
-JQ_PR='"\(.state) \(.isCrossRepository) \(.headRefName) \(.headRefOid)", (.closingIssuesReferences[] | "closes #\(.number)"), .body, (.commits[] | .messageHeadline, .messageBody)'
+JQ_PR='"\(.state) \(.isCrossRepository) \(.headRefName) \(.headRefOid) \(.baseRefName)", (.closingIssuesReferences[] | "closes #\(.number)"), .body, (.commits[] | .messageHeadline, .messageBody)'
 
 # merged <pr> [--dry-run]: what the release-claim workflow runs when a PR
 # merges. Reaps the claims of the issues it closes, once GitHub has closed
 # them (the workflow's run for each issue's close catches any it hasn't
 # yet), and deletes its head branch if that is issue-<n> for one of them,
-# leased on the merged sha so work pushed after the merge stays.
+# leased on the merged sha so work pushed after the merge stays. A PR into a
+# claim's feature base closes the issue first, since GitHub won't. No run
+# follows that close (GITHUB_TOKEN's events start no workflows), so this
+# run's reap is the one that ends the claim.
 cmd_merged() {
-  local pr=${1:?PR number} dry="" info state cross branch sha nums n
+  local pr=${1:?PR number} dry="" info state cross branch sha to nums n
   [ "${2:-}" = --dry-run ] && dry=--dry-run
   case $pr in *[!0-9]*) die "merged: $pr isn't a PR number" ;; esac
   gh_on || die "merged reads the PR from GitHub, so it can't run with CLAIM_NO_GH=1"
-  info=$(gh pr view "$pr" --json state,isCrossRepository,headRefName,headRefOid,closingIssuesReferences,body,commits \
+  info=$(gh pr view "$pr" --json state,isCrossRepository,headRefName,headRefOid,baseRefName,closingIssuesReferences,body,commits \
     -q "$JQ_PR") || die "couldn't read PR #$pr"
-  read -r state cross branch sha <<<"$(head -n 1 <<<"$info")"
+  read -r state cross branch sha to <<<"$(head -n 1 <<<"$info")"
   if [ "$state" != MERGED ]; then
     echo "PR #$pr is ${state:-unknown}, not merged: every claim stays"
     return 0
@@ -605,6 +729,8 @@ cmd_merged() {
     return 0
   fi
   echo "PR #$pr closes $(printf '#%s ' $nums)"
+  # shellcheck disable=SC2086
+  [ -z "${to:-}" ] || close_merged_on_base "$pr" "$to" "$dry" $nums
   # shellcheck disable=SC2086
   cmd_reap $dry $nums
   [ "$cross" = false ] && [[ $branch =~ ^issue-([0-9]+)$ ]] || return 0
@@ -622,15 +748,19 @@ cmd_merged() {
 run_verify() { echo "verifying: $1"; bash -c "$1" || die "verify failed; fix it, commit, land again"; }
 
 cmd_land() {
-  local n=${1:?issue number} verify="" attempt b branch url
+  local n=${1:?issue number} verify="" attempt sha on b branch url says="" default
   shift
   if [ "${1:-}" = --verify ]; then verify=${2:?--verify needs a command}; else verify=$DEFAULT_VERIFY; fi
-  require_mine "$n" >/dev/null
+  sha=$(require_mine "$n")
+  on=$(recorded_base "$sha")
   git diff --quiet && git diff --cached --quiet || die "commit or drop your changes first"
-  b=$(base_branch)
+  b=${on:-$(base_branch)}
   git fetch -q "$REMOTE" "$b"
-  git log "$REMOTE/$b..HEAD" --format=%B | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?) #$n\b" \
-    || echo "issue.sh: warning: no commit says 'Closes #$n'" >&2
+  if git log "$REMOTE/$b..HEAD" --format=%B | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?) #$n\b"; then
+    says=1
+  else
+    echo "issue.sh: warning: no commit says 'Closes #$n'" >&2
+  fi
 
   if [ "$LAND_MODE" = pr ]; then
     # The branch goes up for review; the claim stays until the PR merges and
@@ -686,6 +816,15 @@ cmd_land() {
     # Fast-forward only: a rejection means someone landed first, so loop.
     if git push -q "$REMOTE" "HEAD:$b"; then
       echo "landed #$n at $(git rev-parse --short HEAD)"
+      # A push to a claim's feature base closes nothing on GitHub, and with the
+      # claim released the issue would read as free to take.
+      if [ -n "$on" ] && [ -n "$says" ] && gh_on; then
+        default=$(default_branch 2>/dev/null || true)
+        if [ -n "$default" ] && [ "$default" != "$b" ]; then
+          close_on_base "$n" "$b" "$default" "$(git rev-parse --short HEAD)" \
+            || echo "issue.sh: warning: landed on $b, but couldn't close #$n; close it by hand" >&2
+        fi
+      fi
       cmd_release "$n"
       git push -q "$REMOTE" --delete "issue-$n" 2>/dev/null || true
       return 0
@@ -703,6 +842,7 @@ case ${1:-} in
   land) shift; cmd_land "$@" ;;
   mine) shift; cmd_mine "$@" ;;
   closed) shift; cmd_closed "$@" ;;
+  base) shift; cmd_base "$@" ;;
   reap) shift; cmd_reap "$@" ;;
   merged) shift; cmd_merged "$@" ;;
   *) usage ;;

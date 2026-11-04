@@ -4,6 +4,8 @@
 
 use flint_procgen::{Generator, ProcGenSpec};
 
+use crate::measure::Distance;
+
 use crate::agent::ProcGenAgent;
 use crate::MockAgent;
 
@@ -125,29 +127,57 @@ Reply with:
     )
 }
 
+/// What the refine's first turn shows of the spec as it stands, beside the
+/// reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Current {
+    /// Nothing: the agent had no picture of it.
+    None,
+    /// The texture the spec generates, pixel for pixel.
+    Texture,
+    /// A render of the mesh the spec builds, on the renderer's backdrop.
+    Render,
+}
+
+/// The measured paragraph of a turn: the score and the terms behind it.
+fn measured_lines(d: &Distance, current: Current) -> String {
+    let hex = |c: [u8; 3]| format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
+    let tone = match current {
+        Current::Render => "The render includes its backdrop, so the colour and tone numbers move with how much of the frame the asset fills as well as with its colours: use them for direction, and the images for shape.",
+        _ => "Overall tone is hard to judge by eye in a small image; trust these numbers for it, and the images for pattern and structure.",
+    };
+    format!(
+        "Measured distance to the reference: {:.1} out of 100 (lower is closer). Average colour of the whole image: reference {} {:?}, current output {} {:?} (distance {:.1}). Luminance histogram difference {:.2}, 16x16 layout difference {:.2} (both 0..1). {tone}",
+        d.score,
+        hex(d.reference_mean),
+        d.reference_mean,
+        hex(d.current_mean),
+        d.current_mean,
+        d.mean_colour,
+        d.histogram,
+        d.layout,
+    )
+}
+
 /// The user turn for `refine_spec`. The images, when there are any, come
 /// before this text in the same turn.
 ///
-/// `measured` is the average colour of the reference and of the current
-/// output, when both are images.
+/// `measured` is the distance from what the spec builds now to the
+/// reference, when both are images.
 pub fn refine_task(
     spec: &ProcGenSpec,
     reference: bool,
-    current: bool,
-    measured: Option<([u8; 3], [u8; 3])>,
+    current: Current,
+    measured: Option<&Distance>,
 ) -> String {
     let text = toml::to_string(spec).unwrap_or_default();
-    let hex = |c: [u8; 3]| format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
-    let measured = match measured {
-        Some((r, c)) => format!(
-            "\n\nMeasured average colour of the whole image: reference {} {:?}, current output {} {:?}. Overall tone is hard to judge by eye in a small image; trust these numbers for it, and the images for pattern and structure.",
-            hex(r), r, hex(c), c
-        ),
-        None => String::new(),
-    };
+    let measured = measured
+        .map(|d| format!("\n\n{}", measured_lines(d, current)))
+        .unwrap_or_default();
     let goal = match (reference, current) {
-        (true, true) => "The first image is the reference. The second is what this spec generates now. Adjust the params so the generated asset looks more like the reference: its colours, proportions, density and texture.",
-        (true, false) => "The image is the reference. Adjust the params so the asset this spec generates looks more like it: its colours, proportions, density and silhouette.",
+        (true, Current::Texture) => "The first image is the reference. The second is what this spec generates now. Adjust the params so the generated asset looks more like the reference: its colours, proportions, density and texture.",
+        (true, Current::Render) => "The first image is the reference. The second is a render of the mesh this spec builds now. Adjust the params so the asset looks more like the reference: its colours, proportions, density and silhouette. Compare the asset, not the backgrounds.",
+        (true, Current::None) => "The image is the reference. Adjust the params so the asset this spec generates looks more like it: its colours, proportions, density and silhouette.",
         (false, _) => "There is no reference image. Adjust the params so the asset better matches the spec's description (or its name and tags).",
     };
     format!(
@@ -164,6 +194,26 @@ Reply with:
   "params": {{ ...the full refined params... }},
   "changes": ["`param` a -> b: what it moves toward", "..."]
 }}"#
+    )
+}
+
+/// The user turn after a measured refine round moved the asset closer. The
+/// new image comes before this text; the turn asks for another step.
+pub fn refine_progress(
+    round: u32,
+    before: &Distance,
+    after: &Distance,
+    current: Current,
+) -> String {
+    let what = match current {
+        Current::Render => "The image is a render of what your params build now.",
+        _ => "The image is what your params generate now.",
+    };
+    format!(
+        "Round {round} result. {what} The distance to the reference went from {:.1} to {:.1}: closer.\n\n{}\n\nRefine again from these params toward the reference. Keep the changes that helped and adjust what still differs most. Reply with the complete JSON object, as before.",
+        before.score,
+        after.score,
+        measured_lines(after, current),
     )
 }
 
@@ -226,14 +276,21 @@ mod tests {
         assert!(t.contains("- `trunk_height` = -2"));
         assert!(t.contains("generator = \"tree_v1\""));
         assert!(interpret_task(&spec, &[]).contains("found no problems"));
-        assert!(
-            refine_task(&spec, true, true, None).starts_with("The first image is the reference")
-        );
-        assert!(refine_task(&spec, false, false, None).contains("no reference image"));
-        let m = refine_task(&spec, true, true, Some(([113, 88, 68], [10, 200, 255])));
+        assert!(refine_task(&spec, true, Current::Texture, None)
+            .starts_with("The first image is the reference"));
+        assert!(refine_task(&spec, true, Current::Render, None).contains("a render of the mesh"));
+        assert!(refine_task(&spec, false, Current::None, None).contains("no reference image"));
+        let r = image::RgbImage::from_pixel(4, 4, image::Rgb([113, 88, 68]));
+        let c = image::RgbImage::from_pixel(4, 4, image::Rgb([10, 200, 255]));
+        let d = crate::measure::distance_rgb(&r, &c);
+        let m = refine_task(&spec, true, Current::Texture, Some(&d));
         assert!(
             m.contains("reference #715844 [113, 88, 68], current output #0AC8FF"),
             "{m}"
         );
+        assert!(m.contains(&format!("{:.1} out of 100", d.score)), "{m}");
+        let same = crate::measure::distance_rgb(&r, &r);
+        let p = refine_progress(1, &d, &same, Current::Render);
+        assert!(p.contains(&format!("from {:.1} to 0.0", d.score)), "{p}");
     }
 }

@@ -490,6 +490,11 @@ fn colonize_crown(
             center: floor,
             radius: params.crown_radius,
         },
+        CrownShape::Cone => CrownVolume::Cone {
+            base: floor,
+            radius: params.crown_radius,
+            height: params.crown_radius * params.crown_height_ratio,
+        },
         CrownShape::Box => {
             let r = params.crown_radius;
             let height = r * params.crown_height_ratio;

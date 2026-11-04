@@ -21,13 +21,6 @@ bark_color_base = "#3A5A2A"
 bark_roughness = 0.85
 
 branch_method = "space_colonization"
-branch_levels = 4
-branch_angle_min = 20.0
-branch_angle_max = 50.0
-branch_length_falloff = 0.6
-branch_radius_falloff = 0.5
-lsystem_iterations = 3
-lsystem_angle_variation = 15.0
 
 crown_shape = "sphere"
 crown_radius = 4.0

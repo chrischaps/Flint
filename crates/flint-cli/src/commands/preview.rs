@@ -692,6 +692,46 @@ fn apply_cli_overrides(camera: &mut Camera, args: &PreviewArgs) {
 // ---------------------------------------------------------------------------
 
 fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
+    let img = render_image(args)?;
+    img.save(output_path)
+        .context(format!("Failed to save image to {}", output_path))?;
+
+    println!(
+        "Rendered {}x{} preview to {}",
+        args.width, args.height, output_path
+    );
+
+    Ok(())
+}
+
+/// `flint edit model.glb --render` without the file: the model, auto-framed
+/// on the default camera with no grid, at `width` x `height`. The refine
+/// previewer (`flint gen --refine`) shows Claude meshes through this.
+pub fn render_model(model: &Path, width: u32, height: u32) -> Result<image::RgbaImage> {
+    render_image(&PreviewArgs {
+        model: Some(model.to_string_lossy().into_owned()),
+        render: None,
+        width,
+        height,
+        distance: None,
+        yaw: None,
+        pitch: None,
+        target: None,
+        fov: None,
+        no_grid: true,
+        watch: false,
+        no_animate: true,
+        clip: None,
+        anim_speed: 1.0,
+        anim_time: None,
+        layers: Vec::new(),
+        sequence: None,
+        sequence_loop: false,
+        auto_orbit: false,
+    })
+}
+
+fn render_image(args: &PreviewArgs) -> Result<image::RgbaImage> {
     let model_str = args
         .model
         .as_deref()
@@ -825,17 +865,8 @@ fn run_headless(args: &PreviewArgs, output_path: &str) -> Result<()> {
 
     // Read pixels and save
     let pixels = pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
-    let img = image::RgbaImage::from_raw(args.width, args.height, pixels)
-        .context("Failed to create image from pixel data")?;
-    img.save(output_path)
-        .context(format!("Failed to save image to {}", output_path))?;
-
-    println!(
-        "Rendered {}x{} preview to {}",
-        args.width, args.height, output_path
-    );
-
-    Ok(())
+    image::RgbaImage::from_raw(args.width, args.height, pixels)
+        .context("Failed to create image from pixel data")
 }
 
 // ---------------------------------------------------------------------------

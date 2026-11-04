@@ -5,30 +5,41 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{ArgGroup, Args};
+use clap::{ArgGroup, Args, ValueEnum};
 use flint_asset_gen::StyleGuide;
 use flint_core::ContentHash;
 use flint_procgen::{
     export_glb, Generator, GeneratorOutput, GeneratorRegistry, OutputKind, ProcGenSpec, SeedConfig,
-    SeedMode, ValidationConstraints,
+    SeedMode, ValidationConstraints, ValidationReport,
 };
+use serde::Serialize;
 
 use super::gen_ai;
 use super::gen_store::{self, WrittenFile};
 
-/// The generation summary goes to stdout, unless stdout is carrying the spec
-/// (`--print-spec`), when it moves to stderr.
-static SUMMARY_TO_STDERR: AtomicBool = AtomicBool::new(false);
+/// Human lines go to stdout, unless stdout is carrying something a program
+/// reads: the spec (`--print-spec`) or the JSON report (`--report json`, #185).
+static HUMAN_TO_STDERR: AtomicBool = AtomicBool::new(false);
 
-/// `println!` for the generation summary; see [`SUMMARY_TO_STDERR`].
+/// `println!` for the human lines; see [`HUMAN_TO_STDERR`].
 macro_rules! say {
     ($($t:tt)*) => {
-        if SUMMARY_TO_STDERR.load(Ordering::Relaxed) {
+        if HUMAN_TO_STDERR.load(Ordering::Relaxed) {
             eprintln!($($t)*)
         } else {
             println!($($t)*)
         }
     };
+}
+
+/// How `--validate` reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    /// One `[ PASS]` / `[ WARN]` / `[ FAIL]` line per check and a summary.
+    Human,
+    /// One JSON object per variant on stdout (JSON Lines); human output
+    /// moves to stderr.
+    Json,
 }
 
 #[derive(Args)]
@@ -99,6 +110,19 @@ pub struct GenArgs {
     )]
     pub ai_iterations: Option<u32>,
 
+    /// Most measured refine rounds against --reference. Claude sees a render
+    /// of what the spec builds; each round's result is rendered and
+    /// measured, and the refine asks again while the distance falls, keeping
+    /// the closest spec [default: --ai-iterations]
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "reference",
+        value_parser = clap::value_parser!(u32).range(1..=8),
+        help_heading = "AI assistance"
+    )]
+    pub refine_rounds: Option<u32>,
+
     /// Print the final spec (after any AI steps and --seed) to stdout as
     /// TOML; the generation summary moves to stderr
     #[arg(long, conflicts_with = "validate", help_heading = "AI assistance")]
@@ -152,7 +176,8 @@ pub struct GenArgs {
     #[arg(long, requires = "batch")]
     pub seed_start: Option<u64>,
 
-    /// Store output(s) in the content store (.flint/assets), write a
+    /// Store output(s) in the project's content store (<project>/.flint/assets,
+    /// the project found from the working directory or --project), write a
     /// provenance sidecar beside each file, and reuse an earlier registered
     /// result for the same spec + seed instead of generating
     #[arg(long)]
@@ -169,6 +194,13 @@ pub struct GenArgs {
     /// Treat warnings as failures (exit code 1)
     #[arg(long)]
     pub strict: bool,
+
+    /// Validation report format. `json` writes one object per variant to
+    /// stdout: spec, seed, output, verdict, counts and every check's name,
+    /// status, detail and, where it measured one, `actual` against `limit`
+    /// (a ceiling). Everything else goes to stderr.
+    #[arg(long, value_enum, requires = "validate")]
+    pub report: Option<ReportFormat>,
 
     /// Style guide TOML path for additional validation constraints
     /// (triangle ceiling, roughness/metallic ranges, palette, require_uvs)
@@ -204,7 +236,8 @@ pub fn run(args: GenArgs) -> Result<()> {
             args.since.as_deref(),
         );
     }
-    SUMMARY_TO_STDERR.store(args.print_spec, Ordering::Relaxed);
+    let json = args.report == Some(ReportFormat::Json);
+    HUMAN_TO_STDERR.store(args.print_spec || json, Ordering::Relaxed);
 
     let steps = gen_ai::Steps::of(&args);
     let loaded = match &args.spec {
@@ -223,11 +256,19 @@ pub fn run(args: GenArgs) -> Result<()> {
     let mut spec = if steps.any() {
         let config = gen_ai::resolve_config(&args, Path::new(gen_ai::CONFIG_PATH))?;
         if args.dry_run {
-            gen_ai::print_plan(&config, steps, args.max_cost);
+            // With --print-spec a dry run has no spec to print, so the plan
+            // keeps stdout; only the JSON report needs it kept clear.
+            for line in gen_ai::plan_lines(&config, steps, &args) {
+                if json {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            }
             return Ok(());
         }
         let meter = gen_ai::build_meter(&config, &args);
-        let agent = gen_ai::build_agent(config, meter.clone())?;
+        let agent = gen_ai::build_agent(config, meter.clone(), args.refine_rounds)?;
         gen_ai::run_steps(&args, agent.as_ref(), &meter, loaded)?
     } else {
         loaded.expect("clap requires a spec unless --ai-create or --cost-report")
@@ -270,6 +311,7 @@ pub fn run(args: GenArgs) -> Result<()> {
     }
 
     let kind = generator.output_kind();
+    let revision = generator.revision();
     let format = check_output_format(
         &spec.generator,
         kind,
@@ -351,7 +393,18 @@ pub fn run(args: GenArgs) -> Result<()> {
     };
     let batch_total = args.batch;
 
-    let store = args.register.then(gen_store::Store::open_default);
+    // The project's store, wherever in the project this runs from (#179).
+    let store = args.register.then(|| {
+        let project = flint_asset::Project::current();
+        let store = gen_store::Store::open_project(&project);
+        say!(
+            "Store:      {} (project {}, by {})",
+            flint_asset::Project::display(store.store_root()),
+            flint_asset::Project::display(&project.root),
+            project.found.describe()
+        );
+        store
+    });
     let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
         (false, _, _) => None,
         (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),
@@ -370,27 +423,54 @@ pub fn run(args: GenArgs) -> Result<()> {
             .unwrap_or_default();
         let seed_spec = spec_with_seed(&spec, seed);
 
-        // The cache: this spec + seed was registered before, and the store
-        // still holds every file it made.
+        // The cache: this spec + seed was registered before, by the
+        // generator revision running now, and the store still holds every
+        // file it made.
         if let (Some(store), Some(sh), false) = (&store, &spec_hash, args.force) {
-            if let Some(prov) = store.lookup(sh, seed) {
+            let fresh = store.lookup(sh, seed).filter(|prov| {
+                match prov.stale_for(&spec.generator, revision) {
+                    Some(why) => {
+                        say!(
+                            "{tag}Stale: {} (seed {seed}, {why}), regenerating",
+                            out_path.display()
+                        );
+                        false
+                    }
+                    None => true,
+                }
+            });
+            if let Some(prov) = fresh {
                 let targets = planned_files(out_path, &prov);
                 if let Some(reuse) = store.reuse(&prov, &targets)? {
                     store.write_sidecars(&seed_spec, kind, &prov, &targets)?;
+                    let rev = format!("{} rev {revision}", spec.generator);
                     match reuse {
                         gen_store::Reuse::Present => say!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged)",
                             out_path.display()
                         ),
                         gen_store::Reuse::Restored(k) => say!(
-                            "{tag}Cached: {} (seed {seed}, spec unchanged; restored {k} missing \
-                             or changed file{} from the content store)",
+                            "{tag}Cached: {} (seed {seed}, spec and {rev} unchanged; restored {k} \
+                             missing or changed file{} from the content store)",
                             out_path.display(),
                             if k == 1 { "" } else { "s" }
                         ),
                     }
                     if args.validate {
                         say!("  validation skipped for a cached result (--force regenerates)");
+                        if json {
+                            emit_json(&VariantReport {
+                                spec: &spec.meta.name,
+                                seed,
+                                output: out_path.display().to_string(),
+                                verdict: Verdict::Skipped,
+                                reason: Some("cached result; --force regenerates"),
+                                passed: 0,
+                                warnings: 0,
+                                failed: 0,
+                                report: &ValidationReport { checks: Vec::new() },
+                            })?;
+                        }
                     }
                     cached += 1;
                     continue;
@@ -408,22 +488,34 @@ pub fn run(args: GenArgs) -> Result<()> {
         generated += 1;
 
         if let (Some(store), Some(sh)) = (&store, &spec_hash) {
-            let prov = store.register(&seed_spec, sh, seed, kind, &files)?;
+            let prov = store.register(&seed_spec, sh, seed, revision, kind, &files)?;
             for (f, (_, hash)) in files.iter().zip(&prov.files) {
                 say!("Registered: {} -> {hash}", f.path.display());
             }
         }
 
-        if args.validate
-            && !run_validation(
+        if args.validate {
+            let (report, passed) = run_validation(
                 &output,
                 &files,
                 &seed_spec,
                 args.style_guide.as_deref(),
                 args.strict,
-            )?
-        {
-            validation_failed = true;
+            )?;
+            if json {
+                emit_json(&VariantReport {
+                    spec: &spec.meta.name,
+                    seed,
+                    output: out_path.display().to_string(),
+                    verdict: if passed { Verdict::Pass } else { Verdict::Fail },
+                    reason: None,
+                    passed: report.count_passed(),
+                    warnings: report.count_warnings(),
+                    failed: report.count_failed(),
+                    report: &report,
+                })?;
+            }
+            validation_failed |= !passed;
         }
     }
 
@@ -864,14 +956,50 @@ fn validate_written(
     Ok(report)
 }
 
-/// Validate the files a run wrote, printing results. Returns true if passed.
+/// One variant's line of `--report json`. Its `checks` key is the
+/// [`ValidationReport`]'s, so the line deserialises straight into one (the
+/// other keys are ignored).
+#[derive(Serialize)]
+struct VariantReport<'a> {
+    spec: &'a str,
+    seed: u64,
+    output: String,
+    verdict: Verdict,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    passed: usize,
+    warnings: usize,
+    failed: usize,
+    #[serde(flatten)]
+    report: &'a ValidationReport,
+}
+
+/// The variant's outcome as the exit code sees it: `--strict` makes a
+/// warning a `fail`; a cached result is `skipped`, not checked.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Verdict {
+    Pass,
+    Fail,
+    Skipped,
+}
+
+/// Write one JSON line to stdout.
+fn emit_json(line: &VariantReport) -> Result<()> {
+    let json = serde_json::to_string(line).context("serialising the validation report")?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Validate the files a run wrote and print the human report (to stderr
+/// under `--report json`). Returns the report and whether it passed.
 fn run_validation(
     output: &GeneratorOutput,
     files: &[WrittenFile],
     spec: &ProcGenSpec,
     style_guide_path: Option<&str>,
     strict: bool,
-) -> Result<bool> {
+) -> Result<(ValidationReport, bool)> {
     let style_guide = if let Some(path) = style_guide_path {
         Some(
             StyleGuide::load(Path::new(path))
@@ -888,18 +1016,21 @@ fn run_validation(
     say!();
     let shown: Vec<String> = files.iter().map(|f| f.path.display().to_string()).collect();
     say!("Validating {} (as written)", shown.join(", "));
-    report.print_checks();
+    for line in report.check_lines() {
+        say!("{line}");
+    }
     say!();
-    report.print_summary();
+    say!("{}", report.summary());
 
-    if report.has_failures() {
-        Ok(false)
+    let passed = if report.has_failures() {
+        false
     } else if strict && report.has_warnings() {
         say!("Strict mode: warnings treated as failures");
-        Ok(false)
+        false
     } else {
-        Ok(true)
-    }
+        true
+    };
+    Ok((report, passed))
 }
 
 /// Human-friendly byte size.

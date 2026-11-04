@@ -290,6 +290,27 @@ fn print_spec_puts_only_toml_on_stdout() {
 }
 
 #[test]
+fn json_report_keeps_stdout_clear_of_the_ai_dry_run_plan() {
+    let dir = scratch("report_json_plan");
+    let o = gen_in(
+        &dir,
+        &[
+            "--ai-create",
+            "old brick wall",
+            "--ai-provider",
+            "mock",
+            "--dry-run",
+            "--validate",
+            "--report",
+            "json",
+        ],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(o.stdout.is_empty(), "{}", text(&o));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("nothing was sent"));
+}
+
+#[test]
 fn anthropic_without_a_key_fails_before_any_call() {
     let dir = scratch("no_key");
     let o = gen_in(&dir, &["--ai-create", "tall oak tree", "-o", "tree.glb"]);

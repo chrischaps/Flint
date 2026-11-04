@@ -2,6 +2,7 @@ use flint_procgen::ProcGenSpec;
 
 use crate::error::Result;
 use crate::http::Usage;
+use crate::measure::Distance;
 
 /// Feedback from an AI agent after analyzing a spec.
 #[derive(Debug, Clone)]
@@ -34,7 +35,17 @@ pub struct Report {
     /// the agent converged on its own).
     pub repaired: usize,
     /// The model's own account of its choices (`rationale` / `changes`).
+    /// For a measured refine, the changes of the round that was kept.
     pub notes: Vec<String>,
+    /// A refine's measured distance to the reference, per refine round:
+    /// `[0]` is the spec as it came in, `[i]` what round `i` built. Empty
+    /// when nothing could be measured (no reference, or no picture of
+    /// what the spec builds).
+    pub distances: Vec<Distance>,
+    /// Which refine round's spec was returned: 0 for the spec as it came in
+    /// (no round moved it closer), `i` for round `i`. A refine that isn't
+    /// measured always keeps its one round. 0 for create and interpret.
+    pub kept: usize,
 }
 
 impl Report {

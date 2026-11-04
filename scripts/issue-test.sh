@@ -177,6 +177,10 @@ fi
 case "$*" in
   "api repos/{owner}/{repo}/issues/"[0-9]*" -q "*)
     n=${2##*/}; awk -v n="$n" '$1 == n' "$GH_STATES" | grep . ;;
+  "api repos/{owner}/{repo} -q .default_branch") [ -n "${GH_NO_DEFAULT:-}" ] && exit 1; echo master ;;
+  "api -X PATCH repos/{owner}/{repo}/issues/"*)
+    [ -n "${GH_NO_CLOSE:-}" ] && exit 1
+    n=${4##*/}; sed -i "s/^$n .*/$n CLOSED 0/" "$GH_STATES" ;;
   "api -X GET repos/{owner}/{repo}/pulls "*) cat "$GH_PULLS" ;;
   "api repos/{owner}/{repo}/pulls "*)
     while [ $# -gt 0 ]; do [ "$1" != -f ] || printf '%s' "${2#*=}" >"$GH_FIELDS/${2%%=*}"; shift; done
@@ -373,6 +377,196 @@ expect 0 "claim --here over a record whose claim is gone" bash "$SCRIPT" claim 2
   && ok "the new record names this worktree" || bad "the new record names this worktree"
 bash "$SCRIPT" release 26 >/dev/null
 cd "$REPO"
+
+# A claim on a feature branch (#243). feature/x holds a commit naming #60, a
+# sibling that merged into it and is still open: GitHub closes issues only for
+# merges to the default branch.
+git worktree add -q "$TMP/feat" -b feature/x master
+(cd "$TMP/feat" && echo f >feat && git add feat && git commit -q -m "Sibling on the feature" -m "Closes #60" \
+  && git push -q origin feature/x)
+feat_tip=$(git rev-parse feature/x)
+git worktree remove -f "$TMP/feat"
+git branch -q -D feature/x
+git update-ref -d refs/remotes/origin/feature/x
+body_of() { git log -1 --format=%B "$(claim_of "$1")"; }
+patched() { grep -q "api -X PATCH repos/{owner}/{repo}/issues/$1 " "$GH_LOG"; }
+
+expect 1 "claim --base with no branch is refused" bash "$SCRIPT" claim 61 --base
+expect 1 "claim --base with an option for a branch is refused" bash "$SCRIPT" claim 61 --base --here
+expect 1 "claim --base of a branch not on origin is refused" bash "$SCRIPT" claim 61 --base feature/nope
+grep -q "feature/nope isn't a branch on origin" "$TMP/out" && [ -z "$(claim_of 61)" ] && [ ! -e "$TMP/repo-61" ] \
+  && ok "and claims nothing" || bad "and claims nothing"
+
+expect 0 "claim --base" bash "$SCRIPT" claim 61 --base feature/x
+[ "$(git -C "$TMP/repo-61" rev-parse HEAD)" = "$feat_tip" ] && [ "$(git -C "$TMP/repo-61" branch --show-current)" = issue-61 ] \
+  && ok "issue-61 branches from the feature branch" || bad "issue-61 branches from the feature branch"
+grep -qx "base: feature/x" <<<"$(body_of 61)" && ok "the claim commit records the base" || bad "the claim commit records the base"
+bash "$SCRIPT" list >"$TMP/out"
+grep -q "^#61 .*ago  on feature/x$" "$TMP/out" && ok "list shows the base" || bad "list shows the base"
+
+# A plain claim is what it always was: no trailer, the repo's base.
+expect 0 "a plain claim" bash "$SCRIPT" claim 62 --no-worktree
+! grep -q "^base:" <<<"$(body_of 62)" && ok "records no base" || bad "records no base"
+[ "$(bash "$SCRIPT" base 62)" = master ] && ok "base <n> of a plain claim is the repo's" || bad "base <n> of a plain claim is the repo's"
+[ "$(bash "$SCRIPT" base 61)" = feature/x ] && ok "base <n> reads the claim" || bad "base <n> reads the claim"
+[ "$(CLAIM_BASE=feature/x bash "$SCRIPT" base 62)" = feature/x ] && [ "$(CLAIM_BASE=master bash "$SCRIPT" base 61)" = feature/x ] \
+  && ok "CLAIM_BASE fills in for a claim with none, and doesn't override one" || bad "CLAIM_BASE fills in for a claim with none, and doesn't override one"
+[ "$(bash "$SCRIPT" base)" = master ] && ok "base from a worktree holding no claim is the repo's" || bad "base from a worktree holding no claim is the repo's"
+[ "$(cd "$TMP/repo-61" && bash "$SCRIPT" base)" = feature/x ] && ok "base from the claim's worktree is the claim's" || bad "base from the claim's worktree is the claim's"
+bash "$SCRIPT" release 62 >/dev/null
+
+# Renewing and stealing keep the base.
+(cd "$TMP/repo-61" && bash "$SCRIPT" renew 61 >/dev/null)
+grep -qx "base: feature/x" <<<"$(body_of 61)" && ok "renew keeps the base" || bad "renew keeps the base"
+CLAIM_AGENT_ID=holder-63 bash "$SCRIPT" claim 63 --no-worktree --base feature/x >/dev/null
+rm -f "$RECS/issue-63"
+expect 0 "a stale feature claim is stolen" env CLAIM_TTL_HOURS=0 CLAIM_AGENT_ID=taker-63 bash "$SCRIPT" claim 63 --steal --no-worktree
+grep -qx "base: feature/x" <<<"$(body_of 63)" && grep -qx "stolen-from: holder-63" <<<"$(body_of 63)" \
+  && ok "the steal keeps the base" || bad "the steal keeps the base"
+expect 0 "a steal can move the base" env CLAIM_TTL_HOURS=0 CLAIM_AGENT_ID=taker-63 bash "$SCRIPT" claim 63 --steal --no-worktree --base master
+grep -qx "base: master" <<<"$(body_of 63)" && ok "to the one it names" || bad "to the one it names"
+CLAIM_AGENT_ID=taker-63 bash "$SCRIPT" release 63 >/dev/null
+
+# The guard judges a push against the claim's base: #60 is on feature/x, so it
+# isn't carried. Against the repo's base it would be, and it's open.
+mkdir -p "$TMP/repo-61/scripts" && cp "$SCRIPT" "$TMP/repo-61/scripts/issue.sh"
+(cd "$TMP/repo-61" && echo w >w && git add w && git commit -q -m "Feature work" -m "Closes #61")
+printf '%s\n' "60 OPEN -" "61 OPEN -" >"$GH_STATES"
+expect 0 "guard: a push on the claim's base passes a sibling's Closes already on it" ghhook "$TMP/repo-61" "git push"
+(cd "$TMP/repo-61" && git commit -q --allow-empty -m "Stowaway" -m "Closes #64")
+expect 2 "guard: a Closes past the claim's base is still denied" ghhook "$TMP/repo-61" "git push"
+grep -q "#64 is named by a commit" "$TMP/out" && ! grep -q "#60" "$TMP/out" \
+  && ok "naming that one and not the base's" || bad "naming that one and not the base's"
+(cd "$TMP/repo-61" && git reset -q --hard HEAD~1)
+# The control: the same history with no base on its claim is refused over #60,
+# from a --here worktree whose branch names no issue, as it was before.
+git worktree add -q "$TMP/plain" -b plain-on-feature origin/feature/x
+mkdir -p "$TMP/plain/scripts" && cp "$SCRIPT" "$TMP/plain/scripts/issue.sh"
+(cd "$TMP/plain" && bash "$SCRIPT" claim 65 --here >/dev/null)
+expect 2 "guard: the same history on a claim with no base is denied" ghhook "$TMP/plain" "git push"
+grep -q "#60 is named by a commit" "$TMP/out" && ok "over the sibling's #60" || bad "over the sibling's #60"
+(cd "$TMP/plain" && bash "$SCRIPT" release 65 >/dev/null)
+(cd "$TMP/plain" && bash "$SCRIPT" claim 65 --here --base feature/x >"$TMP/out" 2>&1)
+! grep -q "warning" "$TMP/out" && ok "claim --here --base on the base gives no warning" || bad "claim --here --base on the base gives no warning"
+expect 0 "guard: and with --here --base it passes, on any branch name" ghhook "$TMP/plain" "git push"
+# Two claims in one worktree on different bases say nothing about a push.
+(cd "$TMP/plain" && bash "$SCRIPT" claim 66 --here >/dev/null)
+[ "$(cd "$TMP/plain" && bash "$SCRIPT" base)" = master ] && ok "claims here that disagree give the repo's base" || bad "claims here that disagree give the repo's base"
+(cd "$TMP/plain" && bash "$SCRIPT" release 65 >/dev/null && bash "$SCRIPT" release 66 >/dev/null)
+git worktree remove -f "$TMP/plain"; git branch -q -D plain-on-feature
+# --here warns when the worktree isn't built on the base it names.
+(cd "$TMP/app-wt" && bash "$SCRIPT" claim 67 --here --base feature/x >"$TMP/out" 2>&1)
+grep -q "warning: HEAD isn't built on origin/feature/x" "$TMP/out" && ok "claim --here --base off the base warns" || bad "claim --here --base off the base warns"
+(cd "$TMP/app-wt" && bash "$SCRIPT" release 67 >/dev/null)
+
+# land opens the PR to the claim's base, with only this work in it.
+cd "$TMP/repo-61"
+: >"$GH_LOG"; : >"$GH_PULLS"; rm -f "$GH_FIELDS"/*
+expect 0 "pr-mode land on a feature base" withgh env CLAIM_LAND=pr bash "$SCRIPT" land 61 --verify true
+field() { [ "$(cat "$GH_FIELDS/$1"; echo .)" = "$2." ] && ok "feature land: $1 is ${3:-$2}" || bad "feature land: $1 is ${3:-$2} (got: $(cat "$GH_FIELDS/$1"))"; }
+field base feature/x
+field head issue-61
+field title "Feature work"
+[ "$(git rev-parse origin/master)" != "$(git rev-parse HEAD)" ] && [ "$(git rev-parse origin/feature/x)" = "$feat_tip" ] \
+  && ok "and leaves both branches where they were" || bad "and leaves both branches where they were"
+[ -n "$(claim_of 61)" ] && ok "and keeps the claim" || bad "and keeps the claim"
+[ "$(git diff --name-only origin/feature/x HEAD)" = w ] \
+  && ok "the PR carries the work, and no change to issue.conf" || bad "the PR carries the work, and no change to issue.conf"
+cd "$REPO"
+
+# merged: a PR into the claim's base closes the issue, then releases the claim.
+export CLAIM_REAP_GRACE_MINUTES=0
+tip61=$(git -C "$TMP/repo-61" rev-parse HEAD)
+printf '%s\n' "MERGED false issue-61 $tip61 feature/x" "Closes #61" >"$GH_PR"
+printf '%s\n' "61 OPEN -" >"$GH_STATES"
+: >"$GH_LOG"
+expect 0 "merged --dry-run on a feature base" withgh bash "$SCRIPT" merged 70 --dry-run
+grep -q "would close #61: PR #70 merged into feature/x" "$TMP/out" && ! patched 61 && [ -n "$(claim_of 61)" ] \
+  && grep -q "61 OPEN" "$GH_STATES" && ok "the dry run names the close, and changes nothing" || bad "the dry run names the close, and changes nothing"
+expect 0 "merged on a feature base" withgh bash "$SCRIPT" merged 70
+patched 61 && grep -q "issues/61 -f state=closed -f state_reason=completed" "$GH_LOG" \
+  && ok "it closes the issue" || bad "it closes the issue"
+grep -E "issues/61/comments -f body=.*PR #70.*feature/x" "$GH_LOG" >/dev/null \
+  && ok "with a comment naming the PR and the base" || bad "with a comment naming the PR and the base"
+[ -z "$(claim_of 61)" ] && unlabeled 61 && ok "and releases the claim and its label" || bad "and releases the claim and its label"
+[ -z "$(git ls-remote origin refs/heads/issue-61)" ] && ok "and deletes its issue-61 branch" || bad "and deletes its issue-61 branch"
+# The workflow runs again, or GitHub's own close comes after: nothing said twice.
+: >"$GH_LOG"
+expect 0 "merged again" withgh bash "$SCRIPT" merged 70
+! patched 61 && ! grep -q "issues/61/comments" "$GH_LOG" && ok "closes and comments nothing twice" || bad "closes and comments nothing twice"
+git worktree remove -f "$TMP/repo-61"; git branch -q -D issue-61
+
+# A PR that isn't the claim's closes nothing: a claim with no base, a claim on
+# another base, and an issue nobody claimed all stay open, and claims stay.
+CLAIM_AGENT_ID=e bash "$SCRIPT" claim 71 --no-worktree >/dev/null
+CLAIM_AGENT_ID=e bash "$SCRIPT" claim 72 --no-worktree --base feature/x >/dev/null
+printf '%s\n' "71 OPEN -" "72 OPEN -" "73 OPEN -" >"$GH_STATES"
+printf '%s\n' "MERGED false docs $tip feature/y" "Closes #71" "Closes #72" "Closes #73" >"$GH_PR"
+: >"$GH_LOG"
+expect 0 "merged into a branch no claim names" withgh bash "$SCRIPT" merged 74
+grep -q "left #71 open: .*its claim's base is not recorded" "$TMP/out" && grep -q "left #72 open: .*its claim's base is feature/x" "$TMP/out" \
+  && grep -q "left #73 open: .*it has no claim" "$TMP/out" && ok "it says why each stays open" || bad "it says why each stays open"
+! grep -q "api -X PATCH" "$GH_LOG" && [ -n "$(claim_of 71)" ] && [ -n "$(claim_of 72)" ] \
+  && ok "closes nothing and keeps the claims" || bad "closes nothing and keeps the claims"
+
+# A merge to the default branch is left to GitHub, base recorded or not.
+printf '%s\n' "MERGED false docs $tip master" "Closes #71" "Closes #72" >"$GH_PR"
+: >"$GH_LOG"
+expect 0 "merged into the default branch" withgh bash "$SCRIPT" merged 75
+! grep -q "api -X PATCH" "$GH_LOG" && [ -n "$(claim_of 71)" ] && [ -n "$(claim_of 72)" ] \
+  && ok "closes nothing itself, and the claims wait for GitHub's close" || bad "closes nothing itself, and the claims wait for GitHub's close"
+printf '%s\n' "71 CLOSED 0" "72 CLOSED 0" >"$GH_STATES"
+expect 0 "merged once GitHub has closed them" withgh bash "$SCRIPT" merged 75
+[ -z "$(claim_of 71)" ] && [ -z "$(claim_of 72)" ] && ok "then it reaps them, as before" || bad "then it reaps them, as before"
+# Even a claim that names the default branch as its base: that close is GitHub's.
+CLAIM_AGENT_ID=e bash "$SCRIPT" claim 80 --no-worktree --base master >/dev/null
+printf '%s\n' "80 OPEN -" >"$GH_STATES"
+printf '%s\n' "MERGED false docs $tip master" "Closes #80" >"$GH_PR"
+: >"$GH_LOG"
+expect 0 "merged into the default branch, its claim's base" withgh bash "$SCRIPT" merged 81
+! grep -q "api -X PATCH" "$GH_LOG" && ! grep -q "issues/80/comments" "$GH_LOG" && [ -n "$(claim_of 80)" ] \
+  && ok "closes and comments nothing, and the claim waits" || bad "closes and comments nothing, and the claim waits"
+CLAIM_AGENT_ID=e bash "$SCRIPT" release 80 >/dev/null
+
+# GitHub can't say which branch is the default: nothing is closed on a guess.
+CLAIM_AGENT_ID=e bash "$SCRIPT" claim 76 --no-worktree --base feature/x >/dev/null
+printf '%s\n' "76 OPEN -" >"$GH_STATES"
+printf '%s\n' "MERGED false docs $tip feature/x" "Closes #76" >"$GH_PR"
+: >"$GH_LOG"
+expect 0 "merged with no default branch known" withgh env GH_NO_DEFAULT=1 bash "$SCRIPT" merged 77
+! grep -q "api -X PATCH" "$GH_LOG" && [ -n "$(claim_of 76)" ] && ok "closes nothing, keeps the claim" || bad "closes nothing, keeps the claim"
+# A close that fails keeps the claim and fails the run; running it again finishes.
+expect 1 "merged when the close fails" withgh env GH_NO_CLOSE=1 bash "$SCRIPT" merged 77
+[ -n "$(claim_of 76)" ] && ! grep -q "issues/76/comments" "$GH_LOG" \
+  && ok "keeps the claim and comments nothing" || bad "keeps the claim and comments nothing"
+expect 0 "merged again once it can" withgh bash "$SCRIPT" merged 77
+[ -z "$(claim_of 76)" ] && ok "releases the claim" || bad "releases the claim"
+unset CLAIM_REAP_GRACE_MINUTES
+
+# Push mode on a feature base: land moves that branch, and closes the issue,
+# since nothing else would. On the default branch it leaves the close to GitHub.
+printf '%s\n' "78 OPEN -" "79 OPEN -" >"$GH_STATES"
+bash "$SCRIPT" claim 78 --base feature/x >/dev/null
+cd "$TMP/repo-78"
+git commit -q --allow-empty -m "Pushed to the feature" -m "Closes #78"
+: >"$GH_LOG"
+expect 0 "push-mode land on a feature base" withgh bash "$SCRIPT" land 78 --verify true
+[ "$(git rev-parse origin/feature/x)" = "$(git rev-parse HEAD)" ] && ok "it moves the feature branch" || bad "it moves the feature branch"
+[ "$(git rev-parse origin/master)" != "$(git rev-parse HEAD)" ] && ok "and not the default branch" || bad "and not the default branch"
+patched 78 && grep -q "issues/78/comments .*feature/x" "$GH_LOG" && [ -z "$(claim_of 78)" ] \
+  && ok "closes the issue, says where, and releases the claim" || bad "closes the issue, says where, and releases the claim"
+cd "$REPO"
+git worktree remove -f "$TMP/repo-78"; git branch -q -D issue-78
+bash "$SCRIPT" claim 79 >/dev/null
+cd "$TMP/repo-79"
+git commit -q --allow-empty -m "Pushed to master" -m "Closes #79"
+: >"$GH_LOG"
+expect 0 "push-mode land with no base recorded" withgh bash "$SCRIPT" land 79 --verify true
+! grep -q "api -X PATCH" "$GH_LOG" && ! grep -q "default_branch" "$GH_LOG" && [ "$(git rev-parse origin/master)" = "$(git rev-parse HEAD)" ] \
+  && ok "lands on master and leaves the close to GitHub" || bad "lands on master and leaves the close to GitHub"
+cd "$REPO"
+git fetch -q origin master && git merge -q --ff-only origin/master
+git worktree remove -f "$TMP/repo-79"; git branch -q -D issue-79
 
 # accept_issue_branch: an issue-<n> branch on origin (an older claim.py claim)
 # holds the issue, and the session on that branch passes the guard.

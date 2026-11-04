@@ -1,0 +1,183 @@
+# Oiled oak floorboards: long planks, their grain running end to end.
+#
+# The fixed patterns (see stone_wall.procgen.toml) cover stone and tile, but
+# wood grain is *directional*: noise stretched along the board. That takes
+# the other texture route, a pipeline. Each [[params.ops]] entry is one step
+# that reads named fields (cell_id, height, r/g/b...) and writes others, run
+# top to bottom; the last ones fill the albedo, normal and roughness maps.
+# `flint edit` opens a pipeline spec in the node editor, where each step is
+# a node you can preview.
+#
+#   flint gen specs/examples/wood_plank.procgen.toml -o wood_plank.png
+#     -> wood_plank_color.png, wood_plank_normal.png, wood_plank_roughness.png
+#   flint gen specs/examples/wood_plank.procgen.toml --batch 4 --seed-start 1 -o planks/
+#
+# Unlike the fixed patterns, a pipeline's noise doesn't tile yet (#172).
+
+generator = "texture_v1"
+
+[meta]
+name = "wood_plank"                      # what a scene's material.texture names
+description = "Oiled oak floorboards with long, wandering grain"
+version = "1.0.0"
+tags = ["texture", "wood", "plank", "floor", "example"]
+
+[seed]
+mode = "fixed"
+value = 1214
+
+[params]
+pattern = "pipeline"                     # a pipeline reads only these three
+width = 512                              #   keys and its ops; colour, roughness
+height = 512                             #   and relief are set on the ops
+output_maps = ["albedo", "normal", "roughness"]
+
+# 1. The boards. Writes cell_id (one per plank) and edge_dist (distance to
+#    the nearest seam, 0 on it).
+[[params.ops]]
+type = "brick_grid"
+columns = 2                              # planks per row across the texture
+rows = 7                                 # rows of planks down it
+stagger = 0.37                           # each row's joints shift by this much
+gap_width = 0.006                        # the seam, as a fraction of a plank
+width_variation = 0.35                   # planks of uneven length
+
+# 2. Each plank sits at its own slight height (writes height).
+[[params.ops]]
+type = "cell_height"
+variation = 0.12
+
+# 3. Growth rings: straight bands running along the boards (they vary
+#    down y). Step 4 bends them.
+[[params.ops]]
+type = "wave_texture"
+output = "rings"
+direction = "y"
+wave_type = "sine"
+scale = 44.0                             # rings down the texture
+
+# 4. A slow, wide noise field, and the rings pushed around by it so they
+#    wander like real grain instead of ruling straight lines. cell_offset
+#    shifts the noise per plank, so no two boards share a grain.
+[[params.ops]]
+type = "noise_layer"
+output = "wander"
+noise_type = "perlin"
+frequency = 1.8
+octaves = 3
+scale_x = 1.0
+scale_y = 2.0                            # a little faster down than across
+cell_offset = true
+
+[[params.ops]]
+type = "domain_warp"
+input = "rings"
+output = "grain"
+warp_x = "wander"
+warp_y = "wander"
+strength = 0.06                          # how far the rings are pushed, as a
+                                         # fraction of the texture
+
+# 5. Keep only the rings' crests, as dark lines: 1 between rings, down to
+#    0.62 on a line. Multiplying the colour by this draws them.
+[[params.ops]]
+type = "map_range"
+input = "grain"
+output = "ring_lines"
+from_min = 0.8
+from_max = 1.0
+to_min = 1.0
+to_max = 0.62
+interpolation = "smoothstep"
+
+# 6. Figure: soft streaks, noise squeezed 10x down y so it stretches along x.
+[[params.ops]]
+type = "noise_layer"
+output = "streaks"
+noise_type = "perlin"
+frequency = 6.0
+octaves = 4
+scale_x = 1.0
+scale_y = 10.0
+
+# 7. Colour each plank its own shade of golden oak (writes r, g, b).
+[[params.ops]]
+type = "cell_color"
+base_color = "#A27448"
+variation = 0.1
+
+# 8-10. Darken r, g and b along the ring lines.
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "r"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "g"
+mode = "multiply"
+strength = 1.0
+
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "b"
+mode = "multiply"
+strength = 1.0
+
+# 11-13. And mottle them with the streaks.
+[[params.ops]]
+type = "blend"
+source = "streaks"
+target = "r"
+mode = "multiply"
+strength = 0.35
+
+[[params.ops]]
+type = "blend"
+source = "streaks"
+target = "g"
+mode = "multiply"
+strength = 0.35
+
+[[params.ops]]
+type = "blend"
+source = "streaks"
+target = "b"
+mode = "multiply"
+strength = 0.35
+
+# 14. The grain also raises the surface a little: open pores sink.
+[[params.ops]]
+type = "blend"
+source = "ring_lines"
+target = "height"
+mode = "add"
+strength = 0.08
+
+# 15. Cut the seams into the height field and paint them dark.
+[[params.ops]]
+type = "mortar_groove"
+depth = 0.3
+width = 0.006
+
+[[params.ops]]
+type = "mortar_color"
+color = "#22160D"
+threshold = 0.012
+
+# 16. Normal map from the height field.
+[[params.ops]]
+type = "derive_normal"
+strength = 1.4
+
+# 17. Roughness: oiled faces are fairly smooth, the seams are not.
+[[params.ops]]
+type = "cell_roughness"
+base = 0.5
+variation = 0.06
+mortar = 0.85
+mortar_threshold = 0.012

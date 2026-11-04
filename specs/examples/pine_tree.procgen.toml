@@ -1,0 +1,92 @@
+# A Scots pine: one tall leader, a narrow cone of limbs, dark needles.
+#
+# Where the oak (oak_tree.procgen.toml) grows from a rewriting rule, the
+# pine grows by *space colonization*: points are scattered through a crown
+# volume, and branches creep toward the nearest of them a step at a time
+# until every point has been reached. The shape of the volume becomes the
+# shape of the tree, so a cone of points grows a conifer.
+#
+#   flint gen specs/examples/pine_tree.procgen.toml -o pine.glb
+#   flint edit specs/examples/pine_tree.procgen.toml      # live sliders
+#
+# Every key is optional; anything left out takes the default that
+# `flint edit` shows (hover a field for what it does). Units are metres.
+
+generator = "tree_v1"
+
+[meta]
+name = "pine_tree"                       # what a scene's model.asset names
+description = "A Scots pine with a conical crown and dark needles"
+version = "1.0.0"
+tags = ["tree", "vegetation", "conifer", "pine", "example"]
+
+[seed]
+mode = "fixed"                           # the same tree, byte for byte, every run
+value = 1907
+
+[params]
+# ── Trunk ────────────────────────────────────────────────────────────────
+# A pine's trunk is the tree: tall, nearly straight, tapering to the leader.
+trunk_height = 8.0
+trunk_radius_base = 0.32
+trunk_radius_top = 0.05                  # thin at the top, where the leader ends
+trunk_segments = 16                      # rings along the trunk, enough for its sway
+radial_segments = 10
+trunk_curve_noise = 0.12                 # metres of sideways sway; 0 is a pole
+
+# ── Bark ─────────────────────────────────────────────────────────────────
+bark_color_base = "#6B4A33"              # Scots pine bark, grey-brown with an orange cast
+bark_roughness = 0.9
+bark_normal_strength = 1.4               # deeper furrows than the oak's
+bark_normal_resolution = 256             # the bark normal map's side, a power of two
+
+# ── Branching: space colonization ────────────────────────────────────────
+branch_method = "space_colonization"
+branch_start = 0.15                      # limbs from 1.2 m up; the cone's
+                                         # floor rests on the trunk here
+crown_shape = "cone"                     # widest at its floor, a point at the top
+crown_radius = 2.6                       # the cone's base radius
+crown_height_ratio = 3.0                 # cone height = 2.6 * 3.0 = 7.8 m, so its
+                                         # tip (9 m) rises past the trunk's (8 m)
+                                         # and branches close over the leader
+num_attraction_points = 900              # more points, a denser crown
+influence_distance = 1.8                 # how far a point can pull a branch tip.
+                                         # Short reach makes many short limbs,
+                                         # each chasing its own patch of points
+kill_distance = 0.35                     # a point is consumed this close to a branch
+step_size = 0.22                         # metres a branch grows per step
+branch_pipe_exponent = 2.6               # r_parent^n = sum(r_child^n); above da
+                                         # Vinci's 2 keeps the twigs from thinning away
+branch_radial_segments = 6               # sides around the thickest limbs
+
+# ── Needles ──────────────────────────────────────────────────────────────
+# Small, many, everywhere: "mesh" diamonds read as needle tufts, and leaves
+# along the branches fill the cone instead of only tufting the tips.
+leaf_style = "mesh"
+leaf_density = 1.0                       # every tip gets a tuft
+leaves_per_tip = 9
+leaf_spread_radius = 0.28
+leaf_along_branch_density = 0.7          # tufts along 70% of segments, too
+leaf_along_branch_min_depth = 1          # starting with the limbs off the trunk
+leaf_size = 0.26
+leaf_size_variation = 0.3                # ±30%
+leaf_color_base = "#2E4A26"              # a deep blue-green
+leaf_shades = 5
+leaf_color_variation = 0.08
+leaf_season = 0.0                        # evergreen: no autumn tint
+leaf_season_variation = 0.02
+
+# ── Levels of detail ─────────────────────────────────────────────────────
+# Each [[lod]] caps one level's triangles; the GLB holds the whole chain.
+# Bark is simplified and needles thinned apart, each keeping its share.
+[[lod]]
+level = 0
+target_triangles = 12000
+
+[[lod]]
+level = 1
+target_triangles = 3000
+
+[[lod]]
+level = 2
+target_triangles = 700

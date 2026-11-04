@@ -22,6 +22,10 @@ impl Generator for MockGenerator {
         "mock"
     }
 
+    fn revision(&self) -> u32 {
+        1
+    }
+
     fn output_kind(&self) -> OutputKind {
         OutputKind::Mesh
     }
