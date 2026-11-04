@@ -51,3 +51,6 @@ arch-data.json
 
 # trunk output for the web spike (crates/flint-player/index.html)
 /crates/flint-player/dist/
+
+# Procgen outputs kept between runs (#181); rebuilt on demand
+**/.flint/procgen-cache/

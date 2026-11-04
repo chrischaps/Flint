@@ -11,12 +11,18 @@
 //! tie (a browser's coarsened `performance.now()` can return the same
 //! instant for a whole frame's worth of lookups), and the eviction order is
 //! the same on every run.
+//!
+//! Under the memory there can be a disk tier ([`DiskCache`], #181), set by
+//! [`ProcGenCacheConfig::disk`]: a memory miss reads it before the caller
+//! generates, and every insert writes through to it, so the next run of the
+//! player starts with what this one made.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use flint_core::ContentHash;
 
+use crate::disk_cache::{DiskCache, DiskCacheConfig, DiskStats};
 use crate::output::GeneratorOutput;
 use crate::Seed;
 
@@ -29,6 +35,9 @@ pub struct ProcGenCacheConfig {
     pub enabled: bool,
     /// Maximum milliseconds per frame to spend on queued procgen generation (default: 4.0).
     pub runtime_max_generation_ms_per_frame: f64,
+    /// The disk tier under the memory, if any (default: none). Ignored on
+    /// the web, and while `enabled` is false.
+    pub disk: Option<DiskCacheConfig>,
 }
 
 impl Default for ProcGenCacheConfig {
@@ -37,6 +46,7 @@ impl Default for ProcGenCacheConfig {
             max_memory_bytes: 256 * 1024 * 1024,
             enabled: true,
             runtime_max_generation_ms_per_frame: 4.0,
+            disk: None,
         }
     }
 }
@@ -52,7 +62,10 @@ pub struct CacheStats {
     pub max_memory_bytes: usize,
     /// Number of cache hits since creation/last clear.
     pub hits: u64,
-    /// Number of cache misses since creation/last clear.
+    /// Number of lookups that missed the memory and were read from the disk
+    /// tier instead (counted in neither `hits` nor `misses`).
+    pub disk_hits: u64,
+    /// Number of lookups found in neither tier: the caller generates.
     pub misses: u64,
     /// Number of entries evicted to stay under budget since creation/last clear.
     pub evictions: u64,
@@ -82,22 +95,32 @@ pub struct ProcGenCache {
     /// Monotonic access counter; each get/insert takes the next value.
     tick: u64,
     hits: u64,
+    disk_hits: u64,
     misses: u64,
     evictions: u64,
+    disk: Option<DiskCache>,
 }
 
 impl ProcGenCache {
     /// Create a new cache with the given configuration.
     pub fn new(config: ProcGenCacheConfig) -> Self {
+        let disk = config.disk.clone().and_then(DiskCache::open);
         Self {
             entries: HashMap::new(),
             total_bytes: 0,
             config,
             tick: 0,
             hits: 0,
+            disk_hits: 0,
             misses: 0,
             evictions: 0,
+            disk,
         }
+    }
+
+    /// What the disk tier has done, if there is one.
+    pub fn disk_stats(&self) -> Option<DiskStats> {
+        self.disk.as_ref().map(DiskCache::stats)
     }
 
     /// The configuration this cache was built with.
@@ -113,24 +136,26 @@ impl ProcGenCache {
     /// Look up a cached output by spec hash and seed.
     ///
     /// Counts a hit or a miss and, on a hit, marks the entry most recently
-    /// used. Returns `None` on miss or if the cache is disabled.
+    /// used. A memory miss reads the disk tier, if there is one, and a file
+    /// found there joins the memory (counted as a disk hit). Returns `None`
+    /// on miss or if the cache is disabled.
     pub fn get(&mut self, spec_hash: ContentHash, seed: &Seed) -> Option<Arc<GeneratorOutput>> {
         if !self.config.enabled {
             self.misses += 1;
             return None;
         }
         let tick = self.next_tick();
-        match self.entries.get_mut(&(spec_hash, seed.clone())) {
-            Some(entry) => {
-                entry.last_access = tick;
-                self.hits += 1;
-                Some(Arc::clone(&entry.output))
-            }
-            None => {
-                self.misses += 1;
-                None
-            }
+        if let Some(entry) = self.entries.get_mut(&(spec_hash, seed.clone())) {
+            entry.last_access = tick;
+            self.hits += 1;
+            return Some(Arc::clone(&entry.output));
         }
+        if let Some(output) = self.disk.as_mut().and_then(|d| d.get(spec_hash, seed)) {
+            self.disk_hits += 1;
+            return Some(self.insert_memory(spec_hash, seed, Arc::new(output)));
+        }
+        self.misses += 1;
+        None
     }
 
     /// Whether an output is cached for this key, without counting a hit or a
@@ -145,7 +170,9 @@ impl ProcGenCache {
     ///
     /// Evicts LRU entries if the memory budget would be exceeded. Entries
     /// individually larger than the whole budget, and everything while the
-    /// cache is disabled, are passed back without being stored.
+    /// cache is disabled, are passed back without being stored. Writes
+    /// through to the disk tier, if there is one (which keeps its own
+    /// budget, and never a `Seed::Random` output).
     pub fn insert(
         &mut self,
         spec_hash: ContentHash,
@@ -156,7 +183,19 @@ impl ProcGenCache {
         if !self.config.enabled {
             return output;
         }
+        if let Some(disk) = self.disk.as_mut() {
+            disk.put(spec_hash, seed, &output);
+        }
+        self.insert_memory(spec_hash, seed, output)
+    }
 
+    /// The memory half of [`insert`](Self::insert).
+    fn insert_memory(
+        &mut self,
+        spec_hash: ContentHash,
+        seed: &Seed,
+        output: Arc<GeneratorOutput>,
+    ) -> Arc<GeneratorOutput> {
         let byte_size = output.estimated_bytes();
 
         // Don't cache entries larger than the entire budget.
@@ -194,11 +233,13 @@ impl ProcGenCache {
         output
     }
 
-    /// Remove all entries and reset counters.
+    /// Remove all entries from memory and reset counters. The disk tier
+    /// keeps its files.
     pub fn clear(&mut self) {
         self.entries.clear();
         self.total_bytes = 0;
         self.hits = 0;
+        self.disk_hits = 0;
         self.misses = 0;
         self.evictions = 0;
     }
@@ -210,6 +251,7 @@ impl ProcGenCache {
             total_bytes: self.total_bytes,
             max_memory_bytes: self.config.max_memory_bytes,
             hits: self.hits,
+            disk_hits: self.disk_hits,
             misses: self.misses,
             evictions: self.evictions,
         }
