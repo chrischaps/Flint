@@ -165,7 +165,8 @@ pub struct GenArgs {
     #[arg(long, requires = "batch")]
     pub seed_start: Option<u64>,
 
-    /// Store output(s) in the content store (.flint/assets), write a
+    /// Store output(s) in the project's content store (<project>/.flint/assets,
+    /// the project found from the working directory or --project), write a
     /// provenance sidecar beside each file, and reuse an earlier registered
     /// result for the same spec + seed instead of generating
     #[arg(long)]
@@ -365,7 +366,18 @@ pub fn run(args: GenArgs) -> Result<()> {
     };
     let batch_total = args.batch;
 
-    let store = args.register.then(gen_store::Store::open_default);
+    // The project's store, wherever in the project this runs from (#179).
+    let store = args.register.then(|| {
+        let project = flint_asset::Project::current();
+        let store = gen_store::Store::open_project(&project);
+        say!(
+            "Store:      {} (project {}, by {})",
+            flint_asset::Project::display(store.store_root()),
+            flint_asset::Project::display(&project.root),
+            project.found.describe()
+        );
+        store
+    });
     let spec_hash = match (args.register, &ai_spec_text, &args.spec) {
         (false, _, _) => None,
         (true, Some(text), _) => Some(ContentHash::from_bytes(text.as_bytes())),

@@ -25,8 +25,8 @@ pub use provider::{
     ProviderStatus, TextureParams,
 };
 pub use registration::{
-    register_generated_asset, register_generated_asset_with_roots, write_asset_sidecar,
-    write_asset_sidecar_with_root, RegisteredAsset,
+    register_generated_asset, register_generated_asset_in, register_generated_asset_with_roots,
+    write_asset_sidecar, write_asset_sidecar_with_root, RegisteredAsset,
 };
 pub use semantic::SemanticAssetDef;
 pub use style::StyleGuide;
