@@ -375,8 +375,9 @@ pub fn cost_line(meter: &CostMeter) -> String {
 }
 
 /// `--dry-run` with AI steps: what would be asked, and the most each call
-/// could cost, without sending anything.
-pub fn print_plan(config: &AgentConfig, steps: Steps, args: &GenArgs) {
+/// could cost, without sending anything. Lines, so the caller picks the stream
+/// (`--report json` keeps stdout for the report).
+pub fn plan_lines(config: &AgentConfig, steps: Steps, args: &GenArgs) -> Vec<String> {
     let (price, priced_as) = price_for(&config.provider, &config.model);
     let max_out = AnthropicAgent::DEFAULT_MAX_TOKENS;
     // A refine against a reference is measured, and may converse once per
@@ -385,20 +386,24 @@ pub fn print_plan(config: &AgentConfig, steps: Steps, args: &GenArgs) {
         (Some(_), true) => args.refine_rounds.unwrap_or(config.max_iterations).max(1),
         _ => 1,
     };
-    println!("AI steps:   {}", steps.names().join(" -> "));
-    println!("Provider:   {} ({})", config.provider, config.model);
-    println!("Rounds:     up to {} per step", config.max_iterations);
+    let mut lines = vec![
+        format!("AI steps:   {}", steps.names().join(" -> ")),
+        format!("Provider:   {} ({})", config.provider, config.model),
+        format!("Rounds:     up to {} per step", config.max_iterations),
+    ];
     if refine_rounds > 1 {
-        println!("Refine:     up to {refine_rounds} measured rounds against the reference");
+        lines.push(format!(
+            "Refine:     up to {refine_rounds} measured rounds against the reference"
+        ));
     }
     if config.provider == "mock" {
-        println!("Cost:       free (mock agent, no API calls)");
+        lines.push("Cost:       free (mock agent, no API calls)".to_string());
     } else {
         let per_reply = f64::from(max_out) * price.output / 1e6;
         let conversations = steps.names().len() as u32 - u32::from(steps.refine)
             + if steps.refine { refine_rounds } else { 0 };
         let calls = conversations * config.max_iterations;
-        println!(
+        lines.push(format!(
             "Cost:       output up to {} per call ({max_out} tokens at ${}/MTok{}), \
              at most {calls} calls",
             cost::usd(per_reply),
@@ -406,12 +411,13 @@ pub fn print_plan(config: &AgentConfig, steps: Steps, args: &GenArgs) {
             priced_as
                 .map(|m| format!(", priced as {m}"))
                 .unwrap_or_default()
-        );
+        ));
     }
     if let Some(m) = args.max_cost {
-        println!("Ceiling:    --max-cost {}", cost::usd(m));
+        lines.push(format!("Ceiling:    --max-cost {}", cost::usd(m)));
     }
-    println!("(nothing was sent; drop --dry-run to run the AI steps)");
+    lines.push("(nothing was sent; drop --dry-run to run the AI steps)".to_string());
+    lines
 }
 
 /// `flint gen --cost-report [--since DATE]`.
