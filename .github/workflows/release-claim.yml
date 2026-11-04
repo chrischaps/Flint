@@ -9,8 +9,17 @@
 #   GitHub closes a merged PR's issues a moment after the merge, so whichever
 #   run comes second finds the claim already gone.
 #
+# - A merged PR into a feature branch: GitHub closes issues only for merges to
+#   the default branch, so `issue.sh merged` closes each issue whose claim
+#   records that branch as its base (claim --base), with a comment naming the
+#   PR and the branch, and reaps it in the same run. This token's close starts
+#   no second run. The feature branch must be cut from a default branch that
+#   already holds this file: a PR's workflow is read from the branch it merges
+#   into. The scripts it runs still come from the default branch.
+#
 # A PR that mentions an issue without closing it, or one closed unmerged,
-# leaves every claim alone: reap only deletes the claim of a closed issue.
+# leaves every claim alone: reap only deletes the claim of a closed issue, and
+# merged closes only an issue claimed for the branch the PR merged into.
 # Numbers come from the event payload through env, never ${{ }} in a shell,
 # and the scripts come from the default branch, never the PR's code.
 #
