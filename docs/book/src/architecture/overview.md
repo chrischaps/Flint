@@ -284,7 +284,7 @@ AI asset generation pipeline:
 - `StyleGuide` --- TOML-defined visual vocabulary (palette, materials, geometry constraints) for prompt enrichment
 - `SemanticAssetDef` --- maps intent (description, material, wear level) to generation requests
 - Batch scene resolution with strategies: `AiGenerate`, `HumanTask`, `AiThenHuman`
-- `validate_model()` --- checks GLB geometry and materials against style constraints
+- `validate_model()` --- reads a GLB with `flint_procgen::read_model` and runs `flint_procgen::validate_model` with the style's constraints (`StyleGuide::validation_constraints`): the checks `flint gen --validate` runs
 - `BuildManifest` --- provenance tracking (provider, prompt, content hash) for all generated assets
 - `FlintConfig` --- layered configuration for API keys and provider settings
 - `JobStore` --- persistent tracking of async generation jobs (for long-running 3D model generation)

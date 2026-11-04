@@ -310,15 +310,20 @@ fn build_skinned_gltf_root(mesh: &SkinnedMeshData, buffer_byte_length: usize) ->
             targets: None,
         }]
     } else {
+        // One glTF material per material slot, however many submeshes
+        // share it (the beetle's ten chitin parts used to write ten).
+        let mut slots: BTreeMap<usize, json::Index<json::Material>> = BTreeMap::new();
         mesh.submeshes
             .iter()
             .map(|sub| {
-                let mat_data = mesh
-                    .materials
-                    .get(sub.material_index)
-                    .cloned()
-                    .unwrap_or_default();
-                let mat_idx = root.push(material_from_data(&mat_data, &[]));
+                let mat_idx = *slots.entry(sub.material_index).or_insert_with(|| {
+                    let mat_data = mesh
+                        .materials
+                        .get(sub.material_index)
+                        .cloned()
+                        .unwrap_or_default();
+                    root.push(material_from_data(&mat_data, &[]))
+                });
 
                 let sub_idx_acc = root.push(json::Accessor {
                     buffer_view: Some(idx_view_idx),
@@ -731,16 +736,20 @@ fn build_gltf_root(
                 targets: None,
             }]
         } else {
-            // One primitive per submesh, each with its own index accessor
+            // One primitive per submesh, each with its own index accessor,
+            // and one glTF material per material slot they share.
+            let mut slots: BTreeMap<usize, json::Index<json::Material>> = BTreeMap::new();
             mesh.submeshes
                 .iter()
                 .map(|sub| {
-                    let mat_data = mesh
-                        .materials
-                        .get(sub.material_index)
-                        .cloned()
-                        .unwrap_or_default();
-                    let mat_idx = root.push(material_from_data(&mat_data, textures));
+                    let mat_idx = *slots.entry(sub.material_index).or_insert_with(|| {
+                        let mat_data = mesh
+                            .materials
+                            .get(sub.material_index)
+                            .cloned()
+                            .unwrap_or_default();
+                        root.push(material_from_data(&mat_data, textures))
+                    });
 
                     // Accessor into a sub-range of the shared index buffer view
                     let sub_idx_acc = root.push(json::Accessor {
