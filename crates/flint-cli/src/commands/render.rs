@@ -440,7 +440,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
                     props: stage
                         .living
                         .as_ref()
-                        .map_or_else(Vec::new, |l| render_report::props_report(l.props())),
+                        .map_or_else(Vec::new, render_report::props_report),
                 });
             }
         }

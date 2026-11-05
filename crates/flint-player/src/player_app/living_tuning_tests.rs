@@ -5,7 +5,7 @@ use super::*;
 use flint_core::wooze::warp;
 use flint_core::EntityId;
 use flint_ecs::FlintWorld;
-use flint_procgen::{LivingPropRequest, ProcGenSpec};
+use flint_procgen::{LivingPropRequest, ProcGenSpec, Stagger, VarianceConfig};
 
 const SPEC: &str = r#"
 generator = "tree_v1"
@@ -394,7 +394,17 @@ variance = { amount = 0.5, steady = 0.6, keep_size = false }
 /// Two oaks of [`SPEC`] (echoes 4, per level) and two thorns, as #244 found the
 /// bug: in a grove of several species, one knob flattened them all.
 fn two_species(folder: &Path, field: bool) -> PlayerApp {
+    two_species_under(folder, field, None)
+}
+
+/// [`two_species`] in a scene whose `[living]` table is `living`.
+fn two_species_under(folder: &Path, field: bool, living: Option<&str>) -> PlayerApp {
     let mut app = app_with(0, folder);
+    if let Some(living) = living {
+        let table: LivingDef = toml::from_str(living).unwrap();
+        app.procgen_resolver
+            .set_living_defaults(super::super::living_props::defaults_of(Some(&table)));
+    }
     let mut oak = ProcGenSpec::parse(SPEC).unwrap();
     oak.living.as_mut().unwrap().echoes = EchoConfig {
         count: 4,
@@ -997,4 +1007,149 @@ fn compare_at_start_waits_for_the_props_and_outlives_the_scene_reset() {
     app.tick_procgen(0.0);
     let ab = app.living_ab_state().unwrap();
     assert!(ab.split && ab.b == "linklater");
+}
+
+// ---- Species (#246) ----
+
+/// What one prop runs on, read the way a person would check it.
+fn running(app: &PlayerApp, i: usize) -> (f32, f32, EchoConfig, Stagger) {
+    let prop = &app.procgen_resolver.living_props().props()[i];
+    (
+        prop.clock().step,
+        prop.clock().glide,
+        prop.echo_config(),
+        prop.stagger(),
+    )
+}
+
+#[test]
+fn a_scripts_species_table_tunes_that_species_alone() {
+    let folder = Folder::new("species_script");
+    let mut app = two_species(&folder.0, true);
+    let oak_before = running(&app, 0);
+    let knobs: toml::Value = toml::from_str(
+        r#"
+        species = "thorn"
+        step = 0.25
+        stagger = "none"
+        echoes = { count = 1 }
+        "#,
+    )
+    .unwrap();
+    app.tune_living_from_script(knobs).unwrap();
+    app.tick_procgen(0.0);
+
+    assert_eq!(running(&app, 0), oak_before, "the oaks as they were");
+    let (step, _, echoes, stagger) = running(&app, 2);
+    assert_eq!(step, 0.25);
+    assert_eq!(echoes.count, 1);
+    assert_eq!(echoes.spread, 0.7, "the thorn's own spread, from its spec");
+    assert_eq!(stagger, Stagger::None);
+    assert_eq!(running(&app, 3).0, 0.25, "both thorns");
+}
+
+#[test]
+fn a_species_nothing_grows_from_is_named_and_a_bad_value_left_out() {
+    let folder = Folder::new("species_bad");
+    let mut app = two_species(&folder.0, true);
+    let knobs: toml::Value = toml::from_str("species = \"thron\"\nglide = 0.5\n").unwrap();
+    let said = app.tune_living_from_script(knobs).unwrap_err();
+    assert!(
+        said.contains("'thron'") && said.contains("sapling, thorn"),
+        "{said}"
+    );
+
+    let knobs: toml::Value =
+        toml::from_str("species = \"thorn\"\nstep = -2.0\nglide = 0.5\n").unwrap();
+    let said = app.tune_living_from_script(knobs).unwrap_err();
+    assert!(said.contains("step = -2"), "{said}");
+    app.tick_procgen(0.0);
+    assert_eq!(running(&app, 2).1, 0.5, "the good value still went in");
+
+    let misspelt: toml::Value = toml::from_str("species = \"thorn\"\nstepp = 1.0\n").unwrap();
+    assert!(app.tune_living_from_script(misspelt).is_err());
+}
+
+#[test]
+fn a_global_change_from_a_script_leaves_a_species_value_standing() {
+    let folder = Folder::new("species_global");
+    let mut app = two_species(&folder.0, true);
+    let thorn: toml::Value = toml::from_str("species = \"thorn\"\nglide = 0.0\n").unwrap();
+    app.tune_living_from_script(thorn).unwrap();
+    let everyone: WoozePreset =
+        toml::from_str("[wooze]\nglide = 0.9\n[living]\nechoes = { count = 5 }\n").unwrap();
+    app.tune_living(&everyone).unwrap();
+    app.tick_procgen(0.0);
+    assert_eq!(running(&app, 0).1, 0.9);
+    assert_eq!(running(&app, 2).1, 0.0, "the thorns' glide stood");
+    assert_eq!(
+        running(&app, 2).2.count,
+        5,
+        "and what they don't set followed"
+    );
+
+    // Cleared, the thorns take the grove's glide.
+    app.clear_living_species("thorn", &["glide".to_string()])
+        .unwrap();
+    app.tick_procgen(0.0);
+    assert_eq!(running(&app, 2).1, 0.9);
+    assert!(app
+        .clear_living_species("thorn", &["glyde".to_string()])
+        .unwrap_err()
+        .contains("glyde"));
+}
+
+#[test]
+fn a_scenes_species_table_reaches_the_player_with_bad_values_left_out() {
+    let living: flint_scene::LivingDef = toml::from_str(
+        r#"
+        [species.thorn]
+        step = 0.25
+        glide = 4.0
+        echoes = { count = 2, alpha = 9.0 }
+        "#,
+    )
+    .unwrap();
+    let defaults = super::super::living_props::defaults_of(Some(&living));
+    let thorn = defaults.species["thorn"];
+    assert_eq!(thorn.clock.step, Some(0.25));
+    assert_eq!(thorn.clock.glide, None, "4 isn't a glide");
+    assert_eq!(thorn.echoes.count, Some(2));
+    assert_eq!(thorn.echoes.alpha, None);
+    let problems = super::super::living_props::species_problems(&living.species["thorn"]);
+    assert_eq!(problems.len(), 2, "{problems:?}");
+}
+
+#[cfg(feature = "debug-hud")]
+mod species_panel {
+    use super::*;
+    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction};
+
+    #[test]
+    fn as_loaded_gives_a_species_back_its_own_values() {
+        let folder = Folder::new("species_as_loaded");
+        // The scene's own [living.species.thorn].
+        let mut app = two_species_under(&folder.0, true, Some("[species.thorn]\nstep = 0.25\n"));
+        app.before_living_tick();
+        assert_eq!(running(&app, 2).0, 0.25, "loaded with the scene's value");
+        let start: Vec<_> = (0..4).map(|i| running(&app, i)).collect();
+
+        // A panel edit to the whole grove, then a species value cleared.
+        let heard = LivingKnobs::from_preset(&app.living_knobs());
+        let mut knobs = heard.clone();
+        knobs.echo_count = 6;
+        knobs.step = 1.5;
+        app.apply_living_action(LivingPanelAction::Set(
+            knobs.moved(&heard, &KnobFlags::default()),
+        ));
+        app.clear_living_species("thorn", &[]).unwrap();
+        app.tick_procgen(0.0);
+        assert_eq!(running(&app, 2).0, 1.5);
+
+        app.apply_living_action(LivingPanelAction::Reset);
+        app.tick_procgen(0.0);
+        let now: Vec<_> = (0..4).map(|i| running(&app, i)).collect();
+        assert_eq!(now, start);
+        assert_eq!(running(&app, 2).0, 0.25, "the species' step is back");
+    }
 }

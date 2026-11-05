@@ -219,7 +219,15 @@ flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
       "poses": { "index": 7, "weight": 0.13669996, "shape_seed": 11430650338220828881,
                  "lowest": 7, "highest": 8, "gliding_parts": 51, "parts": 243 },
       "wooze": { "amplitude": 1.0, "step": 0.5, "glide": 0.3, "jitter": 1.0 },
-      "echoes": 6
+      "echoes": 6,
+      "species": "oak_living",
+      "values": {
+        "step": { "value": 0.5, "layer": "global" },
+        "glide": { "value": 0.3, "layer": "global" },
+        "echoes.count": { "value": 6, "layer": "spec" },
+        "stagger": { "value": "per_level", "layer": "spec" },
+        "...": "amplitude, jitter, echoes.spread, echoes.alpha and variance.* the same way"
+      }
     }]
   }],
   "still_props": [],
@@ -229,7 +237,7 @@ flint render demo/wooze_field.scene.toml --time 3.5 -o at-3.5.png --report json
 
 There's one capture per image in the file: per column in a sweep (each with a `column`, the knob's value), and per frame in a span. Props come in order of name.
 
-`poses` is what was drawn, read from the blend: `index` and `weight` are the first part of the skeleton, the trunk's first segment, leaving that pose toward the next, and `shape_seed` regrows it. `lowest` and `highest` are how far a staggered tree's parts have spread, and `gliding_parts` is how many are between poses instead of holding, so a frozen-looking tree has a number that says why. `wooze` is what the field said where the prop stands. `still_props` lists entities that asked to be living and drew as still models; the reason is in stderr.
+`poses` is what was drawn, read from the blend: `index` and `weight` are the first part of the skeleton, the trunk's first segment, leaving that pose toward the next, and `shape_seed` regrows it. `lowest` and `highest` are how far a staggered tree's parts have spread, and `gliding_parts` is how many are between poses instead of holding, so a frozen-looking tree has a number that says why. `wooze` is what the field said where the prop stands. `species` is the prop's spec, and `values` has every value a [species](../concepts/procgen.md#species-values) can set, as the prop runs on it, with the layer that set it: `spec`, `entity` (a `living_prop` stagger), `global` (the scene's `[living]` or `[wooze]`), `zone:<name>` where a zone has the last word, or `species`. A zone's `value` can be part way to its own, inside its falloff. `still_props` lists entities that asked to be living and drew as still models; the reason is in stderr.
 
 Why the runtime values are here and not in `flint query`: query reads scene files, and none of this is in one.
 

@@ -1758,8 +1758,14 @@ fn ray_hit_dynamic(hit: Option<flint_core::ray_mesh::RayHit>) -> Dynamic {
     map.insert("entity".into(), Dynamic::from(hit.entity.raw() as i64));
     map.insert("distance".into(), Dynamic::from(hit.distance as f64));
     for (k, axis) in ["x", "y", "z"].iter().enumerate() {
-        map.insert(format!("point_{axis}").into(), Dynamic::from(hit.point[k] as f64));
-        map.insert(format!("normal_{axis}").into(), Dynamic::from(hit.normal[k] as f64));
+        map.insert(
+            format!("point_{axis}").into(),
+            Dynamic::from(hit.point[k] as f64),
+        );
+        map.insert(
+            format!("normal_{axis}").into(),
+            Dynamic::from(hit.normal[k] as f64),
+        );
     }
     Dynamic::from(map)
 }
@@ -3981,12 +3987,36 @@ fn register_wooze_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
     // Living Props' knobs (#218), the F3 panel's by another door. tune_living takes
     // what a .wooze.toml holds: #{ wooze: #{ step: 0.25 }, living: #{ echoes:
     // #{ count: 3 } }, boil: #{ on: 2 } }. What it leaves out stays as it is.
+    // With a species (#246) it takes one species' own values, which beat the
+    // global ones: #{ species: "grove_thorn", step: 0.25, echoes: #{ count: 1 } }.
     {
         let ctx = ctx.clone();
         engine.register_fn("tune_living", move |knobs: Map| {
             let mut c = crate::lock_or_recover(&ctx);
             c.commands.push(ScriptCommand::TuneLiving {
                 knobs: map_to_toml(&knobs),
+            });
+        });
+    }
+    // clear_living(species), clear_living(species, ["echoes", "step"]): give a
+    // species' values back to the layers below, all of them or the keys named.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_living", move |species: &str| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::ClearLiving {
+                species: species.to_string(),
+                keys: Vec::new(),
+            });
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("clear_living", move |species: &str, keys: Array| {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::ClearLiving {
+                species: species.to_string(),
+                keys: keys.iter().map(|key| key.to_string()).collect(),
             });
         });
     }
@@ -5296,7 +5326,11 @@ pub(crate) fn world_text_from(
     opts: &Map,
 ) -> flint_core::world_text::WorldText {
     let o = TextOpts::from_map(opts);
-    let align = if opts.contains_key("align") { o.align } else { 1 };
+    let align = if opts.contains_key("align") {
+        o.align
+    } else {
+        1
+    };
     let valign = match opts.get("valign") {
         Some(v) => match v.clone().try_cast::<ImmutableString>() {
             Some(s) => match s.as_str() {
@@ -5448,7 +5482,11 @@ mod text_opts_tests {
         m.insert("valign".into(), Dynamic::from("bottom"));
         m.insert(
             "facing".into(),
-            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(-1.0_f64)]),
+            arr(&[
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(-1.0_f64),
+            ]),
         );
         let t = world_text_from([0.0; 3], "x", 0.2, &m);
         assert_eq!(t.font.as_deref(), Some("display"));
@@ -5459,9 +5497,16 @@ mod text_opts_tests {
 
         m.insert(
             "up".into(),
-            arr(&[Dynamic::from(1_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+            arr(&[
+                Dynamic::from(1_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+            ]),
         );
-        assert_eq!(world_text_from([0.0; 3], "x", 0.2, &m).plane.unwrap().up, [1.0, 0.0, 0.0]);
+        assert_eq!(
+            world_text_from([0.0; 3], "x", 0.2, &m).plane.unwrap().up,
+            [1.0, 0.0, 0.0]
+        );
     }
 
     #[test]
@@ -5469,7 +5514,11 @@ mod text_opts_tests {
         let mut m = Map::new();
         m.insert(
             "facing".into(),
-            arr(&[Dynamic::from(0_i64), Dynamic::from(0_i64), Dynamic::from(0_i64)]),
+            arr(&[
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+                Dynamic::from(0_i64),
+            ]),
         );
         assert_eq!(world_text_from([0.0; 3], "x", 9.0, &m).plane, None);
         m.insert("facing".into(), arr(&[Dynamic::from(1_i64)]));
@@ -5573,10 +5622,13 @@ mod tests {
         // Missing file: unit, and a warning queued for the game log
         let d4 = load_data_impl(&mut c, "data/missing.toml", false);
         assert!(d4.is_unit());
-        assert!(c
-            .commands
-            .iter()
-            .any(|cmd| matches!(cmd, ScriptCommand::Log { level: LogLevel::Warn, .. })));
+        assert!(c.commands.iter().any(|cmd| matches!(
+            cmd,
+            ScriptCommand::Log {
+                level: LogLevel::Warn,
+                ..
+            }
+        )));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -5711,4 +5763,3 @@ fn push_line_3d(
         layer,
     });
 }
-

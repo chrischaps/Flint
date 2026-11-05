@@ -30,7 +30,7 @@
 //! the prop is doing and what it's about to do, and the prop keeps its old clocks
 //! until the new ones have every pose they'd read. No frame goes without one.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use flint_core::wooze::{Cycle, WoozeField, WoozeSample};
@@ -100,7 +100,7 @@ pub enum LivingShadows {
 
 /// What a scene says about its living props, ahead of any one spec. How woozy
 /// they are is the wooze field's to say (#213).
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LivingDefaults {
     /// What the shadows follow.
     pub shadows: LivingShadows,
@@ -111,6 +111,155 @@ pub struct LivingDefaults {
     pub stagger: Option<Stagger>,
     /// The scene's word on variance, over each spec's, a field at a time.
     pub variance: VarianceOverride,
+    /// `[living.species.<spec>]` (#246): each species' own values, over all of
+    /// the above and over the wooze field, zones included. Keyed by spec name.
+    pub species: BTreeMap<String, SpeciesOverride>,
+}
+
+/// One species' own values (#246): a layer over everything the scene says for
+/// every prop, so a global knob moved live leaves them standing. A species is a
+/// spec, with all its lineage seeds. Unset fields are whatever's below.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SpeciesOverride {
+    /// Its clock's knobs, over what the field says where each prop stands, or
+    /// over its spec's in a scene with no field.
+    pub clock: ClockOverride,
+    /// Its stagger, over the scene's, each prop's own and the spec's.
+    pub stagger: Option<Stagger>,
+    /// Its echoes, a field at a time.
+    pub echoes: EchoOverride,
+    /// Its variance, a field at a time.
+    pub variance: VarianceOverride,
+}
+
+impl SpeciesOverride {
+    /// These values over `under`'s, a field at a time.
+    pub fn merged(self, under: SpeciesOverride) -> SpeciesOverride {
+        SpeciesOverride {
+            clock: self.clock.merged(under.clock),
+            stagger: self.stagger.or(under.stagger),
+            echoes: self.echoes.merged(under.echoes),
+            variance: self.variance.merged(under.variance),
+        }
+    }
+
+    /// Whether it says nothing, and the species is as the scene would have it.
+    pub fn is_empty(&self) -> bool {
+        *self == SpeciesOverride::default()
+    }
+}
+
+/// A species' word on the four knobs a wooze field has (#246).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ClockOverride {
+    /// How much of its slow drift shows.
+    pub amplitude: Option<f32>,
+    /// Seconds between pose targets.
+    pub step: Option<f32>,
+    /// How much of a step is spent easing.
+    pub glide: Option<f32>,
+    /// How much of its fast jitter shows.
+    pub jitter: Option<f32>,
+}
+
+impl ClockOverride {
+    /// What a prop reads: these over what the layers below it said.
+    pub fn over(&self, below: WoozeSample) -> WoozeSample {
+        WoozeSample {
+            amplitude: self.amplitude.unwrap_or(below.amplitude),
+            step: self.step.unwrap_or(below.step),
+            glide: self.glide.unwrap_or(below.glide),
+            jitter: self.jitter.unwrap_or(below.jitter),
+        }
+    }
+
+    /// These over `under`, a field at a time.
+    pub fn merged(self, under: ClockOverride) -> ClockOverride {
+        ClockOverride {
+            amplitude: self.amplitude.or(under.amplitude),
+            step: self.step.or(under.step),
+            glide: self.glide.or(under.glide),
+            jitter: self.jitter.or(under.jitter),
+        }
+    }
+}
+
+/// Which props a live change reaches (#246): every one, or one species'.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LivingScope<'a> {
+    /// The global layer: every prop, under any species' own value.
+    All,
+    /// One species' layer, by spec name, which beats the global one.
+    Species(&'a str),
+}
+
+/// Where a prop's value came from (#246), lowest first. A layer beats every one
+/// before it in this list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LivingLayer {
+    /// The spec's `[living]` table, or for amplitude and jitter, as authored.
+    Spec,
+    /// The entity's `living_prop` component.
+    Entity,
+    /// The scene's `[living]` or `[wooze]` globals, or a knob moved live for the
+    /// whole grove.
+    Global,
+    /// A wooze zone, by name, where the prop stands.
+    Zone(String),
+    /// `[living.species.<spec>]`, or a knob moved live for that species.
+    Species,
+}
+
+impl LivingLayer {
+    /// How a report names it: `spec`, `entity`, `global`, `zone:<name>` or
+    /// `species`.
+    pub fn label(&self) -> String {
+        match self {
+            LivingLayer::Spec => "spec".to_string(),
+            LivingLayer::Entity => "entity".to_string(),
+            LivingLayer::Global => "global".to_string(),
+            LivingLayer::Zone(name) => format!("zone:{name}"),
+            LivingLayer::Species => "species".to_string(),
+        }
+    }
+}
+
+/// A value and the layer that set it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved<T> {
+    /// What the prop runs on.
+    pub value: T,
+    /// Who said so.
+    pub layer: LivingLayer,
+}
+
+/// Every value a species can set on one prop, resolved, each with its layer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedProp {
+    /// Its spec's name.
+    pub species: String,
+    pub amplitude: Resolved<f32>,
+    pub step: Resolved<f32>,
+    pub glide: Resolved<f32>,
+    pub jitter: Resolved<f32>,
+    pub stagger: Resolved<Stagger>,
+    pub echo_count: Resolved<u32>,
+    pub echo_spread: Resolved<f32>,
+    pub echo_alpha: Resolved<f32>,
+    pub variance_amount: Resolved<f32>,
+    pub variance_steady: Resolved<f32>,
+    pub keep_size: Resolved<bool>,
+}
+
+/// Every layer the grove's values are made of, apart from the field, to put back
+/// with [`LivingProps::restore_layers`]: what "As loaded" goes back to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LivingLayers {
+    echoes: Vec<EchoOverride>,
+    staggers: Vec<Option<Stagger>>,
+    clocks: Vec<(WoozeSample, bool)>,
+    variances: Vec<VarianceOverride>,
+    species: Vec<(String, SpeciesOverride)>,
 }
 
 /// A scene's `[living] echoes`: whichever of a spec's fields it sets. The wooze
@@ -137,22 +286,71 @@ pub struct VarianceOverride {
 }
 
 impl VarianceOverride {
-    fn over(&self, spec: VarianceConfig) -> VarianceConfig {
+    /// These fields over a whole config.
+    pub fn over(&self, spec: VarianceConfig) -> VarianceConfig {
         VarianceConfig {
             amount: self.amount.unwrap_or(spec.amount),
             steady: self.steady.unwrap_or(spec.steady),
             keep_size: self.keep_size.unwrap_or(spec.keep_size),
         }
     }
+
+    /// Every field set, to these.
+    pub fn full(variance: VarianceConfig) -> Self {
+        Self {
+            amount: Some(variance.amount),
+            steady: Some(variance.steady),
+            keep_size: Some(variance.keep_size),
+        }
+    }
+
+    /// These over `under`, a field at a time.
+    pub fn merged(self, under: Self) -> Self {
+        Self {
+            amount: self.amount.or(under.amount),
+            steady: self.steady.or(under.steady),
+            keep_size: self.keep_size.or(under.keep_size),
+        }
+    }
 }
 
 impl EchoOverride {
-    fn over(&self, spec: EchoConfig) -> EchoConfig {
+    /// These fields over a whole config.
+    pub fn over(&self, spec: EchoConfig) -> EchoConfig {
         EchoConfig {
             count: self.count.unwrap_or(spec.count),
             spread: self.spread.unwrap_or(spec.spread),
             alpha: self.alpha.unwrap_or(spec.alpha),
         }
+    }
+
+    /// Every field set, to these.
+    pub fn full(echoes: EchoConfig) -> Self {
+        Self {
+            count: Some(echoes.count),
+            spread: Some(echoes.spread),
+            alpha: Some(echoes.alpha),
+        }
+    }
+
+    /// These over `under`, a field at a time.
+    pub fn merged(self, under: Self) -> Self {
+        Self {
+            count: self.count.or(under.count),
+            spread: self.spread.or(under.spread),
+            alpha: self.alpha.or(under.alpha),
+        }
+    }
+}
+
+/// The layer a field came from, out of a species', the global one and the spec.
+fn layer_of(species: bool, global: bool) -> LivingLayer {
+    if species {
+        LivingLayer::Species
+    } else if global {
+        LivingLayer::Global
+    } else {
+        LivingLayer::Spec
     }
 }
 
@@ -432,6 +630,25 @@ pub struct LivingProp {
     pending: Option<PendingClocks>,
     /// Whether its echoes have changed since it last blended.
     echoes_changed: bool,
+    /// Its species, as an index into [`LivingProps::species`].
+    species: usize,
+    /// What the layers under its species say of its clock: the field where it
+    /// stands, or in a scene with none its spec's, or what was set live.
+    wooze_below: WoozeSample,
+    /// Whether `wooze_below` was set live in a scene with no field, which makes
+    /// it the global layer's and not the spec's.
+    clock_live: bool,
+    /// Its spec's echoes, the lowest layer.
+    echo_spec: EchoConfig,
+    /// The global layer's word on its echoes: the scene's `[living] echoes` and
+    /// whatever was moved live for every prop.
+    echo_global: EchoOverride,
+    /// Its own stagger, the entity's or else the spec's, and whether it's the
+    /// entity's.
+    stagger_own: Stagger,
+    stagger_entity: bool,
+    /// The global layer's word on its stagger.
+    stagger_global: Option<Stagger>,
 }
 
 /// New clocks for a prop, held back until its ring has what they read.
@@ -497,10 +714,17 @@ impl LivingProp {
         self.position
     }
 
-    /// What the wooze field last said about its place, or what its spec says in
-    /// a scene with no field.
+    /// What its clock runs on: what the wooze field last said about its place, or
+    /// what its spec says in a scene with no field, with its species' own values
+    /// over either.
     pub fn wooze(&self) -> WoozeSample {
         self.wooze
+    }
+
+    /// What its clock would run on without its species' own values (#246): what
+    /// a global knob starts from.
+    pub fn wooze_below(&self) -> WoozeSample {
+        self.wooze_below
     }
 
     /// Each part's place on the clock as of its last blend, in the skeleton's
@@ -766,6 +990,17 @@ struct Lineage {
     variance: VarianceConfig,
     /// Counts the changes to `variance`, so a ring can tell what's out of date.
     generation: u64,
+    /// Its species, as an index into [`LivingProps::species`].
+    species: usize,
+    /// The global layer's word on its variance, over the spec's.
+    variance_global: VarianceOverride,
+}
+
+/// A species and its own values (#246).
+#[derive(Debug, Clone)]
+struct Species {
+    name: String,
+    over: SpeciesOverride,
 }
 
 /// Poses that have been generated, apart from the meshes in
@@ -819,6 +1054,9 @@ impl PoseCache {
 pub struct LivingProps {
     lineages: Vec<Lineage>,
     props: Vec<LivingProp>,
+    /// Every species a prop has been added from, or a value set for, by spec
+    /// name. Never shrinks while the scene runs, so an index stays good.
+    species: Vec<Species>,
     cache: PoseCache,
     /// The clock every prop reads, in seconds. It stops when the game pauses.
     time: f64,
@@ -843,6 +1081,7 @@ impl LivingProps {
         Self {
             lineages: Vec::new(),
             props: Vec::new(),
+            species: Vec::new(),
             cache: PoseCache::new(pose_cache_bytes),
             time: 0.0,
             pose_estimate_ms: 0.0,
@@ -858,6 +1097,42 @@ impl LivingProps {
     /// What the scene says about its props, for the props added after this.
     pub fn set_defaults(&mut self, defaults: LivingDefaults) {
         self.defaults = defaults;
+    }
+
+    /// The index of a species by spec name, made if it's new, with whatever the
+    /// scene says for it.
+    fn species_index(&mut self, name: &str) -> usize {
+        if let Some(i) = self.species.iter().position(|s| s.name == name) {
+            return i;
+        }
+        self.species.push(Species {
+            name: name.to_string(),
+            over: self.defaults.species.get(name).copied().unwrap_or_default(),
+        });
+        self.species.len() - 1
+    }
+
+    /// Every species by spec name, in the order they were first met: each one a
+    /// prop grows from, and any a value was set for.
+    pub fn species_names(&self) -> Vec<&str> {
+        self.species.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    /// A species' own values, if it's one this has met.
+    pub fn species_override(&self, name: &str) -> Option<SpeciesOverride> {
+        self.species.iter().find(|s| s.name == name).map(|s| s.over)
+    }
+
+    /// Whether any prop grows from this spec.
+    pub fn has_species(&self, name: &str) -> bool {
+        self.props
+            .iter()
+            .any(|prop| self.species[prop.species].name == name)
+    }
+
+    /// A prop's species: its spec's name.
+    pub fn species_of(&self, id: LivingPropId) -> &str {
+        &self.species[self.props[id.0].species].name
     }
 
     /// Whether there's nothing here to do, as in any scene that doesn't opt in.
@@ -912,6 +1187,7 @@ impl LivingProps {
     pub fn clear_props(&mut self) {
         self.lineages.clear();
         self.props.clear();
+        self.species.clear();
         self.time = 0.0;
         self.stats = LivingStats::default();
         self.reholding = false;
@@ -921,18 +1197,214 @@ impl LivingProps {
 
     /// Give every prop these echoes, as soon as its ring can show them. Until
     /// then it keeps the ones it has, and a change that needs no new pose takes
-    /// effect on the next tick.
+    /// effect on the next tick. This is the global layer: a species' own echoes
+    /// (#246) still beat it, a field at a time.
     pub fn set_echoes(&mut self, echoes: EchoConfig) {
         for i in 0..self.props.len() {
             self.set_echoes_of(LivingPropId(i), echoes);
         }
     }
 
-    /// Give one prop these echoes, as [`Self::set_echoes`] does every prop: a
-    /// grove of several species keeps each one's own.
+    /// Give one prop these echoes in the global layer, as [`Self::set_echoes`]
+    /// does every prop: a grove of several species keeps each one's own.
     pub fn set_echoes_of(&mut self, id: LivingPropId, echoes: EchoConfig) {
-        let drift = self.defaults.shadows == LivingShadows::Drift;
+        self.props[id.0].echo_global = EchoOverride::full(echoes);
+        self.refresh_echoes(id.0);
+    }
+
+    /// Set whichever echo fields `echoes` sets, for every prop in the global
+    /// layer or in one species' own (#246). Returns whether any prop has them:
+    /// a species no prop grows from keeps them, for none.
+    pub fn tune_echoes(&mut self, scope: LivingScope, echoes: EchoOverride) -> bool {
+        match scope {
+            LivingScope::All => {
+                for prop in &mut self.props {
+                    prop.echo_global = echoes.merged(prop.echo_global);
+                }
+            }
+            LivingScope::Species(name) => {
+                let species = self.species_index(name);
+                let over = &mut self.species[species].over;
+                over.echoes = echoes.merged(over.echoes);
+            }
+        }
+        self.refresh_props(scope)
+    }
+
+    /// Put every prop on this stagger, as soon as its ring can show it. A part
+    /// jumps to its new place on the clock: no stagger can change without that.
+    /// The global layer: a species' own stagger still beats it.
+    pub fn set_stagger(&mut self, stagger: Stagger) {
+        for i in 0..self.props.len() {
+            self.set_stagger_of(LivingPropId(i), stagger);
+        }
+    }
+
+    /// Put one prop on this stagger in the global layer, as [`Self::set_stagger`]
+    /// does every prop.
+    pub fn set_stagger_of(&mut self, id: LivingPropId, stagger: Stagger) {
+        self.props[id.0].stagger_global = Some(stagger);
+        self.refresh_stagger(id.0);
+    }
+
+    /// Put every prop on this stagger in the global layer, or one species in its
+    /// own (#246). Returns whether any prop is of it.
+    pub fn tune_stagger(&mut self, scope: LivingScope, stagger: Stagger) -> bool {
+        match scope {
+            LivingScope::All => {
+                for prop in &mut self.props {
+                    prop.stagger_global = Some(stagger);
+                }
+            }
+            LivingScope::Species(name) => {
+                let species = self.species_index(name);
+                self.species[species].over.stagger = Some(stagger);
+            }
+        }
+        self.refresh_props(scope)
+    }
+
+    /// Put one prop's clock where `wooze` says, as the field would in a scene
+    /// that has one. For giving a scene with no field its specs' clocks back:
+    /// a field, while there is one, says again each tick. Its species' own clock
+    /// values (#246) still beat this.
+    pub fn set_wooze_of(&mut self, id: LivingPropId, wooze: WoozeSample) {
         let prop = &mut self.props[id.0];
+        prop.wooze_below = wooze;
+        prop.clock_live = true;
+        self.refresh_clock(id.0);
+    }
+
+    /// Set whichever clock knobs `clock` sets for one species (#246), over the
+    /// field and its zones. A species is the only scope this has: the global
+    /// clock is the field's. Returns whether any prop is of it.
+    pub fn tune_clock(&mut self, species: &str, clock: ClockOverride) -> bool {
+        let index = self.species_index(species);
+        let over = &mut self.species[index].over;
+        over.clock = clock.merged(over.clock);
+        self.refresh_props(LivingScope::Species(species))
+    }
+
+    /// Replace one species' own values whole (#246), which is how one is cleared,
+    /// a knob or all of them at a time. Returns whether any prop is of it.
+    pub fn set_species(&mut self, species: &str, over: SpeciesOverride) -> bool {
+        let index = self.species_index(species);
+        self.species[index].over = over;
+        self.refresh_props(LivingScope::Species(species))
+    }
+
+    /// Hold every lineage's poses to this variance: what the rings have is
+    /// re-held from its full form, a few poses a frame, and what's made from
+    /// here on starts at it. The global layer: a species' own variance beats it.
+    pub fn set_variance(&mut self, variance: VarianceConfig) {
+        for lineage in 0..self.lineages.len() {
+            self.set_variance_of(lineage, variance);
+        }
+    }
+
+    /// Hold one lineage's poses to this variance in the global layer, as
+    /// [`Self::set_variance`] does every lineage's. `lineage` counts as
+    /// [`Self::variances`] does.
+    pub fn set_variance_of(&mut self, lineage: usize, variance: VarianceConfig) {
+        self.lineages[lineage].variance_global = VarianceOverride::full(variance);
+        self.refresh_variance(lineage);
+    }
+
+    /// Set whichever variance fields `variance` sets, for every lineage in the
+    /// global layer or one species' own (#246). A lineage belongs to one spec, so
+    /// a species' change re-holds only its lineages. Returns whether any prop is
+    /// of it.
+    pub fn tune_variance(&mut self, scope: LivingScope, variance: VarianceOverride) -> bool {
+        match scope {
+            LivingScope::All => {
+                for lineage in &mut self.lineages {
+                    lineage.variance_global = variance.merged(lineage.variance_global);
+                }
+            }
+            LivingScope::Species(name) => {
+                let species = self.species_index(name);
+                let over = &mut self.species[species].over;
+                over.variance = variance.merged(over.variance);
+            }
+        }
+        self.refresh_props(scope)
+    }
+
+    /// Every layer as it stands, apart from the field, to go back to.
+    pub fn layers(&self) -> LivingLayers {
+        LivingLayers {
+            echoes: self.props.iter().map(|p| p.echo_global).collect(),
+            staggers: self.props.iter().map(|p| p.stagger_global).collect(),
+            clocks: (self.props.iter())
+                .map(|p| (p.wooze_below, p.clock_live))
+                .collect(),
+            variances: (self.lineages.iter()).map(|l| l.variance_global).collect(),
+            species: (self.species.iter())
+                .map(|s| (s.name.clone(), s.over))
+                .collect(),
+        }
+    }
+
+    /// Put every layer back as [`Self::layers`] found it. In a scene with a
+    /// field the clocks come from it again on the next tick.
+    pub fn restore_layers(&mut self, layers: &LivingLayers) {
+        for (prop, echoes) in self.props.iter_mut().zip(&layers.echoes) {
+            prop.echo_global = *echoes;
+        }
+        for (prop, stagger) in self.props.iter_mut().zip(&layers.staggers) {
+            prop.stagger_global = *stagger;
+        }
+        for (prop, (below, live)) in self.props.iter_mut().zip(&layers.clocks) {
+            prop.wooze_below = *below;
+            prop.clock_live = *live;
+        }
+        for (lineage, variance) in self.lineages.iter_mut().zip(&layers.variances) {
+            lineage.variance_global = *variance;
+        }
+        for species in &mut self.species {
+            species.over = (layers.species.iter())
+                .find(|(name, _)| *name == species.name)
+                .map_or_else(SpeciesOverride::default, |(_, over)| *over);
+        }
+        self.refresh_props(LivingScope::All);
+    }
+
+    /// Bring every prop in `scope`, and its lineage, up to what its layers say
+    /// now. Returns whether there were any.
+    fn refresh_props(&mut self, scope: LivingScope) -> bool {
+        let wanted = match scope {
+            LivingScope::All => None,
+            LivingScope::Species(name) => match self.species.iter().position(|s| s.name == name) {
+                Some(index) => Some(index),
+                None => return false,
+            },
+        };
+        let mut any = false;
+        for i in 0..self.props.len() {
+            if wanted.is_some_and(|species| self.props[i].species != species) {
+                continue;
+            }
+            any = true;
+            self.refresh_echoes(i);
+            self.refresh_stagger(i);
+            self.refresh_clock(i);
+        }
+        for lineage in 0..self.lineages.len() {
+            if wanted.is_some_and(|species| self.lineages[lineage].species != species) {
+                continue;
+            }
+            self.refresh_variance(lineage);
+        }
+        any
+    }
+
+    /// One prop's echoes, from its layers.
+    fn refresh_echoes(&mut self, i: usize) {
+        let prop = &self.props[i];
+        let species = &self.species[prop.species].over;
+        let echoes = species.echoes.over(prop.echo_global.over(prop.echo_spec));
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        let prop = &mut self.props[i];
         if prop.echo_config == echoes {
             return;
         }
@@ -948,18 +1420,16 @@ impl LivingProps {
         prop.fit_ring(drift);
     }
 
-    /// Put every prop on this stagger, as soon as its ring can show it. A part
-    /// jumps to its new place on the clock: no stagger can change without that.
-    pub fn set_stagger(&mut self, stagger: Stagger) {
-        for i in 0..self.props.len() {
-            self.set_stagger_of(LivingPropId(i), stagger);
-        }
-    }
-
-    /// Put one prop on this stagger, as [`Self::set_stagger`] does every prop.
-    pub fn set_stagger_of(&mut self, id: LivingPropId, stagger: Stagger) {
+    /// One prop's stagger, from its layers.
+    fn refresh_stagger(&mut self, i: usize) {
+        let prop = &self.props[i];
+        let stagger = self.species[prop.species]
+            .over
+            .stagger
+            .or(prop.stagger_global)
+            .unwrap_or(prop.stagger_own);
         let drift = self.defaults.shadows == LivingShadows::Drift;
-        let prop = &mut self.props[id.0];
+        let prop = &mut self.props[i];
         if prop.stagger() == stagger {
             return;
         }
@@ -974,29 +1444,28 @@ impl LivingProps {
         prop.fit_ring(drift);
     }
 
-    /// Put one prop's clock where `wooze` says, as the field would in a scene
-    /// that has one. For giving a scene with no field its specs' clocks back:
-    /// a field, while there is one, says again each tick.
-    pub fn set_wooze_of(&mut self, id: LivingPropId, wooze: WoozeSample) {
-        let prop = &mut self.props[id.0];
-        prop.wooze = wooze;
-        prop.clock.step = wooze.step;
-        prop.clock.glide = wooze.glide;
+    /// One prop's clock, from what's below its species and its species' own.
+    fn refresh_clock(&mut self, i: usize) {
+        let clock = self.species[self.props[i].species].over.clock;
+        let prop = &mut self.props[i];
+        prop.wooze = clock.over(prop.wooze_below);
+        prop.clock.step = prop.wooze.step;
+        prop.clock.glide = prop.wooze.glide;
     }
 
-    /// Hold every lineage's poses to this variance: what the rings have is
-    /// re-held from its full form, a few poses a frame, and what's made from
-    /// here on starts at it.
-    pub fn set_variance(&mut self, variance: VarianceConfig) {
-        for lineage in 0..self.lineages.len() {
-            self.set_variance_of(lineage, variance);
-        }
-    }
-
-    /// Hold one lineage's poses to this variance, as [`Self::set_variance`] does
-    /// every lineage's. `lineage` counts as [`Self::variances`] does.
-    pub fn set_variance_of(&mut self, lineage: usize, variance: VarianceConfig) {
-        let lineage = &mut self.lineages[lineage];
+    /// One lineage's variance, from its layers. A change re-holds its poses.
+    fn refresh_variance(&mut self, index: usize) {
+        let lineage = &self.lineages[index];
+        let spec = lineage
+            .spec
+            .living
+            .as_ref()
+            .map_or_else(VarianceConfig::default, |living| living.variance);
+        let variance = self.species[lineage.species]
+            .over
+            .variance
+            .over(lineage.variance_global.over(spec));
+        let lineage = &mut self.lineages[index];
         if lineage.variance == variance {
             return;
         }
@@ -1005,6 +1474,83 @@ impl LivingProps {
         self.reholding = true;
         self.rehold_cursor = 0;
         self.rehold_pass = 0;
+    }
+
+    /// Every value a species can set on one prop, with the layer that set it
+    /// (#246). `field` is the wooze field and the moment the props last read it,
+    /// in a scene that has one, to name a zone where one has the last word.
+    pub fn resolved(&self, id: LivingPropId, field: Option<(&WoozeField, f64)>) -> ResolvedProp {
+        let prop = &self.props[id.0];
+        let species = &self.species[prop.species];
+        let over = species.over;
+        let lineage = &self.lineages[prop.lineage];
+        let zones = field.map(|(field, time)| field.zones_at(prop.position, time));
+        let clock_layer = |knob: usize, set: Option<f32>| {
+            if set.is_some() {
+                LivingLayer::Species
+            } else if let Some(zones) = &zones {
+                zones[knob].map_or(LivingLayer::Global, |zone| LivingLayer::Zone(zone.into()))
+            } else if prop.clock_live {
+                LivingLayer::Global
+            } else {
+                LivingLayer::Spec
+            }
+        };
+        fn resolved<T>(value: T, layer: LivingLayer) -> Resolved<T> {
+            Resolved { value, layer }
+        }
+        let stagger_layer = if over.stagger.is_some() {
+            LivingLayer::Species
+        } else if prop.stagger_global.is_some() {
+            LivingLayer::Global
+        } else if prop.stagger_entity {
+            LivingLayer::Entity
+        } else {
+            LivingLayer::Spec
+        };
+        let (echoes, global) = (prop.echo_config, prop.echo_global);
+        let (variance, global_variance) = (lineage.variance, lineage.variance_global);
+        ResolvedProp {
+            species: species.name.clone(),
+            amplitude: resolved(prop.wooze.amplitude, clock_layer(0, over.clock.amplitude)),
+            step: resolved(prop.wooze.step, clock_layer(1, over.clock.step)),
+            glide: resolved(prop.wooze.glide, clock_layer(2, over.clock.glide)),
+            jitter: resolved(prop.wooze.jitter, clock_layer(3, over.clock.jitter)),
+            stagger: resolved(prop.stagger(), stagger_layer),
+            echo_count: resolved(
+                echoes.count,
+                layer_of(over.echoes.count.is_some(), global.count.is_some()),
+            ),
+            echo_spread: resolved(
+                echoes.spread,
+                layer_of(over.echoes.spread.is_some(), global.spread.is_some()),
+            ),
+            echo_alpha: resolved(
+                echoes.alpha,
+                layer_of(over.echoes.alpha.is_some(), global.alpha.is_some()),
+            ),
+            variance_amount: resolved(
+                variance.amount,
+                layer_of(
+                    over.variance.amount.is_some(),
+                    global_variance.amount.is_some(),
+                ),
+            ),
+            variance_steady: resolved(
+                variance.steady,
+                layer_of(
+                    over.variance.steady.is_some(),
+                    global_variance.steady.is_some(),
+                ),
+            ),
+            keep_size: resolved(
+                variance.keep_size,
+                layer_of(
+                    over.variance.keep_size.is_some(),
+                    global_variance.keep_size.is_some(),
+                ),
+            ),
+        }
     }
 
     /// What the first lineage's poses are held to. Every lineage has this once a
@@ -1037,11 +1583,13 @@ impl LivingProps {
         Self {
             lineages: self.lineages.clone(),
             props: self.props.clone(),
+            // Each side keeps its own species values (#246), as it does the rest.
+            species: self.species.clone(),
             cache: PoseCache::new(self.cache.max_bytes),
             time: self.time,
             pose_estimate_ms: self.pose_estimate_ms,
             stats: LivingStats::default(),
-            defaults: self.defaults,
+            defaults: self.defaults.clone(),
             reholding: self.reholding,
             rehold_cursor: self.rehold_cursor,
             rehold_pass: self.rehold_pass,
@@ -1131,12 +1679,14 @@ impl LivingProps {
             .expect("the resolver checks for a [living] table");
         let seed = request.lineage_seed.unwrap_or(living.lineage_seed);
         let asset_name = format!("{}@{seed}", request.spec_name);
+        let species = self.species_index(&request.spec_name);
 
         let existing = self
             .lineages
             .iter()
             .position(|l| l.asset_name == asset_name);
         let lineage = existing.unwrap_or_else(|| {
+            let global = self.defaults.variance;
             self.lineages.push(Lineage {
                 spec: Arc::new(spec.clone()),
                 seed,
@@ -1144,21 +1694,39 @@ impl LivingProps {
                 identity: ContentHash::from_str(&format!("{identity}\n{seed}")),
                 built: None,
                 tried: false,
-                variance: self.defaults.variance.over(living.variance),
+                variance: (self.species[species].over.variance).over(global.over(living.variance)),
                 generation: 0,
+                species,
+                variance_global: global,
             });
             self.lineages.len() - 1
         });
 
+        let over = self.species[species].over;
         let stream = name_hash(&request.entity_name);
         let phase_offset = request
             .phase_offset
             .map_or_else(|| name_phase(stream), |phase| phase.rem_euclid(1.0));
         let mut clock = LivingClock::from(living);
-        if let Some(stagger) = self.defaults.stagger.or(request.stagger) {
-            clock.stagger = stagger;
-        }
-        let echo_config = self.defaults.echoes.over(living.echoes);
+        let stagger_own = request.stagger.unwrap_or(clock.stagger);
+        clock.stagger = over
+            .stagger
+            .or(self.defaults.stagger)
+            .unwrap_or(stagger_own);
+        let echo_global = self.defaults.echoes;
+        let echo_config = over.echoes.over(echo_global.over(living.echoes));
+        let wooze_below = WoozeSample {
+            amplitude: 1.0,
+            step: clock.step,
+            glide: clock.glide,
+            jitter: 1.0,
+        };
+        // Its jitter's place is fixed by the spec's step, as it is in a scene with
+        // a field, whose step arrives on the first tick.
+        let jitter_step = f64::from(clock.step);
+        let wooze = over.clock.over(wooze_below);
+        clock.step = wooze.step;
+        clock.glide = wooze.glide;
         self.props.push(LivingProp {
             entity: request.entity,
             entity_name: request.entity_name,
@@ -1170,16 +1738,11 @@ impl LivingProps {
             pose_ring: request.pose_ring.unwrap_or(living.pose_ring),
             ring: None,
             jitter: LivingJitter::from(living),
-            jitter_ahead: f64::from(phase_offset) * f64::from(clock.step),
-            jitter_step: f64::from(clock.step),
+            jitter_ahead: f64::from(phase_offset) * jitter_step,
+            jitter_step,
             beats: f64::from(phase_offset),
             position: request.position,
-            wooze: WoozeSample {
-                amplitude: 1.0,
-                step: clock.step,
-                glide: clock.glide,
-                jitter: 1.0,
-            },
+            wooze,
             shadow_cycle: Cycle::default(),
             drawn: DrawnState::default(),
             echoes: echo_config
@@ -1194,6 +1757,14 @@ impl LivingProps {
             max_depth: 0,
             pending: None,
             echoes_changed: false,
+            species,
+            wooze_below,
+            clock_live: false,
+            echo_spec: living.echoes,
+            echo_global,
+            stagger_own,
+            stagger_entity: request.stagger.is_some(),
+            stagger_global: self.defaults.stagger,
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }
@@ -1383,9 +1954,12 @@ impl LivingProps {
     ) -> Vec<LineageDone> {
         self.time += dt;
         let start = Instant::now();
+        let species = &self.species;
         for prop in &mut self.props {
             if let Some((field, time)) = wooze {
-                prop.wooze = field.sample(prop.position, time);
+                // A species' own values go over the field, zones and all (#246).
+                prop.wooze_below = field.sample(prop.position, time);
+                prop.wooze = species[prop.species].over.clock.over(prop.wooze_below);
                 prop.clock.step = prop.wooze.step;
                 prop.clock.glide = prop.wooze.glide;
             }
@@ -2098,6 +2672,43 @@ variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
         assert_eq!(stats.poses_made, 0, "the scene made them first: {stats:?}");
         assert!(stats.poses_from_cache > 0, "{stats:?}");
         assert_eq!(stats.frames_starved, 0, "{stats:?}");
+    }
+
+    #[test]
+    fn a_fork_keeps_the_species_values_and_turns_its_own() {
+        let (resolver, id) = running("count = 2, spread = 0.2", 1.0);
+        let mut props = resolver.living_props().fork();
+        let species = props.species_of(id).to_string();
+        let slow = SpeciesOverride {
+            clock: ClockOverride {
+                step: Some(1.5),
+                ..ClockOverride::default()
+            },
+            ..SpeciesOverride::default()
+        };
+        assert!(props.set_species(&species, slow));
+        let side = props.fork();
+        assert_eq!(
+            side.resolved(id, None),
+            props.resolved(id, None),
+            "carried over"
+        );
+
+        let mut side = side;
+        let quick = SpeciesOverride {
+            clock: ClockOverride {
+                step: Some(0.25),
+                ..ClockOverride::default()
+            },
+            ..SpeciesOverride::default()
+        };
+        side.set_species(&species, quick);
+        assert_ne!(side.resolved(id, None), props.resolved(id, None));
+        assert_eq!(
+            props.resolved(id, None),
+            props.fork().resolved(id, None),
+            "left alone"
+        );
     }
 
     #[test]
@@ -3900,5 +4511,329 @@ value = 1
         tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
         let clock = resolver.living_props().prop(id).clock();
         assert_eq!((clock.step, clock.glide), (2.0, 0.0));
+    }
+
+    // ---- Species (#246) ----
+
+    /// The sapling under another name, and nothing else changed.
+    fn renamed(spec: &str, name: &str) -> String {
+        spec.replace("name = \"sapling\"", &format!("name = \"{name}\""))
+    }
+
+    /// Two saplings and two thorns, with the scene's species values, built.
+    fn grove(defaults: LivingDefaults) -> ProcGenResolver {
+        let spec = sapling("echoes = { count = 1, spread = 0.5 }");
+        let mut resolver = resolver_with(&spec);
+        resolver.index_spec(ProcGenSpec::parse(&renamed(&spec, "thorn")).unwrap());
+        resolver.set_living_defaults(defaults);
+        for (i, species) in ["sapling", "sapling", "thorn", "thorn"].iter().enumerate() {
+            let mut asked = request(i as u64 + 1, &format!("{species}_{i}"));
+            asked.spec_name = species.to_string();
+            asked.position = [i as f32 * 10.0, 0.0, 0.0];
+            resolver.add_living_prop(asked).unwrap();
+        }
+        resolver.make_living_now();
+        resolver
+    }
+
+    fn thorny() -> LivingDefaults {
+        let mut defaults = LivingDefaults::default();
+        defaults.species.insert(
+            "thorn".to_string(),
+            SpeciesOverride {
+                clock: ClockOverride {
+                    step: Some(0.25),
+                    ..Default::default()
+                },
+                stagger: Some(Stagger::None),
+                echoes: EchoOverride {
+                    count: Some(3),
+                    ..Default::default()
+                },
+                variance: VarianceOverride {
+                    amount: Some(0.9),
+                    ..Default::default()
+                },
+            },
+        );
+        defaults
+    }
+
+    #[test]
+    fn a_species_value_beats_the_field_and_its_zones_and_no_other_species_sees_it() {
+        let mut resolver = grove(thorny());
+        // A zone over all four that slows the step, and says glide too.
+        let field = field(
+            "glide = 0.5",
+            &[r#"name = "slow"
+                shape = "sphere"
+                center = [15, 0, 0]
+                radius = 40
+                step = 1.0"#],
+        );
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+        let props = resolver.living_props();
+        let at = |i: usize| props.resolved(LivingPropId(i), Some((&field, 0.0)));
+
+        let sapling = at(0);
+        assert_eq!(sapling.species, "sapling");
+        assert_eq!(sapling.step.value, 1.0);
+        assert_eq!(sapling.step.layer, LivingLayer::Zone("slow".into()));
+        assert_eq!(sapling.glide.layer, LivingLayer::Global);
+        assert_eq!(sapling.echo_count.value, 1);
+        assert_eq!(sapling.echo_count.layer, LivingLayer::Spec);
+        assert_eq!(sapling.stagger.value, Stagger::PerLevel);
+        assert_eq!(sapling.variance_amount.value, 0.5);
+
+        let thorn = at(2);
+        assert_eq!(thorn.step.value, 0.25, "the species beats the zone");
+        assert_eq!(thorn.step.layer, LivingLayer::Species);
+        assert_eq!(thorn.glide.value, 0.5, "and leaves the rest to the field");
+        assert_eq!(props.prop(LivingPropId(2)).clock().step, 0.25);
+        assert_eq!((thorn.echo_count.value, thorn.echo_spread.value), (3, 0.5));
+        assert_eq!(thorn.echo_count.layer, LivingLayer::Species);
+        assert_eq!(thorn.echo_spread.layer, LivingLayer::Spec);
+        assert_eq!(thorn.stagger.value, Stagger::None);
+        assert_eq!(thorn.variance_amount.value, 0.9);
+        assert_eq!(thorn.variance_steady.layer, LivingLayer::Spec);
+        assert_eq!(props.prop(LivingPropId(3)).echo_count(), 3);
+        assert_eq!(
+            props.variances(),
+            vec![
+                VarianceConfig {
+                    amount: 0.5,
+                    steady: 0.5,
+                    keep_size: false
+                },
+                VarianceConfig {
+                    amount: 0.9,
+                    steady: 0.5,
+                    keep_size: false
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_global_knob_moved_live_leaves_explicit_species_values_standing() {
+        let mut resolver = grove(thorny());
+        let mut field = field("", &[]);
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+
+        // Every global knob a person can move, moved.
+        field
+            .set_global(&"step = 2.0\nglide = 0.9".parse().unwrap(), 0.0, 0.0)
+            .unwrap();
+        let props = resolver.living_props_mut();
+        props.set_echoes(EchoConfig {
+            count: 6,
+            spread: 1.0,
+            alpha: 0.4,
+        });
+        props.set_stagger(Stagger::PerBranch);
+        props.set_variance(VarianceConfig {
+            amount: 0.2,
+            steady: 0.1,
+            keep_size: true,
+        });
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+
+        let props = resolver.living_props();
+        let sapling = props.resolved(LivingPropId(0), Some((&field, 0.0)));
+        assert_eq!((sapling.step.value, sapling.glide.value), (2.0, 0.9));
+        assert_eq!(sapling.echo_count.value, 6);
+        assert_eq!(sapling.echo_count.layer, LivingLayer::Global);
+        assert_eq!(sapling.stagger.value, Stagger::PerBranch);
+        assert_eq!(sapling.variance_amount.value, 0.2);
+
+        let thorn = props.resolved(LivingPropId(2), Some((&field, 0.0)));
+        assert_eq!(thorn.step.value, 0.25, "the species' step stood");
+        assert_eq!(thorn.glide.value, 0.9, "what it doesn't set follows");
+        assert_eq!(thorn.echo_count.value, 3);
+        assert_eq!(thorn.echo_spread.value, 1.0);
+        assert_eq!(thorn.echo_spread.layer, LivingLayer::Global);
+        assert_eq!(thorn.stagger.value, Stagger::None);
+        assert_eq!(thorn.variance_amount.value, 0.9);
+        assert_eq!(thorn.variance_steady.value, 0.1);
+
+        // Cleared, the species takes what the grove has.
+        let props = resolver.living_props_mut();
+        assert!(props.set_species("thorn", SpeciesOverride::default()));
+        tick_with(&mut resolver, &field, 0.0, 1.0 / 60.0);
+        let thorn = resolver
+            .living_props()
+            .resolved(LivingPropId(2), Some((&field, 0.0)));
+        assert_eq!(thorn.step.value, 2.0);
+        assert_eq!(thorn.echo_count.value, 6);
+        assert_eq!(thorn.stagger.value, Stagger::PerBranch);
+        assert_eq!(thorn.variance_amount.value, 0.2);
+    }
+
+    #[test]
+    fn a_species_scope_reaches_its_own_props_and_lineages_only() {
+        let mut resolver = grove(LivingDefaults::default());
+        let props = resolver.living_props_mut();
+        let echoes = EchoOverride {
+            alpha: Some(0.05),
+            ..Default::default()
+        };
+        assert!(props.tune_echoes(LivingScope::Species("thorn"), echoes));
+        assert!(props.tune_stagger(LivingScope::Species("thorn"), Stagger::PerBranch));
+        let variance = VarianceOverride {
+            keep_size: Some(true),
+            ..Default::default()
+        };
+        assert!(props.tune_variance(LivingScope::Species("thorn"), variance));
+        assert!(props.tune_clock(
+            "thorn",
+            ClockOverride {
+                glide: Some(0.0),
+                ..Default::default()
+            }
+        ));
+        let alphas: Vec<f32> = props
+            .props()
+            .iter()
+            .map(|p| p.echo_config().alpha)
+            .collect();
+        let spec_alpha = EchoConfig::default().alpha;
+        assert_eq!(alphas, [spec_alpha, spec_alpha, 0.05, 0.05]);
+        let staggers: Vec<Stagger> = props.props().iter().map(|p| p.stagger()).collect();
+        assert_eq!(staggers[..2], [Stagger::PerLevel; 2]);
+        assert_eq!(staggers[2..], [Stagger::PerBranch; 2]);
+        let keeps: Vec<bool> = props.variances().iter().map(|v| v.keep_size).collect();
+        assert_eq!(keeps, [false, true]);
+        // With no field, a species' clock goes over its spec's at once.
+        let glides: Vec<f32> = props.props().iter().map(|p| p.clock().glide).collect();
+        assert_eq!(glides, [0.3, 0.3, 0.0, 0.0]);
+
+        // A species with no props keeps what it's given, for none of them.
+        assert!(!props.tune_echoes(LivingScope::Species("birch"), echoes));
+        assert_eq!(props.species_override("birch").unwrap().echoes, echoes);
+        assert!(!props.has_species("birch"));
+        assert!(props.has_species("thorn"));
+    }
+
+    #[test]
+    fn with_no_species_values_every_layer_is_what_it_was() {
+        let resolver = grove(LivingDefaults::default());
+        let props = resolver.living_props();
+        for i in 0..4 {
+            let at = props.resolved(LivingPropId(i), None);
+            for layer in [
+                &at.amplitude.layer,
+                &at.step.layer,
+                &at.glide.layer,
+                &at.jitter.layer,
+                &at.stagger.layer,
+                &at.echo_count.layer,
+                &at.variance_amount.layer,
+                &at.keep_size.layer,
+            ] {
+                assert_eq!(*layer, LivingLayer::Spec);
+            }
+            assert_eq!(
+                props.prop(LivingPropId(i)).wooze(),
+                props.prop(LivingPropId(i)).wooze_below()
+            );
+        }
+    }
+
+    #[test]
+    fn an_entity_stagger_is_its_own_layer_under_the_global_one() {
+        let spec = sapling("");
+        let mut resolver = resolver_with(&spec);
+        let mut asked = request(1, "own");
+        asked.stagger = Some(Stagger::None);
+        let id = resolver.add_living_prop(asked).unwrap().0;
+        resolver.make_living_now();
+        let props = resolver.living_props_mut();
+        assert_eq!(props.resolved(id, None).stagger.layer, LivingLayer::Entity);
+        props.set_stagger(Stagger::PerBranch);
+        assert_eq!(props.resolved(id, None).stagger.layer, LivingLayer::Global);
+        props.tune_stagger(LivingScope::Species("sapling"), Stagger::PerLevel);
+        let stagger = props.resolved(id, None).stagger;
+        assert_eq!(
+            (stagger.value, stagger.layer),
+            (Stagger::PerLevel, LivingLayer::Species)
+        );
+    }
+
+    #[test]
+    fn a_clock_given_back_live_keeps_the_species_step_over_it() {
+        let mut resolver = grove(thorny());
+        let props = resolver.living_props_mut();
+        let id = LivingPropId(2);
+        let back = WoozeSample {
+            step: 0.7,
+            ..WoozeSample::NEUTRAL
+        };
+        props.set_wooze_of(id, back);
+        assert_eq!(props.prop(id).clock().step, 0.25);
+        assert_eq!(props.prop(id).wooze_below(), back);
+        assert_eq!(props.resolved(id, None).glide.layer, LivingLayer::Global);
+        props.set_wooze_of(LivingPropId(0), back);
+        assert_eq!(props.prop(LivingPropId(0)).clock().step, 0.7);
+    }
+
+    #[test]
+    fn layers_put_back_are_the_grove_as_it_was() {
+        let mut resolver = grove(thorny());
+        let start = resolver.living_props().layers();
+        let configs = |r: &ProcGenResolver| -> Vec<(EchoConfig, Stagger, f32)> {
+            let props = r.living_props();
+            props
+                .props()
+                .iter()
+                .map(|p| (p.echo_config(), p.stagger(), p.clock().step))
+                .collect()
+        };
+        let before = (configs(&resolver), resolver.living_props().variances());
+        let props = resolver.living_props_mut();
+        props.set_echoes(EchoConfig::default());
+        props.set_stagger(Stagger::PerBranch);
+        props.set_species("thorn", SpeciesOverride::default());
+        props.tune_clock(
+            "sapling",
+            ClockOverride {
+                step: Some(3.0),
+                ..Default::default()
+            },
+        );
+        assert_ne!(configs(&resolver), before.0);
+        resolver.living_props_mut().restore_layers(&start);
+        assert_eq!(
+            (configs(&resolver), resolver.living_props().variances()),
+            before
+        );
+    }
+
+    /// A fair side-by-side pair is a copy of a spec under a new name with the same
+    /// lineage seed: its own species, and the same tree. Its poses come from the
+    /// prop's name and the step, so the same name grows the very same pose.
+    #[test]
+    fn a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton() {
+        let spec = sapling("");
+        let mut resolver = resolver_with(&spec);
+        resolver.index_spec(ProcGenSpec::parse(&renamed(&spec, "sapling_twin")).unwrap());
+        let mut twin = request(2, "same_name");
+        twin.spec_name = "sapling_twin".to_string();
+        let a = resolver.add_living_prop(request(1, "same_name")).unwrap();
+        let b = resolver.add_living_prop(twin).unwrap();
+        assert_eq!(a.1, "sapling@7");
+        assert_eq!(b.1, "sapling_twin@7", "a mesh of its own");
+        resolver.make_living_now();
+        let props = resolver.living_props();
+        assert_eq!(props.lineage_count(), 2);
+        let (skeleton_a, rig_a) = props.rig_of(a.0).unwrap();
+        let (skeleton_b, rig_b) = props.rig_of(b.0).unwrap();
+        assert_eq!(**skeleton_a, **skeleton_b);
+        assert_eq!(**rig_a, **rig_b);
+        assert_eq!(props.rest_height(a.0), props.rest_height(b.0));
+        let first = props.prop(a.0).first_step().unwrap();
+        for step in first..first + props.prop(a.0).ring_len() as u64 {
+            assert_eq!(props.prop(a.0).pose(step), props.prop(b.0).pose(step));
+        }
+        assert_eq!(props.species_of(b.0), "sapling_twin");
     }
 }

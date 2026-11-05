@@ -30,9 +30,9 @@ use flint_core::wooze::WoozeField;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
-    AssetKind, BlendFrame, EchoConfig, EchoOverride, LineageDone, LivingDefaults, LivingPropId,
-    LivingPropRequest, LivingProps, LivingRig, LivingShadows, LivingStats, ProcGenResolver,
-    Stagger, VarianceConfig, VarianceOverride,
+    AssetKind, BlendFrame, ClockOverride, EchoConfig, EchoOverride, LineageDone, LivingDefaults,
+    LivingPropId, LivingPropRequest, LivingProps, LivingRig, LivingShadows, LivingStats,
+    ProcGenResolver, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
@@ -56,22 +56,80 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
             LivingShadows::Blended
         }
     };
-    let stagger = table.stagger.as_deref().and_then(|name| {
-        let stagger = stagger_of(name);
-        if stagger.is_none() {
-            tracing::warn!(
-                "[living] stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\"; \
-                 using each spec's"
-            );
-        }
-        stagger
-    });
+    let mut warn = |problem: String| tracing::warn!("[living] {problem}; using each spec's");
+    let stagger = table
+        .stagger
+        .as_deref()
+        .and_then(|name| checked_stagger(name, &mut warn));
+    let species = table
+        .species
+        .iter()
+        .map(|(name, def)| {
+            let mut warn = |problem: String| {
+                tracing::warn!("[living.species.{name}] {problem}; leaving it to the layers below")
+            };
+            (name.clone(), species_of(def, &mut warn))
+        })
+        .collect();
     LivingDefaults {
         shadows,
-        echoes: echoes_of(table.echoes.as_ref()),
+        echoes: echoes_of(table.echoes.as_ref(), &mut warn),
         stagger,
-        variance: variance_of(table.variance.as_ref()),
+        variance: variance_of(table.variance.as_ref(), &mut warn),
+        species,
     }
+}
+
+/// One species' table (#246) as the resolver wants it. Each bad value goes to
+/// `say`, by key, and is left unset, so the layers below decide it.
+pub fn species_of(
+    def: &flint_scene::LivingSpeciesDef,
+    say: &mut dyn FnMut(String),
+) -> SpeciesOverride {
+    let mut knob = |name: &str, value: Option<f32>| {
+        value.filter(
+            |&value| match flint_core::wooze::check_knob_named(name, value) {
+                Ok(_) => true,
+                Err(problem) => {
+                    say(problem);
+                    false
+                }
+            },
+        )
+    };
+    let clock = ClockOverride {
+        amplitude: knob("amplitude", def.amplitude),
+        step: knob("step", def.step),
+        glide: knob("glide", def.glide),
+        jitter: knob("jitter", def.jitter),
+    };
+    SpeciesOverride {
+        clock,
+        stagger: def
+            .stagger
+            .as_deref()
+            .and_then(|name| checked_stagger(name, say)),
+        echoes: echoes_of(def.echoes.as_ref(), say),
+        variance: variance_of(def.variance.as_ref(), say),
+    }
+}
+
+/// Everything wrong with one species' table, for `flint validate`.
+pub fn species_problems(def: &flint_scene::LivingSpeciesDef) -> Vec<String> {
+    let mut problems = Vec::new();
+    species_of(def, &mut |problem| problems.push(problem));
+    problems
+}
+
+/// A stagger by name, or `None` with the reason sent to `say`.
+fn checked_stagger(name: &str, say: &mut dyn FnMut(String)) -> Option<Stagger> {
+    let stagger = stagger_of(name);
+    if stagger.is_none() {
+        say(format!(
+            "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
+        ));
+    }
+    stagger
 }
 
 /// A stagger by the name a spec or a scene knows it by.
@@ -88,16 +146,19 @@ pub fn stagger_name(stagger: Stagger) -> &'static str {
     }
 }
 
-/// A scene's `[living] variance` as the resolver wants it, with a bad field named
-/// and then left to each spec.
-fn variance_of(table: Option<&flint_scene::LivingVarianceDef>) -> VarianceOverride {
+/// A `variance` table as the resolver wants it, with a bad field sent to `say`
+/// and then left to the layers below.
+pub fn variance_of(
+    table: Option<&flint_scene::LivingVarianceDef>,
+    say: &mut dyn FnMut(String),
+) -> VarianceOverride {
     let Some(table) = table else {
         return VarianceOverride::default();
     };
-    let fine = |variance: VarianceConfig| match variance.check() {
+    let mut fine = |variance: VarianceConfig| match variance.check() {
         Ok(()) => true,
         Err((key, reason)) => {
-            tracing::warn!("[living] variance.{key} = {reason}; using each spec's");
+            say(format!("variance.{key} = {reason}"));
             false
         }
     };
@@ -124,16 +185,19 @@ pub fn field_of(table: Option<&flint_scene::WoozeDef>) -> Option<WoozeField> {
     Some(field)
 }
 
-/// A scene's `[living] echoes` as the resolver wants it, with a bad field named
-/// and then left to each spec.
-fn echoes_of(table: Option<&flint_scene::LivingEchoesDef>) -> EchoOverride {
+/// An `echoes` table as the resolver wants it, with a bad field sent to `say`
+/// and then left to the layers below.
+pub fn echoes_of(
+    table: Option<&flint_scene::LivingEchoesDef>,
+    say: &mut dyn FnMut(String),
+) -> EchoOverride {
     let Some(table) = table else {
         return EchoOverride::default();
     };
-    let fine = |echoes: EchoConfig| match echoes.check() {
+    let mut fine = |echoes: EchoConfig| match echoes.check() {
         Ok(()) => true,
         Err((key, reason)) => {
-            tracing::warn!("[living] echoes.{key} = {reason}; using each spec's");
+            say(format!("echoes.{key} = {reason}"));
             false
         }
     };

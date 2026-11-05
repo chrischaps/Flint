@@ -181,3 +181,34 @@ fn a_script_can_freeze_step_save_and_load() {
         .iter()
         .any(|c| matches!(c, ScriptCommand::SaveLivingPreset { name } if name == "misty")));
 }
+
+/// One species' own values (#246): the flat form, with a species named, arrives
+/// as it was written, and clear_living takes a species and any keys.
+#[test]
+fn a_script_can_tune_and_clear_one_species() {
+    let commands = commands_of(
+        r#"
+        fn on_init() {
+            tune_living(#{ species: "grove_thorn", step: 0.25, echoes: #{ count: 1 } });
+            clear_living("grove_thorn", ["echoes", "step"]);
+            clear_living("grove_oak");
+        }
+        "#,
+    );
+    let [ScriptCommand::TuneLiving { knobs }, ScriptCommand::ClearLiving {
+        species: thorn,
+        keys,
+    }, ScriptCommand::ClearLiving {
+        species: oak,
+        keys: none,
+    }] = &commands[..]
+    else {
+        panic!("{commands:?}");
+    };
+    assert_eq!(knobs["species"].as_str(), Some("grove_thorn"));
+    assert_eq!(knobs["echoes"]["count"].as_integer(), Some(1));
+    assert_eq!(thorn, "grove_thorn");
+    assert_eq!(keys, &["echoes".to_string(), "step".to_string()]);
+    assert_eq!(oak, "grove_oak");
+    assert!(none.is_empty());
+}

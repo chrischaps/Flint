@@ -153,12 +153,13 @@ impl PlayerApp {
                     });
                 }
                 ScriptCommand::TuneLiving { knobs } => {
-                    let tuned = knobs
-                        .try_into::<flint_scene::WoozePreset>()
-                        .map_err(|e| e.to_string())
-                        .and_then(|tune| self.tune_living(&tune));
-                    if let Err(problem) = tuned {
+                    if let Err(problem) = self.tune_living_from_script(knobs) {
                         tracing::warn!(target: "script", "tune_living: {problem}");
+                    }
+                }
+                ScriptCommand::ClearLiving { species, keys } => {
+                    if let Err(problem) = self.clear_living_species(&species, &keys) {
+                        tracing::warn!(target: "script", "clear_living: {problem}");
                     }
                 }
                 ScriptCommand::FreezeLiving { frozen } => self.living_tune.frozen = frozen,

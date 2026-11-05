@@ -102,9 +102,10 @@ At the top is the warped clock, drawn as what it is: one step's worth of hold, t
 **In a grove of several species.** Each species' spec sets its own echoes, stagger and variance, so props can disagree on those knobs. Woozy Grove's four species do on all of them. Where they disagree, the knob reads `mixed` (the slider sits at the first prop's value, the checkbox shows a dash) until you move it.
 
 - Moving a knob sets that one knob on every prop and nothing else. Moving echo `count` gives every prop that count and leaves `spread`, `alpha`, stagger and variance as each species had them. Moving `glide` doesn't touch any of them.
+- The panel's knobs are the global layer. A species with its own value for a knob, from [`[living.species.<spec>]`](../concepts/procgen.md#species-values) or a script, keeps it whatever the panel does, so that knob may read `mixed` and stay so.
 - A `mixed` knob counts as moved as soon as you touch it, even if you pick the number it was showing: every prop then has that value, and the knob stops reading `mixed`.
 - Variance is held per lineage, so `amount` changes every lineage's amount and each keeps its own `steady` and `keep size`.
-- **As loaded** gives back each species' own values, prop by prop and lineage by lineage.
+- **As loaded** gives back each species' own values, prop by prop and lineage by lineage, and every `[living.species]` value as the scene set it. One a script set or cleared since goes back too.
 - **Save** writes only the knobs every prop agrees on and names the ones it left out, so loading the file leaves each species its own of the rest. A preset file or a script that sets a knob still sets it on every prop.
 - The clock's four knobs come from the scene's `[wooze]` field, which is one for the whole grove. A scene with no `[wooze]` table runs each species on its spec's clock, and the panel shows those as `mixed` too. Turning any of them gives the scene a field starting from the first prop's clock, which evens out `step` and `glide` across the grove, and the panel says so under the clock. **As loaded** takes the field away again and gives each species its spec's clock back.
 

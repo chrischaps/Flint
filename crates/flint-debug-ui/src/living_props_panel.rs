@@ -110,6 +110,7 @@ impl LivingKnobs {
                     steady: Some(self.variance_steady),
                     keep_size: Some(self.keep_size),
                 }),
+                ..Default::default()
             },
             boil: Some(BoilDef {
                 enabled: Some(self.boil_on),
@@ -166,6 +167,7 @@ impl LivingKnobs {
                 stagger: pick(&self.stagger, &before.stagger, t.stagger),
                 echoes: (echoes != LivingEchoesDef::default()).then_some(echoes),
                 variance: (variance != LivingVarianceDef::default()).then_some(variance),
+                ..Default::default()
             },
             boil: (boil != BoilDef::default()).then_some(boil),
         }
