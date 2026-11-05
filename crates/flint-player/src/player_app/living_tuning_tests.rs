@@ -307,7 +307,7 @@ fn as_loaded_puts_it_all_back() {
 #[cfg(feature = "debug-hud")]
 #[test]
 fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
-    use flint_debug_ui::{LivingPanelAction, LivingPropsDebugPanel};
+    use flint_debug_ui::{LivingPanelAction, LivingPropsDebugPanel, PanelScope};
 
     fn panel(app: &mut PlayerApp) -> &mut LivingPropsDebugPanel {
         app.debug_panels[0]
@@ -343,7 +343,7 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
     knobs.echo_count = 5;
     knobs.glide = 0.8;
     let moved = knobs.moved(&before, &Default::default());
-    panel(&mut app).send_for_test(LivingPanelAction::Set(moved));
+    panel(&mut app).send_for_test(LivingPanelAction::Set(PanelScope::Global, moved));
     panel(&mut app).send_for_test(LivingPanelAction::Freeze(true));
     panel(&mut app).send_for_test(LivingPanelAction::Overlay(true));
     app.drain_living_panel();
@@ -481,7 +481,7 @@ fn a_sparse_echo_count_from_a_script_leaves_each_species_its_spread() {
 #[cfg(feature = "debug-hud")]
 mod panel_edits {
     use super::*;
-    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction};
+    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
 
     /// What the panel does with a hand on one knob: the knobs it last heard,
     /// that one moved, and only what moved sent.
@@ -490,7 +490,7 @@ mod panel_edits {
         let mut knobs = heard.clone();
         touch(&mut knobs);
         let moved = knobs.moved(&heard, &KnobFlags::default());
-        app.apply_living_action(LivingPanelAction::Set(moved));
+        app.apply_living_action(LivingPanelAction::Set(PanelScope::Global, moved));
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod panel_edits {
             ..Default::default()
         };
         let moved = heard.moved(&heard, &touched);
-        app.apply_living_action(LivingPanelAction::Set(moved));
+        app.apply_living_action(LivingPanelAction::Set(PanelScope::Global, moved));
         let counts: Vec<u32> = species_of(&app).echoes.iter().map(|e| e.count).collect();
         assert_eq!(counts, [4; 4]);
         assert!(!app.living_mixed().echo_count);
@@ -1123,7 +1123,7 @@ fn a_scenes_species_table_reaches_the_player_with_bad_values_left_out() {
 #[cfg(feature = "debug-hud")]
 mod species_panel {
     use super::*;
-    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction};
+    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction, PanelScope};
 
     #[test]
     fn as_loaded_gives_a_species_back_its_own_values() {
@@ -1140,6 +1140,7 @@ mod species_panel {
         knobs.echo_count = 6;
         knobs.step = 1.5;
         app.apply_living_action(LivingPanelAction::Set(
+            PanelScope::Global,
             knobs.moved(&heard, &KnobFlags::default()),
         ));
         app.clear_living_species("thorn", &[]).unwrap();
@@ -1151,5 +1152,294 @@ mod species_panel {
         let now: Vec<_> = (0..4).map(|i| running(&app, i)).collect();
         assert_eq!(now, start);
         assert_eq!(running(&app, 2).0, 0.25, "the species' step is back");
+    }
+}
+
+// ---- Scopes on the panel (#247) ----
+
+#[cfg(feature = "debug-hud")]
+mod scopes {
+    use super::*;
+    use flint_debug_ui::{
+        Knob, KnobFlags, LivingKnobs, LivingPanelAction, LivingSpeciesState, PanelScope,
+    };
+    use flint_procgen::{BlendFrame, LivingPropId, WarpedTime};
+
+    fn repo() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// Woozy Grove's living props as the scene commits them, with no window:
+    /// its four species, every tree, and its field with its zones.
+    fn woozy_grove(folder: &Path) -> PlayerApp {
+        let text = std::fs::read_to_string(repo().join("demo/woozy_grove.scene.toml")).unwrap();
+        let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
+        let mut app = app_with(0, folder);
+        app.procgen_resolver
+            .set_living_defaults(super::super::super::living_props::defaults_of(
+                scene.living.as_ref(),
+            ));
+        for spec in ["grove_birch", "grove_cypress", "grove_oak", "grove_thorn"] {
+            let path = repo().join(format!("demo/specs/{spec}.procgen.toml"));
+            let text = std::fs::read_to_string(path).unwrap();
+            app.procgen_resolver
+                .index_spec(ProcGenSpec::parse(&text).unwrap());
+        }
+        // In name order, so two runs build the same grove.
+        let mut names: Vec<&String> = scene.entities.keys().collect();
+        names.sort();
+        for (i, name) in names.into_iter().enumerate() {
+            let components = &scene.entities[name].components;
+            let Some(component) = components.get("living_prop") else {
+                continue;
+            };
+            let spec = components["model"]["asset"].as_str().unwrap();
+            let at = components["transform"]["position"].as_array().unwrap();
+            let position = [0, 1, 2].map(|j| flint_core::toml_util::toml_f32(&at[j]).unwrap());
+            let request = super::super::super::living_props::read_request(
+                EntityId::from_raw(i as u64 + 1),
+                name,
+                position,
+                spec,
+                component,
+            )
+            .unwrap();
+            app.procgen_resolver.add_living_prop(request).unwrap();
+        }
+        app.procgen_resolver.make_living_now();
+        app.wooze = super::super::super::living_props::field_of(scene.wooze.as_ref());
+        app.tick_procgen(0.0);
+        app
+    }
+
+    fn species_at(app: &PlayerApp, i: usize) -> String {
+        let living = app.procgen_resolver.living_props();
+        living.species_of(LivingPropId(i)).to_string()
+    }
+
+    fn state_of(app: &PlayerApp, name: &str) -> LivingSpeciesState {
+        let states = app.living_species_states();
+        states.into_iter().find(|s| s.name == name).unwrap()
+    }
+
+    /// Move one knob at a species, as the panel does with a hand on it there.
+    fn move_at(app: &mut PlayerApp, species: &str, touch: impl FnOnce(&mut LivingKnobs)) {
+        let heard = state_of(app, species).knobs;
+        let mut knobs = heard.clone();
+        touch(&mut knobs);
+        let moved = knobs.moved(&heard, &KnobFlags::default());
+        let scope = PanelScope::Species(species.to_string());
+        app.apply_living_action(LivingPanelAction::Set(scope, moved));
+    }
+
+    /// The done-when of #247, headless: in Woozy Grove, echo `count` moved at
+    /// one species' scope changes that species' trees and no others, and its
+    /// clear gives them back.
+    #[test]
+    fn at_species_scope_in_woozy_grove_echo_count_moves_that_species_alone() {
+        let folder = Folder::new("scope_grove");
+        let mut app = woozy_grove(&folder.0);
+        let n = app.procgen_resolver.living_props().props().len();
+        assert_eq!(app.living_species().len(), 4, "{:?}", app.living_species());
+        assert!(n >= 20, "{n} trees");
+        let before: Vec<_> = (0..n).map(|i| running(&app, i)).collect();
+        let variances = app.procgen_resolver.living_props().variances();
+        let states = app.living_species_states();
+        let thorn = state_of(&app, "grove_thorn");
+        assert_eq!(thorn.sources.of(Knob::EchoCount), ["spec"]);
+
+        let count = thorn.knobs.echo_count + 3;
+        move_at(&mut app, "grove_thorn", |k| k.echo_count = count);
+        app.tick_procgen(0.0);
+
+        let mut thorns = 0;
+        for (i, was) in before.iter().enumerate() {
+            let now = running(&app, i);
+            if species_at(&app, i) == "grove_thorn" {
+                thorns += 1;
+                assert_eq!(now.2.count, count);
+                let mut expected = *was;
+                expected.2.count = count;
+                assert_eq!(now, expected, "only the count moved");
+            } else {
+                assert_eq!(&now, was, "{} held", species_at(&app, i));
+            }
+        }
+        assert_eq!(thorns, thorn.props);
+        assert_eq!(app.procgen_resolver.living_props().variances(), variances);
+
+        // The panel sees the same: the thorns' count is their own, the other
+        // three species are exactly as they were, and Global says one owns it.
+        let thorn_now = state_of(&app, "grove_thorn");
+        assert_eq!(thorn_now.sources.of(Knob::EchoCount), ["species"]);
+        assert_eq!(thorn_now.knobs.echo_count, count);
+        for was in states.iter().filter(|s| s.name != "grove_thorn") {
+            assert_eq!(&state_of(&app, &was.name), was);
+        }
+
+        // Cleared, the thorns' trees take what's below again: here, their spec.
+        app.apply_living_action(LivingPanelAction::Clear(
+            "grove_thorn".to_string(),
+            Some(Knob::EchoCount),
+        ));
+        app.tick_procgen(0.0);
+        let now: Vec<_> = (0..n).map(|i| running(&app, i)).collect();
+        assert_eq!(now, before);
+        assert_eq!(state_of(&app, "grove_thorn"), thorn);
+    }
+
+    /// Who set each value, for every species, is what `flint render --report
+    /// json` would name: both read `LivingProps::resolved`, prop by prop. Woozy
+    /// Grove has zones, so some species read more than one layer.
+    #[test]
+    fn every_source_mark_is_the_layer_the_report_names() {
+        let folder = Folder::new("scope_sources");
+        let mut app = woozy_grove(&folder.0);
+        move_at(&mut app, "grove_birch", |k| {
+            k.glide = 0.05;
+            k.stagger = "none".to_string();
+        });
+        app.tick_procgen(0.0);
+        let living = app.procgen_resolver.living_props();
+        let field = app.wooze.as_ref().map(|field| (field, app.wooze_time));
+        let mut zoned = 0;
+        for state in app.living_species_states() {
+            let props: Vec<_> = (0..living.props().len())
+                .map(|i| living.resolved(LivingPropId(i), field))
+                .filter(|r| r.species == state.name)
+                .collect();
+            assert_eq!(props.len(), state.props);
+            for knob in Knob::ALL {
+                let mut report: Vec<String> = Vec::new();
+                for prop in &props {
+                    let label = match knob {
+                        Knob::Amplitude => prop.amplitude.layer.label(),
+                        Knob::Step => prop.step.layer.label(),
+                        Knob::Glide => prop.glide.layer.label(),
+                        Knob::Jitter => prop.jitter.layer.label(),
+                        Knob::Stagger => prop.stagger.layer.label(),
+                        Knob::EchoCount => prop.echo_count.layer.label(),
+                        Knob::EchoSpread => prop.echo_spread.layer.label(),
+                        Knob::EchoAlpha => prop.echo_alpha.layer.label(),
+                        Knob::VarianceAmount => prop.variance_amount.layer.label(),
+                        Knob::VarianceSteady => prop.variance_steady.layer.label(),
+                        Knob::KeepSize => prop.keep_size.layer.label(),
+                    };
+                    if !report.contains(&label) {
+                        report.push(label);
+                    }
+                }
+                assert_eq!(state.sources.of(knob), report, "{} {knob:?}", state.name);
+                zoned += usize::from(report.iter().any(|l| l.starts_with("zone:")));
+            }
+            if state.name == "grove_birch" {
+                assert_eq!(state.sources.of(Knob::Glide), ["species"]);
+                assert_eq!(state.sources.of(Knob::Stagger), ["species"]);
+            }
+        }
+        assert!(zoned > 0, "some knob reads a zone");
+        // Every knob's key is one the clear takes.
+        for knob in Knob::ALL {
+            app.clear_living_species("grove_birch", &[knob.key().to_string()])
+                .unwrap();
+            assert!(SPECIES_KEYS.contains(&knob.key()));
+        }
+    }
+
+    /// What each of a prop's parts is drawn between, right now.
+    fn drawn(app: &mut PlayerApp, i: usize) -> Vec<WarpedTime> {
+        let living = app.procgen_resolver.living_props_mut();
+        living.blend_prop(LivingPropId(i), &mut BlendFrame::default());
+        living.prop(LivingPropId(i)).drawn_times().to_vec()
+    }
+
+    /// Clearing a species' value gives its trees the grove's again, the one
+    /// set for every prop, and nothing drawn jumps: only stagger could.
+    #[test]
+    fn a_cleared_species_value_is_the_groves_again_with_no_pop() {
+        let folder = Folder::new("scope_clear");
+        let mut app = two_species(&folder.0, true);
+        let grove: WoozePreset =
+            toml::from_str("[wooze]\nglide = 0.4\n[living]\nechoes = { count = 5 }\n").unwrap();
+        app.apply_living_action(LivingPanelAction::Set(PanelScope::Global, grove.clone()));
+        move_at(&mut app, "thorn", |k| {
+            k.step = 0.25;
+            k.glide = 0.9;
+            k.amplitude = 0.3;
+            k.jitter = 2.0;
+            k.echo_count = 1;
+            k.echo_alpha = 0.5;
+            k.variance_amount = 0.9;
+        });
+        for _ in 0..20 {
+            app.tick_procgen(1.0 / 60.0);
+        }
+        // A grove with the same global values and no species ones: what the
+        // thorns should be once every value is cleared.
+        let reference = Folder::new("scope_clear_reference");
+        let mut plain = two_species(&reference.0, true);
+        plain.apply_living_action(LivingPanelAction::Set(PanelScope::Global, grove));
+        plain.tick_procgen(0.0);
+        let want = plain.living_view(Some("thorn"));
+
+        for knob in [
+            Knob::Step,
+            Knob::Glide,
+            Knob::Amplitude,
+            Knob::Jitter,
+            Knob::EchoCount,
+            Knob::EchoAlpha,
+            Knob::VarianceAmount,
+        ] {
+            let held: Vec<_> = (2..4).map(|i| drawn(&mut app, i)).collect();
+            assert!(
+                held.iter().all(|parts| parts.len() > 1),
+                "every part drawn: {held:?}"
+            );
+            let beats: Vec<f64> = (2..4)
+                .map(|i| app.procgen_resolver.living_props().props()[i].beats())
+                .collect();
+            app.apply_living_action(LivingPanelAction::Clear("thorn".to_string(), Some(knob)));
+            app.tick_procgen(0.0);
+            let now: Vec<_> = (2..4).map(|i| drawn(&mut app, i)).collect();
+            assert_eq!(now, held, "clearing {knob:?} moved what's drawn");
+            let beats_now: Vec<f64> = (2..4)
+                .map(|i| app.procgen_resolver.living_props().props()[i].beats())
+                .collect();
+            assert_eq!(beats_now, beats, "clearing {knob:?} moved the clock");
+            assert!(
+                !state_of(&app, "thorn").sources.is_own(knob),
+                "{knob:?} is still the species' own"
+            );
+        }
+        let got = app.living_view(Some("thorn"));
+        assert_eq!(got.step.value, want.step.value);
+        assert_eq!(got.glide.value, want.glide.value);
+        assert_eq!(got.glide.value, 0.4, "the grove's glide");
+        assert_eq!(got.amplitude.value, want.amplitude.value);
+        assert_eq!(got.jitter.value, want.jitter.value);
+        assert_eq!(got.echo_count.value, 5, "the grove's count");
+        assert_eq!(got.echo_alpha.value, want.echo_alpha.value);
+        assert_eq!(got.variance_amount.value, want.variance_amount.value);
+        assert!(!state_of(&app, "thorn").has_own());
+    }
+
+    /// At Global, a species that sets its own value is left out of the knob,
+    /// which reads the grove's: so a thorn table doesn't make it `mixed`.
+    #[test]
+    fn a_species_own_value_doesnt_make_the_grove_knob_mixed() {
+        let folder = Folder::new("scope_global");
+        let mut app = two_species(&folder.0, true);
+        let grove: WoozePreset = toml::from_str("[living]\nechoes = { count = 5 }\n").unwrap();
+        app.apply_living_action(LivingPanelAction::Set(PanelScope::Global, grove));
+        assert!(!app.living_mixed().echo_count);
+        move_at(&mut app, "thorn", |k| k.echo_count = 1);
+        assert!(!app.living_mixed().echo_count, "the thorns own theirs");
+        assert_eq!(app.living_view(None).echo_count.value, 5);
+        // Every species owning it, the knob reads what they run on.
+        move_at(&mut app, "sapling", |k| k.echo_count = 3);
+        let view = app.living_view(None);
+        assert!(view.echo_count.mixed);
+        assert_eq!(view.echo_count.layers, ["species"]);
     }
 }
