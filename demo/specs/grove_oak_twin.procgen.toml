@@ -1,0 +1,64 @@
+# grove_oak under another name, for demo/living_compare.scene.toml (#246).
+#
+# Everything below is demo/specs/grove_oak.procgen.toml, unchanged but for meta.name. A species is a spec,
+# so this is a second species that grows the very same tree: the same lineage
+# seed gives the same skeleton (living_props.rs tests that). A scene can then
+# give it values of its own in [living.species.grove_oak_twin] and stand it beside
+# the original. Change the original and copy it again.
+
+generator = "tree_v1"
+
+[meta]
+name = "grove_oak_twin"
+description = "A broad oak, late in the summer, that keeps drifting between versions of itself"
+version = "1.0.0"
+tags = ["tree", "vegetation", "deciduous", "oak", "living", "woozy-grove"]
+
+[seed]
+mode = "fixed"
+value = 11
+
+[params]
+trunk_height = 4.2
+trunk_radius_base = 0.42
+trunk_radius_top = 0.15
+trunk_segments = 12
+radial_segments = 8
+trunk_curve_noise = 0.22                 # older than the others, and it shows
+
+bark_color_base = "#463022"
+bark_roughness = 0.92
+bark_normal_strength = 1.3
+
+branch_method = "lsystem"
+lsystem_iterations = 5
+branch_start = 0.55
+crown_radius = 4.6
+branch_angle_min = 28.0
+branch_angle_max = 54.0
+lsystem_angle_variation = 16.0
+branch_length_falloff = 0.68
+branch_radius_falloff = 0.56
+
+leaf_style = "billboard"
+leaf_density = 0.92
+leaves_per_tip = 8
+leaf_spread_radius = 0.6
+leaf_along_branch_density = 0.8
+leaf_along_branch_min_depth = 2
+leaf_size = 0.36
+leaf_size_variation = 0.28
+leaf_color_base = "#4C6E22"
+leaf_shades = 5
+leaf_color_variation = 0.12
+leaf_season = 0.07                       # the first leaves turning
+leaf_season_variation = 0.1
+
+[living]
+lineage_seed = 11
+pose_ring = 8
+stagger = "per_level"
+drift = { amplitude = 0.35, params = ["branch_angle", "lsystem_tropism", "trunk_curve"] }
+jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0 }
+variance = { amount = 0.35, steady = 0.8, keep_size = true }
+echoes = { count = 4, spread = 0.9, alpha = 0.2 }

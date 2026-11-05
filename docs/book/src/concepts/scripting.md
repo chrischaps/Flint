@@ -491,11 +491,13 @@ A change the field can't use is logged by the player, naming the zone, and chang
 
 ### Living Props API
 
-The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s controls, for a script. These reach every prop at once, and a look lab or a test can run them with no panel open.
+The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s controls, for a script. These reach every prop at once, or [one species](procgen.md#species-values), and a look lab or a test can run them with no panel open.
 
 | Function | Description |
 |----------|-------------|
 | `tune_living(knobs)` | Turn any knobs. `knobs` is what a [`.wooze.toml`](procgen.md#saved-presets) holds, as a map, and what it leaves out stays as it is, prop by prop: `echoes: #{ count: 3 }` gives every prop three echoes and leaves each species its own `spread` and `alpha` |
+| `tune_living(#{ species: name, ... })` | One species' own values, which beat the global ones, the field and its zones: the shape of a scene's [`[living.species.<spec>]`](procgen.md#species-values), so `step`, `glide`, `amplitude`, `jitter`, `stagger`, `echoes` and `variance`. A field it leaves out stays as the species has it. A species no prop grows from is logged and kept, for none |
+| `clear_living(name)`, `clear_living(name, keys)` | Give a species' values back to the layers below: all of them, or the keys named, such as `["step", "echoes.count", "variance"]` |
 | `freeze_living(frozen)` | Stop or start the clock everything woozy runs on. The game goes on |
 | `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |
 | `save_living_preset(name)` | Save every knob the props agree on as `wooze/<name>.wooze.toml`, leaving out the ones a grove's species differ on. Not on the web, which has nowhere to put it |
@@ -511,6 +513,10 @@ tune_living(#{
     },
     boil: #{ contour: 1.0, on: 3 },
 });
+
+// The thorns twitchier than the rest, whatever the grove does next.
+tune_living(#{ species: "grove_thorn", step: 0.125, glide: 0.0, echoes: #{ count: 1 } });
+clear_living("grove_thorn", ["echoes"]);   // their echoes back to the grove's
 ```
 
 Unlike `set_wooze`, these work in a scene with no `[wooze]` table: turning a clock knob gives it a field, starting from where its props stand. What can't be used is logged, naming the key, and the rest still happens. New echoes wait until the rings have every pose they'd read, and a new variance re-holds the poses in use first. Bench: `demo/living_sweep.scene.toml`, whose script moves every knob across its range.

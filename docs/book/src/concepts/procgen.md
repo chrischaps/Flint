@@ -470,13 +470,70 @@ contour = 1.4
 on = 3
 ```
 
-The first two tables are the shapes a scene's own take, so they can be pasted either way: a scene's `[living]` table also takes `stagger` and `variance` now, over each spec's, a field at a time. Every key is optional.
+The first two tables are the shapes a scene's own take, so they can be pasted either way: a scene's `[living]` table also takes `stagger` and `variance` now, over each spec's, a field at a time. Every key is optional. A preset can hold [`[living.species.<spec>]`](#species-values) tables too, which a scene's own beat a field at a time, though the panel doesn't save them.
 
 Whatever a scene says itself still beats its preset, as with a built-in: `glide = 0.4` beside `preset = "misty"` means 0.4, and the panel lists those keys when it saves. There are two exceptions. `stagger` from the scene or a preset beats an entity's own `living_prop` stagger too, since a preset has to look as it did when it was saved. And `[boil]` beats `[post_process]`, whose `kuwahara_boil`, `contour_boil` and `boil_on` have no way to say they weren't set. Whether the passes themselves are on stays with `[post_process]`, and zones stay with the scene, since they belong to a place.
 
 A file holds numbers as briefly as they read back to the same bits, so what you saved is what you get: a run tuned to these values and a fresh run that names the file drew 0 of 518,400 pixels differently at each of 12 moments over 6 s.
 
 `flint validate` fails on a preset file with a misspelt key or a value out of range, naming the preset. The player warns and goes without it, and `flint bundle` packs `wooze/`.
+
+### Species values
+
+A grove is one world made of different things. `[living.species.<spec>]` gives one species values of its own, so the thorns can be twitchier than the oaks without editing a spec:
+
+```toml
+[living.species.grove_thorn]
+step = 0.125             # the clock's knobs, as [wooze] names them
+glide = 0.0
+jitter = 2.2
+stagger = "none"         # and the props' knobs, as [living] names them
+echoes = { count = 0 }
+variance = { amount = 0.9 }
+```
+
+A species is a spec, named by its `meta.name`, which is what a living prop's `model.asset` says. It covers every lineage seed of that spec. Every key is optional, and one left out is whatever the layers below say. Those are, lowest first:
+
+| Layer | Where it's said | Sets |
+|-------|-----------------|------|
+| `spec` | The spec's `[living]` table | Everything; amplitude and jitter are 1, as authored |
+| `entity` | A `living_prop` component | `stagger` only. `lineage_seed`, `pose_ring` and `phase_offset` are the entity's alone |
+| `global` | The scene's `[living]` and `[wooze]` globals, a preset it names, and any knob moved live for the whole grove | Everything |
+| `zone:<name>` | A `[[wooze.zone]]` where the prop stands | The clock's four knobs |
+| `species` | `[living.species.<spec>]`, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance` |
+
+Each layer beats every one above it, a field at a time: a species that sets echo `count` still takes `spread` from the layers below. So a global knob does what it always did, and a species value survives it. Move `glide` on the [F3 panel](../guides/debug-panels.md#living-props-f3) and every tree takes it except a species that set its own.
+
+Two things to know about that order:
+
+- **A species with its own clock ignores a zone's.** In Woozy Grove's `hush`, a thorn with its own `step` keeps it. That's the point of the layer, and also its cost: a zone can't calm a species that has been told otherwise. Leave clock values unset for species in shipped scenes unless the look needs them.
+- **The shading boil and the shadows stay global.** The boil is a screen-space pass over the whole frame, and shadows are one choice per scene.
+
+Variance is held per lineage, as it was, and a lineage belongs to one spec, so a species' new variance re-holds only its own poses. A species' new echoes wait for the rings to have what they'd read, as global ones do.
+
+**Saying where a value came from.** `flint render --report json` gives every prop its `species` and a `values` map: each value it runs on and the layer that set it, `spec`, `entity`, `global`, `zone:<name>` or `species` ([What a Prop Was Doing](../guides/headless-rendering.md#what-a-prop-was-doing)).
+
+```bash
+flint render demo/living_compare.scene.toml --time 3.5 -o compare.png --report json
+```
+
+**Checking it.** `flint validate` names a bad value, `[living.species.grove_thorn_twin]: step = -1 must be 0.01 seconds or more`, and a species no living prop in the scene grows from, which is most likely a misspelt spec. The player warns and leaves a bad value to the layers below. A misspelt key fails the scene's load, as it does in `[living]`.
+
+**From a script.** `tune_living(#{ species: "grove_thorn", step: 0.125, echoes: #{ count: 1 } })` sets one species' values over what it has, and `clear_living("grove_thorn")`, or `clear_living("grove_thorn", ["echoes", "step"])`, gives them back to the layers below. See the [Living Props API](scripting.md#living-props-api). The panel's **As loaded** puts every species back as the scene set it.
+
+#### Comparing two settings side by side
+
+Different species are different trees, so an oak beside a thorn compares nothing. A fair pair is one spec beside a copy of itself:
+
+1. Copy the spec and change only its `meta.name`, say to `grove_oak_twin`. It's a species of its own, and with the same `lineage_seed` it grows the same skeleton: `a_copy_of_a_spec_under_a_new_name_grows_the_same_skeleton` in `living_props.rs` tests exactly that.
+2. Stand the two side by side with the same `lineage_seed`, rotation and scale, and give them the same `phase_offset`, so they hold and glide on the same beats.
+3. Give the copy its own values in `[living.species.grove_oak_twin]` and leave the original alone.
+
+![Left to right: the oak as specced, the oak at the morph end, the thorn as specced, the thorn at the shiver end](../images/living-compare.png)
+
+`demo/living_compare.scene.toml` does this twice under `linklater`. The oak twin is at the morph end (step 1, glide 1, all of its drift, brighter echoes) and the thorn twin at the shiver end (step 0.125, no glide, jitter 2.2, no echoes). Its twins are `demo/specs/grove_oak_twin.procgen.toml` and `grove_thorn_twin.procgen.toml`. Copy them again if their originals change.
+
+What still differs within a pair is each pose's shape seed, which comes from the entity's name. Two entities can't share a name, so the twins pass through cousins of each other's poses: the same rest shape, clock and settings, a different draw of the same distribution. Treat a pair as a look comparison, not a cost one. A copy has its own lineage and pose cache, so it builds and fills everything twice; measure frame cost on the 40-oak bench.
 
 ### Shallow wooze
 

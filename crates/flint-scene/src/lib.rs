@@ -10,8 +10,9 @@ mod saver;
 mod wooze;
 
 pub use format::{
-    BoilDef, CameraDef, EntityDef, LivingDef, LivingEchoesDef, LivingVarianceDef, PostProcessDef,
-    PrefabFile, PrefabInstance, SceneFile, SceneMetadata, WoozeDef, WoozeKnobs, WoozePreset,
+    BoilDef, CameraDef, EntityDef, LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingVarianceDef,
+    PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata, WoozeDef, WoozeKnobs,
+    WoozePreset,
 };
 pub use loader::{load_scene, load_scene_string, reload_scene, reload_scene_string};
 pub use patcher::SceneDocument;

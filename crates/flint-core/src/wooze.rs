@@ -152,6 +152,18 @@ fn check_knob(knob: usize, value: f32) -> Result<f32, String> {
     }
 }
 
+/// Check a knob by name (`amplitude`, `step`, `glide` or `jitter`), as the field
+/// checks its own: for anything else that holds one, such as a species (#246).
+pub fn check_knob_named(name: &str, value: f32) -> Result<f32, String> {
+    let knob = KNOB_NAMES.iter().position(|k| *k == name).ok_or_else(|| {
+        format!(
+            "'{name}' isn't a wooze knob; it takes {}",
+            KNOB_NAMES.join(", ")
+        )
+    })?;
+    check_knob(knob, value)
+}
+
 /// The hold-and-glide clock at `beats`, counted in steps: `(index, weight)` means
 /// `weight` of the way from target `index` to the next. The design's t', which
 /// holds for the first `1 - glide` of a step and eases over the rest. A glide of
@@ -526,6 +538,24 @@ impl WoozeField {
             }
         }
         WoozeSample::from_array(value)
+    }
+
+    /// Which zone has the last word on each knob at `position` and `time`, in the
+    /// order `amplitude`, `step`, `glide`, `jitter`: `None` where the global value
+    /// stands. For saying where a value came from (#246), not for every frame.
+    pub fn zones_at(&self, position: [f32; 3], time: f64) -> [Option<&str>; KNOBS] {
+        let mut said = [None; KNOBS];
+        for zone in &self.zones {
+            if zone.weight(position) * zone.strength.at(time) <= 0.0 {
+                continue;
+            }
+            for (said, knob) in said.iter_mut().zip(&zone.knobs) {
+                if knob.is_some() {
+                    *said = Some(zone.name.as_str());
+                }
+            }
+        }
+        said
     }
 
     /// Change global knobs from a table of any of `amplitude`, `step`, `glide`,

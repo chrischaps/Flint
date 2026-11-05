@@ -1,7 +1,7 @@
 //! Scene file format definitions
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Root structure of a scene TOML file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +69,40 @@ pub struct LivingDef {
     pub echoes: Option<LivingEchoesDef>,
     /// How much of the difference between poses is left. Fields left unset are
     /// each spec's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variance: Option<LivingVarianceDef>,
+    /// `[living.species.<spec>]` (#246): one species' own values, over everything
+    /// above, a field at a time. Keyed by the spec's `meta.name`, which is what a
+    /// living prop's `model.asset` names.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub species: BTreeMap<String, LivingSpeciesDef>,
+}
+
+/// One species' values (#246): the clock knobs `[wooze]` has and the props'
+/// knobs `[living]` has, each beating the global one, zones included. Unset is
+/// whatever the layers below say.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingSpeciesDef {
+    /// How much of its slow drift shows, 0 to 1. The panel calls it drift.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amplitude: Option<f32>,
+    /// Seconds between pose targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f32>,
+    /// How much of a step is spent easing, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glide: Option<f32>,
+    /// How much of its fast jitter shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter: Option<f32>,
+    /// `none`, `per_level` or `per_branch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stagger: Option<String>,
+    /// Its echoes, a field at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echoes: Option<LivingEchoesDef>,
+    /// Its variance, a field at a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variance: Option<LivingVarianceDef>,
 }
