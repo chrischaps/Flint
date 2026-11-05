@@ -2,7 +2,7 @@
 # north path to the bench, into the hush, across to the drowse, and on to the shiver.
 #
 #   flint-player demo/woozy_grove.scene.toml --schemas schemas \
-#     --input-script demo/woozy_grove_walk.txt --exit-after 52
+#     --input-script demo/woozy_grove_walk.txt --exit-after 48
 #
 # Add --frame-step 0.0166667 to get the same walk every time. Step at 1/60 and no
 # coarser: the character reads mouse look once per physics step, so a frame of two
@@ -16,27 +16,27 @@
   9.59  look    -236 0 1.1
  10.74  down KeyW
  13.59  up   KeyW
-# the hush, among the cypress
- 13.64  look    -306 0 1.1
+# the hush, at the edge of the cypress
+ 13.64  look    -288 0 1.1
  14.79  down KeyW
- 17.11  up   KeyW
+ 15.71  up   KeyW
 # back across the clearing
- 22.16  look    -886 0 1.1
- 23.31  down KeyW
- 27.16  up   KeyW
+ 20.76  look    -819 0 1.1
+ 21.91  down KeyW
+ 24.64  up   KeyW
 # past the bench
- 27.21  look    -245 0 1.1
- 28.36  down KeyW
- 31.31  up   KeyW
-# the drowse, under the oaks
- 31.36  look    -155 0 1.1
- 32.51  down KeyW
- 35.14  up   KeyW
+ 24.69  look    -331 0 1.1
+ 25.84  down KeyW
+ 28.79  up   KeyW
+# the drowse, looking in at the oaks
+ 28.84  look    -206 0 1.1
+ 29.99  down KeyW
+ 31.14  up   KeyW
 # out of the drowse
- 40.19  look     833 0 1.1
- 41.34  down KeyW
- 44.42  up   KeyW
+ 36.19  look     725 0 1.1
+ 37.34  down KeyW
+ 39.59  up   KeyW
 # the shiver, thorn all round
- 44.47  look    -272 0 1.1
- 45.62  down KeyW
- 46.84  up   KeyW
+ 39.64  look    -112 0 1.1
+ 40.79  down KeyW
+ 42.01  up   KeyW
