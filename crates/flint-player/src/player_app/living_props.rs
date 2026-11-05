@@ -19,14 +19,18 @@
 //! warped clock (#212) and writes what changed. All of that is on the CPU, so
 //! no new shader or vertex data: the leaf cards' jitter fits in the palette
 //! (see [`flint_procgen::CardBoil`]) and their tint is a material change.
+//!
+//! A prop's echoes (#228) blend the same way at their own places on the clock,
+//! each into a bone buffer of its own, and the renderer draws them in the
+//! transparent pass in the prop's own materials.
 
 use flint_core::components as comp;
 use flint_core::toml_util::toml_f32;
 use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
-    AssetKind, BlendFrame, LineageDone, LivingDefaults, LivingPropId, LivingPropRequest, LivingRig,
-    LivingShadows, LivingStats, ProcGenResolver, Stagger,
+    AssetKind, BlendFrame, EchoConfig, EchoOverride, LineageDone, LivingDefaults, LivingPropId,
+    LivingPropRequest, LivingRig, LivingShadows, LivingStats, ProcGenResolver, Stagger,
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
@@ -68,6 +72,34 @@ pub fn defaults_of(table: Option<&flint_scene::LivingDef>) -> LivingDefaults {
         step,
         glide,
         shadows,
+        echoes: echoes_of(table.echoes.as_ref()),
+    }
+}
+
+/// A scene's `[living] echoes` as the resolver wants it, with a bad field named
+/// and then left to each spec.
+fn echoes_of(table: Option<&flint_scene::LivingEchoesDef>) -> EchoOverride {
+    let Some(table) = table else {
+        return EchoOverride::default();
+    };
+    let fine = |echoes: EchoConfig| match echoes.check() {
+        Ok(()) => true,
+        Err((key, reason)) => {
+            tracing::warn!("[living] echoes.{key} = {reason}; using each spec's");
+            false
+        }
+    };
+    let base = EchoConfig::default();
+    EchoOverride {
+        count: table
+            .count
+            .filter(|&count| fine(EchoConfig { count, ..base })),
+        spread: table
+            .spread
+            .filter(|&spread| fine(EchoConfig { spread, ..base })),
+        alpha: table
+            .alpha
+            .filter(|&alpha| fine(EchoConfig { alpha, ..base })),
     }
 }
 
@@ -87,7 +119,8 @@ pub fn upload_blends(
     let started = web_time::Instant::now();
     let mut writes = 0;
     for i in 0..props.props().len() {
-        let blend = props.blend_prop(LivingPropId(i), frame);
+        let id = LivingPropId(i);
+        let blend = props.blend_prop(id, frame);
         if let Some(first) = blend.first_bone {
             renderer.write_entity_bones(device, queue, blend.entity, first, &frame.bones);
             writes += 1;
@@ -98,6 +131,21 @@ pub fn upload_blends(
         }
         for (part, tint) in &frame.tints {
             renderer.set_entity_part_tint(blend.entity, *part, *tint);
+        }
+        for echo in 0..props.prop(id).echo_count() {
+            if let Some(first) = props.blend_echo(id, echo, frame) {
+                let opacity = props.prop(id).echo(echo).opacity;
+                renderer.write_entity_echo_bones(
+                    device,
+                    queue,
+                    blend.entity,
+                    echo,
+                    opacity,
+                    first,
+                    &frame.bones,
+                );
+                writes += 1;
+            }
         }
     }
     props.record_blend(started.elapsed().as_secs_f64() * 1e3, writes);

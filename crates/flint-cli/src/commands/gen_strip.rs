@@ -22,8 +22,8 @@ use flint_core::Vec3;
 use flint_ecs::FlintWorld;
 use flint_import::{import_gltf, ImportResult};
 use flint_procgen::{
-    mesh_to_glb, BranchSegment, Generator, LivingClock, LivingConfig, PoseStream, ProcGenSpec,
-    Stagger, WarpedTime,
+    boil_bones, mesh_to_glb, BranchSegment, EchoCopy, Generator, LivingClock, LivingConfig,
+    LivingRig, LivingSkeleton, PoseStream, ProcGenSpec, Stagger, WarpedTime, JITTER_CHANNELS,
 };
 use flint_render::{Camera, HeadlessContext, RendererConfig, SceneRenderer};
 use image::{Rgb, RgbImage};
@@ -241,6 +241,15 @@ pub fn run(
         living.glide,
         stagger_name(living.stagger)
     );
+    let echoes = living.echoes.copies();
+    if !echoes.is_empty() {
+        println!(
+            "Echoes:     {} copies, out to {} of a step, alpha {}",
+            echoes.len(),
+            living.echoes.spread,
+            living.echoes.alpha
+        );
+    }
     println!(
         "Strip:      {} frames at {} fps, {} x {} cells of {} px, {} x {} px",
         options.frames,
@@ -258,21 +267,37 @@ pub fn run(
 
     let started = Instant::now();
 
-    // Every frame's mesh first: the camera has to frame all of them, and it
-    // can't move once it starts.
     let mut stream = PoseStream::new(alive, spec, &skeleton, clock);
-    let mut positions: Vec<Vec3> = Vec::new();
-    let mut glbs = Vec::with_capacity(infos.len());
-    for info in &infos {
-        let mesh = stream
-            .at(info.t)
-            .and_then(|pose| alive.posed_mesh(spec, &skeleton, &pose))
-            .with_context(|| format!("{label}: couldn't build frame {}", info.index))?;
-        positions.extend(mesh.vertices.iter().map(|v| Vec3::from_array(v.position)));
-        glbs.push(mesh_to_glb(&mesh).context("failed to encode a frame")?);
-    }
-
-    let frames = render_frames(&glbs, &positions, options.cell_size)?;
+    let frames = if echoes.is_empty() {
+        // Every frame's mesh first: the camera has to frame all of them, and it
+        // can't move once it starts.
+        let mut positions: Vec<Vec3> = Vec::new();
+        let mut glbs = Vec::with_capacity(infos.len());
+        for info in &infos {
+            let mesh = stream
+                .at(info.t)
+                .and_then(|pose| alive.posed_mesh(spec, &skeleton, &pose))
+                .with_context(|| format!("{label}: couldn't build frame {}", info.index))?;
+            positions.extend(mesh.vertices.iter().map(|v| Vec3::from_array(v.position)));
+            glbs.push(mesh_to_glb(&mesh).context("failed to encode a frame")?);
+        }
+        render_frames(&glbs, &positions, options.cell_size)?
+    } else {
+        let rig = alive
+            .rig(spec, living.lineage_seed)
+            .with_context(|| format!("{label}: couldn't build the rig"))?;
+        let times: Vec<f64> = infos.iter().map(|info| info.t).collect();
+        render_echo_frames(
+            &mut stream,
+            &skeleton,
+            &rig,
+            &times,
+            &echoes,
+            f64::from(clock.step),
+            options.cell_size,
+        )
+        .with_context(|| format!("{label}: couldn't render its echoes"))?
+    };
     let sheet = compose(spec, living, &options, &layout, &infos, &frames);
 
     if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -332,51 +357,155 @@ fn import_glb(glb: &[u8]) -> Result<ImportResult> {
         .context("failed to read a frame back")
 }
 
-/// Each GLB as an image, all from the camera that frames `positions`.
-fn render_frames(glbs: &[Vec<u8>], positions: &[Vec3], size: u32) -> Result<Vec<RgbImage>> {
-    let ctx = pollster::block_on(HeadlessContext::new(size, size))
-        .context("Failed to create headless render context")?;
+/// What every frame of a strip is drawn with.
+struct StripStage {
+    ctx: HeadlessContext,
+    camera: Camera,
+    renderer: SceneRenderer,
+    world: FlintWorld,
+}
 
-    let mut camera = Camera::new();
-    camera.aspect = ctx.aspect_ratio();
-    camera.yaw = CAMERA_YAW;
-    camera.pitch = CAMERA_PITCH;
-    let (target, distance) = fit_view(positions, camera.yaw, camera.pitch, camera.fov);
-    camera.target = target;
-    camera.distance = distance;
-    camera.update_orbit();
+impl StripStage {
+    /// A renderer and a camera that frames `positions`.
+    fn new(positions: &[Vec3], size: u32) -> Result<Self> {
+        let ctx = pollster::block_on(HeadlessContext::new(size, size))
+            .context("Failed to create headless render context")?;
 
-    let mut renderer = SceneRenderer::new_headless(
-        &ctx.device,
-        &ctx.queue,
-        ctx.format,
-        ctx.width,
-        ctx.height,
-        RendererConfig {
-            show_grid: false,
-            sample_count: SAMPLE_COUNT,
-        },
-    );
-    renderer.set_clear_color(BACKDROP);
-    let world = strip_world()?;
+        let mut camera = Camera::new();
+        camera.aspect = ctx.aspect_ratio();
+        camera.yaw = CAMERA_YAW;
+        camera.pitch = CAMERA_PITCH;
+        let (target, distance) = fit_view(positions, camera.yaw, camera.pitch, camera.fov);
+        camera.target = target;
+        camera.distance = distance;
+        camera.update_orbit();
 
-    let mut frames = Vec::with_capacity(glbs.len());
-    for glb in glbs {
-        renderer.load_model(&ctx.device, &ctx.queue, PREVIEW_ASSET, &import_glb(glb)?);
-        renderer.update_from_world(&world, &ctx.device);
-        renderer.render_to(
+        let mut renderer = SceneRenderer::new_headless(
+            &ctx.device,
+            &ctx.queue,
+            ctx.format,
+            ctx.width,
+            ctx.height,
+            RendererConfig {
+                show_grid: false,
+                sample_count: SAMPLE_COUNT,
+            },
+        );
+        renderer.set_clear_color(BACKDROP);
+        let world = strip_world()?;
+        Ok(Self {
+            ctx,
+            camera,
+            renderer,
+            world,
+        })
+    }
+
+    /// The prop as it's loaded now, as an image.
+    fn capture(&mut self) -> Result<RgbImage> {
+        let ctx = &self.ctx;
+        self.renderer.update_from_world(&self.world, &ctx.device);
+        self.renderer.render_to(
             &ctx.device,
             &ctx.queue,
             &ctx.depth_view,
-            &camera,
+            &self.camera,
             &ctx.color_view,
         );
         let pixels =
             pollster::block_on(ctx.read_pixels()).context("Failed to read rendered pixels")?;
         let (rgba, _) = pixels.as_chunks::<4>();
         let rgb = rgba.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
-        frames
-            .push(RgbImage::from_raw(size, size, rgb).context("a frame came back the wrong size")?);
+        RgbImage::from_raw(ctx.width, ctx.height, rgb).context("a frame came back the wrong size")
+    }
+}
+
+/// Each GLB as an image, all from the camera that frames `positions`.
+fn render_frames(glbs: &[Vec<u8>], positions: &[Vec3], size: u32) -> Result<Vec<RgbImage>> {
+    let mut stage = StripStage::new(positions, size)?;
+    let mut frames = Vec::with_capacity(glbs.len());
+    for glb in glbs {
+        let ctx = &stage.ctx;
+        stage
+            .renderer
+            .load_model(&ctx.device, &ctx.queue, PREVIEW_ASSET, &import_glb(glb)?);
+        frames.push(stage.capture()?);
+    }
+    Ok(frames)
+}
+
+/// A pose as what the skinned pipeline reads, with its leaf cards held still:
+/// a strip draws the slow layer.
+fn still_palette(
+    stream: &mut PoseStream,
+    skeleton: &LivingSkeleton,
+    rig: &LivingRig,
+    t: f64,
+) -> Result<Vec<[[f32; 4]; 4]>> {
+    let mut bones = Vec::new();
+    rig.palette(skeleton, &stream.at(t)?, &mut bones)?;
+    boil_bones(&[0.0; JITTER_CHANNELS], &mut bones);
+    Ok(bones)
+}
+
+/// The frames with their echoes, through the skinned draw `flint play` uses:
+/// the rest mesh goes up once, and a frame is a palette for the prop and one
+/// for each echo.
+fn render_echo_frames(
+    stream: &mut PoseStream,
+    skeleton: &LivingSkeleton,
+    rig: &LivingRig,
+    times: &[f64],
+    echoes: &[EchoCopy],
+    step: f64,
+    size: u32,
+) -> Result<Vec<RgbImage>> {
+    // The camera frames every frame's prop, and the echoes that reach past
+    // both ends of the strip, which no frame's prop will ever show.
+    let reach = echoes
+        .iter()
+        .map(|e| f64::from(e.offset.abs()))
+        .fold(0.0, f64::max)
+        * step;
+    let ends = times.first().map(|t| t - reach).into_iter();
+    let ends = ends.chain(times.last().map(|t| t + reach));
+    let mut positions: Vec<Vec3> = Vec::new();
+    for t in times.iter().copied().chain(ends) {
+        let mesh = rig.skinned_mesh(&still_palette(stream, skeleton, rig, t)?);
+        positions.extend(mesh.vertices.iter().map(|v| Vec3::from_array(v.position)));
+    }
+
+    let mut stage = StripStage::new(&positions, size)?;
+    let ctx = &stage.ctx;
+    let import = flint_player::living_import(PREVIEW_ASSET, rig);
+    stage
+        .renderer
+        .load_skinned_model(&ctx.device, &ctx.queue, PREVIEW_ASSET, &import);
+    let entity = stage
+        .world
+        .get_id(PREVIEW_ASSET)
+        .context("the strip's world has no prop")?;
+
+    let mut frames = Vec::with_capacity(times.len());
+    for &t in times {
+        let ctx = &stage.ctx;
+        let bones = still_palette(stream, skeleton, rig, t)?;
+        stage
+            .renderer
+            .write_entity_bones(&ctx.device, &ctx.queue, entity, 0, &bones);
+        for (index, echo) in echoes.iter().enumerate() {
+            let bones = still_palette(stream, skeleton, rig, t + f64::from(echo.offset) * step)?;
+            stage.renderer.write_entity_echo_bones(
+                &ctx.device,
+                &ctx.queue,
+                entity,
+                index,
+                echo.opacity,
+                0,
+                &bones,
+            );
+        }
+        frames.push(stage.capture()?);
     }
     Ok(frames)
 }
@@ -485,6 +614,7 @@ fn compose(
         &format!("LINEAGE {}", living.lineage_seed),
     );
     y += GLYPH_HEIGHT * title + 6 * scale;
+    let echoes = living.echoes.copies().len();
     draw_text(
         &mut sheet,
         MARGIN,
@@ -492,12 +622,17 @@ fn compose(
         scale,
         BONE,
         &format!(
-            "STEP {:.2}S   GLIDE {:.2}   STAGGER {}   {} FPS   {} FRAMES",
+            "STEP {:.2}S   GLIDE {:.2}   STAGGER {}   {} FPS   {} FRAMES{}",
             living.step,
             living.glide,
             stagger_name(living.stagger).to_uppercase(),
             options.fps,
-            options.frames
+            options.frames,
+            if echoes > 0 {
+                format!("   {echoes} ECHOES")
+            } else {
+                String::new()
+            }
         ),
     );
     y += GLYPH_HEIGHT * scale + 4 * scale;

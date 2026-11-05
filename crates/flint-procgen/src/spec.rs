@@ -129,6 +129,10 @@ pub struct LivingConfig {
     /// How far poses wander from the lineage's, and where on the tree.
     #[serde(default)]
     pub variance: VarianceConfig,
+    /// Faint copies of the prop a little before and after now. Left out of a
+    /// spec's text unless changed, since they don't touch what's baked.
+    #[serde(default, skip_serializing_if = "EchoConfig::is_default")]
+    pub echoes: EchoConfig,
 }
 
 fn default_pose_ring() -> u32 {
@@ -228,6 +232,9 @@ impl LivingConfig {
                 format!("{}: must be in [0.0, 1.0]", self.variance.steady),
             );
         }
+        if let Err((key, reason)) = self.echoes.check() {
+            return bad(&format!("echoes.{key}"), reason);
+        }
         Ok(())
     }
 }
@@ -274,6 +281,98 @@ impl Default for JitterConfig {
             step: 0.125,
             glide: 0.0,
         }
+    }
+}
+
+/// How much of an echo's alpha is gone per step of clock offset.
+const ECHO_FALLOFF: f32 = 0.55;
+
+/// The most echoes a prop may have: each is a bone palette and a draw per part.
+pub const MAX_ECHOES: u32 = 16;
+
+/// The widest `spread`, where [`ECHO_FALLOFF`] has taken an echo's alpha to nothing.
+pub const MAX_ECHO_SPREAD: f32 = 1.0 / ECHO_FALLOFF;
+
+/// How the offsets of [`EchoConfig::copies`] bunch toward now. With three pairs
+/// and a spread of 0.9 this is the look chosen by eye in the mock-up: about
+/// 0.25, 0.55 and 0.9 of a step.
+const ECHO_BUNCHING: f32 = 1.17;
+
+/// `[living] echoes`: faint copies of the prop drawn in its own colours, each
+/// sampled a little before or after now on its clock. Every prop has them by
+/// default, and `count = 0` turns them off and costs nothing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct EchoConfig {
+    /// How many copies to draw.
+    pub count: u32,
+    /// How far the farthest copy is from now, in steps of the clock.
+    pub spread: f32,
+    /// The opacity of a copy at now, which falls off with distance from it.
+    pub alpha: f32,
+}
+
+impl Default for EchoConfig {
+    fn default() -> Self {
+        Self {
+            count: 6,
+            spread: 0.9,
+            alpha: 0.2,
+        }
+    }
+}
+
+/// One copy of a prop: see [`EchoConfig::copies`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EchoCopy {
+    /// Where it is on the clock, in steps from now. Negative is behind.
+    pub offset: f32,
+    /// How opaque it's drawn, 0 to 1.
+    pub opacity: f32,
+}
+
+impl EchoConfig {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The copies, in the order to draw them: farthest from now first, and of
+    /// a pair the one behind first. An odd count's spare is behind, since a
+    /// trailing copy reads better than one that leads. Nothing that would draw
+    /// nothing is listed, so `count = 0` and `alpha = 0` are both no copies.
+    pub fn copies(&self) -> Vec<EchoCopy> {
+        let pairs = self.count.div_ceil(2);
+        (0..self.count)
+            .map(|i| {
+                let pair = pairs - i / 2;
+                let reach = self.spread * (pair as f32 / pairs as f32).powf(ECHO_BUNCHING);
+                EchoCopy {
+                    offset: if i % 2 == 0 { -reach } else { reach },
+                    opacity: self.alpha * (1.0 - reach * ECHO_FALLOFF),
+                }
+            })
+            .filter(|copy| copy.offset != 0.0 && copy.opacity > 0.0)
+            .collect()
+    }
+
+    /// Check what the types can't: the key at fault and why.
+    pub fn check(&self) -> std::result::Result<(), (&'static str, String)> {
+        if self.count > MAX_ECHOES {
+            return Err(("count", format!("{}: at most {MAX_ECHOES}", self.count)));
+        }
+        if !(0.0..=MAX_ECHO_SPREAD).contains(&self.spread) {
+            return Err((
+                "spread",
+                format!(
+                    "{}: must be from 0 to {MAX_ECHO_SPREAD:.2} steps, where an echo has faded to nothing",
+                    self.spread
+                ),
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.alpha) {
+            return Err(("alpha", format!("{}: must be in [0.0, 1.0]", self.alpha)));
+        }
+        Ok(())
     }
 }
 
@@ -616,6 +715,72 @@ variance = { amount = 1, steady = 0, keep_size = false }
         // It survives the round trip every save and content hash takes.
         let again = ProcGenSpec::parse(&toml::to_string(&spec).unwrap()).unwrap();
         assert_eq!(spec, again);
+    }
+
+    #[test]
+    fn echoes_default_to_six_and_stay_out_of_a_specs_text() {
+        let spec = ProcGenSpec::parse(&with_living("lineage_seed = 3")).unwrap();
+        let echoes = spec.living.as_ref().unwrap().echoes;
+        assert_eq!(echoes, EchoConfig::default());
+        assert_eq!(echoes.count, 6);
+        assert!(!toml::to_string(&spec).unwrap().contains("echoes"));
+    }
+
+    #[test]
+    fn six_echoes_sit_where_the_mock_up_put_them() {
+        let copies = EchoConfig::default().copies();
+        let offsets: Vec<f32> = copies.iter().map(|c| c.offset).collect();
+        let want = [-0.9, 0.9, -0.56, 0.56, -0.25, 0.25];
+        assert_eq!(offsets.len(), want.len());
+        for (got, want) in offsets.iter().zip(want) {
+            assert!((got - want).abs() < 0.01, "{offsets:?}");
+        }
+        // alpha x (1 - |offset| x 0.55), and so nearer copies are stronger.
+        assert!((copies[0].opacity - 0.2 * (1.0 - 0.9 * 0.55)).abs() < 1e-5);
+        assert!(copies[4].opacity > copies[2].opacity);
+        assert!(copies[2].opacity > copies[0].opacity);
+        assert_eq!(copies[0].opacity, copies[1].opacity);
+    }
+
+    #[test]
+    fn no_copy_is_listed_that_would_draw_nothing() {
+        let off = |count, spread, alpha| {
+            EchoConfig {
+                count,
+                spread,
+                alpha,
+            }
+            .copies()
+        };
+        assert!(off(0, 0.9, 0.2).is_empty());
+        assert!(off(6, 0.0, 0.2).is_empty());
+        assert!(off(6, 0.9, 0.0).is_empty());
+    }
+
+    #[test]
+    fn an_odd_count_keeps_its_spare_behind() {
+        let copies = EchoConfig {
+            count: 3,
+            ..Default::default()
+        }
+        .copies();
+        assert_eq!(copies.len(), 3);
+        assert!(copies[0].offset < 0.0 && copies[1].offset > 0.0 && copies[2].offset < 0.0);
+        assert!(copies[2].offset.abs() < copies[0].offset.abs());
+    }
+
+    #[test]
+    fn echoes_are_checked_at_parse() {
+        for (table, key) in [
+            ("count = 17", "living.echoes.count"),
+            ("spread = -0.1", "living.echoes.spread"),
+            ("spread = 2.0", "living.echoes.spread"),
+            ("alpha = 1.5", "living.echoes.alpha"),
+        ] {
+            let text = with_living(&format!("lineage_seed = 3\nechoes = {{ {table} }}"));
+            let error = ProcGenSpec::parse(&text).unwrap_err().to_string();
+            assert!(error.contains(key), "{table}: {error}");
+        }
     }
 
     #[test]

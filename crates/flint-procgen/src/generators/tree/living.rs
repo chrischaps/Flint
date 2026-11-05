@@ -923,6 +923,7 @@ mod tests {
             jitter: Default::default(),
             stagger: Default::default(),
             variance,
+            echoes: Default::default(),
         });
         living.variance = variance;
         spec.living = Some(living);

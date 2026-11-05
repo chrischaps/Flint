@@ -432,23 +432,36 @@ fn the_renderer_gets_the_jitter_influences_and_the_glb_does_not() {
 #[test]
 fn a_scene_living_table_reads_as_defaults() {
     use flint_procgen::{LivingDefaults, LivingShadows};
-    use flint_scene::LivingDef;
+    use flint_scene::{LivingDef, LivingEchoesDef};
 
     assert_eq!(defaults_of(None), LivingDefaults::default());
     let read = defaults_of(Some(&LivingDef {
         step: Some(0.25),
         glide: Some(0.0),
         shadows: Some("drift".into()),
+        echoes: Some(LivingEchoesDef {
+            count: Some(0),
+            spread: None,
+            alpha: Some(0.5),
+        }),
     }));
     assert_eq!(read.step, Some(0.25));
     assert_eq!(read.glide, Some(0.0));
     assert_eq!(read.shadows, LivingShadows::Drift);
+    assert_eq!(read.echoes.count, Some(0));
+    assert_eq!(read.echoes.spread, None);
+    assert_eq!(read.echoes.alpha, Some(0.5));
 
     // A bad knob means its default, with a warning, and doesn't stop the scene.
     let bad = defaults_of(Some(&LivingDef {
         step: Some(0.0),
         glide: Some(1.5),
         shadows: Some("yes".into()),
+        echoes: Some(LivingEchoesDef {
+            count: Some(99),
+            spread: Some(-1.0),
+            alpha: Some(2.0),
+        }),
     }));
     assert_eq!(bad, LivingDefaults::default());
 }

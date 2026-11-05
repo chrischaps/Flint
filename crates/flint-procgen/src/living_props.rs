@@ -28,7 +28,7 @@ use crate::living::{
     SegmentPose, WarpedTime, BOIL_BONES, JITTER_CHANNELS,
 };
 use crate::registry::GeneratorRegistry;
-use crate::spec::{ProcGenSpec, Stagger};
+use crate::spec::{EchoConfig, EchoCopy, ProcGenSpec, Stagger};
 use crate::types::BranchSegment;
 
 /// How many bytes of poses the cache keeps once no ring holds them. A pose of
@@ -84,6 +84,30 @@ pub struct LivingDefaults {
     pub glide: Option<f32>,
     /// What the shadows follow.
     pub shadows: LivingShadows,
+    /// The scene's word on echoes, over each spec's, a field at a time.
+    pub echoes: EchoOverride,
+}
+
+/// A scene's `[living] echoes`: whichever of a spec's fields it sets. The wooze
+/// field (#213) is where this goes from here.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EchoOverride {
+    /// How many copies. `None`: the spec's.
+    pub count: Option<u32>,
+    /// How far the farthest copy is from now, in steps. `None`: the spec's.
+    pub spread: Option<f32>,
+    /// The opacity of a copy at now. `None`: the spec's.
+    pub alpha: Option<f32>,
+}
+
+impl EchoOverride {
+    fn over(&self, spec: EchoConfig) -> EchoConfig {
+        EchoConfig {
+            count: self.count.unwrap_or(spec.count),
+            spread: self.spread.unwrap_or(spec.spread),
+            alpha: self.alpha.unwrap_or(spec.alpha),
+        }
+    }
 }
 
 /// Room for one prop's blend at a time, kept across props and frames so that
@@ -116,10 +140,23 @@ pub struct PropBlend {
 /// nothing computed and nothing uploaded: a prop holding still is free.
 #[derive(Debug, Clone, Default)]
 struct DrawnState {
-    times: Vec<WarpedTime>,
-    turns: [f32; JITTER_CHANNELS],
+    bones: DrawnBones,
     tints: Vec<i32>,
     shadow: Option<(u64, f32)>,
+}
+
+/// What one bone buffer last held: a prop's, or one of its echoes'.
+#[derive(Debug, Clone, Default)]
+struct DrawnBones {
+    times: Vec<WarpedTime>,
+    turns: [f32; JITTER_CHANNELS],
+}
+
+/// One faint copy of a prop, and what its own bones last held.
+#[derive(Debug, Clone)]
+struct PropEcho {
+    copy: EchoCopy,
+    drawn: DrawnBones,
 }
 
 /// A prop's place in [`LivingProps`]; stays valid until the props are cleared.
@@ -273,6 +310,8 @@ pub struct LivingProp {
     ring: Option<PoseRing>,
     jitter: LivingJitter,
     drawn: DrawnState,
+    /// Farthest from now first, which is the order they draw in.
+    echoes: Vec<PropEcho>,
 }
 
 impl LivingProp {
@@ -309,6 +348,48 @@ impl LivingProp {
     /// Where this prop's clock stands when the props' clock reads `time`.
     pub fn local_time(&self, time: f64) -> f64 {
         time + f64::from(self.phase_offset) * f64::from(self.clock.step)
+    }
+
+    /// How many echoes it draws.
+    pub fn echo_count(&self) -> usize {
+        self.echoes.len()
+    }
+
+    /// Echo `index`'s place on the clock and its opacity.
+    pub fn echo(&self, index: usize) -> EchoCopy {
+        self.echoes[index].copy
+    }
+
+    /// Where echo `index`'s clock stands when this prop's reads `t`.
+    pub fn echo_time(&self, index: usize, t: f64) -> f64 {
+        t + f64::from(self.echoes[index].copy.offset) * f64::from(self.clock.step)
+    }
+
+    /// How many steps behind now the farthest echo is. A ring's window starts
+    /// there, so a pose stays until the last echo has finished with it.
+    fn steps_behind(&self) -> f64 {
+        let behind = self
+            .echoes
+            .iter()
+            .map(|e| -e.copy.offset)
+            .fold(0.0, f32::max);
+        f64::from(behind)
+    }
+
+    /// How many steps the prop's clocks span, behind now to ahead of it.
+    fn echo_span(&self) -> f64 {
+        let ahead = self
+            .echoes
+            .iter()
+            .map(|e| e.copy.offset)
+            .fold(0.0, f32::max);
+        self.steps_behind() + f64::from(ahead)
+    }
+
+    /// The first step its ring's window needs when the props' clock reads `time`.
+    fn window_start(&self, time: f64) -> u64 {
+        let behind = self.steps_behind() * f64::from(self.clock.step);
+        self.clock.at(self.local_time(time) - behind).index
     }
 
     /// The shape seed of step `index`. Two props of a lineage share a
@@ -537,6 +618,17 @@ impl LivingProps {
             ring: None,
             jitter: LivingJitter::from(living),
             drawn: DrawnState::default(),
+            echoes: self
+                .defaults
+                .echoes
+                .over(living.echoes)
+                .copies()
+                .into_iter()
+                .map(|copy| PropEcho {
+                    copy,
+                    drawn: DrawnBones::default(),
+                })
+                .collect(),
         });
         (LivingPropId(self.props.len() - 1), asset_name)
     }
@@ -566,41 +658,19 @@ impl LivingProps {
         let (skeleton, rig) = (&built.skeleton, &built.rig);
         let t = prop.local_time(self.time);
 
-        let mut turns = [0.0; JITTER_CHANNELS];
-        for (channel, turn) in turns.iter_mut().enumerate() {
-            *turn = prop.jitter.card_turn(prop.stream, channel, t);
-        }
-        prop.clock
-            .times_into(t, &skeleton.segments, &mut frame.times);
-        let turned = turns != prop.drawn.turns;
-        let drifted = frame.times != prop.drawn.times;
-
-        frame.bones.clear();
-        if drifted {
-            let pose = frame.pose.get_or_insert_with(|| LivingPose {
-                shape_seed: 0,
-                segments: Vec::new(),
-            });
-            let found = pose.blend_from(&frame.times, |index| ring.get(index).map(|p| &**p));
-            let posed = found
-                && rig
-                    .palette_into(skeleton, pose, &mut frame.posed, &mut frame.bones)
-                    .is_ok();
-            if posed {
-                std::mem::swap(&mut prop.drawn.times, &mut frame.times);
-                boil_bones(&turns, &mut frame.bones);
-                prop.drawn.turns = turns;
-                blend.first_bone = Some(0);
-            } else {
-                frame.bones.clear();
-                self.stats.blends_starved += 1;
-            }
-        }
-        if blend.first_bone.is_none() && turned {
-            boil_bones(&turns, &mut frame.bones);
-            prop.drawn.turns = turns;
-            blend.first_bone = Some(rig.bone_segments.len());
-        }
+        let moved = blend_bones(
+            &prop.clock,
+            &prop.jitter,
+            prop.stream,
+            ring,
+            skeleton,
+            rig,
+            t,
+            &mut prop.drawn.bones,
+            frame,
+        );
+        blend.first_bone = moved.first_bone;
+        self.stats.blends_starved += u64::from(moved.starved);
 
         // Each part's own beat, and what's new goes up as a material change.
         prop.drawn.tints.resize(rig.leaf_parts.len(), 0);
@@ -643,6 +713,41 @@ impl LivingProps {
         blend
     }
 
+    /// One echo's blend this frame: fills `frame.bones` if its bones have moved
+    /// and returns where they go. It's the prop's own blend, at its own place
+    /// on the clock, so a leaf card comes along with its bones and turns on the
+    /// echo's beat. Its tints are the prop's.
+    ///
+    /// An echo has no rest pose to fall back on: its bones are written whole the
+    /// first time, or not at all.
+    pub fn blend_echo(
+        &mut self,
+        id: LivingPropId,
+        echo: usize,
+        frame: &mut BlendFrame,
+    ) -> Option<usize> {
+        let prop = &mut self.props[id.0];
+        let (Some(ring), Some(built)) = (&prop.ring, &self.lineages[prop.lineage].built) else {
+            return None;
+        };
+        let t = prop.echo_time(echo, prop.local_time(self.time));
+        let drawn = &mut prop.echoes[echo].drawn;
+        let never_posed = drawn.times.is_empty();
+        let moved = blend_bones(
+            &prop.clock,
+            &prop.jitter,
+            prop.stream,
+            ring,
+            &built.skeleton,
+            &built.rig,
+            t,
+            drawn,
+            frame,
+        );
+        self.stats.blends_starved += u64::from(moved.starved);
+        moved.first_bone.filter(|first| *first == 0 || !never_posed)
+    }
+
     /// Note one frame's blending: how long it took and how many buffer writes.
     pub fn record_blend(&mut self, spent_ms: f64, writes: u64) {
         let stats = &mut self.stats;
@@ -680,9 +785,9 @@ impl LivingProps {
         self.time += dt;
         let start = Instant::now();
         for prop in &mut self.props {
-            let now = prop.clock.at(prop.local_time(self.time)).index;
+            let first = prop.window_start(self.time);
             if let Some(ring) = &mut prop.ring {
-                ring.slide_to(now);
+                ring.slide_to(first);
             }
         }
 
@@ -814,12 +919,14 @@ impl LivingProps {
                 let max_depth = built.skeleton.max_depth();
                 lineage.built = Some(built);
                 for prop in self.props.iter_mut().filter(|p| p.lineage == index) {
-                    let first = prop.clock.at(prop.local_time(self.time)).index;
-                    // Every pose a staggered part can be using has to fit.
-                    let mut len = u64::from(prop.pose_ring).max(prop.clock.reach(max_depth) + 1);
-                    // The slow pair is up to three steps ahead of the window's start.
+                    let first = prop.window_start(self.time);
+                    // Every pose a staggered part of it or its echoes can be
+                    // using has to fit.
+                    let reach = prop.clock.reach_across(max_depth, prop.echo_span());
+                    let mut len = u64::from(prop.pose_ring).max(reach + 1);
+                    // The slow pair is up to three steps ahead of now.
                     if self.defaults.shadows == LivingShadows::Drift {
-                        len = len.max(4);
+                        len = len.max(4 + prop.steps_behind().ceil() as u64);
                     }
                     prop.ring = Some(PoseRing::new(first, len as usize));
                 }
@@ -863,6 +970,70 @@ impl LivingProps {
         // can't have overrun, even one the asset queue had already spent.
         stats.frames_over_budget += u64::from(worked && spent_ms > budget_ms.max(0.0));
     }
+}
+
+/// What [`blend_bones`] did.
+struct MovedBones {
+    /// Where [`BlendFrame::bones`] goes; `None` if the bones haven't changed.
+    first_bone: Option<usize>,
+    /// Whether a pose it needed wasn't ready, which left the bones as they were.
+    starved: bool,
+}
+
+/// One bone buffer's blend at `t`, a prop's or an echo's: every part reads its
+/// own place on the warped clock, and if none of that has moved nor the jitter
+/// turned, this computes nothing.
+#[allow(clippy::too_many_arguments)]
+fn blend_bones(
+    clock: &LivingClock,
+    jitter: &LivingJitter,
+    stream: u64,
+    ring: &PoseRing,
+    skeleton: &LivingSkeleton,
+    rig: &LivingRig,
+    t: f64,
+    drawn: &mut DrawnBones,
+    frame: &mut BlendFrame,
+) -> MovedBones {
+    let mut moved = MovedBones {
+        first_bone: None,
+        starved: false,
+    };
+    let mut turns = [0.0; JITTER_CHANNELS];
+    for (channel, turn) in turns.iter_mut().enumerate() {
+        *turn = jitter.card_turn(stream, channel, t);
+    }
+    clock.times_into(t, &skeleton.segments, &mut frame.times);
+    let turned = turns != drawn.turns;
+    let drifted = frame.times != drawn.times;
+
+    frame.bones.clear();
+    if drifted {
+        let pose = frame.pose.get_or_insert_with(|| LivingPose {
+            shape_seed: 0,
+            segments: Vec::new(),
+        });
+        let found = pose.blend_from(&frame.times, |index| ring.get(index).map(|p| &**p));
+        let posed = found
+            && rig
+                .palette_into(skeleton, pose, &mut frame.posed, &mut frame.bones)
+                .is_ok();
+        if posed {
+            std::mem::swap(&mut drawn.times, &mut frame.times);
+            boil_bones(&turns, &mut frame.bones);
+            drawn.turns = turns;
+            moved.first_bone = Some(0);
+        } else {
+            frame.bones.clear();
+            moved.starved = true;
+        }
+    }
+    if moved.first_bone.is_none() && turned {
+        boil_bones(&turns, &mut frame.bones);
+        drawn.turns = turns;
+        moved.first_bone = Some(rig.bone_segments.len());
+    }
+    moved
 }
 
 fn living_side<'a>(
@@ -933,7 +1104,14 @@ lineage_seed = 7
 pose_ring = 4
 variance = {{ amount = 0.5, steady = 0.5, keep_size = false }}
 {extra}
-"#
+{echoes}
+"#,
+            // These tests are about the prop itself, except those that ask.
+            echoes = if extra.contains("echoes") {
+                ""
+            } else {
+                "echoes = { count = 0 }"
+            },
         )
     }
 
@@ -1493,7 +1671,7 @@ value = 1
 
         let props = resolver.living_props();
         let (skeleton, _) = props.rig_of(id).unwrap();
-        let drawn = &props.prop(id).drawn.times;
+        let drawn = &props.prop(id).drawn.bones.times;
         let by_depth = |depth: u32| {
             let at = skeleton.segments.iter().position(|s| s.depth == depth);
             drawn[at.expect("the sapling has this level")]
@@ -1703,6 +1881,178 @@ value = 1
             let blend = resolver.living_props_mut().blend_prop(id, &mut frame);
             assert!(!blend.shadow_changed);
         }
+    }
+
+    #[test]
+    fn an_echo_is_the_props_own_blend_at_an_offset_time() {
+        let extra = format!("stagger = \"per_level\"\nechoes = {{ count = 6 }}\n{NO_JITTER}");
+        let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+        assert_eq!(resolver.living_props().prop(id).echo_count(), 6);
+        let mut frame = BlendFrame::default();
+        let mut checked = 0;
+        for _ in 0..40 {
+            resolver.process_living(0.03);
+            for echo in 0..6 {
+                let first = resolver.living_props_mut().blend_echo(id, echo, &mut frame);
+                if first != Some(0) {
+                    continue;
+                }
+                checked += 1;
+                let props = resolver.living_props();
+                let prop = props.prop(id);
+                let (skeleton, rig) = props.rig_of(id).unwrap();
+                let t = prop.echo_time(echo, prop.local_time(props.time()));
+                let segments = skeleton
+                    .segments
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let now = prop.clock.for_segment(t, s);
+                        SegmentPose::blend(
+                            &prop.pose(now.index).unwrap().segments[i],
+                            &prop.pose(now.index + 1).unwrap().segments[i],
+                            now.weight,
+                        )
+                    })
+                    .collect();
+                let by_hand = LivingPose {
+                    shape_seed: 0,
+                    segments,
+                };
+                let mut expected = Vec::new();
+                rig.palette(skeleton, &by_hand, &mut expected).unwrap();
+                assert_eq!(&frame.bones[..expected.len()], &expected[..]);
+            }
+        }
+        assert!(checked > 30, "only {checked} echo blends moved");
+    }
+
+    #[test]
+    fn a_ring_has_every_pose_every_echo_wants() {
+        for stagger in ["none", "per_level", "per_branch"] {
+            // A small ring and the widest spread there is.
+            let extra = format!("stagger = \"{stagger}\"\nechoes = {{ count = 6, spread = 1.8 }}");
+            let (mut resolver, id) = one_prop(&extra, LivingDefaults::default());
+            let mut frame = BlendFrame::default();
+            for _ in 0..600 {
+                resolver.process_living(1.0 / 60.0);
+                let props = resolver.living_props_mut();
+                props.blend_prop(id, &mut frame);
+                for echo in 0..6 {
+                    props.blend_echo(id, echo, &mut frame);
+                }
+            }
+            assert_eq!(
+                resolver.living_props().stats().blends_starved,
+                0,
+                "with {stagger} stagger"
+            );
+        }
+    }
+
+    #[test]
+    fn drift_shadows_still_find_their_poses_with_echoes_on() {
+        let defaults = LivingDefaults {
+            shadows: LivingShadows::Drift,
+            ..Default::default()
+        };
+        let extra = "echoes = { count = 6, spread = 1.8 }";
+        let (mut resolver, id) = one_prop(extra, defaults);
+        let mut frame = BlendFrame::default();
+        let mut wrote = 0;
+        for _ in 0..600 {
+            resolver.process_living(1.0 / 60.0);
+            let props = resolver.living_props_mut();
+            let prop = props.prop(id);
+            let t = prop.local_time(props.time());
+            let (from, to, _) = prop.clock.slow_pair(t);
+            assert!(prop.pose(from).is_some() && prop.pose(to).is_some());
+            wrote += u32::from(props.blend_prop(id, &mut frame).shadow_changed);
+        }
+        assert!(wrote > 30, "the shadow only moved {wrote} times");
+    }
+
+    #[test]
+    fn with_no_echoes_a_ring_is_what_it_was() {
+        let off = "echoes = { count = 0 }\nstagger = \"per_level\"";
+        let on = "echoes = { count = 6 }\nstagger = \"per_level\"";
+        let (mut resolver_off, id_off) = one_prop(off, LivingDefaults::default());
+        let (mut resolver_on, id_on) = one_prop(on, LivingDefaults::default());
+        run(&mut resolver_off, 3.0, 1.0 / 60.0);
+        run(&mut resolver_on, 3.0, 1.0 / 60.0);
+
+        let props = resolver_off.living_props();
+        let prop = props.prop(id_off);
+        assert_eq!(prop.echo_count(), 0);
+        // The window starts at now, as it did before echoes.
+        let now = prop.clock.at(prop.local_time(props.time())).index;
+        assert_eq!(prop.first_step(), Some(now));
+        assert_eq!(prop.ring_len(), 4);
+
+        // With them it starts behind, for the farthest one to read.
+        let props = resolver_on.living_props();
+        let prop = props.prop(id_on);
+        let now = prop.clock.at(prop.local_time(props.time())).index;
+        assert!(prop.first_step().unwrap() < now);
+    }
+
+    #[test]
+    fn an_echo_costs_nothing_while_the_clock_is_paused() {
+        let (mut resolver, id) = one_prop("echoes = { count = 2 }", LivingDefaults::default());
+        let mut frame = BlendFrame::default();
+        let props = resolver.living_props_mut();
+        assert_eq!(props.blend_echo(id, 0, &mut frame), Some(0));
+        assert_eq!(props.blend_echo(id, 1, &mut frame), Some(0));
+        resolver.process_living(0.0);
+        let props = resolver.living_props_mut();
+        assert_eq!(props.blend_echo(id, 0, &mut frame), None);
+        assert_eq!(props.blend_echo(id, 1, &mut frame), None);
+    }
+
+    #[test]
+    fn an_echo_with_no_pose_writes_nothing_and_never_part_of_its_bones() {
+        // It has no rest pose under it, so jitter alone can't be its first write.
+        let extra = "echoes = { count = 2 }\njitter = { amplitude = 0.3, step = 0.01 }";
+        let mut resolver = resolver_with(&sapling(extra));
+        let id = resolver.add_living_prop(request(1, "oak")).unwrap().0;
+        let props = resolver.living_props_mut();
+        let mut frame = BlendFrame::default();
+        assert_eq!(props.blend_echo(id, 0, &mut frame), None, "no lineage yet");
+        resolver.make_living_now();
+        let props = resolver.living_props_mut();
+        let ring = props.props[id.0].ring.as_mut().unwrap();
+        ring.slots.fill(None);
+        ring.ready = 0;
+        props.time = 0.05;
+        assert_eq!(props.blend_echo(id, 0, &mut frame), None);
+        assert_eq!(props.stats().blends_starved, 1);
+    }
+
+    #[test]
+    fn a_scene_overrides_echoes_a_field_at_a_time() {
+        let defaults = LivingDefaults {
+            echoes: EchoOverride {
+                count: Some(2),
+                alpha: Some(0.5),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (resolver, id) = one_prop("echoes = { count = 6, spread = 0.5 }", defaults);
+        let prop = resolver.living_props().prop(id);
+        assert_eq!(prop.echo_count(), 2);
+        assert_eq!(prop.echo(0).offset, -0.5);
+        assert!((prop.echo(0).opacity - 0.5 * (1.0 - 0.5 * 0.55)).abs() < 1e-5);
+
+        let off = LivingDefaults {
+            echoes: EchoOverride {
+                count: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (resolver, id) = one_prop("echoes = { count = 6 }", off);
+        assert_eq!(resolver.living_props().prop(id).echo_count(), 0);
     }
 
     #[test]

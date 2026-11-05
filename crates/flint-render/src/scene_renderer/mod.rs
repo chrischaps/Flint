@@ -354,6 +354,31 @@ struct SkinnedDrawCall {
     casts_shadow: bool,
 }
 
+/// One faint copy of a skinned entity (#228): bones of its own and how opaque
+/// it draws. The rest it takes from the entity's own draw at extraction.
+struct EntityEcho {
+    bones: wgpu::Buffer,
+    bind_group: Arc<wgpu::BindGroup>,
+    opacity: f32,
+}
+
+/// A draw of one part of one echo. It reads the entity's transform slot rather
+/// than having one of its own, and a material shared by content.
+struct EchoDrawCall {
+    vertex_buffer: Arc<wgpu::Buffer>,
+    index_buffer: Arc<wgpu::Buffer>,
+    index_count: u32,
+    transform_bind_group: Arc<wgpu::BindGroup>,
+    material_buffer: Arc<MaterialBuffer>,
+    material_bind_group: Arc<wgpu::BindGroup>,
+    bone_bind_group: Arc<wgpu::BindGroup>,
+    /// Where the entity stands, since all its echoes sort as one.
+    origin: [f32; 3],
+    /// Which echo: they draw in this order, so farthest from now first.
+    echo: usize,
+    sort_depth: f32,
+}
+
 /// Configuration for creating a SceneRenderer
 pub struct RendererConfig {
     /// Show the ground-plane grid (useful for debug/inspection modes)
@@ -416,6 +441,7 @@ pub struct SceneRenderer {
     skinned_entity_draws: Vec<SkinnedDrawCall>,
     transparent_draws: Vec<DrawCall>,
     transparent_skinned_draws: Vec<SkinnedDrawCall>,
+    echo_draws: Vec<EchoDrawCall>,
     /// Draws outside the camera frustum in the last `render_to`, set aside
     /// from `entity_draws` / `transparent_draws` after the shadow pass.
     culled_entity_draws: Vec<DrawCall>,
@@ -609,6 +635,8 @@ pub struct SceneRenderer {
     entity_shadow_bone_buffers: HashMap<flint_core::EntityId, wgpu::Buffer>,
     /// Per entity, what each skinned part's vertex colour is multiplied by.
     entity_part_tints: HashMap<flint_core::EntityId, Vec<[f32; 3]>>,
+    /// Living props' echoes, in the order they draw. Empty costs nothing.
+    entity_echoes: HashMap<flint_core::EntityId, Vec<EntityEcho>>,
     /// Bone bind groups of skinned draws, by entity and sub-mesh.
     skinned_bone_binds: HashMap<(flint_core::EntityId, u32), CachedBoneBind>,
 }
@@ -722,12 +750,14 @@ impl SceneRenderer {
             entity_bone_buffers: HashMap::new(),
             entity_shadow_bone_buffers: HashMap::new(),
             entity_part_tints: HashMap::new(),
+            entity_echoes: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
             transparent_draws: Vec::new(),
             transparent_skinned_draws: Vec::new(),
+            echo_draws: Vec::new(),
             culled_entity_draws: Vec::new(),
             culled_transparent_draws: Vec::new(),
             billboard_draws: Vec::new(),
@@ -2076,6 +2106,7 @@ impl SceneRenderer {
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
+        self.echo_draws.clear();
         self.culled_entity_draws.clear();
         self.culled_transparent_draws.clear();
         self.billboard_draws.clear();
@@ -2199,12 +2230,14 @@ impl SceneRenderer {
             entity_bone_buffers: HashMap::new(),
             entity_shadow_bone_buffers: HashMap::new(),
             entity_part_tints: HashMap::new(),
+            entity_echoes: HashMap::new(),
             skinned_bone_binds: HashMap::new(),
             grid_draw,
             entity_draws: Vec::new(),
             skinned_entity_draws: Vec::new(),
             transparent_draws: Vec::new(),
             transparent_skinned_draws: Vec::new(),
+            echo_draws: Vec::new(),
             culled_entity_draws: Vec::new(),
             culled_transparent_draws: Vec::new(),
             billboard_draws: Vec::new(),
@@ -2532,6 +2565,46 @@ impl SceneRenderer {
         })
     }
 
+    /// Write part of the bones of echo `echo` of a skinned entity, from bone
+    /// `first`, and say how opaque it draws. Writing an echo is what makes it
+    /// exist. It then draws from the next extraction, after everything opaque,
+    /// in the entity's own colours and with no depth write, in `echo` order. An
+    /// entity that's never written one pays nothing.
+    ///
+    /// Write the whole palette first: until then its bones are zero, which puts
+    /// it nowhere.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_entity_echo_bones(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        entity_id: flint_core::EntityId,
+        echo: usize,
+        opacity: f32,
+        first: usize,
+        matrices: &[[[f32; 4]; 4]],
+    ) {
+        if self.device_lost {
+            return;
+        }
+        let Some(pipeline) = &self.skinned_pipeline else {
+            return;
+        };
+        let echoes = self.entity_echoes.entry(entity_id).or_default();
+        while echoes.len() <= echo {
+            let bones = Self::create_entity_bones(device, "Entity Echo Bone Buffer");
+            let bind_group =
+                Self::create_bone_bind(device, &pipeline.bone_bind_group_layout, &bones);
+            echoes.push(EntityEcho {
+                bones,
+                bind_group: Arc::new(bind_group),
+                opacity: 0.0,
+            });
+        }
+        echoes[echo].opacity = opacity;
+        write_bones(queue, &echoes[echo].bones, first, matrices);
+    }
+
     /// Multiply the vertex colour of one part of an entity's skinned mesh by
     /// `tint`. Materials are shared by content, so a few distinct tints cost a
     /// few materials, however many entities use them: keep them few.
@@ -2553,6 +2626,7 @@ impl SceneRenderer {
         self.entity_bone_buffers.clear();
         self.entity_shadow_bone_buffers.clear();
         self.entity_part_tints.clear();
+        self.entity_echoes.clear();
         self.skinned_bone_binds.clear();
     }
 
@@ -2748,8 +2822,10 @@ impl SceneRenderer {
         let entity_draws = self.entity_draws.len() as u32;
         let skinned_draws = self.skinned_entity_draws.len() as u32;
         let terrain_draws = self.terrain_visible_chunks;
-        let transparent_draws =
-            (self.transparent_draws.len() + self.transparent_skinned_draws.len()) as u32;
+        let echo_draws = self.echo_draws.len() as u32;
+        let transparent_draws = (self.transparent_draws.len()
+            + self.transparent_skinned_draws.len()
+            + self.echo_draws.len()) as u32;
         let billboard_draws = self.billboard_draws.len() as u32;
         let particle_draws = self.particle_draws.len() as u32;
         let sprite_batches = self.sprite2d_batches.len() as u32;
@@ -2780,6 +2856,9 @@ impl SceneRenderer {
             triangles += d.index_count / 3;
         }
         for d in &self.transparent_skinned_draws {
+            triangles += d.index_count / 3;
+        }
+        for d in &self.echo_draws {
             triangles += d.index_count / 3;
         }
         for d in &self.terrain_draws {
@@ -2821,6 +2900,7 @@ impl SceneRenderer {
         crate::render_stats::RenderStats {
             draw_calls,
             triangles,
+            echo_draws,
             entity_draws,
             culled_draws: (self.culled_entity_draws.len() + self.culled_transparent_draws.len())
                 as u32,
@@ -3227,6 +3307,7 @@ impl SceneRenderer {
         self.skinned_entity_draws.clear();
         self.transparent_draws.clear();
         self.transparent_skinned_draws.clear();
+        self.echo_draws.clear();
         self.culled_entity_draws.clear();
         self.culled_transparent_draws.clear();
         self.billboard_draws.clear();
@@ -3413,24 +3494,18 @@ impl SceneRenderer {
         metallic_roughness: &wgpu::TextureView,
         emissive: &wgpu::TextureView,
     ) -> &'a CachedDrawBinds {
-        let shared = cache.materials.entry(material_key).or_insert_with(|| {
-            let (b, bg) = Self::create_material_bind_with_textures(
-                device,
-                pipeline,
-                material_uniforms,
-                base_color,
-                normal,
-                metallic_roughness,
-                emissive,
-            );
-            SharedMaterial {
-                buffer: Arc::new(MaterialBuffer::new(b)),
-                bind_group: Arc::new(bg),
-                touched: frame,
-            }
-        });
-        shared.touched = frame;
-        let (mb, mbg) = (shared.buffer.clone(), shared.bind_group.clone());
+        let (mb, mbg) = Self::shared_material(
+            cache,
+            frame,
+            device,
+            pipeline,
+            material_uniforms,
+            material_key,
+            base_color,
+            normal,
+            metallic_roughness,
+            emissive,
+        );
         let arena = &mut cache.arena;
         let entry = cache.draws.entry(key).or_insert_with(|| {
             let (slot, page) = arena.alloc(device);
@@ -3466,6 +3541,41 @@ impl SceneRenderer {
         }
         entry.touched = frame;
         entry
+    }
+
+    /// The material for `material_key`, made on first use and shared with every
+    /// draw of that key.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn shared_material(
+        cache: &mut DrawBindCache,
+        frame: u64,
+        device: &wgpu::Device,
+        pipeline: &RenderPipeline,
+        material_uniforms: &MaterialUniforms,
+        material_key: u64,
+        base_color: &wgpu::TextureView,
+        normal: &wgpu::TextureView,
+        metallic_roughness: &wgpu::TextureView,
+        emissive: &wgpu::TextureView,
+    ) -> (Arc<MaterialBuffer>, Arc<wgpu::BindGroup>) {
+        let shared = cache.materials.entry(material_key).or_insert_with(|| {
+            let (b, bg) = Self::create_material_bind_with_textures(
+                device,
+                pipeline,
+                material_uniforms,
+                base_color,
+                normal,
+                metallic_roughness,
+                emissive,
+            );
+            SharedMaterial {
+                buffer: Arc::new(MaterialBuffer::new(b)),
+                bind_group: Arc::new(bg),
+                touched: frame,
+            }
+        });
+        shared.touched = frame;
+        (shared.buffer.clone(), shared.bind_group.clone())
     }
 
     /// The uploaded box for `key`, building it with `build` on a miss.

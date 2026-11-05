@@ -114,3 +114,11 @@ jitter = { amplitude = 0.05, targets = ["leaf_cards"], step = 0.125, glide = 0.0
 # whether each pose is scaled back to the lineage's size (keep_size). For a
 # pose exactly as its shape seed grew it: amount = 1, steady = 0, keep_size = false.
 variance = { amount = 0.35, steady = 0.8, keep_size = true }
+
+# Faint copies of the tree, in its own colours, each a little before or after
+# now on the clock: a living version of Pep Ventosa's layered tree photographs.
+# count = 0 turns them off, and they then cost nothing. spread is how far the
+# farthest copy is from now, in steps. alpha is the opacity of a copy at now,
+# and they fade by 55% per step away from it. Each one is another bone palette
+# and a draw per part (here six), so a big grove may want fewer.
+echoes = { count = 6, spread = 0.9, alpha = 0.2 }

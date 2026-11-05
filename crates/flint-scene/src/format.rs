@@ -37,6 +37,24 @@ pub struct LivingDef {
     /// `drift` (a slower pose with no stagger or jitter).
     #[serde(default)]
     pub shadows: Option<String>,
+    /// Faint time-offset copies of every prop. Fields left unset are each spec's.
+    #[serde(default)]
+    pub echoes: Option<LivingEchoesDef>,
+}
+
+/// A scene's `[living] echoes`, over each spec's a field at a time.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LivingEchoesDef {
+    /// How many copies; 0 turns them off.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// How far the farthest copy is from now, in steps of the clock.
+    #[serde(default)]
+    pub spread: Option<f32>,
+    /// The opacity of a copy at now, which falls off with distance from it.
+    #[serde(default)]
+    pub alpha: Option<f32>,
 }
 
 /// A prefab template file (.prefab.toml)

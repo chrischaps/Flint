@@ -305,6 +305,19 @@ impl SceneRenderer {
                     .partial_cmp(&a.sort_depth)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+
+            // Stable, so each entity's echoes stay in their order.
+            for draw in &mut self.echo_draws {
+                let dx = draw.origin[0] - cam[0];
+                let dy = draw.origin[1] - cam[1];
+                let dz = draw.origin[2] - cam[2];
+                draw.sort_depth = dx * dx + dy * dy + dz * dz;
+            }
+            self.echo_draws.sort_by(|a, b| {
+                b.sort_depth
+                    .partial_cmp(&a.sort_depth)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         // Cached draws' transforms are staged in the arena and go up a page
@@ -385,6 +398,12 @@ impl SceneRenderer {
             };
             put(&draw.transform, &uniforms);
 
+            draw.material_buffer
+                .write_flags(queue, debug_mode_u32, tonemapping_u32);
+        }
+
+        // Echoes read their entity's transform, so only their materials' flags
+        for draw in &self.echo_draws {
             draw.material_buffer
                 .write_flags(queue, debug_mode_u32, tonemapping_u32);
         }
@@ -1219,6 +1238,38 @@ impl SceneRenderer {
                         render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                     }
                     render_pass.set_pipeline(pipeline);
+                    render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+                }
+            }
+        }
+
+        // Living props' echoes (#228). Front faces only, and in a fixed order with
+        // no depth write, so they can't hide each other: drawing the back faces as
+        // well would double every two-sided leaf card and muddy the crown. They
+        // test against depth, so the part of a copy behind its own tree stays hidden.
+        if let Some(sp) = &self.skinned_pipeline {
+            if !self.echo_draws.is_empty() {
+                render_pass.set_pipeline(&sp.transparent_alpha_pipeline);
+                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                // A tree's echoes share a transform, and an echo's parts its
+                // bones, so a grove rebinds those far less often than it draws.
+                let mut transform = None;
+                let mut bones = None;
+                for draw in &self.echo_draws {
+                    if transform
+                        .is_none_or(|t| !std::sync::Arc::ptr_eq(t, &draw.transform_bind_group))
+                    {
+                        render_pass.set_bind_group(0, &*draw.transform_bind_group, &[]);
+                        transform = Some(&draw.transform_bind_group);
+                    }
+                    if bones.is_none_or(|b| !std::sync::Arc::ptr_eq(b, &draw.bone_bind_group)) {
+                        render_pass.set_bind_group(3, &*draw.bone_bind_group, &[]);
+                        bones = Some(&draw.bone_bind_group);
+                    }
+                    render_pass.set_bind_group(1, &*draw.material_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+                    render_pass
+                        .set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
                 }
             }

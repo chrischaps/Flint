@@ -703,6 +703,13 @@ impl PlayerApp {
                 "[living] {} skinned draws this frame",
                 renderer.collect_stats().skinned_draws
             );
+            let echoes: usize = props.props().iter().map(|p| p.echo_count()).sum();
+            if echoes > 0 {
+                eprintln!(
+                    "[living] {echoes} echoes, {} echo draws this frame",
+                    renderer.collect_stats().echo_draws
+                );
+            }
         }
     }
 

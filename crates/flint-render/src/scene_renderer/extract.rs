@@ -5,8 +5,8 @@
 
 use super::helpers::{extract_bounds_info, mat4_inv_transpose, parse_blend_mode};
 use super::{
-    hash_parts, transform_aabb, CachedBoneBind, SceneRenderer, SkinnedDrawCall, SHADOW_BONE_KEY,
-    SKINNED_DRAW_KEY,
+    hash_parts, transform_aabb, CachedBoneBind, EchoDrawCall, SceneRenderer, SkinnedDrawCall,
+    SHADOW_BONE_KEY, SKINNED_DRAW_KEY,
 };
 use crate::billboard_pipeline::{BillboardDrawCall, BillboardUniforms, SpriteInstance};
 use crate::bitmap_font::{anchor_origin, apply_fill, BitmapFont};
@@ -81,7 +81,12 @@ impl SceneRenderer {
         let read = |id: EntityId| {
             let m = world.get_components(id)?.get(comp::MATERIAL)?;
             let c = |k: &str| m.get(k).and_then(toml_f32).map(|v| v.max(0.0));
-            Some([c("vertex_tint_r")?, c("vertex_tint_g")?, c("vertex_tint_b")?, 1.0])
+            Some([
+                c("vertex_tint_r")?,
+                c("vertex_tint_g")?,
+                c("vertex_tint_b")?,
+                1.0,
+            ])
         };
         read(entity_id)
             .or_else(|| world.get_parent(entity_id).and_then(read))
@@ -175,6 +180,15 @@ impl SceneRenderer {
         };
 
         let inv_transpose = mat4_inv_transpose(&model_matrix);
+        let first_echo_draw = self.echo_draws.len();
+        // All of an entity's echoes read the transform of its first part, as
+        // every part's holds the same matrices.
+        let mut echo_transform: Option<Arc<wgpu::BindGroup>> = None;
+        // Debug views are for the geometry itself, and return an alpha of 1.
+        let echoes = match self.debug_state.mode {
+            crate::debug::DebugMode::Pbr => self.entity_echoes.get(&entity_id),
+            _ => None,
+        };
 
         for (mesh_index, gpu_mesh) in skinned_meshes.iter().enumerate() {
             let transform_uniforms = TransformUniforms {
@@ -292,6 +306,42 @@ impl SceneRenderer {
             let transform_bind_group = binds.transform_bind_group.clone();
             let material_buffer = binds.material_buffer.clone();
             let material_bind_group = binds.material_bind_group.clone();
+
+            // One draw per echo per part, in the part's own colours (tint and
+            // all) at the echo's opacity. No more buffers than the opacities
+            // and colours in use: a material is shared by its content.
+            for (echo, copy) in echoes.into_iter().flatten().enumerate() {
+                let mut uniforms = material_uniforms;
+                uniforms.opacity = copy.opacity;
+                let echo_key =
+                    hash_parts(&[&material_key.to_le_bytes(), &copy.opacity.to_le_bytes()]);
+                let (buffer, bind_group) = Self::shared_material(
+                    &mut self.draw_bind_cache,
+                    self.extract_frame,
+                    device,
+                    &self.pipeline,
+                    &uniforms,
+                    echo_key,
+                    bc_view,
+                    nm_view,
+                    mr_view,
+                    em_view,
+                );
+                self.echo_draws.push(EchoDrawCall {
+                    vertex_buffer: gpu_mesh.vertex_buffer.clone(),
+                    index_buffer: gpu_mesh.index_buffer.clone(),
+                    index_count: gpu_mesh.index_count,
+                    transform_bind_group: echo_transform
+                        .get_or_insert_with(|| transform_bind_group.clone())
+                        .clone(),
+                    material_buffer: buffer,
+                    material_bind_group: bind_group,
+                    bone_bind_group: copy.bind_group.clone(),
+                    origin: [model_matrix[3][0], model_matrix[3][1], model_matrix[3][2]],
+                    echo,
+                    sort_depth: 0.0,
+                });
+            }
 
             let entity_bones = self.entity_bone_buffers.get(&entity_id);
             let from_entity = entity_bones.is_some();
@@ -422,6 +472,10 @@ impl SceneRenderer {
                 self.skinned_entity_draws.push(skinned_draw);
             }
         }
+
+        // They came a part at a time: a whole echo at a time, in its order,
+        // is what keeps overlapping copies from flickering.
+        self.echo_draws[first_echo_draw..].sort_by_key(|draw| draw.echo);
 
         true
     }
