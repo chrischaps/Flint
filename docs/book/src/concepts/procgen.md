@@ -442,6 +442,8 @@ remove_wooze_zone("spot", 1.0);                              // and out
 
 Bench: `demo/wooze_field.scene.toml`, a row of oaks through a dreamy sphere and a calm box, whose script changes the step at 12 s.
 
+**Paint and ink read it too.** The [shading boil](post-processing.md#shading-boil) runs the Kuwahara filter and contour lines on the field's beat, as hard as its `jitter` says, where the camera stands.
+
 ## `flint gen`
 
 ```bash

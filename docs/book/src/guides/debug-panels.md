@@ -59,7 +59,9 @@ One consolidated home for every render and post-effect control. Its groups, top 
 - **Fog**: enabled, colour, density, start, end, height fog on/off, height falloff, height origin.
 - **Bloom**: enabled, intensity, threshold, soft threshold.
 - **Grade / Grain / FXAA**: lift, gamma, gain, a "Neutral grade" reset, film grain, FXAA.
-- **Kuwahara**: enabled, radius, sharpness, hardness, anisotropy.
+- **Kuwahara**: enabled, radius, sharpness, hardness, anisotropy, boil.
+- **Contour**: enabled, width, threshold, strength, luma, ink colour, fade, boil.
+- **Shading boil**: hold each drawing on ones, twos or threes, and what the scene's wooze field says now. See [Shading boil](../concepts/post-processing.md#shading-boil).
 - **Render mode**: mode combo (none, matrix, blood, drunk, tron, underwater), mix, the four mode params.
 - **Dither / Volumetric**: dither on/off and intensity, volumetric on/off, samples, density, decay.
 - **Shadows**: enabled, resolution combo (512, 1024, 2048, 4096). Changing resolution rebuilds the shadow pass.

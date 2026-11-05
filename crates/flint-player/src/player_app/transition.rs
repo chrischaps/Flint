@@ -419,6 +419,7 @@ impl PlayerApp {
                 .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
             self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
             self.wooze_time = 0.0;
+            self.boil_clock = Default::default();
             super::procgen_assets::resolve_scene(
                 &self.scene_path,
                 &mut self.world,
@@ -499,6 +500,7 @@ impl PlayerApp {
                 );
                 renderer.ensure_kuwahara_resources(&context.device, &context.queue);
                 renderer.ensure_fxaa_resources(&context.device);
+                renderer.ensure_contour_resources(&context.device);
             }
         }
 

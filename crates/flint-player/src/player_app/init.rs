@@ -107,6 +107,7 @@ impl PlayerApp {
             wooze: None,
             wooze_time: 0.0,
             wooze_missing_warned: false,
+            boil_clock: Default::default(),
             pp_vignette_override: None,
             pp_bloom_override: None,
             pp_exposure_override: None,
@@ -446,6 +447,7 @@ impl PlayerApp {
             .set_living_defaults(super::living_props::defaults_of(self.scene_living.as_ref()));
         self.wooze = super::living_props::field_of(self.scene_wooze.as_ref());
         self.wooze_time = 0.0;
+        self.boil_clock = Default::default();
         super::procgen_assets::resolve_scene(
             &self.scene_path,
             &mut self.world,
@@ -592,6 +594,7 @@ impl PlayerApp {
                 .set_post_process_config(scene_loading::post_process_config_from_def(pp_def));
             scene_renderer.ensure_kuwahara_resources(&render_context.device, &render_context.queue);
             scene_renderer.ensure_fxaa_resources(&render_context.device);
+            scene_renderer.ensure_contour_resources(&render_context.device);
         }
     }
 

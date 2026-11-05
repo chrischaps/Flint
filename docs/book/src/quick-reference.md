@@ -92,7 +92,7 @@ The old per-effect keys (F1 debug mode, F4 shadows, F5 bloom, F6 post) are gone;
 
 ### Rendering & Effects Menu (F4, player and viewer)
 
-One panel for everything the old F-keys flipped. Sections: **Post chain** (enable, exposure, vignette, chromatic aberration, radial blur, desaturate; player-only "freeze script post overrides"), **SSAO** (radius, intensity, bias, samples), **Depth of field** (strength, focus distance, range; viewer adds DoF-follow-selection), **Fog** with height fog, the aerial tint and ground fog, **Bloom** with film grain and FXAA, **Kuwahara**, **Render mode** (none / Matrix / blood / drunk / Tron / underwater, mix, params), **Dither / Volumetric**, **Shadows** (enable, resolution — rebuilds the shadow pass), **Lighting** (ambient sky/ground, diffuse wrap, Oren-Nayar, sheen, reset), **Camera** (vertical FOV), **Shading** (debug mode combo). The viewer also has an authored-vs-viewer-default post switch.
+One panel for everything the old F-keys flipped. Sections: **Post chain** (enable, exposure, vignette, chromatic aberration, radial blur, desaturate; player-only "freeze script post overrides"), **SSAO** (radius, intensity, bias, samples), **Depth of field** (strength, focus distance, range; viewer adds DoF-follow-selection), **Fog** with height fog, the aerial tint and ground fog, **Bloom** with film grain and FXAA, **Kuwahara**, **Contour**, **Shading boil**, **Render mode** (none / Matrix / blood / drunk / Tron / underwater, mix, params), **Dither / Volumetric**, **Shadows** (enable, resolution — rebuilds the shadow pass), **Lighting** (ambient sky/ground, diffuse wrap, Oren-Nayar, sheen, reset), **Camera** (vertical FOV), **Shading** (debug mode combo). The viewer also has an authored-vs-viewer-default post switch.
 
 ### File Type Auto-Detection (`flint edit`)
 
@@ -177,6 +177,16 @@ dof_strength = 0.0              # 0 = sharp
 dof_focus_distance = 10.0       # view metres
 dof_focus_range = 5.0
 kuwahara_enabled = false        # painterly pre-pass
+kuwahara_boil = 0.0             # with [wooze]: how far each drawing moves the paint
+contour_enabled = false         # ink lines from depth and luminance
+contour_width = 1.25            # half a line, in pixels at 1080p
+contour_threshold = 0.08        # lower draws more
+contour_strength = 0.9
+contour_luma = 0.5              # 0 = silhouettes only
+contour_color = [0.015, 0.012, 0.02]
+contour_fade = 30.0             # metres to fade by half; 0 never
+contour_boil = 0.0              # with [wooze]: how far each drawing moves the lines
+boil_on = 2                     # film frames a drawing holds: 1, 2 or 3
 film_grain = 0.0                # 0.02-0.05 is subtle
 grade_lift = [0.0, 0.0, 0.0]    # after ACES; neutral 0,0,0
 grade_gamma = [1.0, 1.0, 1.0]
