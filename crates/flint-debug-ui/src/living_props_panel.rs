@@ -371,6 +371,9 @@ pub struct LivingSpeciesState {
     pub mixed: KnobFlags,
     /// The layer behind each value.
     pub sources: KnobSources,
+    /// Whether it has values the scene file doesn't (#249): set, changed or
+    /// cleared since the scene loaded or was last committed.
+    pub unsaved: bool,
 }
 
 impl LivingSpeciesState {
@@ -506,7 +509,17 @@ pub struct LivingPanelState {
     pub ab: Option<LivingAbState>,
     /// The tree picked in the world, as the host resolved it (#248).
     pub picked: Option<LivingPickedState>,
+    /// Whether the grove's own values differ from what the scene file gives
+    /// (#249): its `[wooze]`, `[living]` or boil.
+    pub unsaved_global: bool,
+    /// What Commit to File would write, one line a value, as
+    /// `[living.species.grove_thorn] echoes.count = 4`.
+    pub unsaved: Vec<String>,
 }
+
+/// What an unsaved level's mark says when hovered.
+const UNSAVED: &str = "*: values the scene file doesn't have yet. Commit to File writes \
+them; As loaded puts the file's back.";
 
 /// How an A/B comparison stands (#238). A name of "" is the knobs as they stood.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -545,6 +558,8 @@ pub enum LivingPanelAction {
     Reset,
     Save(String),
     Load(String),
+    /// Write every value the scene file doesn't give into it (#249).
+    Commit,
     /// Compare preset A with preset B (#238); "" is the knobs as they stand.
     Compare(String, String),
     /// The presets F6 and F7 would compare, as picked.
@@ -768,22 +783,29 @@ impl LivingPropsDebugPanel {
         let mut picked = self.scope.clone();
         ui.horizontal_wrapped(|ui| {
             ui.weak("Tuning");
-            ui.selectable_value(&mut picked, PanelScope::Global, "Global")
-                .on_hover_text("The whole grove, under any species' own value");
+            let global = unsaved_text("Global".to_string(), self.state.unsaved_global);
+            let hover = "The whole grove, under any species' own value";
+            ui.selectable_value(&mut picked, PanelScope::Global, global)
+                .on_hover_text(with_unsaved(hover, self.state.unsaved_global));
             for species in &self.state.species {
                 let own = if species.has_own() { " \u{2022}" } else { "" };
                 let text = format!("{} {}{own}", species.name, species.props);
+                let text = unsaved_text(text, species.unsaved);
+                let unsaved = species.unsaved;
                 ui.selectable_value(&mut picked, PanelScope::Species(species.name.clone()), text)
-                    .on_hover_text(format!(
-                        "{}: {} trees. A knob moved here is the species' own: it beats the \
+                    .on_hover_text(with_unsaved(
+                        &format!(
+                            "{}: {} trees. A knob moved here is the species' own: it beats the \
                          grove's, the field and its zones{}",
-                        species.name,
-                        species.props,
-                        if own.is_empty() {
-                            "."
-                        } else {
-                            ". The dot: it already has some."
-                        }
+                            species.name,
+                            species.props,
+                            if own.is_empty() {
+                                "."
+                            } else {
+                                ". The dot: it already has some."
+                            }
+                        ),
+                        unsaved,
                     ));
             }
         });
@@ -1070,13 +1092,54 @@ impl LivingPropsDebugPanel {
             });
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.save_as).desired_width(120.0));
-                if ui.button("Save").clicked() {
+                if ui
+                    .button("Save")
+                    .on_hover_text(
+                        "A preset: the grove's knobs, and each species' own values as \
+                         [living.species.<spec>] tables",
+                    )
+                    .clicked()
+                {
                     self.push(LivingPanelAction::Save(self.save_as.clone()));
                 }
             });
+            self.commit_ui(ui);
             if let Some(status) = &self.state.status {
                 ui.label(egui::RichText::new(status).small());
             }
+        });
+    }
+
+    /// Commit to File (#249), and how much it would write.
+    fn commit_ui(&mut self, ui: &mut egui::Ui) {
+        let unsaved = self.state.unsaved.clone();
+        ui.horizontal_wrapped(|ui| {
+            let hover = if unsaved.is_empty() {
+                "The scene file already gives every value as it stands.".to_string()
+            } else {
+                let mut lines: Vec<String> = unsaved.iter().take(12).cloned().collect();
+                if unsaved.len() > 12 {
+                    lines.push(format!("and {} more", unsaved.len() - 12));
+                }
+                format!(
+                    "Writes into the scene file, each on its own line, the rest of the \
+                     file as it is:\n{}",
+                    lines.join("\n")
+                )
+            };
+            if ui
+                .add_enabled(!unsaved.is_empty(), egui::Button::new("Commit to File"))
+                .on_hover_text(hover.clone())
+                .on_disabled_hover_text(hover)
+                .clicked()
+            {
+                self.push(LivingPanelAction::Commit);
+            }
+            match unsaved.len() {
+                0 => ui.weak("the scene has it all"),
+                1 => ui.colored_label(INK, "* 1 value unsaved"),
+                n => ui.colored_label(INK, format!("* {n} values unsaved")),
+            };
         });
     }
 
@@ -1664,6 +1727,24 @@ impl DebugPanel for LivingPropsDebugPanel {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+/// A scope's name, with a `*` and in ink if it has values the file doesn't.
+fn unsaved_text(text: String, unsaved: bool) -> egui::RichText {
+    if unsaved {
+        egui::RichText::new(format!("{text} *")).color(INK)
+    } else {
+        egui::RichText::new(text)
+    }
+}
+
+/// A scope's hover, saying what its `*` means if it has one.
+fn with_unsaved(hover: &str, unsaved: bool) -> String {
+    if unsaved {
+        format!("{hover}\n\n{UNSAVED}")
+    } else {
+        hover.to_string()
     }
 }
 
@@ -2410,6 +2491,7 @@ mod tests {
                 ..Default::default()
             },
             sources: all_from("global"),
+            unsaved: false,
         };
         thorn
             .sources
@@ -2428,6 +2510,7 @@ mod tests {
                     knobs: LivingKnobs::default(),
                     mixed: KnobFlags::default(),
                     sources: all_from("spec"),
+                    unsaved: false,
                 },
                 thorn,
             ],
@@ -2988,5 +3071,39 @@ mod tests {
         assert_eq!(moved.boil, None);
         assert!(moved.wooze.glide.is_some(), "{moved:?}");
         assert_eq!(count_set(moved), 1, "{moved:?}");
+    }
+
+    #[test]
+    fn with_nothing_unsaved_there_are_no_marks_and_commit_asks_for_nothing() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        panel.refresh(grove());
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, " *"), 0, "{said:?}");
+        assert_eq!(says(&said, "the scene has it all"), 1, "{said:?}");
+        assert!(click_text(&ctx, &mut panel, "Commit to File").is_empty());
+    }
+
+    #[test]
+    fn an_unsaved_level_wears_a_star_and_commit_sends_once() {
+        let ctx = egui::Context::default();
+        let mut panel = LivingPropsDebugPanel::new();
+        let mut state = grove();
+        state.species[1].unsaved = true;
+        state.unsaved = vec!["[living.species.thorn] echoes.count = 4".to_string()];
+        panel.refresh(state.clone());
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "thorn 2 \u{2022} *"), 1, "{said:?}");
+        assert_eq!(says(&said, "Global *"), 0, "the grove's own are saved");
+        assert_eq!(says(&said, "* 1 value unsaved"), 1, "{said:?}");
+
+        state.unsaved_global = true;
+        state.unsaved.push("[wooze] glide = 0.8".to_string());
+        panel.refresh(state);
+        let said = shown(&ctx, &mut panel);
+        assert_eq!(says(&said, "Global *"), 1, "{said:?}");
+        assert_eq!(says(&said, "* 2 values unsaved"), 1, "{said:?}");
+        let asked = click_text(&ctx, &mut panel, "Commit to File");
+        assert_eq!(asked, [LivingPanelAction::Commit]);
     }
 }

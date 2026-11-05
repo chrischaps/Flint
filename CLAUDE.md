@@ -57,7 +57,8 @@ Flint uses an **edit -> validate -> play** loop:
    #                           byte-identical, and the same pixels as flint-player --frame-step
    #                           at that time. No scripts or physics. --frame-step S names the step)
    #   --time 0..4 --fps 12 -o x.gif   (a span as a GIF sharing one palette; a still pixel never flickers)
-   #   --sweep wooze.glide=0,0.25,0.5,1  (labelled columns; also .step .amplitude .jitter .preset)
+   #   --sweep wooze.glide=0,0.25,0.5,1  (labelled columns; also .step .amplitude .jitter .preset;
+   #                           a preset is a wooze/<name>.wooze.toml first, species tables and all, #249)
    #   --report json          (stdout: each living prop's lineage seed, pose indices, wooze values,
    #                           and every species value with the layer that set it, #246)
    # Note: --shadow-resolution defaults to 2048 (the renderer's construction

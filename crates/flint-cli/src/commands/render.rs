@@ -365,7 +365,7 @@ pub fn run(args: RenderArgs) -> Result<()> {
     }
     render_plan::check_output(&args.output, args.time)?;
     if let Some(sweep) = &args.sweep {
-        check_sweep(sweep)?;
+        check_sweep(&args, sweep)?;
     }
     HUMAN_TO_STDERR.store(args.report.is_some(), Ordering::Relaxed);
     flint_render::set_gpu_override(args.gpu.clone());
@@ -536,9 +536,13 @@ pub fn run(args: RenderArgs) -> Result<()> {
     Ok(())
 }
 
-/// Try every column's value on a field of its own, before anything is loaded.
-fn check_sweep(sweep: &Sweep) -> Result<()> {
+/// Try every column's value on a field of its own, before anything is loaded. A
+/// preset column may be a file beside the scene (#249), which has to read.
+fn check_sweep(args: &RenderArgs, sweep: &Sweep) -> Result<()> {
     for index in 0..sweep.values.len() {
+        if preset_file_of(args, index)?.is_some() {
+            continue;
+        }
         let mut field = flint_core::wooze::WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL);
         field
             .set_global(&sweep.table(index), 0.0, 0.0)
@@ -607,6 +611,36 @@ fn still_props(stage: &Stage) -> Vec<String> {
         })
         .map(|entity| entity.name)
         .collect()
+}
+
+/// The preset file a `--sweep wooze.preset=...` column names, if it's a file the
+/// scene can see rather than a built-in (#249).
+fn preset_file_of(args: &RenderArgs, column: usize) -> Result<Option<flint_scene::WoozePreset>> {
+    let Some(sweep) = args.sweep.as_ref().filter(|sweep| sweep.knob == "preset") else {
+        return Ok(None);
+    };
+    let name = &sweep.values[column];
+    match flint_scene::read_preset(Path::new(&args.scene), name) {
+        None => Ok(None),
+        Some(Ok(preset)) => Ok(Some(preset)),
+        Some(Err(reason)) => Err(anyhow!("--sweep: preset '{name}': {reason}")),
+    }
+}
+
+/// A preset's `[wooze]` knobs as the table the field takes.
+fn preset_wooze_table(knobs: &flint_scene::WoozeKnobs) -> toml::Table {
+    let mut table = toml::Table::new();
+    for (key, value) in [
+        ("amplitude", knobs.amplitude),
+        ("step", knobs.step),
+        ("glide", knobs.glide),
+        ("jitter", knobs.jitter),
+    ] {
+        if let Some(value) = value {
+            table.insert(key.to_string(), toml::Value::Float(f64::from(value)));
+        }
+    }
+    table
 }
 
 /// What a sweep's sheet says, as of the moment each stage last captured.
@@ -803,10 +837,22 @@ impl Stage {
                 },
             )
         });
-        let column_knobs = args.sweep.as_ref().map(|sweep| sweep.table(column));
+        // A preset column names a preset file beside the scene before a built-in,
+        // as the player's Load does (#249), and the file's [living] tables, species
+        // and all, go over the scene's as they do there.
+        let column_preset = preset_file_of(args, column)?;
+        let column_knobs = match &column_preset {
+            Some(preset) => Some(preset_wooze_table(&preset.wooze)),
+            None => args.sweep.as_ref().map(|sweep| sweep.table(column)),
+        };
         if let (Some(run), Some(knobs)) = (&mut living, &column_knobs) {
             run.change_field(knobs)
                 .map_err(|reason| anyhow!("--sweep: {reason}"))?;
+        }
+        if let (Some(run), Some(preset)) = (&mut living, &column_preset) {
+            for problem in run.apply_preset(&preset.living) {
+                eprintln!("Warning: --sweep preset: {problem}");
+            }
         }
         // What else reads the field: the shading boil always, and shallow wooze in a
         // capture of a moment. A plain render shows those meshes at rest (#215).
@@ -965,6 +1011,18 @@ impl Stage {
             if let Some(anisotropy) = args.kuwahara_anisotropy {
                 pp_config.kuwahara_anisotropy = anisotropy;
                 pp_config.kuwahara_enabled = true;
+            }
+            if let Some(boil) = column_preset.as_ref().and_then(|preset| preset.boil) {
+                let on = boil.enabled.unwrap_or(true);
+                if let Some(paint) = boil.kuwahara {
+                    pp_config.kuwahara_boil = if on { paint } else { 0.0 };
+                }
+                if let Some(ink) = boil.contour {
+                    pp_config.contour_boil = if on { ink } else { 0.0 };
+                }
+                if let Some(cadence) = boil.on {
+                    pp_config.boil_on = cadence.clamp(1, 3);
+                }
             }
             if let Some(boil) = args.kuwahara_boil {
                 pp_config.kuwahara_boil = boil;

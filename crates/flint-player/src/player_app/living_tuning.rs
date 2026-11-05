@@ -13,13 +13,14 @@
 
 use flint_core::wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
 use flint_procgen::{
-    EchoConfig, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved, ResolvedProp,
-    Stagger, VarianceConfig,
+    EchoConfig, EchoOverride, LivingLayer, LivingLayers, LivingPropId, LivingScope, Resolved,
+    ResolvedProp, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
 };
 use flint_scene::{
-    list_presets, read_preset, write_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
-    LivingVarianceDef, WoozeKnobs, WoozePreset,
+    commit_look, list_presets, read_preset, write_preset, BoilDef, LivingDef, LivingEchoesDef,
+    LivingSpeciesDef, LivingVarianceDef, WoozeKnobs, WoozePreset,
 };
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::living_props::{echoes_of, species_of, stagger_name, stagger_of, variance_of};
@@ -44,6 +45,9 @@ pub struct LivingTune {
     boil_waiting: Option<BoilDef>,
     /// The knobs as the scene loaded, to go back to.
     pub(super) at_load: Option<AtLoad>,
+    /// The look as last committed to the scene file (#249), which is what the
+    /// file gives from then on. `None`: as the scene loaded.
+    committed: Option<WoozePreset>,
     /// What came of the last save or load, for the panel.
     pub status: Option<String>,
     /// Two presets on the same grove, if they're being compared (#238).
@@ -71,6 +75,67 @@ pub(super) struct AtLoad {
     no_field: bool,
     /// Every prop's and lineage's global layer, and every species' own values.
     layers: LivingLayers,
+    /// The same as a look in a scene's terms (#249): what the file gave.
+    look: WoozePreset,
+}
+
+/// Which levels have values the scene file doesn't give (#249): what a commit
+/// would write, and so what closing the window would lose.
+#[cfg(any(feature = "debug-hud", test))]
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Unsaved {
+    /// The whole grove's: `[wooze]`, `[living]` or the boil.
+    pub global: bool,
+    /// Each species with a value of its own to write or take out, by name.
+    pub species: Vec<String>,
+    /// Every value a commit would write, by its place in the file.
+    pub edits: Vec<flint_scene::SceneEdit>,
+}
+
+#[cfg(any(feature = "debug-hud", test))]
+impl Unsaved {
+    fn of(edits: Vec<flint_scene::SceneEdit>) -> Self {
+        let mut species: Vec<String> = Vec::new();
+        for name in edits.iter().filter_map(flint_scene::SceneEdit::species) {
+            if !species.iter().any(|s| s == name) {
+                species.push(name.to_string());
+            }
+        }
+        Self {
+            global: edits.iter().any(|edit| edit.species().is_none()),
+            species,
+            edits,
+        }
+    }
+}
+
+/// A species' own values as its scene table says them.
+pub(crate) fn species_table(over: &SpeciesOverride) -> LivingSpeciesDef {
+    LivingSpeciesDef {
+        amplitude: over.clock.amplitude,
+        step: over.clock.step,
+        glide: over.clock.glide,
+        jitter: over.clock.jitter,
+        stagger: over.stagger.map(|s| stagger_name(s).to_string()),
+        echoes: echoes_table(over.echoes),
+        variance: variance_table(over.variance),
+    }
+}
+
+fn echoes_table(echoes: EchoOverride) -> Option<LivingEchoesDef> {
+    (echoes != EchoOverride::default()).then_some(LivingEchoesDef {
+        count: echoes.count,
+        spread: echoes.spread,
+        alpha: echoes.alpha,
+    })
+}
+
+fn variance_table(variance: VarianceOverride) -> Option<LivingVarianceDef> {
+    (variance != VarianceOverride::default()).then_some(LivingVarianceDef {
+        amount: variance.amount,
+        steady: variance.steady,
+        keep_size: variance.keep_size,
+    })
 }
 
 /// The keys [`PlayerApp::clear_living_species`] takes, each a knob or a group.
@@ -377,10 +442,21 @@ impl PlayerApp {
     /// Turn the knobs a preset sets. What can't be used is named and the rest
     /// still happen, since this is a person or a script at work.
     pub(super) fn tune_living(&mut self, tune: &WoozePreset) -> Result<(), String> {
+        self.tune_living_as(tune, false)
+    }
+
+    /// [`Self::tune_living`], with each species the preset names given exactly
+    /// its values if `replace`, as loading a preset does (#249), rather than
+    /// those laid over what it has, as a script's tune does.
+    fn tune_living_as(&mut self, tune: &WoozePreset, replace: bool) -> Result<(), String> {
         let mut problems = self.tune_wooze(&tune.wooze);
         problems.extend(self.tune_props(&tune.living));
         for (name, species) in &tune.living.species {
-            problems.extend(self.tune_species(name, species));
+            if replace {
+                problems.extend(self.replace_species(name, species));
+            } else {
+                problems.extend(self.tune_species(name, species));
+            }
         }
         if let Some(boil) = tune.boil {
             if let Some(on) = boil.on.filter(|on| !(1..=3).contains(on)) {
@@ -506,6 +582,23 @@ impl PlayerApp {
         problems
     }
 
+    /// One species' own values made exactly `def` (#249): what it had and `def`
+    /// doesn't say goes back to the layers below.
+    fn replace_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
+        let mut problems = Vec::new();
+        let over = species_of(def, &mut |problem| {
+            problems.push(format!("species '{name}': {problem}"));
+        });
+        if !self
+            .procgen_resolver
+            .living_props_mut()
+            .set_species(name, over)
+        {
+            problems.push(self.no_such_species(name));
+        }
+        problems
+    }
+
     /// Clear some of a species' own values, or all of them with no keys, so the
     /// layers below decide them again. Keys are [`SPECIES_KEYS`].
     pub(super) fn clear_living_species(
@@ -587,11 +680,118 @@ impl PlayerApp {
     /// Save every knob as a preset. Returns the file and what a scene needs to
     /// say to load it.
     ///
-    /// A knob the props disagree on is left out, so loading the file leaves each
-    /// species its own: saving per-species values is #249's.
+    /// A knob the props disagree on is left out of the grove's tables. Each
+    /// species with values of its own gets a `[living.species.<spec>]` (#249),
+    /// and one the scene gave values that now has none an empty one, so that
+    /// loading the file gives every species what it has now.
     pub(super) fn save_living_preset(&mut self, name: &str) -> Result<PathBuf, String> {
-        let (knobs, _) = self.living_shared_knobs();
+        let (mut knobs, _) = self.living_shared_knobs();
+        knobs.living.species = self.living_species_tables();
         write_preset(Path::new(&self.scene_path), name, &knobs)
+    }
+
+    /// Each species' own values as a preset holds them: every one that has some,
+    /// and an empty table for each the file gave values to that now has none.
+    fn living_species_tables(&self) -> BTreeMap<String, LivingSpeciesDef> {
+        let mut tables = self.living_look().living.species;
+        if let Some(base) = self.living_base() {
+            for name in base.living.species.into_keys() {
+                tables.entry(name).or_default();
+            }
+        }
+        tables
+    }
+
+    /// The look as it stands now, in a scene's terms (#249): the field's global
+    /// knobs, if there's a field, the global layer of `[living]` as it was set,
+    /// a field at a time, each species' own values, and the boil.
+    pub(super) fn living_look(&self) -> WoozePreset {
+        let props = self.procgen_resolver.living_props();
+        let wooze = match &self.wooze {
+            Some(field) => {
+                let global = field.global(self.wooze_time);
+                WoozeKnobs {
+                    amplitude: Some(global.amplitude),
+                    step: Some(global.step),
+                    glide: Some(global.glide),
+                    jitter: Some(global.jitter),
+                }
+            }
+            None => WoozeKnobs::default(),
+        };
+        let (echoes, stagger, variance) = props.global_layer();
+        let species = (self.living_species().into_iter())
+            .filter_map(|name| {
+                let over = props.species_override(&name)?;
+                (!over.is_empty()).then(|| (name, species_table(&over)))
+            })
+            .collect();
+        WoozePreset {
+            wooze,
+            living: LivingDef {
+                shadows: None,
+                stagger: stagger.map(|s| stagger_name(s).to_string()),
+                echoes: echoes_table(echoes),
+                variance: variance_table(variance),
+                species,
+            },
+            boil: Some(self.living_boil()),
+        }
+    }
+
+    /// The look the scene file gives: as last committed, or as it loaded.
+    fn living_base(&self) -> Option<WoozePreset> {
+        let tune = &self.living_tune;
+        (tune.committed.clone()).or_else(|| tune.at_load.as_ref().map(|at| at.look.clone()))
+    }
+
+    /// What a commit would write now, level by level.
+    #[cfg(any(feature = "debug-hud", test))]
+    pub(crate) fn living_unsaved(&self) -> Unsaved {
+        match self.living_base() {
+            Some(base) => Unsaved::of(flint_scene::look_edits(&base, &self.living_look())),
+            None => Unsaved::default(),
+        }
+    }
+
+    /// Write every value the scene file doesn't give into it (#249): species
+    /// values to `[living.species.<spec>]`, the grove's to `[wooze]` and
+    /// `[living]`, the boil to `[post_process]`, each on its own line and the rest
+    /// of the file as it was. Returns what was said about it. On the web it's an
+    /// error, as saving a preset is.
+    pub(super) fn commit_living(&mut self) -> Result<String, String> {
+        let base = self
+            .living_base()
+            .ok_or_else(|| "there are no living props to commit".to_string())?;
+        let now = self.living_look();
+        let path = PathBuf::from(&self.scene_path);
+        let report = commit_look(&path, &base, &now)?;
+        self.living_tune.committed = Some(now);
+        let file = path.file_name().map_or_else(
+            || self.scene_path.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let mut said = match report.edits.len() {
+            0 => format!("{file} already says all of it."),
+            1 => format!("Committed 1 value to {file}: {}", report.edits[0]),
+            n => format!(
+                "Committed {n} values to {file}: {}",
+                (report.edits.iter())
+                    .map(|edit| edit.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        if report.boil_skipped {
+            said.push_str(". The boil isn't written: the scene has no [post_process]");
+        }
+        if !report.preset_still_sets.is_empty() {
+            said.push_str(&format!(
+                ". The preset it names still sets {}, so take them out there too",
+                report.preset_still_sets.join(", ")
+            ));
+        }
+        Ok(said)
     }
 
     /// Load a preset file, or a built-in, which holds only the field's knobs. A
@@ -612,7 +812,7 @@ impl PlayerApp {
                 })
             })
             .ok_or_else(|| format!("there's no preset named '{name}'"))??;
-        self.tune_living(&found)
+        self.tune_living_as(&found, true)
     }
 
     /// Every knob as it stands, layer by layer, to go back to.
@@ -627,6 +827,7 @@ impl PlayerApp {
             knobs,
             no_field,
             layers: self.procgen_resolver.living_props().layers(),
+            look: self.living_look(),
         }
     }
 
@@ -720,6 +921,31 @@ impl PlayerApp {
     }
 }
 
+/// The knobs a scene sets itself, which a preset it names can't change: its
+/// `[wooze]` knobs, its `[living]` and each `[living.species.<spec>]` value
+/// (#249), named as a commit names them.
+#[cfg(any(feature = "debug-hud", test))]
+pub(crate) fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
+    let wooze = scene.wooze.as_ref();
+    let own = WoozePreset {
+        wooze: WoozeKnobs {
+            amplitude: wooze.and_then(|w| w.amplitude),
+            step: wooze.and_then(|w| w.step),
+            glide: wooze.and_then(|w| w.glide),
+            jitter: wooze.and_then(|w| w.jitter),
+        },
+        living: LivingDef {
+            shadows: None,
+            ..scene.living.clone().unwrap_or_default()
+        },
+        boil: None,
+    };
+    flint_scene::look_edits(&WoozePreset::default(), &own)
+        .iter()
+        .map(flint_scene::SceneEdit::label)
+        .collect()
+}
+
 /// The F3 panel's half: its actions come in here and what's true goes back out.
 #[cfg(feature = "debug-hud")]
 pub(super) mod panel {
@@ -783,7 +1009,10 @@ pub(super) mod panel {
 
         /// Each species the props grow from, with its knobs, where its own
         /// props disagree, and the layer behind each value (#247).
-        pub(in super::super) fn living_species_states(&self) -> Vec<LivingSpeciesState> {
+        pub(in super::super) fn living_species_states(
+            &self,
+            unsaved: &super::Unsaved,
+        ) -> Vec<LivingSpeciesState> {
             let boil = self.living_boil();
             self.living_species()
                 .into_iter()
@@ -794,6 +1023,7 @@ pub(super) mod panel {
                         knobs: LivingKnobs::from_preset(&view.knobs(boil)),
                         mixed: mixed_of(&view),
                         sources: sources_of(&view),
+                        unsaved: unsaved.species.contains(&name),
                         name,
                     }
                 })
@@ -963,7 +1193,8 @@ pub(super) mod panel {
             let view = self.living_view(None);
             let knobs = view.knobs(self.living_boil());
             let mixed = mixed_of(&view);
-            let species = self.living_species_states();
+            let unsaved = self.living_unsaved();
+            let species = self.living_species_states(&unsaved);
             let no_field = self.wooze.is_none();
             let rows = self.living_rows();
             let shadows = match self.procgen_resolver.living_props().shadows() {
@@ -1025,6 +1256,8 @@ pub(super) mod panel {
                     paint_pass,
                     ink_pass,
                     picked,
+                    unsaved_global: unsaved.global,
+                    unsaved: unsaved.edits.iter().map(|edit| edit.to_string()).collect(),
                 });
             }
         }
@@ -1071,6 +1304,14 @@ pub(super) mod panel {
                     println!("[living] {said}");
                     self.living_tune.status = Some(said);
                     self.living_tune.preset_names = None;
+                }
+                LivingPanelAction::Commit => {
+                    let said = match self.commit_living() {
+                        Ok(said) => said,
+                        Err(problem) => format!("Couldn't commit: {problem}"),
+                    };
+                    println!("[living] {said}");
+                    self.living_tune.status = Some(said);
                 }
                 LivingPanelAction::Load(name) => {
                     self.living_tune.status = Some(match self.load_living_preset(&name) {
@@ -1120,7 +1361,7 @@ pub(super) mod panel {
         let scene = flint_core::vfs::read_to_string(&app.scene_path)
             .ok()
             .and_then(|text| toml::from_str::<flint_scene::SceneFile>(&text).ok());
-        let wins = scene.as_ref().map(scene_says).unwrap_or_default();
+        let wins = scene.as_ref().map(super::scene_says).unwrap_or_default();
         if !wins.is_empty() {
             said.push_str(&format!(
                 ". This scene's own {} would win over it",
@@ -1128,51 +1369,6 @@ pub(super) mod panel {
             ));
         }
         said
-    }
-
-    /// The knobs a scene sets itself, which a preset it names can't change.
-    fn scene_says(scene: &flint_scene::SceneFile) -> Vec<String> {
-        let mut says = Vec::new();
-        if let Some(wooze) = &scene.wooze {
-            for (key, value) in [
-                ("amplitude", wooze.amplitude),
-                ("step", wooze.step),
-                ("glide", wooze.glide),
-                ("jitter", wooze.jitter),
-            ] {
-                if value.is_some() {
-                    says.push(format!("[wooze] {key}"));
-                }
-            }
-        }
-        if let Some(living) = &scene.living {
-            if living.stagger.is_some() {
-                says.push("[living] stagger".to_string());
-            }
-            if let Some(echoes) = living.echoes {
-                for (key, set) in [
-                    ("count", echoes.count.is_some()),
-                    ("spread", echoes.spread.is_some()),
-                    ("alpha", echoes.alpha.is_some()),
-                ] {
-                    if set {
-                        says.push(format!("[living] echoes.{key}"));
-                    }
-                }
-            }
-            if let Some(variance) = living.variance {
-                for (key, set) in [
-                    ("amount", variance.amount.is_some()),
-                    ("steady", variance.steady.is_some()),
-                    ("keep_size", variance.keep_size.is_some()),
-                ] {
-                    if set {
-                        says.push(format!("[living] variance.{key}"));
-                    }
-                }
-            }
-        }
-        says
     }
 }
 

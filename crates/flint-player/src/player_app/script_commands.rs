@@ -164,14 +164,16 @@ impl PlayerApp {
                 }
                 ScriptCommand::FreezeLiving { frozen } => self.living_tune.frozen = frozen,
                 ScriptCommand::StepLiving => self.step_living(),
-                ScriptCommand::SaveLivingPreset { name } => {
-                    match self.save_living_preset(&name) {
-                        Ok(path) => println!("[living] saved {}", path.display()),
-                        Err(problem) => {
-                            tracing::warn!(target: "script", "save_living_preset: {problem}");
-                        }
+                ScriptCommand::SaveLivingPreset { name } => match self.save_living_preset(&name) {
+                    Ok(path) => println!("[living] saved {}", path.display()),
+                    Err(problem) => {
+                        tracing::warn!(target: "script", "save_living_preset: {problem}");
                     }
-                }
+                },
+                ScriptCommand::CommitLiving => match self.commit_living() {
+                    Ok(said) => println!("[living] {said}"),
+                    Err(problem) => tracing::warn!(target: "script", "commit_living: {problem}"),
+                },
                 ScriptCommand::LoadLivingPreset { name } => {
                     if let Err(problem) = self.load_living_preset(&name) {
                         tracing::warn!(target: "script", "load_living_preset: {problem}");

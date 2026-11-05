@@ -108,6 +108,53 @@ fn an_unknown_preset_fails_too() {
     assert!(text(&o).contains("goddard"), "{}", text(&o));
 }
 
+/// One oak, alive, and a `[living.species.<spec>]` table for `species` (#249).
+fn grove_with_species(species: &str, body: &str) -> String {
+    format!(
+        "{GOOD}\n[living.species.{species}]\n{body}\n\n\
+         [entities.oak_1.transform]\nposition = [0.0, 0.0, 0.0]\n\
+         [entities.oak_1.model]\nasset = \"grove_oak\"\n\
+         [entities.oak_1.living_prop]\nlineage_seed = 3\n"
+    )
+}
+
+#[test]
+fn a_species_table_for_a_spec_the_scene_grows_passes() {
+    let o = validate(
+        "species_good",
+        &grove_with_species("grove_oak", "step = 0.25"),
+        "text",
+    );
+    assert!(o.status.success(), "{}", text(&o));
+}
+
+#[test]
+fn a_misspelt_species_table_fails_and_is_named() {
+    let o = validate(
+        "species_typo",
+        &grove_with_species("grove_oke", "step = 0.25"),
+        "text",
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("[living.species.grove_oke]"), "{out}");
+    assert!(
+        out.contains("grove_oak"),
+        "says what the props grow from: {out}"
+    );
+}
+
+#[test]
+fn a_misspelt_key_in_a_species_table_fails_and_is_named() {
+    let o = validate(
+        "species_key",
+        &grove_with_species("grove_oak", "ehoes = { count = 1 }"),
+        "text",
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("ehoes"), "{}", text(&o));
+}
+
 #[test]
 fn json_reads_as_a_violation_of_the_zone() {
     let o = validate("json", &GOOD.replace("radius = 6", "radius = -6"), "json");

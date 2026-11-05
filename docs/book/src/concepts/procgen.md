@@ -470,11 +470,13 @@ contour = 1.4
 on = 3
 ```
 
-The first two tables are the shapes a scene's own take, so they can be pasted either way: a scene's `[living]` table also takes `stagger` and `variance` now, over each spec's, a field at a time. Every key is optional. A preset can hold [`[living.species.<spec>]`](#species-values) tables too, which a scene's own beat a field at a time, though the panel doesn't save them.
+The first two tables are the shapes a scene's own take, so they can be pasted either way: a scene's `[living]` table also takes `stagger` and `variance` now, over each spec's, a field at a time. Every key is optional. A preset holds [`[living.species.<spec>]`](#species-values) tables too, in the same shape, and the panel saves one for each species with values of its own, so one file holds a look for every species in the grove. A species the scene gave values that has none when you save gets an empty table, which loading reads as "back to the grove's". When a scene names the preset its own species tables still beat the preset's, a field at a time; when the panel or a script loads it, each species it names takes exactly its table.
 
 Whatever a scene says itself still beats its preset, as with a built-in: `glide = 0.4` beside `preset = "misty"` means 0.4, and the panel lists those keys when it saves. There are two exceptions. `stagger` from the scene or a preset beats an entity's own `living_prop` stagger too, since a preset has to look as it did when it was saved. And `[boil]` beats `[post_process]`, whose `kuwahara_boil`, `contour_boil` and `boil_on` have no way to say they weren't set. Whether the passes themselves are on stays with `[post_process]`, and zones stay with the scene, since they belong to a place.
 
 A file holds numbers as briefly as they read back to the same bits, so what you saved is what you get: a run tuned to these values and a fresh run that names the file drew 0 of 518,400 pixels differently at each of 12 moments over 6 s.
+
+`flint render --sweep wooze.preset=misty,linklater` reads a file before a built-in, as the panel does, with its `[living]`, species tables and boil, so a saved look renders the same headless, and `--report json` names the layer behind each value.
 
 `flint validate` fails on a preset file with a misspelt key or a value out of range, naming the preset. The player warns and goes without it, and `flint bundle` packs `wooze/`.
 
@@ -502,7 +504,7 @@ A species is a spec, named by its `meta.name`, which is what a living prop's `mo
 | `entity` | A `living_prop` component | `stagger` only. `lineage_seed`, `pose_ring` and `phase_offset` are the entity's alone |
 | `global` | The scene's `[living]` and `[wooze]` globals, a preset it names, and any knob moved live for the whole grove | Everything |
 | `zone:<name>` | A `[[wooze.zone]]` where the prop stands | The clock's four knobs |
-| `species` | `[living.species.<spec>]`, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance` |
+| `species` | `[living.species.<spec>]` in the scene or a preset it names (the scene's own first), the panel at a species, or a script's `tune_living(#{ species: ... })` | The clock's four knobs, `stagger`, `echoes`, `variance` |
 
 Each layer beats every one above it, a field at a time: a species that sets echo `count` still takes `spread` from the layers below. So a global knob does what it always did, and a species value survives it. Move `glide` on the [F3 panel](../guides/debug-panels.md#living-props-f3) and every tree takes it except a species that set its own. Pick a species under the panel's **Tuning**, or click one of its trees in the world, to move its own values, see the layer each one comes from, and clear them.
 
@@ -522,6 +524,8 @@ flint render demo/living_compare.scene.toml --time 3.5 -o compare.png --report j
 **Checking it.** `flint validate` names a bad value, `[living.species.grove_thorn_twin]: step = -1 must be 0.01 seconds or more`, and a species no living prop in the scene grows from, which is most likely a misspelt spec. The player warns and leaves a bad value to the layers below. A misspelt key fails the scene's load, as it does in `[living]`.
 
 **From a script.** `tune_living(#{ species: "grove_thorn", step: 0.125, echoes: #{ count: 1 } })` sets one species' values over what it has, and `clear_living("grove_thorn")`, or `clear_living("grove_thorn", ["echoes", "step"])`, gives them back to the layers below. See the [Living Props API](scripting.md#living-props-api). The panel's **As loaded** puts every species back as the scene set it.
+
+**Keeping them.** A species tuned by hand is kept two ways. The panel's **Commit to File**, or a script's `commit_living()`, writes it into the scene: one changed value is one changed line, inside the species' table or a new table beside the others, with every comment and the file's order as they were. A fresh run of the committed scene then draws what the tuned run drew. Or **Save** puts every species' table in a preset, beside the grove's knobs, and **Load** gives each species exactly what the file says, in this run or another. Neither writes the species' spec: a committed species reads differently from its `.procgen.toml`, and `flint gen --strip` shows the spec's look, not the scene's.
 
 #### Comparing two settings side by side
 

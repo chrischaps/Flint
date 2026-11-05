@@ -1345,6 +1345,20 @@ impl LivingProps {
         self.refresh_props(scope)
     }
 
+    /// What the global layer says (#249): the first prop's echoes and stagger and
+    /// the first lineage's variance, which every live change and a scene's
+    /// `[living]` set alike for all of them. Unset fields are each spec's.
+    pub fn global_layer(&self) -> (EchoOverride, Option<Stagger>, VarianceOverride) {
+        let prop = self.props.first();
+        (
+            prop.map(|p| p.echo_global).unwrap_or_default(),
+            prop.and_then(|p| p.stagger_global),
+            (self.lineages.first())
+                .map(|l| l.variance_global)
+                .unwrap_or_default(),
+        )
+    }
+
     /// Every layer as it stands, apart from the field, to go back to.
     pub fn layers(&self) -> LivingLayers {
         LivingLayers {
