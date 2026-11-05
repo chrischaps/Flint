@@ -399,11 +399,16 @@ fn two_species(folder: &Path, field: bool) -> PlayerApp {
 
 /// [`two_species`] in a scene whose `[living]` table is `living`.
 fn two_species_under(folder: &Path, field: bool, living: Option<&str>) -> PlayerApp {
+    let table = living.map(|living| toml::from_str::<LivingDef>(living).unwrap());
+    two_species_from(folder, field, table.as_ref())
+}
+
+/// [`two_species`] in a scene whose `[living]` table is `living`, parsed.
+fn two_species_from(folder: &Path, field: bool, living: Option<&LivingDef>) -> PlayerApp {
     let mut app = app_with(0, folder);
-    if let Some(living) = living {
-        let table: LivingDef = toml::from_str(living).unwrap();
+    if let Some(table) = living {
         app.procgen_resolver
-            .set_living_defaults(super::super::living_props::defaults_of(Some(&table)));
+            .set_living_defaults(super::super::living_props::defaults_of(Some(table)));
     }
     let mut oak = ProcGenSpec::parse(SPEC).unwrap();
     oak.living.as_mut().unwrap().echoes = EchoConfig {
@@ -637,7 +642,7 @@ mod panel_edits {
             .unwrap();
         assert!(saved.wooze.glide.is_some(), "the field's knobs are one");
         assert_eq!(saved.living.stagger, None);
-        assert_eq!(saved.living.echoes.unwrap().count, None);
+        assert_eq!(saved.living.echoes.and_then(|echoes| echoes.count), None);
         app.load_living_preset("grove").unwrap();
         assert_eq!(species_of(&app), start);
     }
@@ -1218,7 +1223,7 @@ mod scopes {
     }
 
     fn state_of(app: &PlayerApp, name: &str) -> LivingSpeciesState {
-        let states = app.living_species_states();
+        let states = app.living_species_states(&app.living_unsaved());
         states.into_iter().find(|s| s.name == name).unwrap()
     }
 
@@ -1244,7 +1249,7 @@ mod scopes {
         assert!(n >= 20, "{n} trees");
         let before: Vec<_> = (0..n).map(|i| running(&app, i)).collect();
         let variances = app.procgen_resolver.living_props().variances();
-        let states = app.living_species_states();
+        let states = app.living_species_states(&app.living_unsaved());
         let thorn = state_of(&app, "grove_thorn");
         assert_eq!(thorn.sources.of(Knob::EchoCount), ["spec"]);
 
@@ -1303,7 +1308,7 @@ mod scopes {
         let living = app.procgen_resolver.living_props();
         let field = app.wooze.as_ref().map(|field| (field, app.wooze_time));
         let mut zoned = 0;
-        for state in app.living_species_states() {
+        for state in app.living_species_states(&app.living_unsaved()) {
             let props: Vec<_> = (0..living.props().len())
                 .map(|i| living.resolved(LivingPropId(i), field))
                 .filter(|r| r.species == state.name)
@@ -1441,5 +1446,265 @@ mod scopes {
         let view = app.living_view(None);
         assert!(view.echo_count.mixed);
         assert_eq!(view.echo_count.layers, ["species"]);
+    }
+}
+
+// ---- Saving species values (#249) ----
+
+mod saving {
+    use super::*;
+
+    /// A scene file for [`two_species`], with comments and a thorn table.
+    const GROVE: &str = r#"# Two species, by hand.
+[scene]
+name = "grove"
+
+[wooze]
+step = 0.5   # the grove's beat
+
+[living]
+# The grove's own.
+stagger = "per_level"
+
+[living.species.thorn]
+step = 0.25   # thorns twitch
+
+[entities.marker]
+archetype = "x"
+"#;
+
+    fn scene_path(folder: &Path) -> PathBuf {
+        folder.join("grove.scene.toml")
+    }
+
+    /// A run of the scene file in `folder` as it stands now, as a fresh start
+    /// reads it: its `[living]`, species and all, and its field.
+    fn fresh(folder: &Path) -> PlayerApp {
+        let text = std::fs::read_to_string(scene_path(folder)).unwrap();
+        let scene: flint_scene::SceneFile = toml::from_str(&text).unwrap();
+        let mut app = two_species_from(folder, true, scene.living.as_ref());
+        app.wooze = super::super::super::living_props::field_of(scene.wooze.as_ref());
+        app.tick_procgen(0.0);
+        app.before_living_tick();
+        app
+    }
+
+    fn tuned_grove(name: &str) -> (Folder, PlayerApp) {
+        let folder = Folder::new(name);
+        std::fs::write(scene_path(&folder.0), GROVE).unwrap();
+        let app = fresh(&folder.0);
+        (folder, app)
+    }
+
+    /// Every value each prop runs on, with the layer that set it.
+    fn resolved(app: &PlayerApp) -> Vec<ResolvedProp> {
+        app.living_resolved()
+    }
+
+    /// What each prop runs on: its clock, echoes and stagger, and its lineage's
+    /// variance. What it looks like rests on these alone.
+    fn runs_on(app: &PlayerApp) -> Vec<(f32, f32, EchoConfig, Stagger)> {
+        (0..4).map(|i| running(app, i)).collect()
+    }
+
+    fn echo_count(count: u32) -> LivingSpeciesDef {
+        LivingSpeciesDef {
+            echoes: Some(LivingEchoesDef {
+                count: Some(count),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The lines of `after` that aren't in `before`, and the other way round.
+    fn changed(before: &str, after: &str) -> (Vec<String>, Vec<String>) {
+        let was: Vec<&str> = before.lines().collect();
+        let is: Vec<&str> = after.lines().collect();
+        let gone = (was.iter())
+            .filter(|l| !is.contains(l))
+            .map(|l| l.to_string());
+        let new = (is.iter())
+            .filter(|l| !was.contains(l))
+            .map(|l| l.to_string());
+        (gone.collect(), new.collect())
+    }
+
+    #[test]
+    fn a_scene_as_loaded_has_nothing_to_commit() {
+        let (_folder, app) = tuned_grove("commit_none");
+        assert_eq!(app.living_unsaved(), Unsaved::default());
+        assert_eq!(
+            app.living_look().living.species.len(),
+            1,
+            "the thorns' table"
+        );
+    }
+
+    #[test]
+    fn committing_one_species_value_changes_exactly_its_line() {
+        let (folder, mut app) = tuned_grove("commit_one");
+        assert!(app.tune_species("thorn", &echo_count(1)).is_empty());
+        let unsaved = app.living_unsaved();
+        assert_eq!(unsaved.species, ["thorn"]);
+        assert!(!unsaved.global);
+        assert_eq!(unsaved.edits.len(), 1, "{:?}", unsaved.edits);
+
+        let said = app.commit_living().unwrap();
+        assert!(
+            said.contains("[living.species.thorn] echoes.count = 1"),
+            "{said}"
+        );
+        let after = std::fs::read_to_string(scene_path(&folder.0)).unwrap();
+        let (gone, new) = changed(GROVE, &after);
+        assert!(gone.is_empty(), "{gone:?}");
+        assert_eq!(new, ["echoes = { count = 1 }"]);
+        assert_eq!(
+            app.living_unsaved(),
+            Unsaved::default(),
+            "nothing left to write"
+        );
+    }
+
+    #[test]
+    fn a_fresh_run_of_the_committed_scene_runs_on_the_tuned_values() {
+        let (folder, mut app) = tuned_grove("commit_fresh");
+        // One of each kind: a species value set and one cleared, a grove knob,
+        // and a field knob.
+        app.tune_species("thorn", &echo_count(1));
+        app.clear_living_species("thorn", &["step".to_string()])
+            .unwrap();
+        app.tune_species(
+            "sapling",
+            &LivingSpeciesDef {
+                variance: Some(LivingVarianceDef {
+                    amount: Some(0.35),
+                    ..Default::default()
+                }),
+                stagger: Some("none".into()),
+                ..Default::default()
+            },
+        );
+        let grove: WoozePreset = toml::from_str(
+            "[wooze]
+glide = 0.8
+[living]
+echoes = { alpha = 0.4 }
+",
+        )
+        .unwrap();
+        app.tune_living(&grove).unwrap();
+        app.tick_procgen(0.0);
+        let unsaved = app.living_unsaved();
+        assert!(unsaved.global);
+        assert_eq!(unsaved.species, ["sapling", "thorn"]);
+        app.commit_living().unwrap();
+
+        let run = fresh(&folder.0);
+        assert_eq!(resolved(&run), resolved(&app));
+        assert_eq!(species_of(&run), species_of(&app));
+        assert_eq!(run.living_look(), app.living_look());
+        let after = std::fs::read_to_string(scene_path(&folder.0)).unwrap();
+        assert!(!after.contains("# thorns twitch"), "the cleared line went");
+        assert!(after.contains("step = 0.5   # the grove's beat"), "{after}");
+        assert!(after.contains("# The grove's own."), "{after}");
+    }
+
+    #[test]
+    fn as_loaded_restores_both_levels_and_the_marks_go() {
+        let (_folder, mut app) = tuned_grove("commit_reset");
+        let start = resolved(&app);
+        app.tune_species("thorn", &echo_count(5));
+        let grove: WoozePreset = toml::from_str(
+            "[wooze]
+step = 0.75
+",
+        )
+        .unwrap();
+        app.tune_living(&grove).unwrap();
+        app.tick_procgen(0.0);
+        let unsaved = app.living_unsaved();
+        assert!(
+            unsaved.global && unsaved.species == ["thorn"],
+            "{unsaved:?}"
+        );
+
+        app.reset_living_knobs();
+        app.tick_procgen(0.0);
+        assert_eq!(app.living_unsaved(), Unsaved::default());
+        assert_eq!(resolved(&app), start);
+    }
+
+    #[test]
+    fn after_a_commit_as_loaded_still_means_as_the_scene_loaded() {
+        let (_folder, mut app) = tuned_grove("commit_then_reset");
+        app.tune_species("thorn", &echo_count(1));
+        app.commit_living().unwrap();
+        app.reset_living_knobs();
+        // The file says count 1 now, so the load's own look is unsaved.
+        assert_eq!(app.living_unsaved().species, ["thorn"]);
+    }
+
+    #[test]
+    fn a_preset_with_species_values_loads_them_whole_in_another_run() {
+        let (folder, mut app) = tuned_grove("preset_species");
+        // The thorns' step cleared, the oaks given a table of their own.
+        app.clear_living_species("thorn", &[]).unwrap();
+        app.tune_species("sapling", &echo_count(1));
+        app.tick_procgen(0.0);
+        app.save_living_preset("both").unwrap();
+        let saved = read_preset(&scene_path(&folder.0), "both")
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.living.species["sapling"], echo_count(1));
+        assert!(
+            saved.living.species["thorn"].is_empty(),
+            "the thorns had values in the file and now have none: {:?}",
+            saved.living.species
+        );
+        let text = std::fs::read_to_string(folder.0.join("wooze/both.wooze.toml")).unwrap();
+        assert!(
+            text.contains("[living.species.thorn]\n# No values"),
+            "{text}"
+        );
+
+        // Another run of the same scene: its thorns start at the file's 0.25,
+        // and loading the preset gives every species what the first run had.
+        let mut other = fresh(&folder.0);
+        assert_ne!(runs_on(&other), runs_on(&app));
+        other.load_living_preset("both").unwrap();
+        other.tick_procgen(0.0);
+        // The same values everywhere. Who set them can differ: a knob the grove
+        // agrees on is saved as the grove's, as it was before species tables.
+        assert_eq!(runs_on(&other), runs_on(&app));
+        assert_eq!(species_of(&other), species_of(&app));
+    }
+
+    #[test]
+    fn a_script_tune_still_lays_species_values_over_what_they_have() {
+        let (_folder, mut app) = tuned_grove("tune_merges");
+        app.tune_living_from_script(
+            toml::toml! {
+                species = "thorn"
+                echoes = { count = 1 }
+            }
+            .into(),
+        )
+        .unwrap();
+        let thorn = app.living_look().living.species["thorn"].clone();
+        assert_eq!(thorn.step, Some(0.25), "the scene's step stands");
+        assert_eq!(thorn.echoes.unwrap().count, Some(1));
+    }
+
+    #[test]
+    fn a_save_names_the_species_values_the_scene_would_keep() {
+        let scene: flint_scene::SceneFile = toml::from_str(GROVE).unwrap();
+        let says = super::super::scene_says(&scene);
+        assert!(
+            says.contains(&"[living.species.thorn] step".to_string()),
+            "{says:?}"
+        );
+        assert!(says.contains(&"[wooze] step".to_string()), "{says:?}");
+        assert!(says.contains(&"[living] stagger".to_string()), "{says:?}");
     }
 }

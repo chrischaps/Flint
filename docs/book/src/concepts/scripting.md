@@ -500,8 +500,9 @@ The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s control
 | `clear_living(name)`, `clear_living(name, keys)` | Give a species' values back to the layers below: all of them, or the keys named, such as `["step", "echoes.count", "variance"]` |
 | `freeze_living(frozen)` | Stop or start the clock everything woozy runs on. The game goes on |
 | `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |
-| `save_living_preset(name)` | Save every knob the props agree on as `wooze/<name>.wooze.toml`, leaving out the ones a grove's species differ on. Not on the web, which has nowhere to put it |
-| `load_living_preset(name)` | Load a preset file or a built-in, live |
+| `save_living_preset(name)` | Save every knob the props agree on as `wooze/<name>.wooze.toml`, leaving out the ones a grove's species differ on, and each species' own values as `[living.species.<spec>]` tables. Not on the web, which has nowhere to put it |
+| `load_living_preset(name)` | Load a preset file or a built-in, live. Each species the file names takes exactly its values |
+| `commit_living()` | Write every value the scene file doesn't already say into it, as the panel's [Commit to File](../guides/debug-panels.md#living-props-f3) does: species to `[living.species.<spec>]`, the grove's to `[wooze]` and `[living]`, one line each. Logged; an error on the web |
 | `compare_living(a, b)` | Put preset `a` and preset `b` on the same grove, showing A ([A/B](../guides/debug-panels.md#comparing-two-presets-ab)). `""` is the knobs as they stand |
 | `flip_living()` | Show the other side, on the same clock and camera |
 | `split_living(split)` | Show both at once, A left and B right, or one at a time |

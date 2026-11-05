@@ -2,6 +2,7 @@
 //!
 //! This crate handles loading and saving scenes in TOML format.
 
+mod commit;
 mod format;
 mod loader;
 pub mod patcher;
@@ -9,6 +10,7 @@ mod prefab;
 mod saver;
 mod wooze;
 
+pub use commit::{commit_look, look_edits, CommitReport, SceneEdit, SceneScalar};
 pub use format::{
     BoilDef, CameraDef, EntityDef, LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingVarianceDef,
     PostProcessDef, PrefabFile, PrefabInstance, SceneFile, SceneMetadata, WoozeDef, WoozeKnobs,

@@ -290,12 +290,14 @@ impl WoozePreset {
                 out.push_str(&format!("{key} = {value:?}\n"));
             }
         }
-        fn inline(fields: &[(&str, Option<String>)]) -> String {
+        /// An inline table of the fields set, or `None` if none are, so a file
+        /// never says `echoes = {  }`.
+        fn inline(fields: &[(&str, Option<String>)]) -> Option<String> {
             let set: Vec<String> = fields
                 .iter()
                 .filter_map(|(key, value)| value.as_ref().map(|value| format!("{key} = {value}")))
                 .collect();
-            format!("{{ {} }}", set.join(", "))
+            (!set.is_empty()).then(|| format!("{{ {} }}", set.join(", ")))
         }
         let number = |value: Option<f32>| value.map(|value| format!("{value:?}"));
 
@@ -316,7 +318,9 @@ impl WoozePreset {
                 ("spread", number(echoes.spread)),
                 ("alpha", number(echoes.alpha)),
             ]);
-            out.push_str(&format!("echoes = {table}\n"));
+            if let Some(table) = table {
+                out.push_str(&format!("echoes = {table}\n"));
+            }
         }
         if let Some(variance) = self.living.variance {
             let table = inline(&[
@@ -324,10 +328,15 @@ impl WoozePreset {
                 ("steady", number(variance.steady)),
                 ("keep_size", variance.keep_size.map(|keep| keep.to_string())),
             ]);
-            out.push_str(&format!("variance = {table}\n"));
+            if let Some(table) = table {
+                out.push_str(&format!("variance = {table}\n"));
+            }
         }
         for (name, species) in &self.living.species {
             out.push_str(&format!("\n[living.species.{name}]\n"));
+            if species.is_empty() {
+                out.push_str("# No values of its own: loading this gives it the grove's.\n");
+            }
             line(&mut out, "amplitude", species.amplitude);
             line(&mut out, "step", species.step);
             line(&mut out, "glide", species.glide);
@@ -339,7 +348,9 @@ impl WoozePreset {
                     ("spread", number(echoes.spread)),
                     ("alpha", number(echoes.alpha)),
                 ]);
-                out.push_str(&format!("echoes = {table}\n"));
+                if let Some(table) = table {
+                    out.push_str(&format!("echoes = {table}\n"));
+                }
             }
             if let Some(variance) = species.variance {
                 let table = inline(&[
@@ -347,7 +358,9 @@ impl WoozePreset {
                     ("steady", number(variance.steady)),
                     ("keep_size", variance.keep_size.map(|keep| keep.to_string())),
                 ]);
-                out.push_str(&format!("variance = {table}\n"));
+                if let Some(table) = table {
+                    out.push_str(&format!("variance = {table}\n"));
+                }
             }
         }
 

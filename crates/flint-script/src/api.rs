@@ -4043,6 +4043,16 @@ fn register_wooze_api(engine: &mut Engine, ctx: Arc<Mutex<ScriptCallContext>>) {
             });
         });
     }
+    // commit_living(): write every value the scene file doesn't give into it
+    // (#249), species tables included, each on its own line. Logged; an error on
+    // the web, which has no file to write.
+    {
+        let ctx = ctx.clone();
+        engine.register_fn("commit_living", move || {
+            let mut c = crate::lock_or_recover(&ctx);
+            c.commands.push(ScriptCommand::CommitLiving);
+        });
+    }
     {
         let ctx = ctx.clone();
         engine.register_fn("load_living_preset", move |name: &str| {

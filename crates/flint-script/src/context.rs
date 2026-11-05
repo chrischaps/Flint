@@ -297,6 +297,9 @@ pub enum ScriptCommand {
     LoadLivingPreset {
         name: String,
     },
+    /// Write every Living Props value the scene file doesn't give into it
+    /// (#249), as the F3 panel's Commit to File does.
+    CommitLiving,
     /// Compare two presets on the same grove (#238). An empty name is the knobs
     /// as they stand.
     CompareLiving {

@@ -31,8 +31,8 @@ use flint_ecs::FlintWorld;
 use flint_import::{AlphaMode, ImportResult, ImportedMaterial, ImportedMesh, ImportedTexture};
 use flint_procgen::{
     AssetKind, BlendFrame, ClockOverride, EchoConfig, EchoOverride, LineageDone, LivingDefaults,
-    LivingPropId, LivingPropRequest, LivingProps, LivingRig, LivingShadows, LivingStats,
-    ProcGenResolver, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
+    LivingPropId, LivingPropRequest, LivingProps, LivingRig, LivingScope, LivingShadows,
+    LivingStats, ProcGenResolver, SpeciesOverride, Stagger, VarianceConfig, VarianceOverride,
 };
 use flint_render::model_loader::ModelLoadConfig;
 use flint_render::SceneRenderer;
@@ -269,6 +269,36 @@ impl LivingRun {
         self.field
             .get_or_insert_with(|| WoozeField::new(flint_core::wooze::WoozeSample::NEUTRAL))
             .set_global(knobs, self.time, 0.0)
+    }
+
+    /// Lay a preset file's `[living]` over the scene's, as the player's Load does
+    /// (#249): its stagger, echoes and variance set the global layer a field at a
+    /// time, and each species it names takes exactly its values. Its `[wooze]`
+    /// knobs go through [`Self::change_field`]. What can't be used is returned.
+    pub fn apply_preset(&mut self, living: &flint_scene::LivingDef) -> Vec<String> {
+        let mut problems = Vec::new();
+        let mut say = |problem: String| problems.push(problem);
+        let stagger = (living.stagger.as_deref()).and_then(|name| checked_stagger(name, &mut say));
+        let echoes = echoes_of(living.echoes.as_ref(), &mut say);
+        let variance = variance_of(living.variance.as_ref(), &mut say);
+        let species: Vec<(String, SpeciesOverride)> = (living.species.iter())
+            .map(|(name, def)| {
+                let mut say = |problem: String| say(format!("species '{name}': {problem}"));
+                (name.clone(), species_of(def, &mut say))
+            })
+            .collect();
+        let props = self.resolver.living_props_mut();
+        if let Some(stagger) = stagger {
+            props.tune_stagger(LivingScope::All, stagger);
+        }
+        props.tune_echoes(LivingScope::All, echoes);
+        props.tune_variance(LivingScope::All, variance);
+        for (name, over) in species {
+            if !props.set_species(&name, over) {
+                problems.push(format!("no living prop grows from '{name}'"));
+            }
+        }
+        problems
     }
 
     /// The field, if the scene has one or has been given one.
