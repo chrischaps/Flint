@@ -339,9 +339,11 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
     assert_eq!(panel(&mut app).state().rows.len(), 2);
 
     // What the panel sends, the grove does, and it mirrors back.
+    let before = knobs.clone();
     knobs.echo_count = 5;
     knobs.glide = 0.8;
-    panel(&mut app).send_for_test(LivingPanelAction::Set(knobs));
+    let moved = knobs.moved(&before, &Default::default());
+    panel(&mut app).send_for_test(LivingPanelAction::Set(moved));
     panel(&mut app).send_for_test(LivingPanelAction::Freeze(true));
     panel(&mut app).send_for_test(LivingPanelAction::Overlay(true));
     app.drain_living_panel();
@@ -364,4 +366,269 @@ fn a_panel_only_appears_in_a_scene_with_living_props_and_drives_them() {
     let status = app.living_tune.status.clone().unwrap();
     assert!(status.contains("preset = \"from_panel\""), "{status}");
     assert!(folder.0.join("wooze/from_panel.wooze.toml").is_file());
+}
+
+/// A second species beside [`SPEC`]'s: other echoes, stagger, variance and clock.
+const THORN: &str = r#"
+generator = "tree_v1"
+[meta]
+name = "thorn"
+version = "1.0.0"
+[seed]
+mode = "fixed"
+value = 2
+[params]
+branch_method = "lsystem"
+lsystem_iterations = 2
+leaf_density = 0.0
+[living]
+lineage_seed = 53
+pose_ring = 4
+step = 0.8
+glide = 0.1
+stagger = "per_branch"
+echoes = { count = 2, spread = 0.7, alpha = 0.22 }
+variance = { amount = 0.5, steady = 0.6, keep_size = false }
+"#;
+
+/// Two oaks of [`SPEC`] (echoes 4, per level) and two thorns, as #244 found the
+/// bug: in a grove of several species, one knob flattened them all.
+fn two_species(folder: &Path, field: bool) -> PlayerApp {
+    let mut app = app_with(0, folder);
+    let mut oak = ProcGenSpec::parse(SPEC).unwrap();
+    oak.living.as_mut().unwrap().echoes = EchoConfig {
+        count: 4,
+        spread: 0.9,
+        alpha: 0.2,
+    };
+    app.procgen_resolver.index_spec(oak);
+    app.procgen_resolver
+        .index_spec(ProcGenSpec::parse(THORN).unwrap());
+    for (i, spec) in ["sapling", "sapling", "thorn", "thorn"].iter().enumerate() {
+        app.procgen_resolver
+            .add_living_prop(LivingPropRequest {
+                entity: EntityId::from_raw(i as u64 + 1),
+                entity_name: format!("{spec}_{i}"),
+                position: [i as f32, 0.0, 0.0],
+                spec_name: spec.to_string(),
+                lineage_seed: None,
+                pose_ring: None,
+                phase_offset: Some(0.25),
+                stagger: None,
+            })
+            .unwrap();
+    }
+    app.procgen_resolver.make_living_now();
+    if !field {
+        app.wooze = None;
+    }
+    app.tick_procgen(0.0);
+    app
+}
+
+/// What each species has of the knobs props can differ on.
+#[derive(Debug, Clone, PartialEq)]
+struct Species {
+    echoes: Vec<EchoConfig>,
+    staggers: Vec<Stagger>,
+    variances: Vec<VarianceConfig>,
+}
+
+fn species_of(app: &PlayerApp) -> Species {
+    let living = app.procgen_resolver.living_props();
+    Species {
+        echoes: living.props().iter().map(|p| p.echo_config()).collect(),
+        staggers: living.props().iter().map(|p| p.stagger()).collect(),
+        variances: living.variances(),
+    }
+}
+
+#[test]
+fn the_two_species_start_apart() {
+    let folder = Folder::new("species");
+    let app = two_species(&folder.0, true);
+    let start = species_of(&app);
+    assert_eq!(start.variances.len(), 2, "a lineage each");
+    assert_ne!(start.echoes[0], start.echoes[2]);
+    assert_eq!(start.staggers[0], Stagger::PerLevel);
+    assert_eq!(start.staggers[2], Stagger::PerBranch);
+    assert_ne!(start.variances[0], start.variances[1]);
+}
+
+#[test]
+fn a_sparse_echo_count_from_a_script_leaves_each_species_its_spread() {
+    let folder = Folder::new("sparse");
+    let mut app = two_species(&folder.0, true);
+    let start = species_of(&app);
+    let count: WoozePreset = toml::from_str("[living]\nechoes = { count = 1 }\n").unwrap();
+    app.tune_living(&count).unwrap();
+    for (now, was) in species_of(&app).echoes.iter().zip(&start.echoes) {
+        assert_eq!(now.count, 1);
+        assert_eq!((now.spread, now.alpha), (was.spread, was.alpha));
+    }
+}
+
+#[cfg(feature = "debug-hud")]
+mod panel_edits {
+    use super::*;
+    use flint_debug_ui::{KnobFlags, LivingKnobs, LivingPanelAction};
+
+    /// What the panel does with a hand on one knob: the knobs it last heard,
+    /// that one moved, and only what moved sent.
+    fn move_on_panel(app: &mut PlayerApp, touch: impl FnOnce(&mut LivingKnobs)) {
+        let heard = LivingKnobs::from_preset(&app.living_knobs());
+        let mut knobs = heard.clone();
+        touch(&mut knobs);
+        let moved = knobs.moved(&heard, &KnobFlags::default());
+        app.apply_living_action(LivingPanelAction::Set(moved));
+    }
+
+    #[test]
+    fn moving_glide_leaves_every_species_its_own_echoes_stagger_and_variance() {
+        let folder = Folder::new("glide");
+        let mut app = two_species(&folder.0, true);
+        let start = species_of(&app);
+        let reholding = app.procgen_resolver.living_props().is_reholding();
+
+        move_on_panel(&mut app, |k| k.glide = 0.8);
+        app.tick_procgen(0.0);
+
+        assert_eq!(species_of(&app), start);
+        assert_eq!(
+            app.procgen_resolver.living_props().is_reholding(),
+            reholding,
+            "no variance changed, so nothing to re-hold"
+        );
+        let glides: Vec<f32> = (app.procgen_resolver.living_props().props().iter())
+            .map(|p| p.clock().glide)
+            .collect();
+        assert_eq!(glides, [0.8; 4], "and glide did move: {glides:?}");
+    }
+
+    #[test]
+    fn moving_echo_count_sets_count_alone() {
+        let folder = Folder::new("count");
+        let mut app = two_species(&folder.0, true);
+        let start = species_of(&app);
+
+        move_on_panel(&mut app, |k| k.echo_count = 6);
+
+        let now = species_of(&app);
+        for (now, was) in now.echoes.iter().zip(&start.echoes) {
+            assert_eq!(now.count, 6);
+            assert_eq!((now.spread, now.alpha), (was.spread, was.alpha));
+        }
+        assert_eq!(now.staggers, start.staggers);
+        assert_eq!(now.variances, start.variances);
+
+        // Variance amount, the same, lineage by lineage.
+        move_on_panel(&mut app, |k| k.variance_amount = 0.9);
+        let now = species_of(&app);
+        for (now, was) in now.variances.iter().zip(&start.variances) {
+            assert_eq!(now.amount, 0.9);
+            assert_eq!((now.steady, now.keep_size), (was.steady, was.keep_size));
+        }
+    }
+
+    #[test]
+    fn a_mixed_knob_set_to_the_first_props_value_still_moves() {
+        // The panel shows the first prop's count; picking it again is meant.
+        let folder = Folder::new("same");
+        let mut app = two_species(&folder.0, true);
+        let heard = LivingKnobs::from_preset(&app.living_knobs());
+        assert!(app.living_mixed().echo_count);
+        let touched = KnobFlags {
+            echo_count: true,
+            ..Default::default()
+        };
+        let moved = heard.moved(&heard, &touched);
+        app.apply_living_action(LivingPanelAction::Set(moved));
+        let counts: Vec<u32> = species_of(&app).echoes.iter().map(|e| e.count).collect();
+        assert_eq!(counts, [4; 4]);
+        assert!(!app.living_mixed().echo_count);
+        assert!(
+            app.living_mixed().echo_spread,
+            "the rest still each its own"
+        );
+    }
+
+    #[test]
+    fn as_loaded_gives_each_species_back_its_own() {
+        let folder = Folder::new("as_loaded");
+        let mut app = two_species(&folder.0, true);
+        app.before_living_tick();
+        let start = species_of(&app);
+
+        // A whole set, as a preset file sends: every species the same.
+        let mut flat = LivingKnobs::from_preset(&app.living_knobs()).to_preset();
+        flat.boil = None;
+        app.tune_living(&flat).unwrap();
+        assert_ne!(species_of(&app), start, "flattened");
+        app.apply_living_action(LivingPanelAction::Reset);
+        assert_eq!(species_of(&app), start);
+    }
+
+    #[test]
+    fn the_panel_says_mixed_where_species_differ() {
+        let folder = Folder::new("mixed");
+        let mut app = two_species(&folder.0, true);
+        let mixed = app.living_mixed();
+        assert!(mixed.stagger && mixed.echo_count && mixed.echo_spread && mixed.echo_alpha);
+        assert!(mixed.variance_amount && mixed.variance_steady && mixed.keep_size);
+        assert!(!mixed.any_clock(), "the field gives every prop one clock");
+
+        move_on_panel(&mut app, |k| k.stagger = "none".to_string());
+        assert!(!app.living_mixed().stagger, "moved, so the same everywhere");
+        assert!(app.living_mixed().echo_count, "and nothing else");
+
+        // With no field, each species runs its spec's clock.
+        let folder = Folder::new("mixed_nofield");
+        let app = two_species(&folder.0, false);
+        assert!(app.living_mixed().step && app.living_mixed().glide);
+    }
+
+    #[test]
+    fn as_loaded_in_a_scene_with_no_field_gives_back_each_specs_clock() {
+        let folder = Folder::new("as_loaded_nofield");
+        let mut app = two_species(&folder.0, false);
+        app.before_living_tick();
+        let clocks = |app: &PlayerApp| -> Vec<(f32, f32)> {
+            let living = app.procgen_resolver.living_props();
+            living
+                .props()
+                .iter()
+                .map(|p| (p.clock().step, p.clock().glide))
+                .collect()
+        };
+        let start = clocks(&app);
+        assert_ne!(start[0], start[2]);
+
+        // Turning one gives the scene a field, and evens the clocks out.
+        move_on_panel(&mut app, |k| k.glide = 0.5);
+        app.tick_procgen(0.0);
+        assert!(app.wooze.is_some());
+        let even = clocks(&app);
+        assert_eq!(even[0], even[2]);
+
+        app.apply_living_action(LivingPanelAction::Reset);
+        app.tick_procgen(0.0);
+        assert!(app.wooze.is_none());
+        assert_eq!(clocks(&app), start);
+    }
+
+    #[test]
+    fn a_saved_preset_leaves_out_what_the_species_differ_on() {
+        let folder = Folder::new("save_mixed");
+        let mut app = two_species(&folder.0, true);
+        let start = species_of(&app);
+        app.save_living_preset("grove").unwrap();
+        let saved = read_preset(&folder.0.join("grove.scene.toml"), "grove")
+            .unwrap()
+            .unwrap();
+        assert!(saved.wooze.glide.is_some(), "the field's knobs are one");
+        assert_eq!(saved.living.stagger, None);
+        assert_eq!(saved.living.echoes.unwrap().count, None);
+        app.load_living_preset("grove").unwrap();
+        assert_eq!(species_of(&app), start);
+    }
 }

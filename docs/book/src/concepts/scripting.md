@@ -495,10 +495,10 @@ The F3 [Living Props panel](../guides/debug-panels.md#living-props-f3)'s control
 
 | Function | Description |
 |----------|-------------|
-| `tune_living(knobs)` | Turn any knobs. `knobs` is what a [`.wooze.toml`](procgen.md#saved-presets) holds, as a map, and what it leaves out stays as it is |
+| `tune_living(knobs)` | Turn any knobs. `knobs` is what a [`.wooze.toml`](procgen.md#saved-presets) holds, as a map, and what it leaves out stays as it is, prop by prop: `echoes: #{ count: 3 }` gives every prop three echoes and leaves each species its own `spread` and `alpha` |
 | `freeze_living(frozen)` | Stop or start the clock everything woozy runs on. The game goes on |
 | `step_living()` | Move that clock on by exactly one beat, for every prop wherever it stands. For use while frozen |
-| `save_living_preset(name)` | Save every knob as `wooze/<name>.wooze.toml`. Not on the web, which has nowhere to put it |
+| `save_living_preset(name)` | Save every knob the props agree on as `wooze/<name>.wooze.toml`, leaving out the ones a grove's species differ on. Not on the web, which has nowhere to put it |
 | `load_living_preset(name)` | Load a preset file or a built-in, live |
 
 ```rust

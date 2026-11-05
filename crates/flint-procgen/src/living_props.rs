@@ -920,67 +920,103 @@ impl LivingProps {
     /// then it keeps the ones it has, and a change that needs no new pose takes
     /// effect on the next tick.
     pub fn set_echoes(&mut self, echoes: EchoConfig) {
-        let drift = self.defaults.shadows == LivingShadows::Drift;
-        for prop in &mut self.props {
-            if prop.echo_config == echoes {
-                continue;
-            }
-            prop.echo_config = echoes;
-            let stagger = prop.stagger();
-            prop.pending = Some(PendingClocks {
-                stagger,
-                copies: echoes.copies(),
-            });
-            if prop.ring.is_none() {
-                prop.start_pending();
-            }
-            prop.fit_ring(drift);
+        for i in 0..self.props.len() {
+            self.set_echoes_of(LivingPropId(i), echoes);
         }
+    }
+
+    /// Give one prop these echoes, as [`Self::set_echoes`] does every prop: a
+    /// grove of several species keeps each one's own.
+    pub fn set_echoes_of(&mut self, id: LivingPropId, echoes: EchoConfig) {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        let prop = &mut self.props[id.0];
+        if prop.echo_config == echoes {
+            return;
+        }
+        prop.echo_config = echoes;
+        let stagger = prop.stagger();
+        prop.pending = Some(PendingClocks {
+            stagger,
+            copies: echoes.copies(),
+        });
+        if prop.ring.is_none() {
+            prop.start_pending();
+        }
+        prop.fit_ring(drift);
     }
 
     /// Put every prop on this stagger, as soon as its ring can show it. A part
     /// jumps to its new place on the clock: no stagger can change without that.
     pub fn set_stagger(&mut self, stagger: Stagger) {
-        let drift = self.defaults.shadows == LivingShadows::Drift;
-        for prop in &mut self.props {
-            if prop.stagger() == stagger {
-                continue;
-            }
-            let copies = match &prop.pending {
-                Some(pending) => pending.copies.clone(),
-                None => prop.echoes.iter().map(|e| e.copy).collect(),
-            };
-            prop.pending = Some(PendingClocks { stagger, copies });
-            if prop.ring.is_none() {
-                prop.start_pending();
-            }
-            prop.fit_ring(drift);
+        for i in 0..self.props.len() {
+            self.set_stagger_of(LivingPropId(i), stagger);
         }
+    }
+
+    /// Put one prop on this stagger, as [`Self::set_stagger`] does every prop.
+    pub fn set_stagger_of(&mut self, id: LivingPropId, stagger: Stagger) {
+        let drift = self.defaults.shadows == LivingShadows::Drift;
+        let prop = &mut self.props[id.0];
+        if prop.stagger() == stagger {
+            return;
+        }
+        let copies = match &prop.pending {
+            Some(pending) => pending.copies.clone(),
+            None => prop.echoes.iter().map(|e| e.copy).collect(),
+        };
+        prop.pending = Some(PendingClocks { stagger, copies });
+        if prop.ring.is_none() {
+            prop.start_pending();
+        }
+        prop.fit_ring(drift);
+    }
+
+    /// Put one prop's clock where `wooze` says, as the field would in a scene
+    /// that has one. For giving a scene with no field its specs' clocks back:
+    /// a field, while there is one, says again each tick.
+    pub fn set_wooze_of(&mut self, id: LivingPropId, wooze: WoozeSample) {
+        let prop = &mut self.props[id.0];
+        prop.wooze = wooze;
+        prop.clock.step = wooze.step;
+        prop.clock.glide = wooze.glide;
     }
 
     /// Hold every lineage's poses to this variance: what the rings have is
     /// re-held from its full form, a few poses a frame, and what's made from
     /// here on starts at it.
     pub fn set_variance(&mut self, variance: VarianceConfig) {
-        let mut changed = false;
-        for lineage in &mut self.lineages {
-            if lineage.variance != variance {
-                lineage.variance = variance;
-                lineage.generation += 1;
-                changed = true;
-            }
-        }
-        if changed {
-            self.reholding = true;
-            self.rehold_cursor = 0;
-            self.rehold_pass = 0;
+        for lineage in 0..self.lineages.len() {
+            self.set_variance_of(lineage, variance);
         }
     }
 
+    /// Hold one lineage's poses to this variance, as [`Self::set_variance`] does
+    /// every lineage's. `lineage` counts as [`Self::variances`] does.
+    pub fn set_variance_of(&mut self, lineage: usize, variance: VarianceConfig) {
+        let lineage = &mut self.lineages[lineage];
+        if lineage.variance == variance {
+            return;
+        }
+        lineage.variance = variance;
+        lineage.generation += 1;
+        self.reholding = true;
+        self.rehold_cursor = 0;
+        self.rehold_pass = 0;
+    }
+
     /// What the first lineage's poses are held to. Every lineage has this once a
-    /// knob has set it; until then each has its spec's.
+    /// knob has set it; until then each has its spec's: see [`Self::variances`].
     pub fn variance(&self) -> Option<VarianceConfig> {
         self.lineages.first().map(|lineage| lineage.variance)
+    }
+
+    /// What each lineage's poses are held to, in the order they were first
+    /// named.
+    pub fn variances(&self) -> Vec<VarianceConfig> {
+        self.lineages
+            .iter()
+            .map(|lineage| lineage.variance)
+            .collect()
     }
 
     /// Whether poses are still being held to a new variance.
