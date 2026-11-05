@@ -1364,6 +1364,22 @@ impl SceneRenderer {
             });
         }
 
+        // Ink over whatever the paint left (#214)
+        if config.enabled && config.contour_enabled {
+            scoped("Contour", encoder, &mut |encoder| {
+                pp.run_contour(
+                    queue,
+                    encoder,
+                    device,
+                    resources,
+                    config,
+                    depth_view,
+                    depth_owned,
+                    camera,
+                )
+            });
+        }
+
         // Run SSAO if enabled
         if config.enabled && config.ssao_enabled {
             scoped("SSAO", encoder, &mut |encoder| {

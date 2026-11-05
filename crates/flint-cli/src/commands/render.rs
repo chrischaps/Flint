@@ -199,6 +199,53 @@ pub struct RenderArgs {
     #[arg(long, value_parser = crate::commands::common_args::parse_vec4)]
     pub mode_params: Option<[f32; 4]>,
 
+    /// How far each drawing moves the paint, as a share of the Kuwahara radius
+    /// (0 = still; needs the scene's [wooze] table)
+    #[arg(long)]
+    pub kuwahara_boil: Option<f32>,
+
+    /// Ink lines over the scene, from breaks in depth and luminance
+    #[arg(long)]
+    pub contour: bool,
+
+    /// Half a contour line's width, in pixels at 1080p (enables contour; default: 1.25)
+    #[arg(long)]
+    pub contour_width: Option<f32>,
+
+    /// How strong an edge must be before it inks (enables contour; default: 0.08)
+    #[arg(long)]
+    pub contour_threshold: Option<f32>,
+
+    /// How dark the ink goes, 0-1 (enables contour; default: 0.9)
+    #[arg(long)]
+    pub contour_strength: Option<f32>,
+
+    /// How much edges in luminance count against depth (enables contour; default: 0.5)
+    #[arg(long)]
+    pub contour_luma: Option<f32>,
+
+    /// The ink's colour as linear R,G,B (enables contour)
+    #[arg(long, value_parser = crate::commands::common_args::parse_vec3)]
+    pub contour_color: Option<[f32; 3]>,
+
+    /// Metres at which a line has faded by half (enables contour; 0 = never; default: 30)
+    #[arg(long)]
+    pub contour_fade: Option<f32>,
+
+    /// How far each drawing moves the lines (enables contour; 0 = still; needs the
+    /// scene's [wooze] table)
+    #[arg(long)]
+    pub contour_boil: Option<f32>,
+
+    /// Film frames each boil drawing is held: 1, 2 or 3 (default: 2)
+    #[arg(long)]
+    pub boil_on: Option<u32>,
+
+    /// Seconds of the scene's wooze field to run before capturing, which picks
+    /// the boil's drawing (default 0: same value, same pixels)
+    #[arg(long)]
+    pub boil_time: Option<f64>,
+
     /// Film grain intensity (0 = off; ~0.02-0.05 is subtle)
     #[arg(long)]
     pub film_grain: Option<f32>,
@@ -531,6 +578,43 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.kuwahara_anisotropy = anisotropy;
             pp_config.kuwahara_enabled = true;
         }
+        if let Some(boil) = args.kuwahara_boil {
+            pp_config.kuwahara_boil = boil;
+        }
+        if args.contour {
+            pp_config.contour_enabled = true;
+        }
+        if let Some(width) = args.contour_width {
+            pp_config.contour_width = width;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(threshold) = args.contour_threshold {
+            pp_config.contour_threshold = threshold;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(strength) = args.contour_strength {
+            pp_config.contour_strength = strength;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(luma) = args.contour_luma {
+            pp_config.contour_luma = luma;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(color) = args.contour_color {
+            pp_config.contour_color = color;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(fade) = args.contour_fade {
+            pp_config.contour_fade = fade;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(boil) = args.contour_boil {
+            pp_config.contour_boil = boil;
+            pp_config.contour_enabled = true;
+        }
+        if let Some(on) = args.boil_on {
+            pp_config.boil_on = on;
+        }
         if let Some(grain) = args.film_grain {
             pp_config.film_grain = grain;
         }
@@ -547,9 +631,29 @@ pub fn run(args: RenderArgs) -> Result<()> {
             pp_config.fxaa_enabled = true;
         }
 
+        // The shading boil's drawing (#214), from the field where the camera is.
+        // A single frame, so the clock runs the whole way in one tick at the tempo
+        // of that moment; a script's changes to the field aren't run here.
+        let boil_wanted = pp_config.kuwahara_boil > 0.0 || pp_config.contour_boil > 0.0;
+        match &scene_file.wooze {
+            Some(def) => {
+                let (field, _) = def.field();
+                let time = args.boil_time.unwrap_or(0.0).max(0.0);
+                let sample = field.sample(camera.position_array(), time);
+                let mut clock = flint_core::wooze::BoilClock::default();
+                clock.tick(time, &sample);
+                pp_config.boil = clock.frame(&sample, pp_config.boil_on);
+            }
+            None if boil_wanted => {
+                println!("This scene has no [wooze] table, so nothing boils.");
+            }
+            None => {}
+        }
+
         renderer.set_post_process_config(pp_config);
         renderer.ensure_kuwahara_resources(&ctx.device, &ctx.queue);
         renderer.ensure_fxaa_resources(&ctx.device);
+        renderer.ensure_contour_resources(&ctx.device);
     }
 
     // Post time for grain/mode animation. Headless renders leave this 0.0 so

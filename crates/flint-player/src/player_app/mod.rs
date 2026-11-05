@@ -302,6 +302,8 @@ pub struct PlayerApp {
     wooze: Option<flint_core::wooze::WoozeField>,
     wooze_time: f64,
     wooze_missing_warned: bool,
+    // The shading boil's beats (#214), on the same clock as the field.
+    boil_clock: flint_core::wooze::BoilClock,
 
     // Script-driven post-processing overrides (applied per-frame before render)
     pp_vignette_override: Option<f32>,
