@@ -151,17 +151,22 @@ fn check_knob(knob: usize, value: f32) -> Result<f32, String> {
 /// `weight` of the way from target `index` to the next. The design's t', which
 /// holds for the first `1 - glide` of a step and eases over the rest. A glide of
 /// 0 never leaves the target and moves to the next on the beat.
+#[inline]
 pub fn warp(beats: f64, glide: f32) -> (u64, f32) {
     let beats = beats.max(0.0);
     let index = beats.floor();
+    (index as u64, eased(beats - index, glide))
+}
+
+/// How far toward the next target a part is, `frac` of the way through a step.
+#[inline]
+fn eased(frac: f64, glide: f32) -> f32 {
     let glide = f64::from(glide);
-    let eased = if glide <= 1e-6 {
-        0.0
-    } else {
-        let x = ((beats - index - (1.0 - glide)) / glide).clamp(0.0, 1.0);
-        x * x * (3.0 - 2.0 * x)
-    };
-    (index as u64, eased as f32)
+    if glide <= 1e-6 {
+        return 0.0;
+    }
+    let x = ((frac - (1.0 - glide)) / glide).clamp(0.0, 1.0);
+    (x * x * (3.0 - 2.0 * x)) as f32
 }
 
 /// One part's way through its current cycle, as of when the cycle began.
@@ -171,10 +176,14 @@ pub fn warp(beats: f64, glide: f32) -> (u64, f32) {
 /// its pose would jump. So a part reads the field once a cycle, on its own beat,
 /// which is also what lets a whole staggered tree take a change one part at a
 /// time and never all at once.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+///
+/// A grove reads tens of thousands of these a frame, a prop's parts and each of
+/// its echoes', so the read that finds the cycle still running has to be as cheap
+/// as working out the clock with no field at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cycle {
-    /// The target being left, or `None` before the first read.
-    index: Option<u64>,
+    /// The target being left, or [`Cycle::UNREAD`] before the first read.
+    index: u64,
     glide: f32,
     /// The amplitude the target being left is shown at.
     from: f32,
@@ -182,31 +191,57 @@ pub struct Cycle {
     to: f32,
 }
 
-impl Cycle {
-    /// Where this part stands at `beats`: its target, how far toward the next,
-    /// and how much of the pose to show. `sample` is only read when a cycle
-    /// begins, so a part's value here can only move as it would have anyway.
-    pub fn read(&mut self, beats: f64, sample: &WoozeSample) -> CycleNow {
-        let index = beats.max(0.0).floor() as u64;
-        if self.index != Some(index) {
-            // What's arriving keeps the amplitude it was on its way in with, so
-            // the beat itself moves nothing. A part that has skipped a target,
-            // or just started, has nothing to keep.
-            self.from = if self.index.map(|last| last + 1) == Some(index) {
-                self.to
-            } else {
-                sample.amplitude
-            };
-            self.to = sample.amplitude;
-            self.glide = sample.glide;
-            self.index = Some(index);
+impl Default for Cycle {
+    fn default() -> Self {
+        Self {
+            index: Self::UNREAD,
+            glide: 0.0,
+            from: 0.0,
+            to: 0.0,
         }
-        let (index, weight) = warp(beats, self.glide);
+    }
+}
+
+impl Cycle {
+    /// No step ever reaches this: at a step every frame, it's far past the sun.
+    const UNREAD: u64 = u64::MAX;
+
+    /// Where this part stands at `beats`: its target, and how far toward the
+    /// next. `sample` is only read when a cycle begins, so a part's value here can
+    /// only move as it would have anyway.
+    #[inline]
+    pub fn read(&mut self, beats: f64, sample: &WoozeSample) -> CycleNow {
+        let beats = beats.max(0.0);
+        let floor = beats.floor();
+        let index = floor as u64;
+        if self.index != index {
+            self.begin(index, sample);
+        }
         CycleNow {
             index,
-            weight,
-            amplitude: self.from + (self.to - self.from) * weight,
+            weight: eased(beats - floor, self.glide),
         }
+    }
+
+    /// How much of its pose this part shows, at a `weight` this cycle has read.
+    #[inline]
+    pub fn shown(&self, weight: f32) -> f32 {
+        self.from + (self.to - self.from) * weight
+    }
+
+    /// A new cycle. What's arriving keeps the amplitude it was on its way in with,
+    /// so the beat itself moves nothing. A part that has skipped a target, or just
+    /// started, has nothing to keep.
+    #[cold]
+    fn begin(&mut self, index: u64, sample: &WoozeSample) {
+        self.from = if self.index != Self::UNREAD && self.index + 1 == index {
+            self.to
+        } else {
+            sample.amplitude
+        };
+        self.to = sample.amplitude;
+        self.glide = sample.glide;
+        self.index = index;
     }
 }
 
@@ -217,8 +252,6 @@ pub struct CycleNow {
     pub index: u64,
     /// How far toward the next target, 0 to 1.
     pub weight: f32,
-    /// How much of the pose to show, 0 to 1.
-    pub amplitude: f32,
 }
 
 /// A value on its way from one number to another, so that a sample is a pure
@@ -945,20 +978,24 @@ mod tests {
     #[test]
     fn a_new_amplitude_arrives_with_the_next_pose_and_the_beat_moves_nothing() {
         let mut part = Cycle::default();
-        assert_eq!(part.read(0.0, &sample(0.5, 1.0)).amplitude, 1.0);
+        let shown = |part: &mut Cycle, beats: f64, s: &WoozeSample| {
+            let now = part.read(beats, s);
+            part.shown(now.weight)
+        };
+        assert_eq!(shown(&mut part, 0.0, &sample(0.5, 1.0)), 1.0);
 
         // This cycle was promised at the old value, all the way to its end.
         let low = sample(0.5, 0.2);
-        assert_eq!(part.read(0.25, &low).amplitude, 1.0);
-        assert_eq!(part.read(0.75, &low).amplitude, 1.0);
+        assert_eq!(shown(&mut part, 0.25, &low), 1.0);
+        assert_eq!(shown(&mut part, 0.75, &low), 1.0);
 
         // The next cycle leaves at what it had and heads for the new value.
-        assert_eq!(part.read(1.0, &low).amplitude, 1.0);
-        assert!((part.read(1.75, &low).amplitude - 0.6).abs() < 1e-6);
-        let end = part.read(1.999_999, &low).amplitude;
+        assert_eq!(shown(&mut part, 1.0, &low), 1.0);
+        assert!((shown(&mut part, 1.75, &low) - 0.6).abs() < 1e-6);
+        let end = shown(&mut part, 1.999_999, &low);
         assert!((end - 0.2).abs() < 1e-3, "{end}");
         // The beat itself: what arrived is at rest at the same amplitude.
-        assert_eq!(part.read(2.0, &low).amplitude, 0.2);
+        assert_eq!(shown(&mut part, 2.0, &low), 0.2);
     }
 
     #[test]
@@ -966,7 +1003,7 @@ mod tests {
         let mut part = Cycle::default();
         part.read(0.0, &sample(0.3, 1.0));
         let after = part.read(5.0, &sample(0.3, 0.4));
-        assert_eq!(after.amplitude, 0.4);
+        assert_eq!(part.shown(after.weight), 0.4);
     }
 
     #[test]

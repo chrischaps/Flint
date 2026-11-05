@@ -114,8 +114,6 @@ impl EchoOverride {
 #[derive(Debug, Default)]
 pub struct BlendFrame {
     times: Vec<WarpedTime>,
-    /// How much of its pose each part shows.
-    shown: Vec<f32>,
     pose: Option<LivingPose>,
     posed: Vec<BranchSegment>,
     /// The bone matrices to write, from [`PropBlend::first_bone`].
@@ -740,6 +738,7 @@ impl LivingProps {
             let slow = prop.shadow_cycle.read(prop.beats / 2.0, &prop.wooze);
             let (from, to) = LivingClock::slow_pair(slow.index);
             let weight = slow.weight;
+            let shown = prop.shadow_cycle.shown(weight);
             if prop.drawn.shadow != Some((from, weight)) {
                 let pose = frame.pose.get_or_insert_with(|| LivingPose {
                     shape_seed: 0,
@@ -755,7 +754,7 @@ impl LivingProps {
                 });
                 if found {
                     for segment in &mut pose.segments {
-                        *segment = segment.pulled(slow.amplitude);
+                        *segment = segment.pulled(shown);
                     }
                 }
                 if found
@@ -1091,14 +1090,12 @@ fn blend_bones(
         .parts
         .resize(skeleton.segments.len(), Cycle::default());
     frame.times.clear();
-    frame.shown.clear();
     for (segment, part) in skeleton.segments.iter().zip(&mut drawn.parts) {
         let now = part.read(beats + clock.phase(segment), wooze);
         frame.times.push(WarpedTime {
             index: now.index,
             weight: now.weight,
         });
-        frame.shown.push(now.amplitude);
     }
     let turned = turns != drawn.turns;
     let drifted = frame.times != drawn.times;
@@ -1111,8 +1108,13 @@ fn blend_bones(
         });
         let found = pose.blend_from(&frame.times, |index| ring.get(index).map(|p| &**p));
         if found {
-            for (segment, shown) in pose.segments.iter_mut().zip(&frame.shown) {
-                *segment = segment.pulled(*shown);
+            for ((segment, part), now) in
+                pose.segments.iter_mut().zip(&drawn.parts).zip(&frame.times)
+            {
+                let shown = part.shown(now.weight);
+                if shown < 1.0 {
+                    *segment = segment.pulled(shown);
+                }
             }
         }
         let posed = found
