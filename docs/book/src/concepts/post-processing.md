@@ -253,14 +253,14 @@ kuwahara_enabled = true
 kuwahara_boil = 0.5
 contour_enabled = true
 contour_boil = 1.0
-boil_on = 2
+boil_on = 1
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `boil_on` | u32 | `2` | Film frames each drawing is held: 1, 2 or 3 |
 
-A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's quarter second is therefore 24 frames a second, and on twos a drawing lasts 1/12 s. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
+A beat of the field's `step` is six film frames, which ones, twos and threes all divide, so a drawing always lands on the beat. The `linklater` preset's half second is therefore 12 frames a second, and on ones a drawing lasts 1/12 s. Leave `boil_on` at its default with that preset and a drawing lasts 1/6 s, which reads as a throb. `demo/shading_boil.scene.toml` gets the same 1/12 s from a quarter-second step on twos. The clock runs on game time, not frames, so a drawing lasts as long at 30 fps as at 144, and it stops when animation does. A change of `step` bends it from where it stands.
 
 The field's `jitter` sets how hard it boils: both `_boil` values are multiplied by it, so a preset or zone with `jitter = 0` holds still, and `amplitude` has no say, so a zone can hold its trees still and go on boiling their lines. The field is sampled once a frame where the camera is, since the passes are full-screen. A zone boils when you're in it, and not when you're looking at it from outside.
 

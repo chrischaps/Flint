@@ -641,7 +641,7 @@ jitter = 0
 
         let linklater = preset("linklater").unwrap();
         let far = field.sample([100.0, 0.0, 0.0], 0.0);
-        assert_eq!(far.step, linklater.step, "from the preset");
+        assert_eq!(far.amplitude, linklater.amplitude, "from the preset");
         assert_eq!(far.glide, 0.4, "a global key beats its preset");
         assert_eq!(field.sample([0.0, 0.0, 12.0], 0.0).glide, 0.8);
         let hush = field.sample([20.0, 0.0, 0.0], 0.0);
