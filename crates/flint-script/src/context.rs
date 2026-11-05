@@ -277,6 +277,12 @@ pub enum ScriptCommand {
     TuneLiving {
         knobs: toml::Value,
     },
+    /// Clear one species' own Living Props values (#246), so the layers below
+    /// decide them again: the named keys, or every one with none named.
+    ClearLiving {
+        species: String,
+        keys: Vec<String>,
+    },
     /// Stop or start the clock living props run on.
     FreezeLiving {
         frozen: bool,

@@ -6,9 +6,12 @@
 //! warns and goes without it, and `flint validate` fails on it, through
 //! [`WoozeDef::check`].
 
-use crate::format::{LivingDef, SceneFile, WoozeDef, WoozePreset};
+use crate::format::{
+    LivingDef, LivingEchoesDef, LivingSpeciesDef, LivingVarianceDef, SceneFile, WoozeDef,
+    WoozePreset,
+};
 use flint_core::vfs;
-use flint_core::wooze::{preset, WoozeField, WoozeSample};
+use flint_core::wooze::{check_knob_named, preset, WoozeField, WoozeSample};
 use flint_schema::{validate_component_data, SchemaRegistry};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -131,30 +134,125 @@ pub fn apply_preset_file(scene: &mut SceneFile, scene_path: &Path) -> Vec<WoozeI
     issues
 }
 
+fn echoes_over(a: Option<LivingEchoesDef>, b: Option<LivingEchoesDef>) -> Option<LivingEchoesDef> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(LivingEchoesDef {
+            count: a.count.or(b.count),
+            spread: a.spread.or(b.spread),
+            alpha: a.alpha.or(b.alpha),
+        }),
+        (a, b) => a.or(b),
+    }
+}
+
+fn variance_over(
+    a: Option<LivingVarianceDef>,
+    b: Option<LivingVarianceDef>,
+) -> Option<LivingVarianceDef> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(LivingVarianceDef {
+            amount: a.amount.or(b.amount),
+            steady: a.steady.or(b.steady),
+            keep_size: a.keep_size.or(b.keep_size),
+        }),
+        (a, b) => a.or(b),
+    }
+}
+
 impl LivingDef {
-    /// This table over `under`, a field at a time.
+    /// This table over `under`, a field at a time, species by species.
     pub fn over(self, under: LivingDef) -> LivingDef {
+        let mut species = under.species;
+        for (name, mine) in self.species {
+            let merged = match species.remove(&name) {
+                Some(theirs) => mine.over(theirs),
+                None => mine,
+            };
+            species.insert(name, merged);
+        }
         LivingDef {
             shadows: self.shadows.or(under.shadows),
             stagger: self.stagger.or(under.stagger),
-            echoes: match (self.echoes, under.echoes) {
-                (Some(a), Some(b)) => Some(crate::format::LivingEchoesDef {
-                    count: a.count.or(b.count),
-                    spread: a.spread.or(b.spread),
-                    alpha: a.alpha.or(b.alpha),
-                }),
-                (a, b) => a.or(b),
-            },
-            variance: match (self.variance, under.variance) {
-                (Some(a), Some(b)) => Some(crate::format::LivingVarianceDef {
-                    amount: a.amount.or(b.amount),
-                    steady: a.steady.or(b.steady),
-                    keep_size: a.keep_size.or(b.keep_size),
-                }),
-                (a, b) => a.or(b),
-            },
+            echoes: echoes_over(self.echoes, under.echoes),
+            variance: variance_over(self.variance, under.variance),
+            species,
         }
     }
+}
+
+impl LivingSpeciesDef {
+    /// This species' values over `under`'s, a field at a time.
+    pub fn over(self, under: LivingSpeciesDef) -> LivingSpeciesDef {
+        LivingSpeciesDef {
+            amplitude: self.amplitude.or(under.amplitude),
+            step: self.step.or(under.step),
+            glide: self.glide.or(under.glide),
+            jitter: self.jitter.or(under.jitter),
+            stagger: self.stagger.or(under.stagger),
+            echoes: echoes_over(self.echoes, under.echoes),
+            variance: variance_over(self.variance, under.variance),
+        }
+    }
+
+    /// Whether it says nothing at all.
+    pub fn is_empty(&self) -> bool {
+        *self == LivingSpeciesDef::default()
+    }
+
+    /// What's wrong with its values that the types can't say, each named by its
+    /// key. The player makes do; `flint validate` fails.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (key, value) in [
+            ("amplitude", self.amplitude),
+            ("step", self.step),
+            ("glide", self.glide),
+            ("jitter", self.jitter),
+        ] {
+            if let Some(value) = value {
+                if let Err(problem) = check_knob_named(key, value) {
+                    problems.push(problem);
+                }
+            }
+        }
+        problems.extend(props_problems(
+            self.stagger.as_deref(),
+            self.echoes,
+            self.variance,
+        ));
+        problems
+    }
+}
+
+/// Stagger, echoes and variance, wherever a table holds them.
+fn props_problems(
+    stagger: Option<&str>,
+    echoes: Option<LivingEchoesDef>,
+    variance: Option<LivingVarianceDef>,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if let Some(name) = stagger {
+        if !["none", "per_level", "per_branch"].contains(&name) {
+            problems.push(format!(
+                "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
+            ));
+        }
+    }
+    let mut unit = |key: &str, value: Option<f32>| {
+        if let Some(value) = value {
+            if !(0.0..=1.0).contains(&value) {
+                problems.push(format!("{key} = {value} must be in [0.0, 1.0]"));
+            }
+        }
+    };
+    if let Some(echoes) = echoes {
+        unit("echoes.alpha", echoes.alpha);
+    }
+    if let Some(variance) = variance {
+        unit("variance.amount", variance.amount);
+        unit("variance.steady", variance.steady);
+    }
+    problems
 }
 
 impl WoozePreset {
@@ -166,27 +264,15 @@ impl WoozePreset {
     /// What's wrong with its values that the types can't say, for the knobs the
     /// field doesn't check itself. The player makes do; `flint validate` fails.
     pub fn problems(&self) -> Vec<String> {
-        let mut problems = Vec::new();
-        if let Some(name) = &self.living.stagger {
-            if !["none", "per_level", "per_branch"].contains(&name.as_str()) {
-                problems.push(format!(
-                    "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
-                ));
+        let mut problems = props_problems(
+            self.living.stagger.as_deref(),
+            self.living.echoes,
+            self.living.variance,
+        );
+        for (name, species) in &self.living.species {
+            for problem in species.problems() {
+                problems.push(format!("species '{name}': {problem}"));
             }
-        }
-        let mut unit = |key: &str, value: Option<f32>| {
-            if let Some(value) = value {
-                if !(0.0..=1.0).contains(&value) {
-                    problems.push(format!("{key} = {value} must be in [0.0, 1.0]"));
-                }
-            }
-        };
-        if let Some(echoes) = self.living.echoes {
-            unit("echoes.alpha", echoes.alpha);
-        }
-        if let Some(variance) = self.living.variance {
-            unit("variance.amount", variance.amount);
-            unit("variance.steady", variance.steady);
         }
         if let Some(on) = self.boil.and_then(|boil| boil.on) {
             if !(1..=3).contains(&on) {
@@ -239,6 +325,30 @@ impl WoozePreset {
                 ("keep_size", variance.keep_size.map(|keep| keep.to_string())),
             ]);
             out.push_str(&format!("variance = {table}\n"));
+        }
+        for (name, species) in &self.living.species {
+            out.push_str(&format!("\n[living.species.{name}]\n"));
+            line(&mut out, "amplitude", species.amplitude);
+            line(&mut out, "step", species.step);
+            line(&mut out, "glide", species.glide);
+            line(&mut out, "jitter", species.jitter);
+            line(&mut out, "stagger", species.stagger.as_deref());
+            if let Some(echoes) = species.echoes {
+                let table = inline(&[
+                    ("count", echoes.count.map(|count| count.to_string())),
+                    ("spread", number(echoes.spread)),
+                    ("alpha", number(echoes.alpha)),
+                ]);
+                out.push_str(&format!("echoes = {table}\n"));
+            }
+            if let Some(variance) = species.variance {
+                let table = inline(&[
+                    ("amount", number(variance.amount)),
+                    ("steady", number(variance.steady)),
+                    ("keep_size", variance.keep_size.map(|keep| keep.to_string())),
+                ]);
+                out.push_str(&format!("variance = {table}\n"));
+            }
         }
 
         if let Some(boil) = self.boil {
@@ -388,7 +498,7 @@ fn zone_label(zone: &toml::Value, index: usize) -> String {
 #[cfg(test)]
 mod preset_tests {
     use super::*;
-    use crate::format::{BoilDef, LivingEchoesDef, LivingVarianceDef, WoozeKnobs};
+    use crate::format::{BoilDef, WoozeKnobs};
 
     fn tuned() -> WoozePreset {
         WoozePreset {
@@ -412,6 +522,19 @@ mod preset_tests {
                     steady: Some(0.0),
                     keep_size: Some(false),
                 }),
+                species: [(
+                    "grove_thorn".to_string(),
+                    LivingSpeciesDef {
+                        step: Some(0.1 + 0.15),
+                        stagger: Some("none".into()),
+                        echoes: Some(LivingEchoesDef {
+                            count: Some(1),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )]
+                .into(),
             },
             boil: Some(BoilDef {
                 enabled: Some(true),
@@ -797,5 +920,63 @@ step = { type = "f32", min = 1.0 }
         let mut keys = flint_core::wooze::ZONE_KEYS.to_vec();
         keys.sort_unstable();
         assert_eq!(names, keys);
+    }
+}
+
+#[cfg(test)]
+mod species_tests {
+    use crate::format::{LivingDef, SceneFile};
+
+    #[test]
+    fn a_scene_says_what_one_species_does_and_a_wrong_key_fails() {
+        let scene: SceneFile = toml::from_str(
+            r#"
+            [scene]
+            name = "s"
+            [living]
+            stagger = "per_level"
+            [living.species.grove_thorn]
+            step = 0.25
+            stagger = "none"
+            echoes = { count = 1 }
+            "#,
+        )
+        .unwrap();
+        let living = scene.living.unwrap();
+        let thorn = &living.species["grove_thorn"];
+        assert_eq!(thorn.step, Some(0.25));
+        assert_eq!(thorn.echoes.unwrap().count, Some(1));
+        assert_eq!(living.stagger.as_deref(), Some("per_level"));
+
+        let wrong = toml::from_str::<LivingDef>("[species.grove_thorn]\nstepp = 1.0\n");
+        assert!(wrong.unwrap_err().to_string().contains("stepp"));
+    }
+
+    #[test]
+    fn a_scenes_species_beat_a_presets_a_field_at_a_time() {
+        let scene: LivingDef =
+            toml::from_str("[species.thorn]\nstep = 0.25\nechoes = { count = 1 }\n").unwrap();
+        let preset: LivingDef = toml::from_str(
+            "[species.thorn]\nstep = 2.0\nglide = 0.4\nechoes = { alpha = 0.3 }\n\
+             [species.oak]\njitter = 0.5\n",
+        )
+        .unwrap();
+        let both = scene.over(preset);
+        let thorn = &both.species["thorn"];
+        assert_eq!((thorn.step, thorn.glide), (Some(0.25), Some(0.4)));
+        let echoes = thorn.echoes.unwrap();
+        assert_eq!((echoes.count, echoes.alpha), (Some(1), Some(0.3)));
+        assert_eq!(both.species["oak"].jitter, Some(0.5));
+    }
+
+    #[test]
+    fn a_bad_species_value_is_named_with_its_species() {
+        let preset = crate::WoozePreset::parse(
+            "[living.species.thorn]\nglide = 2.0\nstagger = \"sideways\"\n",
+        )
+        .unwrap();
+        let problems = preset.problems();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems.iter().all(|p| p.starts_with("species 'thorn': ")));
     }
 }

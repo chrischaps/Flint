@@ -12,14 +12,14 @@
 //! at speed.
 
 use flint_core::wooze::{preset as builtin_preset, WoozeField, WoozeSample, PRESETS};
-use flint_procgen::{EchoConfig, LivingPropId, Stagger, VarianceConfig};
+use flint_procgen::{EchoConfig, LivingLayers, LivingPropId, LivingScope};
 use flint_scene::{
-    list_presets, read_preset, write_preset, BoilDef, LivingDef, LivingEchoesDef,
+    list_presets, read_preset, write_preset, BoilDef, LivingDef, LivingEchoesDef, LivingSpeciesDef,
     LivingVarianceDef, WoozeKnobs, WoozePreset,
 };
 use std::path::{Path, PathBuf};
 
-use super::living_props::{stagger_name, stagger_of};
+use super::living_props::{echoes_of, species_of, stagger_name, stagger_of, variance_of};
 use super::PlayerApp;
 
 /// What's been done to a running grove by hand.
@@ -45,21 +45,35 @@ pub struct LivingTune {
     preset_names: Option<Vec<String>>,
 }
 
-/// Every knob as the scene loaded, prop by prop where props can differ: a grove
-/// of several species goes back to several.
+/// Every knob as the scene loaded, layer by layer: a grove of several species
+/// goes back to several, and each species to its own values (#246).
 #[derive(Debug, Clone)]
 struct AtLoad {
     /// The field's knobs and the boil, one of each per scene. In a scene with no
-    /// field the clock's are unset, and `clocks` has them instead.
+    /// field the clock's are unset, and `layers` has each prop's instead.
     knobs: WoozePreset,
-    /// Each prop's clock, in a scene that had no field to give them one.
-    clocks: Option<Vec<WoozeSample>>,
-    /// Each prop's echoes, and its stagger.
-    echoes: Vec<EchoConfig>,
-    staggers: Vec<Stagger>,
-    /// Each lineage's variance.
-    variances: Vec<VarianceConfig>,
+    /// Whether the scene had no field.
+    no_field: bool,
+    /// Every prop's and lineage's global layer, and every species' own values.
+    layers: LivingLayers,
 }
+
+/// The keys [`PlayerApp::clear_living_species`] takes, each a knob or a group.
+pub const SPECIES_KEYS: [&str; 13] = [
+    "amplitude",
+    "step",
+    "glide",
+    "jitter",
+    "stagger",
+    "echoes",
+    "echoes.count",
+    "echoes.spread",
+    "echoes.alpha",
+    "variance",
+    "variance.amount",
+    "variance.steady",
+    "variance.keep_size",
+];
 
 /// Whether the values `read` gives for `items` aren't all the same.
 fn disagree<T, V: PartialEq>(items: &[T], read: impl Fn(&T) -> V) -> bool {
@@ -105,6 +119,7 @@ impl PlayerApp {
                     steady: Some(variance.steady),
                     keep_size: Some(variance.keep_size),
                 }),
+                ..Default::default()
             },
             boil: Some(boil),
         }
@@ -223,12 +238,43 @@ impl PlayerApp {
     pub(super) fn tune_living(&mut self, tune: &WoozePreset) -> Result<(), String> {
         let mut problems = self.tune_wooze(&tune.wooze);
         problems.extend(self.tune_props(&tune.living));
+        for (name, species) in &tune.living.species {
+            problems.extend(self.tune_species(name, species));
+        }
         if let Some(boil) = tune.boil {
             if let Some(on) = boil.on.filter(|on| !(1..=3).contains(on)) {
                 problems.push(format!("boil.on = {on} must be 1, 2 or 3"));
             }
             self.tune_boil(boil);
         }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems.join("; "))
+        }
+    }
+
+    /// A script's `tune_living` table: a `.wooze.toml`'s shape, or with a
+    /// `species` name, one species' own values in the shape of a scene's
+    /// `[living.species.<spec>]` (#246).
+    pub(super) fn tune_living_from_script(&mut self, knobs: toml::Value) -> Result<(), String> {
+        let mut table = match knobs {
+            toml::Value::Table(table) => table,
+            other => return Err(format!("{other} must be a map")),
+        };
+        let Some(species) = table.remove("species") else {
+            let tune = toml::Value::Table(table)
+                .try_into::<WoozePreset>()
+                .map_err(|e| e.to_string())?;
+            return self.tune_living(&tune);
+        };
+        let name = species
+            .as_str()
+            .ok_or_else(|| format!("species = {species} must be a spec's name"))?;
+        let def = toml::Value::Table(table)
+            .try_into::<LivingSpeciesDef>()
+            .map_err(|e| format!("species '{name}': {e}"))?;
+        let problems = self.tune_species(name, &def);
         if problems.is_empty() {
             Ok(())
         } else {
@@ -247,14 +293,15 @@ impl PlayerApp {
             return Vec::new();
         }
         // A scene with no [wooze] table has its specs' clocks: turning one of
-        // these is what gives it a field, starting from where it stands.
+        // these is what gives it a field, starting from where it stands, under
+        // any species' own clock.
         let time = self.wooze_time;
         let start = self
             .procgen_resolver
             .living_props()
             .props()
             .first()
-            .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze());
+            .map_or(WoozeSample::NEUTRAL, |prop| prop.wooze_below());
         let field = self.wooze.get_or_insert_with(|| WoozeField::new(start));
         let now = field.global(time);
         let current = [now.amplitude, now.step, now.glide, now.jitter];
@@ -279,50 +326,102 @@ impl PlayerApp {
     /// of several species leaves each its own `spread` and `alpha`.
     fn tune_props(&mut self, living: &LivingDef) -> Vec<String> {
         let mut problems = Vec::new();
-        // Once, however many props it's wrong for.
-        let mut say = |problem: String| {
-            if !problems.contains(&problem) {
-                problems.push(problem);
-            }
-        };
-        let props = self.procgen_resolver.living_props_mut();
-        if let Some(name) = living.stagger.as_deref() {
-            match stagger_of(name) {
-                Some(stagger) => props.set_stagger(stagger),
-                None => say(format!(
+        let mut say = |problem: String| problems.push(problem);
+        // The global layer, a field at a time (#246): a species' own value still
+        // beats whatever this sets.
+        let stagger = living.stagger.as_deref().and_then(|name| {
+            let stagger = stagger_of(name);
+            if stagger.is_none() {
+                say(format!(
                     "stagger = \"{name}\" isn't \"none\", \"per_level\" or \"per_branch\""
-                )),
+                ));
             }
+            stagger
+        });
+        let echoes = echoes_of(living.echoes.as_ref(), &mut say);
+        let variance = variance_of(living.variance.as_ref(), &mut say);
+        let props = self.procgen_resolver.living_props_mut();
+        if let Some(stagger) = stagger {
+            props.tune_stagger(LivingScope::All, stagger);
         }
-        if let Some(wanted) = living.echoes {
-            for i in 0..props.props().len() {
-                let id = LivingPropId(i);
-                let now = props.prop(id).echo_config();
-                let echoes = EchoConfig {
-                    count: wanted.count.unwrap_or(now.count),
-                    spread: wanted.spread.unwrap_or(now.spread),
-                    alpha: wanted.alpha.unwrap_or(now.alpha),
-                };
-                match echoes.check() {
-                    Ok(()) => props.set_echoes_of(id, echoes),
-                    Err((key, reason)) => say(format!("echoes.{key} = {reason}")),
-                }
-            }
-        }
-        if let Some(wanted) = living.variance {
-            for (lineage, now) in props.variances().into_iter().enumerate() {
-                let variance = VarianceConfig {
-                    amount: wanted.amount.unwrap_or(now.amount),
-                    steady: wanted.steady.unwrap_or(now.steady),
-                    keep_size: wanted.keep_size.unwrap_or(now.keep_size),
-                };
-                match variance.check() {
-                    Ok(()) => props.set_variance_of(lineage, variance),
-                    Err((key, reason)) => say(format!("variance.{key} = {reason}")),
-                }
-            }
+        props.tune_echoes(LivingScope::All, echoes);
+        props.tune_variance(LivingScope::All, variance);
+        problems
+    }
+
+    /// One species' own values (#246), over whatever it has already: they beat
+    /// the global ones, the field and its zones. A species no prop grows from
+    /// keeps them, and is named, since it's most likely a misspelling.
+    pub(super) fn tune_species(&mut self, name: &str, def: &LivingSpeciesDef) -> Vec<String> {
+        let mut problems = Vec::new();
+        let over = species_of(def, &mut |problem| {
+            problems.push(format!("species '{name}': {problem}"));
+        });
+        let props = self.procgen_resolver.living_props_mut();
+        let now = props.species_override(name).unwrap_or_default();
+        if !props.set_species(name, over.merged(now)) {
+            problems.push(self.no_such_species(name));
         }
         problems
+    }
+
+    /// Clear some of a species' own values, or all of them with no keys, so the
+    /// layers below decide them again. Keys are [`SPECIES_KEYS`].
+    pub(super) fn clear_living_species(
+        &mut self,
+        name: &str,
+        keys: &[String],
+    ) -> Result<(), String> {
+        let props = self.procgen_resolver.living_props_mut();
+        let mut over = props.species_override(name).unwrap_or_default();
+        if keys.is_empty() {
+            over = Default::default();
+        }
+        let mut unknown = Vec::new();
+        for key in keys {
+            match key.as_str() {
+                "amplitude" => over.clock.amplitude = None,
+                "step" => over.clock.step = None,
+                "glide" => over.clock.glide = None,
+                "jitter" => over.clock.jitter = None,
+                "stagger" => over.stagger = None,
+                "echoes" => over.echoes = Default::default(),
+                "echoes.count" => over.echoes.count = None,
+                "echoes.spread" => over.echoes.spread = None,
+                "echoes.alpha" => over.echoes.alpha = None,
+                "variance" => over.variance = Default::default(),
+                "variance.amount" => over.variance.amount = None,
+                "variance.steady" => over.variance.steady = None,
+                "variance.keep_size" => over.variance.keep_size = None,
+                other => unknown.push(other.to_string()),
+            }
+        }
+        let any = props.set_species(name, over);
+        if !unknown.is_empty() {
+            return Err(format!(
+                "{} isn't a species value; it takes {}",
+                unknown.join(", "),
+                SPECIES_KEYS.join(", ")
+            ));
+        }
+        if any {
+            Ok(())
+        } else {
+            Err(self.no_such_species(name))
+        }
+    }
+
+    /// What to say about a species no prop grows from.
+    fn no_such_species(&self, name: &str) -> String {
+        let living = self.procgen_resolver.living_props();
+        let mut grown: Vec<&str> = (living.species_names().into_iter())
+            .filter(|species| living.has_species(species))
+            .collect();
+        grown.sort_unstable();
+        format!(
+            "no living prop grows from '{name}', so it changes nothing; the species here are {}",
+            grown.join(", ")
+        )
     }
 
     fn tune_boil(&mut self, boil: BoilDef) {
@@ -379,28 +478,24 @@ impl PlayerApp {
         self.tune_living(&found)
     }
 
-    /// Every knob as it stands, prop by prop, to go back to.
+    /// Every knob as it stands, layer by layer, to go back to.
     fn living_at_load(&self) -> AtLoad {
-        let living = self.procgen_resolver.living_props();
-        let props = living.props();
         let mut knobs = self.living_knobs();
         knobs.living = LivingDef::default();
-        let clocks = self.wooze.is_none().then(|| {
+        let no_field = self.wooze.is_none();
+        if no_field {
             knobs.wooze = WoozeKnobs::default();
-            props.iter().map(|prop| prop.wooze()).collect()
-        });
+        }
         AtLoad {
             knobs,
-            clocks,
-            echoes: props.iter().map(|prop| prop.echo_config()).collect(),
-            staggers: props.iter().map(|prop| prop.stagger()).collect(),
-            variances: living.variances(),
+            no_field,
+            layers: self.procgen_resolver.living_props().layers(),
         }
     }
 
     /// Put the knobs back as the scene loaded them: each prop's echoes and
-    /// stagger, each lineage's variance, and in a scene that had no field, each
-    /// prop's own clock.
+    /// stagger, each lineage's variance, each species' own values, and in a scene
+    /// that had no field, each prop's own clock.
     pub(super) fn reset_living_knobs(&mut self) {
         let Some(at_load) = self.living_tune.at_load.clone() else {
             return;
@@ -408,26 +503,13 @@ impl PlayerApp {
         if let Err(problem) = self.tune_living(&at_load.knobs) {
             tracing::warn!("Living Props: {problem}");
         }
-        if let Some(clocks) = &at_load.clocks {
+        if at_load.no_field {
             // A clock knob may since have given the scene a field it didn't have.
             self.wooze = None;
-            let props = self.procgen_resolver.living_props_mut();
-            let count = props.props().len();
-            for (i, clock) in clocks.iter().enumerate().take(count) {
-                props.set_wooze_of(LivingPropId(i), *clock);
-            }
         }
-        let props = self.procgen_resolver.living_props_mut();
-        let count = props.props().len();
-        let each = at_load.echoes.iter().zip(&at_load.staggers);
-        for (i, (echoes, stagger)) in each.enumerate().take(count) {
-            props.set_echoes_of(LivingPropId(i), *echoes);
-            props.set_stagger_of(LivingPropId(i), *stagger);
-        }
-        let lineages = props.variances().len();
-        for (lineage, variance) in at_load.variances.iter().enumerate().take(lineages) {
-            props.set_variance_of(lineage, *variance);
-        }
+        self.procgen_resolver
+            .living_props_mut()
+            .restore_layers(&at_load.layers);
     }
 
     /// Queue exactly one beat of the clock.

@@ -455,6 +455,7 @@ fn a_scene_living_table_reads_as_defaults() {
             steady: None,
             keep_size: Some(false),
         }),
+        ..Default::default()
     }));
     assert_eq!(read.stagger, Some(flint_procgen::Stagger::PerBranch));
     assert_eq!(read.variance.amount, Some(0.5));
@@ -479,6 +480,7 @@ fn a_scene_living_table_reads_as_defaults() {
             steady: Some(-0.5),
             keep_size: None,
         }),
+        ..Default::default()
     }));
     assert_eq!(bad, LivingDefaults::default());
 }

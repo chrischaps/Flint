@@ -3,8 +3,10 @@
 //! files and none of this is in one: a lineage is, but which pose a prop has reached
 //! and what the field told it exist only once it's running.
 
-use flint_procgen::{LivingPropId, LivingProps};
+use flint_player::LivingRun;
+use flint_procgen::{LivingPropId, LivingProps, Resolved, Stagger};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// The whole report: one JSON object on stdout.
 #[derive(Debug, Serialize)]
@@ -52,6 +54,72 @@ pub struct PropReport {
     pub poses: Option<PoseReport>,
     pub wooze: WoozeReport,
     pub echoes: usize,
+    /// Its spec's name, which is what `[living.species.<spec>]` is keyed by.
+    pub species: String,
+    /// Every value a species can set (#246), as the prop runs on it, and the layer
+    /// that set it: `spec`, `entity`, `global`, `zone:<name>` or `species`.
+    pub values: BTreeMap<&'static str, ValueReport>,
+}
+
+/// One resolved value and who said so.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct ValueReport {
+    pub value: ReportValue,
+    pub layer: String,
+}
+
+/// A value as JSON writes it: an `f32` as briefly as it reads back, as the rest
+/// of the report does.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ReportValue {
+    Number(f32),
+    Count(u32),
+    Flag(bool),
+    Name(&'static str),
+}
+
+impl From<f32> for ReportValue {
+    fn from(value: f32) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<u32> for ReportValue {
+    fn from(value: u32) -> Self {
+        Self::Count(value)
+    }
+}
+
+impl From<bool> for ReportValue {
+    fn from(value: bool) -> Self {
+        Self::Flag(value)
+    }
+}
+
+impl From<&'static str> for ReportValue {
+    fn from(value: &'static str) -> Self {
+        Self::Name(value)
+    }
+}
+
+fn value<T: Into<ReportValue>>(resolved: Resolved<T>) -> ValueReport {
+    ValueReport {
+        value: resolved.value.into(),
+        layer: resolved.layer.label(),
+    }
+}
+
+fn stagger_value(resolved: Resolved<Stagger>) -> ValueReport {
+    let name = match resolved.value {
+        Stagger::None => "none",
+        Stagger::PerLevel => "per_level",
+        Stagger::PerBranch => "per_branch",
+    };
+    value(Resolved {
+        value: name,
+        layer: resolved.layer,
+    })
 }
 
 /// Which poses a prop was drawn between, from the blend that drew it. A staggered
@@ -82,7 +150,9 @@ pub struct WoozeReport {
 
 /// Every prop as it stands, by name, since a scene's entities load in no fixed
 /// order and two runs ought to read the same.
-pub fn props_report(props: &LivingProps) -> Vec<PropReport> {
+pub fn props_report(run: &LivingRun) -> Vec<PropReport> {
+    let props = run.props();
+    let field = run.field().map(|field| (field, run.time()));
     let mut report: Vec<PropReport> = props
         .props()
         .iter()
@@ -118,11 +188,35 @@ pub fn props_report(props: &LivingProps) -> Vec<PropReport> {
                     jitter: wooze.jitter,
                 },
                 echoes: prop.echo_count(),
+                species: props.species_of(id).to_string(),
+                values: values_of(props, id, field),
             }
         })
         .collect();
     report.sort_by(|a, b| a.entity.cmp(&b.entity));
     report
+}
+
+/// Each value a species can set on a prop, by the key a scene gives it.
+fn values_of(
+    props: &LivingProps,
+    id: LivingPropId,
+    field: Option<(&flint_core::wooze::WoozeField, f64)>,
+) -> BTreeMap<&'static str, ValueReport> {
+    let at = props.resolved(id, field);
+    BTreeMap::from([
+        ("amplitude", value(at.amplitude)),
+        ("step", value(at.step)),
+        ("glide", value(at.glide)),
+        ("jitter", value(at.jitter)),
+        ("stagger", stagger_value(at.stagger)),
+        ("echoes.count", value(at.echo_count)),
+        ("echoes.spread", value(at.echo_spread)),
+        ("echoes.alpha", value(at.echo_alpha)),
+        ("variance.amount", value(at.variance_amount)),
+        ("variance.steady", value(at.variance_steady)),
+        ("variance.keep_size", value(at.keep_size)),
+    ])
 }
 
 /// How the values a sweep's column set compare with what its props actually read:
